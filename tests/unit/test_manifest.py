@@ -1,0 +1,364 @@
+from pathlib import Path
+
+import pytest
+
+from claw_trade.artifacts.manifest import ApprovedManifest, ArtifactFlowError, ManifestStore
+from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index
+from claw_trade.workflow.models import Stage
+
+
+def test_add_rejects_duplicate_material_and_call_and_worker(tmp_path: Path) -> None:
+    material = fake_approved_material(
+        material_id="mat-frontline-market-1",
+        worker_id="market_analyst",
+        stage=Stage.FRONTLINE,
+        call_id="call-1",
+        hard_gate_result_path=write_gate_result(tmp_path, "market-1.json"),
+    )
+    manifest = ApprovedManifest.empty().add(material)
+
+    with pytest.raises(ArtifactFlowError, match="重复 material_id"):
+        manifest.add(material)
+
+    with pytest.raises(ArtifactFlowError, match="重复 worker"):
+        manifest.add(
+            fake_approved_material(
+                material_id="mat-frontline-market-2",
+                worker_id="market_analyst",
+                stage=Stage.FRONTLINE,
+                call_id="call-2",
+                hard_gate_result_path=write_gate_result(tmp_path, "market-2.json"),
+            )
+        )
+
+    with pytest.raises(ArtifactFlowError, match="重复 call"):
+        manifest.add(
+            fake_approved_material(
+                material_id="mat-frontline-fundamental-1",
+                worker_id="fundamental_analyst",
+                stage=Stage.FRONTLINE,
+                call_id="call-1",
+                hard_gate_result_path=write_gate_result(tmp_path, "fundamental-1.json"),
+            )
+        )
+
+
+def test_add_updates_current_manifest_when_return_value_is_ignored(tmp_path: Path) -> None:
+    manifest = ApprovedManifest.empty()
+    material = fake_approved_material(
+        material_id="mat-investment-manager",
+        worker_id="research_manager",
+        stage=Stage.INVESTMENT_DECISION,
+        call_id="call-7",
+        hard_gate_result_path=write_gate_result(tmp_path, "manager.json"),
+    )
+
+    manifest.add(material)
+
+    refs = manifest.for_downstream_stage(Stage.TRADE_DECISION)
+    assert len(refs) == 1
+    assert refs[0].material_id == "mat-investment-manager"
+    assert refs[0].worker_id == "research_manager"
+
+
+def test_capabilities_for_downstream_stage_use_manifest_scoped_hash(tmp_path: Path) -> None:
+    manifest = (
+        ApprovedManifest.empty()
+        .add(
+            fake_approved_material(
+                "mat-frontline-market",
+                "market_analyst",
+                Stage.FRONTLINE,
+                "call-1",
+                hard_gate_result_path=write_gate_result(tmp_path, "market.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-frontline-fundamental",
+                "fundamental_analyst",
+                Stage.FRONTLINE,
+                "call-2",
+                hard_gate_result_path=write_gate_result(tmp_path, "fundamental.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-frontline-news",
+                "news_analyst",
+                Stage.FRONTLINE,
+                "call-3",
+                hard_gate_result_path=write_gate_result(tmp_path, "news.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-frontline-social",
+                "social_analyst",
+                Stage.FRONTLINE,
+                "call-4",
+                hard_gate_result_path=write_gate_result(tmp_path, "social.json"),
+            )
+        )
+    )
+
+    capabilities = manifest.capabilities_for_downstream_stage(Stage.INVESTMENT_DEBATE)
+
+    assert len(capabilities) == 4
+    for capability in capabilities:
+        assert capability.capability_id
+        assert capability.material_id
+        assert capability.allowed_l1_uri.endswith("/report.md")
+        assert capability.allowed_l1_sha256.startswith("sha-")
+        assert capability.allowed_l2_prefix.endswith("/evidence/")
+        assert capability.manifest_entry_sha256
+
+
+def test_for_downstream_stage_rejects_partial_records(tmp_path: Path) -> None:
+    manifest = ApprovedManifest.empty().add(
+        fake_approved_material(
+            "mat-risk-challenger",
+            "risk_challenger",
+            Stage.RISK_DEBATE,
+            "call-9",
+            hard_gate_result_path=write_gate_result(tmp_path, "risk-challenger.json"),
+        )
+    )
+
+    with pytest.raises(ArtifactFlowError, match="下游材料缺失"):
+        manifest.for_downstream_stage(Stage.PORTFOLIO_DECISION)
+
+
+def test_add_rejects_material_without_hard_gate_path() -> None:
+    manifest = ApprovedManifest.empty()
+    material = fake_approved_material("mat-frontline-market", "market_analyst", Stage.FRONTLINE, "call-1")
+    bad = ApprovedMaterial(
+        material_id=material.material_id,
+        run_id=material.run_id,
+        call_id=material.call_id,
+        worker_id=material.worker_id,
+        stage=material.stage,
+        target_name=material.target_name,
+        l1_uri=material.l1_uri,
+        l1_sha256=material.l1_sha256,
+        l1_size_bytes=material.l1_size_bytes,
+        l2_index_uri=material.l2_index_uri,
+        l2_index=material.l2_index,
+        l1_claims=material.l1_claims,
+        approved_at=material.approved_at,
+        hard_gate_result_path=Path(" "),
+    )
+    with pytest.raises(ArtifactFlowError, match="hard_gate_result_path"):
+        manifest.add(bad)
+
+
+def test_add_rejects_missing_hard_gate_result_file(tmp_path: Path) -> None:
+    manifest = ApprovedManifest.empty()
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=tmp_path / "guards" / "missing.json",
+    )
+
+    with pytest.raises(ArtifactFlowError, match="hard gate 结果文件不存在"):
+        manifest.add(material)
+
+
+def test_manifest_store_add_and_load_roundtrip(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    gate_path = tmp_path / "guards" / "market-pass.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"ok": true, "category": "runtime_guards"}', encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+    store.add("run-1", material)
+
+    loaded = store.load("run-1")
+    items = loaded.all_for_run("run-1")
+    assert len(items) == 1
+    assert items[0].material_id == material.material_id
+    manifest_path = tmp_path / "run-1" / "openviking" / "approved-manifest.json"
+    assert manifest_path.exists()
+
+
+def test_manifest_store_add_rejects_missing_hard_gate_result_file(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=tmp_path / "guards" / "missing.json",
+    )
+
+    with pytest.raises(ArtifactFlowError, match="hard gate 结果文件不存在"):
+        store.add("run-1", material)
+
+
+def test_manifest_store_add_rejects_invalid_guard_result_json(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    gate_path = tmp_path / "guards" / "broken.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text("{not-json", encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+
+    with pytest.raises(ArtifactFlowError, match="不是合法 JSON"):
+        store.add("run-1", material)
+
+
+def test_manifest_store_add_rejects_non_pass_guard_result(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    gate_path = tmp_path / "guards" / "failed.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"ok": false, "status": "fail"}', encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+
+    with pytest.raises(ArtifactFlowError, match="hard gate 未通过"):
+        store.add("run-1", material)
+
+
+def test_manifest_store_add_accepts_status_pass_contract(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    gate_path = tmp_path / "guards" / "pass-status.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"status": "pass", "category": "hard_gate"}', encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+
+    store.add("run-1", material)
+    assert store.load("run-1").all_for_run("run-1")
+
+
+def test_manifest_store_add_rejects_illegal_guard_category(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    gate_path = tmp_path / "guards" / "illegal-category.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"ok": true, "status": "pass", "category": "illegal_gate"}', encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+
+    with pytest.raises(ArtifactFlowError, match="hard gate 未通过"):
+        store.add("run-1", material)
+
+
+def test_manifest_store_add_rejects_missing_guard_category(tmp_path: Path) -> None:
+    store = ManifestStore(root_dir=tmp_path)
+    gate_path = tmp_path / "guards" / "missing-category.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"ok": true}', encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+
+    with pytest.raises(ArtifactFlowError, match="hard gate 未通过"):
+        store.add("run-1", material)
+
+
+def test_approved_manifest_add_rejects_illegal_guard_category(tmp_path: Path) -> None:
+    manifest = ApprovedManifest.empty()
+    gate_path = tmp_path / "guards" / "approved-manifest-illegal-category.json"
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.write_text('{"ok": true, "category": "illegal_gate"}', encoding="utf-8")
+    material = fake_approved_material(
+        "mat-frontline-market",
+        "market_analyst",
+        Stage.FRONTLINE,
+        "call-1",
+        hard_gate_result_path=gate_path,
+    )
+
+    with pytest.raises(ArtifactFlowError, match="hard gate 未通过"):
+        manifest.add(material)
+
+
+def fake_approved_material(
+    material_id: str = "mat-default",
+    worker_id: str = "market_analyst",
+    stage: Stage = Stage.FRONTLINE,
+    call_id: str = "call-1",
+    hard_gate_result_path: Path | None = None,
+) -> ApprovedMaterial:
+    l1_uri = f"viking://resources/workflow/run-1/{stage.value}/{worker_id}/{call_id}/report.md"
+    l2_index_uri = f"viking://resources/workflow/run-1/{stage.value}/{worker_id}/{call_id}/evidence/index.json"
+    evidence_uri = f"viking://resources/workflow/run-1/{stage.value}/{worker_id}/{call_id}/evidence/e1.json"
+
+    return ApprovedMaterial(
+        material_id=material_id,
+        run_id="run-1",
+        call_id=call_id,
+        worker_id=worker_id,
+        stage=stage,
+        target_name="report",
+        l1_uri=l1_uri,
+        l1_sha256=f"sha-{material_id}",
+        l1_size_bytes=512,
+        l2_index_uri=l2_index_uri,
+        l2_index=L2Index(
+            entries=(
+                L2Entry(
+                    evidence_id="e1",
+                    uri=evidence_uri,
+                    kind="source",
+                    source="api",
+                    sha256=f"sha-{material_id}-e1",
+                    size_bytes=64,
+                ),
+            ),
+            empty_reason=None,
+            index_uri=l2_index_uri,
+            index_sha256=f"sha-{material_id}-index",
+            index_size_bytes=32,
+        ),
+        l1_claims=(
+            L1Claim(
+                claim_id=f"claim-{material_id}",
+                kind="source_claim",
+                text="引用了来源",
+                value=None,
+                required_evidence_kinds=("source",),
+                evidence_ids=("e1",),
+            ),
+        ),
+        approved_at="2026-05-03T16:10:00Z",
+        hard_gate_result_path=hard_gate_result_path or Path("runs/run-1/evidence/guards/result.json"),
+    )
+
+
+def write_gate_result(tmp_path: Path, name: str, payload: str = '{"ok": true, "category": "runtime_guards"}') -> Path:
+    path = tmp_path / "guards" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8")
+    return path

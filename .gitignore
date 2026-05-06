@@ -1,0 +1,10 @@
+src-bak/
+.venv/
+.runtime/
+.claude/
+runs/
+agents/*/.openclaw/
+__pycache__/
+*.py[cod]
+*.pyc.*
+.pytest_cache/

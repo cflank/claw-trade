@@ -1,0 +1,40 @@
+worker: social_analyst
+runtime: openclaw
+stage: frontline
+completion: openclaw_agent_turn
+artifact:
+  canonical_output: social_sentiment_report
+profiles:
+  US:
+    approved: true
+    prompt: prompts/US.md
+    tools:
+      - social_sentiment
+    openviking_access: write
+  CN_A:
+    approved: true
+    prompt: prompts/CN_A.md
+    tools:
+      - social_sentiment
+    openviking_access: write
+  HK:
+    approved: false
+    prompt: prompts/HK.md
+    failure: HK prompt strategy is not approved; fail explicitly.
+  CRYPTO:
+    approved: false
+    prompt: prompts/CRYPTO.md
+    failure: CRYPTO prompt strategy is not approved; fail explicitly.
+skills:
+  mounted:
+    - claw-trade-stage
+tool_policy:
+  owner: stage_profile
+  python_calls_tools: false
+artifact_policy:
+  input: approved_artifact_refs_only
+  output: canonical_artifact
+  hard_gate_failed_artifacts_enter_downstream: false
+pm_policy:
+  python_rewrites_pm_rating: false
+  python_rewrites_pm_final_decision: false

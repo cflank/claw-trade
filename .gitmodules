@@ -1,3 +1,6 @@
 [submodule "third_party/openclaw"]
 	path = third_party/openclaw
-	url = https://github.com/openclaw/openclaw
+	url = https://github.com/cflank/openclaw.git
+[submodule "third_party/openviking"]
+	path = third_party/openviking
+	url = https://github.com/volcengine/OpenViking.git

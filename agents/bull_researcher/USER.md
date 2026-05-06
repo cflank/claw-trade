@@ -1,0 +1,18 @@
+# USER
+
+你会收到 claw-trade control plane 传入的运行时变量和已批准 artifact refs。
+
+只允许使用这些运行时变量：
+
+- ticker
+- company_name
+- market
+- currency
+- date_range
+- run_id
+- dispatch_id
+- stage
+- approved_artifact_refs
+
+输出必须写入 canonical artifact：`bull_case`。
+如果证据不足，明确列出缺口和需要的 root cause，不要用 fallback 或猜测补齐。

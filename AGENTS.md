@@ -52,6 +52,21 @@ Codex must not use agreement phrases such as `对，你说得对`, `完全正确
 
 For emotionally charged turns, Codex must become more precise, not more agreeable.
 
+## 2.1 Plain-Language Answer Rule
+
+When answering the human, explain the idea in plain Chinese first.
+
+Unless the exact identifier is needed for code, logs, tests, file paths, commands,
+provider payload evidence, or another concrete source reference:
+
+- Do not lead with English variable names, field names, class names, function names,
+  or self-invented English terms.
+- Do not use internal implementation names as the explanation itself.
+- First say what the thing does in human terms, then give the exact identifier only
+  when it helps the human inspect or change the code.
+- If the user asks what something means, prefer descriptions such as “流程决定下一步叫谁”
+  and “执行层负责叫醒 worker 并拿回证据” over unexplained internal labels.
+
 ## 3. Mandatory Pushback
 
 When the user proposes an architecture or implementation direction, Codex must actively test it against these questions before recommending implementation:
@@ -212,8 +227,10 @@ Rules:
 - OpenClaw does not own the complete 12-worker TradingAgents DAG.
 - OpenClaw source lives under `third_party/openclaw`.
 - Do not write claw-trade business logic inside `third_party/openclaw`.
-- Do not modify OpenClaw source unless the human explicitly approves that architecture change.
-- If OpenClaw lacks an extension seam needed for this project, stop and ask before changing OpenClaw source.
+- Human approval to modify OpenClaw source for the claw-trade control migration has been granted.
+- OpenClaw source changes are allowed only for generic single-agent runtime seams needed by claw-trade: per-turn tool narrowing, true provider payload capture, first-response capture, and machine-readable run evidence.
+- Do not put claw-trade workflow state machine, 12-worker DAG logic, artifact authority, hard gates, report export, worker business prompts, or investment logic inside `third_party/openclaw`.
+- If the needed OpenClaw change would move business authority from claw-trade into OpenClaw, stop and ask.
 
 ## 4. OpenClaw Agent Boundary
 
@@ -313,7 +330,7 @@ Rules:
 - Agent skills must be visible through OpenClaw workspace/skill mechanisms.
 - Stage policy must narrow current-turn tool exposure.
 - Python must not call tools on behalf of a worker.
-- Python hardcoded allowlists may be used only as temporary experiments, not final architecture.
+- Python hardcoded allowlists may be used only as temporary validation scaffolding, not final architecture.
 - News analysis must cover company news and global/macro news. If existing tools do not cover global news clearly, add or define an explicit approved capability instead of relying on ambiguous naming.
 
 ## 8. Artifact Authority
@@ -467,7 +484,7 @@ Every sub-agent must:
 
 Stop and ask the human before proceeding if any task requires:
 
-- Changing OpenClaw source.
+- Changing OpenClaw source outside the approved generic runtime seam scope.
 - Changing PM owner.
 - Letting Python rewrite PM investment conclusion or rating.
 - Keeping or adding direct LLM report path.
