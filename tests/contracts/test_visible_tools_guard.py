@@ -10,7 +10,7 @@ from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall
 
 
 def test_visible_tools_guard_passes_when_same_source_and_same_names(tmp_path: Path) -> None:
-    call = _sample_call(tmp_path, allowed_tools=("market_data", "openviking.write_material"))
+    call = _sample_call(tmp_path, allowed_tools=("market_data", "openviking_write_material"))
     evidence, provider_request_path, visible_tools_path = _sample_evidence_paths(tmp_path)
     _write_json(
         provider_request_path,
@@ -19,7 +19,7 @@ def test_visible_tools_guard_passes_when_same_source_and_same_names(tmp_path: Pa
             "payload": {
                 "tools": [
                     {"type": "function", "function": {"name": "market_data"}},
-                    {"name": "openviking.write_material"},
+                    {"name": "openviking_write_material"},
                 ]
             },
         },
@@ -29,7 +29,7 @@ def test_visible_tools_guard_passes_when_same_source_and_same_names(tmp_path: Pa
         {
             "source": "provider_request",
             "provider_request_path": str(provider_request_path),
-            "tools": ["openviking.write_material", "market_data", "market_data"],
+            "tools": ["openviking_write_material", "market_data", "market_data"],
         },
     )
     guard = validate_visible_tools(call, evidence)
@@ -90,7 +90,7 @@ def test_visible_tools_guard_fails_when_tools_empty(tmp_path: Path) -> None:
 
 
 def test_visible_tools_guard_fails_when_visible_tools_not_equal_allowed_tools(tmp_path: Path) -> None:
-    call = _sample_call(tmp_path, allowed_tools=("market_data", "openviking.write_material"))
+    call = _sample_call(tmp_path, allowed_tools=("market_data", "openviking_write_material"))
     evidence, provider_request_path, visible_tools_path = _sample_evidence_paths(tmp_path)
     _write_json(
         provider_request_path,

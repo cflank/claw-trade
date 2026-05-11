@@ -10,8 +10,8 @@ from claw_trade.guards.common import GuardResult, guard_failed, guard_passed
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import Stage, WorkerCall
 
-_OPENVIKING_READ_TOOL = "openviking.read_with_capability"
-_OPENVIKING_WRITE_TOOL = "openviking.write_material"
+_OPENVIKING_READ_TOOL = "openviking_read_with_capability"
+_OPENVIKING_WRITE_TOOL = "openviking_write_material"
 _TOOL_CALL_STATUS = {"success", "error"}
 
 

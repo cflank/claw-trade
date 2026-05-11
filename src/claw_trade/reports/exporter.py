@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
-from typing import Any, Protocol
+import re
+import shutil
+from typing import Any, Callable, Protocol
 
 from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.openviking_client import OpenVikingReadResult
@@ -89,6 +91,14 @@ class ReportMaterialsResult:
 class RenderedReport:
     text: str
     claim_links: tuple[ExportClaim, ...]
+
+
+@dataclass(frozen=True)
+class ReportImageAsset:
+    source_path: Path
+    relative_path: Path
+    alt_text: str
+    cleanup_source: bool
 
 
 def required_report_workers() -> set[str]:
@@ -245,8 +255,10 @@ def run_export_guards(
 def persist_export_outputs(
     state: WorkflowState,
     rendered: RenderedReport,
+    image_assets: tuple[ReportImageAsset, ...],
     mapping: ExportClaimMapping,
     guard: GuardResult,
+    chart_cleanup: Callable[[WorkflowState, tuple[ReportImageAsset, ...]], _CopyResult] | None = None,
 ) -> ExportResult:
     reports_dir = state.run_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -254,30 +266,54 @@ def persist_export_outputs(
     mapping_path = reports_dir / "export-claims.json"
     guard_path = reports_dir / "export-guard-results.json"
 
+    copy_result = _copy_report_image_assets(reports_dir=reports_dir, image_assets=image_assets)
+    if not copy_result.ok:
+        return ExportResult.failed(
+            state=state,
+            category=copy_result.category or "export_report_assets",
+            reason=copy_result.reason or "报告图表资产复制失败",
+            paths=copy_result.paths or (reports_dir,),
+        )
+
     final_report_path.write_text(rendered.text, encoding="utf-8")
     _write_json(mapping_path, mapping)
     _write_json(guard_path, guard)
-
-    if guard.ok:
-        # 导出结果由 runner/store 统一写 export-result.json，避免 exporter 与 store 双写不一致。
-        return ExportResult.passed(state=state, final_report_path=final_report_path, guard_path=guard_path)
 
     fail_paths: list[Path] = [final_report_path, mapping_path, guard_path]
     for path in guard.paths:
         if path not in fail_paths:
             fail_paths.append(path)
-    return ExportResult.failed(
-        state=state,
-        category=guard.category or "export_truthfulness",
-        reason=guard.reason or "export guard 失败",
-        paths=tuple(fail_paths),
-    )
+    if not guard.ok:
+        return ExportResult.failed(
+            state=state,
+            category=guard.category or "export_truthfulness",
+            reason=guard.reason or "export guard 失败",
+            paths=tuple(fail_paths),
+        )
+
+    cleanup_result = (chart_cleanup or _cleanup_report_chart_references)(state, image_assets)
+    if not cleanup_result.ok:
+        cleanup_paths = list(cleanup_result.paths)
+        for path in fail_paths:
+            if path not in cleanup_paths:
+                cleanup_paths.append(path)
+        return ExportResult.failed(
+            state=state,
+            category=cleanup_result.category or "export_chart_cleanup",
+            reason=cleanup_result.reason or "临时图表引用清理失败",
+            paths=tuple(cleanup_paths),
+        )
+
+    # 导出结果由 runner/store 统一写 export-result.json，避免 exporter 与 store 双写不一致。
+    return ExportResult.passed(state=state, final_report_path=final_report_path, guard_path=guard_path)
 
 
 def export_final_report(
     state: WorkflowState,
     manifest: ApprovedManifest,
     openviking: OpenVikingApprovedL1Reader,
+    report_image_assets: tuple[Path, ...] | None = None,
+    chart_cleanup: Callable[[WorkflowState, tuple[ReportImageAsset, ...]], _CopyResult] | None = None,
 ) -> ExportResult:
     loaded = load_report_materials(state=state, manifest=manifest, openviking=openviking)
     if not loaded.ok or loaded.pm_decision is None:
@@ -288,21 +324,55 @@ def export_final_report(
             paths=loaded.paths or (state.run_dir / "openviking" / "approved-manifest.json",),
         )
     rendered = render_final_report(materials=loaded.materials, pm_decision=loaded.pm_decision)
+    image_assets = _collect_report_image_assets(
+        state=state,
+        materials=loaded.materials,
+        report_image_assets=report_image_assets,
+    )
+    if not image_assets:
+        return ExportResult.failed(
+            state=state,
+            category="export_report_assets",
+            reason="报告导出失败：未找到可复制的图表资产",
+            paths=(state.run_dir / "calls",),
+        )
+    rendered = _attach_report_image_assets(rendered=rendered, image_assets=image_assets)
     mapping = build_export_claim_mapping(
         rendered=rendered,
         materials=loaded.materials,
         pm_decision=loaded.pm_decision,
     )
     guard = run_export_guards(mapping=mapping, materials=loaded.materials, pm_decision=loaded.pm_decision, state=state)
-    return persist_export_outputs(state=state, rendered=rendered, mapping=mapping, guard=guard)
+    return persist_export_outputs(
+        state=state,
+        rendered=rendered,
+        image_assets=image_assets,
+        mapping=mapping,
+        guard=guard,
+        chart_cleanup=chart_cleanup,
+    )
 
 
 class FinalReportExporter:
-    def __init__(self, *, openviking: OpenVikingApprovedL1Reader) -> None:
+    def __init__(
+        self,
+        *,
+        openviking: OpenVikingApprovedL1Reader,
+        report_image_assets: tuple[Path, ...] | None = None,
+        chart_cleanup: Callable[[WorkflowState, tuple[ReportImageAsset, ...]], _CopyResult] | None = None,
+    ) -> None:
         self.openviking = openviking
+        self.report_image_assets = report_image_assets
+        self.chart_cleanup = chart_cleanup
 
     def export(self, state: WorkflowState, manifest: ApprovedManifest) -> ExportResult:
-        return export_final_report(state=state, manifest=manifest, openviking=self.openviking)
+        return export_final_report(
+            state=state,
+            manifest=manifest,
+            openviking=self.openviking,
+            report_image_assets=self.report_image_assets,
+            chart_cleanup=self.chart_cleanup,
+        )
 
 
 def _ordered_materials(materials: tuple[ApprovedMaterial, ...]) -> tuple[ApprovedMaterial, ...]:
@@ -393,6 +463,154 @@ def _normalize_export_claim_kind(kind: str) -> str:
 
 def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(_to_jsonable(payload), ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class _CopyResult:
+    ok: bool
+    category: str | None = None
+    reason: str | None = None
+    paths: tuple[Path, ...] = ()
+
+
+def _copy_report_image_assets(*, reports_dir: Path, image_assets: tuple[ReportImageAsset, ...]) -> _CopyResult:
+    if not image_assets:
+        return _CopyResult(ok=True)
+    assets_dir = reports_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    copied_paths: list[Path] = []
+    try:
+        for asset in image_assets:
+            destination = reports_dir / asset.relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(asset.source_path, destination)
+            copied_paths.append(destination)
+    except OSError as exc:
+        return _CopyResult(
+            ok=False,
+            category="export_report_assets",
+            reason=f"报告图表资产复制失败: {exc}",
+            paths=tuple(copied_paths + [asset.source_path]),
+        )
+    return _CopyResult(ok=True)
+
+
+def _attach_report_image_assets(rendered: RenderedReport, image_assets: tuple[ReportImageAsset, ...]) -> RenderedReport:
+    lines = [rendered.text.rstrip(), "", "## 图表资产"]
+    for asset in image_assets:
+        lines.append(f"![{asset.alt_text}]({asset.relative_path.as_posix()})")
+    return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=rendered.claim_links)
+
+
+def _collect_report_image_assets(
+    *,
+    state: WorkflowState,
+    materials: tuple[ApprovedMaterial, ...],
+    report_image_assets: tuple[Path, ...] | None,
+) -> tuple[ReportImageAsset, ...]:
+    source_paths: list[Path]
+    if report_image_assets is None:
+        source_paths = _discover_market_chart_images(state=state, materials=materials)
+    else:
+        source_paths = [Path(path) for path in report_image_assets]
+
+    assets: list[ReportImageAsset] = []
+    used_names: set[str] = set()
+    for index, source_path in enumerate(source_paths, start=1):
+        if not source_path.exists() or not source_path.is_file():
+            continue
+        suffix = source_path.suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
+            continue
+        stem = _safe_filename_token(source_path.stem)
+        base_name = f"market-{index:02d}-{stem}{suffix}"
+        file_name = base_name
+        dedupe_seq = 2
+        while file_name in used_names:
+            file_name = f"market-{index:02d}-{stem}-{dedupe_seq}{suffix}"
+            dedupe_seq += 1
+        used_names.add(file_name)
+        assets.append(
+            ReportImageAsset(
+                source_path=source_path,
+                relative_path=Path("assets") / file_name,
+                alt_text=f"market-chart-{index}",
+                cleanup_source=_is_transient_market_chart_source(state=state, source_path=source_path),
+            )
+        )
+    return tuple(assets)
+
+
+def _discover_market_chart_images(*, state: WorkflowState, materials: tuple[ApprovedMaterial, ...]) -> list[Path]:
+    sources: list[Path] = []
+    seen: set[str] = set()
+    for material in materials:
+        if material.worker_id != "market_analyst":
+            continue
+        call_dir = state.run_dir / "calls" / material.call_id
+        candidate_dirs = (
+            call_dir / "pack-tool-evidence" / "techlab" / "charts-local",
+            call_dir / "evidence" / "techlab" / "charts-local",
+            call_dir / "techlab" / "charts-local",
+        )
+        for chart_dir in candidate_dirs:
+            if not chart_dir.exists() or not chart_dir.is_dir():
+                continue
+            for path in sorted(chart_dir.glob("*")):
+                path_key = str(path.resolve())
+                if path_key in seen:
+                    continue
+                seen.add(path_key)
+                sources.append(path)
+    return sources
+
+
+_SAFE_ASSET_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_filename_token(value: str) -> str:
+    cleaned = _SAFE_ASSET_TOKEN_RE.sub("-", value.strip()).strip("-._")
+    return cleaned or "chart"
+
+
+def _is_transient_market_chart_source(*, state: WorkflowState, source_path: Path) -> bool:
+    try:
+        resolved = source_path.resolve()
+        calls_root = (state.run_dir / "calls").resolve()
+    except OSError:
+        return False
+    if not _is_relative_to(resolved, calls_root):
+        return False
+    parts = tuple(item.lower() for item in resolved.parts)
+    return "charts-local" in parts
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _cleanup_report_chart_references(state: WorkflowState, image_assets: tuple[ReportImageAsset, ...]) -> _CopyResult:
+    cleaned_paths: list[Path] = []
+    for asset in image_assets:
+        if not asset.cleanup_source:
+            continue
+        source_path = asset.source_path
+        try:
+            if source_path.exists():
+                source_path.unlink()
+                cleaned_paths.append(source_path)
+        except OSError as exc:
+            return _CopyResult(
+                ok=False,
+                category="export_chart_cleanup",
+                reason=f"临时图表引用清理失败: {exc}",
+                paths=tuple(cleaned_paths + [source_path, state.run_dir / "reports" / "assets"]),
+            )
+    return _CopyResult(ok=True)
 
 
 def _to_jsonable(value: object) -> object:

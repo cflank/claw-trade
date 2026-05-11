@@ -229,6 +229,10 @@ Rules:
 - Do not write claw-trade business logic inside `third_party/openclaw`.
 - Human approval to modify OpenClaw source for the claw-trade control migration has been granted.
 - OpenClaw source changes are allowed only for generic single-agent runtime seams needed by claw-trade: per-turn tool narrowing, true provider payload capture, first-response capture, and machine-readable run evidence.
+- OpenClaw runtime changes are not verified by `src` edits or source-level tests alone. In this workspace, live OpenClaw execution loads built `third_party/openclaw/dist/**` through the OpenClaw launcher.
+- After any change under `third_party/openclaw/src/**` that affects runtime behavior, Codex must rebuild OpenClaw from `third_party/openclaw` with `pnpm build`, restart the local control runtime, and verify the real provider payload from a fresh live run before claiming the runtime behavior changed.
+- Required verification order for OpenClaw runtime seam changes: edit `src` -> run focused source/unit tests -> run `pnpm build` -> restart `scripts/start-control-runtime.sh` -> run focused live proof -> inspect captured provider payload from the new run.
+- If `pnpm build` fails, is skipped, or the runtime is not restarted after build, the change status is `NOT VERIFIED` for live behavior; Codex must report that plainly and must not treat stale `dist` evidence as proof.
 - Do not put claw-trade workflow state machine, 12-worker DAG logic, artifact authority, hard gates, report export, worker business prompts, or investment logic inside `third_party/openclaw`.
 - If the needed OpenClaw change would move business authority from claw-trade into OpenClaw, stop and ask.
 
@@ -303,6 +307,7 @@ Rules:
 - Workflow state and dispatch decisions belong to `claw-trade`.
 - Each dispatch maps to one OpenClaw wake.
 - A wake is a session turn, not a permanently sleeping worker process.
+- In the real product UI, the TradingAgents investment-research workflow is triggered from the chat interface by the `/report` command. Ordinary chat must not silently enter the report workflow.
 
 ## 6. Agent / Prompt Policy
 
@@ -392,6 +397,8 @@ Rules:
 - After a focused fix, run focused green before scoped regression.
 - Do not use full-chain/live gate as the default loop for every small fix.
 - Run full-chain/four-market validation only when the scoped surface is ready for final acceptance or market-level verification.
+- For OpenClaw runtime seam changes, provider payload verification must come from a post-build, post-restart live run. Stale `dist`, source-render tests, or exporter output do not count as runtime proof.
+- Until the UI `/report` command entry is implemented, subsequent workflow integration, live-gate, and regression tests default to the `/report` entry semantics and must mark the run as `report_command`. Tests for ordinary chat or non-report flows must say so explicitly and must not inherit `/report` prompt policy.
 - Do not claim completion without concrete verification evidence.
 
 ## 13. Collect-First Rule

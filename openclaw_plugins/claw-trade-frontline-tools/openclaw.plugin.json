@@ -1,0 +1,20 @@
+{
+  "id": "claw-trade-frontline-tools",
+  "name": "claw-trade frontline tools",
+  "description": "Registers claw-trade frontline data pack tools for report worker turns.",
+  "contracts": {
+    "tools": [
+      "market_market_data_pack",
+      "fundamental_fundamentals_data_pack",
+      "news_news_data_pack",
+      "social_social_sentiment_pack"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

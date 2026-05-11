@@ -1,2 +1,9 @@
 skills:
   - path: claw-trade-stage/SKILL.md
+  - path: cn-a-fundamental-data/SKILL.md
+    skill_id: cn-a-fundamental-data
+    skill_version: 0.1.0
+    workers:
+      - fundamental_analyst
+    tool_exports:
+      - fundamental_fundamentals_data_pack

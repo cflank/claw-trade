@@ -22,6 +22,24 @@ def test_openviking_receipt_guard_passes_with_verified_receipt(tmp_path: Path) -
     assert result.category == "openviking_receipt"
 
 
+def test_openviking_receipt_guard_passes_with_downloadback_method(tmp_path: Path) -> None:
+    call = make_call(tmp_path=tmp_path)
+    receipt = make_receipt(call.material_target, content=b"hello")
+    receipt = replace(
+        receipt,
+        verification=MaterialReceiptVerification(
+            verified=True,
+            method="openviking_write_then_stat_then_downloadback_sha_size_identity_check",
+        ),
+    )
+    store = FakeOpenVikingStore()
+    store.seed_object(call.material_target.l1_uri, b"hello")
+    client = OpenVikingClient(FakeBackendAdapter(store))
+    result = validate_openviking_receipt(call=call, receipt=receipt, client=client)
+    assert result.ok
+    assert result.category == "openviking_receipt"
+
+
 def test_openviking_receipt_guard_rejects_material_target_mismatch(tmp_path: Path) -> None:
     call = make_call(tmp_path=tmp_path)
     receipt = make_receipt(call.material_target, content=b"hello")

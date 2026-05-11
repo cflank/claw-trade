@@ -1,0 +1,20 @@
+[
+  {
+    "signature": "ace98666724bea05ac454d8f75bca5a91c1e751234cf635b1d6dbc36f5249624",
+    "thinking": "我需要按照系统提示的要求，对股票600519进行全面分析。首先，我必须调用get_stock_news_unified工具来获取最新的新闻数据。\n\n让我先调用工具获取新闻：\n- 股票代码：600519\n- 最大新闻数量：我设置为50条（合理的数量）\n- 日期：2026-05-06\n\n我需要首先获取新闻数据，然后基于数据进行分析。",
+    "type": "thinking"
+  },
+  {
+    "text": "我将立即调用工具获取股票600519的最新新闻数据，然后进行全面的新闻分析。",
+    "type": "text"
+  },
+  {
+    "id": "call_function_l03uzmionv6p_1",
+    "input": {
+      "max_news": 50,
+      "stock_code": "600519"
+    },
+    "name": "get_stock_news_unified",
+    "type": "tool_use"
+  }
+]

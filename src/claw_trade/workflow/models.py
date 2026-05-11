@@ -17,6 +17,11 @@ class StopPoint(str, Enum):
     COMPLETED = "completed"
 
 
+class WorkflowEntryPoint(str, Enum):
+    GENERIC = "generic"
+    REPORT_COMMAND = "report_command"
+
+
 class RunStatus(str, Enum):
     CREATED = "created"
     FRONTLINE_RUNNING = "frontline_running"
@@ -60,6 +65,7 @@ class RunRequest:
     stop_point: StopPoint = StopPoint.NONE
     target_worker_id: str | None = None
     target_stage: Stage | None = None
+    entry_point: WorkflowEntryPoint = WorkflowEntryPoint.GENERIC
 
 
 @dataclass(frozen=True)
@@ -184,6 +190,7 @@ class WorkerCall:
     read_policy: ReadPolicy
     evidence_dir: Path
     stop_after_first_response: bool
+    system_context_policy: str = "openclaw_default"
 
 
 @dataclass(frozen=True)
@@ -202,6 +209,7 @@ class OpenClawCommand:
     read_policy: dict[str, object]
     evidence_dir: Path
     stop_after_first_response: bool
+    system_context_policy: str = "openclaw_default"
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -173,6 +174,20 @@ class OpenVikingBackend(OpenVikingApprovalClient, Protocol):
 class OpenVikingClient:
     def __init__(self, backend: OpenVikingBackend) -> None:
         self._backend = backend
+        probe_run_id = os.environ.get("CLAW_TRADE_OPENVIKING_PROBE_RUN_ID", "").strip()
+        if probe_run_id:
+            # 每次 boot probe 使用独立 URI，避免 OpenViking 对固定 probe 文件的并发锁污染正式运行。
+            self._probe_run_id = probe_run_id
+            self._probe_receipt_path = Path("runs") / probe_run_id / "openviking" / "receipt.json"
+            self._probe_stat_uri = f"viking://resources/workflow/{probe_run_id}/frontline/probe_worker/probe_call/report.md"
+            self._probe_namespace = f"workflow/{probe_run_id}"
+            self._probe_namespace_uri = f"viking://resources/workflow/{probe_run_id}/"
+        else:
+            self._probe_run_id = "probe"
+            self._probe_receipt_path = OPENVIKING_PROBE_RECEIPT_PATH
+            self._probe_stat_uri = OPENVIKING_PROBE_STAT_URI
+            self._probe_namespace = OPENVIKING_PROBE_NAMESPACE
+            self._probe_namespace_uri = OPENVIKING_PROBE_NAMESPACE_URI
 
     def ensure_namespace(self, namespace: str) -> None:
         # namespace 是本次 run 的材料工作区；创建失败必须显式失败，不能静默换到其它目录。
@@ -193,13 +208,13 @@ class OpenVikingClient:
 
         # first_response 启动探针只验证真实服务可写命名空间并可 stat 目录，不要求 receipt 或 raw output 证据。
         try:
-            self._backend.ensure_namespace(OPENVIKING_PROBE_NAMESPACE)
+            self._backend.ensure_namespace(self._probe_namespace)
         except OpenVikingAccessError as exc:
             return ProbeResult.failed(f"openviking namespace probe failed: {exc.category}:{exc}")
         except Exception as exc:
             return ProbeResult.failed(f"openviking namespace probe failed: {exc}")
 
-        stat = self._stat_raw(OPENVIKING_PROBE_NAMESPACE_URI)
+        stat = self._stat_raw(self._probe_namespace_uri)
         if not stat.ok:
             return ProbeResult.failed(f"openviking namespace stat probe failed: {stat.error_category}:{stat.error_message}")
         if not stat.exists:
@@ -230,17 +245,17 @@ class OpenVikingClient:
     def _validate_existing_probe_receipt(self) -> ProbeResult:
         # 这里必须做真实调用：仅检查 callable 会放行“方法存在但 backend 已坏”的假成功，boot 会误以为 OpenViking 可用。
         try:
-            receipt = self._backend.fetch_receipt_by_path(OPENVIKING_PROBE_RECEIPT_PATH)
+            receipt = self._backend.fetch_receipt_by_path(self._probe_receipt_path)
         except Exception as exc:
             return ProbeResult.failed(f"openviking receipt probe failed: {exc}")
         if not isinstance(receipt, MaterialReceipt):
             return ProbeResult.failed("openviking receipt probe invalid result: expected MaterialReceipt")
 
-        stat = self._stat_raw(OPENVIKING_PROBE_STAT_URI)
+        stat = self._stat_raw(self._probe_stat_uri)
         if not stat.ok:
             return ProbeResult.failed(f"openviking stat probe failed: {stat.error_category}:{stat.error_message}")
-        if stat.uri != OPENVIKING_PROBE_STAT_URI:
-            return ProbeResult.failed("openviking stat probe failed: stat.uri 与固定 probe URI 不一致")
+        if stat.uri != self._probe_stat_uri:
+            return ProbeResult.failed("openviking stat probe failed: stat.uri 与当前 probe URI 不一致")
         if not stat.exists:
             return ProbeResult.failed("openviking stat probe failed: probe URI 不存在")
         if stat.is_dir:
@@ -249,14 +264,14 @@ class OpenVikingClient:
             return ProbeResult.failed("openviking stat probe failed: stat.size_bytes 必须大于 0")
 
         # stat 缺 sha 时不能放行；必须走真实 read-back，并由 read 的 sha/size 对 receipt 做完整性证明。
-        read_result = self._read_raw(OPENVIKING_PROBE_STAT_URI)
+        read_result = self._read_raw(self._probe_stat_uri)
         if not read_result.ok:
             return ProbeResult.failed(
                 f"openviking read probe failed: {read_result.error_category}:{read_result.error_message}"
             )
         if read_result.size_bytes is None or read_result.size_bytes <= 0:
             return ProbeResult.failed("openviking read probe failed: read.size_bytes 必须大于 0")
-        receipt_check = _validate_probe_receipt_identity(receipt)
+        receipt_check = _validate_probe_receipt_identity(receipt, stat_uri=self._probe_stat_uri, run_id=self._probe_run_id)
         if receipt_check is not None:
             return ProbeResult.failed(f"openviking receipt probe failed: {receipt_check}")
         return ProbeResult.passed()
@@ -267,8 +282,8 @@ class OpenVikingClient:
             return None
         try:
             prepare(
-                receipt_path=OPENVIKING_PROBE_RECEIPT_PATH,
-                stat_uri=OPENVIKING_PROBE_STAT_URI,
+                receipt_path=self._probe_receipt_path,
+                stat_uri=self._probe_stat_uri,
             )
         except OpenVikingAccessError as exc:
             return f"openviking probe prepare failed: {exc.category}:{exc}"
@@ -482,13 +497,13 @@ def _failed_read(uri: VikingUri, category: OpenVikingErrorCategory, message: str
     )
 
 
-def _validate_probe_receipt_identity(receipt: MaterialReceipt) -> str | None:
+def _validate_probe_receipt_identity(receipt: MaterialReceipt, *, stat_uri: str, run_id: str) -> str | None:
     from claw_trade.workflow.models import Stage
 
-    if receipt.uri != OPENVIKING_PROBE_STAT_URI:
-        return "receipt.uri 与固定 probe URI 不一致"
-    if receipt.run_id != "probe":
-        return "receipt.run_id 非 probe"
+    if receipt.uri != stat_uri:
+        return "receipt.uri 与当前 probe URI 不一致"
+    if receipt.run_id != run_id:
+        return "receipt.run_id 与当前 probe run_id 不一致"
     if receipt.call_id != "probe_call":
         return "receipt.call_id 非 probe_call"
     if receipt.worker_id != "probe_worker":

@@ -112,6 +112,7 @@ def build_openclaw_command(call: WorkerCall) -> OpenClawCommand:
         read_policy=serialize_read_policy(call.read_policy),
         evidence_dir=call.evidence_dir,
         stop_after_first_response=call.stop_after_first_response,
+        system_context_policy=_required_str(call.system_context_policy, "system_context_policy"),
     )
     if command.agent != command.worker_id:
         raise ValueError("OpenClawCommand.agent 必须等于 worker_id")
@@ -134,6 +135,7 @@ def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, ob
         "read_policy": dict(command.read_policy),
         "evidence_dir": str(command.evidence_dir),
         "stop_after_first_response": command.stop_after_first_response,
+        "system_context_policy": command.system_context_policy,
     }
 
 

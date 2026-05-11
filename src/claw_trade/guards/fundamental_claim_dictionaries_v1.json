@@ -1,0 +1,43 @@
+{
+  "schema_version": "fundamental_claim_dictionary.asset.v1",
+  "dictionary_revision_id": "fundamental_claim_dictionary.v1",
+  "metric_field_paths": {
+    "pe": "valuation.pe_ttm",
+    "pb": "valuation.pb",
+    "roe": "financial_indicators.roe",
+    "roa": "financial_indicators.roa",
+    "gross_margin": "financial_indicators.gross_margin",
+    "netprofit_margin": "financial_indicators.netprofit_margin",
+    "debt_to_assets": "financial_indicators.debt_to_assets",
+    "revenue": "income_statement.revenue",
+    "net_profit": "income_statement.net_profit",
+    "eps": "income_statement.eps",
+    "total_mv": "valuation.total_mv"
+  },
+  "metric_keywords_v1": {
+    "pe": ["(?<![A-Za-z])PE(?![A-Za-z])", "市盈率"],
+    "pb": ["(?<![A-Za-z])PB(?![A-Za-z])", "市净率"],
+    "roe": ["(?<![A-Za-z])ROE(?![A-Za-z])"],
+    "roa": ["(?<![A-Za-z])ROA(?![A-Za-z])"],
+    "gross_margin": ["毛利率"],
+    "netprofit_margin": ["净利率"],
+    "debt_to_assets": ["资产负债率"],
+    "revenue": ["营收", "营业收入"],
+    "net_profit": ["净利润"],
+    "eps": ["(?<![A-Za-z])EPS(?![A-Za-z])", "每股收益"],
+    "total_mv": ["市值", "总市值"]
+  },
+  "conclusion_phrases_v1": {
+    "target_price": ["目标价", "目标价格", "合理价", "目标位"],
+    "rating": ["买入", "持有", "卖出", "观望", "评级"],
+    "valuation_judgment": ["高估", "低估", "估值偏高", "估值偏低", "估值过高", "估值过低"]
+  },
+  "narrative_phrases_v1": {
+    "industry_leader": ["行业龙头", "龙头地位"],
+    "moat": ["护城河"],
+    "business_model_advantage": ["商业模式优势", "商业模式.*优势"],
+    "stable_industry_position": ["行业地位稳固", "行业地位.*稳固"]
+  },
+  "trend_keywords_v1": ["趋势", "连续", "同比", "环比", "增长", "提升", "上升", "下降", "回落", "改善", "恶化"],
+  "compliant_downgrade_phrases_v1": ["证据不足，无法给出基本面评级", "证据不足，无法给出目标价"]
+}

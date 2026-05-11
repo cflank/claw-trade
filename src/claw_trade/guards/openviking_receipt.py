@@ -10,7 +10,12 @@ from claw_trade.workflow.models import WorkerCall
 _EXPECTED_RECEIPT_SOURCE = "openviking_adapter_verified_receipt"
 _EXPECTED_RECEIPT_LABEL = "verified_openviking_write_receipt"
 _EXPECTED_RECEIPT_ORIGIN = "adapter_verified_non_native"
-_EXPECTED_VERIFICATION_METHOD = "openviking_write_then_stat_then_readback_sha_size_identity_check"
+_EXPECTED_VERIFICATION_METHODS = frozenset(
+    {
+        "openviking_write_then_stat_then_readback_sha_size_identity_check",
+        "openviking_write_then_stat_then_downloadback_sha_size_identity_check",
+    }
+)
 
 
 def validate_openviking_receipt(
@@ -79,10 +84,10 @@ def _adapter_verified_receipt_error(receipt: MaterialReceipt) -> str | None:
             "receipt.verification.verified 必须为 True: "
             f"actual={receipt.verification.verified!r}"
         )
-    if receipt.verification.method != _EXPECTED_VERIFICATION_METHOD:
+    if receipt.verification.method not in _EXPECTED_VERIFICATION_METHODS:
         return (
             "receipt.verification.method 非法: "
-            f"actual={receipt.verification.method!r} expected={_EXPECTED_VERIFICATION_METHOD!r}"
+            f"actual={receipt.verification.method!r} expected_one_of={sorted(_EXPECTED_VERIFICATION_METHODS)!r}"
         )
     return None
 

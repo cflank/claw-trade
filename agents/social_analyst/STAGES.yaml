@@ -9,14 +9,14 @@ profiles:
     approved: true
     prompt: prompts/US.md
     tools:
-      - social_sentiment
-    openviking_access: write
+      - social_sentiment_pack
+    openviking_access: none
   CN_A:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - social_sentiment
-    openviking_access: write
+      - social_sentiment_pack
+    openviking_access: none
   HK:
     approved: false
     prompt: prompts/HK.md
@@ -28,6 +28,7 @@ profiles:
 skills:
   mounted:
     - claw-trade-stage
+    - cn-a-social-data
 tool_policy:
   owner: stage_profile
   python_calls_tools: false

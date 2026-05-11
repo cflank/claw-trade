@@ -47,6 +47,9 @@ def test_export_final_report_fails_when_required_material_missing(tmp_path: Path
 def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-pass")
     manifest, reader = _build_manifest_and_reader(state)
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-pass")
 
     result = export_final_report(state=state, manifest=manifest, openviking=reader)
 
@@ -66,8 +69,113 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
 
     guard_payload = json.loads((state.run_dir / "reports" / "export-guard-results.json").read_text(encoding="utf-8"))
     assert guard_payload["ok"] is True
+    report_text = result.final_report_path.read_text(encoding="utf-8") if result.final_report_path is not None else ""
+    assert "## 图表资产" in report_text
+    assert "assets/market-01-market-structure.png" in report_text
+    assert "viking://resources/workflow/" not in "\n".join(line for line in report_text.splitlines() if line.startswith("!["))
+    copied_asset = state.run_dir / "reports" / "assets" / "market-01-market-structure.png"
+    assert copied_asset.exists()
+    assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\nreport-asset-pass"
+    assert not source_chart.exists()
     # export-result.json 由 runner/store 写，exporter 不双写。
     assert not (state.run_dir / "reports" / "export-result.json").exists()
+
+
+def test_export_final_report_copies_chart_image_to_reports_assets_and_uses_relative_markdown_path(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-report-assets")
+    manifest, reader = _build_manifest_and_reader(state)
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    image_lines = [line for line in report_text.splitlines() if line.startswith("![")]
+    assert image_lines
+    assert "assets/market-01-market-structure.png" in image_lines[0]
+    assert "viking://" not in image_lines[0]
+    assert str(source_chart) not in image_lines[0]
+
+    copied_asset = state.run_dir / "reports" / "assets" / "market-01-market-structure.png"
+    assert copied_asset.exists()
+    assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\nreport-asset"
+    assert not source_chart.exists()
+    assert copied_asset.exists()
+    assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\nreport-asset"
+
+
+def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-pack-tool-assets")
+    manifest, reader = _build_manifest_and_reader(state)
+    source_chart = (
+        state.run_dir
+        / "calls"
+        / "call-01"
+        / "pack-tool-evidence"
+        / "techlab"
+        / "charts-local"
+        / "600519.SH_indicator_panels.png"
+    )
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\npack-tool-chart")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "## 图表资产" in report_text
+    assert "assets/market-01-600519.SH_indicator_panels.png" in report_text
+
+    copied_asset = state.run_dir / "reports" / "assets" / "market-01-600519.SH_indicator_panels.png"
+    assert copied_asset.exists()
+    assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\npack-tool-chart"
+    assert not source_chart.exists()
+
+
+def test_export_final_report_fails_when_no_copyable_chart_asset(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-no-asset")
+    manifest, reader = _build_manifest_and_reader(state)
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.category == "export_report_assets"
+    assert "未找到可复制的图表资产" in (result.failure.reason or "")
+
+
+def test_export_final_report_cleanup_failure_is_exposed(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-cleanup-fail")
+    manifest, reader = _build_manifest_and_reader(state)
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-cleanup")
+
+    def _cleanup_fail(*_args):
+        from claw_trade.reports import exporter as exporter_module
+
+        return exporter_module._CopyResult(
+            ok=False,
+            category="export_chart_cleanup",
+            reason="cleanup failed for test",
+            paths=(source_chart,),
+        )
+
+    result = export_final_report(
+        state=state,
+        manifest=manifest,
+        openviking=reader,
+        chart_cleanup=_cleanup_fail,
+    )
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.category == "export_chart_cleanup"
+    assert "cleanup failed for test" in (result.failure.reason or "")
 
 
 def test_run_export_guards_fails_when_pm_fields_rewritten(tmp_path: Path) -> None:

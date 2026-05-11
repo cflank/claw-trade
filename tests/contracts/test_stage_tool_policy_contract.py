@@ -1,3 +1,5 @@
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -7,6 +9,8 @@ from claw_trade.config.stage_policy import StagePolicy, load_stage_policy
 from claw_trade.config.tool_names import ToolRegistry, load_tool_registry, resolve_tools
 from claw_trade.workflow.models import Stage
 from claw_trade.workflow.workers import all_worker_ids, worker_by_id
+
+SOCIAL_POLICY_PATH = Path("agents/social_analyst/skills/cn-a-social-data/scripts/policy.py")
 
 
 @pytest.fixture
@@ -37,9 +41,10 @@ def test_market_data_intent_resolves_to_provider_visible_mcp_tools(
     policy_result = load_stage_policy(agents_root, "market_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    assert "market.stock_price" in tools
-    assert "market.techlab_analyze" in tools
-    assert "openviking.write_material" in tools
+    assert "market_market_data_pack" in tools
+    assert "market.stock_price" not in tools
+    assert "market.techlab_analyze" not in tools
+    assert "openviking_write_material" not in tools
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))
@@ -54,11 +59,11 @@ def test_openviking_read_write_are_stage_scoped(agents_root: Path, profile: str)
         tools = resolve_tools(policy, registry)
 
         if policy.stage == Stage.FRONTLINE:
-            assert "openviking.write_material" in tools
-            assert "openviking.read_with_capability" not in tools
+            assert "openviking_read_with_capability" not in tools
+            assert "openviking_write_material" not in tools
         else:
-            assert "openviking.read_with_capability" in tools
-            assert "openviking.write_material" in tools
+            assert "openviking_read_with_capability" in tools
+            assert "openviking_write_material" in tools
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))
@@ -69,8 +74,7 @@ def test_news_analyst_must_include_company_and_macro_news(agents_root: Path, pro
     policy_result = load_stage_policy(agents_root, "news_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    assert "company_news" in tools
-    assert "macro_news" in tools
+    assert "news_news_data_pack" in tools
 
 
 def test_unknown_openviking_access_fails() -> None:
@@ -117,3 +121,37 @@ def test_missing_openviking_tool_mapping_fails() -> None:
     )
     with pytest.raises(ConfigError):
         resolve_tools(policy, registry)
+
+
+def test_social_visible_tools_validator_passes_for_exact_approved_set() -> None:
+    result = SOCIAL_POLICY_MODULE.validate_social_visible_tools(
+        ["social_social_sentiment_pack"]
+    )
+    assert result.ok is True
+    assert result.code is None
+
+
+def test_social_visible_tools_validator_fails_for_unapproved_extra_tool() -> None:
+    result = SOCIAL_POLICY_MODULE.validate_social_visible_tools(
+        [
+            "social_social_sentiment_pack",
+            "openviking_write_material",
+            "stock_hot_keyword_em",
+        ]
+    )
+    assert result.ok is False
+    assert result.code == SOCIAL_POLICY_MODULE.SOCIAL_VISIBLE_TOOL_SET_INVALID
+
+
+def _load_social_policy_module():
+    module_name = "cn_a_social_policy_contract"
+    spec = importlib.util.spec_from_file_location(module_name, SOCIAL_POLICY_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载 social policy 模块: {SOCIAL_POLICY_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+SOCIAL_POLICY_MODULE = _load_social_policy_module()

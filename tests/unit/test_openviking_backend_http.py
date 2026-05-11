@@ -30,6 +30,7 @@ class _RecordingHandler(BaseHTTPRequestHandler):
     stat_status: int = 200
     missing_stat_returns_404: bool = False
     missing_stat_returns_exists_false: bool = False
+    missing_stat_returns_internal_500_not_found: bool = False
     download_status: int = 404
     dynamic_content: dict[str, str] = {}
     temp_upload_files: dict[str, bytes] = {}
@@ -76,6 +77,20 @@ class _RecordingHandler(BaseHTTPRequestHandler):
             if self.missing_stat_returns_404:
                 self.send_response(404)
                 self.end_headers()
+                return
+            if self.missing_stat_returns_internal_500_not_found:
+                payload = {
+                    "status": "error",
+                    "result": None,
+                    "error": {"code": "INTERNAL", "message": "Internal server error", "details": None},
+                    "telemetry": None,
+                }
+                encoded = json.dumps(payload).encode("utf-8")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
                 return
             self._json_response({"status": "ok", "result": dict(self.stat_result)})
             return
@@ -216,6 +231,7 @@ def http_server() -> tuple[str, type[_RecordingHandler]]:
     _RecordingHandler.stat_status = 200
     _RecordingHandler.missing_stat_returns_404 = False
     _RecordingHandler.missing_stat_returns_exists_false = False
+    _RecordingHandler.missing_stat_returns_internal_500_not_found = False
     _RecordingHandler.download_status = 404
     _RecordingHandler.dynamic_content = {}
     _RecordingHandler.temp_upload_files = {}
@@ -433,6 +449,26 @@ def test_prepare_probe_receipt_treats_stat_exists_false_as_missing_and_uses_pack
     assert any(path.startswith("/api/v1/fs/stat") for path in paths)
     assert any(path.startswith("/api/v1/content/download") for path in paths)
     assert all(not path.startswith("/api/v1/content/read") for path in paths)
+    assert receipt_path.exists()
+
+
+def test_prepare_probe_receipt_treats_openviking_035_stat_internal_500_on_missing_path_as_not_found(
+    http_server: tuple[str, type[_RecordingHandler]],
+    tmp_path: Path,
+) -> None:
+    endpoint, handler_cls = http_server
+    handler_cls.download_status = 200
+    handler_cls.missing_stat_returns_internal_500_not_found = True
+    backend = OpenVikingHttpBackend(endpoint=endpoint)
+    receipt_path = tmp_path / "runs" / "probe" / "openviking" / "receipt.json"
+    stat_uri = "viking://resources/workflow/probe/frontline/probe_worker/probe_call/report.md"
+
+    backend.prepare_probe_receipt(receipt_path=receipt_path, stat_uri=stat_uri)
+
+    paths = [path for _, path in handler_cls.requests]
+    assert any(path.startswith("/api/v1/resources/temp_upload") for path in paths)
+    assert any(path.startswith("/api/v1/pack/import") for path in paths)
+    assert all(not path.startswith("/api/v1/content/write") for path in paths)
     assert receipt_path.exists()
 
 

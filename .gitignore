@@ -1,6 +1,7 @@
 src-bak/
 .venv/
 .runtime/
+.env.local
 .claude/
 runs/
 agents/*/.openclaw/

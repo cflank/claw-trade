@@ -11,7 +11,15 @@ from claw_trade.config.profiles import ConfigError, require_profile
 from claw_trade.config.stage_policy import load_stage_policy, validate_stage_policy_matches_worker
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 from claw_trade.config.workspace import validate_worker_workspace_for_control
-from claw_trade.workflow.models import FailureRecord, ReadPolicy, Stage, StopPoint, WorkerCall, WorkflowState
+from claw_trade.workflow.models import (
+    FailureRecord,
+    ReadPolicy,
+    Stage,
+    StopPoint,
+    WorkerCall,
+    WorkflowEntryPoint,
+    WorkflowState,
+)
 from claw_trade.workflow.workers import worker_by_id
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -266,6 +274,7 @@ def build_worker_call_from_context(context: RequestBuildContext) -> RequestBuild
         read_policy=ReadPolicy(),
         evidence_dir=evidence_dir,
         stop_after_first_response=state.request.stop_point == StopPoint.FIRST_RESPONSE,
+        system_context_policy=_system_context_policy_for_request(state.request.entry_point),
     )
     return RequestBuildResult.call_result(context, call)
 
@@ -290,6 +299,12 @@ def make_call_id(run_id: str, stage: Stage, worker_id: str) -> str:
 
 def default_read_policy() -> ReadPolicy:
     return ReadPolicy()
+
+
+def _system_context_policy_for_request(entry_point: WorkflowEntryPoint) -> str:
+    if entry_point == WorkflowEntryPoint.REPORT_COMMAND:
+        return "single_worker_minimal"
+    return "openclaw_default"
 
 
 def _validate_manifest_contract(

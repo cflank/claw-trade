@@ -11,6 +11,10 @@ from claw_trade.workflow.models import Stage, WorkerCall
 
 CLAIM_SCHEMA_VERSION = "control.claims.v1"
 MATERIAL_CLAIMS_SOURCE = "openclaw_openviking_write_material"
+RUNTIME_MATERIAL_CLAIMS_SOURCE = "openclaw_runtime_material_save"
+_ALLOWED_MATERIAL_CLAIMS_SOURCES = frozenset(
+    {MATERIAL_CLAIMS_SOURCE, RUNTIME_MATERIAL_CLAIMS_SOURCE}
+)
 MATERIAL_CLAIMS_FILENAME = "material-claims.json"
 
 _ALLOWED_CLAIM_KINDS = frozenset(
@@ -150,7 +154,7 @@ def parse_material_claims_evidence(path: Path) -> MaterialClaimsEvidenceResult:
             return MaterialClaimsEvidenceResult.failed(f"{MATERIAL_CLAIMS_FILENAME} 缺少字段: {field}")
     if payload["schema_version"] != CLAIM_SCHEMA_VERSION:
         return MaterialClaimsEvidenceResult.failed(f"{MATERIAL_CLAIMS_FILENAME} schema_version 不匹配")
-    if payload["source"] != MATERIAL_CLAIMS_SOURCE:
+    if payload["source"] not in _ALLOWED_MATERIAL_CLAIMS_SOURCES:
         return MaterialClaimsEvidenceResult.failed(f"{MATERIAL_CLAIMS_FILENAME} source 不匹配")
     try:
         stage = Stage(str(payload["stage"]))
@@ -177,7 +181,7 @@ def parse_material_claims_evidence(path: Path) -> MaterialClaimsEvidenceResult:
     return MaterialClaimsEvidenceResult.passed(
         MaterialClaimsEvidence(
             schema_version=CLAIM_SCHEMA_VERSION,
-            source=MATERIAL_CLAIMS_SOURCE,
+            source=str(payload["source"]),
             run_id=str(payload["run_id"]),
             call_id=str(payload["call_id"]),
             worker_id=str(payload["worker_id"]),

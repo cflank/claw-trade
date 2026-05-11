@@ -231,7 +231,7 @@ class OpenVikingHttpBackend:
             )
             exists = _stat_result_exists(stat_before)
         except OpenVikingAccessError as exc:
-            if exc.category != "not_found":
+            if exc.category != "not_found" and not _is_openviking_035_missing_stat_before_write(exc):
                 raise
 
         if not exists:
@@ -710,6 +710,18 @@ def _http_status_to_category(status_code: int) -> str:
     if status_code >= 500:
         return "backend_unavailable"
     return "unknown"
+
+
+def _is_openviking_035_missing_stat_before_write(exc: OpenVikingAccessError) -> bool:
+    # OpenViking 0.3.5 对缺失文件的写入前 stat 会返回 500/internal；只在这个探测点放行。
+    if exc.category != "backend_unavailable":
+        return False
+    lower = str(exc).lower()
+    if "http 500" not in lower:
+        return False
+    if '"code":"internal"' not in lower and '"code": "internal"' not in lower:
+        return False
+    return '"message":"internal server error"' in lower or '"message": "internal server error"' in lower
 
 
 def _parse_receipt_payload(raw: dict[str, object]) -> MaterialReceipt:

@@ -20,16 +20,11 @@ def validate_l1_l2_contract(
     raw_output: str,
     l2_index: L2Index,
 ) -> tuple[tuple[L1Claim, ...], GuardResult]:
+    del raw_output
     if not l1_text.strip():
         return (), guard_failed(category="l1_l2", reason="L1 不能为空", paths=_l1_paths(call))
     if l1_declares_compact_material(l1_text):
         return (), guard_failed(category="l1_l2", reason="L1 不能是 compact 摘要", paths=_l1_paths(call))
-    if raw_output.strip() and l1_text.strip() == raw_output.strip():
-        return (), guard_failed(
-            category="l1_l2",
-            reason="L1 不能直接使用 raw_output 作为正式材料",
-            paths=_l1_paths(call),
-        )
     if l1_has_manual_claim_block(l1_text):
         # 越权边界：L1 正文只给读者，不接受 LLM 在正文手拼机器 claim block。
         return (), guard_failed(

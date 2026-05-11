@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 
 from claw_trade.cli.run_control import main, parse_args
-from claw_trade.workflow.models import RunRequest, RunStatus, Stage, StopPoint, WorkflowState
+from claw_trade.workflow.models import (
+    RunRequest,
+    RunStatus,
+    Stage,
+    StopPoint,
+    WorkflowEntryPoint,
+    WorkflowState,
+)
 
 
 def _base_args() -> list[str]:
@@ -59,6 +66,7 @@ def test_parse_args_builds_run_request_with_all_fields() -> None:
     assert request.stop_point == StopPoint.FRONTLINE_READY
     assert request.target_worker_id == "market_analyst"
     assert request.target_stage == Stage.FRONTLINE
+    assert request.entry_point == WorkflowEntryPoint.REPORT_COMMAND
 
 
 def test_parse_args_supports_single_worker_request_shape() -> None:

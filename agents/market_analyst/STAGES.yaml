@@ -10,13 +10,13 @@ profiles:
     prompt: prompts/US.md
     tools:
       - market_data
-    openviking_access: write
+    openviking_access: none
   CN_A:
     approved: true
     prompt: prompts/CN_A.md
     tools:
       - market_data
-    openviking_access: write
+    openviking_access: none
   HK:
     approved: false
     prompt: prompts/HK.md

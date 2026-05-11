@@ -140,7 +140,7 @@ def fake_call(
         current_date="2026-05-03",
         start_date="2026-01-01",
         end_date="2026-05-03",
-        allowed_tools=("market_data", "openviking.read_with_capability"),
+        allowed_tools=("market_data", "openviking_read_with_capability"),
         upstream_materials=upstream_materials,
         openviking_read_capabilities=upstream_capabilities,
         material_target=target,

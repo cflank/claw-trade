@@ -2,11 +2,107 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CLAW_TRADE_ENV_PATH="${CLAW_TRADE_ENV_PATH:-${ROOT_DIR}/.env.local}"
+OPENCLAW_SOURCE_ENV_PATH="${OPENCLAW_SOURCE_ENV_PATH:-${HOME}/.openclaw/.env}"
+
+load_runtime_env_files_into_process_env() {
+  local exported_count=0
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    export "${key}=${value}"
+    exported_count=$(( exported_count + 1 ))
+  done < <(
+    OPENCLAW_SOURCE_ENV_PATH_VALUE="${OPENCLAW_SOURCE_ENV_PATH}" \
+    CLAW_TRADE_ENV_PATH_VALUE="${CLAW_TRADE_ENV_PATH}" \
+    node <<'NODE'
+const fs = require("node:fs");
+
+function parseEnvFile(envPath) {
+  const result = new Map();
+  let content = "";
+  try {
+    content = fs.readFileSync(envPath, "utf8");
+  } catch {
+    return result;
+  }
+  const lines = content.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const normalized = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const splitIndex = normalized.indexOf("=");
+    if (splitIndex <= 0) {
+      continue;
+    }
+    const key = normalized.slice(0, splitIndex).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      continue;
+    }
+    let value = normalized.slice(splitIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+    ) {
+      value = value.slice(1, -1);
+    }
+    result.set(key, value);
+  }
+  return result;
+}
+
+const sourceEnvPath = process.env.OPENCLAW_SOURCE_ENV_PATH_VALUE;
+const clawTradeEnvPath = process.env.CLAW_TRADE_ENV_PATH_VALUE;
+const originalKeys = new Set(Object.keys(process.env));
+const merged = new Map();
+
+for (const [key, value] of parseEnvFile(sourceEnvPath)) {
+  if (!originalKeys.has(key)) {
+    merged.set(key, value);
+  }
+}
+for (const [key, value] of parseEnvFile(clawTradeEnvPath)) {
+  if (!originalKeys.has(key)) {
+    merged.set(key, value);
+  }
+}
+
+for (const [key, value] of merged) {
+  process.stdout.write(key);
+  process.stdout.write("\u0000");
+  process.stdout.write(value);
+  process.stdout.write("\u0000");
+}
+NODE
+  )
+  if [[ -f "${CLAW_TRADE_ENV_PATH}" ]]; then
+    printf '[INFO] 已加载 claw-trade .env.local：%s\n' "${CLAW_TRADE_ENV_PATH}"
+  else
+    printf '[WARN] claw-trade .env.local 不存在，跳过注入：%s\n' "${CLAW_TRADE_ENV_PATH}" >&2
+  fi
+  if [[ -f "${OPENCLAW_SOURCE_ENV_PATH}" ]]; then
+    printf '[INFO] 已加载 OpenClaw source .env：%s\n' "${OPENCLAW_SOURCE_ENV_PATH}"
+  else
+    printf '[WARN] OpenClaw source .env 不存在，跳过注入：%s\n' "${OPENCLAW_SOURCE_ENV_PATH}" >&2
+  fi
+  printf '[INFO] 环境变量注入条目数：%s\n' "${exported_count}"
+}
+
+load_runtime_env_files_into_process_env
+
 RUNTIME_DIR="${ROOT_DIR}/.runtime/dev-services"
 LOG_DIR="${RUNTIME_DIR}/logs"
 PID_DIR="${RUNTIME_DIR}/pids"
 RUNTIME_ENV_PATH="${RUNTIME_DIR}/runtime.env"
 RUNS_PROBE_DIR="${ROOT_DIR}/runs/probe"
+UV_CACHE_DIR="${UV_CACHE_DIR:-${RUNTIME_DIR}/uv-cache}"
+UV_LINK_MODE="${UV_LINK_MODE:-copy}"
+export UV_CACHE_DIR UV_LINK_MODE
+OPENVIKING_RUNTIME_DIR="${RUNTIME_DIR}/openviking"
+OPENVIKING_SOURCE_CONFIG_PATH="${OPENVIKING_SOURCE_CONFIG_PATH:-${HOME}/.openviking/ov.conf}"
+OPENVIKING_CONFIG_FILE="${OPENVIKING_CONFIG_FILE:-${OPENVIKING_RUNTIME_DIR}/ov.conf}"
+OPENVIKING_DATA_DIR="${OPENVIKING_DATA_DIR:-${OPENVIKING_RUNTIME_DIR}/data}"
+export OPENVIKING_CONFIG_FILE
 
 OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
 OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL:-${OPENVIKING_ENDPOINT}}"
@@ -19,9 +115,10 @@ OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/third_party/
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${RUNTIME_DIR}/openclaw-state}"
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
 OPENCLAW_SOURCE_CONFIG_PATH="${OPENCLAW_SOURCE_CONFIG_PATH:-${HOME}/.openclaw/openclaw.json}"
-OPENCLAW_SOURCE_ENV_PATH="${OPENCLAW_SOURCE_ENV_PATH:-${HOME}/.openclaw/.env}"
 OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
+OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-}"
+CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-probe-$(date -u +%Y%m%d%H%M%S)-$RANDOM}"
 CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
 CLAW_TRADE_OPENVIKING_SERVER_BIN="${CLAW_TRADE_OPENVIKING_SERVER_BIN:-}"
@@ -251,12 +348,48 @@ for (const entry of sourceAgentList) {
   sourceAgentById.set(entry.id.trim(), entry);
 }
 
+function readWorkerMountedSkills(workerId) {
+  const manifestPath = `${rootDir}/agents/${workerId}/skills/manifest.yaml`;
+  let manifestText = "";
+  try {
+    manifestText = fs.readFileSync(manifestPath, "utf8");
+  } catch (error) {
+    console.error(`[ERROR] worker skill manifest 不存在：${manifestPath}`);
+    console.error(String(error));
+    process.exit(1);
+  }
+  const skills = [];
+  const seen = new Set();
+  for (const line of manifestText.split(/\r?\n/)) {
+    const match = line.match(/^\s*-\s+path:\s+(.+?)\s*$/);
+    if (!match) {
+      continue;
+    }
+    const skillPath = match[1].trim().replace(/^["']|["']$/g, "");
+    if (skillPath.startsWith("/") || skillPath.includes("..")) {
+      console.error(`[ERROR] worker skill path 非法：${manifestPath} -> ${skillPath}`);
+      process.exit(1);
+    }
+    const skillId = skillPath.replace(/\/SKILL\.md$/i, "").trim();
+    if (skillId && !seen.has(skillId)) {
+      seen.add(skillId);
+      skills.push(skillId);
+    }
+  }
+  if (skills.length === 0) {
+    console.error(`[ERROR] worker skill manifest 没有可挂载 skill：${manifestPath}`);
+    process.exit(1);
+  }
+  return skills;
+}
+
 const mergedWorkers = workers.map((workerId) => {
   const sourceEntry = sourceAgentById.get(workerId);
   const merged = isPlainObject(sourceEntry) ? { ...sourceEntry } : {};
   merged.id = workerId;
   merged.default = workerId === "market_analyst";
   merged.workspace = `${rootDir}/agents/${workerId}`;
+  merged.skills = readWorkerMountedSkills(workerId);
   return merged;
 });
 
@@ -303,6 +436,32 @@ const mergedDefaults = {
   ...sourceDefaults,
   skipBootstrap: true,
 };
+const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};
+const sourcePluginLoad = isPlainObject(sourcePlugins.load) ? sourcePlugins.load : {};
+const sourcePluginLoadPaths = Array.isArray(sourcePluginLoad.paths) ? sourcePluginLoad.paths : [];
+const clawTradeFrontlinePluginPath = `${rootDir}/openclaw_plugins/claw-trade-frontline-tools`;
+const mergedPluginLoadPaths = sourcePluginLoadPaths.includes(clawTradeFrontlinePluginPath)
+  ? sourcePluginLoadPaths
+  : [...sourcePluginLoadPaths, clawTradeFrontlinePluginPath];
+const sourcePluginEntries = isPlainObject(sourcePlugins.entries) ? sourcePlugins.entries : {};
+const sourceFrontlinePluginEntry = isPlainObject(sourcePluginEntries["claw-trade-frontline-tools"])
+  ? sourcePluginEntries["claw-trade-frontline-tools"]
+  : {};
+const mergedPlugins = {
+  ...sourcePlugins,
+  enabled: sourcePlugins.enabled === false ? false : true,
+  load: {
+    ...sourcePluginLoad,
+    paths: mergedPluginLoadPaths,
+  },
+  entries: {
+    ...sourcePluginEntries,
+    "claw-trade-frontline-tools": {
+      ...sourceFrontlinePluginEntry,
+      enabled: true,
+    },
+  },
+};
 
 const mergedConfig = {
   ...sourceConfig,
@@ -316,6 +475,7 @@ const mergedConfig = {
     list: mergedWorkers,
   },
   models: mergedModels,
+  plugins: mergedPlugins,
 };
 
 fs.mkdirSync(require("node:path").dirname(outputPath), { recursive: true });
@@ -323,56 +483,64 @@ fs.writeFileSync(outputPath, `${JSON.stringify(mergedConfig, null, 2)}\n`, "utf8
 NODE
 }
 
-load_source_env_into_process_env() {
-  if [[ ! -f "${OPENCLAW_SOURCE_ENV_PATH}" ]]; then
-    log_warn "OpenClaw source .env 不存在，跳过注入：${OPENCLAW_SOURCE_ENV_PATH}"
+prepare_openviking_runtime_config() {
+  mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
+  if [[ "${OPENVIKING_CONFIG_FILE}" != "${OPENVIKING_RUNTIME_DIR}/ov.conf" ]]; then
+    log_info "使用显式 OpenViking config：${OPENVIKING_CONFIG_FILE}"
     return 0
   fi
+  if [[ ! -f "${OPENVIKING_SOURCE_CONFIG_PATH}" ]]; then
+    log_error "OpenViking source config 不存在：${OPENVIKING_SOURCE_CONFIG_PATH}"
+    exit 1
+  fi
 
-  local exported_count=0
-  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
-    export "${key}=${value}"
-    exported_count=$(( exported_count + 1 ))
-  done < <(
-    OPENCLAW_SOURCE_ENV_PATH_VALUE="${OPENCLAW_SOURCE_ENV_PATH}" node <<'NODE'
+  OPENVIKING_SOURCE_CONFIG_PATH_VALUE="${OPENVIKING_SOURCE_CONFIG_PATH}" \
+  OPENVIKING_CONFIG_FILE_VALUE="${OPENVIKING_CONFIG_FILE}" \
+  OPENVIKING_DATA_DIR_VALUE="${OPENVIKING_DATA_DIR}" \
+  OPENVIKING_SERVER_PORT_VALUE="${OPENVIKING_SERVER_PORT}" \
+    node <<'NODE'
 const fs = require("node:fs");
-const envPath = process.env.OPENCLAW_SOURCE_ENV_PATH_VALUE;
-let content = "";
+const path = require("node:path");
+
+const sourcePath = process.env.OPENVIKING_SOURCE_CONFIG_PATH_VALUE;
+const outputPath = process.env.OPENVIKING_CONFIG_FILE_VALUE;
+const dataDir = process.env.OPENVIKING_DATA_DIR_VALUE;
+const port = Number.parseInt(process.env.OPENVIKING_SERVER_PORT_VALUE || "1933", 10);
+
+let source;
 try {
-  content = fs.readFileSync(envPath, "utf8");
-} catch {
-  process.exit(0);
+  source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+} catch (error) {
+  console.error(`[ERROR] OpenViking source config 解析失败：${sourcePath}`);
+  console.error(String(error));
+  process.exit(1);
 }
-const lines = content.split(/\r?\n/);
-for (const rawLine of lines) {
-  const line = rawLine.trim();
-  if (!line || line.startsWith("#")) {
-    continue;
-  }
-  const normalized = line.startsWith("export ") ? line.slice(7).trim() : line;
-  const splitIndex = normalized.indexOf("=");
-  if (splitIndex <= 0) {
-    continue;
-  }
-  const key = normalized.slice(0, splitIndex).trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-    continue;
-  }
-  let value = normalized.slice(splitIndex + 1).trim();
-  if (
-    (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
-    (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
-  ) {
-    value = value.slice(1, -1);
-  }
-  process.stdout.write(key);
-  process.stdout.write("\u0000");
-  process.stdout.write(value);
-  process.stdout.write("\u0000");
+if (!source || typeof source !== "object" || Array.isArray(source)) {
+  console.error(`[ERROR] OpenViking source config 根节点不是 object：${sourcePath}`);
+  process.exit(1);
 }
+
+const next = {
+  ...source,
+  server: {
+    ...(source.server && typeof source.server === "object" && !Array.isArray(source.server)
+      ? source.server
+      : {}),
+    host: "127.0.0.1",
+    port,
+  },
+  storage: {
+    ...(source.storage && typeof source.storage === "object" && !Array.isArray(source.storage)
+      ? source.storage
+      : {}),
+    workspace: dataDir,
+  },
+};
+
+fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+fs.mkdirSync(dataDir, { recursive: true });
+fs.writeFileSync(outputPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 NODE
-  )
-  log_info "已从 OpenClaw source .env 注入环境变量条目数：${exported_count}"
 }
 
 trap 'on_script_exit $?' EXIT
@@ -380,6 +548,8 @@ trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
 
 mkdir -p "${RUNTIME_DIR}" "${LOG_DIR}" "${PID_DIR}"
+mkdir -p "${UV_CACHE_DIR}"
+mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
 mkdir -p "${OPENCLAW_STATE_DIR}"
 
 log_info "删除旧 runtime.env，避免复验读取到过期环境"
@@ -402,7 +572,7 @@ mkdir -p "${OPENCLAW_STATE_DIR}"
 mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 prepare_openclaw_trade_agent_config
-load_source_env_into_process_env
+prepare_openviking_runtime_config
 
 if [[ ! -x "${OPENCLAW_GATEWAY_CALL_BIN}" ]]; then
   log_error "OPENCLAW_GATEWAY_CALL_BIN 不可执行：${OPENCLAW_GATEWAY_CALL_BIN}"
@@ -441,13 +611,13 @@ if [[ -n "${CLAW_TRADE_OPENVIKING_SERVER_BIN}" ]]; then
 
   (
     cd "${selected_server_cwd}"
-    "${selected_server_bin}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}" > "${OPENVIKING_SERVER_LOG}" 2>&1
+    "${selected_server_bin}" --config "${OPENVIKING_CONFIG_FILE}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}" > "${OPENVIKING_SERVER_LOG}" 2>&1
   ) &
 else
   # 默认使用本仓 uv 环境里锁定的 OpenViking wheel，避免 third_party 源码现场构建。
   (
     cd "${ROOT_DIR}"
-    uv run openviking-server --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}" > "${OPENVIKING_SERVER_LOG}" 2>&1
+    uv run openviking-server --config "${OPENVIKING_CONFIG_FILE}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}" > "${OPENVIKING_SERVER_LOG}" 2>&1
   ) &
 fi
 OPENVIKING_SERVER_PID=$!
@@ -504,6 +674,11 @@ else
   openviking_mcp_started=1
 fi
 
+# market skill 的 Python 依赖安装在项目虚拟环境中，OpenClaw 子进程必须用同一解释器。
+if [[ -z "${OPENCLAW_MARKET_TOOL_PYTHON}" && -x "${ROOT_DIR}/.venv/bin/python" ]]; then
+  OPENCLAW_MARKET_TOOL_PYTHON="${ROOT_DIR}/.venv/bin/python"
+fi
+
 gateway_cmd=(
   "${OPENCLAW_GATEWAY_CALL_BIN}"
   gateway
@@ -526,6 +701,8 @@ fi
 log_info "启动 OpenClaw gateway（${OPENCLAW_GATEWAY_URL}）"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}" \
+CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}" \
   "${gateway_cmd[@]}" > "${OPENCLAW_GATEWAY_LOG}" 2>&1 &
 OPENCLAW_GATEWAY_PID=$!
 STARTED_PIDS+=("${OPENCLAW_GATEWAY_PID}")
@@ -542,15 +719,21 @@ cat > "${RUNTIME_ENV_PATH}" <<EOF
 CLAW_TRADE_OPENCLAW_RUNNER=${CLAW_TRADE_OPENCLAW_RUNNER}
 CLAW_TRADE_OPENVIKING_BACKEND=${CLAW_TRADE_OPENVIKING_BACKEND}
 CLAW_TRADE_OPENVIKING_MCP_STARTED=${openviking_mcp_started}
+CLAW_TRADE_OPENVIKING_PROBE_RUN_ID=${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}
 OPENCLAW_GATEWAY_CALL_BIN=${OPENCLAW_GATEWAY_CALL_BIN}
 OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL}
 OPENCLAW_STATE_DIR=${OPENCLAW_STATE_DIR}
 OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH}
 OPENCLAW_GATEWAY_TIMEOUT_MS=${OPENCLAW_GATEWAY_TIMEOUT_MS}
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS=${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}
+OPENCLAW_MARKET_TOOL_PYTHON=${OPENCLAW_MARKET_TOOL_PYTHON}
+UV_CACHE_DIR=${UV_CACHE_DIR}
+UV_LINK_MODE=${UV_LINK_MODE}
 OPENVIKING_ENDPOINT=${OPENVIKING_ENDPOINT}
 OPENVIKING_BASE_URL=${OPENVIKING_BASE_URL}
 OPENVIKING_WORKSPACE=${OPENVIKING_WORKSPACE}
+OPENVIKING_CONFIG_FILE=${OPENVIKING_CONFIG_FILE}
+OPENVIKING_DATA_DIR=${OPENVIKING_DATA_DIR}
 EOF
 if [[ "${openviking_mcp_started}" == "1" ]]; then
   printf 'OPENVIKING_MCP_URL=%s\n' "${OPENVIKING_MCP_URL}" >> "${RUNTIME_ENV_PATH}"

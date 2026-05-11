@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from claw_trade.config.profiles import ConfigError
 from claw_trade.config.stage_policy import StagePolicy
@@ -19,13 +21,30 @@ def test_load_tool_registry_has_minimum_intents() -> None:
     assert result.registry is not None
     intents = result.registry.intent_to_tools
     assert "market_data" in intents
-    assert intents["market_data"] == (
-        "market.stock_price",
-        "market.techlab_analyze",
-    )
+    assert intents["market_data"] == ("market_market_data_pack",)
+    assert intents["fundamentals_data_pack"] == ("fundamental_fundamentals_data_pack",)
+    assert intents["news_data_pack"] == ("news_news_data_pack",)
+    assert intents["social_sentiment_pack"] == ("social_social_sentiment_pack",)
     assert "openviking_write" in intents
-    assert intents["openviking_read"] == ("openviking.read_with_capability",)
-    assert intents["openviking_write"] == ("openviking.write_material",)
+    assert intents["openviking_read"] == ("openviking_read_with_capability",)
+    assert intents["openviking_write"] == ("openviking_write_material",)
+
+
+def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_files() -> None:
+    root = Path(__file__).resolve().parents[2]
+    plugin_root = root / "openclaw_plugins" / "claw-trade-frontline-tools"
+    manifest = json.loads((plugin_root / "openclaw.plugin.json").read_text(encoding="utf-8"))
+    assert set(manifest["contracts"]["tools"]) == {
+        "market_market_data_pack",
+        "fundamental_fundamentals_data_pack",
+        "news_news_data_pack",
+        "social_social_sentiment_pack",
+    }
+
+    plugin_entry = (plugin_root / "index.js").read_text(encoding="utf-8")
+    assert "{ name, optional: true }" in plugin_entry
+    assert not (root / "third_party/openclaw/src/agents/pi-embedded-runner/run/frontline-tools.ts").exists()
+    assert not (root / "third_party/openclaw/src/agents/pi-embedded-runner/run/market-tools.ts").exists()
 
 
 def test_unknown_stage_tool_intent_fails() -> None:
@@ -88,6 +107,35 @@ def test_openviking_required_tool_missing_fails() -> None:
 
 
 def test_news_guard_blocks_missing_macro_or_company_news() -> None:
-    guard = require_global_news_capability_for_news(ToolRegistry({"company_news": ("company_news",)}))
+    guard = require_global_news_capability_for_news(ToolRegistry({"market_data": ("market_market_data_pack",)}))
     assert guard.ok is False
     assert guard.category == "config_blocked"
+
+
+def test_social_analyst_skill_manifest_must_mount_cn_a_social_data_skill() -> None:
+    manifest_text = Path("agents/social_analyst/skills/manifest.yaml").read_text(encoding="utf-8")
+    _assert_social_analyst_manifest_mounts_cn_a_social_data(manifest_text)
+
+
+def test_social_analyst_skill_manifest_contract_fails_when_cn_a_social_skill_missing() -> None:
+    broken_manifest = """
+skills:
+  - path: claw-trade-stage/SKILL.md
+"""
+    with pytest.raises(AssertionError):
+        _assert_social_analyst_manifest_mounts_cn_a_social_data(broken_manifest)
+
+
+def _assert_social_analyst_manifest_mounts_cn_a_social_data(manifest_text: str) -> None:
+    parsed = yaml.safe_load(manifest_text)
+    assert isinstance(parsed, dict)
+    skills = parsed.get("skills")
+    assert isinstance(skills, list)
+    for entry in skills:
+        assert isinstance(entry, dict)
+        if entry.get("path") != "cn-a-social-data/SKILL.md":
+            continue
+        workers = entry.get("workers")
+        assert workers == ["social_analyst"]
+        return
+    raise AssertionError("social_analyst 未挂载 cn-a-social-data skill manifest 条目")

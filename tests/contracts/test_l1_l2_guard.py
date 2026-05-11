@@ -118,13 +118,13 @@ def test_validate_l1_l2_contract_rejects_compact_l1(tmp_path: Path) -> None:
     assert not guard.ok
 
 
-def test_validate_l1_l2_contract_rejects_raw_output_as_l1(tmp_path: Path) -> None:
+def test_validate_l1_l2_contract_allows_verified_l1_even_if_text_equals_raw_output(tmp_path: Path) -> None:
     call = sample_call(tmp_path)
     write_material_claims(call=call, evidence_id="l2-001")
     l1 = "# 正式报告"
     claims, guard = validate_l1_l2_contract(call, l1, l1, l2_with_entry("l2-001"))
-    assert not claims
-    assert not guard.ok
+    assert claims
+    assert guard.ok
 
 
 def test_validate_l2_entries_rejects_outside_prefix() -> None:

@@ -31,17 +31,16 @@ def load_tool_registry() -> ToolRegistryResult:
             # market_data 必须映射到真实 provider-visible 工具名；不能把 intent 当成可调用工具名。
             # no-sidecar 路径：禁止使用 openvikingArtifact__* 触发 1944 MCP sidecar。
             "market_data": (
-                "market.stock_price",
-                "market.techlab_analyze",
+                "market_market_data_pack",
             ),
-            "fundamentals_data": ("fundamentals_data",),
-            "company_news": ("company_news",),
-            "macro_news": ("macro_news",),
-            "social_sentiment": ("social_sentiment",),
+            # frontline 资料包入口：worker 只看少量职责清晰的 pack，不再拼多段 generic 工具结果。
+            "fundamentals_data_pack": ("fundamental_fundamentals_data_pack",),
+            "news_data_pack": ("news_news_data_pack",),
+            "social_sentiment_pack": ("social_social_sentiment_pack",),
             # 这里是 intent 到 provider-visible 工具名的边界：stage policy 保留 intent，
             # 但最终发给模型可见的工具名必须对齐 OpenViking 设计合同。
-            "openviking_read": ("openviking.read_with_capability",),
-            "openviking_write": ("openviking.write_material",),
+            "openviking_read": ("openviking_read_with_capability",),
+            "openviking_write": ("openviking_write_material",),
         }
     )
     return ToolRegistryResult(ok=True, registry=registry, reason=None)
@@ -68,8 +67,8 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
         require_global_news = require_global_news_capability_for_news(registry)
         if not require_global_news.ok:
             raise ConfigError(require_global_news.reason or "news capability missing")
-        if "company_news" not in tools or "macro_news" not in tools:
-            raise ConfigError("news_analyst must include both company_news and macro_news")
+        if "news_news_data_pack" not in tools:
+            raise ConfigError("news_analyst must include news_news_data_pack")
 
     # 这里是 OpenClaw 调用前硬边界：工具集合为空不能执行，避免出现策略空跑或隐式 fallback。
     if not tools:
@@ -78,18 +77,12 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
 
 
 def require_global_news_capability_for_news(registry: ToolRegistry) -> GuardResult:
-    has_company = "company_news" in registry.intent_to_tools
-    has_macro = "macro_news" in registry.intent_to_tools
-    if has_company and has_macro:
+    has_news_pack = "news_data_pack" in registry.intent_to_tools
+    if has_news_pack:
         return guard_passed("news_capability")
-    missing = []
-    if not has_company:
-        missing.append("company_news")
-    if not has_macro:
-        missing.append("macro_news")
     return guard_failed(
         category="config_blocked",
-        reason=f"news tool capability missing: {', '.join(missing)}",
+        reason="news tool capability missing: news_data_pack",
         paths=(),
         early_stop=True,
     )

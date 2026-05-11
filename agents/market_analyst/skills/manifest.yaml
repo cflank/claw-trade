@@ -1,4 +1,15 @@
 skills:
   - path: claw-trade-stage/SKILL.md
+  - path: cn-a-market-data/SKILL.md
+    skill_id: cn-a-market-data
+    skill_version: 0.1.0
+    workers:
+      - market_analyst
+    tool_exports:
+      - market_market_data_pack
   - path: alphaear-stock/SKILL.md
   - path: alphaear-techlab/SKILL.md
+    skill_id: alphaear-techlab
+    skill_version: 0.1.0
+    workers:
+      - market_analyst

@@ -38,6 +38,7 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "OPENCLAW_GATEWAY_CALL_BIN" in text
     assert "OPENCLAW_STATE_DIR" in text
     assert "OPENCLAW_CONFIG_PATH" in text
+    assert "CLAW_TRADE_ENV_PATH" in text
     assert "OPENCLAW_SOURCE_CONFIG_PATH" in text
     assert "OPENCLAW_SOURCE_ENV_PATH" in text
     assert "OPENCLAW_GATEWAY_TIMEOUT_MS" in text
@@ -132,6 +133,12 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "const workers = [" in text
     assert 'merged.default = workerId === "market_analyst";' in text
     assert 'merged.workspace = `${rootDir}/agents/${workerId}`;' in text
+    assert "function readWorkerMountedSkills(workerId) {" in text
+    assert "skills/manifest.yaml" in text
+    assert "worker skill manifest 不存在" in text
+    assert "worker skill path 非法" in text
+    assert "worker skill manifest 没有可挂载 skill" in text
+    assert "merged.skills = readWorkerMountedSkills(workerId);" in text
     assert "const mergedDefaults = {" in text
     assert "const sourceModels = isPlainObject(sourceConfig.models) ? sourceConfig.models : {};" in text
     assert "const sourceProviders = isPlainObject(sourceModels.providers) ? sourceModels.providers : {};" in text
@@ -140,6 +147,11 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "primaryProviderId = sourcePrimaryModel.split(\"/\")[0].trim();" in text
     assert "timeoutSeconds: llmIdleTimeoutSeconds" in text
     assert "models: mergedModels," in text
+    assert "const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};" in text
+    assert "openclaw_plugins/claw-trade-frontline-tools" in text
+    assert "const mergedPluginLoadPaths = sourcePluginLoadPaths.includes(clawTradeFrontlinePluginPath)" in text
+    assert '"claw-trade-frontline-tools": {' in text
+    assert "plugins: mergedPlugins," in text
     assert "idleTimeoutSeconds: llmIdleTimeoutSeconds" not in text
     assert "defaults.llm" not in text
     assert "skipBootstrap: true" in text
@@ -170,16 +182,23 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert prepare_index < gateway_index
 
 
-def test_start_control_runtime_script_loads_source_env_without_logging_secret_values() -> None:
+def test_start_control_runtime_script_loads_claw_trade_env_before_source_env_without_logging_secret_values() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
-    assert "load_source_env_into_process_env() {" in text
+    assert "load_runtime_env_files_into_process_env() {" in text
+    assert 'CLAW_TRADE_ENV_PATH="${CLAW_TRADE_ENV_PATH:-${ROOT_DIR}/.env.local}"' in text
     assert 'OPENCLAW_SOURCE_ENV_PATH="${OPENCLAW_SOURCE_ENV_PATH:-${HOME}/.openclaw/.env}"' in text
+    assert "const originalKeys = new Set(Object.keys(process.env));" in text
+    assert "parseEnvFile(sourceEnvPath)" in text
+    assert "parseEnvFile(clawTradeEnvPath)" in text
     assert "process.stdout.write(\"\\u0000\")" in text
-    assert 'log_info "已从 OpenClaw source .env 注入环境变量条目数：${exported_count}"' in text
-    assert "source .env 不存在，跳过注入" in text
-    load_index = text.index("load_source_env_into_process_env")
+    assert "claw-trade .env.local 不存在，跳过注入" in text
+    assert "OpenClaw source .env 不存在，跳过注入" in text
+    assert 'printf \'[INFO] 环境变量注入条目数：%s\\n\' "${exported_count}"' in text
+    load_index = text.index("load_runtime_env_files_into_process_env")
+    defaults_index = text.index('OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"')
     gateway_index = text.index("gateway_cmd=(")
+    assert load_index < defaults_index
     assert load_index < gateway_index
 
 

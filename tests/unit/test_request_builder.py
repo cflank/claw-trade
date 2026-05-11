@@ -9,7 +9,13 @@ from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.refs import MaterialReadRef, OpenVikingReadCapability
 from claw_trade.runtime import request_builder
 from claw_trade.runtime.request_builder import build_request_context, build_worker_call_from_context
-from claw_trade.workflow.models import RunRequest, RunStatus, Stage, WorkflowState
+from claw_trade.workflow.models import (
+    RunRequest,
+    RunStatus,
+    Stage,
+    WorkflowEntryPoint,
+    WorkflowState,
+)
 
 
 def test_build_request_context_rejects_unapproved_profile(tmp_path: Path) -> None:
@@ -113,6 +119,27 @@ def test_build_worker_call_from_context_uses_call_root_evidence_dir(tmp_path: Pa
     assert call.evidence_dir == state.run_dir / "calls" / call.call_id
     assert call.evidence_dir.name == call.call_id
     assert "/evidence" not in str(call.evidence_dir).replace("\\", "/")
+    assert call.system_context_policy == "openclaw_default"
+
+
+def test_build_worker_call_uses_minimal_system_context_only_for_report_command(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path=tmp_path, profile="US", entry_point=WorkflowEntryPoint.REPORT_COMMAND)
+    context_result = build_request_context(
+        state=state,
+        worker_id="market_analyst",
+        stage=Stage.FRONTLINE,
+        manifest=ApprovedManifest.empty(),
+    )
+    assert context_result.ok is True
+    assert context_result.context is not None
+
+    call_result = build_worker_call_from_context(context_result.context)
+    assert call_result.ok is True
+    assert call_result.call is not None
+    call = call_result.call
+    assert call.system_context_policy == "single_worker_minimal"
 
 
 def test_build_request_context_uses_repo_agents_root_when_cwd_changes(
@@ -131,7 +158,12 @@ def test_build_request_context_uses_repo_agents_root_when_cwd_changes(
     assert result.context is not None
 
 
-def _state(*, tmp_path: Path, profile: str) -> WorkflowState:
+def _state(
+    *,
+    tmp_path: Path,
+    profile: str,
+    entry_point: WorkflowEntryPoint = WorkflowEntryPoint.GENERIC,
+) -> WorkflowState:
     run_id = "run-1"
     request = RunRequest(
         ticker="AAPL",
@@ -143,6 +175,7 @@ def _state(*, tmp_path: Path, profile: str) -> WorkflowState:
         current_date="2026-05-03",
         start_date="2026-01-01",
         end_date="2026-05-03",
+        entry_point=entry_point,
     )
     return WorkflowState(
         run_id=run_id,

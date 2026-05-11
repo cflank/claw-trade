@@ -47,6 +47,7 @@ def test_build_openclaw_command_keeps_upstream_and_capability_sha_fields() -> No
     assert capability["capability_id"] == "cap-frontline-market"
     assert capability["allowed_l1_sha256"] == "sha-l1"
     assert capability["allowed_l2_index_sha256"] == "sha-l2-index"
+    assert command.system_context_policy == "openclaw_default"
 
 
 def test_parse_openclaw_result_converts_paths() -> None:
@@ -219,7 +220,10 @@ def test_run_worker_returns_failed_when_openclaw_payload_is_missing_required_pat
 
 
 def test_run_worker_sends_command_payload_to_runner(tmp_path: Path) -> None:
-    call = _valid_call(evidence_dir=tmp_path / "evidence")
+    call = replace(
+        _valid_call(evidence_dir=tmp_path / "evidence"),
+        system_context_policy="single_worker_minimal",
+    )
     command = build_openclaw_command(call)
     paths = _prepare_required_evidence_files(call.evidence_dir)
     runner = _FakeRunner(
@@ -249,6 +253,7 @@ def test_run_worker_sends_command_payload_to_runner(tmp_path: Path) -> None:
     assert sent["material_target"]["l1_uri"] == command.material_target["l1_uri"]  # type: ignore[index]
     first_cap = sent["openviking_read_capabilities"][0]  # type: ignore[index]
     assert first_cap["allowed_l2_index_sha256"] == "sha-l2-index"
+    assert sent["system_context_policy"] == "single_worker_minimal"
 
 
 def test_probe_delegates_to_runner() -> None:
@@ -321,7 +326,7 @@ def _valid_call(
         current_date="2026-05-03",
         start_date="2026-01-01",
         end_date="2026-05-03",
-        allowed_tools=("market_data", "openviking.read_with_capability"),
+        allowed_tools=("market_data", "openviking_read_with_capability"),
         upstream_materials=(upstream,),
         openviking_read_capabilities=(capability,),
         material_target=target,

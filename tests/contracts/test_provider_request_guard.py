@@ -150,7 +150,7 @@ def sample_call_and_evidence(tmp_path: Path) -> tuple[WorkerCall, ProviderEviden
         current_date="2026-05-04",
         start_date="2026-01-01",
         end_date="2026-05-04",
-        allowed_tools=("market_data", "openviking.write_material"),
+        allowed_tools=("market_data", "openviking_write_material"),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

@@ -84,7 +84,7 @@ def test_tool_calls_rejects_recorded_call_missing_required_fields() -> None:
             "openclaw_run_id": evidence.openclaw_run_id,
             "calls": [
                 {
-                    "tool_name": "openviking.write_material",
+                    "tool_name": "openviking_write_material",
                     "action": "write",
                     "status": "success",
                 }
@@ -110,7 +110,7 @@ def test_tool_calls_rejects_recorded_call_invalid_status() -> None:
             "openclaw_run_id": evidence.openclaw_run_id,
             "calls": [
                 {
-                    "tool_name": "openviking.write_material",
+                    "tool_name": "openviking_write_material",
                     "action": "write",
                     "status": "succeeded",
                     "result_sha256": "w" * 64,
@@ -138,7 +138,7 @@ def _worker_call() -> WorkerCall:
         current_date="2026-05-04",
         start_date="2026-01-01",
         end_date="2026-05-04",
-        allowed_tools=("openviking.read_with_capability", "openviking.write_material"),
+        allowed_tools=("openviking_read_with_capability", "openviking_write_material"),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

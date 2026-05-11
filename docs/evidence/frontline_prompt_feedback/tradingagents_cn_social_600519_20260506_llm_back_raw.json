@@ -1,0 +1,64 @@
+{
+  "type": "AIMessage",
+  "content": [
+    {
+      "signature": "2690ebb0cf8191ab7487b5122a20c036bd28506cdd0f4d87ea6d55fc427e9cc1",
+      "thinking": "用户要求我分析股票600519（贵州茅台），交易日期为2026-05-06。我需要使用提供的工具来获取情绪分析数据。\n\n让我调用get_stock_sentiment_unified工具来获取600519股票的情绪分析数据。",
+      "type": "thinking"
+    },
+    {
+      "id": "call_function_h3zyhmilkv9w_1",
+      "input": {
+        "curr_date": "2026-05-06",
+        "ticker": "600519"
+      },
+      "name": "get_stock_sentiment_unified",
+      "type": "tool_use"
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "get_stock_sentiment_unified",
+      "args": {
+        "curr_date": "2026-05-06",
+        "ticker": "600519"
+      },
+      "id": "call_function_h3zyhmilkv9w_1",
+      "type": "tool_call"
+    }
+  ],
+  "response_metadata": {
+    "id": "064a64af436cddcb31ab954ff84f4dd0",
+    "container": null,
+    "model": "MiniMax-M2.5",
+    "stop_details": null,
+    "stop_reason": "tool_use",
+    "stop_sequence": null,
+    "usage": {
+      "cache_creation": null,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 880,
+      "inference_geo": null,
+      "input_tokens": 10,
+      "output_tokens": 97,
+      "server_tool_use": null,
+      "service_tier": null
+    },
+    "base_resp": {
+      "status_code": 0,
+      "status_msg": "success"
+    },
+    "model_name": "MiniMax-M2.5",
+    "model_provider": "anthropic"
+  },
+  "usage_metadata": {
+    "input_tokens": 890,
+    "output_tokens": 97,
+    "total_tokens": 987,
+    "input_token_details": {
+      "cache_read": 880,
+      "cache_creation": 0
+    }
+  },
+  "id": "lc_run--019dfd3a-0fa8-7483-bef9-49c6aed85601-0"
+}

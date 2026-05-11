@@ -1,0 +1,35 @@
+{
+  "required_evidence_fields": [
+    "visible_tools",
+    "provider_request",
+    "tool_calls",
+    "data_pack_raw_output",
+    "provider_attempts",
+    "field_sources",
+    "missing_fields",
+    "openviking_receipt",
+    "guard_result",
+    "report"
+  ],
+  "required_sample_ids": [
+    "sample_1",
+    "sample_2",
+    "sample_3",
+    "sample_4",
+    "sample_5"
+  ],
+  "allowed_status": [
+    "existing_real_path",
+    "pending_t_fnd_047_real_run"
+  ],
+  "required_compare_filenames": [
+    "trade_fundamental_analyst_600519_20260506_final_prompt.md",
+    "tradingagents_cn_fundamentals_600519_20260506_final_prompt.md",
+    "trade_fundamental_analyst_600519_20260506_tool_calls_raw.json",
+    "tradingagents_cn_fundamentals_600519_20260506_all_llm_calls_raw.json",
+    "trade_fundamental_analyst_600519_20260506_llm_back_raw.json",
+    "tradingagents_cn_fundamentals_600519_20260506_llm_back_raw.json",
+    "trade_fundamental_analyst_600519_20260506_report.md",
+    "tradingagents_cn_fundamentals_600519_20260506_report.md"
+  ]
+}

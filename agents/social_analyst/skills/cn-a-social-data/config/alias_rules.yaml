@@ -1,0 +1,7 @@
+profile: CN_A
+rules:
+  normalize_full_width: true
+  trim_suffixes:
+    - 股份有限公司
+    - 有限公司
+  approved_aliases_source: approved_artifact_refs_only

@@ -9,16 +9,14 @@ profiles:
     approved: true
     prompt: prompts/US.md
     tools:
-      - company_news
-      - macro_news
-    openviking_access: write
+      - news_data_pack
+    openviking_access: none
   CN_A:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - company_news
-      - macro_news
-    openviking_access: write
+      - news_data_pack
+    openviking_access: none
   HK:
     approved: false
     prompt: prompts/HK.md
@@ -30,6 +28,7 @@ profiles:
 skills:
   mounted:
     - claw-trade-stage
+    - cn-a-news-data
 tool_policy:
   owner: stage_profile
   python_calls_tools: false

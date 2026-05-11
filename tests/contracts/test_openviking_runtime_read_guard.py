@@ -23,7 +23,7 @@ def test_runtime_reads_pass_for_manifest_scoped_l1_read_and_local_write(tmp_path
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -32,7 +32,7 @@ def test_runtime_reads_pass_for_manifest_scoped_l1_read_and_local_write(tmp_path
                     "status": "success",
                 },
                 {
-                    "tool_name": "openviking.write_material",
+                    "tool_name": "openviking_write_material",
                     "action": "write",
                     "capability_id": None,
                     "material_id": None,
@@ -59,7 +59,7 @@ def test_runtime_reads_reject_missing_read_fields(tmp_path: Path) -> None:
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "material_id": cap.material_id,
                     "uri": cap.allowed_l1_uri,
@@ -84,11 +84,11 @@ def test_runtime_reads_allow_error_read_without_capability_or_uri_when_error_is_
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "material_id": "US",
                     "status": "error",
-                    "error": "openviking.read_with_capability capability not found in command",
+                    "error": "openviking_read_with_capability capability not found in command",
                 }
             ],
         },
@@ -108,7 +108,7 @@ def test_runtime_reads_reject_error_read_without_error_message(tmp_path: Path) -
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "status": "error",
                 }
@@ -131,7 +131,7 @@ def test_runtime_reads_reject_uri_outside_manifest_capability(tmp_path: Path) ->
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -158,7 +158,7 @@ def test_runtime_reads_allow_l1_hash_mismatch_for_audit_only(tmp_path: Path) -> 
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -187,7 +187,7 @@ def test_runtime_reads_pass_for_manifest_scoped_l2_read_with_index_sha(tmp_path:
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -239,7 +239,7 @@ def test_runtime_reads_reject_openviking_tool_name_with_wrong_action(tmp_path: P
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "write",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -266,7 +266,7 @@ def test_runtime_reads_reject_openviking_status_invalid(tmp_path: Path) -> None:
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -294,7 +294,7 @@ def test_runtime_reads_reject_l2_index_sha_missing(tmp_path: Path) -> None:
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -322,7 +322,7 @@ def test_runtime_reads_allow_l2_index_sha_mismatch_for_audit_only(tmp_path: Path
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.read_with_capability",
+                    "tool_name": "openviking_read_with_capability",
                     "action": "read",
                     "capability_id": cap.capability_id,
                     "material_id": cap.material_id,
@@ -349,7 +349,7 @@ def test_runtime_reads_reject_write_with_forged_capability_or_material(tmp_path:
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.write_material",
+                    "tool_name": "openviking_write_material",
                     "action": "write",
                     "capability_id": "cap-forged",
                     "material_id": "mat-forged",
@@ -375,7 +375,7 @@ def test_runtime_reads_reject_write_uri_not_material_target(tmp_path: Path) -> N
             "status": "recorded",
             "calls": [
                 {
-                    "tool_name": "openviking.write_material",
+                    "tool_name": "openviking_write_material",
                     "action": "write",
                     "capability_id": None,
                     "material_id": None,
@@ -406,7 +406,7 @@ def _worker_call() -> WorkerCall:
         current_date="2026-05-04",
         start_date="2026-01-01",
         end_date="2026-05-04",
-        allowed_tools=("openviking.read_with_capability", "openviking.write_material"),
+        allowed_tools=("openviking_read_with_capability", "openviking_write_material"),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

@@ -31,6 +31,7 @@ from claw_trade.workflow.models import (
     WorkerCall,
     WorkerResult,
     WorkerStatus,
+    WorkflowEntryPoint,
 )
 from claw_trade.workflow.store import WorkflowStore
 
@@ -67,6 +68,7 @@ def test_create_run_and_state_roundtrip(tmp_path: Path) -> None:
     assert loaded.run_id == state.run_id
     assert loaded.status == RunStatus.CREATED
     assert loaded.request.stop_point == StopPoint.NONE
+    assert loaded.request.entry_point == WorkflowEntryPoint.GENERIC
 
     updated = loaded.__class__(
         **{
@@ -324,7 +326,7 @@ def _worker_call(run_id: str) -> WorkerCall:
         current_date="2026-05-04",
         start_date="2026-04-04",
         end_date="2026-05-04",
-        allowed_tools=("market_data", "openviking.write_material"),
+        allowed_tools=("market_data", "openviking_write_material"),
         upstream_materials=(),
         openviking_read_capabilities=(
             OpenVikingReadCapability(

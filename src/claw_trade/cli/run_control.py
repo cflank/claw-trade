@@ -10,7 +10,7 @@ from claw_trade.artifacts.manifest import ManifestStore
 from claw_trade.artifacts.openviking_client import OpenVikingClient
 from claw_trade.reports.exporter import FinalReportExporter
 from claw_trade.runtime.openclaw_client import OpenClawClient
-from claw_trade.workflow.models import RunRequest, RunStatus, Stage, StopPoint
+from claw_trade.workflow.models import RunRequest, RunStatus, Stage, StopPoint, WorkflowEntryPoint
 from claw_trade.workflow.runner import ControlRunner
 from claw_trade.workflow.store import WorkflowStore
 
@@ -62,6 +62,8 @@ def _namespace_to_request(namespace: argparse.Namespace) -> RunRequest:
         stop_point=StopPoint(namespace.stop_point),
         target_worker_id=namespace.target_worker_id,
         target_stage=target_stage,
+        # run_control 是 UI /report workflow 的运维/集成测试入口，不代表普通聊天。
+        entry_point=WorkflowEntryPoint.REPORT_COMMAND,
     )
 
 

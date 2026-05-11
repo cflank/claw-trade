@@ -27,6 +27,7 @@ from claw_trade.workflow.models import (
     WorkerCall,
     WorkerResult,
     WorkerStatus,
+    WorkflowEntryPoint,
     WorkflowState,
 )
 
@@ -341,6 +342,12 @@ class WorkflowStore:
             stop_point=StopPoint(self._as_str(payload.get("stop_point", StopPoint.NONE.value), "stop_point")),
             target_worker_id=self._optional_str(payload.get("target_worker_id"), "target_worker_id"),
             target_stage=self._stage_or_none(payload.get("target_stage")),
+            entry_point=WorkflowEntryPoint(
+                self._as_str(
+                    payload.get("entry_point", WorkflowEntryPoint.GENERIC.value),
+                    "entry_point",
+                )
+            ),
         )
 
     def _worker_result_from_dict(self, payload: dict[str, Any]) -> WorkerResult:

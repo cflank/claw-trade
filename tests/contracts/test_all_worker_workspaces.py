@@ -86,19 +86,19 @@ def test_all_worker_stage_policy_is_loadable_and_resolvable(
 
 def _assert_openviking_access_tools(access: str, tools: tuple[str, ...]) -> None:
     if access == "write":
-        assert "openviking.write_material" in tools
-        assert "openviking.read_with_capability" not in tools
+        assert "openviking_write_material" in tools
+        assert "openviking_read_with_capability" not in tools
         return
     if access == "read_write":
-        assert "openviking.read_with_capability" in tools
-        assert "openviking.write_material" in tools
+        assert "openviking_read_with_capability" in tools
+        assert "openviking_write_material" in tools
         return
     if access == "read":
-        assert "openviking.read_with_capability" in tools
-        assert "openviking.write_material" not in tools
+        assert "openviking_read_with_capability" in tools
+        assert "openviking_write_material" not in tools
         return
     if access == "none":
-        assert "openviking.read_with_capability" not in tools
-        assert "openviking.write_material" not in tools
+        assert "openviking_read_with_capability" not in tools
+        assert "openviking_write_material" not in tools
         return
     raise AssertionError(f"未知 openviking_access: {access}")

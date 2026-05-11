@@ -104,6 +104,101 @@ def test_techlab_entrypoint_analyze_returns_indicator_payload(monkeypatch, capsy
     }
 
 
+def test_techlab_entrypoint_market_pack_returns_price_rows_and_technical_payload(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-04-10",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.9,
+                "close": 10.3,
+                "volume": 1200,
+                "change_pct": 0.0,
+            },
+            {
+                "date": "2026-04-11",
+                "open": 10.2,
+                "high": 10.8,
+                "low": 10.1,
+                "close": 10.7,
+                "volume": 1800,
+                "change_pct": 3.8835,
+            },
+        ]
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: frame)
+    monkeypatch.setattr(
+        techlab_entrypoint,
+        "analyze_market_frame",
+        lambda input_frame, *, ticker: AnalysisBundle(
+            summary={"trend": "uptrend", "volume_state": "expanding", "indicator_backend": "pandas_ta"},
+            indicators={
+                "ma": {"ma5": 10.5, "ma10": 10.1, "ma20": 9.8},
+                "macd": {"macd": 0.2, "signal": 0.1, "hist": 0.1},
+                "rsi": {"rsi14": 63.4},
+                "boll": {"upper": 10.9, "mid": 10.2, "lower": 9.5},
+                "atr": {"atr14": 0.4},
+                "kdj": {"k": 70.0, "d": 66.0, "j": 78.0},
+            },
+            warnings=[],
+            chart_frame=input_frame,
+        ),
+    )
+    monkeypatch.setattr(
+        techlab_entrypoint,
+        "render_market_charts",
+        lambda chart_frame, *, ticker, output_dir: (
+            output_dir / f"{ticker}_market_structure.png",
+            output_dir / f"{ticker}_indicator_panels.png",
+        ),
+    )
+
+    exit_code = techlab_entrypoint.main(
+        [
+            "market-pack",
+            "--ticker",
+            "600010",
+            "--start-date",
+            "2026-01-01",
+            "--end-date",
+            "2026-04-13",
+            "--output-dir",
+            "techlab-out",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["ticker"] == "600010"
+    assert payload["market_data"] == {
+        "ticker": "600010",
+        "price_row_count": 2,
+        "requested_price_row_count": 2,
+        "recent_price_rows": frame.to_dict(orient="records"),
+        "recent_price_row_count": 2,
+        "price_range": {"start_date": "2026-04-10", "end_date": "2026-04-11"},
+        "requested_price_range": {"start_date": "2026-01-01", "end_date": "2026-04-13"},
+        "recent_price_range": {"start_date": "2026-04-10", "end_date": "2026-04-11"},
+        "indicator_warmup": {
+            "enabled": True,
+            "reason": "technical indicators and chart panels need enough prior price history",
+        },
+    }
+    assert payload["indicators"]["macd"] == {"macd": 0.2, "signal": 0.1, "hist": 0.1}
+    assert payload["chart_files"] == [
+        "techlab-out/600010_market_structure.png",
+        "techlab-out/600010_indicator_panels.png",
+    ]
+
+
 def test_entrypoint_fails_when_chart_runtime_dependencies_missing(monkeypatch, capsys) -> None:
     frame = pd.DataFrame(
         [
