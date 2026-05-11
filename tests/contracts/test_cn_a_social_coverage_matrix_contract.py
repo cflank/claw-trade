@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 DOCS_ROOT = Path("docs")
+LEGACY_ROOT = DOCS_ROOT / "reference" / "legacy"
 CANONICAL_DOCS = {
     "需求设计.md",
     "架构设计.md",
@@ -41,6 +42,21 @@ def test_docs_are_consolidated_into_four_canonical_entries() -> None:
     actual_top_level_docs = {path.name for path in DOCS_ROOT.glob("*.md")}
     assert CANONICAL_DOCS <= actual_top_level_docs
     assert not (OLD_TOP_LEVEL_DOCS & actual_top_level_docs)
+    assert (LEGACY_ROOT / "README.md").exists()
+    for filename in OLD_TOP_LEVEL_DOCS:
+        assert (LEGACY_ROOT / filename).exists(), f"legacy source document missing: {filename}"
+
+
+def test_canonical_docs_disclose_legacy_source_boundary() -> None:
+    for filename in CANONICAL_DOCS:
+        text = (DOCS_ROOT / filename).read_text(encoding="utf-8")
+        assert "不是旧文档全文替代" in text
+        assert "reference/legacy/README.md" in text
+
+    legacy_index = (LEGACY_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "已恢复非 evidence 旧文档：23 份" in legacy_index
+    assert "25,585 行" in legacy_index
+    assert "不自动恢复旧决策" in legacy_index
 
 
 def test_canonical_docs_preserve_social_design_and_task_coverage() -> None:

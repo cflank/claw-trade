@@ -326,6 +326,35 @@ Rules:
 - Only runtime variables such as ticker, company name, market, currency, and date range should be substituted.
 - If a prompt profile is missing or unapproved, fail explicitly. Do not use fallback prompts to fake coverage.
 
+### 6.1 Prompt Alignment Hard Rules
+
+Future worker prompt migration must preserve TradingAgents parity before adding
+claw-trade evidence constraints.
+
+Rules:
+
+- Every worker prompt migration must start from real TradingAgents-CN or original TradingAgents baseline evidence, not from a freshly invented engineering checklist.
+- The minimum evidence set for a migrated worker is: baseline source, real provider final prompt, LLM back or worker report, and a three-layer comparison tying those files to the same run/dispatch when available.
+- Provider final prompt evidence must come from provider payload capture. Static render output, exporter output, logs, or reconstructed prompt text are not proof of runtime prompt alignment.
+- Worker-visible prompt and handoff material must remain natural-language report, debate, decision, or approved summary material. JSON, debug payloads, audit envelopes, provider attempts, cache objects, and machine protocol fields must not become the main worker-facing material.
+- Do not put `RuntimeTarget`, `ReportSubmission`, OpenViking target blocks, URI/hash/receipt/L1/L2/manifest protocol text, JSON claim blocks, provider payload audit prose, or control-plane checklist language into worker profile prompts.
+- Keep role, report structure, reasoning task, and voice from TradingAgents-CN/original TradingAgents unless a claw-trade architecture boundary explicitly requires a minimal substitution.
+- Allowed prompt substitutions are limited to runtime variables, approved tool/material names, market/profile wording, and concise truthfulness constraints.
+- Prompt alignment is not proven by static tests alone. Runtime proof requires real provider final prompt plus LLM output/report comparison.
+
+### 6.2 Guard And Prompt Boundary
+
+Truthfulness guards protect evidence integrity. They must not become a hidden
+style system for rewriting analyst voice.
+
+Rules:
+
+- Do not add or tighten runtime guards, hard gates, or report-boundary rules that affect report expression, ratings, target-price framing, trading suggestions, risk wording, sentiment judgment, or analyst tone without human approval.
+- Allowed no-approval guard changes are limited to truthfulness redlines: fabricated facts, fake sources, fake news, unsupported PE/PB/ROE or target-price claims, unsupported sentiment claims, fake chart/tool success, missing required chart root cause, Python rewriting PM conclusions, and artifact/receipt/provider-payload integrity failures.
+- Evidence-supported analyst opinions, valuation frameworks, target-price scenarios, risk framing, and trading conditions are report content. They are not hard-gate failures solely because they sound like a research report.
+- If a proposed guard would make the output less like TradingAgents-CN/original TradingAgents in order to make tests pass, stop and ask.
+- Guard changes touching expression-sensitive terms must include an explicit approval note in the task/PR evidence and must be covered by a focused contract test that proves truthfulness redlines still fail while evidence-supported report language is not blocked.
+
 ## 7. Skill / Tool Policy
 
 Agents mount skills. Stage/profile controls which tools are visible in the current turn.

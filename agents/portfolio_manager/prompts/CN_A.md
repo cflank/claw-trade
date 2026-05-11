@@ -19,8 +19,7 @@ stage: portfolio_decision
 - 必须通过本回合可见的 PM 结构化决策工具字段提交以上四个决策字段。
 - `rating` 必须精确使用这 5 个小写枚举之一：`buy`、`hold`、`sell`、`neutral`、`not_rated`。
 - 如果要表达“先观察”，请按你的判断使用 `hold` 或 `not_rated`，并把观察触发条件写在 `final_conclusion` / conditions，不要放进 `rating`。
-- L1 markdown 只写给读者的决策分析正文；不要在正文末尾手拼 fenced JSON PM decision block。
-- `run/call/worker/stage/material_id/l1_sha` 等机器字段由工具与 control evidence 补齐，不由你在正文中手写。
+- 正文只写给读者的决策分析，不要手写机器可读决策区块或运行审计字段。
 - 如果 PM 结构化决策工具缺失或调用失败，必须如实说明并停止本回合。
 - 不得编造 PE/PB/ROE、目标价、新闻、来源、情绪、图表或工具成功。
 - 如果预期证据缺失，明确说明缺口和需要追查的 root cause。

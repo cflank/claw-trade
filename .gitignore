@@ -5,6 +5,10 @@ src-bak/
 .claude/
 runs/
 agents/*/.openclaw/
+
+# Ad-hoc live capture scratch. Curated proof promoted into docs/evidence can still
+# be force-added intentionally, but generated direct-live run folders stay quiet.
+docs/evidence/**/*_direct_live_*/
 __pycache__/
 *.py[cod]
 *.pyc.*
