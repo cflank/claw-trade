@@ -41,6 +41,36 @@ FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS = (
     "viking://",
 )
 
+FRONTLINE_WORKERS: tuple[str, ...] = (
+    "market_analyst",
+    "fundamental_analyst",
+    "news_analyst",
+    "social_analyst",
+)
+
+FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS: tuple[str, ...] = (
+    "最终报告正文必须直接从报告标题或正文第一句开始",
+    "不要输出“我将调用工具”",
+    "数据限制与风险提示",
+)
+
+FRONTLINE_MACHINE_PROTOCOL_KEYWORDS: tuple[str, ...] = (
+    "artifact",
+    "ref",
+    "hash",
+    "receipt",
+    "capability",
+    "ApprovedMaterials",
+    "RuntimeTarget",
+    "ReportSubmission",
+)
+
+SOCIAL_TOOL_SILENT_PROCESS_RULE_SNIPPETS: tuple[str, ...] = (
+    "需要调用工具时，直接发起工具调用；不要先输出任何自然语言说明。",
+    "如果工具调用失败且需要重试，直接再次发起工具调用；不要输出“工具调用超时”“我来调用”“我重新尝试”等过程说明。",
+    "最终回答第一行必须是 Markdown 标题，且必须以 `# ` 开头。",
+)
+
 AGENT_FACING_RELATIVE_PATHS = (
     "USER.md",
     "skills/claw-trade-stage/SKILL.md",
@@ -96,14 +126,34 @@ def test_agent_facing_text_does_not_contain_machine_protocol(worker_id: str) -> 
             assert token not in text, f"{path} contains machine protocol token {token!r}"
 
 
+def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protocol_keywords() -> None:
+    for worker_id in FRONTLINE_WORKERS:
+        text = (Path("agents") / worker_id / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+        for snippet in FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS:
+            assert snippet in text, f"{worker_id} missing required process-prose rule: {snippet!r}"
+        for token in FRONTLINE_MACHINE_PROTOCOL_KEYWORDS:
+            assert token not in text, f"{worker_id} prompt contains machine protocol keyword {token!r}"
+
+
+def test_social_prompt_requires_silent_tool_call_and_hash_title_first_line() -> None:
+    text = (Path("agents") / "social_analyst" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+    for snippet in SOCIAL_TOOL_SILENT_PROCESS_RULE_SNIPPETS:
+        assert snippet in text, f"social_analyst missing required silent-process rule: {snippet!r}"
+
+
 def test_prompt_alignment_policy_is_documented_as_runtime_evidence_not_static_render() -> None:
     agents_rules = Path("AGENTS.md").read_text(encoding="utf-8")
     playbook = Path("docs/prompt_alignment_playbook.md").read_text(encoding="utf-8")
 
     assert "Provider final prompt evidence must come from provider payload capture" in agents_rules
     assert "Prompt alignment is not proven by static tests alone" in agents_rules
+    assert "model-visible messages must not contain runtime wrapper prose" in agents_rules
+    assert "Prompt front matter is agent configuration only" in agents_rules
+    assert "must expose no OpenViking read/write tools to the model" in agents_rules
     assert "claw_provider_final_prompt" in playbook
     assert "不得用静态渲染" in playbook
+    assert "真实 provider prompt 必须从角色正文直接开始" in playbook
+    assert "准备让 CN/原版纯 prompt worker 暴露 OpenViking read/write 工具" in playbook
 
 
 def _front_matter(path: Path) -> dict[str, str]:

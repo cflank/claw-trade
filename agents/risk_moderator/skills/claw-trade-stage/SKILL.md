@@ -7,7 +7,7 @@ description: Stage contract for `risk_moderator` in the claw-trade OpenClaw repo
 
 Follow `STAGES.yaml` for the current worker/profile/stage.
 
-- Read only approved artifact refs supplied by claw-trade.
+- Use only approved upstream report material supplied by claw-trade; refs and capabilities are for traceability and deeper evidence reads.
 - Write the canonical artifact named `risk_moderation`.
 - Do not call tools through Python or assume Python already fetched evidence.
 - Do not emit unsupported investment claims.

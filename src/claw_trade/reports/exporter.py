@@ -20,7 +20,7 @@ from claw_trade.guards.export_claims import (
     validate_export_mapping_identity,
     validate_export_pm_fields,
 )
-from claw_trade.guards.pm_owner import PMDecision, load_pm_decision_for_material
+from claw_trade.guards.pm_owner import PMDecision, load_pm_decision_for_material, pm_decision_required_for_profile
 from claw_trade.workflow.models import ExportResult, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids
 
@@ -28,6 +28,20 @@ _PM_WORKER_ID = "portfolio_manager"
 _REPORT_WORKER_ORDER = all_worker_ids()
 # 导出输入边界：报告必须覆盖固定 12 worker 的 approved materials，不能按“现有多少算多少”降级。
 _REPORT_WORKERS_SET = set(_REPORT_WORKER_ORDER)
+_WORKER_SECTION_TITLES: dict[str, str] = {
+    "market_analyst": "图表与技术面分析",
+    "fundamental_analyst": "基本面分析",
+    "news_analyst": "新闻与宏观事件分析",
+    "social_analyst": "社媒与情绪分析",
+    "bull_researcher": "投资辩论（多头观点）",
+    "bear_researcher": "投资辩论（空头观点）",
+    "research_manager": "研究经理综合决策",
+    "trader": "交易执行计划",
+    "risk_challenger": "风险辩论（挑战方）",
+    "risk_guardian": "风险辩论（防守方）",
+    "risk_moderator": "风险辩论（中立整合）",
+    "portfolio_manager": "最终裁决 / 最终投资决策",
+}
 
 
 class OpenVikingApprovedL1Reader(Protocol):
@@ -56,7 +70,7 @@ class ReportMaterialsResult:
         *,
         materials: tuple[ApprovedMaterial, ...],
         report_materials: tuple[ReportMaterial, ...],
-        pm_decision: PMDecision,
+        pm_decision: PMDecision | None,
     ) -> ReportMaterialsResult:
         return cls(
             ok=True,
@@ -152,8 +166,8 @@ def load_report_materials(
         report_materials.append(ReportMaterial(material=material, l1_text=l1_text))
 
     pm_material = material_by_worker[_PM_WORKER_ID]
-    # PM owner 边界：PM 决策只能来自 pm-decision.json 证据文件，不能从 L1 自然语言或机器块反推。
-    pm_decision, pm_guard = load_pm_decision_for_material(pm_material)
+    require_pm_decision = pm_decision_required_for_profile(state.request.profile)
+    pm_decision, pm_guard = load_pm_decision_for_material(pm_material, required=require_pm_decision)
     if not pm_guard.ok:
         return ReportMaterialsResult.failed(
             category=pm_guard.category,
@@ -166,81 +180,78 @@ def load_report_materials(
         pm_decision=pm_decision,
     )
 
-
-def render_final_report(materials: tuple[ApprovedMaterial, ...], pm_decision: PMDecision) -> RenderedReport:
+def render_final_report(
+    materials: tuple[ApprovedMaterial, ...],
+    pm_decision: PMDecision | None,
+    *,
+    report_materials: tuple[ReportMaterial, ...] = (),
+    pm_report_text: str | None = None,
+) -> RenderedReport:
     ordered_materials = _ordered_materials(materials)
+    report_text_by_worker = _report_text_by_worker(report_materials)
     claim_links: list[ExportClaim] = []
-    lines: list[str] = [
-        "# 最终投资报告",
-        "",
-        "## PM 最终决策",
-        f"- 评级：{pm_decision.rating}",
-        f"- 最终结论：{pm_decision.final_conclusion}",
-        "- 执行条件：",
-    ]
-    if pm_decision.execution_conditions:
-        for item in pm_decision.execution_conditions:
-            lines.append(f"  - {item}")
-    else:
-        lines.append("  - （无）")
-    lines.append("- 风险条件：")
-    if pm_decision.risk_conditions:
-        for item in pm_decision.risk_conditions:
-            lines.append(f"  - {item}")
-    else:
-        lines.append("  - （无）")
+    lines: list[str] = ["# 最终投资报告", ""]
+    pm_text = report_text_by_worker.get(_PM_WORKER_ID, "")
+    if not pm_text:
+        pm_text = (pm_report_text or "").strip()
+    lines.extend(
+        (
+            f"## {_WORKER_SECTION_TITLES[_PM_WORKER_ID]}",
+            pm_text or "（PM 原文缺失）",
+        )
+    )
 
     for material in ordered_materials:
-        lines.extend(
-            (
-                "",
-                f"## {material.worker_id}",
-                f"- 阶段：{material.stage.value}",
-                f"- L1 URI：{material.l1_uri}",
-                f"- L1 SHA256：{material.l1_sha256}",
-                f"- L2 Index：{material.l2_index_uri or material.l2_index.empty_reason or '无'}",
-                "- 已批准声明：",
-            )
-        )
+        if material.worker_id == _PM_WORKER_ID:
+            if material.l1_claims:
+                for claim in material.l1_claims:
+                    claim_links.append(_claim_link_from_material(material, claim))
+            continue
+        lines.append("")
+        lines.append(f"## {_WORKER_SECTION_TITLES.get(material.worker_id, material.worker_id)}")
+        section_text = report_text_by_worker.get(material.worker_id, "").strip()
+        lines.append(section_text or "（报告原文缺失）")
         if material.l1_claims:
             for claim in material.l1_claims:
-                lines.append(f"  - [{claim.claim_id}] {claim.text}")
                 claim_links.append(_claim_link_from_material(material, claim))
-        else:
-            lines.append("  - （无）")
 
-    claim_links.extend(_pm_claim_links(pm_decision=pm_decision, materials=ordered_materials))
+    if pm_decision is not None:
+        claim_links.extend(_pm_claim_links(pm_decision=pm_decision, materials=ordered_materials))
     return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=tuple(claim_links))
 
 
 def build_export_claim_mapping(
     rendered: RenderedReport,
     materials: tuple[ApprovedMaterial, ...],
-    pm_decision: PMDecision,
+    pm_decision: PMDecision | None,
 ) -> ExportClaimMapping:
     if not materials:
         raise ValueError("build_export_claim_mapping 需要非空 materials")
     # 这里仅使用渲染阶段显式携带的 claim link，禁止从 final report 自然语言反向猜测 claim。
     deduped_claims = _dedupe_claim_links(rendered.claim_links)
-    return ExportClaimMapping(
-        schema_version=EXPORT_CLAIM_SCHEMA_VERSION,
-        run_id=materials[0].run_id,
-        final_report_path="reports/final-report.md",
-        claims=deduped_claims,
-        pm_decision={
+    pm_payload: dict[str, object] | None = None
+    if pm_decision is not None:
+        pm_payload = {
             "source_material_id": pm_decision.material_id,
             "rating": pm_decision.rating,
             "final_conclusion": pm_decision.final_conclusion,
             "execution_conditions": list(pm_decision.execution_conditions),
             "risk_conditions": list(pm_decision.risk_conditions),
-        },
+        }
+
+    return ExportClaimMapping(
+        schema_version=EXPORT_CLAIM_SCHEMA_VERSION,
+        run_id=materials[0].run_id,
+        final_report_path="reports/final-report.md",
+        claims=deduped_claims,
+        pm_decision=pm_payload,
     )
 
 
 def run_export_guards(
     mapping: ExportClaimMapping,
     materials: tuple[ApprovedMaterial, ...],
-    pm_decision: PMDecision,
+    pm_decision: PMDecision | None,
     state: WorkflowState | None = None,
 ) -> GuardResult:
     checks: list[GuardResult] = []
@@ -316,14 +327,19 @@ def export_final_report(
     chart_cleanup: Callable[[WorkflowState, tuple[ReportImageAsset, ...]], _CopyResult] | None = None,
 ) -> ExportResult:
     loaded = load_report_materials(state=state, manifest=manifest, openviking=openviking)
-    if not loaded.ok or loaded.pm_decision is None:
+    if not loaded.ok:
         return ExportResult.failed(
             state=state,
             category=loaded.category or "export_missing_material",
             reason=loaded.reason or "报告导出材料装载失败",
             paths=loaded.paths or (state.run_dir / "openviking" / "approved-manifest.json",),
         )
-    rendered = render_final_report(materials=loaded.materials, pm_decision=loaded.pm_decision)
+    rendered = render_final_report(
+        materials=loaded.materials,
+        pm_decision=loaded.pm_decision,
+        report_materials=loaded.report_materials,
+        pm_report_text=_pm_report_text(loaded.report_materials),
+    )
     image_assets = _collect_report_image_assets(
         state=state,
         materials=loaded.materials,
@@ -378,6 +394,17 @@ class FinalReportExporter:
 def _ordered_materials(materials: tuple[ApprovedMaterial, ...]) -> tuple[ApprovedMaterial, ...]:
     material_by_worker = {material.worker_id: material for material in materials}
     return tuple(material_by_worker[worker_id] for worker_id in _REPORT_WORKER_ORDER if worker_id in material_by_worker)
+
+
+def _pm_report_text(report_materials: tuple[ReportMaterial, ...]) -> str:
+    for item in report_materials:
+        if item.material.worker_id == _PM_WORKER_ID:
+            return item.l1_text
+    return ""
+
+
+def _report_text_by_worker(report_materials: tuple[ReportMaterial, ...]) -> dict[str, str]:
+    return {item.material.worker_id: item.l1_text for item in report_materials}
 
 
 def _claim_link_from_material(material: ApprovedMaterial, claim: L1Claim) -> ExportClaim:
@@ -496,10 +523,46 @@ def _copy_report_image_assets(*, reports_dir: Path, image_assets: tuple[ReportIm
 
 
 def _attach_report_image_assets(rendered: RenderedReport, image_assets: tuple[ReportImageAsset, ...]) -> RenderedReport:
-    lines = [rendered.text.rstrip(), "", "## 图表资产"]
+    image_block = _render_report_image_asset_block(image_assets)
+    report_text = rendered.text.rstrip()
+    market_title = f"## {_WORKER_SECTION_TITLES['market_analyst']}"
+    next_section_title = f"## {_WORKER_SECTION_TITLES['fundamental_analyst']}"
+    next_section_marker = f"\n{next_section_title}\n"
+
+    if market_title in report_text and next_section_marker in report_text:
+        before_next_section, _, after_next_section = report_text.partition(next_section_marker)
+        updated_market_section = _attach_image_assets_to_technical_indicator_section(before_next_section, image_block)
+        if updated_market_section != before_next_section:
+            report_text = f"{updated_market_section.rstrip()}\n\n{next_section_title}\n{after_next_section}"
+        else:
+            report_text = f"{before_next_section.rstrip()}\n\n{image_block}\n\n{next_section_title}\n{after_next_section}"
+    else:
+        report_text = f"{report_text}\n\n{image_block}"
+
+    return RenderedReport(text=report_text.strip() + "\n", claim_links=rendered.claim_links)
+
+
+def _render_report_image_asset_block(image_assets: tuple[ReportImageAsset, ...]) -> str:
+    lines = ["## 图表资产"]
     for asset in image_assets:
         lines.append(f"![{asset.alt_text}]({asset.relative_path.as_posix()})")
-    return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=rendered.claim_links)
+    return "\n".join(lines)
+
+
+def _attach_image_assets_to_technical_indicator_section(report_text: str, image_block: str) -> str:
+    heading_markers = (
+        "\n## 二、技术指标分析\n",
+        "\n## 技术指标分析\n",
+        "\n### 技术指标分析\n",
+        "\n## Technical Indicator Analysis\n",
+        "\n### Technical Indicator Analysis\n",
+    )
+    for marker in heading_markers:
+        if marker in report_text:
+            before_heading, _, after_heading = report_text.partition(marker)
+            heading = marker.strip()
+            return f"{before_heading.rstrip()}\n\n{heading}\n\n{image_block}\n\n{after_heading.lstrip()}"
+    return report_text
 
 
 def _collect_report_image_assets(

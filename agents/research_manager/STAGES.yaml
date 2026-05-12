@@ -8,15 +8,13 @@ profiles:
   US:
     approved: true
     prompt: prompts/US.md
-    tools:
-      - openviking_read
-    openviking_access: read_write
+    tools: []
+    openviking_access: none
   CN_A:
     approved: true
     prompt: prompts/CN_A.md
-    tools:
-      - openviking_read
-    openviking_access: read_write
+    tools: []
+    openviking_access: none
   HK:
     approved: false
     prompt: prompts/HK.md
@@ -32,7 +30,7 @@ tool_policy:
   owner: stage_profile
   python_calls_tools: false
 artifact_policy:
-  input: approved_artifact_refs_only
+  input: approved_l1_report_text_with_traceable_refs
   output: canonical_artifact
   hard_gate_failed_artifacts_enter_downstream: false
 pm_policy:

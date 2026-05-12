@@ -22,6 +22,8 @@ def test_start_control_runtime_script_is_bash_valid() -> None:
 def test_start_control_runtime_script_contains_required_guards() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
+    assert "RUNTIME_COMMAND=()" in text
+    assert '[ERROR] 用法：%s [-- <test-command> ...]' in text
     assert "1933" in text
     assert "1944" in text
     assert "18789" in text
@@ -48,6 +50,7 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "CLAW_TRADE_OPENVIKING_MCP_MODULE" in text
     assert "supervise_started_services" in text
     assert "脚本将持续运行并监控服务状态" in text
+    assert "运行测试命令" in text
 
 
 def test_start_control_runtime_script_has_explicit_mcp_sidecar_args() -> None:
@@ -79,6 +82,35 @@ def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_
     assert "printf 'OPENVIKING_MCP_URL=%s\\n' \"${OPENVIKING_MCP_URL}\"" in text
 
 
+def test_start_control_runtime_script_exports_runtime_env_before_child_command() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "export_runtime_env_for_child_commands() {" in text
+    assert "export CLAW_TRADE_OPENCLAW_RUNNER" in text
+    assert "export CLAW_TRADE_OPENVIKING_BACKEND" in text
+    assert 'export CLAW_TRADE_OPENVIKING_MCP_STARTED="${openviking_mcp_started}"' in text
+    assert "export OPENCLAW_GATEWAY_URL" in text
+    assert "export OPENVIKING_ENDPOINT" in text
+    assert "export OPENVIKING_DATA_DIR" in text
+    export_index = text.index("export_runtime_env_for_child_commands")
+    command_index = text.index('if [[ ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then')
+    supervise_index = text.rindex("\nsupervise_started_services")
+    assert export_index < command_index
+    assert command_index < supervise_index
+
+
+def test_start_control_runtime_script_child_command_mode_uses_cleanup_trap() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'if [[ "${1}" != "--" ]]; then' in text
+    assert 'RUNTIME_COMMAND=("$@")' in text
+    assert '"${RUNTIME_COMMAND[@]}"' in text
+    assert 'exit "${command_status}"' in text
+    trap_index = text.index("trap 'on_script_exit $?' EXIT")
+    command_index = text.index('"${RUNTIME_COMMAND[@]}"')
+    assert trap_index < command_index
+
+
 def test_start_control_runtime_script_uses_trade_openviking_wheel_and_keeps_override_bin_branch() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
@@ -86,7 +118,10 @@ def test_start_control_runtime_script_uses_trade_openviking_wheel_and_keeps_over
     assert 'cd "${ROOT_DIR}/third_party/openviking"' not in text
     assert 'if [[ -n "${CLAW_TRADE_OPENVIKING_SERVER_BIN}" ]]; then' in text
     assert "uv run openviking-server" in text
-    assert '"${selected_server_bin}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}"' in text
+    assert (
+        '"${selected_server_bin}" --config "${OPENVIKING_CONFIG_FILE}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}"'
+        in text
+    )
 
 
 def test_start_control_runtime_script_stops_gateway_service_before_and_after_listener_cleanup() -> None:
@@ -144,7 +179,11 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "const sourceProviders = isPlainObject(sourceModels.providers) ? sourceModels.providers : {};" in text
     assert "const sourceDefaultModel = isPlainObject(sourceDefaults.model) ? sourceDefaults.model : {};" in text
     assert "const sourcePrimaryModel = typeof sourceDefaultModel.primary === \"string\" ? sourceDefaultModel.primary.trim() : \"\";" in text
-    assert "primaryProviderId = sourcePrimaryModel.split(\"/\")[0].trim();" in text
+    assert 'const clawTradePrimaryModel = "deepseek/deepseek-chat";' in text
+    assert "const selectedPrimaryModel = clawTradePrimaryModel;" in text
+    assert "primaryProviderId = selectedPrimaryModel.split(\"/\")[0].trim();" in text
+    assert "primary: selectedPrimaryModel" in text
+    assert 'alias: "DeepSeek Chat"' in text
     assert "timeoutSeconds: llmIdleTimeoutSeconds" in text
     assert "models: mergedModels," in text
     assert "const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};" in text

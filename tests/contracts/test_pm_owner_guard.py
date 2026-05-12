@@ -37,6 +37,20 @@ def test_validate_pm_owner_missing_pm_decision_evidence_fails(tmp_path: Path) ->
     assert guard.reason is not None and "pm-decision.json" in guard.reason
 
 
+def test_validate_pm_owner_cn_a_missing_pm_decision_evidence_passes(tmp_path: Path) -> None:
+    call = sample_call(tmp_path, profile="CN_A")
+    receipt = sample_receipt(call, l1_text="# PM L1")
+    decision, guard = validate_pm_owner(
+        call=call,
+        evidence=sample_evidence(call),
+        receipt=receipt,
+        claims=sample_claims(),
+        require_structured_decision=False,
+    )
+    assert decision is None
+    assert guard.ok
+
+
 def test_validate_pm_owner_rejects_identity_mismatch(tmp_path: Path) -> None:
     call = sample_call(tmp_path)
     receipt = sample_receipt(call, l1_text="# PM L1")
@@ -49,6 +63,21 @@ def test_validate_pm_owner_rejects_identity_mismatch(tmp_path: Path) -> None:
     )
     assert decision is None
     assert not guard.ok
+
+
+def test_validate_pm_owner_rejects_non_pm_worker_evidence(tmp_path: Path) -> None:
+    call = sample_call(tmp_path)
+    receipt = sample_receipt(call, l1_text="# PM L1")
+    write_pm_decision(call=call, receipt=receipt)
+    decision, guard = validate_pm_owner(
+        call=call,
+        evidence=sample_evidence(call, worker_id="news_analyst"),
+        receipt=receipt,
+        claims=sample_claims(),
+    )
+    assert decision is None
+    assert not guard.ok
+    assert guard.reason is not None and "worker_id 不是 portfolio_manager" in guard.reason
 
 
 def test_validate_pm_owner_rejects_unknown_source_claim_id(tmp_path: Path) -> None:
@@ -121,7 +150,7 @@ def test_validate_export_does_not_rewrite_pm_fails_on_rewrite() -> None:
     assert not guard.ok
 
 
-def sample_call(tmp_path: Path) -> WorkerCall:
+def sample_call(tmp_path: Path, *, profile: str = "US") -> WorkerCall:
     target = make_material_target("run-1", Stage.PORTFOLIO_DECISION, "portfolio_manager", "call-12")
     evidence_dir = tmp_path / "runs" / "run-1" / "calls" / "call-12" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -130,7 +159,7 @@ def sample_call(tmp_path: Path) -> WorkerCall:
         run_id="run-1",
         worker_id="portfolio_manager",
         stage=Stage.PORTFOLIO_DECISION,
-        profile="us",
+        profile=profile,
         ticker="AAPL",
         company_name="Apple Inc.",
         market="US",
@@ -165,7 +194,12 @@ def sample_receipt(call: WorkerCall, *, l1_text: str) -> MaterialReceipt:
     )
 
 
-def sample_evidence(call: WorkerCall) -> ProviderEvidence:
+def sample_evidence(
+    call: WorkerCall,
+    *,
+    worker_id: str | None = None,
+    stage: Stage | None = None,
+) -> ProviderEvidence:
     p = call.evidence_dir
     for name in ("provider-request.json", "workspace.json", "visible.json", "first.json", "tools.json", "raw.txt"):
         (p / name).write_text("{}", encoding="utf-8")
@@ -173,8 +207,8 @@ def sample_evidence(call: WorkerCall) -> ProviderEvidence:
     return ProviderEvidence(
         run_id=call.run_id,
         call_id=call.call_id,
-        worker_id=call.worker_id,
-        stage=call.stage,
+        worker_id=worker_id or call.worker_id,
+        stage=stage or call.stage,
         openclaw_run_id="oc-run-1",
         provider_request_id="req-1",
         provider_request_id_status="returned",

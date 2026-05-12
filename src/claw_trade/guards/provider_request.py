@@ -62,13 +62,76 @@ def validate_provider_request(call: WorkerCall, evidence: ProviderEvidence) -> G
     if not all(_looks_like_message(item) for item in messages):
         return _failed("payload.messages 结构不可信", provider_request_path)
 
+    prompt_guard = _validate_model_visible_prompt_text(call, messages, provider_request_path)
+    if not prompt_guard.ok:
+        return prompt_guard
+
     tools = payload_body.get("tools")
-    if not isinstance(tools, list) or not tools:
-        return _failed("payload.tools 必须是非空列表", provider_request_path)
+    if call.allowed_tools:
+        if not isinstance(tools, list) or not tools:
+            return _failed("payload.tools 必须是非空列表", provider_request_path)
+    elif tools is None:
+        tools = []
+    elif not isinstance(tools, list):
+        return _failed("payload.tools 必须是列表", provider_request_path)
     if not all(_looks_like_tool(item) for item in tools):
         return _failed("payload.tools 结构不可信", provider_request_path)
 
     return guard_passed(category="provider_request")
+
+
+_FORBIDDEN_MODEL_VISIBLE_PROMPT_TOKENS = (
+    "你正在执行当前分析师的一轮任务。",
+    "请按用户消息中的角色、工具和报告格式要求完成本轮分析。",
+    "只能依据本轮可见工具结果写报告，不要编造工具没有返回的数据或来源。",
+    "[ApprovedMaterials]",
+    "[RuntimeTarget]",
+    "[ReportSubmission]",
+    "[OpenVikingReadableMaterials]",
+    "[OpenVikingWriteTarget]",
+    "profile:",
+    "profile_status:",
+    "worker_id:",
+    "material_id",
+    "capability=",
+    "capability_id",
+    "l1_sha256",
+    "l2_available",
+    "viking://",
+    "OpenViking",
+    "OpenClaw",
+    "openviking_read_with_capability",
+    "openviking_write_material",
+)
+
+
+def _validate_model_visible_prompt_text(
+    call: WorkerCall,
+    messages: list[object],
+    provider_request_path: Path,
+) -> GuardResult:
+    if call.profile not in {"US", "CN_A"}:
+        return guard_passed(category="provider_request")
+    text = "\n".join(_message_text(item) for item in messages)
+    for token in _FORBIDDEN_MODEL_VISIBLE_PROMPT_TOKENS:
+        if token in text:
+            return _failed(f"模型可见 prompt 含机器协议或运行包装: {token}", provider_request_path)
+    return guard_passed(category="provider_request")
+
+
+def _message_text(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    content = value.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "\n".join(parts)
+    return ""
 
 
 def _validate_runtime_marker(

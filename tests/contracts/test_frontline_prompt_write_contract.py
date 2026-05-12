@@ -10,6 +10,11 @@ FRONTLINE_TOOLS = {
     "social_analyst": "social_social_sentiment_pack",
 }
 
+FRONTLINE_EXECUTION_TONE_SNIPPETS = {
+    "market_analyst": ("工作流程：", "接收到工具数据后，必须立即生成完整的技术分析报告"),
+    "social_analyst": ("工作流程：", "收到工具数据后，生成完整中文分析报告"),
+}
+
 FORBIDDEN_PROTOCOL_TOKENS = (
     "[RuntimeTarget]",
     "[OpenVikingWriteTarget]",
@@ -40,6 +45,8 @@ def test_frontline_cn_prompts_keep_only_domain_pack_tools() -> None:
         assert "openviking_write_material" not in text
         assert "tool_choice" not in text
         assert "报告" in text
+        for snippet in FRONTLINE_EXECUTION_TONE_SNIPPETS.get(worker, ()):
+            assert snippet not in text
         _assert_no_handwritten_protocol(text)
 
 

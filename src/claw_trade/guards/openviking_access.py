@@ -33,7 +33,11 @@ def validate_openviking_runtime_reads(
         )
 
     try:
-        caps = manifest.capabilities_for_downstream_stage(stage=call.stage, run_id=call.run_id)
+        caps = manifest.capabilities_for_worker_call(
+            stage=call.stage,
+            worker_id=call.worker_id,
+            run_id=call.run_id,
+        )
     except (ArtifactFlowError, ValueError) as exc:
         return guard_failed(
             category="openviking_runtime_reads",

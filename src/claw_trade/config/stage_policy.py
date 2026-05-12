@@ -61,8 +61,6 @@ def load_stage_policy(agents_root: Path, worker_id: str, profile: str) -> StageP
         return StagePolicyResult(False, None, f"profile is not approved: {profile}", source_path)
 
     tools = tuple(profile_data.get("tools", ()))
-    if not tools:
-        return StagePolicyResult(False, None, f"profile tools cannot be empty: {profile}", source_path)
 
     access = str(profile_data.get("openviking_access", "")).strip()
     if access not in _ALLOWED_OPENVIKING_ACCESS:

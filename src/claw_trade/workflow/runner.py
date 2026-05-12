@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -8,6 +8,8 @@ from typing import Callable, Protocol
 
 from claw_trade.artifacts.approval import approve_worker_material
 from claw_trade.artifacts.manifest import ApprovedManifest, ManifestStore
+from claw_trade.artifacts.openviking_client import OpenVikingReadResult
+from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.config.profiles import require_profile
 from claw_trade.config.tool_names import load_tool_registry
 from claw_trade.guards.common import (
@@ -43,6 +45,7 @@ from claw_trade.workflow.models import (
     WorkerResult,
     WorkerStatus,
     WorkflowState,
+    export_result_allows_workflow_completion,
 )
 from claw_trade.workflow.store import WorkflowStore
 
@@ -59,6 +62,8 @@ class OpenVikingClientLike(Protocol):
     def probe_namespace_stat(self) -> object: ...
 
     def ensure_namespace(self, namespace: str) -> None: ...
+
+    def read_approved_l1(self, material: ApprovedMaterial) -> OpenVikingReadResult: ...
 
 
 class RequestBuilderLike(Protocol):
@@ -77,6 +82,13 @@ class ToolRegistryProbeLike(Protocol):
 
 class ExporterLike(Protocol):
     def export(self, state: WorkflowState, manifest: ApprovedManifest) -> ExportResult: ...
+
+
+@dataclass(frozen=True)
+class PromptMaterialResult:
+    ok: bool
+    call: WorkerCall | None
+    failure: FailureRecord | None
 
 
 class _DefaultRequestBuilder:
@@ -300,7 +312,7 @@ class ControlRunner:
             manifest = self.manifest_store.load(exporting.run_id)
             exported = self.export_final_report(exporting, manifest)
             self.store.save_export_result(exported)
-            if exported.status != "passed":
+            if not export_result_allows_workflow_completion(exporting.request.profile, exported):
                 failure = exported.failure or FailureRecord(
                     run_id=exporting.run_id,
                     call_id=None,
@@ -390,11 +402,12 @@ class ControlRunner:
 
         # collect-first 语义在这里执行：同阶段可恢复失败继续收集，命中早停类再中止。
         for worker_id in batch.worker_ids:
+            manifest = self.manifest_store.load(batch.run_id)
             call_result = self.request_builder.build_worker_call(
                 state=state,
                 worker_id=worker_id,
                 stage=batch.stage,
-                manifest=self.manifest_store.load(batch.run_id),
+                manifest=manifest,
             )
             if not call_result.ok or call_result.call is None:
                 failure = self._normalize_build_failure(batch, worker_id, call_result)
@@ -420,7 +433,37 @@ class ControlRunner:
                     break
                 continue
 
-            call = call_result.call
+            prompt_result = self.attach_prompt_materials(call=call_result.call, manifest=manifest)
+            if not prompt_result.ok or prompt_result.call is None:
+                failure = prompt_result.failure or FailureRecord(
+                    run_id=batch.run_id,
+                    call_id=call_result.call.call_id,
+                    worker_id=worker_id,
+                    stage=batch.stage,
+                    category="prompt_materials",
+                    reason="prompt 材料注入失败",
+                    evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
+                    early_stop=True,
+                    human_action_required=None,
+                )
+                result = WorkerResult(
+                    run_id=batch.run_id,
+                    call_id=failure.call_id or call_result.call.call_id,
+                    worker_id=worker_id,
+                    stage=batch.stage,
+                    status=WorkerStatus.BLOCKED,
+                    openclaw_result_path=None,
+                    approved_material_id=None,
+                    failure=failure,
+                )
+                self.store.save_worker_result(result)
+                worker_results.append(result)
+                failures.append(failure)
+                early_stop_used = True
+                early_stop_failures.append(failure)
+                break
+
+            call = prompt_result.call
             result = self.run_single_worker(call)
             self.store.save_worker_result(result)
             worker_results.append(result)
@@ -450,6 +493,76 @@ class ControlRunner:
             failures=tuple(failures),
             early_stop_used=early_stop_used,
             collect_first_report_path=report_path,
+        )
+
+    def attach_prompt_materials(self, call: WorkerCall, manifest: ApprovedManifest) -> PromptMaterialResult:
+        if call.profile != "CN_A" or call.stage == Stage.FRONTLINE:
+            return PromptMaterialResult(ok=True, call=call, failure=None)
+
+        material_texts: dict[tuple[str, Stage], str] = {}
+        material_by_source = {
+            (material.worker_id, material.stage): material
+            for material in manifest.all_for_run(call.run_id)
+        }
+        for ref in call.upstream_materials:
+            source = (ref.worker_id, ref.stage)
+            material = material_by_source.get(source)
+            if material is None:
+                return PromptMaterialResult(
+                    ok=False,
+                    call=None,
+                    failure=self._prompt_material_failure(
+                        call=call,
+                        reason=f"approved material 缺失: worker={ref.worker_id} stage={ref.stage.value}",
+                        paths=(call.evidence_dir / "call.json",),
+                    ),
+                )
+            read_result = self.openviking.read_approved_l1(material)
+            if not read_result.ok or read_result.content is None:
+                return PromptMaterialResult(
+                    ok=False,
+                    call=None,
+                    failure=self._prompt_material_failure(
+                        call=call,
+                        reason=(
+                            f"读取 approved material L1 失败: worker={material.worker_id} "
+                            f"category={read_result.error_category} reason={read_result.error_message}"
+                        ),
+                        paths=(call.evidence_dir / "call.json", material.hard_gate_result_path),
+                    ),
+                )
+            if read_result.sha256 != material.l1_sha256 or read_result.size_bytes != material.l1_size_bytes:
+                return PromptMaterialResult(
+                    ok=False,
+                    call=None,
+                    failure=self._prompt_material_failure(
+                        call=call,
+                        reason=(
+                            f"approved material L1 指纹不匹配: worker={material.worker_id} "
+                            f"sha={read_result.sha256}/{material.l1_sha256} "
+                            f"size={read_result.size_bytes}/{material.l1_size_bytes}"
+                        ),
+                        paths=(call.evidence_dir / "call.json", material.hard_gate_result_path),
+                    ),
+                )
+            try:
+                material_texts[source] = read_result.content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                return PromptMaterialResult(
+                    ok=False,
+                    call=None,
+                    failure=self._prompt_material_failure(
+                        call=call,
+                        reason=f"approved material L1 不是 UTF-8 文本: worker={material.worker_id} ({exc})",
+                        paths=(call.evidence_dir / "call.json", material.hard_gate_result_path),
+                    ),
+                )
+
+        prompt_vars = build_cn_a_prompt_vars(call=call, material_texts=material_texts)
+        return PromptMaterialResult(
+            ok=True,
+            call=replace(call, prompt_runtime_vars=prompt_vars),
+            failure=None,
         )
 
     def run_single_worker(self, call: WorkerCall) -> WorkerResult:
@@ -671,7 +784,7 @@ class ControlRunner:
         exported = self.store.load_export_result(state.run_id)
         if exported is None:
             raise ValueError("REPORT_EXPORTING 缺少 export-result.json，禁止 completed")
-        if exported.status != "passed":
+        if not export_result_allows_workflow_completion(state.request.profile, exported):
             raise ValueError(f"export-result.status={exported.status}，禁止 completed")
 
     def _validate_artifact_flow(self, call: WorkerCall, manifest: ApprovedManifest) -> GuardResult:
@@ -686,8 +799,12 @@ class ControlRunner:
                 )
             return guard_passed(category="artifact_flow")
         try:
-            expected_refs = manifest.for_downstream_stage(call.stage, run_id=call.run_id)
-            expected_caps = manifest.capabilities_for_downstream_stage(call.stage, run_id=call.run_id)
+            expected_refs = manifest.for_worker_call(call.stage, worker_id=call.worker_id, run_id=call.run_id)
+            expected_caps = manifest.capabilities_for_worker_call(
+                call.stage,
+                worker_id=call.worker_id,
+                run_id=call.run_id,
+            )
         except Exception as exc:
             return guard_failed(
                 category="artifact_flow_overreach",
@@ -710,6 +827,24 @@ class ControlRunner:
                 early_stop=True,
             )
         return guard_passed(category="artifact_flow")
+
+    def _prompt_material_failure(
+        self,
+        call: WorkerCall,
+        reason: str,
+        paths: tuple[Path, ...],
+    ) -> FailureRecord:
+        return FailureRecord(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            category="prompt_materials",
+            reason=reason,
+            evidence_paths=paths,
+            early_stop=True,
+            human_action_required=None,
+        )
 
     def _normalize_build_failure(
         self,
@@ -758,6 +893,101 @@ def first_human_action(failures: tuple[FailureRecord, ...]) -> str | None:
         if failure.human_action_required:
             return failure.human_action_required
     return None
+
+
+def build_cn_a_prompt_vars(
+    *,
+    call: WorkerCall,
+    material_texts: dict[tuple[str, Stage], str],
+) -> dict[str, str]:
+    frontline_vars = {
+        "market_research_report": material_texts.get(("market_analyst", Stage.FRONTLINE), ""),
+        "sentiment_report": material_texts.get(("social_analyst", Stage.FRONTLINE), ""),
+        "news_report": material_texts.get(("news_analyst", Stage.FRONTLINE), ""),
+        "fundamentals_report": material_texts.get(("fundamental_analyst", Stage.FRONTLINE), ""),
+    }
+    bull_argument = _role_argument(material_texts, "bull_researcher", Stage.INVESTMENT_DEBATE, "Bull Analyst")
+    bear_argument = _role_argument(material_texts, "bear_researcher", Stage.INVESTMENT_DEBATE, "Bear Analyst")
+    risky_argument = _role_argument(material_texts, "risk_challenger", Stage.RISK_DEBATE, "Risky Analyst")
+    safe_argument = _role_argument(material_texts, "risk_guardian", Stage.RISK_DEBATE, "Safe Analyst")
+    neutral_argument = _role_argument(material_texts, "risk_moderator", Stage.RISK_DEBATE, "Neutral Analyst")
+
+    if call.worker_id == "bull_researcher":
+        return {
+            **frontline_vars,
+            "history": "",
+            "current_response": "",
+            "past_memory_str": _default_memory_for_worker(call.worker_id),
+        }
+    if call.worker_id == "bear_researcher":
+        return {
+            **frontline_vars,
+            "history": _conversation_history(bull_argument),
+            "current_response": bull_argument,
+            "past_memory_str": _default_memory_for_worker(call.worker_id),
+        }
+    if call.worker_id == "research_manager":
+        return {
+            **frontline_vars,
+            "history": _conversation_history(bull_argument, bear_argument),
+            "past_memory_str": _default_memory_for_worker(call.worker_id),
+        }
+    if call.worker_id == "trader":
+        return {
+            "investment_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
+            "past_memory_str": _default_memory_for_worker(call.worker_id),
+        }
+    if call.worker_id == "risk_challenger":
+        return {
+            **frontline_vars,
+            "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
+            "history": "",
+            "current_safe_response": "",
+            "current_neutral_response": "",
+        }
+    if call.worker_id == "risk_guardian":
+        return {
+            **frontline_vars,
+            "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
+            "history": _conversation_history(risky_argument),
+            "current_risky_response": risky_argument,
+            "current_neutral_response": "",
+        }
+    if call.worker_id == "risk_moderator":
+        return {
+            **frontline_vars,
+            "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
+            "history": _conversation_history(risky_argument, safe_argument),
+            "current_risky_response": risky_argument,
+            "current_safe_response": safe_argument,
+        }
+    if call.worker_id == "portfolio_manager":
+        return {
+            "ticker": call.ticker,
+            "trader_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
+            "history": _conversation_history(risky_argument, safe_argument, neutral_argument),
+            "past_memory_str": _default_memory_for_worker(call.worker_id),
+        }
+    return {}
+
+
+def _role_argument(
+    material_texts: dict[tuple[str, Stage], str],
+    worker_id: str,
+    stage: Stage,
+    role_label: str,
+) -> str:
+    text = material_texts.get((worker_id, stage), "")
+    return f"{role_label}: {text}" if text else ""
+
+
+def _conversation_history(*arguments: str) -> str:
+    return "".join(f"\n{argument}" for argument in arguments if argument)
+
+
+def _default_memory_for_worker(worker_id: str) -> str:
+    _ = worker_id
+    return ""
 
 
 def merge_stage_failures(run_id: str, stage: Stage, failures: tuple[FailureRecord, ...]) -> FailureRecord:

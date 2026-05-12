@@ -89,6 +89,24 @@ def test_visible_tools_guard_fails_when_tools_empty(tmp_path: Path) -> None:
     assert guard.reason is not None and "不能为空" in guard.reason
 
 
+def test_visible_tools_guard_passes_when_pure_prompt_worker_has_no_tools(tmp_path: Path) -> None:
+    call = _sample_call(tmp_path, allowed_tools=())
+    evidence, provider_request_path, visible_tools_path = _sample_evidence_paths(tmp_path)
+    _write_json(provider_request_path, {"source": "provider_request_capture", "payload": {"tools": []}})
+    _write_json(
+        visible_tools_path,
+        {
+            "source": "provider_request",
+            "provider_request_path": str(provider_request_path),
+            "tools": [],
+        },
+    )
+
+    guard = validate_visible_tools(call, evidence)
+
+    assert guard.ok
+
+
 def test_visible_tools_guard_fails_when_visible_tools_not_equal_allowed_tools(tmp_path: Path) -> None:
     call = _sample_call(tmp_path, allowed_tools=("market_data", "openviking_write_material"))
     evidence, provider_request_path, visible_tools_path = _sample_evidence_paths(tmp_path)

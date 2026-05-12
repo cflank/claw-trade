@@ -85,6 +85,17 @@ def build_openclaw_command(call: WorkerCall) -> OpenClawCommand:
         raise ValueError("worker_id 不能为空")
     if call.stage is None:
         raise ValueError("stage 不能为空")
+    runtime_vars = {
+        "ticker": _required_str(call.ticker, "runtime_vars.ticker"),
+        "company_name": _required_str(call.company_name, "runtime_vars.company_name"),
+        "market": _required_str(call.market, "runtime_vars.market"),
+        "currency": _required_str(call.currency, "runtime_vars.currency"),
+        "currency_symbol": _required_str(call.currency_symbol, "runtime_vars.currency_symbol"),
+        "current_date": _required_str(call.current_date, "runtime_vars.current_date"),
+        "start_date": _required_str(call.start_date, "runtime_vars.start_date"),
+        "end_date": _required_str(call.end_date, "runtime_vars.end_date"),
+        **_required_runtime_var_map(call.prompt_runtime_vars),
+    }
     # 控制权边界：这里只做字段翻译，不新增任何业务分析内容。
     command = OpenClawCommand(
         agent=_required_str(call.worker_id, "agent"),
@@ -93,16 +104,7 @@ def build_openclaw_command(call: WorkerCall) -> OpenClawCommand:
         stage=_required_stage_value(call.stage, "stage"),
         run_id=_required_str(call.run_id, "run_id"),
         call_id=_required_str(call.call_id, "call_id"),
-        runtime_vars={
-            "ticker": _required_str(call.ticker, "runtime_vars.ticker"),
-            "company_name": _required_str(call.company_name, "runtime_vars.company_name"),
-            "market": _required_str(call.market, "runtime_vars.market"),
-            "currency": _required_str(call.currency, "runtime_vars.currency"),
-            "currency_symbol": _required_str(call.currency_symbol, "runtime_vars.currency_symbol"),
-            "current_date": _required_str(call.current_date, "runtime_vars.current_date"),
-            "start_date": _required_str(call.start_date, "runtime_vars.start_date"),
-            "end_date": _required_str(call.end_date, "runtime_vars.end_date"),
-        },
+        runtime_vars=runtime_vars,
         allowed_tools=call.allowed_tools,
         upstream_materials=tuple(_serialize_material_ref(item) for item in call.upstream_materials),
         openviking_read_capabilities=tuple(
@@ -117,6 +119,16 @@ def build_openclaw_command(call: WorkerCall) -> OpenClawCommand:
     if command.agent != command.worker_id:
         raise ValueError("OpenClawCommand.agent 必须等于 worker_id")
     return command
+
+
+def _required_runtime_var_map(values: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in values.items():
+        runtime_key = _required_str(key, "runtime_vars.key")
+        if not isinstance(value, str):
+            raise TypeError(f"runtime_vars.{runtime_key} 必须是 str")
+        out[runtime_key] = value
+    return out
 
 
 def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, object]:

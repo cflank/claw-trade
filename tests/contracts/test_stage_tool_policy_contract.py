@@ -19,7 +19,10 @@ def agents_root() -> Path:
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))
-def test_stage_tool_policy_never_returns_empty_tools(agents_root: Path, profile: str) -> None:
+def test_stage_tool_policy_allows_empty_tools_only_for_pure_prompt_workers(
+    agents_root: Path,
+    profile: str,
+) -> None:
     registry_result = load_tool_registry()
     assert registry_result.ok is True and registry_result.registry is not None
     registry = registry_result.registry
@@ -28,7 +31,10 @@ def test_stage_tool_policy_never_returns_empty_tools(agents_root: Path, profile:
         policy_result = load_stage_policy(agents_root, worker_id, profile)
         assert policy_result.ok is True and policy_result.policy is not None
         tools = resolve_tools(policy_result.policy, registry)
-        assert tools, f"{worker_id}/{profile} tools 为空"
+        if policy_result.policy.openviking_access == "none" and policy_result.policy.stage != Stage.FRONTLINE:
+            assert tools == (), f"{worker_id}/{profile} pure prompt worker 不应暴露工具"
+        else:
+            assert tools, f"{worker_id}/{profile} tools 为空"
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))
@@ -58,12 +64,8 @@ def test_openviking_read_write_are_stage_scoped(agents_root: Path, profile: str)
         policy = policy_result.policy
         tools = resolve_tools(policy, registry)
 
-        if policy.stage == Stage.FRONTLINE:
-            assert "openviking_read_with_capability" not in tools
-            assert "openviking_write_material" not in tools
-        else:
-            assert "openviking_read_with_capability" in tools
-            assert "openviking_write_material" in tools
+        assert "openviking_read_with_capability" not in tools
+        assert "openviking_write_material" not in tools
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))
@@ -93,7 +95,7 @@ def test_unknown_openviking_access_fails() -> None:
         resolve_tools(policy, registry)
 
 
-def test_empty_intents_fail() -> None:
+def test_empty_intents_with_read_access_resolve_to_openviking_read_tool() -> None:
     registry = load_tool_registry().registry
     assert registry is not None
 
@@ -102,11 +104,26 @@ def test_empty_intents_fail() -> None:
         stage=worker_by_id("market_analyst").stage,
         profile="US",
         tool_intents=(),
-        openviking_access="write",
+        openviking_access="read",
         source_path=Path("agents/market_analyst/STAGES.yaml"),
     )
-    with pytest.raises(ConfigError):
-        resolve_tools(policy, registry)
+    assert resolve_tools(policy, registry) == ("openviking_read_with_capability",)
+
+
+def test_empty_intents_are_allowed_for_pure_prompt_workers() -> None:
+    registry = load_tool_registry().registry
+    assert registry is not None
+
+    policy = StagePolicy(
+        worker_id="research_manager",
+        stage=Stage.INVESTMENT_DECISION,
+        profile="CN_A",
+        tool_intents=(),
+        openviking_access="none",
+        source_path=Path("agents/research_manager/STAGES.yaml"),
+    )
+
+    assert resolve_tools(policy, registry) == ()
 
 
 def test_missing_openviking_tool_mapping_fails() -> None:

@@ -43,14 +43,22 @@ def validate_visible_tools(call: WorkerCall, evidence: ProviderEvidence) -> Guar
             paths=(evidence.visible_tools_path, evidence.provider_request_path),
         )
 
-    provider_tool_names, provider_error = _extract_provider_tool_names(provider_request)
+    allow_empty_tools = len(call.allowed_tools) == 0
+    provider_tool_names, provider_error = _extract_provider_tool_names(
+        provider_request,
+        allow_empty=allow_empty_tools,
+    )
     if provider_error is not None:
         return guard_failed(
             category="visible_tools",
             reason=provider_error,
             paths=(evidence.provider_request_path,),
         )
-    visible_tool_names, visible_error = _normalize_tool_names(visible_tools.get("tools"), "visible_tools.tools")
+    visible_tool_names, visible_error = _normalize_tool_names(
+        visible_tools.get("tools"),
+        "visible_tools.tools",
+        allow_empty=allow_empty_tools,
+    )
     if visible_error is not None:
         return guard_failed(
             category="visible_tools",
@@ -65,7 +73,11 @@ def validate_visible_tools(call: WorkerCall, evidence: ProviderEvidence) -> Guar
             paths=(evidence.provider_request_path, evidence.visible_tools_path),
         )
 
-    expected_tool_names, expected_error = _normalize_tool_names(call.allowed_tools, "call.allowed_tools")
+    expected_tool_names, expected_error = _normalize_tool_names(
+        call.allowed_tools,
+        "call.allowed_tools",
+        allow_empty=True,
+    )
     if expected_error is not None:
         return guard_failed(
             category="visible_tools",
@@ -100,14 +112,26 @@ def _same_provider_request_source(visible_tools: dict[str, object], evidence: Pr
     return evidence_dir_resolved == expected_path
 
 
-def _extract_provider_tool_names(provider_request: dict[str, object]) -> tuple[frozenset[str], str | None]:
+def _extract_provider_tool_names(
+    provider_request: dict[str, object],
+    *,
+    allow_empty: bool,
+) -> tuple[frozenset[str], str | None]:
     payload = provider_request.get("payload")
     if not isinstance(payload, dict):
         return frozenset(), "provider request payload 缺失或格式非法"
-    return _normalize_tool_names(payload.get("tools"), "provider_request.payload.tools")
+    raw_tools = payload.get("tools")
+    if raw_tools is None and allow_empty:
+        raw_tools = []
+    return _normalize_tool_names(raw_tools, "provider_request.payload.tools", allow_empty=allow_empty)
 
 
-def _normalize_tool_names(raw_tools: object, field_name: str) -> tuple[frozenset[str], str | None]:
+def _normalize_tool_names(
+    raw_tools: object,
+    field_name: str,
+    *,
+    allow_empty: bool = False,
+) -> tuple[frozenset[str], str | None]:
     if not isinstance(raw_tools, (list, tuple)):
         return frozenset(), f"{field_name} 必须是列表"
     names: set[str] = set()
@@ -118,7 +142,7 @@ def _normalize_tool_names(raw_tools: object, field_name: str) -> tuple[frozenset
         if name is None or not name.strip():
             return frozenset(), f"{field_name}[{index}] 工具名为空"
         names.add(name.strip())
-    if not names:
+    if not names and not allow_empty:
         return frozenset(), f"{field_name} 不能为空"
     return frozenset(names), None
 

@@ -37,6 +37,11 @@ PM_DECISION_REQUIRED_FIELDS = (
 )
 
 
+def pm_decision_required_for_profile(profile: str | None) -> bool:
+    normalized = (profile or "").strip().upper()
+    return normalized != "CN_A"
+
+
 @dataclass(frozen=True)
 class PMDecision:
     schema_version: str
@@ -150,17 +155,24 @@ def validate_pm_owner(
     evidence: ProviderEvidence,
     receipt: MaterialReceipt,
     claims: tuple[L1Claim, ...],
+    require_structured_decision: bool = True,
 ) -> tuple[PMDecision | None, GuardResult]:
+    if evidence.worker_id != PM_WORKER_ID:
+        return None, _failed_pm_owner("ProviderEvidence worker_id 不是 portfolio_manager", paths=_evidence_paths(evidence))
+    if evidence.stage != PM_STAGE:
+        return None, _failed_pm_owner("ProviderEvidence stage 不是 portfolio_decision", paths=_evidence_paths(evidence))
+
     pm_path = call.evidence_dir / PM_DECISION_FILENAME
+    if not pm_path.exists() or not pm_path.is_file():
+        if require_structured_decision:
+            return None, _failed_pm_owner(f"{PM_DECISION_FILENAME} 不存在或不是文件", paths=(pm_path,))
+        return None, guard_passed(category="pm_owner")
+
     parsed = parse_pm_decision_evidence(pm_path)
     if not parsed.ok or parsed.decision is None:
         return None, _failed_pm_owner(parsed.reason or "PM decision 解析失败", paths=(pm_path,))
     decision = parsed.decision
 
-    if evidence.worker_id != PM_WORKER_ID:
-        return None, _failed_pm_owner("ProviderEvidence worker_id 不是 portfolio_manager", paths=_evidence_paths(evidence))
-    if evidence.stage != PM_STAGE:
-        return None, _failed_pm_owner("ProviderEvidence stage 不是 portfolio_decision", paths=_evidence_paths(evidence))
     if decision.run_id != evidence.run_id:
         return None, _failed_pm_owner("PM decision run_id 与 ProviderEvidence 不一致", paths=(pm_path,))
     if decision.call_id != evidence.call_id:
@@ -184,8 +196,17 @@ def validate_pm_owner(
     return decision, guard_passed(category="pm_owner")
 
 
-def load_pm_decision_for_material(material: ApprovedMaterial) -> tuple[PMDecision | None, GuardResult]:
+def load_pm_decision_for_material(
+    material: ApprovedMaterial,
+    *,
+    required: bool = True,
+) -> tuple[PMDecision | None, GuardResult]:
     pm_path = material.hard_gate_result_path.parent / PM_DECISION_FILENAME
+    if not pm_path.exists() or not pm_path.is_file():
+        if required:
+            return None, _failed_pm_owner(f"{PM_DECISION_FILENAME} 不存在或不是文件", paths=(pm_path,))
+        return None, guard_passed(category="pm_owner")
+
     parsed = parse_pm_decision_evidence(pm_path)
     if not parsed.ok or parsed.decision is None:
         return None, _failed_pm_owner(parsed.reason or "PM decision 解析失败", paths=(pm_path,))

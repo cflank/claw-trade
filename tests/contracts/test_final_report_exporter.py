@@ -44,6 +44,28 @@ def test_export_final_report_fails_when_required_material_missing(tmp_path: Path
     assert "trader" in (result.failure.reason or "")
 
 
+def test_export_final_report_cn_a_passes_without_pm_decision_json(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-cn-a-no-pm-json", profile="CN_A")
+    manifest, reader = _build_manifest_and_reader(state, include_pm_decision_evidence=False)
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-cn-a")
+
+    loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
+    assert loaded.ok
+    assert loaded.pm_decision is None
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "## 最终裁决 / 最终投资决策" in report_text
+    assert "组合经理最终裁决：维持审慎增持" in report_text
+    mapping_payload = json.loads((state.run_dir / "reports" / "export-claims.json").read_text(encoding="utf-8"))
+    assert mapping_payload.get("pm_decision") is None
+
+
 def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-pass")
     manifest, reader = _build_manifest_and_reader(state)
@@ -72,6 +94,31 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     report_text = result.final_report_path.read_text(encoding="utf-8") if result.final_report_path is not None else ""
     assert "## 图表资产" in report_text
     assert "assets/market-01-market-structure.png" in report_text
+    assert "## 最终裁决 / 最终投资决策" in report_text
+    assert "## 图表与技术面分析" in report_text
+    assert "## 二、技术指标分析" in report_text
+    assert "## 基本面分析" in report_text
+    assert report_text.index("## 图表与技术面分析") < report_text.index("## 图表资产")
+    assert report_text.index("## 二、技术指标分析") < report_text.index("## 图表资产")
+    assert report_text.index("## 图表资产") < report_text.index("## 基本面分析")
+    assert "## 新闻与宏观事件分析" in report_text
+    assert "## 社媒与情绪分析" in report_text
+    forbidden_terms = (
+        "viking://",
+        "sha256",
+        "SHA256",
+        "L1 URI",
+        "L2 Index",
+        "material_id",
+        "ApprovedMaterials",
+        "provider payload",
+        "receipt",
+        "capability",
+        "ReportSubmission",
+        "RuntimeTarget",
+    )
+    for term in forbidden_terms:
+        assert term not in report_text
     assert "viking://resources/workflow/" not in "\n".join(line for line in report_text.splitlines() if line.startswith("!["))
     copied_asset = state.run_dir / "reports" / "assets" / "market-01-market-structure.png"
     assert copied_asset.exists()
@@ -184,7 +231,11 @@ def test_run_export_guards_fails_when_pm_fields_rewritten(tmp_path: Path) -> Non
     loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
     assert loaded.ok and loaded.pm_decision is not None
 
-    rendered = render_final_report(materials=loaded.materials, pm_decision=loaded.pm_decision)
+    rendered = render_final_report(
+        materials=loaded.materials,
+        pm_decision=loaded.pm_decision,
+        report_materials=loaded.report_materials,
+    )
     mapping = build_export_claim_mapping(rendered=rendered, materials=loaded.materials, pm_decision=loaded.pm_decision)
     tampered = ExportClaimMapping(
         schema_version=mapping.schema_version,
@@ -217,7 +268,11 @@ def test_run_export_guards_fails_when_claim_source_mapping_missing(tmp_path: Pat
     loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
     assert loaded.ok and loaded.pm_decision is not None
 
-    rendered = render_final_report(materials=loaded.materials, pm_decision=loaded.pm_decision)
+    rendered = render_final_report(
+        materials=loaded.materials,
+        pm_decision=loaded.pm_decision,
+        report_materials=loaded.report_materials,
+    )
     mapping = build_export_claim_mapping(rendered=rendered, materials=loaded.materials, pm_decision=loaded.pm_decision)
     first = mapping.claims[0]
     broken_first = ExportClaim(
@@ -264,14 +319,14 @@ def test_export_final_report_fails_when_openviking_reader_hash_mismatch(tmp_path
     assert "hash_mismatch" in (result.failure.reason or "")
 
 
-def _sample_state(tmp_path: Path, *, run_id: str) -> WorkflowState:
+def _sample_state(tmp_path: Path, *, run_id: str, profile: str = "US") -> WorkflowState:
     run_dir = tmp_path / "runs" / run_id
     (run_dir / "reports").mkdir(parents=True, exist_ok=True)
     request = RunRequest(
         ticker="AAPL",
         company_name="Apple",
         market="US",
-        profile="US",
+        profile=profile,
         currency="USD",
         currency_symbol="$",
         current_date="2026-05-04",
@@ -396,7 +451,21 @@ def _sample_material(state: WorkflowState, worker_id: str, stage: Stage, index: 
 
 
 def _l1_content_bytes(material: ApprovedMaterial) -> bytes:
-    return f"{material.worker_id} approved material".encode("utf-8")
+    text_by_worker = {
+        "market_analyst": "## 二、技术指标分析\n技术面结论：量价结构改善，趋势仍需成交量确认。",
+        "fundamental_analyst": "基本面结论：盈利韧性尚可，估值处于历史中枢附近。",
+        "news_analyst": "新闻结论：近期公司与行业信息偏中性，未见重大突发利空。",
+        "social_analyst": "社媒结论：讨论热度抬升，情绪分化，需防短线波动。",
+        "bull_researcher": "多头观点：核心竞争力与现金流能力支持中期配置价值。",
+        "bear_researcher": "空头观点：估值安全边际有限，宏观扰动可能放大回撤。",
+        "research_manager": "研究经理结论：维持审慎偏多，等待关键财报验证。",
+        "trader": "交易计划：分批建仓，触发条件明确，执行时控制仓位节奏。",
+        "risk_challenger": "风险挑战：若需求回落，盈利假设存在下修风险。",
+        "risk_guardian": "风险防守：建议设置止损与仓位上限，避免单点暴露。",
+        "risk_moderator": "风险整合：在可控风险前提下保留策略弹性。",
+        "portfolio_manager": "组合经理最终裁决：维持审慎增持，按条件分步执行。",
+    }
+    return text_by_worker[material.worker_id].encode("utf-8")
 
 
 def _build_manifest_and_reader(
@@ -405,6 +474,7 @@ def _build_manifest_and_reader(
     broken_worker: str | None = None,
     broken_category: str | None = None,
     broken_reason: str | None = None,
+    include_pm_decision_evidence: bool = True,
 ) -> tuple[ApprovedManifest, _ControlledReader]:
     manifest = ApprovedManifest.empty()
     content_by_material_id: dict[str, bytes] = {}
@@ -414,7 +484,7 @@ def _build_manifest_and_reader(
         material = _sample_material(state=state, worker_id=worker_id, stage=stage, index=index)
         manifest.add(material)
         content_by_material_id[material.material_id] = _l1_content_bytes(material=material)
-        if worker_id == "portfolio_manager":
+        if worker_id == "portfolio_manager" and include_pm_decision_evidence:
             _write_pm_decision_evidence(material)
     return (
         manifest,

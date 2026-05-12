@@ -10,6 +10,7 @@ from .security import normalize_ticker, validate_date, validate_date_range, vali
 
 
 DEFAULT_MARKET_WINDOW_DAYS = 60
+MIN_MARKET_TECHNICAL_WINDOW_DAYS = 120
 DEFAULT_MARKET_ADJUST = "qfq"
 
 
@@ -50,11 +51,15 @@ def normalize_market_input(
     else:
         end_date = validate_date(end_date_raw, field_name="end_date")
 
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    effective_window_days = max(window_days, MIN_MARKET_TECHNICAL_WINDOW_DAYS)
+    technical_window_start = (end_dt - timedelta(days=effective_window_days)).isoformat()
+
     if start_date_raw is None:
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
-        start_date = (end_dt - timedelta(days=window_days)).isoformat()
+        start_date = technical_window_start
     else:
-        start_date = validate_date(start_date_raw, field_name="start_date")
+        requested_start_date = validate_date(start_date_raw, field_name="start_date")
+        start_date = min(requested_start_date, technical_window_start)
 
     start_date, end_date = validate_date_range(start_date, end_date)
     return NormalizedMarketInput(
@@ -138,6 +143,7 @@ __all__ = [
     "BuildMarketProviderQuery",
     "DEFAULT_MARKET_ADJUST",
     "DEFAULT_MARKET_WINDOW_DAYS",
+    "MIN_MARKET_TECHNICAL_WINDOW_DAYS",
     "NormalizedMarketInput",
     "build_market_provider_query",
     "normalize_market_input",

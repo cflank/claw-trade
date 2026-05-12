@@ -7,7 +7,7 @@ description: Stage contract for `news_analyst` in the claw-trade OpenClaw report
 
 Follow `STAGES.yaml` for the current worker/profile/stage.
 
-- Read only approved artifact refs supplied by claw-trade.
+- Use only approved upstream report material supplied by claw-trade; refs and capabilities are for traceability and deeper evidence reads.
 - Output the final reader-facing report body for `news_analysis_report`.
 - The report body must not include tool logs, JSON, URIs, or machine-readable fields.
 - If the tool returns zero data or an error limitation, still write a limitation report with root cause and missing evidence.

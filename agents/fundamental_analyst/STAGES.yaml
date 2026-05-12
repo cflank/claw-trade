@@ -33,7 +33,7 @@ tool_policy:
   owner: stage_profile
   python_calls_tools: false
 artifact_policy:
-  input: approved_artifact_refs_only
+  input: approved_l1_report_text_with_traceable_refs
   output: canonical_artifact
   hard_gate_failed_artifacts_enter_downstream: false
 pm_policy:

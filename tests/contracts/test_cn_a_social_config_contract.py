@@ -13,12 +13,12 @@ ALIAS_RULES_PATH = SOCIAL_CONFIG_ROOT / "alias_rules.yaml"
 KEYWORD_CATEGORIES_PATH = SOCIAL_CONFIG_ROOT / "keyword_categories.yaml"
 
 
-def test_alias_rules_uses_only_approved_artifact_refs_for_alias_source() -> None:
+def test_alias_rules_uses_only_approved_traceable_materials_for_alias_source() -> None:
     alias_rules = RULES_MODULE.load_alias_rules(ALIAS_RULES_PATH)
 
     rules = alias_rules.get("rules")
     assert isinstance(rules, dict)
-    assert rules.get("approved_aliases_source") == "approved_artifact_refs_only"
+    assert rules.get("approved_aliases_source") == "approved_traceable_alias_materials_only"
 
 
 def test_keyword_categories_contains_attention_topic_and_forbidden_target_match() -> None:
@@ -41,7 +41,7 @@ def test_keyword_categories_contains_attention_topic_and_forbidden_target_match(
             """
 profile: CN_A
 rules:
-  approved_aliases_source: approved_artifact_refs_only
+  approved_aliases_source: approved_traceable_alias_materials_only
   secret: should_fail
 """,
             "禁用字段",
@@ -51,7 +51,7 @@ rules:
             """
 profile: CN_A
 rules:
-  approved_aliases_source: approved_artifact_refs_only
+  approved_aliases_source: approved_traceable_alias_materials_only
   raw_payload: should_fail
 """,
             "raw_payload",
@@ -114,7 +114,7 @@ def test_social_config_loader_blocks_missing_cn_a_profile(tmp_path: Path, loader
     if loader_name == "load_alias_rules":
         payload = """
 rules:
-  approved_aliases_source: approved_artifact_refs_only
+  approved_aliases_source: approved_traceable_alias_materials_only
 """
     else:
         payload = """

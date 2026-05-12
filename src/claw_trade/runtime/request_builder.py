@@ -86,7 +86,7 @@ def build_request_context(
     stage: Stage,
     manifest: ApprovedManifest,
 ) -> RequestBuildResult:
-    # Python 只做运行前校验与参数拼装，不负责 worker 正文，也不能替 OpenClaw 改写 provider request。
+    # Python 只做运行前校验与参数拼装；可搬运已批准上游报告正文，但不能生成或改写 worker 观点。
     profile = require_profile(state.request.profile)
     if not profile.ok:
         return RequestBuildResult.failed(
@@ -172,19 +172,9 @@ def build_request_context(
             reason=str(exc),
             paths=(policy.source_path,),
         )
-    if not allowed_tools:
-        return RequestBuildResult.failed(
-            state=state,
-            worker_id=worker_id,
-            stage=stage,
-            category="config_blocked",
-            reason=f"阶段工具为空: {worker_id}",
-            paths=(policy.source_path,),
-        )
-
     try:
-        upstream_refs = manifest.for_downstream_stage(stage=stage, run_id=state.run_id)
-        upstream_caps = manifest.capabilities_for_downstream_stage(stage=stage, run_id=state.run_id)
+        upstream_refs = manifest.for_worker_call(stage=stage, worker_id=worker_id, run_id=state.run_id)
+        upstream_caps = manifest.capabilities_for_worker_call(stage=stage, worker_id=worker_id, run_id=state.run_id)
     except (ArtifactFlowError, ValueError) as exc:
         return RequestBuildResult.failed(
             state=state,
@@ -218,15 +208,6 @@ def build_request_context(
 
 def build_worker_call_from_context(context: RequestBuildContext) -> RequestBuildResult:
     state = context.state
-    if not context.allowed_tools:
-        return RequestBuildResult.failed(
-            state=state,
-            worker_id=context.worker_id,
-            stage=context.stage,
-            category="config_blocked",
-            reason=f"阶段工具为空: {context.worker_id}",
-        )
-
     manifest_reason = _validate_manifest_contract(
         context.stage,
         context.upstream_materials,
@@ -252,7 +233,7 @@ def build_worker_call_from_context(context: RequestBuildContext) -> RequestBuild
     )
     evidence_dir = state.run_dir / "calls" / call_id
 
-    # 这里只传运行变量和 approved capability，禁止 Python 生成业务正文。
+    # 这里只生成静态运行变量和 approved capability；完整上游报告正文由 runner 在批准后填入。
     call = WorkerCall(
         call_id=call_id,
         run_id=state.run_id,
@@ -285,7 +266,7 @@ def build_worker_call(
     stage: Stage,
     manifest: ApprovedManifest,
 ) -> RequestBuildResult:
-    # 这里只校验运行上下文和权限边界，禁止 Python 生成业务正文。
+    # 这里只校验运行上下文和权限边界，禁止 Python 生成或改写业务正文。
     context_result = build_request_context(state=state, worker_id=worker_id, stage=stage, manifest=manifest)
     if not context_result.ok or context_result.context is None:
         return context_result

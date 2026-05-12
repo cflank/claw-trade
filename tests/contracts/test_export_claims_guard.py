@@ -250,6 +250,36 @@ def test_validate_export_pm_fields_match_passes() -> None:
     assert guard.ok
 
 
+def test_validate_export_pm_fields_cn_a_without_pm_decision_passes() -> None:
+    mapping = ExportClaimMapping(
+        schema_version="control.export_claims.v1",
+        run_id="run-1",
+        final_report_path="reports/final-report.md",
+        claims=(),
+        pm_decision=None,
+    )
+    guard = validate_export_pm_fields(mapping, None)
+    assert guard.ok
+
+
+def test_validate_export_pm_fields_cn_a_with_synthetic_pm_decision_fails() -> None:
+    mapping = ExportClaimMapping(
+        schema_version="control.export_claims.v1",
+        run_id="run-1",
+        final_report_path="reports/final-report.md",
+        claims=(),
+        pm_decision={
+            "source_material_id": "mat-pm-1",
+            "rating": "buy",
+            "final_conclusion": "伪造",
+            "execution_conditions": [],
+            "risk_conditions": [],
+        },
+    )
+    guard = validate_export_pm_fields(mapping, None)
+    assert not guard.ok
+
+
 def sample_state(tmp_path: Path, *, run_id: str) -> WorkflowState:
     run_dir = tmp_path / "runs" / run_id
     (run_dir / "reports").mkdir(parents=True, exist_ok=True)

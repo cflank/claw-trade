@@ -64,7 +64,7 @@ STAGE_PLANS: tuple[StagePlan, ...] = (
         ready_status=RunStatus.RISK_DEBATE_READY,
         next_stage=Stage.PORTFOLIO_DECISION,
         required_upstream_stage=Stage.TRADE_DECISION,
-        collect_first=True,
+        collect_first=False,
     ),
     StagePlan(
         stage=Stage.PORTFOLIO_DECISION,

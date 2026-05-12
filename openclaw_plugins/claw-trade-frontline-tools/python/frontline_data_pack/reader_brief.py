@@ -18,11 +18,6 @@ _DOMAIN_LABELS = {
     "news": "新闻资料",
     "social": "社交与情绪资料",
 }
-_STATUS_LABELS = {
-    "complete": "资料完整，可支撑后续分析章节",
-    "partial": "资料部分可用，后续分析需明确受限边界",
-    "failed": "资料不可用，仅可作为失败审计记录",
-}
 _URI_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 _SECRET_RE = re.compile(
     r"(?i)\b(?:api[_-]?key|token|authorization|password|passwd|signature|sign|secret)\b\s*[:=]\s*\S+"
@@ -46,56 +41,31 @@ def build_reader_brief(input: BriefInput) -> str:
     """生成给 worker 阅读的中文事实材料，禁止投资结论。"""
     try:
         domain_label = _DOMAIN_LABELS[input.domain]
-        coverage_percent = round(input.quality.coverage_score * 100, 2)
         date_window = f"{input.input.start_date} 至 {input.input.end_date}"
-        attempts_total = len(input.provider_attempts)
-        success_attempts = sum(1 for attempt in input.provider_attempts if attempt.status == "success")
-        accepted_total = sum(input.accepted_counts.values())
-        raw_total = sum(attempt.raw_count for attempt in input.provider_attempts)
 
         paragraphs: list[str] = []
         paragraphs.append(
-            "资料范围："
-            f"本次资料包面向{input.input.ticker}，归属市场为{input.input.market}，资料主题属于{domain_label}。"
-            f"统计窗口覆盖 {date_window}。"
-            "以下内容是给后续 worker 直接阅读的事实材料，不是机器审计包，也不扩展为投资判断。"
+            f"{input.input.company_name}（{input.input.ticker}）{domain_label}，统计窗口 {date_window}。"
         )
         paragraphs.append(
-            "材料正文："
-            f"{_summarize_evidence(input.evidence_summary)}"
-            "后续报告只能引用这里已有的事实；材料没有给出的数字、新闻、情绪或图表结论不得补写。"
+            f"事实材料：{_summarize_evidence(input.evidence_summary)}"
         )
-        paragraphs.append(
-            "质量状态："
-            f"当前质量状态为 {input.quality.status}，覆盖分为 {coverage_percent}% ，"
-            f"新鲜度标记为 {input.quality.freshness_status}。"
-            f"{_STATUS_LABELS[input.quality.status]}。"
-        )
-        paragraphs.append(
-            "来源概况："
-            f"本轮累计访问 {attempts_total} 个数据接口，其中成功取得可用结果 {success_attempts} 个，"
-            f"形成可用材料 {accepted_total} 条，原始返回记录 {raw_total} 条。"
-            f"{_summarize_attempts(input)}"
-        )
+
+        attempt_summary = _summarize_attempts(input)
+        if attempt_summary:
+            paragraphs.append(f"来源：{attempt_summary}")
+
         if input.missing_items:
             paragraphs.append(
-                "证据缺口："
-                f"目前确认的缺口包括 {_join_human_list(input.missing_items)}。"
-                "这些缺口会直接限制可被稳健支持的分析维度。"
+                "未覆盖项："
+                f"{_join_human_list(input.missing_items)}。"
             )
-        else:
-            paragraphs.append("证据缺口：当前未发现显式缺口项，但仍需以已采集证据范围为上限解释结论。")
 
         if input.conflict_diagnostics:
             paragraphs.append(
-                "冲突诊断："
-                f"已记录的冲突提示包括 {_join_human_list(input.conflict_diagnostics)}。"
-                "冲突项表示来源之间存在不一致，需要在后续分析中注明差异。"
+                "来源冲突："
+                f"{_join_human_list(input.conflict_diagnostics)}。"
             )
-        else:
-            paragraphs.append("冲突诊断：当前未记录显式冲突项，来源之间未发现明显相互否定。")
-
-        paragraphs.append(_status_boundary_line(input))
 
         text = "\n\n".join(paragraphs).strip()
         text = _ensure_brief_length(text, input)
@@ -150,17 +120,21 @@ def _summarize_attempts(input: BriefInput) -> str:
     grouped: dict[tuple[str, str], int] = {}
     for attempt in input.provider_attempts:
         key = (attempt.provider, attempt.endpoint)
-        grouped[key] = grouped.get(key, 0) + attempt.accepted_count
+        grouped[key] = grouped.get(key, 0) + max(0, attempt.accepted_count)
 
     if not grouped:
-        return "本轮未形成可归因来源。"
+        return ""
 
     parts: list[str] = []
     for (provider, endpoint), accepted_count in sorted(grouped.items(), key=lambda item: item[1], reverse=True):
+        if accepted_count <= 0:
+            continue
         if len(parts) >= 6:
             break
         parts.append(f"{provider}/{endpoint} 提供 {accepted_count} 条可用材料")
-    return "来源分布为：" + "；".join(parts) + "。"
+    if not parts:
+        return ""
+    return "；".join(parts) + "。"
 
 
 def _summarize_evidence(evidence_summary: list[str]) -> str:
@@ -186,24 +160,8 @@ def _join_human_list(items: list[str]) -> str:
     return "、".join(chosen)
 
 
-def _status_boundary_line(input: BriefInput) -> str:
-    if input.quality.status == "complete":
-        return (
-            "使用边界：当前资料包可作为后续 worker 的主要证据基础，但仍需保持“仅引用已采集与可追溯事实”的约束，"
-            "新增结论必须能够回溯到本次来源摘要中的证据类别。"
-        )
-    if input.quality.status == "partial":
-        return (
-            "使用边界：当前资料包只允许在已覆盖维度内展开分析；对缺口维度不得补写推测性事实，"
-            "并应明确标注缺口对结论稳定性的影响范围。"
-        )
-    return (
-        "使用边界：当前资料包处于失败状态，仅可用于说明失败原因、证据缺口与冲突诊断，"
-        "不得据此扩展事实判断。后续流程应优先触发补采或重跑。"
-    )
-
-
 def _ensure_brief_length(text: str, input: BriefInput) -> str:
+    _ = input
     if len(text) > 3000:
         truncated = text[:3000].rstrip()
         if truncated and truncated[-1] not in "。！？":
@@ -211,24 +169,7 @@ def _ensure_brief_length(text: str, input: BriefInput) -> str:
                 truncated = truncated[:2999].rstrip()
             truncated += "。"
         return truncated[:3000]
-
-    if len(text) >= 500:
-        return text
-
-    supplement = (
-        f"补充说明：本次资料窗口为 {input.input.start_date} 至 {input.input.end_date}，"
-        f"覆盖对象为 {input.input.ticker}，质量状态 {input.quality.status}，"
-        f"覆盖分 {round(input.quality.coverage_score * 100, 2)}%，"
-        f"数据接口访问 {len(input.provider_attempts)} 次。"
-        "这份材料强调已取得的事实、证据缺口与冲突诊断，供后续 worker 按自然语言材料引用。"
-    )
-    enriched = text
-    while len(enriched) < 500:
-        next_block = "\n\n" + supplement
-        if len(enriched) + len(next_block) > 3000:
-            break
-        enriched += next_block
-    return enriched
+    return text
 
 
 def _extract_missing_core_fields(pack: PackEnvelope) -> list[str]:

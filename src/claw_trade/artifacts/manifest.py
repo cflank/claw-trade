@@ -166,6 +166,44 @@ class ApprovedManifest:
             return ()
         return _STAGE_WORKERS[upstream]
 
+    def required_sources_for_worker_call(self, stage: Stage, worker_id: str) -> tuple[tuple[str, Stage], ...]:
+        if stage not in _STAGE_WORKERS:
+            raise ArtifactFlowError(f"unknown stage: {stage.value}")
+        if worker_id not in _STAGE_WORKERS[stage]:
+            raise ArtifactFlowError(f"worker 不属于阶段: stage={stage.value} worker={worker_id}")
+        if stage == Stage.FRONTLINE:
+            return ()
+        frontline_sources = tuple((item, Stage.FRONTLINE) for item in _STAGE_WORKERS[Stage.FRONTLINE])
+        if stage == Stage.INVESTMENT_DEBATE:
+            if worker_id == "bear_researcher":
+                return frontline_sources + (("bull_researcher", Stage.INVESTMENT_DEBATE),)
+            return frontline_sources
+        if stage == Stage.INVESTMENT_DECISION:
+            return frontline_sources + tuple(
+                (item, Stage.INVESTMENT_DEBATE) for item in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]
+            )
+        if stage == Stage.TRADE_DECISION:
+            return (("research_manager", Stage.INVESTMENT_DECISION),)
+        if stage == Stage.RISK_DEBATE:
+            risk_sources: tuple[tuple[str, Stage], ...] = ()
+            if worker_id == "risk_guardian":
+                risk_sources = (("risk_challenger", Stage.RISK_DEBATE),)
+            elif worker_id == "risk_moderator":
+                risk_sources = (
+                    ("risk_challenger", Stage.RISK_DEBATE),
+                    ("risk_guardian", Stage.RISK_DEBATE),
+                )
+            return frontline_sources + (("trader", Stage.TRADE_DECISION),) + risk_sources
+        if stage == Stage.PORTFOLIO_DECISION:
+            return (
+                ("research_manager", Stage.INVESTMENT_DECISION),
+                *tuple((item, Stage.RISK_DEBATE) for item in _STAGE_WORKERS[Stage.RISK_DEBATE]),
+            )
+        upstream = _UPSTREAM_STAGE[stage]
+        if upstream is None:
+            return ()
+        return tuple((item, upstream) for item in _STAGE_WORKERS[upstream])
+
     def has_worker(self, worker_id: str, stage: Stage, run_id: str | None = None) -> bool:
         for material in self._materials(run_id):
             if material.worker_id == worker_id and material.stage == stage:
@@ -207,12 +245,75 @@ class ApprovedManifest:
             )
         return tuple(refs)
 
+    def for_worker_call(
+        self,
+        stage: Stage,
+        worker_id: str,
+        run_id: str | None = None,
+    ) -> tuple[MaterialReadRef, ...]:
+        sources = self.required_sources_for_worker_call(stage=stage, worker_id=worker_id)
+        if not sources:
+            return ()
+        selected = self._selected_materials_for_sources(sources=sources, run_id=run_id)
+        selected_by_source = {(material.worker_id, material.stage): material for material in selected}
+        missing = [
+            f"{source_worker}@{source_stage.value}"
+            for source_worker, source_stage in sources
+            if (source_worker, source_stage) not in selected_by_source
+        ]
+        if missing:
+            raise ArtifactFlowError(
+                f"worker 输入材料缺失: run_id={run_id or '<auto>'} "
+                f"stage={stage.value} worker={worker_id} missing_sources={','.join(missing)}"
+            )
+        refs: list[MaterialReadRef] = []
+        for source in sources:
+            material = selected_by_source[source]
+            capability_id = _capability_id(material)
+            refs.append(
+                MaterialReadRef(
+                    material_id=material.material_id,
+                    capability_id=capability_id,
+                    worker_id=material.worker_id,
+                    stage=material.stage,
+                    l1_uri=material.l1_uri,
+                    l1_sha256=material.l1_sha256,
+                    l2_index_uri=material.l2_index_uri,
+                    l2_allowed_prefix=_l2_prefix(material),
+                    call_id=material.call_id,
+                )
+            )
+        return tuple(refs)
+
     def capabilities_for_downstream_stage(
         self,
         stage: Stage,
         run_id: str | None = None,
     ) -> tuple[OpenVikingReadCapability, ...]:
         refs = self.for_downstream_stage(stage=stage, run_id=run_id)
+        out: list[OpenVikingReadCapability] = []
+        for ref in refs:
+            material = self._by_id[ref.material_id]
+            out.append(
+                OpenVikingReadCapability(
+                    capability_id=ref.capability_id,
+                    material_id=ref.material_id,
+                    allowed_l1_uri=ref.l1_uri,
+                    allowed_l1_sha256=ref.l1_sha256,
+                    allowed_l2_prefix=ref.l2_allowed_prefix,
+                    manifest_entry_sha256=manifest_entry_sha256(material),
+                    allowed_l2_index_sha256=material.l2_index.index_sha256,
+                )
+            )
+        return tuple(out)
+
+    def capabilities_for_worker_call(
+        self,
+        stage: Stage,
+        worker_id: str,
+        run_id: str | None = None,
+    ) -> tuple[OpenVikingReadCapability, ...]:
+        refs = self.for_worker_call(stage=stage, worker_id=worker_id, run_id=run_id)
         out: list[OpenVikingReadCapability] = []
         for ref in refs:
             material = self._by_id[ref.material_id]
@@ -254,6 +355,20 @@ class ApprovedManifest:
                 continue
             selected[material.worker_id] = material
         return tuple(selected[worker_id] for worker_id in workers if worker_id in selected)
+
+    def _selected_materials_for_sources(
+        self,
+        sources: tuple[tuple[str, Stage], ...],
+        run_id: str | None,
+    ) -> tuple[ApprovedMaterial, ...]:
+        materials = self._materials(run_id=run_id)
+        wanted = set(sources)
+        selected: dict[tuple[str, Stage], ApprovedMaterial] = {}
+        for material in materials:
+            key = (material.worker_id, material.stage)
+            if key in wanted:
+                selected[key] = material
+        return tuple(selected[source] for source in sources if source in selected)
 
 
 class ManifestStore:

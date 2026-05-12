@@ -43,7 +43,7 @@ class ExportClaimMapping:
     run_id: str
     final_report_path: str
     claims: tuple[ExportClaim, ...]
-    pm_decision: dict[str, object]
+    pm_decision: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -220,11 +220,26 @@ def validate_export_claims_are_supported(
     return guard_passed(category="export_truthfulness")
 
 
-def validate_export_pm_fields(mapping: ExportClaimMapping, pm_decision: PMDecision) -> GuardResult:
+def validate_export_pm_fields(mapping: ExportClaimMapping, pm_decision: PMDecision | None) -> GuardResult:
+    if pm_decision is None:
+        if mapping.pm_decision is None:
+            return guard_passed(category="pm_owner")
+        return guard_failed(
+            category="pm_owner",
+            reason="CN_A 导出映射不应伪造结构化 pm_decision",
+            paths=(Path("reports/export-claims.json"),),
+        )
+
     # PM owner 防线：export 映射只能复述 PM 结构化决策，不能改写字段。
     guard = validate_export_does_not_rewrite_pm(pm_decision, mapping)
     if not guard.ok:
         return guard
+    if mapping.pm_decision is None:
+        return guard_failed(
+            category="pm_owner",
+            reason="export mapping 缺少 pm_decision",
+            paths=(Path("reports/export-claims.json"),),
+        )
     source_material_id = _expect_str(mapping.pm_decision, "source_material_id")
     if source_material_id is None:
         return guard_failed(
@@ -286,7 +301,9 @@ def _parse_claim_item(index: int, claim_raw: object) -> ExportClaim | str:
     )
 
 
-def _parse_pm_decision(pm_raw: object) -> dict[str, object] | str:
+def _parse_pm_decision(pm_raw: object) -> dict[str, object] | None | str:
+    if pm_raw is None:
+        return None
     if not isinstance(pm_raw, dict):
         return "export claim mapping pm_decision 必须是对象"
     required_fields = (

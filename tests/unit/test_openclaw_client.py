@@ -50,6 +50,43 @@ def test_build_openclaw_command_keeps_upstream_and_capability_sha_fields() -> No
     assert command.system_context_policy == "openclaw_default"
 
 
+def test_cn_a_bear_command_supplies_debate_prompt_runtime_vars() -> None:
+    call = _valid_call()
+    command = build_openclaw_command(
+        replace(
+            call,
+            worker_id="bear_researcher",
+            profile="CN_A",
+            prompt_runtime_vars={
+                "market_research_report": "完整市场报告正文",
+                "sentiment_report": "完整舆情报告正文",
+                "news_report": "完整新闻报告正文",
+                "fundamentals_report": "完整基本面报告正文",
+                "history": "\nBull Analyst: 完整多方报告正文",
+                "current_response": "Bull Analyst: 完整多方报告正文",
+                "past_memory_str": "",
+            },
+        )
+    )
+
+    assert command.runtime_vars["market_research_report"] == "完整市场报告正文"
+    assert command.runtime_vars["current_response"] == "Bull Analyst: 完整多方报告正文"
+    assert command.runtime_vars["past_memory_str"] == ""
+
+
+def test_cn_a_pure_prompt_worker_command_can_have_no_visible_tools() -> None:
+    command = build_openclaw_command(
+        replace(
+            _valid_call(),
+            worker_id="bear_researcher",
+            profile="CN_A",
+            allowed_tools=(),
+        )
+    )
+
+    assert command.allowed_tools == ()
+
+
 def test_parse_openclaw_result_converts_paths() -> None:
     payload = {
         "status": "succeeded",

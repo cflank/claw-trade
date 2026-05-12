@@ -104,6 +104,17 @@ class _Exporter:
         )
 
 
+class _AssetFailExporter:
+    def export(self, state: WorkflowState, manifest) -> ExportResult:  # type: ignore[no-untyped-def]
+        _ = manifest
+        return ExportResult.failed(
+            state=state,
+            category="export_report_assets",
+            reason="报告导出失败：未找到可复制的图表资产",
+            paths=(state.run_dir / "calls",),
+        )
+
+
 class _RunnerHarness:
     def __init__(self, tmp_path: Path) -> None:
         self.root = tmp_path / "runs"
@@ -168,6 +179,31 @@ def test_report_exporting_complete_requires_passed_export_result(monkeypatch, tm
 
     assert state.status == RunStatus.FAILED
     assert "REPORT_EXPORTING 缺少 export-result.json" in (state.failure_reason or "")
+
+
+def test_cn_a_export_asset_failure_does_not_fail_workflow(monkeypatch, tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    harness.runner.exporter = _AssetFailExporter()
+    decisions = iter(
+        (
+            Decision(kind=DecisionKind.EXPORT_REPORT, next_status=RunStatus.REPORT_EXPORTING),
+            Decision(kind=DecisionKind.COMPLETE, next_status=RunStatus.COMPLETED),
+        )
+    )
+
+    def _decide_sequence(input) -> Decision:  # type: ignore[no-untyped-def]
+        del input
+        return next(decisions)
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _decide_sequence)
+    state = harness.runner.run(_request(profile="CN_A"))
+
+    assert state.status == RunStatus.COMPLETED
+    exported = harness.store.load_export_result(state.run_id)
+    assert exported is not None
+    assert exported.status == "failed"
+    assert exported.failure is not None
+    assert exported.failure.category == "export_report_assets"
 
 
 def test_single_worker_openclaw_failed_does_not_read_evidence(tmp_path: Path) -> None:

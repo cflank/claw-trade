@@ -4,4 +4,4 @@ rules:
   trim_suffixes:
     - 股份有限公司
     - 有限公司
-  approved_aliases_source: approved_artifact_refs_only
+  approved_aliases_source: approved_traceable_alias_materials_only

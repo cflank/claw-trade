@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +14,7 @@ class StopPoint(str, Enum):
     FIRST_RESPONSE = "first_response"
     SINGLE_WORKER_COMPLETE = "single_worker_complete"
     FRONTLINE_READY = "frontline_ready"
+    INVESTMENT_DEBATE_READY = "investment_debate_ready"
     COMPLETED = "completed"
 
 
@@ -191,6 +192,7 @@ class WorkerCall:
     evidence_dir: Path
     stop_after_first_response: bool
     system_context_policy: str = "openclaw_default"
+    prompt_runtime_vars: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -284,6 +286,23 @@ class ExportResult:
                 human_action_required=None,
             ),
         )
+
+
+_CN_NON_BLOCKING_EXPORT_FAILURE_CATEGORIES = frozenset({"export_report_assets"})
+
+
+def export_result_allows_workflow_completion(profile: str, export_result: ExportResult) -> bool:
+    if export_result.status == "passed":
+        return True
+    return _is_cn_non_blocking_export_failure(profile=profile, export_result=export_result)
+
+
+def _is_cn_non_blocking_export_failure(profile: str, export_result: ExportResult) -> bool:
+    if profile != "CN_A":
+        return False
+    if export_result.status != "failed" or export_result.failure is None:
+        return False
+    return export_result.failure.category in _CN_NON_BLOCKING_EXPORT_FAILURE_CATEGORIES
 
 
 def normalize_stop_point(value: str | None) -> StopPoint:

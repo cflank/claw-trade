@@ -51,7 +51,7 @@ def test_approve_worker_material_returns_approved_material_when_all_gates_pass(t
     assert result.material.hard_gate_result_path == call.evidence_dir / "approval-hard-gate.json"
 
 
-def test_approve_worker_material_rejects_portfolio_manager_without_pm_decision_evidence(tmp_path: Path) -> None:
+def test_approve_worker_material_rejects_us_portfolio_manager_without_pm_decision_evidence(tmp_path: Path) -> None:
     call = _make_call(tmp_path, worker_id="portfolio_manager", stage=Stage.PORTFOLIO_DECISION)
     l1_text = _l1_report()
     evidence = _make_evidence(call, raw_output="和 L1 不同")
@@ -65,6 +65,26 @@ def test_approve_worker_material_rejects_portfolio_manager_without_pm_decision_e
     assert result.material is None
     assert result.category == "pm_owner"
     assert result.reason is not None
+
+
+def test_approve_worker_material_accepts_cn_a_portfolio_manager_without_pm_decision_evidence(tmp_path: Path) -> None:
+    call = _make_call(
+        tmp_path,
+        worker_id="portfolio_manager",
+        stage=Stage.PORTFOLIO_DECISION,
+        profile="CN_A",
+    )
+    l1_text = _l1_report()
+    evidence = _make_evidence(call, raw_output="和 L1 不同")
+    l2_index = _make_l2_index(call, evidence_id="l2-1")
+    client, receipt = _seed_openviking_client(call=call, evidence=evidence, l1_text=l1_text, l2_index=l2_index)
+    _write_material_claims_evidence(call=call, receipt=receipt, claim_evidence_id="l2-1")
+
+    result = approve_worker_material(call=call, evidence=evidence, openviking=client)
+
+    assert result.ok
+    assert result.material is not None
+    assert result.material.worker_id == "portfolio_manager"
 
 
 def test_approve_worker_material_accepts_portfolio_manager_with_pm_decision_evidence(tmp_path: Path) -> None:
@@ -126,6 +146,7 @@ def _make_call(
     worker_id: str,
     stage: Stage,
     call_id: str = "call-1",
+    profile: str = "US",
 ) -> WorkerCall:
     target = make_material_target("run-1", stage, worker_id, call_id)
     evidence_dir = tmp_path / "runs" / "run-1" / "calls" / call_id / "evidence"
@@ -135,7 +156,7 @@ def _make_call(
         run_id="run-1",
         worker_id=worker_id,
         stage=stage,
-        profile="us",
+        profile=profile,
         ticker="AAPL",
         company_name="Apple Inc.",
         market="US",

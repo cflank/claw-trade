@@ -46,19 +46,22 @@ def test_build_request_context_rejects_worker_stage_mismatch(tmp_path: Path) -> 
     assert "阶段不匹配" in result.failure.reason
 
 
-def test_build_request_context_rejects_empty_allowed_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_request_context_allows_empty_allowed_tools_for_pure_prompt_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     state = _state(tmp_path=tmp_path, profile="US")
     monkeypatch.setattr(request_builder, "resolve_tools", lambda policy, registry: ())
     result = build_request_context(
         state=state,
-        worker_id="market_analyst",
-        stage=Stage.FRONTLINE,
+        worker_id="research_manager",
+        stage=Stage.INVESTMENT_DECISION,
         manifest=ApprovedManifest.empty(),
     )
     assert result.ok is False
     assert result.failure is not None
     assert result.failure.category == "config_blocked"
-    assert "阶段工具为空" in result.failure.reason
+    assert "worker 输入材料缺失" in result.failure.reason
 
 
 def test_build_request_context_rejects_manifest_capability_mismatch(tmp_path: Path) -> None:
@@ -196,9 +199,25 @@ class _BadManifest:
     def for_downstream_stage(self, stage: Stage, run_id: str | None = None) -> tuple[MaterialReadRef, ...]:
         return self.refs
 
+    def for_worker_call(
+        self,
+        stage: Stage,
+        worker_id: str,
+        run_id: str | None = None,
+    ) -> tuple[MaterialReadRef, ...]:
+        return self.refs
+
     def capabilities_for_downstream_stage(
         self,
         stage: Stage,
+        run_id: str | None = None,
+    ) -> tuple[OpenVikingReadCapability, ...]:
+        return self.capabilities
+
+    def capabilities_for_worker_call(
+        self,
+        stage: Stage,
+        worker_id: str,
         run_id: str | None = None,
     ) -> tuple[OpenVikingReadCapability, ...]:
         return self.capabilities

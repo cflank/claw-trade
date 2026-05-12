@@ -10,7 +10,7 @@ ALIAS_RULES_PATH = CONFIG_ROOT / "alias_rules.yaml"
 KEYWORD_CATEGORIES_PATH = CONFIG_ROOT / "keyword_categories.yaml"
 
 _REQUIRED_PROFILE = "CN_A"
-_REQUIRED_ALIAS_SOURCE = "approved_artifact_refs_only"
+_REQUIRED_ALIAS_SOURCE = "approved_traceable_alias_materials_only"
 _REQUIRED_KEYWORD_CATEGORIES = frozenset({"attention", "topic", "forbidden_as_target_match"})
 _INDUSTRY_OR_TOPIC_CLASS_TERMS = frozenset({"白酒", "消费", "国企改革"})
 

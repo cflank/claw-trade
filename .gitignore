@@ -4,6 +4,7 @@ src-bak/
 .env.local
 .claude/
 runs/
+logs/
 agents/*/.openclaw/
 
 # Ad-hoc live capture scratch. Curated proof promoted into docs/evidence can still

@@ -16,10 +16,14 @@ from frontline_data_pack.normalizer_market import (  # noqa: E402
     normalize_market_rows,
     validate_ohlcv_rows,
 )
-from frontline_data_pack.profile import build_market_provider_query, normalize_market_input  # noqa: E402
+from frontline_data_pack.profile import (  # noqa: E402
+    MIN_MARKET_TECHNICAL_WINDOW_DAYS,
+    build_market_provider_query,
+    normalize_market_input,
+)
 
 
-def test_t_mkt_001_normalize_market_input_defaults_60_day_window() -> None:
+def test_t_mkt_001_normalize_market_input_defaults_to_technical_window() -> None:
     normalized = normalize_market_input(
         {
             "ticker": "SH600519",
@@ -30,8 +34,38 @@ def test_t_mkt_001_normalize_market_input_defaults_60_day_window() -> None:
 
     assert normalized.ticker == "600519.SH"
     assert normalized.end_date == "2026-05-08"
-    assert normalized.start_date == "2026-03-09"
+    expected = datetime.strptime("2026-05-08", "%Y-%m-%d").date() - timedelta(days=MIN_MARKET_TECHNICAL_WINDOW_DAYS)
+    assert normalized.start_date == expected.isoformat()
     assert normalized.adjust == "qfq"
+
+
+def test_t_mkt_001_explicit_short_start_date_expands_to_technical_window() -> None:
+    normalized = normalize_market_input(
+        {
+            "ticker": "SH600519",
+            "market": "CN_A",
+            "start_date": "2026-04-11",
+            "end_date": "2026-05-11",
+        }
+    )
+
+    expected = datetime.strptime("2026-05-11", "%Y-%m-%d").date() - timedelta(days=MIN_MARKET_TECHNICAL_WINDOW_DAYS)
+    assert normalized.start_date == expected.isoformat()
+    assert normalized.end_date == "2026-05-11"
+
+
+def test_t_mkt_001_explicit_earlier_start_date_is_not_shortened() -> None:
+    normalized = normalize_market_input(
+        {
+            "ticker": "SH600519",
+            "market": "CN_A",
+            "start_date": "2025-12-01",
+            "end_date": "2026-05-11",
+        }
+    )
+
+    assert normalized.start_date == "2025-12-01"
+    assert normalized.end_date == "2026-05-11"
 
 
 def test_t_mkt_001_validate_ohlcv_rejects_high_below_close_and_records_diagnostic() -> None:
@@ -166,6 +200,6 @@ def test_t_mkt_001_build_market_provider_query_uses_normalized_input() -> None:
     assert query.market == "CN_A"
     assert query.ticker == "600519.SH"
     assert query.adjust == "qfq"
-    expected = datetime.strptime("2026-05-08", "%Y-%m-%d").date() - timedelta(days=60)
+    expected = datetime.strptime("2026-05-08", "%Y-%m-%d").date() - timedelta(days=MIN_MARKET_TECHNICAL_WINDOW_DAYS)
     normalized = normalize_market_input({"ticker": "600519", "market": "CN_A"}, today=date(2026, 5, 8))
     assert normalized.start_date == expected.isoformat()

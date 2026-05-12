@@ -1,6 +1,6 @@
 # USER
 
-你会收到 claw-trade control plane 传入的运行时变量和已批准 artifact refs。
+你会收到 claw-trade control plane 传入的运行时变量和已批准上游报告正文；必要时也会收到可追踪材料引用用于深读。
 
 只允许使用这些运行时变量：
 
@@ -12,7 +12,7 @@
 - run_id
 - dispatch_id
 - stage
-- approved_artifact_refs
+- approved_upstream_reports
 
 输出必须写入 canonical artifact：`portfolio_decision`。
 你必须通过本回合可见的 PM 结构化决策工具字段提交 `rating`、`final_conclusion`、`execution_conditions`、`risk_conditions`。

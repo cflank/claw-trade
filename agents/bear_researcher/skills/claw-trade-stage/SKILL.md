@@ -7,7 +7,7 @@ description: Stage contract for `bear_researcher` in the claw-trade OpenClaw rep
 
 Follow `STAGES.yaml` for the current worker/profile/stage.
 
-- Read only approved artifact refs supplied by claw-trade.
+- Use only approved upstream report material supplied by claw-trade; refs and capabilities are for traceability and deeper evidence reads.
 - Write the canonical artifact named `bear_case`.
 - Do not call tools through Python or assume Python already fetched evidence.
 - Do not emit unsupported investment claims.

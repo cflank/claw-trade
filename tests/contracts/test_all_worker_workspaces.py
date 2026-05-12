@@ -76,11 +76,16 @@ def test_all_worker_stage_policy_is_loadable_and_resolvable(
     assert policy_result.ok is True and policy_result.policy is not None
     policy = policy_result.policy
     assert policy.stage == worker_by_id(worker_id).stage
-    assert policy.tool_intents
     assert policy.openviking_access.strip()
 
     tools = resolve_tools(policy, registry)
-    assert tools
+    if policy.stage == worker_by_id(worker_id).stage and policy.openviking_access == "none":
+        if policy.stage.value == "frontline":
+            assert tools
+        else:
+            assert tools == ()
+    else:
+        assert tools
     _assert_openviking_access_tools(policy.openviking_access, tools)
 
 

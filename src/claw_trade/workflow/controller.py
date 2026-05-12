@@ -19,6 +19,7 @@ from claw_trade.workflow.models import (
     WorkerResult,
     WorkerStatus,
     WorkflowState,
+    export_result_allows_workflow_completion,
     is_terminal_status,
 )
 from claw_trade.workflow.workers import (
@@ -145,6 +146,25 @@ def decide_wake_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMani
             reason=upstream_check.reason or "上游 approved material 缺失",
         )
 
+    if stage == Stage.INVESTMENT_DEBATE and state.request.stop_point == StopPoint.NONE:
+        next_worker = next_investment_debate_worker(manifest=manifest)
+        if next_worker is None:
+            return Decision(
+                kind=DecisionKind.ADVANCE,
+                stage=stage,
+                next_status=plan.ready_status,
+            )
+        return wake_investment_debate_worker(state=state, worker_id=next_worker)
+    if stage == Stage.RISK_DEBATE and state.request.stop_point == StopPoint.NONE:
+        next_worker = next_risk_debate_worker(manifest=manifest)
+        if next_worker is None:
+            return Decision(
+                kind=DecisionKind.ADVANCE,
+                stage=stage,
+                next_status=plan.ready_status,
+            )
+        return wake_risk_debate_worker(state=state, worker_id=next_worker)
+
     # controller 只决定下一批 worker id，不负责构造运行时调用参数。
     return Decision(
         kind=DecisionKind.WAKE_STAGE,
@@ -245,6 +265,19 @@ def decide_running_stage(
             failure=merge_stage_failures(run_id=state.run_id, stage=stage, failures=failures),
         )
 
+    if stage == Stage.INVESTMENT_DEBATE and state.request.stop_point == StopPoint.NONE:
+        return decide_running_investment_debate(
+            state=state,
+            results=stage_results,
+            manifest=manifest,
+        )
+    if stage == Stage.RISK_DEBATE and state.request.stop_point == StopPoint.NONE:
+        return decide_running_risk_debate(
+            state=state,
+            results=stage_results,
+            manifest=manifest,
+        )
+
     if state.request.stop_point == StopPoint.FIRST_RESPONSE:
         if first_response_ready(results=stage_results, workers=expected_workers):
             return Decision(DecisionKind.COMPLETE, next_status=RunStatus.COMPLETED)
@@ -296,6 +329,107 @@ def first_response_ready(results: tuple[WorkerResult, ...], workers: tuple[str, 
     return set(workers).issubset(succeeded)
 
 
+def next_investment_debate_worker(manifest: ApprovedManifest) -> str | None:
+    if not manifest.has_worker(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE):
+        return "bull_researcher"
+    if not manifest.has_worker(worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE):
+        return "bear_researcher"
+    return None
+
+
+def wake_investment_debate_worker(state: WorkflowState, worker_id: str) -> Decision:
+    plan = stage_plan(Stage.INVESTMENT_DEBATE)
+    return Decision(
+        kind=DecisionKind.WAKE_STAGE,
+        stage=Stage.INVESTMENT_DEBATE,
+        batch=StageBatch(
+            run_id=state.run_id,
+            stage=Stage.INVESTMENT_DEBATE,
+            worker_ids=(worker_id,),
+            scope=BatchScope.FULL_STAGE,
+            collect_first=False,
+            stop_point=state.request.stop_point,
+        ),
+        next_status=plan.running_status,
+    )
+
+
+def next_risk_debate_worker(manifest: ApprovedManifest) -> str | None:
+    if not manifest.has_worker(worker_id="risk_challenger", stage=Stage.RISK_DEBATE):
+        return "risk_challenger"
+    if not manifest.has_worker(worker_id="risk_guardian", stage=Stage.RISK_DEBATE):
+        return "risk_guardian"
+    if not manifest.has_worker(worker_id="risk_moderator", stage=Stage.RISK_DEBATE):
+        return "risk_moderator"
+    return None
+
+
+def wake_risk_debate_worker(state: WorkflowState, worker_id: str) -> Decision:
+    plan = stage_plan(Stage.RISK_DEBATE)
+    return Decision(
+        kind=DecisionKind.WAKE_STAGE,
+        stage=Stage.RISK_DEBATE,
+        batch=StageBatch(
+            run_id=state.run_id,
+            stage=Stage.RISK_DEBATE,
+            worker_ids=(worker_id,),
+            scope=BatchScope.FULL_STAGE,
+            collect_first=False,
+            stop_point=state.request.stop_point,
+        ),
+        next_status=plan.running_status,
+    )
+
+
+def decide_running_investment_debate(
+    state: WorkflowState,
+    results: tuple[WorkerResult, ...],
+    manifest: ApprovedManifest,
+) -> Decision:
+    if not all_workers_have_result(results=results, workers=("bull_researcher",)):
+        return Decision(DecisionKind.WAIT, reason="等待 investment_debate bull_researcher worker result")
+    if not manifest.has_worker(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE):
+        return Decision(DecisionKind.WAIT, reason="等待 investment_debate bull_researcher approved material")
+
+    if not all_workers_have_result(results=results, workers=("bear_researcher",)):
+        return wake_investment_debate_worker(state=state, worker_id="bear_researcher")
+    if not manifest.has_worker(worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE):
+        return Decision(DecisionKind.WAIT, reason="等待 investment_debate bear_researcher approved material")
+
+    return Decision(
+        kind=DecisionKind.ADVANCE,
+        stage=Stage.INVESTMENT_DEBATE,
+        next_status=RunStatus.INVESTMENT_DEBATE_READY,
+    )
+
+
+def decide_running_risk_debate(
+    state: WorkflowState,
+    results: tuple[WorkerResult, ...],
+    manifest: ApprovedManifest,
+) -> Decision:
+    if not all_workers_have_result(results=results, workers=("risk_challenger",)):
+        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_challenger worker result")
+    if not manifest.has_worker(worker_id="risk_challenger", stage=Stage.RISK_DEBATE):
+        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_challenger approved material")
+
+    if not all_workers_have_result(results=results, workers=("risk_guardian",)):
+        return wake_risk_debate_worker(state=state, worker_id="risk_guardian")
+    if not manifest.has_worker(worker_id="risk_guardian", stage=Stage.RISK_DEBATE):
+        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_guardian approved material")
+
+    if not all_workers_have_result(results=results, workers=("risk_moderator",)):
+        return wake_risk_debate_worker(state=state, worker_id="risk_moderator")
+    if not manifest.has_worker(worker_id="risk_moderator", stage=Stage.RISK_DEBATE):
+        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_moderator approved material")
+
+    return Decision(
+        kind=DecisionKind.ADVANCE,
+        stage=Stage.RISK_DEBATE,
+        next_status=RunStatus.RISK_DEBATE_READY,
+    )
+
+
 def expected_workers_for_state(state: WorkflowState, plan: StagePlan) -> tuple[str, ...]:
     if state.request.stop_point in (StopPoint.FIRST_RESPONSE, StopPoint.SINGLE_WORKER_COMPLETE):
         target = resolve_single_worker_target(state)
@@ -307,6 +441,8 @@ def expected_workers_for_state(state: WorkflowState, plan: StagePlan) -> tuple[s
 
 def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedManifest) -> Decision:
     if stage == Stage.FRONTLINE and state.request.stop_point == StopPoint.FRONTLINE_READY:
+        return Decision(kind=DecisionKind.COMPLETE, next_status=RunStatus.COMPLETED)
+    if stage == Stage.INVESTMENT_DEBATE and state.request.stop_point == StopPoint.INVESTMENT_DEBATE_READY:
         return Decision(kind=DecisionKind.COMPLETE, next_status=RunStatus.COMPLETED)
 
     if stage == Stage.PORTFOLIO_DECISION:
@@ -351,8 +487,8 @@ def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMan
 def decide_report_exporting(state: WorkflowState, export_result: ExportResult | None) -> Decision:
     if export_result is None:
         return Decision(kind=DecisionKind.WAIT, reason="等待 export result")
-    # 导出必须显式 passed 才能 completed，避免“有报告文件就算成功”的假阳性。
-    if export_result.status == "passed":
+    # CN_A 下图表资产导出失败属于产品导出证据，不阻断 12-worker workflow 完成。
+    if export_result_allows_workflow_completion(state.request.profile, export_result):
         return Decision(kind=DecisionKind.COMPLETE, next_status=RunStatus.COMPLETED)
     return Decision(
         kind=DecisionKind.FAIL,

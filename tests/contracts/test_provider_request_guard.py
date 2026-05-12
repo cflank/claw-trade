@@ -132,6 +132,41 @@ def test_validate_provider_request_fails_on_bad_payload_shape(
     assert guard.reason is not None and expected in guard.reason
 
 
+def test_validate_provider_request_allows_no_tools_for_pure_prompt_worker(tmp_path: Path) -> None:
+    call, evidence = sample_call_and_evidence(tmp_path)
+    call = _replace_call_tools(call, allowed_tools=())
+    payload = provider_request_payload(call, evidence)
+    payload_body = payload["payload"]
+    assert isinstance(payload_body, dict)
+    payload_body["tools"] = []
+    write_json(evidence.provider_request_path, payload)
+
+    guard = validate_provider_request(call, evidence)
+
+    assert guard.ok
+
+
+def test_validate_provider_request_rejects_model_visible_protocol_pollution(tmp_path: Path) -> None:
+    call, evidence = sample_call_and_evidence(tmp_path)
+    call = _replace_call_tools(call, profile="CN_A", allowed_tools=())
+    payload = provider_request_payload(call, evidence)
+    payload_body = payload["payload"]
+    assert isinstance(payload_body, dict)
+    payload_body["tools"] = []
+    payload_body["messages"] = [
+        {"role": "user", "content": "你正在执行当前分析师的一轮任务。\n[ApprovedMaterials]\nmaterial_id=mat-1"}
+    ]
+    runtime_markers = payload["runtime_markers"]
+    assert isinstance(runtime_markers, dict)
+    runtime_markers["profile"] = "CN_A"
+    write_json(evidence.provider_request_path, payload)
+
+    guard = validate_provider_request(call, evidence)
+
+    assert not guard.ok
+    assert guard.reason is not None and "模型可见 prompt 含机器协议" in guard.reason
+
+
 def sample_call_and_evidence(tmp_path: Path) -> tuple[WorkerCall, ProviderEvidence]:
     evidence_dir = tmp_path / "runs" / "run-1" / "calls" / "call-1" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -204,6 +239,17 @@ def provider_request_payload(call: WorkerCall, evidence: ProviderEvidence) -> di
             "openclaw_run_id": evidence.openclaw_run_id,
         },
     }
+
+
+def _replace_call_tools(
+    call: WorkerCall,
+    *,
+    allowed_tools: tuple[str, ...],
+    profile: str | None = None,
+) -> WorkerCall:
+    from dataclasses import replace
+
+    return replace(call, allowed_tools=allowed_tools, profile=profile or call.profile)
 
 
 def write_json(path: Path, payload: dict[str, object]) -> None:

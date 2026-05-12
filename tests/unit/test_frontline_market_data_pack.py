@@ -36,6 +36,7 @@ from frontline_data_pack.models import (  # noqa: E402
     RsiIndicators,
     TechlabResult,
 )
+from frontline_data_pack.profile import MIN_MARKET_TECHNICAL_WINDOW_DAYS  # noqa: E402
 from frontline_data_pack.runtime_context import ToolRuntimeContext  # noqa: E402
 from frontline_data_pack.techlab_adapter import compute_market_techlab_outputs  # noqa: E402
 
@@ -289,7 +290,7 @@ def test_t_mkt_002_context_errors_fail_fast_without_provider_attempts(
     assert error.value.code == expected_code
 
 
-def test_t_mkt_002_default_60_day_window_recent_rows_max_10_and_trade_date_ascending() -> None:
+def test_t_mkt_002_default_start_date_uses_technical_window_recent_rows_max_10_and_trade_date_ascending() -> None:
     pack = _build_runner(
         call_registry={
             ("akshare", "stock_zh_a_hist"): _market_rows_provider(80),
@@ -310,10 +311,38 @@ def test_t_mkt_002_default_60_day_window_recent_rows_max_10_and_trade_date_ascen
     )
 
     assert pack.input.end_date == "2026-05-09"
-    assert pack.input.start_date == "2026-03-10"
+    expected_start = (date(2026, 5, 9) - timedelta(days=MIN_MARKET_TECHNICAL_WINDOW_DAYS)).isoformat()
+    assert pack.input.start_date == expected_start
     recent_rows = pack.domain_data["price_history"]["recent_rows"]
     assert len(recent_rows) == 10
     assert recent_rows == sorted(recent_rows, key=lambda item: item["trade_date"])
+    assert "market_chart_evidence_gap" not in pack.reader_brief
+
+
+def test_t_mkt_002_explicit_short_start_date_expands_to_technical_window() -> None:
+    pack = _build_runner(
+        call_registry={
+            ("akshare", "stock_zh_a_hist"): _market_rows_provider(80),
+            ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
+            ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
+            ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
+        },
+        techlab_compute=_techlab_complete,
+    ).build(
+        {
+            "ticker": "600519.SH",
+            "market": "CN_A",
+            "company_name": "贵州茅台",
+            "start_date": "2026-04-11",
+            "end_date": "2026-05-11",
+        },
+        _runtime_context(),
+    )
+
+    expected_start = (date(2026, 5, 11) - timedelta(days=MIN_MARKET_TECHNICAL_WINDOW_DAYS)).isoformat()
+    assert pack.input.start_date == expected_start
+    assert pack.input.end_date == "2026-05-11"
+    assert "market_ohlcv_window_insufficient" not in pack.quality.warnings
 
 
 def test_t_mkt_002_reader_brief_material_body_excludes_zero_accepted_sources() -> None:

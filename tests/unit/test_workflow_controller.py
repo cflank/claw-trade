@@ -105,12 +105,95 @@ def test_ready_stage_blocks_on_missing_upstream_material(tmp_path: Path):
     assert decision.failure.category == "artifact_flow"
 
 
+def test_frontline_ready_wakes_bull_first_without_extra_gate(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.FRONTLINE_READY)
+    approved = ManifestView(
+        approved={
+            ("market_analyst", Stage.FRONTLINE),
+            ("fundamental_analyst", Stage.FRONTLINE),
+            ("news_analyst", Stage.FRONTLINE),
+            ("social_analyst", Stage.FRONTLINE),
+        }
+    )
+
+    decision = decide_next(make_input(state=state, manifest=approved))
+
+    assert decision.kind == DecisionKind.WAKE_STAGE
+    assert decision.next_status == RunStatus.INVESTMENT_DEBATE_RUNNING
+    assert decision.stage == Stage.INVESTMENT_DEBATE
+    assert decision.batch is not None
+    assert decision.batch.worker_ids == ("bull_researcher",)
+    assert decision.batch.collect_first is False
+
+
+def test_investment_debate_ready_wakes_research_manager_after_bull_and_bear(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.INVESTMENT_DEBATE_READY)
+    approved = ManifestView(
+        approved={
+            ("bull_researcher", Stage.INVESTMENT_DEBATE),
+            ("bear_researcher", Stage.INVESTMENT_DEBATE),
+        }
+    )
+
+    decision = decide_next(make_input(state=state, manifest=approved))
+
+    assert decision.kind == DecisionKind.WAKE_STAGE
+    assert decision.next_status == RunStatus.INVESTMENT_DECISION_RUNNING
+    assert decision.stage == Stage.INVESTMENT_DECISION
+    assert decision.batch is not None
+    assert decision.batch.worker_ids == ("research_manager",)
+    assert decision.batch.collect_first is False
+
+
+def test_investment_debate_ready_stop_point_completes_without_research_manager(tmp_path: Path):
+    state = make_state(
+        tmp_path=tmp_path,
+        status=RunStatus.INVESTMENT_DEBATE_READY,
+        stop_point=StopPoint.INVESTMENT_DEBATE_READY,
+    )
+    approved = ManifestView(
+        approved={
+            ("bull_researcher", Stage.INVESTMENT_DEBATE),
+            ("bear_researcher", Stage.INVESTMENT_DEBATE),
+        }
+    )
+
+    decision = decide_next(make_input(state=state, manifest=approved))
+
+    assert decision.kind == DecisionKind.COMPLETE
+    assert decision.next_status == RunStatus.COMPLETED
+
+
+def test_trade_decision_ready_wakes_risk_challenger_first_without_collect_first(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.TRADE_DECISION_READY)
+    approved = ManifestView(
+        approved={
+            ("trader", Stage.TRADE_DECISION),
+        }
+    )
+
+    decision = decide_next(make_input(state=state, manifest=approved))
+
+    assert decision.kind == DecisionKind.WAKE_STAGE
+    assert decision.next_status == RunStatus.RISK_DEBATE_RUNNING
+    assert decision.stage == Stage.RISK_DEBATE
+    assert decision.batch is not None
+    assert decision.batch.worker_ids == ("risk_challenger",)
+    assert decision.batch.collect_first is False
+
+
 def test_running_stage_waits_until_all_results_and_approvals(tmp_path: Path):
     state = make_state(tmp_path=tmp_path, status=RunStatus.INVESTMENT_DEBATE_RUNNING)
     partial = (succeeded_result(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE),)
 
     wait_result = decide_next(make_input(state=state, manifest=ManifestView(), worker_results=partial))
     assert wait_result.kind == DecisionKind.WAIT
+
+    bull_approved = ManifestView(approved={("bull_researcher", Stage.INVESTMENT_DEBATE)})
+    wake_bear = decide_next(make_input(state=state, manifest=bull_approved, worker_results=partial))
+    assert wake_bear.kind == DecisionKind.WAKE_STAGE
+    assert wake_bear.batch is not None
+    assert wake_bear.batch.worker_ids == ("bear_researcher",)
 
     finished = (
         succeeded_result(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE),
@@ -124,6 +207,53 @@ def test_running_stage_waits_until_all_results_and_approvals(tmp_path: Path):
 
     assert advance.kind == DecisionKind.ADVANCE
     assert advance.next_status == RunStatus.INVESTMENT_DEBATE_READY
+
+
+def test_running_risk_debate_enforces_cn_serial_handoff(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.RISK_DEBATE_RUNNING)
+    risky_only = (succeeded_result(worker_id="risk_challenger", stage=Stage.RISK_DEBATE),)
+
+    wait_risky_approved = decide_next(make_input(state=state, manifest=ManifestView(), worker_results=risky_only))
+    assert wait_risky_approved.kind == DecisionKind.WAIT
+
+    risky_approved = ManifestView(approved={("risk_challenger", Stage.RISK_DEBATE)})
+    wake_safe = decide_next(make_input(state=state, manifest=risky_approved, worker_results=risky_only))
+    assert wake_safe.kind == DecisionKind.WAKE_STAGE
+    assert wake_safe.batch is not None
+    assert wake_safe.batch.worker_ids == ("risk_guardian",)
+    assert wake_safe.batch.collect_first is False
+
+    risky_safe = (
+        succeeded_result(worker_id="risk_challenger", stage=Stage.RISK_DEBATE),
+        succeeded_result(worker_id="risk_guardian", stage=Stage.RISK_DEBATE),
+    )
+    risky_safe_approved = ManifestView(
+        approved={
+            ("risk_challenger", Stage.RISK_DEBATE),
+            ("risk_guardian", Stage.RISK_DEBATE),
+        }
+    )
+    wake_neutral = decide_next(make_input(state=state, manifest=risky_safe_approved, worker_results=risky_safe))
+    assert wake_neutral.kind == DecisionKind.WAKE_STAGE
+    assert wake_neutral.batch is not None
+    assert wake_neutral.batch.worker_ids == ("risk_moderator",)
+    assert wake_neutral.batch.collect_first is False
+
+    all_three = (
+        succeeded_result(worker_id="risk_challenger", stage=Stage.RISK_DEBATE),
+        succeeded_result(worker_id="risk_guardian", stage=Stage.RISK_DEBATE),
+        succeeded_result(worker_id="risk_moderator", stage=Stage.RISK_DEBATE),
+    )
+    all_approved = ManifestView(
+        approved={
+            ("risk_challenger", Stage.RISK_DEBATE),
+            ("risk_guardian", Stage.RISK_DEBATE),
+            ("risk_moderator", Stage.RISK_DEBATE),
+        }
+    )
+    advance = decide_next(make_input(state=state, manifest=all_approved, worker_results=all_three))
+    assert advance.kind == DecisionKind.ADVANCE
+    assert advance.next_status == RunStatus.RISK_DEBATE_READY
 
 
 def test_running_stage_failure_merges_collect_first_failures(tmp_path: Path):
@@ -252,6 +382,29 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
     assert fail_decision.kind == DecisionKind.FAIL
     assert fail_decision.failure is not None
 
+    state_exporting_cn = make_state(tmp_path=tmp_path, status=RunStatus.REPORT_EXPORTING, profile="CN_A")
+    asset_failed = ExportResult(
+        run_id=state_exporting_cn.run_id,
+        status="failed",
+        final_report_path=None,
+        export_guard_result_path=None,
+        pm_owner_guard_result_path=None,
+        unsupported_claims=(),
+        failure=FailureRecord(
+            run_id=state_exporting_cn.run_id,
+            call_id=None,
+            worker_id=None,
+            stage=Stage.PORTFOLIO_DECISION,
+            category="export_report_assets",
+            reason="未找到可复制的图表资产",
+            evidence_paths=(state_exporting_cn.run_dir / "reports" / "export-result.json",),
+            early_stop=True,
+            human_action_required=None,
+        ),
+    )
+    complete_cn = decide_next(make_input(state=state_exporting_cn, manifest=approved, export_result=asset_failed))
+    assert complete_cn.kind == DecisionKind.COMPLETE
+
 
 def test_runner_failure_grouping_and_merge():
     f1 = FailureRecord(
@@ -321,6 +474,7 @@ def make_state(
     stop_point: StopPoint = StopPoint.NONE,
     target_worker_id: str | None = None,
     target_stage: Stage | None = None,
+    profile: str = "US",
 ) -> WorkflowState:
     run_dir = tmp_path / "runs" / "run-1"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -328,7 +482,7 @@ def make_state(
         ticker="AAPL",
         company_name="Apple",
         market="US",
-        profile="US",
+        profile=profile,
         currency="USD",
         currency_symbol="$",
         current_date="2026-05-04",

@@ -152,8 +152,14 @@ def main(argv: list[str] | None = None) -> int:
     state = runner.run(request)
     # CLI 只回传控制面终态，不在这里改写 workflow 决策或失败归因。
     if state.status == RunStatus.COMPLETED:
-        report_path = state.run_dir / "reports" / "final-report.md"
-        print(f"COMPLETED run_id={state.run_id} status={state.status.value} report_path={report_path}")
+        if request.stop_point == StopPoint.NONE:
+            report_path = state.run_dir / "reports" / "final-report.md"
+            print(f"COMPLETED run_id={state.run_id} status={state.status.value} report_path={report_path}")
+        else:
+            print(
+                f"COMPLETED run_id={state.run_id} status={state.status.value} "
+                f"stop_point={request.stop_point.value} run_dir={state.run_dir}"
+            )
         return 0
 
     failure = state.failure_reason or "unknown"

@@ -55,6 +55,38 @@ def test_downstream_worker_call_reads_only_from_approved_manifest(tmp_path: Path
     assert "market_summary_text" not in payload
 
 
+def test_bear_researcher_call_receives_bull_argument_ref_after_bull_approved(tmp_path: Path) -> None:
+    state = _state(tmp_path=tmp_path, run_id="run-1", profile="CN_A")
+    manifest = frontline_manifest(tmp_path).add(
+        fake_approved_material(
+            tmp_path,
+            "mat-debate-bull",
+            "bull_researcher",
+            Stage.INVESTMENT_DEBATE,
+            "call-5",
+        )
+    )
+
+    context_result = build_request_context(
+        state=state,
+        worker_id="bear_researcher",
+        stage=Stage.INVESTMENT_DEBATE,
+        manifest=manifest,
+    )
+
+    assert context_result.ok is True
+    assert context_result.context is not None
+    refs = context_result.context.upstream_materials
+    assert [ref.worker_id for ref in refs] == [
+        "market_analyst",
+        "fundamental_analyst",
+        "news_analyst",
+        "social_analyst",
+        "bull_researcher",
+    ]
+    assert refs[-1].stage == Stage.INVESTMENT_DEBATE
+
+
 def test_material_target_is_unique_per_call_even_same_worker_stage(tmp_path: Path) -> None:
     state = _state(
         tmp_path=tmp_path,

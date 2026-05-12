@@ -47,9 +47,6 @@ def load_tool_registry() -> ToolRegistryResult:
 
 
 def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...]:
-    if not policy.tool_intents:
-        raise ConfigError(f"stage tool intents cannot be empty: {policy.worker_id}/{policy.profile}")
-
     tools: list[str] = []
     for intent in policy.tool_intents:
         for tool_name in registry.resolve_intent(intent):
@@ -70,9 +67,11 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
         if "news_news_data_pack" not in tools:
             raise ConfigError("news_analyst must include news_news_data_pack")
 
-    # 这里是 OpenClaw 调用前硬边界：工具集合为空不能执行，避免出现策略空跑或隐式 fallback。
-    if not tools:
-        raise ConfigError(f"resolved tool set is empty: {policy.worker_id}/{policy.profile}")
+    if not tools and policy.openviking_access != "none":
+        raise ConfigError(
+            f"resolved tool set is empty but openviking_access={policy.openviking_access}: "
+            f"{policy.worker_id}/{policy.profile}"
+        )
     return tuple(tools)
 
 

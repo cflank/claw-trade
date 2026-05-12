@@ -336,8 +336,11 @@ Rules:
 - Every worker prompt migration must start from real TradingAgents-CN or original TradingAgents baseline evidence, not from a freshly invented engineering checklist.
 - The minimum evidence set for a migrated worker is: baseline source, real provider final prompt, LLM back or worker report, and a three-layer comparison tying those files to the same run/dispatch when available.
 - Provider final prompt evidence must come from provider payload capture. Static render output, exporter output, logs, or reconstructed prompt text are not proof of runtime prompt alignment.
-- Worker-visible prompt and handoff material must remain natural-language report, debate, decision, or approved summary material. JSON, debug payloads, audit envelopes, provider attempts, cache objects, and machine protocol fields must not become the main worker-facing material.
+- Worker-visible prompt and handoff material must remain approved full natural-language report, debate, or decision material. JSON, debug payloads, audit envelopes, provider attempts, cache objects, refs, and machine protocol fields must not become the main worker-facing material.
 - Do not put `RuntimeTarget`, `ReportSubmission`, OpenViking target blocks, URI/hash/receipt/L1/L2/manifest protocol text, JSON claim blocks, provider payload audit prose, or control-plane checklist language into worker profile prompts.
+- The same ban applies to the real provider payload. For `CN_A`/`US` report workers, model-visible messages must not contain runtime wrapper prose, prompt front matter, `[ApprovedMaterials]`, `material_id`, `capability`, URI/hash/L1/L2 text, or OpenViking/OpenClaw tool protocol text. These details may exist only in runtime command payloads, manifests, receipts, logs, or evidence files.
+- Prompt front matter is agent configuration only. It must be stripped before rendering provider-visible prompt text.
+- For downstream TradingAgents-CN / original TradingAgents workers whose baseline turn is pure LLM reasoning over upstream reports, the stage policy must expose no OpenViking read/write tools to the model. Python may pass already-approved full natural-language report bodies into CN/original prompt placeholders, and the runtime may save the returned LLM text after the turn, but the LLM must not be asked to read or write artifacts.
 - Keep role, report structure, reasoning task, and voice from TradingAgents-CN/original TradingAgents unless a claw-trade architecture boundary explicitly requires a minimal substitution.
 - Allowed prompt substitutions are limited to runtime variables, approved tool/material names, market/profile wording, and concise truthfulness constraints.
 - Prompt alignment is not proven by static tests alone. Runtime proof requires real provider final prompt plus LLM output/report comparison.
@@ -369,13 +372,15 @@ Rules:
 
 ## 8. Artifact Authority
 
-Upstream outputs pass to downstream workers through approved artifacts, not Python prompt stuffing.
+Upstream outputs pass to downstream workers as approved materials. When TradingAgents-CN/original prompts expect upstream reports in the prompt, `claw-trade` should inline the approved L1 report body into the runtime prompt variables.
 
 Rules:
 
-- Each worker writes a canonical artifact.
+- Each worker writes a canonical L1 report artifact.
 - `claw-trade` validates artifacts before making them available downstream.
-- Downstream workers receive artifact refs or approved summaries, not unbounded previous-stage full text inserted by Python.
+- Downstream workers receive approved L1 report text when the CN/original baseline expects full upstream reports.
+- Python may only move already-approved L1 report bodies into prompt variables. It must not summarize, rewrite, compress, or author worker business content.
+- Artifact refs and read capabilities remain audit/deeper-read handles, not the default replacement for complete upstream report text.
 - Hard-gate-failed artifacts must not enter shared state, PM material, reader export, or later-stage prompts.
 - Artifact refs must be traceable by run, stage, worker, URI, and content hash or equivalent integrity marker.
 
@@ -429,6 +434,28 @@ Rules:
 - For OpenClaw runtime seam changes, provider payload verification must come from a post-build, post-restart live run. Stale `dist`, source-render tests, or exporter output do not count as runtime proof.
 - Until the UI `/report` command entry is implemented, subsequent workflow integration, live-gate, and regression tests default to the `/report` entry semantics and must mark the run as `report_command`. Tests for ordinary chat or non-report flows must say so explicitly and must not inherit `/report` prompt policy.
 - Do not claim completion without concrete verification evidence.
+
+### 12.1 Live Runtime Preflight Gate
+
+Before any live/fresh/provider run, the manager must pass this gate first.
+
+Rules:
+
+- The manager must read the fixed runtime guidance in `memory/` first, then print the exact runtime profile for this run before dispatching any live-run sub-agent.
+- The fixed runtime profile is: start with `scripts/start-control-runtime.sh`; use claw-trade repo `uv` environment; OpenViking on `1933`; OpenClaw gateway on `18789`; no invest sidecar; OpenViking source config from `~/.openviking/ov.conf`; runtime config/data/cache written under `.runtime/dev-services`.
+- Tests or fresh/live commands that require a clean runtime must start through `scripts/start-control-runtime.sh -- <command>` so the same script starts OpenViking, OpenClaw, exports runtime env, runs the command, and then shuts down the services it started.
+- Preflight must check existing runtime before any restart: verify `runtime.env` exists, `1933/health` or `1933/healthz` is reachable, and `18789/health` is reachable. If all pass, reuse runtime and do not restart blindly.
+- If restart is required, the manager must output a preflight table and confirm all rows:
+  - `CLAW_TRADE_OPENVIKING_MCP_MODULE` and `CLAW_TRADE_OPENVIKING_MCP_CWD` are unset (or explicitly `unset`).
+  - `CLAW_TRADE_OPENVIKING_SERVER_BIN` and `CLAW_TRADE_OPENVIKING_SERVER_CWD` are unset (or explicitly `unset`) unless the human explicitly approved external server mode.
+  - `OPENVIKING_CONFIG_FILE` points to `.runtime/dev-services/openviking/ov.conf`.
+  - `OPENVIKING_DATA_DIR` points to `.runtime/dev-services/openviking/data`.
+  - `CLAW_TRADE_OPENVIKING_MCP_STARTED=0` after `runtime.env` is generated.
+  - Health checks for both `1933` and `18789` pass.
+- If port/bind/health fails, troubleshooting must follow memory-guided checks (port status, sandbox/loopback permission, override vars, stale PID, script cleanup, provider path). Do not stop at a generic “runtime blocked” summary.
+- Sub-agent C (or any live-run sub-agent) must not self-certify runtime readiness. The manager must verify and print the preflight table first; live-run evidence without preflight table is invalid.
+- Do not bypass this gate via alternate startup method, invest sidecar startup, temporary `/tmp` config, source-tree guessing, or mock/stub/fake/capture-only substitutions.
+- Do not manually start OpenViking and OpenClaw separately before tests that need a clean runtime; use the fixed script command mode instead.
 
 ## 13. Collect-First Rule
 

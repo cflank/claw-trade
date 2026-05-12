@@ -4,6 +4,19 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAW_TRADE_ENV_PATH="${CLAW_TRADE_ENV_PATH:-${ROOT_DIR}/.env.local}"
 OPENCLAW_SOURCE_ENV_PATH="${OPENCLAW_SOURCE_ENV_PATH:-${HOME}/.openclaw/.env}"
+RUNTIME_COMMAND=()
+if [[ $# -gt 0 ]]; then
+  if [[ "${1}" != "--" ]]; then
+    printf '[ERROR] 用法：%s [-- <test-command> ...]\n' "$0" >&2
+    exit 2
+  fi
+  shift
+  if [[ $# -eq 0 ]]; then
+    printf '[ERROR] -- 后必须提供要运行的测试或 live 命令\n' >&2
+    exit 2
+  fi
+  RUNTIME_COMMAND=("$@")
+fi
 
 load_runtime_env_files_into_process_env() {
   local exported_count=0
@@ -248,6 +261,30 @@ cleanup_started_services() {
   fi
 }
 
+export_runtime_env_for_child_commands() {
+  export CLAW_TRADE_OPENCLAW_RUNNER
+  export CLAW_TRADE_OPENVIKING_BACKEND
+  export CLAW_TRADE_OPENVIKING_MCP_STARTED="${openviking_mcp_started}"
+  export CLAW_TRADE_OPENVIKING_PROBE_RUN_ID
+  export OPENCLAW_GATEWAY_CALL_BIN
+  export OPENCLAW_GATEWAY_URL
+  export OPENCLAW_STATE_DIR
+  export OPENCLAW_CONFIG_PATH
+  export OPENCLAW_GATEWAY_TIMEOUT_MS
+  export OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS
+  export OPENCLAW_MARKET_TOOL_PYTHON
+  export OPENVIKING_ENDPOINT
+  export OPENVIKING_BASE_URL
+  export OPENVIKING_WORKSPACE
+  export OPENVIKING_CONFIG_FILE
+  export OPENVIKING_DATA_DIR
+  if [[ "${openviking_mcp_started}" == "1" ]]; then
+    export OPENVIKING_MCP_URL
+  else
+    unset OPENVIKING_MCP_URL
+  fi
+}
+
 on_script_exit() {
   local status="$1"
   # 防止 trap 重入，确保只清理一次，并把原始退出码传回调用方。
@@ -398,11 +435,13 @@ const sourceModels = isPlainObject(sourceConfig.models) ? sourceConfig.models : 
 const sourceProviders = isPlainObject(sourceModels.providers) ? sourceModels.providers : {};
 const sourceDefaultModel = isPlainObject(sourceDefaults.model) ? sourceDefaults.model : {};
 const sourcePrimaryModel = typeof sourceDefaultModel.primary === "string" ? sourceDefaultModel.primary.trim() : "";
+const clawTradePrimaryModel = "deepseek/deepseek-chat";
+const selectedPrimaryModel = clawTradePrimaryModel;
 let primaryProviderId = "";
-if (sourcePrimaryModel.includes("/")) {
-  primaryProviderId = sourcePrimaryModel.split("/")[0].trim();
-} else if (sourcePrimaryModel.length > 0 && sourcePrimaryModel in sourceProviders) {
-  primaryProviderId = sourcePrimaryModel;
+if (selectedPrimaryModel.includes("/")) {
+  primaryProviderId = selectedPrimaryModel.split("/")[0].trim();
+} else if (selectedPrimaryModel.length > 0 && selectedPrimaryModel in sourceProviders) {
+  primaryProviderId = selectedPrimaryModel;
 }
 if (!primaryProviderId) {
   const knownProviderIds = Object.keys(sourceProviders);
@@ -412,8 +451,12 @@ if (!primaryProviderId) {
 }
 if (!primaryProviderId) {
   console.error(
-    `[ERROR] 无法解析 primary model provider：agents.defaults.model.primary=${sourcePrimaryModel || "<empty>"}`,
+    `[ERROR] 无法解析 primary model provider：agents.defaults.model.primary=${sourcePrimaryModel || "<empty>"} selected=${selectedPrimaryModel || "<empty>"}`,
   );
+  process.exit(1);
+}
+if (!isPlainObject(sourceProviders[primaryProviderId])) {
+  console.error(`[ERROR] OpenClaw source config 缺少 DeepSeek provider：${primaryProviderId}`);
   process.exit(1);
 }
 
@@ -432,8 +475,19 @@ const mergedModels = {
   ...sourceModels,
   providers: mergedProviders,
 };
+const sourceModelAliases = isPlainObject(sourceDefaults.models) ? sourceDefaults.models : {};
 const mergedDefaults = {
   ...sourceDefaults,
+  model: {
+    ...sourceDefaultModel,
+    primary: selectedPrimaryModel,
+  },
+  models: {
+    ...sourceModelAliases,
+    [selectedPrimaryModel]: {
+      alias: "DeepSeek Chat",
+    },
+  },
   skipBootstrap: true,
 };
 const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};
@@ -743,5 +797,20 @@ log_info "服务已就绪"
 log_info "PID 文件目录：${PID_DIR}"
 log_info "日志目录：${LOG_DIR}"
 log_info "运行时环境文件：${RUNTIME_ENV_PATH}"
+
+export_runtime_env_for_child_commands
+if [[ ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then
+  log_info "运行测试命令：${RUNTIME_COMMAND[*]}"
+  set +e
+  "${RUNTIME_COMMAND[@]}"
+  command_status=$?
+  set -e
+  if [[ "${command_status}" == "0" ]]; then
+    log_info "测试命令完成：退出码 0"
+  else
+    log_error "测试命令失败：退出码 ${command_status}"
+  fi
+  exit "${command_status}"
+fi
 
 supervise_started_services

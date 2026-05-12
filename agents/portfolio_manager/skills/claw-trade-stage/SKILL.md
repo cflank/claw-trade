@@ -7,7 +7,7 @@ description: Stage contract for `portfolio_manager` in the claw-trade OpenClaw r
 
 Follow `STAGES.yaml` for the current worker/profile/stage.
 
-- Read only approved artifact refs supplied by claw-trade.
+- Use only approved upstream report material supplied by claw-trade; refs and capabilities are for traceability and deeper evidence reads.
 - Write the canonical artifact named `portfolio_decision`.
 - Submit PM structured decision fields for `rating`, `final_conclusion`, `execution_conditions`, and `risk_conditions` through the tool schema exposed in this turn.
 - Keep report markdown reader-facing; do not append machine-readable PM decision blocks by hand.

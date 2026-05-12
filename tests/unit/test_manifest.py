@@ -114,6 +114,74 @@ def test_capabilities_for_downstream_stage_use_manifest_scoped_hash(tmp_path: Pa
         assert capability.manifest_entry_sha256
 
 
+def test_bear_worker_call_sources_include_frontline_and_bull_argument(tmp_path: Path) -> None:
+    manifest = (
+        ApprovedManifest.empty()
+        .add(
+            fake_approved_material(
+                "mat-frontline-market",
+                "market_analyst",
+                Stage.FRONTLINE,
+                "call-1",
+                hard_gate_result_path=write_gate_result(tmp_path, "market-bear.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-frontline-fundamental",
+                "fundamental_analyst",
+                Stage.FRONTLINE,
+                "call-2",
+                hard_gate_result_path=write_gate_result(tmp_path, "fundamental-bear.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-frontline-news",
+                "news_analyst",
+                Stage.FRONTLINE,
+                "call-3",
+                hard_gate_result_path=write_gate_result(tmp_path, "news-bear.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-frontline-social",
+                "social_analyst",
+                Stage.FRONTLINE,
+                "call-4",
+                hard_gate_result_path=write_gate_result(tmp_path, "social-bear.json"),
+            )
+        )
+        .add(
+            fake_approved_material(
+                "mat-debate-bull",
+                "bull_researcher",
+                Stage.INVESTMENT_DEBATE,
+                "call-5",
+                hard_gate_result_path=write_gate_result(tmp_path, "bull-bear.json"),
+            )
+        )
+    )
+
+    bull_refs = manifest.for_worker_call(Stage.INVESTMENT_DEBATE, worker_id="bull_researcher")
+    bear_refs = manifest.for_worker_call(Stage.INVESTMENT_DEBATE, worker_id="bear_researcher")
+
+    assert [ref.worker_id for ref in bull_refs] == [
+        "market_analyst",
+        "fundamental_analyst",
+        "news_analyst",
+        "social_analyst",
+    ]
+    assert [ref.worker_id for ref in bear_refs] == [
+        "market_analyst",
+        "fundamental_analyst",
+        "news_analyst",
+        "social_analyst",
+        "bull_researcher",
+    ]
+
+
 def test_for_downstream_stage_rejects_partial_records(tmp_path: Path) -> None:
     manifest = ApprovedManifest.empty().add(
         fake_approved_material(

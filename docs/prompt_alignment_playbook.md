@@ -14,8 +14,10 @@
 1. CN_A prompt 以 TradingAgents-CN 为基线。
 2. US prompt 以原版 TradingAgents 为基线。
 3. guard 只守真实性红线，不负责塑造报告文风。
-4. worker 可见材料必须是自然语言 report、debate、decision、approved summary 或 approved artifact ref。
+4. worker 可见材料必须优先是已批准的完整自然语言 report、debate 或 decision；artifact ref / capability 只作为追踪和必要深读入口。
 5. 结构化 payload、provider attempts、cache、OpenViking 审计、manifest、receipt、hash 只属于运行层和审计层。
+6. CN/原版是纯 prompt 推理的后续 worker，模型可见工具必须为空；OpenViking 读写由运行层和证据层处理，不能进入模型任务。
+7. prompt 文件头部的 profile/frontmatter 是配置，不是 prompt 正文；真实 provider prompt 必须从角色正文直接开始。
 
 ## 每个 Worker 的准备流程
 
@@ -57,6 +59,15 @@
 - provider attempts、Mongo cache、OpenViking raw payload、tool-call log。
 - 为了让测试通过而新增的工程 checklist。
 - 未经人类批准的报告口吻类 guard 规则。
+
+不得出现在真实 provider prompt：
+
+- OpenClaw 运行包装句，例如“你正在执行当前分析师的一轮任务”。
+- profile/frontmatter，例如 `profile:`、`profile_status:`、`worker_id:`、`stage:`。
+- `[ApprovedMaterials]`、`material_id`、`capability`、`l1_sha256`、`l2_available`、`call_id` 这类材料目录字段。
+- `OpenViking`、`OpenClaw`、`openviking_read_with_capability`、`openviking_write_material`、`viking://`。
+
+这些字段只能保留在 command payload、approved manifest、receipt、provider evidence、visible tools evidence、debug logs 或测试断言中。
 
 ### 4. Guard 边界
 
@@ -119,5 +130,7 @@
 - 找不到 CN/原版基线，却准备继续写 prompt。
 - 准备新增报告表达类 guard。
 - 准备把 URI、hash、receipt、L1/L2、manifest、JSON claim 等机器字段放入 prompt。
+- 准备让 CN/原版纯 prompt worker 暴露 OpenViking read/write 工具。
+- 准备用 artifact ref / capability 代替 CN/原版 prompt 中的完整上游材料正文。
 - 三层证据不能绑定真实 provider payload。
 - 某 worker 的原版权限与 PM owner 边界冲突。

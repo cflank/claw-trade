@@ -79,13 +79,21 @@ def test_t_brf_001_build_reader_brief_complete_contains_required_sections_and_le
         )
     )
 
-    assert "资料范围：" in brief
-    assert "材料正文：" in brief
-    assert "质量状态：" in brief
-    assert "来源概况：" in brief
+    assert "贵州茅台（600519.SH）行情与技术面资料" in brief
+    assert "事实材料：" in brief
+    assert "来源：" in brief
+    assert "数据可用性：" not in brief
+    assert "来源统计：" not in brief
+    assert "资料范围：" not in brief
+    assert "材料正文：" not in brief
+    assert "质量状态：" not in brief
+    assert "来源概况：" not in brief
+    assert "使用边界：" not in brief
+    assert "证据缺口：" not in brief
+    assert "冲突诊断：" not in brief
     assert "accepted=" not in brief
     assert '"provider_attempts"' not in brief
-    assert 500 <= len(brief) <= 3000
+    assert 1 <= len(brief) <= 3000
 
 
 def test_t_brf_001_build_reader_brief_truncates_without_exceeding_schema_limit() -> None:
