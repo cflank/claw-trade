@@ -62,7 +62,11 @@ def call_akshare_stock_info_global_em(
     _ = runtime_context
     call_context.raise_if_cancelled()
     akshare = _load_akshare_module()
-    dataframe = akshare.stock_info_global_em()
+    dataframe = _call_requests_backed_function_with_budget_timeout(
+        func=akshare.stock_info_global_em,
+        call_context=call_context,
+        error_label="AkShare stock_info_global_em",
+    )
     return _to_stock_info_global_em_payload(dataframe, spec=spec, query=query)
 
 
@@ -75,7 +79,12 @@ def call_akshare_news_cctv(
     _ = runtime_context
     call_context.raise_if_cancelled()
     akshare = _load_akshare_module()
-    dataframe = akshare.news_cctv(date=query.end_date.replace("-", ""))
+    dataframe = _call_requests_backed_function_with_budget_timeout(
+        func=akshare.news_cctv,
+        call_context=call_context,
+        error_label="AkShare news_cctv",
+        date=query.end_date.replace("-", ""),
+    )
     return _to_news_cctv_payload(dataframe, spec=spec, query=query)
 
 
@@ -289,13 +298,31 @@ def _call_stock_news_em_with_budget_timeout(
     symbol: str,
     call_context: ProviderCallContext,
 ) -> Any:
+    return _call_requests_backed_function_with_budget_timeout(
+        func=func,
+        call_context=call_context,
+        error_label="AkShare stock_news_em",
+        symbol=symbol,
+    )
+
+
+def _call_requests_backed_function_with_budget_timeout(
+    *,
+    func: Callable[..., Any],
+    call_context: ProviderCallContext,
+    error_label: str,
+    **kwargs: Any,
+) -> Any:
     if not inspect.isfunction(func):
         call_context.raise_if_cancelled()
-        return func(symbol=symbol)
+        return func(**kwargs)
+    if "requests" not in func.__code__.co_names:
+        call_context.raise_if_cancelled()
+        return func(**kwargs)
 
     original_requests = func.__globals__.get("requests")
     if original_requests is None or not hasattr(original_requests, "get"):
-        raise RuntimeError("AkShare stock_news_em 无法注入 requests timeout")
+        raise RuntimeError(f"{error_label} 无法注入 requests timeout")
 
     proxied = _clone_function(
         func,
@@ -304,7 +331,7 @@ def _call_stock_news_em_with_budget_timeout(
         },
     )
     call_context.raise_if_cancelled()
-    return proxied(symbol=symbol)
+    return proxied(**kwargs)
 
 
 def _call_stock_info_global_cls_with_budget_timeout(

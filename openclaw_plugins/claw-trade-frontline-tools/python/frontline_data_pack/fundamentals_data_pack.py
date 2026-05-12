@@ -14,7 +14,7 @@ from .cache import (
 from .config import FrontlineProviderConfig, load_frontline_provider_config
 from .errors import TOOL_CONTEXT_INCOMPLETE, TOOL_PARAMS_INVALID, TOOL_WORKER_MISMATCH, FrontlineValidationError
 from .evidence import OpenVikingEvidenceClient
-from .evidence_writer import L2WriteSessionState, write_pack_evidence, write_provider_attempts, write_raw_payload
+from .evidence_writer import L2WriteSessionState, commit_l2_write_session, write_pack_evidence, write_provider_attempts, write_raw_payload
 from .fundamental_mapper import compute_missing_core_fields, map_fundamental_fields
 from .models import (
     BriefInput,
@@ -34,7 +34,7 @@ from .mongo_store import (
     COLLECTION_NORMALIZED_FUNDAMENTAL_FIELDS,
     COLLECTION_PROVIDER_ATTEMPTS,
     COLLECTION_PROVIDER_CACHE,
-    create_mongo_store,
+    resolve_optional_mongo_database,
 )
 from .normalized_store import upsert_fundamental_fields
 from .observability import (
@@ -133,7 +133,7 @@ class BuildFundamentalDataPack:
             call_registry=call_registry,
         )
 
-        state = L2WriteSessionState()
+        state = L2WriteSessionState(defer_writes=True)
         diagnostic_flags: list[str] = []
         raw_payload_refs = []
         updated_results: list[ProviderResult] = []
@@ -429,6 +429,10 @@ class BuildFundamentalDataPack:
                 domain_data=pack.domain_data,
             )
 
+        commit_result = commit_l2_write_session(state=state, client=self.evidence_client)
+        if not commit_result.ok and commit_result.error is not None:
+            raise FrontlineValidationError(commit_result.error.code, commit_result.error.message)
+
         build_elapsed_ms = max(0, int((time.perf_counter() - build_started) * 1000))
         record_pack_build(domain="fundamental", status=final_pack.quality.status, elapsed_ms=build_elapsed_ms)
         record_span(
@@ -454,14 +458,20 @@ class BuildFundamentalDataPack:
         if cache_collection is not None and attempts_collection is not None and normalized_collection is not None:
             return cache_collection, attempts_collection, normalized_collection
 
-        store = create_mongo_store(config.mongodb.uri)
-        database = store.database
+        database = resolve_optional_mongo_database(
+            config.mongodb.uri,
+            cache_required=config.mongodb.cache_required,
+        )
         return (
-            cache_collection if cache_collection is not None else database[COLLECTION_PROVIDER_CACHE],
-            attempts_collection if attempts_collection is not None else database[COLLECTION_PROVIDER_ATTEMPTS],
+            cache_collection if cache_collection is not None else (
+                database[COLLECTION_PROVIDER_CACHE] if database is not None else None
+            ),
+            attempts_collection if attempts_collection is not None else (
+                database[COLLECTION_PROVIDER_ATTEMPTS] if database is not None else None
+            ),
             normalized_collection
             if normalized_collection is not None
-            else database[COLLECTION_NORMALIZED_FUNDAMENTAL_FIELDS],
+            else (database[COLLECTION_NORMALIZED_FUNDAMENTAL_FIELDS] if database is not None else None),
         )
 
 

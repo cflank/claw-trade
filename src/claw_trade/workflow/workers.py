@@ -3,7 +3,7 @@ from __future__ import annotations
 from claw_trade.workflow.models import RunStatus, Stage, StagePlan, WorkerSpec
 
 
-# 12 个 worker 的身份和阶段在这里固定声明，LLM 不能临场决定“下一步叫谁”。
+# 核心 12 个决策 worker 加 1 个读者版终稿 worker 在这里固定声明，LLM 不能临场决定“下一步叫谁”。
 WORKER_SPECS: tuple[WorkerSpec, ...] = (
     WorkerSpec("market_analyst", Stage.FRONTLINE),
     WorkerSpec("fundamental_analyst", Stage.FRONTLINE),
@@ -17,6 +17,7 @@ WORKER_SPECS: tuple[WorkerSpec, ...] = (
     WorkerSpec("risk_guardian", Stage.RISK_DEBATE),
     WorkerSpec("risk_moderator", Stage.RISK_DEBATE),
     WorkerSpec("portfolio_manager", Stage.PORTFOLIO_DECISION),
+    WorkerSpec("report_polisher", Stage.FINAL_REPORT),
 )
 
 # 每个阶段是否可 collect-first、依赖哪个上游阶段，也集中放在这里，runner 只按表执行。
@@ -71,8 +72,17 @@ STAGE_PLANS: tuple[StagePlan, ...] = (
         workers=("portfolio_manager",),
         running_status=RunStatus.PORTFOLIO_DECISION_RUNNING,
         ready_status=RunStatus.PORTFOLIO_DECISION_READY,
-        next_stage=None,
+        next_stage=Stage.FINAL_REPORT,
         required_upstream_stage=Stage.RISK_DEBATE,
+        collect_first=False,
+    ),
+    StagePlan(
+        stage=Stage.FINAL_REPORT,
+        workers=("report_polisher",),
+        running_status=RunStatus.FINAL_REPORT_RUNNING,
+        ready_status=RunStatus.FINAL_REPORT_READY,
+        next_stage=None,
+        required_upstream_stage=Stage.PORTFOLIO_DECISION,
         collect_first=False,
     ),
 )
@@ -94,7 +104,7 @@ def all_worker_ids() -> tuple[str, ...]:
 
 
 def worker_ids() -> list[str]:
-    # 固定 12 worker 顺序的公开只读接口；保留旧调用名以兼容历史测试。
+    # 固定报告链路 worker 顺序的公开只读接口；保留旧调用名以兼容历史测试。
     return list(all_worker_ids())
 
 

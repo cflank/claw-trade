@@ -27,6 +27,7 @@ class ToolRuntimeContext:
     evidence_root: str
     current_time: str
     current_date: str | None = None
+    tool_call_id: str | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "ToolRuntimeContext":
@@ -44,4 +45,12 @@ class ToolRuntimeContext:
             current_date = raw_current_date
         else:
             raise ValueError("runtime_context.current_date must be a non-empty string when provided")
-        return cls(current_date=current_date, **values)
+        raw_tool_call_id = payload.get("tool_call_id")
+        tool_call_id: str | None
+        if raw_tool_call_id is None:
+            tool_call_id = None
+        elif isinstance(raw_tool_call_id, str) and raw_tool_call_id.strip():
+            tool_call_id = raw_tool_call_id
+        else:
+            raise ValueError("runtime_context.tool_call_id must be a non-empty string when provided")
+        return cls(current_date=current_date, tool_call_id=tool_call_id, **values)

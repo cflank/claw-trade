@@ -129,47 +129,42 @@ def test_t_mkt_002_chart_evidence_ref_from_real_techlab_write_enters_openviking_
 
 def test_t_mkt_002_given_rows_but_chart_write_failed_quality_partial_and_brief_mentions_chart_gap() -> None:
     l2_client = _ChartWriteFailingL2Client()
-    pack = BuildMarketDataPack(
-        config=load_frontline_provider_config(_base_env()),
-        provider_call_registry={
-            ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
-            ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
-            ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
-            ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
-        },
-        evidence_client=l2_client,
-        provider_cache_collection=_MongoCollection(),
-        provider_attempts_collection=_MongoCollection(),
-        normalized_market_collection=_MongoCollection(),
-        techlab_compute=_techlab_compute_with_real_adapter,
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "partial"
-    assert pack.domain_data["chart_refs"] == []
-    assert all(ref.kind != "chart_manifest" for ref in pack.openviking_l2_refs)
-    assert "market_chart_evidence_gap" in pack.reader_brief
+    with pytest.raises(FrontlineValidationError):
+        BuildMarketDataPack(
+            config=load_frontline_provider_config(_base_env()),
+            provider_call_registry={
+                ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
+                ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
+                ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
+                ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
+            },
+            evidence_client=l2_client,
+            provider_cache_collection=_MongoCollection(),
+            provider_attempts_collection=_MongoCollection(),
+            normalized_market_collection=_MongoCollection(),
+            techlab_compute=_techlab_compute_with_real_adapter,
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_mkt_002_chart_l2_uri_error_not_leaked_into_pack_diagnostic_flags() -> None:
     l2_client = _ChartWriteUriNoiseL2Client()
-    pack = BuildMarketDataPack(
-        config=load_frontline_provider_config(_base_env()),
-        provider_call_registry={
-            ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
-            ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
-            ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
-            ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
-        },
-        evidence_client=l2_client,
-        provider_cache_collection=_MongoCollection(),
-        provider_attempts_collection=_MongoCollection(),
-        normalized_market_collection=_MongoCollection(),
-        techlab_compute=_techlab_compute_with_real_adapter,
-    ).build(_tool_input(), _runtime_context())
+    with pytest.raises(FrontlineValidationError) as error:
+        BuildMarketDataPack(
+            config=load_frontline_provider_config(_base_env()),
+            provider_call_registry={
+                ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
+                ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
+                ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
+                ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
+            },
+            evidence_client=l2_client,
+            provider_cache_collection=_MongoCollection(),
+            provider_attempts_collection=_MongoCollection(),
+            normalized_market_collection=_MongoCollection(),
+            techlab_compute=_techlab_compute_with_real_adapter,
+        ).build(_tool_input(), _runtime_context())
 
-    assert pack.quality.status == "partial"
-    assert any(item.startswith("l2_write_failed:chart:") for item in pack.diagnostic_flags)
-    assert all("viking://" not in item for item in pack.diagnostic_flags)
+    assert "viking://" not in error.value.message
 
 
 def test_t_mkt_002_chart_cleanup_removes_stale_chart_refs_and_keeps_core_evidence() -> None:
@@ -226,23 +221,21 @@ def test_t_mkt_002_given_p0_p1_all_failed_quality_failed_and_price_history_not_s
 
 
 def test_t_mkt_002_core_provider_raw_l2_write_failed_results_in_failed_quality() -> None:
-    pack = BuildMarketDataPack(
-        config=load_frontline_provider_config(_base_env()),
-        provider_call_registry={
-            ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
-            ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
-            ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
-            ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
-        },
-        evidence_client=_ProviderRawWriteFailingL2Client(),
-        provider_cache_collection=_MongoCollection(),
-        provider_attempts_collection=_MongoCollection(),
-        normalized_market_collection=_MongoCollection(),
-        techlab_compute=_techlab_complete,
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert any(item == "core_l2_write_or_verify_failed" for item in pack.quality.warnings)
+    with pytest.raises(FrontlineValidationError):
+        BuildMarketDataPack(
+            config=load_frontline_provider_config(_base_env()),
+            provider_call_registry={
+                ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
+                ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
+                ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
+                ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
+            },
+            evidence_client=_ProviderRawWriteFailingL2Client(),
+            provider_cache_collection=_MongoCollection(),
+            provider_attempts_collection=_MongoCollection(),
+            normalized_market_collection=_MongoCollection(),
+            techlab_compute=_techlab_complete,
+        ).build(_tool_input(), _runtime_context())
 
 
 @pytest.mark.parametrize(

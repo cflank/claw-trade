@@ -3,20 +3,24 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+import threading
 
 from claw_trade.artifacts.manifest import ManifestStore
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Index, make_material_target
 from claw_trade.guards.common import ApprovalResult, BootResult, GuardResult
 from claw_trade.runtime.evidence_reader import EvidenceReadResult, OpenClawResult, ProviderEvidence
 from claw_trade.workflow.models import (
+    BatchScope,
     Decision,
     DecisionKind,
     ExportResult,
     RunRequest,
     RunStatus,
     Stage,
+    StageBatch,
     StopPoint,
     WorkerCall,
+    WorkerResult,
     WorkerStatus,
     WorkflowState,
     ReadPolicy,
@@ -220,6 +224,55 @@ def test_single_worker_openclaw_failed_does_not_read_evidence(tmp_path: Path) ->
     assert result.status == WorkerStatus.FAILED
     assert result.failure is not None
     assert result.failure.category == "openclaw_runtime"
+
+
+def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request())
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FRONTLINE,
+        worker_ids=("market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=True,
+        stop_point=StopPoint.NONE,
+    )
+    barrier = threading.Barrier(len(batch.worker_ids))
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+    started: list[str] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        nonlocal active, max_active
+        with lock:
+            started.append(call.worker_id)
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            barrier.wait(timeout=2)
+        finally:
+            with lock:
+                active -= 1
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-{call.worker_id}",
+            failure=None,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert [item.worker_id for item in result.worker_results] == list(batch.worker_ids)
+    assert set(started) == set(batch.worker_ids)
+    assert max_active == len(batch.worker_ids)
+    assert result.failures == ()
 
 
 def test_boot_first_response_uses_receipt_free_openviking_probe(tmp_path: Path) -> None:

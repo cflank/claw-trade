@@ -108,6 +108,8 @@ LOG_DIR="${RUNTIME_DIR}/logs"
 PID_DIR="${RUNTIME_DIR}/pids"
 RUNTIME_ENV_PATH="${RUNTIME_DIR}/runtime.env"
 RUNS_PROBE_DIR="${ROOT_DIR}/runs/probe"
+LOCAL_MONGODB_START_SCRIPT="${ROOT_DIR}/scripts/start-local-mongodb.sh"
+LOCAL_MONGODB_PID_FILE="${ROOT_DIR}/.runtime/mongodb/run/mongod.pid"
 UV_CACHE_DIR="${UV_CACHE_DIR:-${RUNTIME_DIR}/uv-cache}"
 UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export UV_CACHE_DIR UV_LINK_MODE
@@ -115,6 +117,7 @@ OPENVIKING_RUNTIME_DIR="${RUNTIME_DIR}/openviking"
 OPENVIKING_SOURCE_CONFIG_PATH="${OPENVIKING_SOURCE_CONFIG_PATH:-${HOME}/.openviking/ov.conf}"
 OPENVIKING_CONFIG_FILE="${OPENVIKING_CONFIG_FILE:-${OPENVIKING_RUNTIME_DIR}/ov.conf}"
 OPENVIKING_DATA_DIR="${OPENVIKING_DATA_DIR:-${OPENVIKING_RUNTIME_DIR}/data}"
+OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH:-${RUNTIME_DIR}/openviking-write.lock}"
 export OPENVIKING_CONFIG_FILE
 
 OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
@@ -142,6 +145,7 @@ OPENCLAW_GATEWAY_PORT=18789
 
 declare -a STARTED_PIDS=()
 declare -a STARTED_NAMES=()
+local_mongodb_started=0
 
 log_info() {
   printf '[INFO] %s\n' "$*"
@@ -209,12 +213,97 @@ kill_port_listener() {
   done <<< "${pids}"
 }
 
+pid_file_alive() {
+  local pid_file="$1"
+  if [[ ! -f "${pid_file}" ]]; then
+    return 1
+  fi
+  local pid
+  pid="$(tr -d '[:space:]' < "${pid_file}" || true)"
+  [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null
+}
+
 stop_openclaw_gateway_service() {
   if [[ ! -x "${OPENCLAW_GATEWAY_CALL_BIN}" ]]; then
     return 0
   fi
   env -u OPENCLAW_STATE_DIR -u OPENCLAW_CONFIG_PATH \
     "${OPENCLAW_GATEWAY_CALL_BIN}" gateway stop >/dev/null 2>&1 || true
+}
+
+should_start_local_mongodb() {
+  case "${CN_A_MONGODB_URI:-}" in
+    mongodb://127.0.0.1:*|mongodb://localhost:*|mongodb://[::1]:*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+wait_mongodb_ok() {
+  local timeout_sec="$1"
+  local uri="${CN_A_MONGODB_URI:-}"
+  if [[ -z "${uri}" ]]; then
+    log_error "CN_A_MONGODB_URI 未设置，无法检查 MongoDB"
+    return 1
+  fi
+  MONGODB_URI_VALUE="${uri}" MONGODB_TIMEOUT_SEC_VALUE="${timeout_sec}" \
+    uv run python - <<'PY'
+import os
+import sys
+import time
+
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+
+uri = os.environ["MONGODB_URI_VALUE"]
+deadline = time.monotonic() + int(os.environ["MONGODB_TIMEOUT_SEC_VALUE"])
+last_error = ""
+while time.monotonic() < deadline:
+    try:
+        client = MongoClient(uri, connectTimeoutMS=500, serverSelectionTimeoutMS=500)
+        client.admin.command("ping")
+        client.close()
+        sys.exit(0)
+    except PyMongoError as exc:
+        last_error = exc.__class__.__name__
+    except Exception as exc:
+        last_error = exc.__class__.__name__
+    time.sleep(0.5)
+print(f"MongoDB ping failed: {last_error}", file=sys.stderr)
+sys.exit(1)
+PY
+}
+
+start_local_mongodb_if_needed() {
+  if ! should_start_local_mongodb; then
+    log_info "CN_A_MONGODB_URI 不是本地 dev Mongo，跳过本地 MongoDB 启动"
+    return 0
+  fi
+  if [[ ! -x "${LOCAL_MONGODB_START_SCRIPT}" ]]; then
+    log_error "本地 MongoDB 启动脚本不可执行：${LOCAL_MONGODB_START_SCRIPT}"
+    exit 1
+  fi
+
+  local was_alive=0
+  if pid_file_alive "${LOCAL_MONGODB_PID_FILE}"; then
+    was_alive=1
+  fi
+
+  log_info "启动 MongoDB（本地 dev runtime）"
+  "${LOCAL_MONGODB_START_SCRIPT}" >/dev/null
+  if ! wait_mongodb_ok 30; then
+    log_error "MongoDB health 检查失败：无法 ping CN_A_MONGODB_URI"
+    exit 1
+  fi
+
+  if [[ "${was_alive}" == "0" ]] && pid_file_alive "${LOCAL_MONGODB_PID_FILE}"; then
+    local pid
+    pid="$(tr -d '[:space:]' < "${LOCAL_MONGODB_PID_FILE}" || true)"
+    STARTED_PIDS+=("${pid}")
+    STARTED_NAMES+=("mongodb")
+    local_mongodb_started=1
+  fi
 }
 
 normalize_ws_health_url() {
@@ -278,6 +367,7 @@ export_runtime_env_for_child_commands() {
   export OPENVIKING_WORKSPACE
   export OPENVIKING_CONFIG_FILE
   export OPENVIKING_DATA_DIR
+  export OPENVIKING_WRITE_LOCK_PATH
   if [[ "${openviking_mcp_started}" == "1" ]]; then
     export OPENVIKING_MCP_URL
   else
@@ -345,6 +435,7 @@ const workers = [
   "risk_guardian",
   "risk_moderator",
   "portfolio_manager",
+  "report_polisher",
 ];
 
 function isPlainObject(value) {
@@ -437,6 +528,9 @@ const sourceDefaultModel = isPlainObject(sourceDefaults.model) ? sourceDefaults.
 const sourcePrimaryModel = typeof sourceDefaultModel.primary === "string" ? sourceDefaultModel.primary.trim() : "";
 const clawTradePrimaryModel = "deepseek/deepseek-chat";
 const selectedPrimaryModel = clawTradePrimaryModel;
+const selectedProviderModelId = selectedPrimaryModel.includes("/")
+  ? selectedPrimaryModel.split("/").slice(1).join("/").trim()
+  : "";
 let primaryProviderId = "";
 if (selectedPrimaryModel.includes("/")) {
   primaryProviderId = selectedPrimaryModel.split("/")[0].trim();
@@ -463,19 +557,35 @@ if (!isPlainObject(sourceProviders[primaryProviderId])) {
 const sourcePrimaryProvider = isPlainObject(sourceProviders[primaryProviderId])
   ? sourceProviders[primaryProviderId]
   : {};
+const selectedProviderModels = Array.isArray(sourcePrimaryProvider.models)
+  ? sourcePrimaryProvider.models.filter((entry) => {
+      if (!isPlainObject(entry) || typeof entry.id !== "string") {
+        return false;
+      }
+      return selectedProviderModelId && entry.id.trim() === selectedProviderModelId;
+    })
+  : null;
+if (Array.isArray(sourcePrimaryProvider.models) && selectedProviderModels.length === 0) {
+  console.error(
+    `[ERROR] OpenClaw source provider ${primaryProviderId} 缺少 primary model：${selectedProviderModelId || selectedPrimaryModel}`,
+  );
+  process.exit(1);
+}
 // 当前 OpenClaw 超时入口在 provider 配置的 timeoutSeconds，不再写旧的 agent 默认 llm 字段。
+const mergedPrimaryProvider = {
+  ...sourcePrimaryProvider,
+  timeoutSeconds: llmIdleTimeoutSeconds,
+};
+if (selectedProviderModels) {
+  mergedPrimaryProvider.models = selectedProviderModels;
+}
 const mergedProviders = {
-  ...sourceProviders,
-  [primaryProviderId]: {
-    ...sourcePrimaryProvider,
-    timeoutSeconds: llmIdleTimeoutSeconds,
-  },
+  [primaryProviderId]: mergedPrimaryProvider,
 };
 const mergedModels = {
   ...sourceModels,
   providers: mergedProviders,
 };
-const sourceModelAliases = isPlainObject(sourceDefaults.models) ? sourceDefaults.models : {};
 const mergedDefaults = {
   ...sourceDefaults,
   model: {
@@ -483,7 +593,6 @@ const mergedDefaults = {
     primary: selectedPrimaryModel,
   },
   models: {
-    ...sourceModelAliases,
     [selectedPrimaryModel]: {
       alias: "DeepSeek Chat",
     },
@@ -491,27 +600,15 @@ const mergedDefaults = {
   skipBootstrap: true,
 };
 const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};
-const sourcePluginLoad = isPlainObject(sourcePlugins.load) ? sourcePlugins.load : {};
-const sourcePluginLoadPaths = Array.isArray(sourcePluginLoad.paths) ? sourcePluginLoad.paths : [];
 const clawTradeFrontlinePluginPath = `${rootDir}/openclaw_plugins/claw-trade-frontline-tools`;
-const mergedPluginLoadPaths = sourcePluginLoadPaths.includes(clawTradeFrontlinePluginPath)
-  ? sourcePluginLoadPaths
-  : [...sourcePluginLoadPaths, clawTradeFrontlinePluginPath];
-const sourcePluginEntries = isPlainObject(sourcePlugins.entries) ? sourcePlugins.entries : {};
-const sourceFrontlinePluginEntry = isPlainObject(sourcePluginEntries["claw-trade-frontline-tools"])
-  ? sourcePluginEntries["claw-trade-frontline-tools"]
-  : {};
 const mergedPlugins = {
   ...sourcePlugins,
   enabled: sourcePlugins.enabled === false ? false : true,
   load: {
-    ...sourcePluginLoad,
-    paths: mergedPluginLoadPaths,
+    paths: [clawTradeFrontlinePluginPath],
   },
   entries: {
-    ...sourcePluginEntries,
     "claw-trade-frontline-tools": {
-      ...sourceFrontlinePluginEntry,
       enabled: true,
     },
   },
@@ -549,6 +646,7 @@ prepare_openviking_runtime_config() {
   fi
 
   OPENVIKING_SOURCE_CONFIG_PATH_VALUE="${OPENVIKING_SOURCE_CONFIG_PATH}" \
+  OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}" \
   OPENVIKING_CONFIG_FILE_VALUE="${OPENVIKING_CONFIG_FILE}" \
   OPENVIKING_DATA_DIR_VALUE="${OPENVIKING_DATA_DIR}" \
   OPENVIKING_SERVER_PORT_VALUE="${OPENVIKING_SERVER_PORT}" \
@@ -557,6 +655,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const sourcePath = process.env.OPENVIKING_SOURCE_CONFIG_PATH_VALUE;
+const openClawConfigPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
 const outputPath = process.env.OPENVIKING_CONFIG_FILE_VALUE;
 const dataDir = process.env.OPENVIKING_DATA_DIR_VALUE;
 const port = Number.parseInt(process.env.OPENVIKING_SERVER_PORT_VALUE || "1933", 10);
@@ -574,6 +673,34 @@ if (!source || typeof source !== "object" || Array.isArray(source)) {
   process.exit(1);
 }
 
+let openClawConfig;
+try {
+  openClawConfig = JSON.parse(fs.readFileSync(openClawConfigPath, "utf8"));
+} catch (error) {
+  console.error(`[ERROR] OpenClaw runtime config 解析失败：${openClawConfigPath}`);
+  console.error(String(error));
+  process.exit(1);
+}
+if (!openClawConfig || typeof openClawConfig !== "object" || Array.isArray(openClawConfig)) {
+  console.error(`[ERROR] OpenClaw runtime config 根节点不是 object：${openClawConfigPath}`);
+  process.exit(1);
+}
+
+const openClawAgents = openClawConfig.agents && typeof openClawConfig.agents === "object" && !Array.isArray(openClawConfig.agents)
+  ? openClawConfig.agents
+  : {};
+const openClawDefaults = openClawAgents.defaults && typeof openClawAgents.defaults === "object" && !Array.isArray(openClawAgents.defaults)
+  ? openClawAgents.defaults
+  : {};
+const openClawDefaultModel = openClawDefaults.model && typeof openClawDefaults.model === "object" && !Array.isArray(openClawDefaults.model)
+  ? openClawDefaults.model
+  : {};
+const primaryModel = typeof openClawDefaultModel.primary === "string" ? openClawDefaultModel.primary.trim() : "";
+if (!primaryModel) {
+  console.error(`[ERROR] OpenClaw runtime config 缺少 primary model：${openClawConfigPath}`);
+  process.exit(1);
+}
+
 const next = {
   ...source,
   server: {
@@ -588,6 +715,15 @@ const next = {
       ? source.storage
       : {}),
     workspace: dataDir,
+  },
+  embedding: {
+    dense: {
+      provider: "litellm",
+      model: primaryModel,
+      dimension: 2048,
+    },
+    max_concurrent: 1,
+    max_retries: 0,
   },
 };
 
@@ -627,6 +763,7 @@ mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 prepare_openclaw_trade_agent_config
 prepare_openviking_runtime_config
+start_local_mongodb_if_needed
 
 if [[ ! -x "${OPENCLAW_GATEWAY_CALL_BIN}" ]]; then
   log_error "OPENCLAW_GATEWAY_CALL_BIN 不可执行：${OPENCLAW_GATEWAY_CALL_BIN}"
@@ -671,7 +808,7 @@ else
   # 默认使用本仓 uv 环境里锁定的 OpenViking wheel，避免 third_party 源码现场构建。
   (
     cd "${ROOT_DIR}"
-    uv run openviking-server --config "${OPENVIKING_CONFIG_FILE}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}" > "${OPENVIKING_SERVER_LOG}" 2>&1
+    uv run python -m claw_trade.runtime.openviking_report_server --config "${OPENVIKING_CONFIG_FILE}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}" > "${OPENVIKING_SERVER_LOG}" 2>&1
   ) &
 fi
 OPENVIKING_SERVER_PID=$!
@@ -756,6 +893,9 @@ log_info "启动 OpenClaw gateway（${OPENCLAW_GATEWAY_URL}）"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}" \
+OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT}" \
+OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL}" \
+OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH}" \
 CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}" \
   "${gateway_cmd[@]}" > "${OPENCLAW_GATEWAY_LOG}" 2>&1 &
 OPENCLAW_GATEWAY_PID=$!
@@ -788,6 +928,8 @@ OPENVIKING_BASE_URL=${OPENVIKING_BASE_URL}
 OPENVIKING_WORKSPACE=${OPENVIKING_WORKSPACE}
 OPENVIKING_CONFIG_FILE=${OPENVIKING_CONFIG_FILE}
 OPENVIKING_DATA_DIR=${OPENVIKING_DATA_DIR}
+OPENVIKING_WRITE_LOCK_PATH=${OPENVIKING_WRITE_LOCK_PATH}
+CLAW_TRADE_LOCAL_MONGODB_STARTED=${local_mongodb_started}
 EOF
 if [[ "${openviking_mcp_started}" == "1" ]]; then
   printf 'OPENVIKING_MCP_URL=%s\n' "${OPENVIKING_MCP_URL}" >> "${RUNTIME_ENV_PATH}"

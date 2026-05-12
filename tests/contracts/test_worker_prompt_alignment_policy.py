@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -20,10 +21,22 @@ REQUIRED_WORKERS: tuple[str, ...] = (
     "risk_guardian",
     "risk_moderator",
     "portfolio_manager",
+    "report_polisher",
 )
 
 APPROVED_PROMPT_PROFILES = ("US", "CN_A")
 UNAPPROVED_PROMPT_PROFILES = ("HK", "CRYPTO")
+REPORT_POLISHER = "report_polisher"
+APPROVED_PROMPT_CASES = tuple(
+    (worker_id, profile)
+    for worker_id in REQUIRED_WORKERS
+    for profile in (("CN_A",) if worker_id == REPORT_POLISHER else APPROVED_PROMPT_PROFILES)
+)
+UNAPPROVED_PROMPT_CASES = tuple(
+    (worker_id, profile)
+    for worker_id in REQUIRED_WORKERS
+    for profile in (("US", "HK", "CRYPTO") if worker_id == REPORT_POLISHER else UNAPPROVED_PROMPT_PROFILES)
+)
 
 FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS = (
     "[RuntimeTarget]",
@@ -40,6 +53,127 @@ FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS = (
     "openviking_write_material",
     "viking://",
 )
+
+US_PROMPT_FORBIDDEN_CONTROL_TOKENS = (
+    "OpenClaw",
+    "OpenViking",
+    "[ApprovedMaterials]",
+    "[RuntimeTarget]",
+    "[ReportSubmission]",
+    "RuntimeTarget",
+    "ReportSubmission",
+    "viking://",
+    "material_id",
+    "l1_sha256",
+    "l2_available",
+    "receipt_path",
+    "source_worker_id",
+    "tool_choice",
+    "Python",
+    "artifact",
+    "capability",
+)
+
+US_BASELINE_SNIPPETS: dict[str, tuple[str, ...]] = {
+    "market_analyst": (
+        "You are a trading assistant tasked with analyzing financial markets",
+        "select the **most relevant indicators**",
+        "The goal is to choose up to **8 indicators**",
+        "Write a very detailed and nuanced report of the trends you observe",
+        "append a Markdown table at the end of the report",
+    ),
+    "fundamental_analyst": (
+        "You are a researcher tasked with analyzing fundamental information over the past week about a company",
+        "financial documents, company profile, basic company financials, and company financial history",
+        "Make sure to include as much detail as possible",
+        "append a Markdown table at the end of the report",
+    ),
+    "news_analyst": (
+        "You are a news researcher tasked with analyzing recent news and trends over the past week",
+        "current state of the world that is relevant for trading and macroeconomics",
+        "Provide specific, actionable insights with supporting evidence",
+        "append a Markdown table at the end of the report",
+    ),
+    "social_analyst": (
+        "You are a social media and company specific news researcher/analyst",
+        "write a comprehensive long report detailing your analysis, insights, and implications",
+        "Try to look at all sources possible from social media to sentiment to news",
+        "append a Markdown table at the end of the report",
+    ),
+    "bull_researcher": (
+        "You are a Bull Analyst advocating for investing in the stock",
+        "Growth Potential:",
+        "Bear Counterpoints:",
+        "engaging directly with the bear analyst's points",
+    ),
+    "bear_researcher": (
+        "You are a Bear Analyst making the case against investing in the stock",
+        "Risks and Challenges:",
+        "Bull Counterpoints:",
+        "directly engaging with the bull analyst's points",
+    ),
+    "research_manager": (
+        "As the portfolio manager and debate facilitator",
+        "align with the bear analyst, the bull analyst, or choose Hold",
+        "Your recommendation--Buy, Sell, or Hold--must be clear and actionable",
+        "develop a detailed investment plan for the trader",
+    ),
+    "trader": (
+        "You are a trading agent analyzing market data to make investment decisions",
+        "provide a specific recommendation to buy, sell, or hold",
+        "FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**",
+        "Proposed Investment Plan: {investment_plan}",
+    ),
+    "risk_challenger": (
+        "As the Aggressive Risk Analyst",
+        "champion high-reward, high-risk opportunities",
+        "Here is the trader's decision:",
+        "countering with data-driven rebuttals",
+    ),
+    "risk_guardian": (
+        "As the Conservative Risk Analyst",
+        "protect assets, minimize volatility",
+        "Here is the trader's decision:",
+        "low-risk strategy",
+    ),
+    "risk_moderator": (
+        "As the Neutral Risk Analyst",
+        "provide a balanced perspective",
+        "Here is the trader's decision:",
+        "Challenge each of their points",
+    ),
+    "portfolio_manager": (
+        "As the Portfolio Manager, synthesize the risk analysts' debate",
+        "**Rating Scale** (use exactly one):",
+        "Research Manager's investment plan: **{research_plan}**",
+        "Trader's transaction proposal: **{trader_decision}**",
+        "Be decisive and ground every conclusion in specific evidence",
+    ),
+}
+
+SUPPORTED_US_PROMPT_PLACEHOLDERS = {
+    "ticker",
+    "company_name",
+    "market",
+    "currency",
+    "currency_symbol",
+    "current_date",
+    "start_date",
+    "end_date",
+    "market_research_report",
+    "sentiment_report",
+    "news_report",
+    "fundamentals_report",
+    "history",
+    "current_response",
+    "past_memory_str",
+    "investment_plan",
+    "trader_decision",
+    "current_safe_response",
+    "current_neutral_response",
+    "current_risky_response",
+    "research_plan",
+}
 
 FRONTLINE_WORKERS: tuple[str, ...] = (
     "market_analyst",
@@ -77,8 +211,7 @@ AGENT_FACING_RELATIVE_PATHS = (
 )
 
 
-@pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
-@pytest.mark.parametrize("profile", APPROVED_PROMPT_PROFILES)
+@pytest.mark.parametrize(("worker_id", "profile"), APPROVED_PROMPT_CASES)
 def test_approved_worker_prompts_keep_baseline_alignment_metadata(
     worker_id: str,
     profile: str,
@@ -92,12 +225,15 @@ def test_approved_worker_prompts_keep_baseline_alignment_metadata(
     assert metadata["stage"] == worker_by_id(worker_id).stage.value
 
     review = _simple_yaml(Path("agents") / worker_id / "prompt-review.yaml")
-    assert review["us_alignment"] == "TradingAgents"
-    assert review["cn_a_alignment"] == "TradingAgents-CN"
+    if worker_id == REPORT_POLISHER:
+        assert review["us_alignment"] == "unapproved"
+        assert "alphaear-reporter" in review["cn_a_alignment"]
+    else:
+        assert review["us_alignment"] == "TradingAgents"
+        assert review["cn_a_alignment"] == "TradingAgents-CN"
 
 
-@pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
-@pytest.mark.parametrize("profile", UNAPPROVED_PROMPT_PROFILES)
+@pytest.mark.parametrize(("worker_id", "profile"), UNAPPROVED_PROMPT_CASES)
 def test_unapproved_profiles_fail_closed_without_fallback(worker_id: str, profile: str) -> None:
     prompt_path = Path("agents") / worker_id / "prompts" / f"{profile}.md"
     metadata = _front_matter(prompt_path)
@@ -124,6 +260,31 @@ def test_agent_facing_text_does_not_contain_machine_protocol(worker_id: str) -> 
         text = path.read_text(encoding="utf-8")
         for token in FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS:
             assert token not in text, f"{path} contains machine protocol token {token!r}"
+
+
+@pytest.mark.parametrize("worker_id", tuple(worker for worker in REQUIRED_WORKERS if worker != REPORT_POLISHER))
+def test_us_worker_prompts_keep_original_tradingagents_baseline_language(worker_id: str) -> None:
+    text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
+
+    for snippet in US_BASELINE_SNIPPETS[worker_id]:
+        assert snippet in text, f"{worker_id} missing original TradingAgents snippet: {snippet!r}"
+
+
+@pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
+def test_us_worker_prompts_do_not_contain_runtime_protocol_or_control_plane_terms(worker_id: str) -> None:
+    text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
+
+    for token in US_PROMPT_FORBIDDEN_CONTROL_TOKENS:
+        assert token not in text, f"{worker_id} US prompt contains control-plane token {token!r}"
+
+
+@pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
+def test_us_worker_prompt_placeholders_are_supported_runtime_vars(worker_id: str) -> None:
+    text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
+    placeholders = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", text))
+
+    unsupported = placeholders - SUPPORTED_US_PROMPT_PLACEHOLDERS
+    assert unsupported == set()
 
 
 def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protocol_keywords() -> None:

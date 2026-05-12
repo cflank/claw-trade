@@ -19,6 +19,7 @@ from frontline_data_pack.evidence_writer import (  # noqa: E402
     DUPLICATE_TARGET_WRITE_FLAG,
     L2WriteSessionState,
     cleanup_chart_manifest_reference,
+    commit_l2_write_session,
     PROVIDER_ATTEMPTS_WRITE_FAILED_FLAG,
     write_chart_evidence,
     write_pack_evidence,
@@ -326,6 +327,57 @@ def test_t_l2_002_write_pack_evidence_writes_normalized_pack_json() -> None:
     assert write_result.ok is True
     assert write_result.receipt is not None
     assert write_result.receipt.uri.endswith("/normalized_pack.json")
+
+
+def test_deferred_l2_writes_publish_only_after_commit() -> None:
+    context = _context()
+    state = L2WriteSessionState(defer_writes=True)
+    client = _InMemoryL2Client()
+
+    write_result = write_raw_payload(
+        result=_provider_result_without_evidence(),
+        context=context,
+        attempt_seq=1,
+        state=state,
+        client=client,
+    )
+
+    assert write_result.ok is True
+    assert client._content_by_uri == {}  # noqa: SLF001
+
+    commit_result = commit_l2_write_session(state=state, client=client)
+
+    assert commit_result.ok is True
+    assert write_result.receipt is not None
+    assert write_result.receipt.uri in client._content_by_uri  # noqa: SLF001
+
+
+def test_tool_call_id_scopes_l2_evidence_paths_for_retried_tool_calls() -> None:
+    context = ToolRuntimeContext(
+        run_id="run-1",
+        stage="frontline",
+        worker_id="market_analyst",
+        call_id="worker-call-1",
+        dispatch_id="dispatch-1",
+        tool_name="market_market_data_pack",
+        evidence_root="tool-evidence/run-1",
+        current_time="2026-05-08T12:00:00Z",
+        current_date="2026-05-08",
+        tool_call_id="call_00_retryA",
+    )
+    state = L2WriteSessionState()
+    client = _InMemoryL2Client()
+
+    write_result = write_raw_payload(
+        result=_provider_result_without_evidence(),
+        context=context,
+        attempt_seq=1,
+        state=state,
+        client=client,
+    )
+
+    assert write_result.receipt is not None
+    assert "/evidence/tool_calls/call_00_retryA/provider_raw/" in write_result.receipt.uri
 
 
 class _InMemoryL2Client:

@@ -18,7 +18,6 @@ stage: frontline
 - company_name: `{company_name}`
 - start_date: `{start_date}`
 - end_date: `{end_date}`
-- current_date: `{current_date}`
 
 写作边界（必须遵守）：
 - 最终回答第一行必须是 Markdown 标题，且必须以 `# ` 开头。

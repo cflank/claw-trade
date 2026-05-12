@@ -224,6 +224,7 @@ def test_cn_a_portfolio_manager_prompt_materials_use_research_plan_and_risk_hist
         run_id,
         {
             ("research_manager", Stage.INVESTMENT_DECISION): "# 投资计划\n完整研究经理报告正文",
+            ("trader", Stage.TRADE_DECISION): "# 交易决策\n完整交易员报告正文",
             ("risk_challenger", Stage.RISK_DEBATE): "# 激进风险\n完整激进报告正文",
             ("risk_guardian", Stage.RISK_DEBATE): "# 保守风险\n完整保守报告正文",
             ("risk_moderator", Stage.RISK_DEBATE): "# 中性风险\n完整中性报告正文",
@@ -258,12 +259,73 @@ def test_cn_a_portfolio_manager_prompt_materials_use_research_plan_and_risk_hist
     assert result.call is not None
     prompt_vars = result.call.prompt_runtime_vars
     assert prompt_vars["trader_plan"] == "# 投资计划\n完整研究经理报告正文"
+    assert prompt_vars["research_plan"] == "# 投资计划\n完整研究经理报告正文"
+    assert prompt_vars["trader_decision"] == "# 交易决策\n完整交易员报告正文"
     assert prompt_vars["history"] == (
         "\nRisky Analyst: # 激进风险\n完整激进报告正文"
         "\nSafe Analyst: # 保守风险\n完整保守报告正文"
         "\nNeutral Analyst: # 中性风险\n完整中性报告正文"
     )
     assert prompt_vars["past_memory_str"] == ""
+    _assert_no_model_visible_protocol(prompt_vars)
+
+
+def test_cn_a_report_polisher_prompt_materials_inline_full_final_report_inputs(tmp_path: Path) -> None:
+    run_id = "run-report-polisher-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# 市场分析\n完整市场报告正文",
+            ("fundamental_analyst", Stage.FRONTLINE): "# 基本面分析\n完整基本面报告正文",
+            ("news_analyst", Stage.FRONTLINE): "# 新闻分析\n完整新闻报告正文",
+            ("social_analyst", Stage.FRONTLINE): "# 社交舆情\n完整舆情报告正文",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 多方观点\n完整多方报告正文",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 空方观点\n完整空方报告正文",
+            ("research_manager", Stage.INVESTMENT_DECISION): "# 投资计划\n完整研究经理报告正文",
+            ("trader", Stage.TRADE_DECISION): "# 交易决策\n完整交易员报告正文",
+            ("risk_challenger", Stage.RISK_DEBATE): "# 激进风险\n完整激进报告正文",
+            ("risk_guardian", Stage.RISK_DEBATE): "# 保守风险\n完整保守报告正文",
+            ("risk_moderator", Stage.RISK_DEBATE): "# 中性风险\n完整中性报告正文",
+            ("portfolio_manager", Stage.PORTFOLIO_DECISION): "# 组合经理\n完整组合经理最终裁决正文",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="report_polisher",
+        stage=Stage.FINAL_REPORT,
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.FINAL_REPORT,
+            worker_id="report_polisher",
+            run_id=run_id,
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.FINAL_REPORT,
+            worker_id="report_polisher",
+            run_id=run_id,
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    prompt_vars = result.call.prompt_runtime_vars
+    assert prompt_vars["portfolio_manager_report"] == "# 组合经理\n完整组合经理最终裁决正文"
+    assert prompt_vars["market_analyst_report"] == "# 市场分析\n完整市场报告正文"
+    assert prompt_vars["fundamental_analyst_report"] == "# 基本面分析\n完整基本面报告正文"
+    assert prompt_vars["news_analyst_report"] == "# 新闻分析\n完整新闻报告正文"
+    assert prompt_vars["social_analyst_report"] == "# 社交舆情\n完整舆情报告正文"
+    assert prompt_vars["trader_report"] == "# 交易决策\n完整交易员报告正文"
+    assert "### 多头研究员\n# 多方观点\n完整多方报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "### 风险整合方\n# 中性风险\n完整中性报告正文" in prompt_vars["supporting_worker_reports"]
     _assert_no_model_visible_protocol(prompt_vars)
 
 

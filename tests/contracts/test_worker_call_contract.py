@@ -87,6 +87,38 @@ def test_bear_researcher_call_receives_bull_argument_ref_after_bull_approved(tmp
     assert refs[-1].stage == Stage.INVESTMENT_DEBATE
 
 
+def test_report_polisher_call_receives_core_12_approved_refs(tmp_path: Path) -> None:
+    state = _state(tmp_path=tmp_path, run_id="run-1", profile="CN_A")
+    manifest = full_core_12_manifest(tmp_path)
+
+    context_result = build_request_context(
+        state=state,
+        worker_id="report_polisher",
+        stage=Stage.FINAL_REPORT,
+        manifest=manifest,
+    )
+
+    assert context_result.ok is True
+    assert context_result.context is not None
+    context = context_result.context
+    assert context.allowed_tools == ()
+    assert [ref.worker_id for ref in context.upstream_materials] == [
+        "market_analyst",
+        "fundamental_analyst",
+        "news_analyst",
+        "social_analyst",
+        "bull_researcher",
+        "bear_researcher",
+        "research_manager",
+        "trader",
+        "risk_challenger",
+        "risk_guardian",
+        "risk_moderator",
+        "portfolio_manager",
+    ]
+    assert len(context.openviking_read_capabilities) == 12
+
+
 def test_material_target_is_unique_per_call_even_same_worker_stage(tmp_path: Path) -> None:
     state = _state(
         tmp_path=tmp_path,
@@ -168,6 +200,23 @@ def frontline_manifest(tmp_path: Path) -> ApprovedManifest:
         .add(fake_approved_material(tmp_path, "mat-frontline-news", "news_analyst", Stage.FRONTLINE, "call-3"))
         .add(fake_approved_material(tmp_path, "mat-frontline-social", "social_analyst", Stage.FRONTLINE, "call-4"))
     )
+
+
+def full_core_12_manifest(tmp_path: Path) -> ApprovedManifest:
+    manifest = frontline_manifest(tmp_path)
+    extra_sources = (
+        ("mat-debate-bull", "bull_researcher", Stage.INVESTMENT_DEBATE, "call-5"),
+        ("mat-debate-bear", "bear_researcher", Stage.INVESTMENT_DEBATE, "call-6"),
+        ("mat-manager", "research_manager", Stage.INVESTMENT_DECISION, "call-7"),
+        ("mat-trader", "trader", Stage.TRADE_DECISION, "call-8"),
+        ("mat-risk-challenger", "risk_challenger", Stage.RISK_DEBATE, "call-9"),
+        ("mat-risk-guardian", "risk_guardian", Stage.RISK_DEBATE, "call-10"),
+        ("mat-risk-moderator", "risk_moderator", Stage.RISK_DEBATE, "call-11"),
+        ("mat-portfolio", "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-12"),
+    )
+    for material_id, worker_id, stage, call_id in extra_sources:
+        manifest.add(fake_approved_material(tmp_path, material_id, worker_id, stage, call_id))
+    return manifest
 
 
 def fake_approved_material(

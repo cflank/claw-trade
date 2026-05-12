@@ -18,12 +18,14 @@ def test_worker_order_is_fixed():
         "risk_guardian",
         "risk_moderator",
         "portfolio_manager",
+        "report_polisher",
     ]
 
 
 def test_worker_stage_mapping_is_fixed():
     assert worker_by_id("market_analyst").stage == Stage.FRONTLINE
     assert worker_by_id("portfolio_manager").stage == Stage.PORTFOLIO_DECISION
+    assert worker_by_id("report_polisher").stage == Stage.FINAL_REPORT
 
 
 def test_worker_stage_mapping_counterexample_rejected():

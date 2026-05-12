@@ -29,6 +29,7 @@ _WORKER_STAGE: tuple[tuple[str, Stage], ...] = (
     ("risk_guardian", Stage.RISK_DEBATE),
     ("risk_moderator", Stage.RISK_DEBATE),
     ("portfolio_manager", Stage.PORTFOLIO_DECISION),
+    ("report_polisher", Stage.FINAL_REPORT),
 )
 
 
@@ -60,7 +61,7 @@ def test_export_final_report_cn_a_passes_without_pm_decision_json(tmp_path: Path
     assert result.status == "passed"
     assert result.final_report_path is not None
     report_text = result.final_report_path.read_text(encoding="utf-8")
-    assert "## 最终裁决 / 最终投资决策" in report_text
+    assert "# 贵州茅台（600519）投资研究报告" in report_text
     assert "组合经理最终裁决：维持审慎增持" in report_text
     mapping_payload = json.loads((state.run_dir / "reports" / "export-claims.json").read_text(encoding="utf-8"))
     assert mapping_payload.get("pm_decision") is None
@@ -92,17 +93,14 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     guard_payload = json.loads((state.run_dir / "reports" / "export-guard-results.json").read_text(encoding="utf-8"))
     assert guard_payload["ok"] is True
     report_text = result.final_report_path.read_text(encoding="utf-8") if result.final_report_path is not None else ""
-    assert "## 图表资产" in report_text
+    assert "### 技术图表" in report_text
     assert "assets/market-01-market-structure.png" in report_text
-    assert "## 最终裁决 / 最终投资决策" in report_text
-    assert "## 图表与技术面分析" in report_text
     assert "## 二、技术指标分析" in report_text
-    assert "## 基本面分析" in report_text
-    assert report_text.index("## 图表与技术面分析") < report_text.index("## 图表资产")
-    assert report_text.index("## 二、技术指标分析") < report_text.index("## 图表资产")
-    assert report_text.index("## 图表资产") < report_text.index("## 基本面分析")
-    assert "## 新闻与宏观事件分析" in report_text
-    assert "## 社媒与情绪分析" in report_text
+    assert "## 三、基本面分析" in report_text
+    assert report_text.index("## 二、技术指标分析") < report_text.index("### 技术图表")
+    assert report_text.index("### 技术图表") < report_text.index("## 三、基本面分析")
+    assert "## 四、消息面与行业环境" in report_text
+    assert "## 五、市场情绪与交易结构" in report_text
     forbidden_terms = (
         "viking://",
         "sha256",
@@ -174,7 +172,7 @@ def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path
     assert result.status == "passed"
     assert result.final_report_path is not None
     report_text = result.final_report_path.read_text(encoding="utf-8")
-    assert "## 图表资产" in report_text
+    assert "### 技术图表" in report_text
     assert "assets/market-01-600519.SH_indicator_panels.png" in report_text
 
     copied_asset = state.run_dir / "reports" / "assets" / "market-01-600519.SH_indicator_panels.png"
@@ -464,6 +462,25 @@ def _l1_content_bytes(material: ApprovedMaterial) -> bytes:
         "risk_guardian": "风险防守：建议设置止损与仓位上限，避免单点暴露。",
         "risk_moderator": "风险整合：在可控风险前提下保留策略弹性。",
         "portfolio_manager": "组合经理最终裁决：维持审慎增持，按条件分步执行。",
+        "report_polisher": (
+            "# 贵州茅台（600519）投资研究报告\n\n"
+            "## 一、投资结论与组合动作\n"
+            "组合经理最终裁决：维持审慎增持，按条件分步执行。\n\n"
+            "## 二、技术指标分析\n"
+            "技术面结论：量价结构改善，趋势仍需成交量确认。\n\n"
+            "## 三、基本面分析\n"
+            "基本面结论：盈利韧性尚可，估值处于历史中枢附近。\n\n"
+            "## 四、消息面与行业环境\n"
+            "新闻结论：近期公司与行业信息偏中性，未见重大突发利空。\n\n"
+            "## 五、市场情绪与交易结构\n"
+            "社媒结论：讨论热度抬升，情绪分化，需防短线波动。\n\n"
+            "## 六、交易计划与组合风险\n"
+            "交易计划：分批建仓，触发条件明确，执行时控制仓位节奏。\n\n"
+            "## 七、关键分歧与跟踪条件\n"
+            "多空分歧集中在估值安全边际和需求验证。\n\n"
+            "## 八、最终结论\n"
+            "维持组合经理审慎增持结论，等待关键条件确认。"
+        ),
     }
     return text_by_worker[material.worker_id].encode("utf-8")
 

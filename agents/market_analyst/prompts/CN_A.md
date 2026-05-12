@@ -18,7 +18,6 @@ stage: frontline
 - market: `CN_A`（必须使用这个精确值，不要写成“中国A股”）
 - start_date: `{start_date}`
 - end_date: `{end_date}`
-- current_date: `{current_date}`
 
 写作边界（必须遵守）：
 - 最终报告正文必须直接从报告标题或正文第一句开始，不要先写过程说明。

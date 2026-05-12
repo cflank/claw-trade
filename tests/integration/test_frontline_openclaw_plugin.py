@@ -135,9 +135,21 @@ sys.stdout.write("\\n")
         assert runtime_context.get("worker_id") == worker_id
         assert runtime_context.get("call_id") == f"it-plugin-call-{index}"
         assert runtime_context.get("dispatch_id") == f"it-plugin-call-{index}"
+        assert runtime_context.get("tool_call_id") == "call"
         assert runtime_context.get("tool_name") == tool_name
         evidence_root = runtime_context.get("evidence_root")
         assert isinstance(evidence_root, str)
         assert evidence_root.endswith("/pack-tool-evidence")
         current_time = runtime_context.get("current_time")
         assert isinstance(current_time, str) and current_time.strip()
+
+
+def test_frontline_plugin_domain_tool_timeout_never_below_provider_total_budget() -> None:
+    text = PLUGIN_PATH.read_text(encoding="utf-8")
+
+    assert 'function providerTotalTimeoutMs()' in text
+    assert 'positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS)' in text
+    assert 'function domainToolTimeoutMs(domainTotalTimeoutMs)' in text
+    assert "return Math.max(totalTimeout, providerTotalTimeoutMs());" in text
+    assert 'positiveSecondsEnvToMs("CN_A_NEWS_TOTAL_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS)' in text
+    assert 'positiveSecondsEnvToMs("CN_A_SOCIAL_PACK_TIMEOUT_SECONDS", DEFAULT_SOCIAL_PACK_TIMEOUT_MS)' in text

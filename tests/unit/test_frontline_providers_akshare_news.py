@@ -382,6 +382,90 @@ def test_t_pvd_006_stock_news_em_passes_remaining_budget_to_underlying_http(monk
     assert all(math.isclose(value, 2.5, rel_tol=0.0, abs_tol=1e-9) for value in request_timeouts)
 
 
+def test_stock_info_global_em_passes_remaining_budget_to_underlying_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_timeouts: list[float] = []
+
+    class _FakeRequests:
+        def get(self, _url: str, **kwargs: object) -> object:
+            timeout = kwargs.get("timeout")
+            assert isinstance(timeout, float)
+            request_timeouts.append(timeout)
+            return object()
+
+    def _fake_stock_info_global_em() -> pd.DataFrame:
+        requests.get("https://example.com/global")  # type: ignore[name-defined]
+        return pd.DataFrame(
+            [
+                {
+                    "标题": "预算测试",
+                    "摘要": "内容",
+                    "发布时间": "2026-05-07 08:00:00",
+                    "链接": "https://example.com/global/1",
+                }
+            ]
+        )
+
+    _fake_stock_info_global_em.__globals__["requests"] = _FakeRequests()
+    fake_akshare = SimpleNamespace(stock_info_global_em=_fake_stock_info_global_em)
+    monkeypatch.setattr(
+        "frontline_data_pack.providers_akshare_news._load_akshare_module",
+        lambda: fake_akshare,
+    )
+
+    call_akshare_stock_info_global_em(
+        _news_spec(endpoint="stock_info_global_em"),
+        _query(),
+        _context(),
+        _fixed_call_context(timeout_ms=2500),
+    )
+
+    assert request_timeouts
+    assert all(math.isclose(value, 2.5, rel_tol=0.0, abs_tol=1e-9) for value in request_timeouts)
+
+
+def test_news_cctv_passes_remaining_budget_to_underlying_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    request_timeouts: list[float] = []
+
+    class _FakeRequests:
+        def get(self, _url: str, **kwargs: object) -> object:
+            timeout = kwargs.get("timeout")
+            assert isinstance(timeout, float)
+            request_timeouts.append(timeout)
+            return object()
+
+    def _fake_news_cctv(date: str) -> pd.DataFrame:
+        _ = date
+        requests.get("https://example.com/cctv")  # type: ignore[name-defined]
+        return pd.DataFrame(
+            [
+                {
+                    "date": "2026-05-07",
+                    "title": "预算测试",
+                    "content": "内容",
+                }
+            ]
+        )
+
+    _fake_news_cctv.__globals__["requests"] = _FakeRequests()
+    fake_akshare = SimpleNamespace(news_cctv=_fake_news_cctv)
+    monkeypatch.setattr(
+        "frontline_data_pack.providers_akshare_news._load_akshare_module",
+        lambda: fake_akshare,
+    )
+
+    call_akshare_news_cctv(
+        _news_spec(endpoint="news_cctv"),
+        _query(),
+        _context(),
+        _fixed_call_context(timeout_ms=2500),
+    )
+
+    assert request_timeouts
+    assert all(math.isclose(value, 2.5, rel_tol=0.0, abs_tol=1e-9) for value in request_timeouts)
+
+
 def test_t_pvd_006_stock_info_global_cls_passes_remaining_budget_to_underlying_http(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

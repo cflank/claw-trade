@@ -182,6 +182,37 @@ def test_bear_worker_call_sources_include_frontline_and_bull_argument(tmp_path: 
     ]
 
 
+def test_portfolio_manager_worker_call_sources_include_research_trader_and_risk(tmp_path: Path) -> None:
+    sources = (
+        ("mat-manager", "research_manager", Stage.INVESTMENT_DECISION, "call-7"),
+        ("mat-trader", "trader", Stage.TRADE_DECISION, "call-8"),
+        ("mat-risk-challenger", "risk_challenger", Stage.RISK_DEBATE, "call-9"),
+        ("mat-risk-guardian", "risk_guardian", Stage.RISK_DEBATE, "call-10"),
+        ("mat-risk-moderator", "risk_moderator", Stage.RISK_DEBATE, "call-11"),
+    )
+    manifest = ApprovedManifest.empty()
+    for material_id, worker_id, stage, call_id in sources:
+        manifest.add(
+            fake_approved_material(
+                material_id,
+                worker_id,
+                stage,
+                call_id,
+                hard_gate_result_path=write_gate_result(tmp_path, f"{worker_id}-portfolio.json"),
+            )
+        )
+
+    refs = manifest.for_worker_call(Stage.PORTFOLIO_DECISION, worker_id="portfolio_manager")
+
+    assert [(ref.worker_id, ref.stage) for ref in refs] == [
+        ("research_manager", Stage.INVESTMENT_DECISION),
+        ("trader", Stage.TRADE_DECISION),
+        ("risk_challenger", Stage.RISK_DEBATE),
+        ("risk_guardian", Stage.RISK_DEBATE),
+        ("risk_moderator", Stage.RISK_DEBATE),
+    ]
+
+
 def test_for_downstream_stage_rejects_partial_records(tmp_path: Path) -> None:
     manifest = ApprovedManifest.empty().add(
         fake_approved_material(
@@ -195,6 +226,51 @@ def test_for_downstream_stage_rejects_partial_records(tmp_path: Path) -> None:
 
     with pytest.raises(ArtifactFlowError, match="下游材料缺失"):
         manifest.for_downstream_stage(Stage.PORTFOLIO_DECISION)
+
+
+def test_report_polisher_worker_call_sources_include_core_12_reports(tmp_path: Path) -> None:
+    sources = (
+        ("mat-frontline-market", "market_analyst", Stage.FRONTLINE, "call-1"),
+        ("mat-frontline-fundamental", "fundamental_analyst", Stage.FRONTLINE, "call-2"),
+        ("mat-frontline-news", "news_analyst", Stage.FRONTLINE, "call-3"),
+        ("mat-frontline-social", "social_analyst", Stage.FRONTLINE, "call-4"),
+        ("mat-debate-bull", "bull_researcher", Stage.INVESTMENT_DEBATE, "call-5"),
+        ("mat-debate-bear", "bear_researcher", Stage.INVESTMENT_DEBATE, "call-6"),
+        ("mat-manager", "research_manager", Stage.INVESTMENT_DECISION, "call-7"),
+        ("mat-trader", "trader", Stage.TRADE_DECISION, "call-8"),
+        ("mat-risk-challenger", "risk_challenger", Stage.RISK_DEBATE, "call-9"),
+        ("mat-risk-guardian", "risk_guardian", Stage.RISK_DEBATE, "call-10"),
+        ("mat-risk-moderator", "risk_moderator", Stage.RISK_DEBATE, "call-11"),
+        ("mat-portfolio", "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-12"),
+    )
+    manifest = ApprovedManifest.empty()
+    for material_id, worker_id, stage, call_id in sources:
+        manifest.add(
+            fake_approved_material(
+                material_id,
+                worker_id,
+                stage,
+                call_id,
+                hard_gate_result_path=write_gate_result(tmp_path, f"{worker_id}.json"),
+            )
+        )
+
+    refs = manifest.for_worker_call(Stage.FINAL_REPORT, worker_id="report_polisher")
+
+    assert [(ref.worker_id, ref.stage) for ref in refs] == [
+        ("market_analyst", Stage.FRONTLINE),
+        ("fundamental_analyst", Stage.FRONTLINE),
+        ("news_analyst", Stage.FRONTLINE),
+        ("social_analyst", Stage.FRONTLINE),
+        ("bull_researcher", Stage.INVESTMENT_DEBATE),
+        ("bear_researcher", Stage.INVESTMENT_DEBATE),
+        ("research_manager", Stage.INVESTMENT_DECISION),
+        ("trader", Stage.TRADE_DECISION),
+        ("risk_challenger", Stage.RISK_DEBATE),
+        ("risk_guardian", Stage.RISK_DEBATE),
+        ("risk_moderator", Stage.RISK_DEBATE),
+        ("portfolio_manager", Stage.PORTFOLIO_DECISION),
+    ]
 
 
 def test_add_rejects_material_without_hard_gate_path() -> None:

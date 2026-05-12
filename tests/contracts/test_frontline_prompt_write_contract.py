@@ -50,6 +50,15 @@ def test_frontline_cn_prompts_keep_only_domain_pack_tools() -> None:
         _assert_no_handwritten_protocol(text)
 
 
+def test_frontline_cn_prompt_tool_parameters_match_frontline_schema() -> None:
+    for worker in FRONTLINE_TOOLS:
+        text = _read(f"agents/{worker}/prompts/CN_A.md")
+        if "工具调用参数：" not in text:
+            continue
+        section = text.split("工具调用参数：", 1)[1].split("写作边界", 1)[0]
+        assert "current_date" not in section
+
+
 def test_frontline_user_and_stage_skill_do_not_request_report_submission_tool() -> None:
     for worker in FRONTLINE_TOOLS:
         user_text = _read(f"agents/{worker}/USER.md")

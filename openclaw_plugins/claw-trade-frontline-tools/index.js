@@ -150,7 +150,7 @@ function buildToolInput(runtimeVars, params, requiredFields = []) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
-function buildRuntimeContext(runtime, toolName) {
+function buildRuntimeContext(runtime, toolName, toolCallId) {
   const currentDate = textValue(runtime.runtimeVars.current_date);
   return {
     run_id: runtime.runId,
@@ -158,6 +158,7 @@ function buildRuntimeContext(runtime, toolName) {
     worker_id: runtime.workerId,
     call_id: runtime.callId,
     dispatch_id: runtime.callId,
+    tool_call_id: textValue(toolCallId) || null,
     tool_name: toolName,
     evidence_root: path.join(runtime.evidenceDir, "pack-tool-evidence"),
     current_date: currentDate,
@@ -215,6 +216,17 @@ function subprocessTimeoutMs(domainTotalTimeoutMs) {
     ? domainTotalTimeoutMs
     : DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS;
   return Math.max(totalTimeout + SUBPROCESS_TIMEOUT_BUFFER_MS, DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS);
+}
+
+function providerTotalTimeoutMs() {
+  return positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS);
+}
+
+function domainToolTimeoutMs(domainTotalTimeoutMs) {
+  const totalTimeout = Number.isFinite(domainTotalTimeoutMs) && domainTotalTimeoutMs > 0
+    ? domainTotalTimeoutMs
+    : DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS;
+  return Math.max(totalTimeout, providerTotalTimeoutMs());
 }
 
 function parseJsonFromStdout(stdout) {
@@ -562,7 +574,9 @@ function newsScriptConfig() {
       pythonDir,
     ],
     pythonPathDirs: [pythonDir],
-    totalTimeoutMs: positiveSecondsEnvToMs("CN_A_NEWS_TOTAL_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs("CN_A_NEWS_TOTAL_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
+    ),
   };
 }
 
@@ -592,7 +606,9 @@ function socialScriptConfig() {
       pythonDir,
     ],
     pythonPathDirs: [pythonDir],
-    totalTimeoutMs: positiveSecondsEnvToMs("CN_A_SOCIAL_PACK_TIMEOUT_SECONDS", DEFAULT_SOCIAL_PACK_TIMEOUT_MS),
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs("CN_A_SOCIAL_PACK_TIMEOUT_SECONDS", DEFAULT_SOCIAL_PACK_TIMEOUT_MS),
+    ),
   };
 }
 
@@ -603,7 +619,7 @@ const TOOL_CONFIG_FACTORIES = Object.freeze({
   [TOOL_NAMES.social]: socialScriptConfig,
 });
 
-async function executeFrontlineTool(ctx, params, toolName) {
+async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   const configFactory = TOOL_CONFIG_FACTORIES[toolName];
   if (!configFactory) {
     return toolErrorResult(TOOL_ERROR_CODES.protocolError, `unknown tool config: ${toolName}`, { tool_name: toolName });
@@ -612,7 +628,7 @@ async function executeFrontlineTool(ctx, params, toolName) {
   const runtime = readCommand(ctx, config.expectedWorkerId, toolName);
   const toolInput = buildToolInput(runtime.runtimeVars, params, config.requiredFields);
   assertFrontlineMarket(toolName, toolInput);
-  const runtimeContext = buildRuntimeContext(runtime, toolName);
+  const runtimeContext = buildRuntimeContext(runtime, toolName, toolCallId);
   const payload = {
     tool_input: toolInput,
     runtime_context: runtimeContext,
@@ -631,33 +647,33 @@ async function executeFrontlineTool(ctx, params, toolName) {
   return toolResult(result.parsed, false);
 }
 
-async function runMarketPack(ctx, params) {
+async function runMarketPack(ctx, params, toolCallId) {
   try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.market);
+    return await executeFrontlineTool(ctx, params, TOOL_NAMES.market, toolCallId);
   } catch (error) {
     return runtimeErrorToResult(TOOL_NAMES.market, "market_analyst", error);
   }
 }
 
-async function runFundamentalPack(ctx, params) {
+async function runFundamentalPack(ctx, params, toolCallId) {
   try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.fundamental);
+    return await executeFrontlineTool(ctx, params, TOOL_NAMES.fundamental, toolCallId);
   } catch (error) {
     return runtimeErrorToResult(TOOL_NAMES.fundamental, "fundamental_analyst", error);
   }
 }
 
-async function runNewsPack(ctx, params) {
+async function runNewsPack(ctx, params, toolCallId) {
   try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.news);
+    return await executeFrontlineTool(ctx, params, TOOL_NAMES.news, toolCallId);
   } catch (error) {
     return runtimeErrorToResult(TOOL_NAMES.news, "news_analyst", error);
   }
 }
 
-async function runSocialPack(ctx, params) {
+async function runSocialPack(ctx, params, toolCallId) {
   try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.social);
+    return await executeFrontlineTool(ctx, params, TOOL_NAMES.social, toolCallId);
   } catch (error) {
     return runtimeErrorToResult(TOOL_NAMES.social, "social_analyst", error);
   }
@@ -671,7 +687,7 @@ function registerFrontlineTool(api, name, description, execute) {
       description,
       parameters: PACK_INPUT_SCHEMA,
       async execute(_id, params) {
-        return execute(ctx, params);
+        return execute(ctx, params, _id);
       },
     }),
     { name, optional: true },

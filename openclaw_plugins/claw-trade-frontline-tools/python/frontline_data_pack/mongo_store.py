@@ -65,6 +65,20 @@ def create_mongo_store(
     return MongoStore(client=client, database=database, database_name=database_name)
 
 
+def resolve_optional_mongo_database(
+    mongodb_uri: str,
+    *,
+    cache_required: bool,
+) -> Any | None:
+    store = create_mongo_store(mongodb_uri)
+    health = check_mongo_health(store.client)
+    if health.ok:
+        return store.database
+    if cache_required:
+        raise FrontlineConfigError(MONGO_CONFIG_INVALID, f"{MONGO_UNAVAILABLE}:MongoDB health check failed")
+    return None
+
+
 def parse_mongodb_database_name(mongodb_uri: str) -> str:
     if not isinstance(mongodb_uri, str) or not mongodb_uri.strip():
         raise FrontlineConfigError(MONGO_CONFIG_INVALID, "CN_A_MONGODB_URI 缺失")

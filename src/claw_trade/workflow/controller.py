@@ -462,6 +462,24 @@ def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMan
                     human_action_required=None,
                 ),
             )
+
+    if stage == Stage.FINAL_REPORT:
+        if not manifest.has_worker("report_polisher", Stage.FINAL_REPORT):
+            return Decision(
+                kind=DecisionKind.FAIL,
+                next_status=RunStatus.FAILED,
+                failure=FailureRecord(
+                    run_id=state.run_id,
+                    call_id=None,
+                    worker_id="report_polisher",
+                    stage=Stage.FINAL_REPORT,
+                    category="final_report",
+                    reason="report_polisher approved material 缺失",
+                    evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
+                    early_stop=True,
+                    human_action_required=None,
+                ),
+            )
         return Decision(kind=DecisionKind.EXPORT_REPORT, next_status=RunStatus.REPORT_EXPORTING)
 
     next_stage = stage_plan(stage).next_stage
@@ -497,8 +515,8 @@ def decide_report_exporting(state: WorkflowState, export_result: ExportResult | 
         or FailureRecord(
             run_id=state.run_id,
             call_id=None,
-            worker_id="portfolio_manager",
-            stage=Stage.PORTFOLIO_DECISION,
+            worker_id="report_polisher",
+            stage=Stage.FINAL_REPORT,
             category="export_truthfulness",
             reason=f"export status={export_result.status}",
             evidence_paths=(state.run_dir / "reports" / "export-result.json",),

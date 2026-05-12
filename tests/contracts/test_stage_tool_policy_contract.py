@@ -29,6 +29,9 @@ def test_stage_tool_policy_allows_empty_tools_only_for_pure_prompt_workers(
 
     for worker_id in all_worker_ids():
         policy_result = load_stage_policy(agents_root, worker_id, profile)
+        if not _profile_is_approved(worker_id, profile):
+            assert policy_result.ok is False
+            continue
         assert policy_result.ok is True and policy_result.policy is not None
         tools = resolve_tools(policy_result.policy, registry)
         if policy_result.policy.openviking_access == "none" and policy_result.policy.stage != Stage.FRONTLINE:
@@ -60,6 +63,9 @@ def test_openviking_read_write_are_stage_scoped(agents_root: Path, profile: str)
 
     for worker_id in all_worker_ids():
         policy_result = load_stage_policy(agents_root, worker_id, profile)
+        if not _profile_is_approved(worker_id, profile):
+            assert policy_result.ok is False
+            continue
         assert policy_result.ok is True and policy_result.policy is not None
         policy = policy_result.policy
         tools = resolve_tools(policy, registry)
@@ -158,6 +164,12 @@ def test_social_visible_tools_validator_fails_for_unapproved_extra_tool() -> Non
     )
     assert result.ok is False
     assert result.code == SOCIAL_POLICY_MODULE.SOCIAL_VISIBLE_TOOL_SET_INVALID
+
+
+def _profile_is_approved(worker_id: str, profile: str) -> bool:
+    if worker_id == "report_polisher":
+        return profile == "CN_A"
+    return profile in {"US", "CN_A"}
 
 
 def _load_social_policy_module():

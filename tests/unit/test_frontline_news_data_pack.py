@@ -185,31 +185,25 @@ def test_t_news_002_enhancement_sources_are_attempted_without_blocking_accepted_
 
 
 def test_t_news_002_provider_attempts_l2_write_failed_must_failed_and_no_fake_attempt_ref() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("akshare", "stock_news_em"): _company_news_provider(1),
-            ("akshare", "stock_info_global_cls"): _empty_news_provider(),
-        },
-        evidence_client=_FailProviderAttemptsWriteL2Client(),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert "l2_write_failed:provider_attempts" in pack.diagnostic_flags
-    assert all(ref.kind != "provider_attempts" for ref in pack.openviking_l2_refs)
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("akshare", "stock_news_em"): _company_news_provider(1),
+                ("akshare", "stock_info_global_cls"): _empty_news_provider(),
+            },
+            evidence_client=_FailProviderAttemptsWriteL2Client(),
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_news_002_normalized_pack_l2_write_failed_must_failed_and_no_fake_pack_ref() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("akshare", "stock_news_em"): _company_news_provider(1),
-            ("akshare", "stock_info_global_cls"): _empty_news_provider(),
-        },
-        evidence_client=_FailNormalizedPackWriteL2Client(),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert "l2_write_failed:normalized_pack" in pack.diagnostic_flags
-    assert all(ref.kind != "normalized_pack" for ref in pack.openviking_l2_refs)
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("akshare", "stock_news_em"): _company_news_provider(1),
+                ("akshare", "stock_info_global_cls"): _empty_news_provider(),
+            },
+            evidence_client=_FailNormalizedPackWriteL2Client(),
+        ).build(_tool_input(), _runtime_context())
 
 
 @dataclass

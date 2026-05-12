@@ -37,6 +37,8 @@ class RunStatus(str, Enum):
     RISK_DEBATE_READY = "risk_debate_ready"
     PORTFOLIO_DECISION_RUNNING = "portfolio_decision_running"
     PORTFOLIO_DECISION_READY = "portfolio_decision_ready"
+    FINAL_REPORT_RUNNING = "final_report_running"
+    FINAL_REPORT_READY = "final_report_ready"
     REPORT_EXPORTING = "report_exporting"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -50,6 +52,7 @@ class Stage(str, Enum):
     TRADE_DECISION = "trade_decision"
     RISK_DEBATE = "risk_debate"
     PORTFOLIO_DECISION = "portfolio_decision"
+    FINAL_REPORT = "final_report"
 
 
 @dataclass(frozen=True)

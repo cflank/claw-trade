@@ -338,13 +338,23 @@ def test_single_worker_complete_requires_result_and_approved_material(tmp_path: 
 def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
     state_ready = make_state(tmp_path=tmp_path, status=RunStatus.PORTFOLIO_DECISION_READY)
     approved = ManifestView(approved={("portfolio_manager", Stage.PORTFOLIO_DECISION)})
-    export_decision = decide_next(make_input(state=state_ready, manifest=approved))
+    report_decision = decide_next(make_input(state=state_ready, manifest=approved))
+
+    assert report_decision.kind == DecisionKind.WAKE_STAGE
+    assert report_decision.next_status == RunStatus.FINAL_REPORT_RUNNING
+    assert report_decision.stage == Stage.FINAL_REPORT
+    assert report_decision.batch is not None
+    assert report_decision.batch.worker_ids == ("report_polisher",)
+
+    state_final_ready = make_state(tmp_path=tmp_path, status=RunStatus.FINAL_REPORT_READY)
+    final_approved = ManifestView(approved={("report_polisher", Stage.FINAL_REPORT)})
+    export_decision = decide_next(make_input(state=state_final_ready, manifest=final_approved))
 
     assert export_decision.kind == DecisionKind.EXPORT_REPORT
     assert export_decision.next_status == RunStatus.REPORT_EXPORTING
 
     state_exporting = make_state(tmp_path=tmp_path, status=RunStatus.REPORT_EXPORTING)
-    wait_decision = decide_next(make_input(state=state_exporting, manifest=approved, export_result=None))
+    wait_decision = decide_next(make_input(state=state_exporting, manifest=final_approved, export_result=None))
     assert wait_decision.kind == DecisionKind.WAIT
 
     passed = ExportResult(
@@ -356,7 +366,7 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
         unsupported_claims=(),
         failure=None,
     )
-    complete = decide_next(make_input(state=state_exporting, manifest=approved, export_result=passed))
+    complete = decide_next(make_input(state=state_exporting, manifest=final_approved, export_result=passed))
     assert complete.kind == DecisionKind.COMPLETE
 
     failed = ExportResult(
@@ -378,7 +388,7 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
             human_action_required=None,
         ),
     )
-    fail_decision = decide_next(make_input(state=state_exporting, manifest=approved, export_result=failed))
+    fail_decision = decide_next(make_input(state=state_exporting, manifest=final_approved, export_result=failed))
     assert fail_decision.kind == DecisionKind.FAIL
     assert fail_decision.failure is not None
 
@@ -402,7 +412,7 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
             human_action_required=None,
         ),
     )
-    complete_cn = decide_next(make_input(state=state_exporting_cn, manifest=approved, export_result=asset_failed))
+    complete_cn = decide_next(make_input(state=state_exporting_cn, manifest=final_approved, export_result=asset_failed))
     assert complete_cn.kind == DecisionKind.COMPLETE
 
 

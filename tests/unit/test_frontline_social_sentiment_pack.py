@@ -86,52 +86,42 @@ def test_t_soc_002_target_heat_without_text_evidence_is_partial_and_judgment_dis
 
 
 def test_t_soc_002_core_signal_l2_write_failed_must_failed() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),
-            ("eastmoney_akshare", "hot_keyword"): _empty_provider(),
-            ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
-            ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
-        },
-        evidence_client=_FailRawWriteL2Client(),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert pack.raw_payload_refs == []
-    assert all(ref.kind != "provider_raw" for ref in pack.openviking_l2_refs)
-    assert all(attempt.raw_payload_ref is None for attempt in pack.provider_attempts if attempt.provider == "eastmoney_akshare")
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),
+                ("eastmoney_akshare", "hot_keyword"): _empty_provider(),
+                ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
+                ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
+            },
+            evidence_client=_FailRawWriteL2Client(),
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_soc_002_provider_attempts_l2_write_failed_must_failed_and_no_fake_attempt_ref() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),
-            ("eastmoney_akshare", "hot_keyword"): _empty_provider(),
-            ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
-            ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
-        },
-        evidence_client=_FailProviderAttemptsWriteL2Client(),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert "l2_write_failed:provider_attempts" in pack.diagnostic_flags
-    assert all(ref.kind != "provider_attempts" for ref in pack.openviking_l2_refs)
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),
+                ("eastmoney_akshare", "hot_keyword"): _empty_provider(),
+                ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
+                ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
+            },
+            evidence_client=_FailProviderAttemptsWriteL2Client(),
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_soc_002_normalized_pack_l2_write_failed_must_failed_and_no_fake_pack_ref() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),
-            ("eastmoney_akshare", "hot_keyword"): _empty_provider(),
-            ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
-            ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
-        },
-        evidence_client=_FailNormalizedPackWriteL2Client(),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert "l2_write_failed:normalized_pack" in pack.diagnostic_flags
-    assert all(ref.kind != "normalized_pack" for ref in pack.openviking_l2_refs)
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),
+                ("eastmoney_akshare", "hot_keyword"): _empty_provider(),
+                ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
+                ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
+            },
+            evidence_client=_FailNormalizedPackWriteL2Client(),
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_soc_002_approved_aliases_can_hard_match_into_accepted() -> None:

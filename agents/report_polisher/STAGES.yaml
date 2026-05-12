@@ -1,0 +1,38 @@
+worker: report_polisher
+runtime: openclaw
+stage: final_report
+completion: openclaw_agent_turn
+artifact:
+  canonical_output: reader_final_report
+profiles:
+  US:
+    approved: false
+    prompt: prompts/US.md
+    failure: US report polishing strategy is not approved; fail explicitly.
+  CN_A:
+    approved: true
+    prompt: prompts/CN_A.md
+    tools: []
+    openviking_access: none
+  HK:
+    approved: false
+    prompt: prompts/HK.md
+    failure: HK report polishing strategy is not approved; fail explicitly.
+  CRYPTO:
+    approved: false
+    prompt: prompts/CRYPTO.md
+    failure: CRYPTO report polishing strategy is not approved; fail explicitly.
+skills:
+  mounted:
+    - claw-trade-stage
+    - alphaear-reporter
+tool_policy:
+  owner: stage_profile
+  python_calls_tools: false
+artifact_policy:
+  input: approved_l1_report_text
+  output: canonical_artifact
+  hard_gate_failed_artifacts_enter_downstream: false
+pm_policy:
+  python_rewrites_pm_rating: false
+  python_rewrites_pm_final_decision: false

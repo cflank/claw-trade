@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+from threading import Lock
 from typing import Callable, Protocol
 
 from claw_trade.artifacts.approval import approve_worker_material
@@ -135,6 +137,7 @@ class ControlRunner:
         self.exporter = exporter
         self.now_text = now_text or _utc_now_iso_text
         self.agents_root = agents_root or (Path(__file__).resolve().parents[3] / "agents")
+        self._manifest_write_lock = Lock()
 
     def boot(self, request: RunRequest) -> BootResult:
         profile = require_profile(request.profile)
@@ -317,7 +320,7 @@ class ControlRunner:
                     run_id=exporting.run_id,
                     call_id=None,
                     worker_id=None,
-                    stage=Stage.PORTFOLIO_DECISION,
+                    stage=Stage.FINAL_REPORT,
                     category="export_truthfulness",
                     reason=f"export status={exported.status}",
                     evidence_paths=(exporting.run_dir / "reports" / "export-result.json",),
@@ -335,7 +338,7 @@ class ControlRunner:
                     run_id=state.run_id,
                     call_id=None,
                     worker_id=None,
-                    stage=Stage.PORTFOLIO_DECISION,
+                    stage=Stage.FINAL_REPORT,
                     category="export_truthfulness",
                     reason=str(exc),
                     evidence_paths=(state.run_dir / "reports" / "export-result.json",),
@@ -395,6 +398,14 @@ class ControlRunner:
         return result
 
     def run_stage_batch(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
+        if self._should_run_stage_batch_concurrently(batch):
+            return self._run_stage_batch_concurrent(state, batch)
+        return self._run_stage_batch_serial(state, batch)
+
+    def _should_run_stage_batch_concurrently(self, batch: StageBatch) -> bool:
+        return batch.stage == Stage.FRONTLINE and batch.collect_first and len(batch.worker_ids) > 1
+
+    def _run_stage_batch_serial(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
         worker_results: list[WorkerResult] = []
         failures: list[FailureRecord] = []
         early_stop_used = False
@@ -479,6 +490,108 @@ class ControlRunner:
                 early_stop_used = True
                 break
 
+        report_path = self.write_collect_first_report(
+            batch=batch,
+            results=worker_results,
+            failures=failures,
+            early_stop_used=early_stop_used,
+            early_stop_failures=tuple(early_stop_failures),
+        )
+        return StageBatchResult(
+            run_id=batch.run_id,
+            stage=batch.stage,
+            worker_results=tuple(worker_results),
+            failures=tuple(failures),
+            early_stop_used=early_stop_used,
+            collect_first_report_path=report_path,
+        )
+
+    def _run_stage_batch_concurrent(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
+        worker_results_by_id: dict[str, WorkerResult] = {}
+        prepared_calls: list[WorkerCall] = []
+
+        for worker_id in batch.worker_ids:
+            manifest = self.manifest_store.load(batch.run_id)
+            call_result = self.request_builder.build_worker_call(
+                state=state,
+                worker_id=worker_id,
+                stage=batch.stage,
+                manifest=manifest,
+            )
+            if not call_result.ok or call_result.call is None:
+                failure = self._normalize_build_failure(batch, worker_id, call_result)
+                result = WorkerResult(
+                    run_id=batch.run_id,
+                    call_id=failure.call_id or _synthetic_blocked_call_id(batch.run_id, batch.stage, worker_id),
+                    worker_id=worker_id,
+                    stage=batch.stage,
+                    status=WorkerStatus.BLOCKED,
+                    openclaw_result_path=None,
+                    approved_material_id=None,
+                    failure=failure,
+                )
+                self.store.save_worker_result(result)
+                worker_results_by_id[worker_id] = result
+                if should_early_stop(failure):
+                    break
+                continue
+
+            prompt_result = self.attach_prompt_materials(call=call_result.call, manifest=manifest)
+            if not prompt_result.ok or prompt_result.call is None:
+                failure = prompt_result.failure or FailureRecord(
+                    run_id=batch.run_id,
+                    call_id=call_result.call.call_id,
+                    worker_id=worker_id,
+                    stage=batch.stage,
+                    category="prompt_materials",
+                    reason="prompt 材料注入失败",
+                    evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
+                    early_stop=True,
+                    human_action_required=None,
+                )
+                result = WorkerResult(
+                    run_id=batch.run_id,
+                    call_id=failure.call_id or call_result.call.call_id,
+                    worker_id=worker_id,
+                    stage=batch.stage,
+                    status=WorkerStatus.BLOCKED,
+                    openclaw_result_path=None,
+                    approved_material_id=None,
+                    failure=failure,
+                )
+                self.store.save_worker_result(result)
+                worker_results_by_id[worker_id] = result
+                break
+
+            prepared_calls.append(prompt_result.call)
+
+        if prepared_calls:
+            with ThreadPoolExecutor(max_workers=len(prepared_calls)) as executor:
+                future_to_call = {executor.submit(self.run_single_worker, call): call for call in prepared_calls}
+                for future in as_completed(future_to_call):
+                    call = future_to_call[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        result = _failed_worker_result(
+                            call=call,
+                            category="worker_exception",
+                            reason=f"worker 执行异常: {exc}",
+                            paths=(call.evidence_dir,),
+                            openclaw_result_path=None,
+                            early_stop=True,
+                        )
+                    self.store.save_worker_result(result)
+                    worker_results_by_id[call.worker_id] = result
+
+        worker_results = [
+            worker_results_by_id[worker_id]
+            for worker_id in batch.worker_ids
+            if worker_id in worker_results_by_id
+        ]
+        failures = [result.failure for result in worker_results if result.failure is not None]
+        early_stop_failures = [failure for failure in failures if should_early_stop(failure)]
+        early_stop_used = bool(early_stop_failures) or (bool(failures) and not batch.collect_first)
         report_path = self.write_collect_first_report(
             batch=batch,
             results=worker_results,
@@ -626,19 +739,20 @@ class ControlRunner:
                 openclaw_result_path=openclaw_result_path,
             )
 
-        try:
-            self.assert_manifest_not_written_before_guards(call.call_id, call.run_id)
-        except ValueError as exc:
-            return _failed_worker_result(
-                call=call,
-                category="artifact_flow_overreach",
-                reason=str(exc),
-                paths=(guard_path,),
-                openclaw_result_path=openclaw_result_path,
-                early_stop=True,
-            )
+        with self._manifest_write_lock:
+            try:
+                self.assert_manifest_not_written_before_guards(call.call_id, call.run_id)
+            except ValueError as exc:
+                return _failed_worker_result(
+                    call=call,
+                    category="artifact_flow_overreach",
+                    reason=str(exc),
+                    paths=(guard_path,),
+                    openclaw_result_path=openclaw_result_path,
+                    early_stop=True,
+                )
 
-        persist_approved_material_after_hard_gate(call=call, approval=approval_result, manifest_store=self.manifest_store)
+            persist_approved_material_after_hard_gate(call=call, approval=approval_result, manifest_store=self.manifest_store)
         return WorkerResult(
             run_id=call.run_id,
             call_id=call.call_id,
@@ -663,15 +777,16 @@ class ControlRunner:
         )
 
     def run_runtime_guards(self, call: WorkerCall, evidence: ProviderEvidence) -> tuple[GuardResult, Path]:
-        manifest = self.manifest_store.load(call.run_id)
-        checks = (
-            validate_workspace_evidence(call, evidence, self.agents_root),
-            validate_provider_request(call, evidence),
-            validate_visible_tools(call, evidence),
-            validate_tool_calls(call, evidence),
-            self._validate_artifact_flow(call, manifest),
-            validate_openviking_runtime_reads(call, evidence, manifest),
-        )
+        with self._manifest_write_lock:
+            manifest = self.manifest_store.load(call.run_id)
+            checks = (
+                validate_workspace_evidence(call, evidence, self.agents_root),
+                validate_provider_request(call, evidence),
+                validate_visible_tools(call, evidence),
+                validate_tool_calls(call, evidence),
+                self._validate_artifact_flow(call, manifest),
+                validate_openviking_runtime_reads(call, evidence, manifest),
+            )
         combined = combine_guard_results(checks)
         guard_path = self.store.save_guard_result(call, combined)
         return combined, guard_path
@@ -964,9 +1079,40 @@ def build_cn_a_prompt_vars(
     if call.worker_id == "portfolio_manager":
         return {
             "ticker": call.ticker,
+            "research_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "trader_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
+            "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
             "history": _conversation_history(risky_argument, safe_argument, neutral_argument),
             "past_memory_str": _default_memory_for_worker(call.worker_id),
+        }
+    if call.worker_id == "report_polisher":
+        supporting_reports = _report_bundle(
+            material_texts,
+            (
+                ("bull_researcher", Stage.INVESTMENT_DEBATE, "多头研究员"),
+                ("bear_researcher", Stage.INVESTMENT_DEBATE, "空头研究员"),
+                ("research_manager", Stage.INVESTMENT_DECISION, "研究经理"),
+                ("risk_challenger", Stage.RISK_DEBATE, "风险挑战方"),
+                ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
+                ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
+            ),
+        )
+        return {
+            "ticker": call.ticker,
+            "company_name": call.company_name,
+            "market": call.market,
+            "currency": call.currency,
+            "current_date": call.current_date,
+            "start_date": call.start_date,
+            "end_date": call.end_date,
+            "portfolio_manager_report": material_texts.get(("portfolio_manager", Stage.PORTFOLIO_DECISION), ""),
+            "market_analyst_report": material_texts.get(("market_analyst", Stage.FRONTLINE), ""),
+            "fundamental_analyst_report": material_texts.get(("fundamental_analyst", Stage.FRONTLINE), ""),
+            "news_analyst_report": material_texts.get(("news_analyst", Stage.FRONTLINE), ""),
+            "social_analyst_report": material_texts.get(("social_analyst", Stage.FRONTLINE), ""),
+            "trader_report": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
+            "supporting_worker_reports": supporting_reports,
+            "chart_assets_note": "如市场分析报告已生成技术图表，最终导出会把已验证图表放入技术指标分析段；不要编造图片路径或图表结论。",
         }
     return {}
 
@@ -983,6 +1129,19 @@ def _role_argument(
 
 def _conversation_history(*arguments: str) -> str:
     return "".join(f"\n{argument}" for argument in arguments if argument)
+
+
+def _report_bundle(
+    material_texts: dict[tuple[str, Stage], str],
+    sources: tuple[tuple[str, Stage, str], ...],
+) -> str:
+    sections: list[str] = []
+    for worker_id, stage, title in sources:
+        text = material_texts.get((worker_id, stage), "").strip()
+        if not text:
+            continue
+        sections.append(f"### {title}\n{text}")
+    return "\n\n".join(sections)
 
 
 def _default_memory_for_worker(worker_id: str) -> str:

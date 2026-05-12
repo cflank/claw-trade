@@ -7,7 +7,7 @@ import re
 from typing import Any, Mapping
 
 from .errors import L2_READBACK_FAILED, L2_TARGET_INVALID, FrontlineValidationError
-from .evidence import OpenVikingEvidenceClient, write_l2_evidence
+from .evidence import OpenVikingEvidenceClient, build_l2_uri, write_l2_evidence, write_l2_evidence_batch
 from .models import (
     ChartRef,
     EvidenceRef,
@@ -88,6 +88,16 @@ class ChartManifestCleanupResult:
 @dataclass
 class L2WriteSessionState:
     written_targets: set[str] = field(default_factory=set)
+    defer_writes: bool = False
+    staged_requests: list[L2WriteRequest] = field(default_factory=list)
+    committed: bool = False
+
+
+@dataclass(frozen=True)
+class L2CommitResult:
+    ok: bool
+    receipts: list[L2WriteReceipt]
+    error: EvidenceWriteError | None
 
 
 def write_raw_payload(
@@ -267,7 +277,7 @@ def cleanup_chart_manifest_reference(
     relative_path = f"charts/{chart_name}.manifest.json"
     target = _target_from_l2_uri(chart_ref.openviking_ref)
     normalized_relative_path = validate_l2_target_path(target.relative_path)
-    if normalized_relative_path != relative_path:
+    if normalized_relative_path != relative_path and not normalized_relative_path.endswith(f"/{relative_path}"):
         return ChartManifestCleanupResult(
             ok=False,
             receipt=None,
@@ -354,7 +364,7 @@ def _write_bytes(
         stage="frontline",
         worker_id=context.worker_id,
         call_id=context.call_id,
-        relative_path=relative_path,
+        relative_path=_tool_scoped_relative_path(context=context, relative_path=relative_path),
         content_type=content_type,
     )
     duplicate_error = _reserve_once(state, target)
@@ -409,15 +419,30 @@ def _write_bytes(
             error=duplicate_error,
         )
 
-    try:
-        receipt = write_l2_evidence(
-            L2WriteRequest(
-                target=target,
-                content_bytes=content_bytes,
-                metadata=dict(metadata),
-            ),
-            client=client,
+    request = L2WriteRequest(
+        target=target,
+        content_bytes=content_bytes,
+        metadata=dict(metadata),
+    )
+    if state.defer_writes:
+        receipt = _build_provisional_receipt(request)
+        state.staged_requests.append(request)
+        evidence_ref = EvidenceRef(
+            uri=receipt.uri,
+            sha256=receipt.sha256,
+            size_bytes=receipt.size_bytes,
+            kind=evidence_kind,
+            readback_verified=receipt.readback_verified,
         )
+        return EvidenceWriteResult(
+            ok=True,
+            receipt=receipt,
+            evidence_ref=evidence_ref,
+            error=None,
+        )
+
+    try:
+        receipt = write_l2_evidence(request, client=client)
     except FrontlineValidationError as exc:
         elapsed_ms = max(0, int((perf_counter() - started) * 1000))
         record_l2_write(kind=kind, status="failure")
@@ -537,6 +562,61 @@ def _write_bytes(
     )
 
 
+def commit_l2_write_session(
+    *,
+    state: L2WriteSessionState,
+    client: OpenVikingEvidenceClient | None = None,
+) -> L2CommitResult:
+    if not state.defer_writes or not state.staged_requests or state.committed:
+        return L2CommitResult(ok=True, receipts=[], error=None)
+    started = perf_counter()
+    try:
+        receipts = write_l2_evidence_batch(state.staged_requests, client=client)
+    except FrontlineValidationError as exc:
+        elapsed_ms = max(0, int((perf_counter() - started) * 1000))
+        emit_structured_log(
+            {
+                "run_id": state.staged_requests[0].target.run_id,
+                "dispatch_id": None,
+                "call_id": state.staged_requests[0].target.call_id,
+                "stage": state.staged_requests[0].target.stage,
+                "worker_id": state.staged_requests[0].target.worker_id,
+                "tool_name": None,
+                "domain": None,
+                "ticker": None,
+                "provider": None,
+                "endpoint": None,
+                "role": None,
+                "attempt_status": "failure",
+                "quality_status": None,
+                "status": "failure",
+                "elapsed_ms": elapsed_ms,
+                "timeout_ms": None,
+                "raw_count": None,
+                "accepted_count": None,
+                "error_code": exc.code,
+                "evidence_kind": "batch",
+                "l2_ref_present": False,
+                "mongo_ref_present": None,
+            }
+        )
+        return L2CommitResult(
+            ok=False,
+            receipts=[],
+            error=EvidenceWriteError(
+                code=exc.code,
+                message=exc.message,
+                diagnostic_flag="l2_write_failed:batch_commit",
+            ),
+        )
+    state.committed = True
+    for receipt, request in zip(receipts, state.staged_requests, strict=True):
+        kind = request.metadata.get("kind", "evidence")
+        record_l2_write(kind=kind, status="success")
+        record_l2_write_bytes(kind=kind, status="success", size_bytes=receipt.size_bytes)
+    return L2CommitResult(ok=True, receipts=receipts, error=None)
+
+
 def _reserve_once(state: L2WriteSessionState, target: L2WriteTarget) -> EvidenceWriteError | None:
     normalized_relative_path = validate_l2_target_path(target.relative_path)
     key = (
@@ -551,6 +631,27 @@ def _reserve_once(state: L2WriteSessionState, target: L2WriteTarget) -> Evidence
         )
     state.written_targets.add(key)
     return None
+
+
+def _tool_scoped_relative_path(*, context: ToolRuntimeContext, relative_path: str) -> str:
+    tool_call_id = getattr(context, "tool_call_id", None)
+    if not tool_call_id:
+        return relative_path
+    safe_tool_call_id = _safe_path_segment("tool_call_id", tool_call_id)
+    return f"tool_calls/{safe_tool_call_id}/{relative_path}"
+
+
+def _build_provisional_receipt(request: L2WriteRequest) -> L2WriteReceipt:
+    content = request.content_bytes
+    return L2WriteReceipt(
+        uri=build_l2_uri(request.target),
+        sha256=f"sha256:{hashlib.sha256(content).hexdigest()}",
+        size_bytes=len(content),
+        write_receipt_id=None,
+        readback_verified=True,
+        stat_verified=False,
+        written_at="pending",
+    )
 
 
 def _safe_path_segment(field_name: str, value: str) -> str:
@@ -598,11 +699,13 @@ __all__ = [
     "ChartEvidenceWriteResult",
     "EvidenceWriteError",
     "EvidenceWriteResult",
+    "L2CommitResult",
     "L2WriteSessionState",
     "NORMALIZED_PACK_WRITE_FAILED_FLAG",
     "PROVIDER_ATTEMPTS_WRITE_FAILED_FLAG",
     "RawPayloadWriteResult",
     "cleanup_chart_manifest_reference",
+    "commit_l2_write_session",
     "write_chart_evidence",
     "write_pack_evidence",
     "write_provider_attempts",

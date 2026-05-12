@@ -115,6 +115,9 @@ def test_t_ops_001_frontline_l2_health_stat_verification_failure_is_unhealthy_an
         def read(self, *, uri: str) -> bytes:
             return self._content[uri]
 
+        def download(self, *, uri: str) -> bytes:
+            return self._content[uri]
+
     result = frontline_l2_health(client=_StatFailClient())
 
     assert result.ok is False

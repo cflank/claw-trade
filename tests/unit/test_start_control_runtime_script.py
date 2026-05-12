@@ -45,6 +45,10 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "OPENCLAW_SOURCE_ENV_PATH" in text
     assert "OPENCLAW_GATEWAY_TIMEOUT_MS" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" in text
+    assert "LOCAL_MONGODB_START_SCRIPT" in text
+    assert "start_local_mongodb_if_needed" in text
+    assert "wait_mongodb_ok" in text
+    assert "CLAW_TRADE_LOCAL_MONGODB_STARTED" in text
     assert "CLAW_TRADE_OPENVIKING_SERVER_BIN" in text
     assert "CLAW_TRADE_OPENVIKING_SERVER_CWD" in text
     assert "CLAW_TRADE_OPENVIKING_MCP_MODULE" in text
@@ -117,7 +121,7 @@ def test_start_control_runtime_script_uses_trade_openviking_wheel_and_keeps_over
     assert 'cd "${ROOT_DIR}"' in text
     assert 'cd "${ROOT_DIR}/third_party/openviking"' not in text
     assert 'if [[ -n "${CLAW_TRADE_OPENVIKING_SERVER_BIN}" ]]; then' in text
-    assert "uv run openviking-server" in text
+    assert "uv run python -m claw_trade.runtime.openviking_report_server" in text
     assert (
         '"${selected_server_bin}" --config "${OPENVIKING_CONFIG_FILE}" --host 127.0.0.1 --port "${OPENVIKING_SERVER_PORT}"'
         in text
@@ -181,14 +185,19 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "const sourcePrimaryModel = typeof sourceDefaultModel.primary === \"string\" ? sourceDefaultModel.primary.trim() : \"\";" in text
     assert 'const clawTradePrimaryModel = "deepseek/deepseek-chat";' in text
     assert "const selectedPrimaryModel = clawTradePrimaryModel;" in text
+    assert "const selectedProviderModelId = selectedPrimaryModel.includes(\"/\")" in text
     assert "primaryProviderId = selectedPrimaryModel.split(\"/\")[0].trim();" in text
+    assert "const selectedProviderModels = Array.isArray(sourcePrimaryProvider.models)" in text
+    assert "OpenClaw source provider ${primaryProviderId} 缺少 primary model" in text
+    assert "const mergedProviders = {" in text
+    assert "[primaryProviderId]: mergedPrimaryProvider" in text
     assert "primary: selectedPrimaryModel" in text
     assert 'alias: "DeepSeek Chat"' in text
     assert "timeoutSeconds: llmIdleTimeoutSeconds" in text
     assert "models: mergedModels," in text
     assert "const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};" in text
     assert "openclaw_plugins/claw-trade-frontline-tools" in text
-    assert "const mergedPluginLoadPaths = sourcePluginLoadPaths.includes(clawTradeFrontlinePluginPath)" in text
+    assert "paths: [clawTradeFrontlinePluginPath]" in text
     assert '"claw-trade-frontline-tools": {' in text
     assert "plugins: mergedPlugins," in text
     assert "idleTimeoutSeconds: llmIdleTimeoutSeconds" not in text
@@ -212,6 +221,7 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
         "risk_guardian",
         "risk_moderator",
         "portfolio_manager",
+        "report_polisher",
     )
     for worker in workers:
         assert f'"{worker}"' in text
@@ -219,6 +229,20 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     prepare_index = text.index("prepare_openclaw_trade_agent_config")
     gateway_index = text.index("gateway_cmd=(")
     assert prepare_index < gateway_index
+
+
+def test_start_control_runtime_script_unifies_openviking_embedding_to_openclaw_primary() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}"' in text
+    assert "const openClawConfigPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;" in text
+    assert "const primaryModel = typeof openClawDefaultModel.primary === \"string\"" in text
+    assert "OpenClaw runtime config 缺少 primary model" in text
+    assert "embedding: {" in text
+    assert 'provider: "litellm"' in text
+    assert "model: primaryModel" in text
+    assert "max_concurrent: 1" in text
+    assert "max_retries: 0" in text
 
 
 def test_start_control_runtime_script_loads_claw_trade_env_before_source_env_without_logging_secret_values() -> None:

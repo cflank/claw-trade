@@ -264,45 +264,39 @@ def test_t_fnd_002_context_errors_do_not_call_provider_or_generate_attempts(
 
 
 def test_t_fnd_002_raw_provider_l2_write_failed_must_not_fake_success() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("akshare", "company_info"): _company_info_provider(),
-            ("akshare", "financial_abstract"): _financial_abstract_provider_with_revenue_net_profit(),
-            ("akshare", "stock_zh_a_spot_em"): _valuation_provider(),
-        },
-        evidence_client=_FailPathL2Client(fail_path_markers={"/provider_raw/"}),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert pack.raw_payload_refs == []
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("akshare", "company_info"): _company_info_provider(),
+                ("akshare", "financial_abstract"): _financial_abstract_provider_with_revenue_net_profit(),
+                ("akshare", "stock_zh_a_spot_em"): _valuation_provider(),
+            },
+            evidence_client=_FailPathL2Client(fail_path_markers={"/provider_raw/"}),
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_fnd_002_attempts_l2_write_failed_must_not_fake_success() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("akshare", "company_info"): _company_info_provider(),
-            ("akshare", "financial_abstract"): _financial_abstract_provider_with_revenue_net_profit(),
-            ("akshare", "stock_zh_a_spot_em"): _valuation_provider(),
-        },
-        evidence_client=_FailPathL2Client(fail_path_markers={"/provider_attempts.json"}),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert "l2_write_failed:provider_attempts" in pack.diagnostic_flags
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("akshare", "company_info"): _company_info_provider(),
+                ("akshare", "financial_abstract"): _financial_abstract_provider_with_revenue_net_profit(),
+                ("akshare", "stock_zh_a_spot_em"): _valuation_provider(),
+            },
+            evidence_client=_FailPathL2Client(fail_path_markers={"/provider_attempts.json"}),
+        ).build(_tool_input(), _runtime_context())
 
 
 def test_t_fnd_002_pack_l2_write_failed_must_not_fake_success() -> None:
-    pack = _build_runner(
-        call_registry={
-            ("akshare", "company_info"): _company_info_provider(),
-            ("akshare", "financial_abstract"): _financial_abstract_provider_with_revenue_net_profit(),
-            ("akshare", "stock_zh_a_spot_em"): _valuation_provider(),
-        },
-        evidence_client=_FailPathL2Client(fail_path_markers={"/normalized_pack.json"}),
-    ).build(_tool_input(), _runtime_context())
-
-    assert pack.quality.status == "failed"
-    assert "l2_write_failed:normalized_pack" in pack.diagnostic_flags
+    with pytest.raises(FrontlineValidationError):
+        _build_runner(
+            call_registry={
+                ("akshare", "company_info"): _company_info_provider(),
+                ("akshare", "financial_abstract"): _financial_abstract_provider_with_revenue_net_profit(),
+                ("akshare", "stock_zh_a_spot_em"): _valuation_provider(),
+            },
+            evidence_client=_FailPathL2Client(fail_path_markers={"/normalized_pack.json"}),
+        ).build(_tool_input(), _runtime_context())
 
 
 class _MongoCollection:

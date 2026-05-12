@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import hashlib
@@ -33,6 +34,9 @@ from .security import redact_secret, summarize_provider_error, validate_l2_targe
 _DEFAULT_TIMEOUT_SEC = 10.0
 _WRITE_RETRY_LIMIT = 5
 _WRITE_RETRY_BASE_SEC = 0.1
+_WRITE_LOCK_TIMEOUT_MS = 600_000
+_WRITE_LOCK_STALE_MS = 1_800_000
+_WRITE_LOCK_POLL_MS = 100
 _WRITE_PATH = "/api/v1/content/write"
 _TEMP_UPLOAD_PATH = "/api/v1/resources/temp_upload"
 _PACK_IMPORT_PATH = "/api/v1/pack/import"
@@ -76,6 +80,12 @@ class OpenVikingEvidenceClient(Protocol):
 
     def read(self, *, uri: str) -> bytes: ...
 
+    def write_batch(
+        self,
+        *,
+        items: list[tuple[str, bytes, str, Mapping[str, str]]],
+    ) -> list[OpenVikingWriteResult]: ...
+
 
 Transport = Callable[[str, str, Mapping[str, str], bytes, float], tuple[int, bytes]]
 
@@ -106,6 +116,40 @@ class OpenVikingHttpEvidenceClient:
         self._transport = transport or _urllib_transport
 
     def write(
+        self,
+        *,
+        uri: str,
+        content_bytes: bytes,
+        content_type: str,
+        metadata: Mapping[str, str],
+    ) -> OpenVikingWriteResult:
+        with _openviking_write_lock(self._base_uri):
+            return self._write_locked(
+                uri=uri,
+                content_bytes=content_bytes,
+                content_type=content_type,
+                metadata=metadata,
+            )
+
+    def write_batch(
+        self,
+        *,
+        items: list[tuple[str, bytes, str, Mapping[str, str]]],
+    ) -> list[OpenVikingWriteResult]:
+        if not items:
+            return []
+        with _openviking_write_lock(self._base_uri):
+            parent_uri, ovpack_bytes = _build_multi_file_ovpack_bytes(items=items)
+            temp_file_id = self._temp_upload(
+                content_bytes=ovpack_bytes,
+                content_type="application/octet-stream",
+                filename=f"batch-{uuid.uuid4().hex}.ovpack",
+            )
+            _, raw = self._pack_import(temp_file_id=temp_file_id, parent_uri=parent_uri)
+            receipt_id = _extract_receipt_id(raw)
+            return [OpenVikingWriteResult(receipt_id=receipt_id, verification_uri=uri) for uri, _, _, _ in items]
+
+    def _write_locked(
         self,
         *,
         uri: str,
@@ -386,6 +430,83 @@ def write_l2_evidence(
     )
 
 
+def write_l2_evidence_batch(
+    requests: list[L2WriteRequest],
+    *,
+    client: OpenVikingEvidenceClient | None = None,
+    env: Mapping[str, str] | None = None,
+) -> list[L2WriteReceipt]:
+    if not requests:
+        return []
+    writer = client or build_openviking_http_client(load_openviking_l2_config(env))
+    if hasattr(writer, "write_batch"):
+        prepared: list[tuple[str, bytes, str, Mapping[str, str], str, int]] = []
+        for request in requests:
+            uri = build_l2_uri(request.target)
+            content = request.content_bytes
+            if len(content) <= 0:
+                raise FrontlineValidationError(L2_TARGET_INVALID, "content_bytes 必须非空")
+            prepared.append(
+                (
+                    uri,
+                    content,
+                    request.target.content_type,
+                    request.metadata,
+                    _sha256_text(content),
+                    len(content),
+                )
+            )
+        try:
+            write_results = writer.write_batch(
+                items=[(uri, content, content_type, metadata) for uri, content, content_type, metadata, _, _ in prepared]
+            )
+        except Exception as exc:
+            _raise_l2_client_error(L2_WRITE_FAILED, "OpenViking 批量写入失败", exc)
+        if len(write_results) != len(prepared):
+            raise FrontlineValidationError(L2_WRITE_FAILED, "OpenViking 批量写入返回数量不匹配")
+        receipts: list[L2WriteReceipt] = []
+        for (uri, _, _, _, expected_sha256, size_bytes), write_result in zip(prepared, write_results, strict=True):
+            verification_uri = write_result.verification_uri or uri
+            stat = _read_stat_once(writer=writer, uri=verification_uri)
+            size_ok = stat.size_bytes is not None and stat.size_bytes == size_bytes
+            if stat.size_bytes is not None and stat.size_bytes != size_bytes:
+                raise FrontlineValidationError(
+                    L2_HASH_MISMATCH,
+                    f"L2 size mismatch expected={size_bytes} actual={stat.size_bytes}",
+                )
+            sha_ok = stat.sha256 is not None and stat.sha256 == expected_sha256
+            if stat.sha256 is not None and stat.sha256 != expected_sha256:
+                raise FrontlineValidationError(
+                    L2_HASH_MISMATCH,
+                    f"L2 sha256 mismatch expected={expected_sha256} actual={stat.sha256}",
+                )
+            stat_verified = bool(size_ok and sha_ok)
+            if stat_verified:
+                readback_verified = True
+            else:
+                _readback_verify(
+                    writer=writer,
+                    uri=verification_uri,
+                    expected_sha256=expected_sha256,
+                    expected_size=size_bytes,
+                )
+                readback_verified = True
+            receipts.append(
+                L2WriteReceipt(
+                    uri=uri,
+                    sha256=expected_sha256,
+                    size_bytes=size_bytes,
+                    write_receipt_id=write_result.receipt_id,
+                    readback_verified=readback_verified,
+                    stat_verified=stat_verified,
+                    written_at=_utc_now_text(),
+                )
+            )
+        return receipts
+
+    return [write_l2_evidence(request, client=writer) for request in requests]
+
+
 def load_openviking_l2_config(env: Mapping[str, str] | None = None) -> OpenVikingConfig:
     source = os.environ if env is None else env
     base_uri = (source.get("CLAW_TRADE_OPENVIKING_BASE_URI") or "").strip()
@@ -602,6 +723,89 @@ def _is_resource_busy_error(exc: OpenVikingClientError) -> bool:
     return "resource is busy" in str(exc).lower()
 
 
+def _read_positive_int_env(name: str, fallback: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return fallback
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _resolve_write_lock_path(base_uri: str) -> str:
+    configured = os.environ.get("OPENVIKING_WRITE_LOCK_PATH", "").strip()
+    if configured:
+        return os.path.abspath(configured)
+    suffix = hashlib.sha256(base_uri.encode("utf-8")).hexdigest()[:16]
+    return os.path.join(os.environ.get("TMPDIR", "/tmp"), f"openviking-write-{suffix}.lock")
+
+
+def _remove_stale_write_lock(lock_path: str, *, stale_ms: int) -> None:
+    try:
+        stat = os.stat(lock_path)
+    except FileNotFoundError:
+        return
+    age_ms = (time.time() - stat.st_mtime) * 1000
+    if age_ms >= stale_ms:
+        os.unlink(lock_path)
+
+
+@contextmanager
+def _openviking_write_lock(base_uri: str):
+    lock_path = _resolve_write_lock_path(base_uri)
+    owner = f"{os.getpid()}-{time.time_ns()}-{uuid.uuid4().hex}"
+    timeout_ms = _read_positive_int_env("OPENVIKING_WRITE_LOCK_TIMEOUT_MS", _WRITE_LOCK_TIMEOUT_MS)
+    stale_ms = _read_positive_int_env("OPENVIKING_WRITE_LOCK_STALE_MS", _WRITE_LOCK_STALE_MS)
+    poll_ms = _read_positive_int_env("OPENVIKING_WRITE_LOCK_POLL_MS", _WRITE_LOCK_POLL_MS)
+    deadline = time.monotonic() + timeout_ms / 1000
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    acquired = False
+
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as file_handle:
+                file_handle.write(
+                    json.dumps(
+                        {
+                            "owner": owner,
+                            "pid": os.getpid(),
+                            "base_uri": base_uri,
+                            "acquired_at": _utc_now_text(),
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                )
+                file_handle.write("\n")
+            acquired = True
+            break
+        except FileExistsError:
+            _remove_stale_write_lock(lock_path, stale_ms=stale_ms)
+            if time.monotonic() >= deadline:
+                raise OpenVikingClientError(f"OpenViking write lock timeout: {lock_path}")
+            time.sleep(poll_ms / 1000)
+
+    try:
+        yield
+    finally:
+        if acquired:
+            _release_write_lock(lock_path=lock_path, owner=owner)
+
+
+def _release_write_lock(*, lock_path: str, owner: str) -> None:
+    try:
+        with open(lock_path, encoding="utf-8") as file_handle:
+            payload = json.loads(file_handle.read() or "{}")
+        if isinstance(payload, Mapping) and payload.get("owner") == owner:
+            os.unlink(lock_path)
+    except FileNotFoundError:
+        return
+
+
 def _build_temp_upload_multipart(*, content_bytes: bytes, content_type: str) -> tuple[bytes, str]:
     return _build_temp_upload_multipart_with_name(
         content_bytes=content_bytes,
@@ -641,6 +845,41 @@ def _build_single_file_ovpack_bytes(*, uri: str, content_text: str) -> tuple[str
     return parent_uri, buffer.getvalue()
 
 
+def _build_multi_file_ovpack_bytes(*, items: list[tuple[str, bytes, str, Mapping[str, str]]]) -> tuple[str, bytes]:
+    parent_uri: str | None = None
+    call_id: str | None = None
+    files: list[tuple[str, bytes]] = []
+    seen_paths: set[str] = set()
+    for uri, content_bytes, content_type, _metadata in items:
+        if content_type != "application/json":
+            raise OpenVikingClientError("OpenViking 批量 evidence 写入只支持 application/json")
+        try:
+            content_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise OpenVikingClientError("OpenViking 批量 evidence 写入只支持 UTF-8 JSON") from exc
+        item_parent_uri, item_call_id, relative_path = _parse_pack_import_target(uri)
+        if parent_uri is None:
+            parent_uri = item_parent_uri
+            call_id = item_call_id
+        elif parent_uri != item_parent_uri or call_id != item_call_id:
+            raise OpenVikingClientError("OpenViking 批量 evidence 写入必须属于同一个 worker call")
+        if relative_path in seen_paths:
+            raise OpenVikingClientError(f"OpenViking 批量 evidence 目标重复: {relative_path}")
+        seen_paths.add(relative_path)
+        files.append((relative_path, content_bytes))
+    if parent_uri is None or call_id is None:
+        raise OpenVikingClientError("OpenViking 批量 evidence 写入缺少文件")
+
+    meta_uri = f"{parent_uri.rstrip('/')}/{call_id}"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{call_id}/", "")
+        archive.writestr(f"{call_id}/_._meta.json", json.dumps({"uri": meta_uri}, ensure_ascii=False))
+        for relative_path, content_bytes in files:
+            archive.writestr(f"{call_id}/{relative_path}", content_bytes)
+    return parent_uri, buffer.getvalue()
+
+
 def _parse_pack_import_target(uri: str) -> tuple[str, str, str]:
     prefix = "viking://resources/workflow/"
     if not uri.startswith(prefix):
@@ -665,7 +904,8 @@ def _sha256_text(content: bytes) -> str:
 
 def _sanitize_error_detail(text: object) -> str:
     summary = summarize_provider_error(text)
-    return _BEARER_TOKEN_RE.sub("Bearer ***", summary)
+    summary = _BEARER_TOKEN_RE.sub("Bearer ***", summary)
+    return summary.replace("viking://<redacted-url>", "<redacted-viking-uri>")
 
 
 def _utc_now_text() -> str:

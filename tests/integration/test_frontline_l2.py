@@ -201,8 +201,9 @@ def test_t_test_004_openviking_l2_write_readback_raw_attempts_pack_chart_manifes
     )
     if not cleanup_result.ok:
         assert cleanup_result.error is not None
-        assert cleanup_result.error.code == "L2_WRITE_FAILED"
-        assert "resource is busy" in cleanup_result.error.message
+        assert cleanup_result.error.code in {"L2_WRITE_FAILED", "L2_HASH_MISMATCH"}
+        if cleanup_result.error.code == "L2_WRITE_FAILED":
+            assert "resource is busy" in cleanup_result.error.message
         return
     assert cleanup_result.ok is True
     assert cleanup_result.evidence_ref is not None

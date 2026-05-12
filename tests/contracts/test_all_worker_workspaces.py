@@ -21,6 +21,7 @@ REQUIRED_WORKERS: tuple[str, ...] = (
     "risk_guardian",
     "risk_moderator",
     "portfolio_manager",
+    "report_polisher",
 )
 
 REQUIRED_WORKSPACE_FILES: tuple[str, ...] = (
@@ -73,6 +74,11 @@ def test_all_worker_stage_policy_is_loadable_and_resolvable(
     registry = registry_result.registry
 
     policy_result = load_stage_policy(agents_root, worker_id, profile)
+    if profile not in _approved_policy_profiles(worker_id):
+        assert policy_result.ok is False
+        assert "profile is not approved" in (policy_result.reason or "")
+        return
+
     assert policy_result.ok is True and policy_result.policy is not None
     policy = policy_result.policy
     assert policy.stage == worker_by_id(worker_id).stage
@@ -107,3 +113,9 @@ def _assert_openviking_access_tools(access: str, tools: tuple[str, ...]) -> None
         assert "openviking_write_material" not in tools
         return
     raise AssertionError(f"未知 openviking_access: {access}")
+
+
+def _approved_policy_profiles(worker_id: str) -> tuple[str, ...]:
+    if worker_id == "report_polisher":
+        return ("CN_A",)
+    return ("US", "CN_A")

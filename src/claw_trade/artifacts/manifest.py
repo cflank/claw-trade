@@ -32,6 +32,7 @@ _STAGE_WORKERS: dict[Stage, tuple[str, ...]] = {
     Stage.TRADE_DECISION: ("trader",),
     Stage.RISK_DEBATE: ("risk_challenger", "risk_guardian", "risk_moderator"),
     Stage.PORTFOLIO_DECISION: ("portfolio_manager",),
+    Stage.FINAL_REPORT: ("report_polisher",),
 }
 
 _UPSTREAM_STAGE: dict[Stage, Stage | None] = {
@@ -41,6 +42,7 @@ _UPSTREAM_STAGE: dict[Stage, Stage | None] = {
     Stage.TRADE_DECISION: Stage.INVESTMENT_DECISION,
     Stage.RISK_DEBATE: Stage.TRADE_DECISION,
     Stage.PORTFOLIO_DECISION: Stage.RISK_DEBATE,
+    Stage.FINAL_REPORT: Stage.PORTFOLIO_DECISION,
 }
 
 _ALLOWED_HARD_GATE_CATEGORIES: frozenset[str] = frozenset(
@@ -197,7 +199,17 @@ class ApprovedManifest:
         if stage == Stage.PORTFOLIO_DECISION:
             return (
                 ("research_manager", Stage.INVESTMENT_DECISION),
+                ("trader", Stage.TRADE_DECISION),
                 *tuple((item, Stage.RISK_DEBATE) for item in _STAGE_WORKERS[Stage.RISK_DEBATE]),
+            )
+        if stage == Stage.FINAL_REPORT:
+            return (
+                *frontline_sources,
+                *tuple((item, Stage.INVESTMENT_DEBATE) for item in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]),
+                ("research_manager", Stage.INVESTMENT_DECISION),
+                ("trader", Stage.TRADE_DECISION),
+                *tuple((item, Stage.RISK_DEBATE) for item in _STAGE_WORKERS[Stage.RISK_DEBATE]),
+                ("portfolio_manager", Stage.PORTFOLIO_DECISION),
             )
         upstream = _UPSTREAM_STAGE[stage]
         if upstream is None:

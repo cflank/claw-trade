@@ -25,8 +25,9 @@ from claw_trade.workflow.models import ExportResult, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids
 
 _PM_WORKER_ID = "portfolio_manager"
+_REPORT_POLISHER_WORKER_ID = "report_polisher"
 _REPORT_WORKER_ORDER = all_worker_ids()
-# 导出输入边界：报告必须覆盖固定 12 worker 的 approved materials，不能按“现有多少算多少”降级。
+# 导出输入边界：报告必须覆盖完整报告链路的 approved materials，不能按“现有多少算多少”降级。
 _REPORT_WORKERS_SET = set(_REPORT_WORKER_ORDER)
 _WORKER_SECTION_TITLES: dict[str, str] = {
     "market_analyst": "图表与技术面分析",
@@ -41,6 +42,7 @@ _WORKER_SECTION_TITLES: dict[str, str] = {
     "risk_guardian": "风险辩论（防守方）",
     "risk_moderator": "风险辩论（中立整合）",
     "portfolio_manager": "最终裁决 / 最终投资决策",
+    "report_polisher": "读者版最终报告",
 }
 
 
@@ -190,6 +192,15 @@ def render_final_report(
     ordered_materials = _ordered_materials(materials)
     report_text_by_worker = _report_text_by_worker(report_materials)
     claim_links: list[ExportClaim] = []
+    polisher_text = report_text_by_worker.get(_REPORT_POLISHER_WORKER_ID, "").strip()
+    if polisher_text:
+        for material in ordered_materials:
+            for claim in material.l1_claims:
+                claim_links.append(_claim_link_from_material(material, claim))
+        if pm_decision is not None:
+            claim_links.extend(_pm_claim_links(pm_decision=pm_decision, materials=ordered_materials))
+        return RenderedReport(text=polisher_text + "\n", claim_links=tuple(claim_links))
+
     lines: list[str] = ["# 最终投资报告", ""]
     pm_text = report_text_by_worker.get(_PM_WORKER_ID, "")
     if not pm_text:
@@ -525,6 +536,10 @@ def _copy_report_image_assets(*, reports_dir: Path, image_assets: tuple[ReportIm
 def _attach_report_image_assets(rendered: RenderedReport, image_assets: tuple[ReportImageAsset, ...]) -> RenderedReport:
     image_block = _render_report_image_asset_block(image_assets)
     report_text = rendered.text.rstrip()
+    updated_text = _attach_image_assets_to_technical_indicator_section(report_text, image_block)
+    if updated_text != report_text:
+        return RenderedReport(text=updated_text.strip() + "\n", claim_links=rendered.claim_links)
+
     market_title = f"## {_WORKER_SECTION_TITLES['market_analyst']}"
     next_section_title = f"## {_WORKER_SECTION_TITLES['fundamental_analyst']}"
     next_section_marker = f"\n{next_section_title}\n"
@@ -543,7 +558,7 @@ def _attach_report_image_assets(rendered: RenderedReport, image_assets: tuple[Re
 
 
 def _render_report_image_asset_block(image_assets: tuple[ReportImageAsset, ...]) -> str:
-    lines = ["## 图表资产"]
+    lines = ["### 技术图表"]
     for asset in image_assets:
         lines.append(f"![{asset.alt_text}]({asset.relative_path.as_posix()})")
     return "\n".join(lines)
