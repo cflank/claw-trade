@@ -72,6 +72,9 @@ def test_bear_researcher_call_receives_bull_argument_ref_after_bull_approved(tmp
         worker_id="bear_researcher",
         stage=Stage.INVESTMENT_DEBATE,
         manifest=manifest,
+        turn_index=1,
+        round_index=1,
+        role_turn_index=1,
     )
 
     assert context_result.ok is True

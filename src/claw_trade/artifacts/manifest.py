@@ -126,6 +126,51 @@ def _capability_id(material: ApprovedMaterial) -> str:
     return f"cap-{sha256(f'{material.material_id}|{material_sha}'.encode('utf-8')).hexdigest()[:24]}"
 
 
+def _material_ref(material: ApprovedMaterial) -> MaterialReadRef:
+    return MaterialReadRef(
+        material_id=material.material_id,
+        capability_id=_capability_id(material),
+        worker_id=material.worker_id,
+        stage=material.stage,
+        l1_uri=material.l1_uri,
+        l1_sha256=material.l1_sha256,
+        l2_index_uri=material.l2_index_uri,
+        l2_allowed_prefix=_l2_prefix(material),
+        call_id=material.call_id,
+        turn_index=material.turn_index,
+        round_index=material.round_index,
+        role_turn_index=material.role_turn_index,
+    )
+
+
+def _material_order_key(material: ApprovedMaterial) -> tuple[int, int, int, str]:
+    stage_order = {
+        Stage.FRONTLINE: 0,
+        Stage.INVESTMENT_DEBATE: 1,
+        Stage.INVESTMENT_DECISION: 2,
+        Stage.TRADE_DECISION: 3,
+        Stage.RISK_DEBATE: 4,
+        Stage.PORTFOLIO_DECISION: 5,
+        Stage.FINAL_REPORT: 6,
+    }
+    worker_order = {worker_id: index for index, worker_id in enumerate(_STAGE_WORKERS.get(material.stage, ()))}
+    return (
+        stage_order.get(material.stage, 99),
+        material.turn_index,
+        worker_order.get(material.worker_id, 99),
+        material.call_id,
+    )
+
+
+def _missing_workers(
+    required_workers: tuple[str, ...],
+    selected: tuple[ApprovedMaterial, ...],
+    stage: Stage,
+) -> list[str]:
+    present = {material.worker_id for material in selected}
+    return [f"{worker_id}@{stage.value}" for worker_id in required_workers if worker_id not in present]
+
+
 class ApprovedManifest:
     @classmethod
     def empty(cls) -> ApprovedManifest:
@@ -134,7 +179,7 @@ class ApprovedManifest:
     def __init__(self) -> None:
         self._by_run: dict[str, list[ApprovedMaterial]] = {}
         self._by_id: dict[str, ApprovedMaterial] = {}
-        self._worker_index: dict[tuple[str, Stage, str], str] = {}
+        self._worker_index: dict[tuple[str, Stage, str, int], str] = {}
         self._call_index: dict[tuple[str, str], str] = {}
 
     def add(self, material: ApprovedMaterial) -> ApprovedManifest:
@@ -143,10 +188,11 @@ class ApprovedManifest:
         _require_hard_gate_pass(material)
         if material.material_id in self._by_id:
             raise ArtifactFlowError(f"重复 material_id: {material.material_id}")
-        worker_key = (material.run_id, material.stage, material.worker_id)
+        worker_key = (material.run_id, material.stage, material.worker_id, material.turn_index)
         if worker_key in self._worker_index:
             raise ArtifactFlowError(
-                f"重复 worker: run_id={material.run_id} stage={material.stage.value} worker_id={material.worker_id}"
+                f"重复 worker turn: run_id={material.run_id} stage={material.stage.value} "
+                f"worker_id={material.worker_id} turn_index={material.turn_index}"
             )
         call_key = (material.run_id, material.call_id)
         if call_key in self._call_index:
@@ -159,6 +205,17 @@ class ApprovedManifest:
 
     def all_for_run(self, run_id: str) -> tuple[ApprovedMaterial, ...]:
         return tuple(self._by_run.get(run_id, ()))
+
+    def materials_for_stage(self, stage: Stage, run_id: str | None = None) -> tuple[ApprovedMaterial, ...]:
+        return tuple(
+            sorted(
+                (material for material in self._materials(run_id) if material.stage == stage),
+                key=_material_order_key,
+            )
+        )
+
+    def stage_turn_count(self, stage: Stage, run_id: str | None = None) -> int:
+        return len(self.materials_for_stage(stage=stage, run_id=run_id))
 
     def required_workers_for(self, stage: Stage) -> tuple[str, ...]:
         if stage not in _UPSTREAM_STAGE:
@@ -222,6 +279,12 @@ class ApprovedManifest:
                 return True
         return False
 
+    def has_worker_turn(self, worker_id: str, stage: Stage, turn_index: int, run_id: str | None = None) -> bool:
+        for material in self._materials(run_id):
+            if material.worker_id == worker_id and material.stage == stage and material.turn_index == turn_index:
+                return True
+        return False
+
     def for_downstream_stage(self, stage: Stage, run_id: str | None = None) -> tuple[MaterialReadRef, ...]:
         required = self.required_workers_for(stage)
         if not required:
@@ -232,70 +295,28 @@ class ApprovedManifest:
             upstream_stage=upstream_stage,
             run_id=run_id,
         )
-        selected_by_worker = {material.worker_id: material for material in selected}
-        missing = [worker_id for worker_id in required if worker_id not in selected_by_worker]
+        present_workers = {material.worker_id for material in selected}
+        missing = [worker_id for worker_id in required if worker_id not in present_workers]
         if missing:
             raise ArtifactFlowError(
                 f"下游材料缺失: run_id={run_id or '<auto>'} stage={stage.value} missing_workers={','.join(missing)}"
             )
-        refs: list[MaterialReadRef] = []
-        for worker_id in required:
-            material = selected_by_worker[worker_id]
-            capability_id = _capability_id(material)
-            refs.append(
-                MaterialReadRef(
-                    material_id=material.material_id,
-                    capability_id=capability_id,
-                    worker_id=material.worker_id,
-                    stage=material.stage,
-                    l1_uri=material.l1_uri,
-                    l1_sha256=material.l1_sha256,
-                    l2_index_uri=material.l2_index_uri,
-                    l2_allowed_prefix=_l2_prefix(material),
-                    call_id=material.call_id,
-                )
-            )
-        return tuple(refs)
+        return tuple(_material_ref(material) for material in selected)
 
     def for_worker_call(
         self,
         stage: Stage,
         worker_id: str,
         run_id: str | None = None,
+        turn_index: int = 0,
     ) -> tuple[MaterialReadRef, ...]:
-        sources = self.required_sources_for_worker_call(stage=stage, worker_id=worker_id)
-        if not sources:
-            return ()
-        selected = self._selected_materials_for_sources(sources=sources, run_id=run_id)
-        selected_by_source = {(material.worker_id, material.stage): material for material in selected}
-        missing = [
-            f"{source_worker}@{source_stage.value}"
-            for source_worker, source_stage in sources
-            if (source_worker, source_stage) not in selected_by_source
-        ]
+        selected, missing = self._materials_for_worker_call(stage=stage, worker_id=worker_id, run_id=run_id, turn_index=turn_index)
         if missing:
             raise ArtifactFlowError(
                 f"worker 输入材料缺失: run_id={run_id or '<auto>'} "
                 f"stage={stage.value} worker={worker_id} missing_sources={','.join(missing)}"
             )
-        refs: list[MaterialReadRef] = []
-        for source in sources:
-            material = selected_by_source[source]
-            capability_id = _capability_id(material)
-            refs.append(
-                MaterialReadRef(
-                    material_id=material.material_id,
-                    capability_id=capability_id,
-                    worker_id=material.worker_id,
-                    stage=material.stage,
-                    l1_uri=material.l1_uri,
-                    l1_sha256=material.l1_sha256,
-                    l2_index_uri=material.l2_index_uri,
-                    l2_allowed_prefix=_l2_prefix(material),
-                    call_id=material.call_id,
-                )
-            )
-        return tuple(refs)
+        return tuple(_material_ref(material) for material in selected)
 
     def capabilities_for_downstream_stage(
         self,
@@ -324,8 +345,9 @@ class ApprovedManifest:
         stage: Stage,
         worker_id: str,
         run_id: str | None = None,
+        turn_index: int = 0,
     ) -> tuple[OpenVikingReadCapability, ...]:
-        refs = self.for_worker_call(stage=stage, worker_id=worker_id, run_id=run_id)
+        refs = self.for_worker_call(stage=stage, worker_id=worker_id, run_id=run_id, turn_index=turn_index)
         out: list[OpenVikingReadCapability] = []
         for ref in refs:
             material = self._by_id[ref.material_id]
@@ -341,6 +363,127 @@ class ApprovedManifest:
                 )
             )
         return tuple(out)
+
+    def _materials_for_worker_call(
+        self,
+        stage: Stage,
+        worker_id: str,
+        run_id: str | None,
+        turn_index: int,
+    ) -> tuple[tuple[ApprovedMaterial, ...], list[str]]:
+        if stage not in _STAGE_WORKERS:
+            raise ArtifactFlowError(f"unknown stage: {stage.value}")
+        if worker_id not in _STAGE_WORKERS[stage]:
+            raise ArtifactFlowError(f"worker 不属于阶段: stage={stage.value} worker={worker_id}")
+        if stage == Stage.FRONTLINE:
+            return (), []
+
+        frontline = self._selected_materials_for_workers(
+            workers=_STAGE_WORKERS[Stage.FRONTLINE],
+            upstream_stage=Stage.FRONTLINE,
+            run_id=run_id,
+        )
+        missing = _missing_workers(_STAGE_WORKERS[Stage.FRONTLINE], frontline, Stage.FRONTLINE)
+
+        if stage == Stage.INVESTMENT_DEBATE:
+            debate = tuple(
+                material
+                for material in self.materials_for_stage(Stage.INVESTMENT_DEBATE, run_id=run_id)
+                if material.turn_index < turn_index
+            )
+            if len(debate) < turn_index:
+                missing.append(f"investment_debate_prior_turns<{turn_index}")
+            return frontline + debate, missing
+
+        if stage == Stage.INVESTMENT_DECISION:
+            debate = self.materials_for_stage(Stage.INVESTMENT_DEBATE, run_id=run_id)
+            present_debate_workers = {material.worker_id for material in debate}
+            for required_worker in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]:
+                if required_worker not in present_debate_workers:
+                    missing.append(f"{required_worker}@{Stage.INVESTMENT_DEBATE.value}")
+            return frontline + debate, missing
+
+        if stage == Stage.TRADE_DECISION:
+            manager = self._selected_materials_for_workers(
+                workers=("research_manager",),
+                upstream_stage=Stage.INVESTMENT_DECISION,
+                run_id=run_id,
+            )
+            return manager, _missing_workers(("research_manager",), manager, Stage.INVESTMENT_DECISION)
+
+        if stage == Stage.RISK_DEBATE:
+            trader = self._selected_materials_for_workers(
+                workers=("trader",),
+                upstream_stage=Stage.TRADE_DECISION,
+                run_id=run_id,
+            )
+            risk = tuple(
+                material
+                for material in self.materials_for_stage(Stage.RISK_DEBATE, run_id=run_id)
+                if material.turn_index < turn_index
+            )
+            missing.extend(_missing_workers(("trader",), trader, Stage.TRADE_DECISION))
+            if len(risk) < turn_index:
+                missing.append(f"risk_debate_prior_turns<{turn_index}")
+            return frontline + trader + risk, missing
+
+        if stage == Stage.PORTFOLIO_DECISION:
+            manager = self._selected_materials_for_workers(
+                workers=("research_manager",),
+                upstream_stage=Stage.INVESTMENT_DECISION,
+                run_id=run_id,
+            )
+            trader = self._selected_materials_for_workers(
+                workers=("trader",),
+                upstream_stage=Stage.TRADE_DECISION,
+                run_id=run_id,
+            )
+            risk = self.materials_for_stage(Stage.RISK_DEBATE, run_id=run_id)
+            missing = _missing_workers(("research_manager",), manager, Stage.INVESTMENT_DECISION)
+            missing.extend(_missing_workers(("trader",), trader, Stage.TRADE_DECISION))
+            present_risk_workers = {material.worker_id for material in risk}
+            for required_worker in _STAGE_WORKERS[Stage.RISK_DEBATE]:
+                if required_worker not in present_risk_workers:
+                    missing.append(f"{required_worker}@{Stage.RISK_DEBATE.value}")
+            return manager + trader + risk, missing
+
+        if stage == Stage.FINAL_REPORT:
+            debate = self.materials_for_stage(Stage.INVESTMENT_DEBATE, run_id=run_id)
+            manager = self._selected_materials_for_workers(
+                workers=("research_manager",),
+                upstream_stage=Stage.INVESTMENT_DECISION,
+                run_id=run_id,
+            )
+            trader = self._selected_materials_for_workers(
+                workers=("trader",),
+                upstream_stage=Stage.TRADE_DECISION,
+                run_id=run_id,
+            )
+            risk = self.materials_for_stage(Stage.RISK_DEBATE, run_id=run_id)
+            portfolio = self._selected_materials_for_workers(
+                workers=("portfolio_manager",),
+                upstream_stage=Stage.PORTFOLIO_DECISION,
+                run_id=run_id,
+            )
+            missing = _missing_workers(("research_manager",), manager, Stage.INVESTMENT_DECISION)
+            missing.extend(_missing_workers(("trader",), trader, Stage.TRADE_DECISION))
+            missing.extend(_missing_workers(("portfolio_manager",), portfolio, Stage.PORTFOLIO_DECISION))
+            present_debate_workers = {material.worker_id for material in debate}
+            for required_worker in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]:
+                if required_worker not in present_debate_workers:
+                    missing.append(f"{required_worker}@{Stage.INVESTMENT_DEBATE.value}")
+            present_risk_workers = {material.worker_id for material in risk}
+            for required_worker in _STAGE_WORKERS[Stage.RISK_DEBATE]:
+                if required_worker not in present_risk_workers:
+                    missing.append(f"{required_worker}@{Stage.RISK_DEBATE.value}")
+            return frontline + debate + manager + trader + risk + portfolio, missing
+
+        upstream = _UPSTREAM_STAGE[stage]
+        if upstream is None:
+            return (), []
+        required = _STAGE_WORKERS[upstream]
+        selected = self._selected_materials_for_workers(workers=required, upstream_stage=upstream, run_id=run_id)
+        return selected, _missing_workers(required, selected, upstream)
 
     def _materials(self, run_id: str | None) -> tuple[ApprovedMaterial, ...]:
         if run_id is not None:
@@ -365,7 +508,8 @@ class ApprovedManifest:
                 continue
             if upstream_stage is not None and material.stage != upstream_stage:
                 continue
-            selected[material.worker_id] = material
+            if material.worker_id not in selected or material.turn_index >= selected[material.worker_id].turn_index:
+                selected[material.worker_id] = material
         return tuple(selected[worker_id] for worker_id in workers if worker_id in selected)
 
     def _selected_materials_for_sources(
@@ -573,4 +717,7 @@ def _material_from_payload(payload: dict[str, Any]) -> ApprovedMaterial:
         l1_claims=claims,
         approved_at=payload["approved_at"],
         hard_gate_result_path=Path(payload["hard_gate_result_path"]),
+        turn_index=int(payload.get("turn_index", 0)),
+        round_index=int(payload.get("round_index", 1)),
+        role_turn_index=int(payload.get("role_turn_index", 1)),
     )

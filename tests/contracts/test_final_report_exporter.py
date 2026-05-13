@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from claw_trade.reports.exporter import (
     export_final_report,
     load_report_materials,
     render_final_report,
+    ReportMaterial,
     run_export_guards,
 )
 from claw_trade.workflow.models import RunRequest, RunStatus, Stage, WorkflowState
@@ -300,6 +301,46 @@ def test_run_export_guards_fails_when_claim_source_mapping_missing(tmp_path: Pat
     assert guard.category == "export_truthfulness"
 
 
+def test_render_final_report_preserves_repeated_debate_rounds(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-render-multi-round")
+    bull_round_1 = _sample_material(state=state, worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE, index=5)
+    bear_round_1 = _sample_material(state=state, worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE, index=6)
+    bull_round_2 = _material_for_turn(
+        state=state,
+        material=bull_round_1,
+        material_id="mat-bull-researcher-r2",
+        call_id="call-14",
+        turn_index=2,
+        round_index=2,
+        claim_id="claim-bull-researcher-r2",
+    )
+    pm_material = _sample_material(state=state, worker_id="portfolio_manager", stage=Stage.PORTFOLIO_DECISION, index=12)
+    report_materials = (
+        ReportMaterial(material=bull_round_1, l1_text="多头第一轮正文"),
+        ReportMaterial(material=bear_round_1, l1_text="空头第一轮正文"),
+        ReportMaterial(material=bull_round_2, l1_text="多头第二轮正文"),
+        ReportMaterial(material=pm_material, l1_text="PM 最终裁决正文"),
+    )
+
+    rendered = render_final_report(
+        materials=(bull_round_1, bear_round_1, bull_round_2, pm_material),
+        pm_decision=None,
+        report_materials=report_materials,
+    )
+    mapping = build_export_claim_mapping(
+        rendered=rendered,
+        materials=(bull_round_1, bear_round_1, bull_round_2, pm_material),
+        pm_decision=None,
+    )
+
+    assert "多头第一轮正文" in rendered.text
+    assert "多头第二轮正文" in rendered.text
+    assert "## 投资辩论（多头观点）（第2轮）" in rendered.text
+    claim_ids = {claim.export_claim_id for claim in mapping.claims}
+    assert f"export-claim-bull_researcher-t00-{bull_round_1.l1_claims[0].claim_id}" in claim_ids
+    assert "export-claim-bull_researcher-t02-claim-bull-researcher-r2" in claim_ids
+
+
 def test_export_final_report_fails_when_openviking_reader_hash_mismatch(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-read-mismatch")
     manifest, reader = _build_manifest_and_reader(
@@ -445,6 +486,54 @@ def _sample_material(state: WorkflowState, worker_id: str, stage: Stage, index: 
         ),
         approved_at="2026-05-04T12:00:00Z",
         hard_gate_result_path=gate_path,
+    )
+
+
+def _material_for_turn(
+    *,
+    state: WorkflowState,
+    material: ApprovedMaterial,
+    material_id: str,
+    call_id: str,
+    turn_index: int,
+    round_index: int,
+    claim_id: str,
+) -> ApprovedMaterial:
+    call_dir = state.run_dir / "calls" / call_id
+    call_dir.mkdir(parents=True, exist_ok=True)
+    gate_path = call_dir / "approval-hard-gate.json"
+    gate_path.write_text(
+        json.dumps({"ok": True, "status": "passed", "category": "runtime_guards"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    l1_uri = f"viking://resources/workflow/{state.run_id}/{material.stage.value}/{material.worker_id}/{call_id}/report.md"
+    l2_index_uri = (
+        f"viking://resources/workflow/{state.run_id}/{material.stage.value}/{material.worker_id}/{call_id}/evidence/index.json"
+    )
+    return replace(
+        material,
+        material_id=material_id,
+        call_id=call_id,
+        l1_uri=l1_uri,
+        l1_sha256=f"sha-{material_id}",
+        l1_size_bytes=256,
+        l2_index_uri=l2_index_uri,
+        l2_index=replace(
+            material.l2_index,
+            index_uri=l2_index_uri,
+            index_sha256=f"sha-l2-index-{material_id}",
+        ),
+        l1_claims=(
+            replace(
+                material.l1_claims[0],
+                claim_id=claim_id,
+                text=f"{material.worker_id} 第二轮声明",
+            ),
+        ),
+        hard_gate_result_path=gate_path,
+        turn_index=turn_index,
+        round_index=round_index,
+        role_turn_index=round_index,
     )
 
 

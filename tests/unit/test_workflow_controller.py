@@ -26,12 +26,23 @@ from claw_trade.workflow.workers import stage_plan
 
 
 class ManifestView:
-    def __init__(self, approved: set[tuple[str, Stage]] | None = None) -> None:
+    def __init__(
+        self,
+        approved: set[tuple[str, Stage]] | None = None,
+        stage_turn_counts: dict[Stage, int] | None = None,
+    ) -> None:
         self._approved = approved or set()
+        self._stage_turn_counts = stage_turn_counts or {}
 
     def has_worker(self, worker_id: str, stage: Stage, run_id: str | None = None) -> bool:
         _ = run_id
         return (worker_id, stage) in self._approved
+
+    def stage_turn_count(self, stage: Stage, run_id: str | None = None) -> int:
+        _ = run_id
+        if stage in self._stage_turn_counts:
+            return self._stage_turn_counts[stage]
+        return sum(1 for worker_id, approved_stage in self._approved if approved_stage == stage)
 
 
 def test_created_wakes_frontline_full_stage(tmp_path: Path):
@@ -209,6 +220,52 @@ def test_running_stage_waits_until_all_results_and_approvals(tmp_path: Path):
     assert advance.next_status == RunStatus.INVESTMENT_DEBATE_READY
 
 
+def test_investment_debate_runs_second_round_when_configured(tmp_path: Path):
+    state = make_state(
+        tmp_path=tmp_path,
+        status=RunStatus.INVESTMENT_DEBATE_RUNNING,
+        max_debate_rounds=2,
+    )
+    first_round_results = (
+        succeeded_result(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE, turn_index=0),
+        succeeded_result(worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE, turn_index=1),
+    )
+    first_round_approved = ManifestView(
+        approved={
+            ("bull_researcher", Stage.INVESTMENT_DEBATE),
+            ("bear_researcher", Stage.INVESTMENT_DEBATE),
+        },
+        stage_turn_counts={Stage.INVESTMENT_DEBATE: 2},
+    )
+
+    wake_bull_round_2 = decide_next(
+        make_input(state=state, manifest=first_round_approved, worker_results=first_round_results)
+    )
+
+    assert wake_bull_round_2.kind == DecisionKind.WAKE_STAGE
+    assert wake_bull_round_2.batch is not None
+    assert wake_bull_round_2.batch.worker_ids == ("bull_researcher",)
+    assert wake_bull_round_2.batch.turn_index == 2
+    assert wake_bull_round_2.batch.round_index == 2
+
+    all_results = first_round_results + (
+        succeeded_result(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE, turn_index=2),
+        succeeded_result(worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE, turn_index=3),
+    )
+    all_approved = ManifestView(
+        approved={
+            ("bull_researcher", Stage.INVESTMENT_DEBATE),
+            ("bear_researcher", Stage.INVESTMENT_DEBATE),
+        },
+        stage_turn_counts={Stage.INVESTMENT_DEBATE: 4},
+    )
+
+    advance = decide_next(make_input(state=state, manifest=all_approved, worker_results=all_results))
+
+    assert advance.kind == DecisionKind.ADVANCE
+    assert advance.next_status == RunStatus.INVESTMENT_DEBATE_READY
+
+
 def test_running_risk_debate_enforces_cn_serial_handoff(tmp_path: Path):
     state = make_state(tmp_path=tmp_path, status=RunStatus.RISK_DEBATE_RUNNING)
     risky_only = (succeeded_result(worker_id="risk_challenger", stage=Stage.RISK_DEBATE),)
@@ -252,6 +309,56 @@ def test_running_risk_debate_enforces_cn_serial_handoff(tmp_path: Path):
         }
     )
     advance = decide_next(make_input(state=state, manifest=all_approved, worker_results=all_three))
+    assert advance.kind == DecisionKind.ADVANCE
+    assert advance.next_status == RunStatus.RISK_DEBATE_READY
+
+
+def test_risk_debate_runs_second_round_when_configured(tmp_path: Path):
+    state = make_state(
+        tmp_path=tmp_path,
+        status=RunStatus.RISK_DEBATE_RUNNING,
+        max_risk_discuss_rounds=2,
+    )
+    first_round_results = (
+        succeeded_result(worker_id="risk_challenger", stage=Stage.RISK_DEBATE, turn_index=0),
+        succeeded_result(worker_id="risk_guardian", stage=Stage.RISK_DEBATE, turn_index=1),
+        succeeded_result(worker_id="risk_moderator", stage=Stage.RISK_DEBATE, turn_index=2),
+    )
+    first_round_approved = ManifestView(
+        approved={
+            ("risk_challenger", Stage.RISK_DEBATE),
+            ("risk_guardian", Stage.RISK_DEBATE),
+            ("risk_moderator", Stage.RISK_DEBATE),
+        },
+        stage_turn_counts={Stage.RISK_DEBATE: 3},
+    )
+
+    wake_challenger_round_2 = decide_next(
+        make_input(state=state, manifest=first_round_approved, worker_results=first_round_results)
+    )
+
+    assert wake_challenger_round_2.kind == DecisionKind.WAKE_STAGE
+    assert wake_challenger_round_2.batch is not None
+    assert wake_challenger_round_2.batch.worker_ids == ("risk_challenger",)
+    assert wake_challenger_round_2.batch.turn_index == 3
+    assert wake_challenger_round_2.batch.round_index == 2
+
+    all_results = first_round_results + (
+        succeeded_result(worker_id="risk_challenger", stage=Stage.RISK_DEBATE, turn_index=3),
+        succeeded_result(worker_id="risk_guardian", stage=Stage.RISK_DEBATE, turn_index=4),
+        succeeded_result(worker_id="risk_moderator", stage=Stage.RISK_DEBATE, turn_index=5),
+    )
+    all_approved = ManifestView(
+        approved={
+            ("risk_challenger", Stage.RISK_DEBATE),
+            ("risk_guardian", Stage.RISK_DEBATE),
+            ("risk_moderator", Stage.RISK_DEBATE),
+        },
+        stage_turn_counts={Stage.RISK_DEBATE: 6},
+    )
+
+    advance = decide_next(make_input(state=state, manifest=all_approved, worker_results=all_results))
+
     assert advance.kind == DecisionKind.ADVANCE
     assert advance.next_status == RunStatus.RISK_DEBATE_READY
 
@@ -485,6 +592,8 @@ def make_state(
     target_worker_id: str | None = None,
     target_stage: Stage | None = None,
     profile: str = "US",
+    max_debate_rounds: int = 1,
+    max_risk_discuss_rounds: int = 1,
 ) -> WorkflowState:
     run_dir = tmp_path / "runs" / "run-1"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -501,6 +610,8 @@ def make_state(
         stop_point=stop_point,
         target_worker_id=target_worker_id,
         target_stage=target_stage,
+        max_debate_rounds=max_debate_rounds,
+        max_risk_discuss_rounds=max_risk_discuss_rounds,
     )
     return WorkflowState(
         run_id="run-1",
@@ -513,16 +624,19 @@ def make_state(
     )
 
 
-def succeeded_result(worker_id: str, stage: Stage) -> WorkerResult:
+def succeeded_result(worker_id: str, stage: Stage, turn_index: int = 0) -> WorkerResult:
     return WorkerResult(
         run_id="run-1",
-        call_id=f"call-{worker_id}",
+        call_id=f"call-{worker_id}-t{turn_index}",
         worker_id=worker_id,
         stage=stage,
         status=WorkerStatus.SUCCEEDED,
-        openclaw_result_path=Path(f"runs/run-1/calls/call-{worker_id}/openclaw-result.json"),
+        openclaw_result_path=Path(f"runs/run-1/calls/call-{worker_id}-t{turn_index}/openclaw-result.json"),
         approved_material_id=None,
         failure=None,
+        turn_index=turn_index,
+        round_index=turn_index + 1,
+        role_turn_index=turn_index + 1,
     )
 
 

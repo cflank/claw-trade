@@ -167,8 +167,7 @@ def test_social_visible_tools_validator_fails_for_unapproved_extra_tool() -> Non
 
 
 def _profile_is_approved(worker_id: str, profile: str) -> bool:
-    if worker_id == "report_polisher":
-        return profile == "CN_A"
+    _ = worker_id
     return profile in {"US", "CN_A"}
 
 

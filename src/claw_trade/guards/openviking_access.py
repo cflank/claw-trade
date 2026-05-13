@@ -37,6 +37,7 @@ def validate_openviking_runtime_reads(
             stage=call.stage,
             worker_id=call.worker_id,
             run_id=call.run_id,
+            turn_index=call.turn_index,
         )
     except (ArtifactFlowError, ValueError) as exc:
         return guard_failed(

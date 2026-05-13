@@ -31,6 +31,19 @@ def test_add_rejects_duplicate_material_and_call_and_worker(tmp_path: Path) -> N
             )
         )
 
+    manifest.add(
+        fake_approved_material(
+            material_id="mat-frontline-market-turn-1",
+            worker_id="market_analyst",
+            stage=Stage.FRONTLINE,
+            call_id="call-2b",
+            hard_gate_result_path=write_gate_result(tmp_path, "market-turn-1.json"),
+            turn_index=1,
+            round_index=2,
+            role_turn_index=2,
+        )
+    )
+
     with pytest.raises(ArtifactFlowError, match="重复 call"):
         manifest.add(
             fake_approved_material(
@@ -165,7 +178,7 @@ def test_bear_worker_call_sources_include_frontline_and_bull_argument(tmp_path: 
     )
 
     bull_refs = manifest.for_worker_call(Stage.INVESTMENT_DEBATE, worker_id="bull_researcher")
-    bear_refs = manifest.for_worker_call(Stage.INVESTMENT_DEBATE, worker_id="bear_researcher")
+    bear_refs = manifest.for_worker_call(Stage.INVESTMENT_DEBATE, worker_id="bear_researcher", turn_index=1)
 
     assert [ref.worker_id for ref in bull_refs] == [
         "market_analyst",
@@ -179,6 +192,43 @@ def test_bear_worker_call_sources_include_frontline_and_bull_argument(tmp_path: 
         "news_analyst",
         "social_analyst",
         "bull_researcher",
+    ]
+
+
+def test_debate_worker_call_sources_preserve_prior_rounds_in_turn_order(tmp_path: Path) -> None:
+    manifest = ApprovedManifest.empty()
+    for material_id, worker_id, stage, call_id, turn_index, round_index in (
+        ("mat-frontline-market", "market_analyst", Stage.FRONTLINE, "call-1", 0, 1),
+        ("mat-frontline-fundamental", "fundamental_analyst", Stage.FRONTLINE, "call-2", 0, 1),
+        ("mat-frontline-news", "news_analyst", Stage.FRONTLINE, "call-3", 0, 1),
+        ("mat-frontline-social", "social_analyst", Stage.FRONTLINE, "call-4", 0, 1),
+        ("mat-debate-bull-r1", "bull_researcher", Stage.INVESTMENT_DEBATE, "call-5", 0, 1),
+        ("mat-debate-bear-r1", "bear_researcher", Stage.INVESTMENT_DEBATE, "call-6", 1, 1),
+        ("mat-debate-bull-r2", "bull_researcher", Stage.INVESTMENT_DEBATE, "call-7", 2, 2),
+    ):
+        manifest.add(
+            fake_approved_material(
+                material_id,
+                worker_id,
+                stage,
+                call_id,
+                hard_gate_result_path=write_gate_result(tmp_path, f"{material_id}.json"),
+                turn_index=turn_index,
+                round_index=round_index,
+                role_turn_index=round_index,
+            )
+        )
+
+    refs = manifest.for_worker_call(Stage.INVESTMENT_DEBATE, worker_id="bear_researcher", turn_index=3)
+
+    assert [(ref.worker_id, ref.turn_index) for ref in refs] == [
+        ("market_analyst", 0),
+        ("fundamental_analyst", 0),
+        ("news_analyst", 0),
+        ("social_analyst", 0),
+        ("bull_researcher", 0),
+        ("bear_researcher", 1),
+        ("bull_researcher", 2),
     ]
 
 
@@ -454,6 +504,9 @@ def fake_approved_material(
     stage: Stage = Stage.FRONTLINE,
     call_id: str = "call-1",
     hard_gate_result_path: Path | None = None,
+    turn_index: int = 0,
+    round_index: int = 1,
+    role_turn_index: int = 1,
 ) -> ApprovedMaterial:
     l1_uri = f"viking://resources/workflow/run-1/{stage.value}/{worker_id}/{call_id}/report.md"
     l2_index_uri = f"viking://resources/workflow/run-1/{stage.value}/{worker_id}/{call_id}/evidence/index.json"
@@ -498,6 +551,9 @@ def fake_approved_material(
         ),
         approved_at="2026-05-03T16:10:00Z",
         hard_gate_result_path=hard_gate_result_path or Path("runs/run-1/evidence/guards/result.json"),
+        turn_index=turn_index,
+        round_index=round_index,
+        role_turn_index=role_turn_index,
     )
 
 

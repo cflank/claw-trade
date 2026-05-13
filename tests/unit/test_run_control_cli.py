@@ -39,7 +39,10 @@ def _base_args() -> list[str]:
     ]
 
 
-def test_parse_args_builds_run_request_with_all_fields() -> None:
+def test_parse_args_builds_run_request_with_all_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAW_TRADE_REPORT_MAX_DEBATE_ROUNDS", "2")
+    monkeypatch.setenv("CLAW_TRADE_REPORT_MAX_RISK_DISCUSS_ROUNDS", "3")
+    monkeypatch.setenv("CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE", "parallel")
     request = parse_args(
         _base_args()
         + [
@@ -67,6 +70,9 @@ def test_parse_args_builds_run_request_with_all_fields() -> None:
     assert request.target_worker_id == "market_analyst"
     assert request.target_stage == Stage.FRONTLINE
     assert request.entry_point == WorkflowEntryPoint.REPORT_COMMAND
+    assert request.max_debate_rounds == 2
+    assert request.max_risk_discuss_rounds == 3
+    assert request.frontline_execution_mode == "parallel"
 
 
 def test_parse_args_supports_single_worker_request_shape() -> None:

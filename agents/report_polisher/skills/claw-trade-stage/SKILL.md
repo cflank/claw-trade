@@ -13,4 +13,4 @@ Follow `STAGES.yaml` for the current worker, profile, and stage.
 - Improve readability, structure, language quality, and report presentation only.
 - Do not add unsupported investment claims.
 - Do not call tools through Python or assume missing evidence has already been fetched.
-- If the current profile is US, HK, or CRYPTO, fail explicitly until that profile strategy is approved.
+- If the current profile is HK or CRYPTO, fail explicitly until that profile strategy is approved.

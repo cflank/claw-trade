@@ -30,12 +30,12 @@ REPORT_POLISHER = "report_polisher"
 APPROVED_PROMPT_CASES = tuple(
     (worker_id, profile)
     for worker_id in REQUIRED_WORKERS
-    for profile in (("CN_A",) if worker_id == REPORT_POLISHER else APPROVED_PROMPT_PROFILES)
+    for profile in APPROVED_PROMPT_PROFILES
 )
 UNAPPROVED_PROMPT_CASES = tuple(
     (worker_id, profile)
     for worker_id in REQUIRED_WORKERS
-    for profile in (("US", "HK", "CRYPTO") if worker_id == REPORT_POLISHER else UNAPPROVED_PROMPT_PROFILES)
+    for profile in UNAPPROVED_PROMPT_PROFILES
 )
 
 FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS = (
@@ -173,6 +173,14 @@ SUPPORTED_US_PROMPT_PLACEHOLDERS = {
     "current_neutral_response",
     "current_risky_response",
     "research_plan",
+    "portfolio_manager_report",
+    "market_analyst_report",
+    "fundamental_analyst_report",
+    "news_analyst_report",
+    "social_analyst_report",
+    "trader_report",
+    "supporting_worker_reports",
+    "chart_assets_note",
 }
 
 FRONTLINE_WORKERS: tuple[str, ...] = (
@@ -226,7 +234,7 @@ def test_approved_worker_prompts_keep_baseline_alignment_metadata(
 
     review = _simple_yaml(Path("agents") / worker_id / "prompt-review.yaml")
     if worker_id == REPORT_POLISHER:
-        assert review["us_alignment"] == "unapproved"
+        assert "human-approved report-polisher" in review["us_alignment"]
         assert "alphaear-reporter" in review["cn_a_alignment"]
     else:
         assert review["us_alignment"] == "TradingAgents"

@@ -147,23 +147,25 @@ def decide_wake_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMani
         )
 
     if stage == Stage.INVESTMENT_DEBATE and state.request.stop_point == StopPoint.NONE:
-        next_worker = next_investment_debate_worker(manifest=manifest)
+        next_worker = next_investment_debate_worker(state=state, manifest=manifest)
         if next_worker is None:
             return Decision(
                 kind=DecisionKind.ADVANCE,
                 stage=stage,
                 next_status=plan.ready_status,
             )
-        return wake_investment_debate_worker(state=state, worker_id=next_worker)
+        turn_index = approved_stage_turn_count(manifest=manifest, stage=Stage.INVESTMENT_DEBATE, run_id=state.run_id)
+        return wake_investment_debate_worker(state=state, worker_id=next_worker, turn_index=turn_index)
     if stage == Stage.RISK_DEBATE and state.request.stop_point == StopPoint.NONE:
-        next_worker = next_risk_debate_worker(manifest=manifest)
+        next_worker = next_risk_debate_worker(state=state, manifest=manifest)
         if next_worker is None:
             return Decision(
                 kind=DecisionKind.ADVANCE,
                 stage=stage,
                 next_status=plan.ready_status,
             )
-        return wake_risk_debate_worker(state=state, worker_id=next_worker)
+        turn_index = approved_stage_turn_count(manifest=manifest, stage=Stage.RISK_DEBATE, run_id=state.run_id)
+        return wake_risk_debate_worker(state=state, worker_id=next_worker, turn_index=turn_index)
 
     # controller 只决定下一批 worker id，不负责构造运行时调用参数。
     return Decision(
@@ -329,16 +331,24 @@ def first_response_ready(results: tuple[WorkerResult, ...], workers: tuple[str, 
     return set(workers).issubset(succeeded)
 
 
-def next_investment_debate_worker(manifest: ApprovedManifest) -> str | None:
-    if not manifest.has_worker(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE):
-        return "bull_researcher"
-    if not manifest.has_worker(worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE):
-        return "bear_researcher"
-    return None
+def approved_stage_turn_count(manifest: ApprovedManifest, stage: Stage, run_id: str) -> int:
+    counter = getattr(manifest, "stage_turn_count", None)
+    if callable(counter):
+        return int(counter(stage=stage, run_id=run_id))
+    workers = stage_plan(stage).workers
+    return sum(1 for worker_id in workers if manifest.has_worker(worker_id=worker_id, stage=stage, run_id=run_id))
 
 
-def wake_investment_debate_worker(state: WorkflowState, worker_id: str) -> Decision:
+def next_investment_debate_worker(state: WorkflowState, manifest: ApprovedManifest) -> str | None:
+    turn_index = approved_stage_turn_count(manifest=manifest, stage=Stage.INVESTMENT_DEBATE, run_id=state.run_id)
+    if turn_index >= 2 * state.request.max_debate_rounds:
+        return None
+    return ("bull_researcher", "bear_researcher")[turn_index % 2]
+
+
+def wake_investment_debate_worker(state: WorkflowState, worker_id: str, turn_index: int) -> Decision:
     plan = stage_plan(Stage.INVESTMENT_DEBATE)
+    round_index = (turn_index // 2) + 1
     return Decision(
         kind=DecisionKind.WAKE_STAGE,
         stage=Stage.INVESTMENT_DEBATE,
@@ -349,23 +359,24 @@ def wake_investment_debate_worker(state: WorkflowState, worker_id: str) -> Decis
             scope=BatchScope.FULL_STAGE,
             collect_first=False,
             stop_point=state.request.stop_point,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=round_index,
         ),
         next_status=plan.running_status,
     )
 
 
-def next_risk_debate_worker(manifest: ApprovedManifest) -> str | None:
-    if not manifest.has_worker(worker_id="risk_challenger", stage=Stage.RISK_DEBATE):
-        return "risk_challenger"
-    if not manifest.has_worker(worker_id="risk_guardian", stage=Stage.RISK_DEBATE):
-        return "risk_guardian"
-    if not manifest.has_worker(worker_id="risk_moderator", stage=Stage.RISK_DEBATE):
-        return "risk_moderator"
-    return None
+def next_risk_debate_worker(state: WorkflowState, manifest: ApprovedManifest) -> str | None:
+    turn_index = approved_stage_turn_count(manifest=manifest, stage=Stage.RISK_DEBATE, run_id=state.run_id)
+    if turn_index >= 3 * state.request.max_risk_discuss_rounds:
+        return None
+    return ("risk_challenger", "risk_guardian", "risk_moderator")[turn_index % 3]
 
 
-def wake_risk_debate_worker(state: WorkflowState, worker_id: str) -> Decision:
+def wake_risk_debate_worker(state: WorkflowState, worker_id: str, turn_index: int) -> Decision:
     plan = stage_plan(Stage.RISK_DEBATE)
+    round_index = (turn_index // 3) + 1
     return Decision(
         kind=DecisionKind.WAKE_STAGE,
         stage=Stage.RISK_DEBATE,
@@ -376,6 +387,9 @@ def wake_risk_debate_worker(state: WorkflowState, worker_id: str) -> Decision:
             scope=BatchScope.FULL_STAGE,
             collect_first=False,
             stop_point=state.request.stop_point,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=round_index,
         ),
         next_status=plan.running_status,
     )
@@ -386,21 +400,22 @@ def decide_running_investment_debate(
     results: tuple[WorkerResult, ...],
     manifest: ApprovedManifest,
 ) -> Decision:
-    if not all_workers_have_result(results=results, workers=("bull_researcher",)):
-        return Decision(DecisionKind.WAIT, reason="等待 investment_debate bull_researcher worker result")
-    if not manifest.has_worker(worker_id="bull_researcher", stage=Stage.INVESTMENT_DEBATE):
-        return Decision(DecisionKind.WAIT, reason="等待 investment_debate bull_researcher approved material")
+    approved_count = approved_stage_turn_count(manifest=manifest, stage=Stage.INVESTMENT_DEBATE, run_id=state.run_id)
+    succeeded_count = succeeded_stage_turn_count(results=results)
+    if succeeded_count > approved_count:
+        return Decision(DecisionKind.WAIT, reason="等待 investment_debate current turn approved material")
 
-    if not all_workers_have_result(results=results, workers=("bear_researcher",)):
-        return wake_investment_debate_worker(state=state, worker_id="bear_researcher")
-    if not manifest.has_worker(worker_id="bear_researcher", stage=Stage.INVESTMENT_DEBATE):
-        return Decision(DecisionKind.WAIT, reason="等待 investment_debate bear_researcher approved material")
-
-    return Decision(
-        kind=DecisionKind.ADVANCE,
-        stage=Stage.INVESTMENT_DEBATE,
-        next_status=RunStatus.INVESTMENT_DEBATE_READY,
-    )
+    total_turns = 2 * state.request.max_debate_rounds
+    if approved_count >= total_turns:
+        return Decision(
+            kind=DecisionKind.ADVANCE,
+            stage=Stage.INVESTMENT_DEBATE,
+            next_status=RunStatus.INVESTMENT_DEBATE_READY,
+        )
+    if not results and approved_count == 0:
+        return Decision(DecisionKind.WAIT, reason="等待 investment_debate turn 0 worker result")
+    worker_id = ("bull_researcher", "bear_researcher")[approved_count % 2]
+    return wake_investment_debate_worker(state=state, worker_id=worker_id, turn_index=approved_count)
 
 
 def decide_running_risk_debate(
@@ -408,26 +423,26 @@ def decide_running_risk_debate(
     results: tuple[WorkerResult, ...],
     manifest: ApprovedManifest,
 ) -> Decision:
-    if not all_workers_have_result(results=results, workers=("risk_challenger",)):
-        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_challenger worker result")
-    if not manifest.has_worker(worker_id="risk_challenger", stage=Stage.RISK_DEBATE):
-        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_challenger approved material")
+    approved_count = approved_stage_turn_count(manifest=manifest, stage=Stage.RISK_DEBATE, run_id=state.run_id)
+    succeeded_count = succeeded_stage_turn_count(results=results)
+    if succeeded_count > approved_count:
+        return Decision(DecisionKind.WAIT, reason="等待 risk_debate current turn approved material")
 
-    if not all_workers_have_result(results=results, workers=("risk_guardian",)):
-        return wake_risk_debate_worker(state=state, worker_id="risk_guardian")
-    if not manifest.has_worker(worker_id="risk_guardian", stage=Stage.RISK_DEBATE):
-        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_guardian approved material")
+    total_turns = 3 * state.request.max_risk_discuss_rounds
+    if approved_count >= total_turns:
+        return Decision(
+            kind=DecisionKind.ADVANCE,
+            stage=Stage.RISK_DEBATE,
+            next_status=RunStatus.RISK_DEBATE_READY,
+        )
+    if not results and approved_count == 0:
+        return Decision(DecisionKind.WAIT, reason="等待 risk_debate turn 0 worker result")
+    worker_id = ("risk_challenger", "risk_guardian", "risk_moderator")[approved_count % 3]
+    return wake_risk_debate_worker(state=state, worker_id=worker_id, turn_index=approved_count)
 
-    if not all_workers_have_result(results=results, workers=("risk_moderator",)):
-        return wake_risk_debate_worker(state=state, worker_id="risk_moderator")
-    if not manifest.has_worker(worker_id="risk_moderator", stage=Stage.RISK_DEBATE):
-        return Decision(DecisionKind.WAIT, reason="等待 risk_debate risk_moderator approved material")
 
-    return Decision(
-        kind=DecisionKind.ADVANCE,
-        stage=Stage.RISK_DEBATE,
-        next_status=RunStatus.RISK_DEBATE_READY,
-    )
+def succeeded_stage_turn_count(results: tuple[WorkerResult, ...]) -> int:
+    return len({result.turn_index for result in results if result.status == WorkerStatus.SUCCEEDED})
 
 
 def expected_workers_for_state(state: WorkflowState, plan: StagePlan) -> tuple[str, ...]:

@@ -204,6 +204,7 @@ class _BadManifest:
         stage: Stage,
         worker_id: str,
         run_id: str | None = None,
+        turn_index: int = 0,
     ) -> tuple[MaterialReadRef, ...]:
         return self.refs
 
@@ -219,5 +220,6 @@ class _BadManifest:
         stage: Stage,
         worker_id: str,
         run_id: str | None = None,
+        turn_index: int = 0,
     ) -> tuple[OpenVikingReadCapability, ...]:
         return self.capabilities

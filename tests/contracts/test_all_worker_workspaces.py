@@ -116,6 +116,5 @@ def _assert_openviking_access_tools(access: str, tools: tuple[str, ...]) -> None
 
 
 def _approved_policy_profiles(worker_id: str) -> tuple[str, ...]:
-    if worker_id == "report_polisher":
-        return ("CN_A",)
+    _ = worker_id
     return ("US", "CN_A")

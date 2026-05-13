@@ -18,6 +18,9 @@ class MaterialTarget:
     target_name: str
     l1_uri: VikingUri
     l2_prefix: VikingUri
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,9 @@ class MaterialReadRef:
     l2_index_uri: VikingUri | None
     l2_allowed_prefix: VikingUri | None
     call_id: str
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,9 @@ class ApprovedMaterial:
     l1_claims: tuple[L1Claim, ...]
     approved_at: str
     hard_gate_result_path: Path
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 def make_material_target(
@@ -122,6 +131,9 @@ def make_material_target(
     worker_id: str,
     call_id: str,
     target_name: str = "report",
+    turn_index: int = 0,
+    round_index: int = 1,
+    role_turn_index: int = 1,
 ) -> MaterialTarget:
     if not run_id.strip() or not worker_id.strip() or not call_id.strip():
         raise ValueError("run_id/worker_id/call_id 不能为空")
@@ -139,6 +151,9 @@ def make_material_target(
         target_name=target_name,
         l1_uri=f"{base}/{target_name}.md",
         l2_prefix=f"{base}/evidence/",
+        turn_index=turn_index,
+        round_index=round_index,
+        role_turn_index=role_turn_index,
     )
 
 

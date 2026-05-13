@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+from pathlib import Path
 import subprocess
 import threading
 
@@ -112,6 +113,33 @@ def test_run_worker_calls_gateway_run_single_worker(
     params_raw = seen_commands[0][seen_commands[0].index("--params") + 1]
     params = json.loads(params_raw)
     assert params["command"]["worker_id"] == "market_analyst"
+
+
+def test_run_worker_uses_params_file_for_large_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    health_server: str,
+) -> None:
+    runner = OpenClawLocalRunner(gateway_ws_url=health_server)
+    seen_params_files: list[str] = []
+
+    def _fake_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        command = list(cmd)
+        assert "--params" not in command
+        assert "--params-file" in command
+        params_file = command[command.index("--params-file") + 1]
+        seen_params_files.append(params_file)
+        with open(params_file, encoding="utf-8") as handle:
+            params = json.load(handle)
+        assert params["command"]["worker_id"] == "report_polisher"
+        assert params["command"]["large_material"].startswith("x")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=json.dumps({"status": "succeeded"}), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    runner.run_worker({"worker_id": "report_polisher", "large_material": "x" * 70_000})
+
+    assert seen_params_files
+    assert not Path(seen_params_files[0]).exists()
 
 
 def test_run_worker_default_local_gateway_without_credentials_omits_url_flag(

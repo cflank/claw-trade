@@ -6,9 +6,10 @@ artifact:
   canonical_output: reader_final_report
 profiles:
   US:
-    approved: false
+    approved: true
     prompt: prompts/US.md
-    failure: US report polishing strategy is not approved; fail explicitly.
+    tools: []
+    openviking_access: none
   CN_A:
     approved: true
     prompt: prompts/CN_A.md

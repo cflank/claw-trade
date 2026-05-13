@@ -348,6 +348,15 @@ class WorkflowStore:
                     "entry_point",
                 )
             ),
+            max_debate_rounds=self._as_int(payload.get("max_debate_rounds", 1), "max_debate_rounds"),
+            max_risk_discuss_rounds=self._as_int(
+                payload.get("max_risk_discuss_rounds", 1),
+                "max_risk_discuss_rounds",
+            ),
+            frontline_execution_mode=self._as_str(
+                payload.get("frontline_execution_mode", "parallel"),
+                "frontline_execution_mode",
+            ),
         )
 
     def _worker_result_from_dict(self, payload: dict[str, Any]) -> WorkerResult:
@@ -362,6 +371,9 @@ class WorkflowStore:
             openclaw_result_path=self._path_or_none(payload.get("openclaw_result_path")),
             approved_material_id=self._optional_str(payload.get("approved_material_id"), "approved_material_id"),
             failure=failure,
+            turn_index=self._as_int(payload.get("turn_index", 0), "turn_index"),
+            round_index=self._as_int(payload.get("round_index", 1), "round_index"),
+            role_turn_index=self._as_int(payload.get("role_turn_index", 1), "role_turn_index"),
         )
 
     def _export_result_from_dict(self, payload: dict[str, Any]) -> ExportResult:
@@ -388,6 +400,9 @@ class WorkflowStore:
             evidence_paths=tuple(Path(str(x)) for x in payload.get("evidence_paths", [])),
             early_stop=bool(payload.get("early_stop", False)),
             human_action_required=self._optional_str(payload.get("human_action_required"), "human_action_required"),
+            turn_index=self._as_int(payload.get("turn_index", 0), "turn_index"),
+            round_index=self._as_int(payload.get("round_index", 1), "round_index"),
+            role_turn_index=self._as_int(payload.get("role_turn_index", 1), "role_turn_index"),
         )
 
     def _decision_from_dict(self, payload: dict[str, Any]) -> Decision:
@@ -412,6 +427,9 @@ class WorkflowStore:
             scope=BatchScope(self._as_str(payload["scope"], "scope")),
             collect_first=bool(payload.get("collect_first", False)),
             stop_point=StopPoint(self._as_str(payload.get("stop_point", StopPoint.NONE.value), "stop_point")),
+            turn_index=self._as_int(payload.get("turn_index", 0), "turn_index"),
+            round_index=self._as_int(payload.get("round_index", 1), "round_index"),
+            role_turn_index=self._as_int(payload.get("role_turn_index", 1), "role_turn_index"),
         )
 
     def _run_status_or_none(self, value: Any) -> RunStatus | None:
@@ -465,6 +483,11 @@ class WorkflowStore:
     def _as_str(self, value: Any, field: str) -> str:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} 必须是非空字符串")
+        return value
+
+    def _as_int(self, value: Any, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{field} 必须是整数")
         return value
 
     def _optional_str(self, value: Any, field: str) -> str | None:

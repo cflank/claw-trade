@@ -21,7 +21,7 @@ from claw_trade.guards.export_claims import (
     validate_export_pm_fields,
 )
 from claw_trade.guards.pm_owner import PMDecision, load_pm_decision_for_material, pm_decision_required_for_profile
-from claw_trade.workflow.models import ExportResult, WorkflowState
+from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids
 
 _PM_WORKER_ID = "portfolio_manager"
@@ -134,8 +134,8 @@ def load_report_materials(
             paths=(state.run_dir / "openviking" / "approved-manifest.json",),
         )
 
-    material_by_worker = {material.worker_id: material for material in materials}
-    missing_workers = sorted(required_report_workers() - set(material_by_worker))
+    workers_present = {material.worker_id for material in materials}
+    missing_workers = sorted(required_report_workers() - workers_present)
     if missing_workers:
         return ReportMaterialsResult.failed(
             category="export_missing_material",
@@ -143,7 +143,7 @@ def load_report_materials(
             paths=(state.run_dir / "openviking" / "approved-manifest.json",),
         )
 
-    ordered_materials = tuple(material_by_worker[worker_id] for worker_id in _REPORT_WORKER_ORDER)
+    ordered_materials = _ordered_materials(tuple(materials))
     report_materials: list[ReportMaterial] = []
     for material in ordered_materials:
         # 导出边界：L1 只能从 OpenViking 正式 URI 读取，不能读 runs/<run>/openviking 或 call 目录本地审计副本。
@@ -167,7 +167,14 @@ def load_report_materials(
             )
         report_materials.append(ReportMaterial(material=material, l1_text=l1_text))
 
-    pm_material = material_by_worker[_PM_WORKER_ID]
+    pm_materials = [material for material in ordered_materials if material.worker_id == _PM_WORKER_ID]
+    if not pm_materials:
+        return ReportMaterialsResult.failed(
+            category="export_missing_material",
+            reason="缺少 portfolio_manager approved material",
+            paths=(state.run_dir / "openviking" / "approved-manifest.json",),
+        )
+    pm_material = pm_materials[-1]
     require_pm_decision = pm_decision_required_for_profile(state.request.profile)
     pm_decision, pm_guard = load_pm_decision_for_material(pm_material, required=require_pm_decision)
     if not pm_guard.ok:
@@ -190,9 +197,9 @@ def render_final_report(
     pm_report_text: str | None = None,
 ) -> RenderedReport:
     ordered_materials = _ordered_materials(materials)
-    report_text_by_worker = _report_text_by_worker(report_materials)
+    report_text_by_material_id = _report_text_by_material_id(report_materials)
     claim_links: list[ExportClaim] = []
-    polisher_text = report_text_by_worker.get(_REPORT_POLISHER_WORKER_ID, "").strip()
+    polisher_text = _latest_report_text(report_materials, _REPORT_POLISHER_WORKER_ID).strip()
     if polisher_text:
         for material in ordered_materials:
             for claim in material.l1_claims:
@@ -202,7 +209,7 @@ def render_final_report(
         return RenderedReport(text=polisher_text + "\n", claim_links=tuple(claim_links))
 
     lines: list[str] = ["# 最终投资报告", ""]
-    pm_text = report_text_by_worker.get(_PM_WORKER_ID, "")
+    pm_text = _latest_report_text(report_materials, _PM_WORKER_ID)
     if not pm_text:
         pm_text = (pm_report_text or "").strip()
     lines.extend(
@@ -219,8 +226,8 @@ def render_final_report(
                     claim_links.append(_claim_link_from_material(material, claim))
             continue
         lines.append("")
-        lines.append(f"## {_WORKER_SECTION_TITLES.get(material.worker_id, material.worker_id)}")
-        section_text = report_text_by_worker.get(material.worker_id, "").strip()
+        lines.append(f"## {_section_title(material)}")
+        section_text = report_text_by_material_id.get(material.material_id, "").strip()
         lines.append(section_text or "（报告原文缺失）")
         if material.l1_claims:
             for claim in material.l1_claims:
@@ -403,25 +410,57 @@ class FinalReportExporter:
 
 
 def _ordered_materials(materials: tuple[ApprovedMaterial, ...]) -> tuple[ApprovedMaterial, ...]:
-    material_by_worker = {material.worker_id: material for material in materials}
-    return tuple(material_by_worker[worker_id] for worker_id in _REPORT_WORKER_ORDER if worker_id in material_by_worker)
+    return tuple(sorted(materials, key=_report_material_order_key))
+
+
+def _report_material_order_key(material: ApprovedMaterial) -> tuple[int, int, int, str]:
+    stage_order = {
+        Stage.FRONTLINE: 0,
+        Stage.INVESTMENT_DEBATE: 1,
+        Stage.INVESTMENT_DECISION: 2,
+        Stage.TRADE_DECISION: 3,
+        Stage.RISK_DEBATE: 4,
+        Stage.PORTFOLIO_DECISION: 5,
+        Stage.FINAL_REPORT: 6,
+    }
+    worker_order = {worker_id: index for index, worker_id in enumerate(_REPORT_WORKER_ORDER)}
+    return (
+        stage_order.get(material.stage, 99),
+        material.turn_index,
+        worker_order.get(material.worker_id, 999),
+        material.call_id,
+    )
 
 
 def _pm_report_text(report_materials: tuple[ReportMaterial, ...]) -> str:
-    for item in report_materials:
+    for item in reversed(report_materials):
         if item.material.worker_id == _PM_WORKER_ID:
             return item.l1_text
     return ""
 
 
-def _report_text_by_worker(report_materials: tuple[ReportMaterial, ...]) -> dict[str, str]:
-    return {item.material.worker_id: item.l1_text for item in report_materials}
+def _report_text_by_material_id(report_materials: tuple[ReportMaterial, ...]) -> dict[str, str]:
+    return {item.material.material_id: item.l1_text for item in report_materials}
+
+
+def _latest_report_text(report_materials: tuple[ReportMaterial, ...], worker_id: str) -> str:
+    for item in reversed(report_materials):
+        if item.material.worker_id == worker_id:
+            return item.l1_text
+    return ""
+
+
+def _section_title(material: ApprovedMaterial) -> str:
+    title = _WORKER_SECTION_TITLES.get(material.worker_id, material.worker_id)
+    if material.stage in {Stage.INVESTMENT_DEBATE, Stage.RISK_DEBATE} and material.round_index > 1:
+        return f"{title}（第{material.round_index}轮）"
+    return title
 
 
 def _claim_link_from_material(material: ApprovedMaterial, claim: L1Claim) -> ExportClaim:
     export_kind = _normalize_export_claim_kind(claim.kind)
     return ExportClaim(
-        export_claim_id=f"export-claim-{material.worker_id}-{claim.claim_id}",
+        export_claim_id=f"export-claim-{material.worker_id}-t{material.turn_index:02d}-{claim.claim_id}",
         text=claim.text,
         kind=export_kind,
         source_material_ids=(material.material_id,),

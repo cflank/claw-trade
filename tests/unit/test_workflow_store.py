@@ -69,6 +69,9 @@ def test_create_run_and_state_roundtrip(tmp_path: Path) -> None:
     assert loaded.status == RunStatus.CREATED
     assert loaded.request.stop_point == StopPoint.NONE
     assert loaded.request.entry_point == WorkflowEntryPoint.GENERIC
+    assert loaded.request.max_debate_rounds == 2
+    assert loaded.request.max_risk_discuss_rounds == 3
+    assert loaded.request.frontline_execution_mode == "parallel"
 
     updated = loaded.__class__(
         **{
@@ -105,6 +108,9 @@ def test_t50_main_persistence_methods(tmp_path: Path) -> None:
                 scope=BatchScope.SINGLE_WORKER,
                 collect_first=False,
                 stop_point=StopPoint.SINGLE_WORKER_COMPLETE,
+                turn_index=2,
+                round_index=2,
+                role_turn_index=2,
             ),
             next_status=RunStatus.FRONTLINE_RUNNING,
             reason=None,
@@ -117,6 +123,8 @@ def test_t50_main_persistence_methods(tmp_path: Path) -> None:
     assert decision_payload["next_status"] == "frontline_running"
     assert decision_payload["stage"] == "frontline"
     assert decision_payload["batch"]["worker_ids"] == ["market_analyst"]
+    assert decision_payload["batch"]["turn_index"] == 2
+    assert decision_payload["batch"]["round_index"] == 2
 
     call_path = store.save_call(call)
     assert call_path.exists()
@@ -152,6 +160,9 @@ def test_t50_main_persistence_methods(tmp_path: Path) -> None:
         openclaw_result_path=openclaw_result_path,
         approved_material_id="mat-1",
         failure=None,
+        turn_index=call.turn_index,
+        round_index=call.round_index,
+        role_turn_index=call.role_turn_index,
     )
     worker_result_path = store.save_worker_result(worker_result)
     assert worker_result_path.exists()
@@ -160,6 +171,7 @@ def test_t50_main_persistence_methods(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0].status == WorkerStatus.SUCCEEDED
     assert results[0].stage == Stage.FRONTLINE
+    assert results[0].turn_index == call.turn_index
 
     failure = FailureRecord(
         run_id=state.run_id,
@@ -171,6 +183,9 @@ def test_t50_main_persistence_methods(tmp_path: Path) -> None:
         evidence_paths=(store.call_dir(call) / "provider-request.json",),
         early_stop=False,
         human_action_required=None,
+        turn_index=call.turn_index,
+        round_index=call.round_index,
+        role_turn_index=call.role_turn_index,
     )
     failure_path = store.save_failure(failure)
     assert failure_path.exists()
@@ -307,6 +322,9 @@ def _request() -> RunRequest:
         current_date="2026-05-04",
         start_date="2026-04-04",
         end_date="2026-05-04",
+        max_debate_rounds=2,
+        max_risk_discuss_rounds=3,
+        frontline_execution_mode="parallel",
     )
 
 

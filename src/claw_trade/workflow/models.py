@@ -70,6 +70,9 @@ class RunRequest:
     target_worker_id: str | None = None
     target_stage: Stage | None = None
     entry_point: WorkflowEntryPoint = WorkflowEntryPoint.GENERIC
+    max_debate_rounds: int = 1
+    max_risk_discuss_rounds: int = 1
+    frontline_execution_mode: str = "parallel"
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,9 @@ class StageBatch:
     scope: BatchScope
     collect_first: bool
     stop_point: StopPoint
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)
@@ -141,6 +147,9 @@ class FailureRecord:
     evidence_paths: tuple[Path, ...]
     early_stop: bool
     human_action_required: str | None
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)
@@ -196,6 +205,9 @@ class WorkerCall:
     stop_after_first_response: bool
     system_context_policy: str = "openclaw_default"
     prompt_runtime_vars: dict[str, str] = field(default_factory=dict)
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)
@@ -227,6 +239,9 @@ class WorkerResult:
     openclaw_result_path: Path | None
     approved_material_id: str | None
     failure: FailureRecord | None
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)

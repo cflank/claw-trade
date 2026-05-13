@@ -35,6 +35,9 @@ class RequestBuildContext:
     allowed_tools: tuple[str, ...]
     upstream_materials: tuple[MaterialReadRef, ...]
     openviking_read_capabilities: tuple[OpenVikingReadCapability, ...]
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,9 @@ def build_request_context(
     worker_id: str,
     stage: Stage,
     manifest: ApprovedManifest,
+    turn_index: int = 0,
+    round_index: int = 1,
+    role_turn_index: int = 1,
 ) -> RequestBuildResult:
     # Python 只做运行前校验与参数拼装；可搬运已批准上游报告正文，但不能生成或改写 worker 观点。
     profile = require_profile(state.request.profile)
@@ -173,8 +179,18 @@ def build_request_context(
             paths=(policy.source_path,),
         )
     try:
-        upstream_refs = manifest.for_worker_call(stage=stage, worker_id=worker_id, run_id=state.run_id)
-        upstream_caps = manifest.capabilities_for_worker_call(stage=stage, worker_id=worker_id, run_id=state.run_id)
+        upstream_refs = manifest.for_worker_call(
+            stage=stage,
+            worker_id=worker_id,
+            run_id=state.run_id,
+            turn_index=turn_index,
+        )
+        upstream_caps = manifest.capabilities_for_worker_call(
+            stage=stage,
+            worker_id=worker_id,
+            run_id=state.run_id,
+            turn_index=turn_index,
+        )
     except (ArtifactFlowError, ValueError) as exc:
         return RequestBuildResult.failed(
             state=state,
@@ -202,6 +218,9 @@ def build_request_context(
         allowed_tools=allowed_tools,
         upstream_materials=upstream_refs,
         openviking_read_capabilities=upstream_caps,
+        turn_index=turn_index,
+        round_index=round_index,
+        role_turn_index=role_turn_index,
     )
     return RequestBuildResult.context_result(context)
 
@@ -222,7 +241,7 @@ def build_worker_call_from_context(context: RequestBuildContext) -> RequestBuild
             reason=manifest_reason,
         )
 
-    call_id = make_call_id(state.run_id, context.stage, context.worker_id)
+    call_id = make_call_id(state.run_id, context.stage, context.worker_id, turn_index=context.turn_index)
     # material_target 绑定 run/stage/worker/call，确保同名“report”不会跨 worker 或跨阶段串证据。
     material_target = make_material_target(
         run_id=state.run_id,
@@ -230,6 +249,9 @@ def build_worker_call_from_context(context: RequestBuildContext) -> RequestBuild
         worker_id=context.worker_id,
         call_id=call_id,
         target_name="report",
+        turn_index=context.turn_index,
+        round_index=context.round_index,
+        role_turn_index=context.role_turn_index,
     )
     evidence_dir = state.run_dir / "calls" / call_id
 
@@ -256,6 +278,9 @@ def build_worker_call_from_context(context: RequestBuildContext) -> RequestBuild
         evidence_dir=evidence_dir,
         stop_after_first_response=state.request.stop_point == StopPoint.FIRST_RESPONSE,
         system_context_policy=_system_context_policy_for_request(state.request.entry_point),
+        turn_index=context.turn_index,
+        round_index=context.round_index,
+        role_turn_index=context.role_turn_index,
     )
     return RequestBuildResult.call_result(context, call)
 
@@ -265,17 +290,28 @@ def build_worker_call(
     worker_id: str,
     stage: Stage,
     manifest: ApprovedManifest,
+    turn_index: int = 0,
+    round_index: int = 1,
+    role_turn_index: int = 1,
 ) -> RequestBuildResult:
     # 这里只校验运行上下文和权限边界，禁止 Python 生成或改写业务正文。
-    context_result = build_request_context(state=state, worker_id=worker_id, stage=stage, manifest=manifest)
+    context_result = build_request_context(
+        state=state,
+        worker_id=worker_id,
+        stage=stage,
+        manifest=manifest,
+        turn_index=turn_index,
+        round_index=round_index,
+        role_turn_index=role_turn_index,
+    )
     if not context_result.ok or context_result.context is None:
         return context_result
     return build_worker_call_from_context(context_result.context)
 
 
-def make_call_id(run_id: str, stage: Stage, worker_id: str) -> str:
+def make_call_id(run_id: str, stage: Stage, worker_id: str, turn_index: int = 0) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    return f"{run_id}-{stage.value}-{worker_id}-{timestamp}-{uuid4().hex[:8]}"
+    return f"{run_id}-{stage.value}-t{turn_index:02d}-{worker_id}-{timestamp}-{uuid4().hex[:8]}"
 
 
 def default_read_policy() -> ReadPolicy:

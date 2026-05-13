@@ -76,10 +76,21 @@ class _RequestBuilder:
         worker_id,
         stage,
         manifest,
+        turn_index=0,
+        round_index=1,
+        role_turn_index=1,
     ):
         _ = manifest
-        call_id = f"{state.run_id}-{stage.value}-{worker_id}-1"
-        target = make_material_target(state.run_id, stage, worker_id, call_id)
+        call_id = f"{state.run_id}-{stage.value}-t{turn_index:02d}-{worker_id}-1"
+        target = make_material_target(
+            state.run_id,
+            stage,
+            worker_id,
+            call_id,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=role_turn_index,
+        )
         return type(
             "R",
             (),
@@ -106,6 +117,9 @@ class _RequestBuilder:
                     read_policy=ReadPolicy(),
                     evidence_dir=state.run_dir / "calls" / call_id,
                     stop_after_first_response=False,
+                    turn_index=turn_index,
+                    round_index=round_index,
+                    role_turn_index=role_turn_index,
                 ),
                 "failure": None,
             },
@@ -247,7 +261,7 @@ def test_collect_first_early_stop_writes_exception_evidence(tmp_path: Path) -> N
 
     assert result.early_stop_used is True
     assert compliance["early_stop_exception_used"] is True
-    assert len(compliance["exception_evidence"]) == 1
+    assert len(compliance["exception_evidence"]) == len(batch.worker_ids)
     assert compliance["exception_evidence"][0]["early_stop_category"] == "artifact_flow_overreach"
 
 

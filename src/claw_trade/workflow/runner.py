@@ -75,6 +75,9 @@ class RequestBuilderLike(Protocol):
         worker_id: str,
         stage: Stage,
         manifest: ApprovedManifest,
+        turn_index: int = 0,
+        round_index: int = 1,
+        role_turn_index: int = 1,
     ) -> RequestBuildResult: ...
 
 
@@ -93,6 +96,16 @@ class PromptMaterialResult:
     failure: FailureRecord | None
 
 
+@dataclass(frozen=True)
+class PromptMaterialText:
+    worker_id: str
+    stage: Stage
+    text: str
+    turn_index: int = 0
+    round_index: int = 1
+    role_turn_index: int = 1
+
+
 class _DefaultRequestBuilder:
     def build_worker_call(
         self,
@@ -100,8 +113,19 @@ class _DefaultRequestBuilder:
         worker_id: str,
         stage: Stage,
         manifest: ApprovedManifest,
+        turn_index: int = 0,
+        round_index: int = 1,
+        role_turn_index: int = 1,
     ) -> RequestBuildResult:
-        return build_worker_call(state=state, worker_id=worker_id, stage=stage, manifest=manifest)
+        return build_worker_call(
+            state=state,
+            worker_id=worker_id,
+            stage=stage,
+            manifest=manifest,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=role_turn_index,
+        )
 
 
 class _DefaultToolRegistryProbe:
@@ -398,12 +422,17 @@ class ControlRunner:
         return result
 
     def run_stage_batch(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
-        if self._should_run_stage_batch_concurrently(batch):
+        if self._should_run_stage_batch_concurrently(state, batch):
             return self._run_stage_batch_concurrent(state, batch)
         return self._run_stage_batch_serial(state, batch)
 
-    def _should_run_stage_batch_concurrently(self, batch: StageBatch) -> bool:
-        return batch.stage == Stage.FRONTLINE and batch.collect_first and len(batch.worker_ids) > 1
+    def _should_run_stage_batch_concurrently(self, state: WorkflowState, batch: StageBatch) -> bool:
+        return (
+            state.request.frontline_execution_mode == "parallel"
+            and batch.stage == Stage.FRONTLINE
+            and batch.collect_first
+            and len(batch.worker_ids) > 1
+        )
 
     def _run_stage_batch_serial(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
         worker_results: list[WorkerResult] = []
@@ -419,6 +448,9 @@ class ControlRunner:
                 worker_id=worker_id,
                 stage=batch.stage,
                 manifest=manifest,
+                turn_index=batch.turn_index,
+                round_index=batch.round_index,
+                role_turn_index=batch.role_turn_index,
             )
             if not call_result.ok or call_result.call is None:
                 failure = self._normalize_build_failure(batch, worker_id, call_result)
@@ -431,6 +463,9 @@ class ControlRunner:
                     openclaw_result_path=None,
                     approved_material_id=None,
                     failure=failure,
+                    turn_index=batch.turn_index,
+                    round_index=batch.round_index,
+                    role_turn_index=batch.role_turn_index,
                 )
                 self.store.save_worker_result(result)
                 worker_results.append(result)
@@ -466,6 +501,9 @@ class ControlRunner:
                     openclaw_result_path=None,
                     approved_material_id=None,
                     failure=failure,
+                    turn_index=batch.turn_index,
+                    round_index=batch.round_index,
+                    role_turn_index=batch.role_turn_index,
                 )
                 self.store.save_worker_result(result)
                 worker_results.append(result)
@@ -517,6 +555,9 @@ class ControlRunner:
                 worker_id=worker_id,
                 stage=batch.stage,
                 manifest=manifest,
+                turn_index=batch.turn_index,
+                round_index=batch.round_index,
+                role_turn_index=batch.role_turn_index,
             )
             if not call_result.ok or call_result.call is None:
                 failure = self._normalize_build_failure(batch, worker_id, call_result)
@@ -529,6 +570,9 @@ class ControlRunner:
                     openclaw_result_path=None,
                     approved_material_id=None,
                     failure=failure,
+                    turn_index=batch.turn_index,
+                    round_index=batch.round_index,
+                    role_turn_index=batch.role_turn_index,
                 )
                 self.store.save_worker_result(result)
                 worker_results_by_id[worker_id] = result
@@ -558,6 +602,9 @@ class ControlRunner:
                     openclaw_result_path=None,
                     approved_material_id=None,
                     failure=failure,
+                    turn_index=batch.turn_index,
+                    round_index=batch.round_index,
+                    role_turn_index=batch.role_turn_index,
                 )
                 self.store.save_worker_result(result)
                 worker_results_by_id[worker_id] = result
@@ -609,24 +656,24 @@ class ControlRunner:
         )
 
     def attach_prompt_materials(self, call: WorkerCall, manifest: ApprovedManifest) -> PromptMaterialResult:
-        if call.profile != "CN_A" or call.stage == Stage.FRONTLINE:
+        if call.profile not in {"CN_A", "US"} or call.stage == Stage.FRONTLINE:
             return PromptMaterialResult(ok=True, call=call, failure=None)
 
         material_texts: dict[tuple[str, Stage], str] = {}
-        material_by_source = {
-            (material.worker_id, material.stage): material
-            for material in manifest.all_for_run(call.run_id)
-        }
+        ordered_material_texts: list[PromptMaterialText] = []
+        material_by_id = {material.material_id: material for material in manifest.all_for_run(call.run_id)}
         for ref in call.upstream_materials:
-            source = (ref.worker_id, ref.stage)
-            material = material_by_source.get(source)
+            material = material_by_id.get(ref.material_id)
             if material is None:
                 return PromptMaterialResult(
                     ok=False,
                     call=None,
                     failure=self._prompt_material_failure(
                         call=call,
-                        reason=f"approved material 缺失: worker={ref.worker_id} stage={ref.stage.value}",
+                        reason=(
+                            f"approved material 缺失: material_id={ref.material_id} "
+                            f"worker={ref.worker_id} stage={ref.stage.value} turn={ref.turn_index}"
+                        ),
                         paths=(call.evidence_dir / "call.json",),
                     ),
                 )
@@ -659,7 +706,7 @@ class ControlRunner:
                     ),
                 )
             try:
-                material_texts[source] = read_result.content.decode("utf-8")
+                text = read_result.content.decode("utf-8")
             except UnicodeDecodeError as exc:
                 return PromptMaterialResult(
                     ok=False,
@@ -670,8 +717,23 @@ class ControlRunner:
                         paths=(call.evidence_dir / "call.json", material.hard_gate_result_path),
                     ),
                 )
+            material_texts[(material.worker_id, material.stage)] = text
+            ordered_material_texts.append(
+                PromptMaterialText(
+                    worker_id=material.worker_id,
+                    stage=material.stage,
+                    text=text,
+                    turn_index=material.turn_index,
+                    round_index=material.round_index,
+                    role_turn_index=material.role_turn_index,
+                )
+            )
 
-        prompt_vars = build_cn_a_prompt_vars(call=call, material_texts=material_texts)
+        prompt_vars = build_cn_a_prompt_vars(
+            call=call,
+            material_texts=material_texts,
+            ordered_material_texts=tuple(ordered_material_texts),
+        )
         return PromptMaterialResult(
             ok=True,
             call=replace(call, prompt_runtime_vars=prompt_vars),
@@ -727,6 +789,9 @@ class ControlRunner:
                 openclaw_result_path=openclaw_result_path,
                 approved_material_id=None,
                 failure=None,
+                turn_index=call.turn_index,
+                round_index=call.round_index,
+                role_turn_index=call.role_turn_index,
             )
 
         approval_result = self.run_material_approval(call, evidence)
@@ -762,6 +827,9 @@ class ControlRunner:
             openclaw_result_path=openclaw_result_path,
             approved_material_id=approval_result.material.material_id,
             failure=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
         )
 
     def read_worker_evidence(self, call: WorkerCall, result: OpenClawResult) -> EvidenceReadResult:
@@ -803,7 +871,9 @@ class ControlRunner:
         early_stop_used: bool,
         early_stop_failures: tuple[FailureRecord, ...],
     ) -> Path:
-        report_path = self.store.run_dir(batch.run_id) / "reports" / f"collect-first-{batch.stage.value}.json"
+        report_path = self.store.run_dir(batch.run_id) / "reports" / (
+            f"collect-first-{batch.stage.value}-t{batch.turn_index:02d}.json"
+        )
         completed_items: list[dict[str, object]] = []
         for result in results:
             if result.status != WorkerStatus.SUCCEEDED:
@@ -814,6 +884,9 @@ class ControlRunner:
                     "call_id": result.call_id,
                     "status": result.status.value,
                     "approved_material_id": result.approved_material_id,
+                    "turn_index": result.turn_index,
+                    "round_index": result.round_index,
+                    "role_turn_index": result.role_turn_index,
                 }
             )
         failure_items = [
@@ -823,6 +896,9 @@ class ControlRunner:
                 "category": failure.category,
                 "reason": failure.reason,
                 "evidence_paths": [str(path) for path in failure.evidence_paths],
+                "turn_index": failure.turn_index,
+                "round_index": failure.round_index,
+                "role_turn_index": failure.role_turn_index,
             }
             for failure in failures
         ]
@@ -914,11 +990,17 @@ class ControlRunner:
                 )
             return guard_passed(category="artifact_flow")
         try:
-            expected_refs = manifest.for_worker_call(call.stage, worker_id=call.worker_id, run_id=call.run_id)
+            expected_refs = manifest.for_worker_call(
+                call.stage,
+                worker_id=call.worker_id,
+                run_id=call.run_id,
+                turn_index=call.turn_index,
+            )
             expected_caps = manifest.capabilities_for_worker_call(
                 call.stage,
                 worker_id=call.worker_id,
                 run_id=call.run_id,
+                turn_index=call.turn_index,
             )
         except Exception as exc:
             return guard_failed(
@@ -959,6 +1041,9 @@ class ControlRunner:
             evidence_paths=paths,
             early_stop=True,
             human_action_required=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
         )
 
     def _normalize_build_failure(
@@ -993,6 +1078,9 @@ class ControlRunner:
             evidence_paths=failure.evidence_paths,
             early_stop=failure.early_stop,
             human_action_required=failure.human_action_required,
+            turn_index=batch.turn_index,
+            round_index=batch.round_index,
+            role_turn_index=batch.role_turn_index,
         )
 
 
@@ -1014,6 +1102,7 @@ def build_cn_a_prompt_vars(
     *,
     call: WorkerCall,
     material_texts: dict[tuple[str, Stage], str],
+    ordered_material_texts: tuple[PromptMaterialText, ...] = (),
 ) -> dict[str, str]:
     frontline_vars = {
         "market_research_report": material_texts.get(("market_analyst", Stage.FRONTLINE), ""),
@@ -1021,30 +1110,81 @@ def build_cn_a_prompt_vars(
         "news_report": material_texts.get(("news_analyst", Stage.FRONTLINE), ""),
         "fundamentals_report": material_texts.get(("fundamental_analyst", Stage.FRONTLINE), ""),
     }
-    bull_argument = _role_argument(material_texts, "bull_researcher", Stage.INVESTMENT_DEBATE, "Bull Analyst")
-    bear_argument = _role_argument(material_texts, "bear_researcher", Stage.INVESTMENT_DEBATE, "Bear Analyst")
-    risky_argument = _role_argument(material_texts, "risk_challenger", Stage.RISK_DEBATE, "Risky Analyst")
-    safe_argument = _role_argument(material_texts, "risk_guardian", Stage.RISK_DEBATE, "Safe Analyst")
-    neutral_argument = _role_argument(material_texts, "risk_moderator", Stage.RISK_DEBATE, "Neutral Analyst")
+    debate_labels = {
+        "bull_researcher": "Bull Analyst",
+        "bear_researcher": "Bear Analyst",
+    }
+    risk_labels = {
+        "risk_challenger": "Risky Analyst",
+        "risk_guardian": "Safe Analyst",
+        "risk_moderator": "Neutral Analyst",
+    }
+    debate_arguments = _ordered_role_arguments(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        stage=Stage.INVESTMENT_DEBATE,
+        role_labels=debate_labels,
+    )
+    risk_arguments = _ordered_role_arguments(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        stage=Stage.RISK_DEBATE,
+        role_labels=risk_labels,
+    )
+    bull_argument = _latest_role_argument(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        worker_id="bull_researcher",
+        stage=Stage.INVESTMENT_DEBATE,
+        role_label="Bull Analyst",
+    )
+    bear_argument = _latest_role_argument(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        worker_id="bear_researcher",
+        stage=Stage.INVESTMENT_DEBATE,
+        role_label="Bear Analyst",
+    )
+    risky_argument = _latest_role_argument(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        worker_id="risk_challenger",
+        stage=Stage.RISK_DEBATE,
+        role_label="Risky Analyst",
+    )
+    safe_argument = _latest_role_argument(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        worker_id="risk_guardian",
+        stage=Stage.RISK_DEBATE,
+        role_label="Safe Analyst",
+    )
+    neutral_argument = _latest_role_argument(
+        material_texts=material_texts,
+        ordered_material_texts=ordered_material_texts,
+        worker_id="risk_moderator",
+        stage=Stage.RISK_DEBATE,
+        role_label="Neutral Analyst",
+    )
 
     if call.worker_id == "bull_researcher":
         return {
             **frontline_vars,
-            "history": "",
-            "current_response": "",
+            "history": _conversation_history(*debate_arguments),
+            "current_response": debate_arguments[-1] if debate_arguments else "",
             "past_memory_str": _default_memory_for_worker(call.worker_id),
         }
     if call.worker_id == "bear_researcher":
         return {
             **frontline_vars,
-            "history": _conversation_history(bull_argument),
-            "current_response": bull_argument,
+            "history": _conversation_history(*debate_arguments),
+            "current_response": debate_arguments[-1] if debate_arguments else bull_argument,
             "past_memory_str": _default_memory_for_worker(call.worker_id),
         }
     if call.worker_id == "research_manager":
         return {
             **frontline_vars,
-            "history": _conversation_history(bull_argument, bear_argument),
+            "history": _conversation_history(*debate_arguments),
             "past_memory_str": _default_memory_for_worker(call.worker_id),
         }
     if call.worker_id == "trader":
@@ -1056,23 +1196,23 @@ def build_cn_a_prompt_vars(
         return {
             **frontline_vars,
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
-            "history": "",
+            "history": _conversation_history(*risk_arguments),
             "current_safe_response": "",
-            "current_neutral_response": "",
+            "current_neutral_response": neutral_argument,
         }
     if call.worker_id == "risk_guardian":
         return {
             **frontline_vars,
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
-            "history": _conversation_history(risky_argument),
+            "history": _conversation_history(*risk_arguments),
             "current_risky_response": risky_argument,
-            "current_neutral_response": "",
+            "current_neutral_response": neutral_argument,
         }
     if call.worker_id == "risk_moderator":
         return {
             **frontline_vars,
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
-            "history": _conversation_history(risky_argument, safe_argument),
+            "history": _conversation_history(*risk_arguments),
             "current_risky_response": risky_argument,
             "current_safe_response": safe_argument,
         }
@@ -1082,20 +1222,37 @@ def build_cn_a_prompt_vars(
             "research_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "trader_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
-            "history": _conversation_history(risky_argument, safe_argument, neutral_argument),
+            "history": _conversation_history(*risk_arguments),
             "past_memory_str": _default_memory_for_worker(call.worker_id),
         }
     if call.worker_id == "report_polisher":
-        supporting_reports = _report_bundle(
-            material_texts,
-            (
+        if call.profile == "US":
+            supporting_sources = (
+                ("bull_researcher", Stage.INVESTMENT_DEBATE, "Bull Researcher"),
+                ("bear_researcher", Stage.INVESTMENT_DEBATE, "Bear Researcher"),
+                ("research_manager", Stage.INVESTMENT_DECISION, "Research Manager"),
+                ("risk_challenger", Stage.RISK_DEBATE, "Aggressive Risk Analyst"),
+                ("risk_guardian", Stage.RISK_DEBATE, "Conservative Risk Analyst"),
+                ("risk_moderator", Stage.RISK_DEBATE, "Neutral Risk Analyst"),
+            )
+            chart_assets_note = (
+                "If the market analysis report generated verified technical charts, the final export will place "
+                "those verified charts in the technical market analysis section; do not invent image paths or chart conclusions."
+            )
+        else:
+            supporting_sources = (
                 ("bull_researcher", Stage.INVESTMENT_DEBATE, "多头研究员"),
                 ("bear_researcher", Stage.INVESTMENT_DEBATE, "空头研究员"),
                 ("research_manager", Stage.INVESTMENT_DECISION, "研究经理"),
                 ("risk_challenger", Stage.RISK_DEBATE, "风险挑战方"),
                 ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
                 ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
-            ),
+            )
+            chart_assets_note = "如市场分析报告已生成技术图表，最终导出会把已验证图表放入技术指标分析段；不要编造图片路径或图表结论。"
+        supporting_reports = _report_bundle(
+            material_texts,
+            supporting_sources,
+            ordered_material_texts=ordered_material_texts,
         )
         return {
             "ticker": call.ticker,
@@ -1112,7 +1269,7 @@ def build_cn_a_prompt_vars(
             "social_analyst_report": material_texts.get(("social_analyst", Stage.FRONTLINE), ""),
             "trader_report": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
             "supporting_worker_reports": supporting_reports,
-            "chart_assets_note": "如市场分析报告已生成技术图表，最终导出会把已验证图表放入技术指标分析段；不要编造图片路径或图表结论。",
+            "chart_assets_note": chart_assets_note,
         }
     return {}
 
@@ -1127,6 +1284,44 @@ def _role_argument(
     return f"{role_label}: {text}" if text else ""
 
 
+def _latest_role_argument(
+    *,
+    material_texts: dict[tuple[str, Stage], str],
+    ordered_material_texts: tuple[PromptMaterialText, ...],
+    worker_id: str,
+    stage: Stage,
+    role_label: str,
+) -> str:
+    for item in reversed(ordered_material_texts):
+        if item.worker_id == worker_id and item.stage == stage:
+            return f"{role_label}: {item.text}" if item.text else ""
+    return _role_argument(material_texts, worker_id, stage, role_label)
+
+
+def _ordered_role_arguments(
+    *,
+    material_texts: dict[tuple[str, Stage], str],
+    ordered_material_texts: tuple[PromptMaterialText, ...],
+    stage: Stage,
+    role_labels: dict[str, str],
+) -> tuple[str, ...]:
+    if ordered_material_texts:
+        arguments: list[str] = []
+        for item in ordered_material_texts:
+            if item.stage != stage:
+                continue
+            role_label = role_labels.get(item.worker_id)
+            if role_label is None or not item.text:
+                continue
+            arguments.append(f"{role_label}: {item.text}")
+        return tuple(arguments)
+    return tuple(
+        argument
+        for worker_id, role_label in role_labels.items()
+        if (argument := _role_argument(material_texts, worker_id, stage, role_label))
+    )
+
+
 def _conversation_history(*arguments: str) -> str:
     return "".join(f"\n{argument}" for argument in arguments if argument)
 
@@ -1134,7 +1329,30 @@ def _conversation_history(*arguments: str) -> str:
 def _report_bundle(
     material_texts: dict[tuple[str, Stage], str],
     sources: tuple[tuple[str, Stage, str], ...],
+    *,
+    ordered_material_texts: tuple[PromptMaterialText, ...] = (),
 ) -> str:
+    if ordered_material_texts:
+        source_titles = {(worker_id, stage): title for worker_id, stage, title in sources}
+        source_counts: dict[tuple[str, Stage], int] = {}
+        for item in ordered_material_texts:
+            source = (item.worker_id, item.stage)
+            if source in source_titles:
+                source_counts[source] = source_counts.get(source, 0) + 1
+        sections: list[str] = []
+        for item in ordered_material_texts:
+            source = (item.worker_id, item.stage)
+            title = source_titles.get(source)
+            if title is None:
+                continue
+            text = item.text.strip()
+            if not text:
+                continue
+            if source_counts.get(source, 0) > 1 or item.round_index > 1:
+                title = f"{title}（第{item.round_index}轮）"
+            sections.append(f"### {title}\n{text}")
+        return "\n\n".join(sections)
+
     sections: list[str] = []
     for worker_id, stage, title in sources:
         text = material_texts.get((worker_id, stage), "").strip()
@@ -1234,7 +1452,13 @@ def _failed_worker_result(
             evidence_paths=paths,
             early_stop=early_stop,
             human_action_required=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
         ),
+        turn_index=call.turn_index,
+        round_index=call.round_index,
+        role_turn_index=call.role_turn_index,
     )
 
 

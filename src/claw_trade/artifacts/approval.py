@@ -219,6 +219,9 @@ def build_approved_material_from_passed_gates(
         l1_claims=claims,
         approved_at=_utc_now_iso_text(),
         hard_gate_result_path=call.evidence_dir / "approval-hard-gate.json",
+        turn_index=call.turn_index,
+        round_index=call.round_index,
+        role_turn_index=call.role_turn_index,
     )
 
 

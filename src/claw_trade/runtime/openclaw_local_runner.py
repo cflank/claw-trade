@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
-from typing import Any
+from pathlib import Path
 import subprocess
+import tempfile
+from typing import Any
 from urllib import error, parse, request
 
 from claw_trade.runtime.openclaw_client import ProbeResult
@@ -12,6 +14,7 @@ from claw_trade.runtime.openclaw_client import ProbeResult
 _DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
 _DEFAULT_TIMEOUT_MS = 10_000
 _METHOD_RUN_SINGLE_WORKER = "agent.runSingleWorker"
+_GATEWAY_PARAMS_ARG_BYTE_LIMIT = 60_000
 
 
 def create_default_runner() -> OpenClawLocalRunner:
@@ -95,20 +98,32 @@ class OpenClawLocalRunner:
             return False, f"gateway method 探测失败: {exc}"
 
     def _call_gateway(self, method: str, params: dict[str, object]) -> object:
+        params_json = json.dumps(params, ensure_ascii=False)
+        params_file: str | None = None
         command = [
             self.gateway_call_bin,
             "gateway",
             "call",
             method,
-            "--timeout",
-            str(self.timeout_ms),
-            "--params",
-            json.dumps(params, ensure_ascii=False),
-            "--json",
         ]
         # 默认本机地址且无显式凭证时，不传 --url，避免触发 OpenClaw 的 URL override 凭证门禁。
         if self.gateway_ws_url != _DEFAULT_GATEWAY_WS_URL or self.token or self.password:
-            command[4:4] = ["--url", self.gateway_ws_url]
+            command.extend(["--url", self.gateway_ws_url])
+        command.extend(["--timeout", str(self.timeout_ms)])
+        if len(params_json.encode("utf-8")) > _GATEWAY_PARAMS_ARG_BYTE_LIMIT:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                prefix="openclaw-gateway-params-",
+                suffix=".json",
+                delete=False,
+            ) as handle:
+                handle.write(params_json)
+                params_file = handle.name
+            command.extend(["--params-file", params_file])
+        else:
+            command.extend(["--params", params_json])
+        command.append("--json")
         if self.token:
             command.extend(["--token", self.token])
         elif self.password:
@@ -120,25 +135,29 @@ class OpenClawLocalRunner:
             child_env.pop("OPENCLAW_GATEWAY_URL", None)
 
         try:
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-                env=child_env,
-            )
-        except OSError as exc:
-            raise RuntimeError(f"gateway CLI 执行失败: {exc}") from exc
-        if completed.returncode != 0:
-            detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"
-            raise RuntimeError(detail)
-        stdout = completed.stdout.strip()
-        if not stdout:
-            raise RuntimeError("gateway 返回空响应")
-        try:
-            return json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"gateway 返回非 JSON: {exc}") from exc
+            try:
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=child_env,
+                )
+            except OSError as exc:
+                raise RuntimeError(f"gateway CLI 执行失败: {exc}") from exc
+            if completed.returncode != 0:
+                detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"
+                raise RuntimeError(detail)
+            stdout = completed.stdout.strip()
+            if not stdout:
+                raise RuntimeError("gateway 返回空响应")
+            try:
+                return json.loads(stdout)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"gateway 返回非 JSON: {exc}") from exc
+        finally:
+            if params_file:
+                Path(params_file).unlink(missing_ok=True)
 
 
 def _normalize_gateway_ws_url(raw: str) -> str:
