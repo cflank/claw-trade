@@ -2353,7 +2353,7 @@ MUST NOT：
 
 - 不调用 `alphaear-stock` 取数作为 market 正式路径。
 - 不接 `alphaear-reporter` 或 `alphaear-predictor`。
-- 不让 AlphaEar 接管报告链路或 PM owner。
+- 不让 AlphaEar 接管报告链路或 PM final authority。
 
 依赖关系：
 
@@ -2925,7 +2925,7 @@ Collect-first compliance：
 - batch scope：market、fundamental、news、social 四个 frontline worker。
 - completed items：运行后逐项列出。
 - failures collected：记录 terminal stage、artifact path、logs、root component guess、evidence。
-- early-stop exception used：仅在 provider/runtime/root alignment 不可信、数据真实性边界、PM owner 边界或 destructive/security 风险时使用。
+- early-stop exception used：仅在 provider/runtime/root alignment 不可信、数据真实性边界、PM final authority 边界或 destructive/security 风险时使用。
 - batch fix grouping：按 context、provider、evidence、quality 分组。
 
 ### 8.5 Eval / report quality

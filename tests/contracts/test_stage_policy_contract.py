@@ -17,7 +17,7 @@ def test_load_stage_policy_reads_profile_tools_and_access(tmp_path: Path) -> Non
     assert result.policy is not None
     assert result.policy.worker_id == "market_analyst"
     assert result.policy.stage == Stage.FRONTLINE
-    assert result.policy.tool_intents == ("market_data",)
+    assert result.policy.tool_intents == ("us_market_data",)
     assert result.policy.openviking_access == "write"
 
 
@@ -46,7 +46,7 @@ def test_load_stage_policy_fails_when_openviking_access_missing(tmp_path: Path) 
         tmp_path,
         tools_block=(
             "    tools:\n"
-            "      - market_data\n"
+            "      - us_market_data\n"
         ),
     )
     result = load_stage_policy(agents_root, "market_analyst", "US")
@@ -66,7 +66,7 @@ def test_validate_stage_policy_matches_worker_blocks_mismatch() -> None:
         worker_id="market_analyst",
         stage=Stage.FRONTLINE,
         profile="US",
-        tool_intents=("market_data",),
+        tool_intents=("us_market_data",),
         openviking_access="write",
         source_path=Path("agents/market_analyst/STAGES.yaml"),
     )
@@ -104,7 +104,7 @@ def _stage_policy_yaml(stage: str, approved: str, tools_block: str | None) -> st
             if tools_block is not None
             else (
                 "    tools:\n"
-                "      - market_data\n"
+                "      - us_market_data\n"
                 "    openviking_access: write\n"
             )
         )

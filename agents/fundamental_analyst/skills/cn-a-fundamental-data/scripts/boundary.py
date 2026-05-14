@@ -29,7 +29,6 @@ _INVESTMENT_SEMANTIC_TOKENS = frozenset(
         "buy_hold_sell",
         "investment_conclusion",
         "report_body",
-        "pm_decision",
         "buy",
         "sell",
         "hold",

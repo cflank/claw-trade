@@ -219,9 +219,64 @@ def test_cn_a_research_manager_prompt_materials_inline_frontline_and_debate(tmp_
     assert result.call is not None
     prompt_vars = result.call.prompt_runtime_vars
     assert prompt_vars["market_research_report"] == "# 市场分析\n完整市场报告正文"
+    assert prompt_vars["fundamentals_report"] == "# 基本面分析\n完整基本面报告正文"
+    assert prompt_vars["news_report"] == "# 新闻分析\n完整新闻报告正文"
+    assert prompt_vars["sentiment_report"] == "# 社交舆情\n完整舆情报告正文"
     assert prompt_vars["history"] == (
         "\nBull Analyst: # 多方观点\n完整多方报告正文"
         "\nBear Analyst: # 空方观点\n完整空方报告正文"
+    )
+    assert prompt_vars["past_memory_str"] == ""
+    _assert_no_model_visible_protocol(prompt_vars)
+
+
+def test_us_research_manager_prompt_materials_use_debate_only(tmp_path: Path) -> None:
+    run_id = "run-us-research-manager-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# Market Analysis\nFull market report body",
+            ("fundamental_analyst", Stage.FRONTLINE): "# Fundamentals\nFull fundamentals report body",
+            ("news_analyst", Stage.FRONTLINE): "# News\nFull news report body",
+            ("social_analyst", Stage.FRONTLINE): "# Sentiment\nFull sentiment report body",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# Bull Case\nFull bull argument body",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# Bear Case\nFull bear argument body",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="research_manager",
+        stage=Stage.INVESTMENT_DECISION,
+        profile="US",
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    prompt_vars = result.call.prompt_runtime_vars
+    assert set(prompt_vars) == {"history", "past_memory_str"}
+    assert prompt_vars["history"] == (
+        "\nBull Analyst: # Bull Case\nFull bull argument body"
+        "\nBear Analyst: # Bear Case\nFull bear argument body"
     )
     assert prompt_vars["past_memory_str"] == ""
     _assert_no_model_visible_protocol(prompt_vars)

@@ -69,7 +69,7 @@ def _make_worker_workspace(
     files = {
         "AGENTS.md": "worker local rules",
         "IDENTITY.md": "worker identity",
-        "STAGES.yaml": "stage: frontline\nprofiles:\n  US:\n    tools:\n      - market_data\n",
+        "STAGES.yaml": "stage: frontline\nprofiles:\n  US:\n    tools:\n      - us_market_data\n",
         "SKILLS.md": "skills list",
         "prompts/US.md": "US prompt",
         "skills/manifest.yaml": manifest_content or "skills:\n  - claw-trade-stage/SKILL.md\n",

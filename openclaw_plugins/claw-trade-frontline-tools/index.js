@@ -7,13 +7,22 @@ import { definePluginEntry } from "../../third_party/openclaw/dist/plugin-sdk/pl
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(PLUGIN_DIR, "..", "..");
 const TOOL_NAMES = Object.freeze({
-  market: "market_market_data_pack",
-  fundamental: "fundamental_fundamentals_data_pack",
-  news: "news_news_data_pack",
-  social: "social_social_sentiment_pack",
+  cnMarket: "market_market_data_pack",
+  usGetStockData: "get_stock_data",
+  usGetIndicators: "get_indicators",
+  cnFundamental: "fundamental_fundamentals_data_pack",
+  usGetFundamentals: "get_fundamentals",
+  usGetBalanceSheet: "get_balance_sheet",
+  usGetCashflow: "get_cashflow",
+  usGetIncomeStatement: "get_income_statement",
+  usGetNews: "get_news",
+  usGetGlobalNews: "get_global_news",
+  cnNews: "news_news_data_pack",
+  cnSocial: "social_social_sentiment_pack",
 });
 const FRONTLINE_STAGE = "frontline";
-const FRONTLINE_MARKET = "CN_A";
+const MARKET_CN_A = "CN_A";
+const MARKET_US = "US";
 const TOOL_ERROR_CODES = Object.freeze({
   runtimeContextMissing: "TOOL_RUNTIME_CONTEXT_MISSING",
   paramsInvalid: "TOOL_PARAMS_INVALID",
@@ -55,6 +64,73 @@ const PACK_INPUT_SCHEMA = {
   },
 };
 
+const STOCK_DATA_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    symbol: OPTIONAL_TEXT,
+    start_date: OPTIONAL_TEXT,
+    end_date: OPTIONAL_TEXT,
+  },
+};
+
+const INDICATOR_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    symbol: OPTIONAL_TEXT,
+    indicator: OPTIONAL_TEXT,
+    curr_date: OPTIONAL_TEXT,
+    look_back_days: {
+      type: "number",
+    },
+  },
+};
+
+const FUNDAMENTALS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ticker: OPTIONAL_TEXT,
+    curr_date: OPTIONAL_TEXT,
+  },
+};
+
+const STATEMENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ticker: OPTIONAL_TEXT,
+    freq: OPTIONAL_TEXT,
+    curr_date: OPTIONAL_TEXT,
+  },
+};
+
+const NEWS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    ticker: OPTIONAL_TEXT,
+    query: OPTIONAL_TEXT,
+    start_date: OPTIONAL_TEXT,
+    end_date: OPTIONAL_TEXT,
+  },
+};
+
+const GLOBAL_NEWS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    curr_date: OPTIONAL_TEXT,
+    look_back_days: {
+      type: "number",
+    },
+    limit: {
+      type: "number",
+    },
+  },
+};
+
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -83,11 +159,12 @@ function readCommand(ctx, expectedWorkerId, toolName) {
     );
   }
   const workerId = textValue(command.worker_id);
-  if (workerId !== expectedWorkerId) {
+  const expectedWorkerIds = Array.isArray(expectedWorkerId) ? expectedWorkerId : [expectedWorkerId];
+  if (!expectedWorkerIds.includes(workerId)) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.workerMismatch,
-      `${toolName} worker mismatch: expected ${expectedWorkerId}, got ${workerId ?? "<empty>"}`,
-      { tool_name: toolName, expected_worker_id: expectedWorkerId, worker_id: workerId ?? null },
+      `${toolName} worker mismatch: expected ${expectedWorkerIds.join(", ")}, got ${workerId ?? "<empty>"}`,
+      { tool_name: toolName, expected_worker_id: expectedWorkerIds.join(","), worker_id: workerId ?? null },
     );
   }
   const runtimeVars = isRecord(command.runtime_vars) ? command.runtime_vars : {};
@@ -150,6 +227,65 @@ function buildToolInput(runtimeVars, params, requiredFields = []) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
+function buildOriginalUsToolInput(runtimeVars, params, toolName) {
+  if (!isRecord(params)) {
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool params must be a JSON object");
+  }
+  const runtime = isRecord(runtimeVars) ? runtimeVars : {};
+  const ticker = readOptionalString(runtime, "ticker");
+  const market = readOptionalString(params, "market") ?? readOptionalString(runtime, "market");
+  const currentDate = readOptionalString(runtime, "current_date");
+  const startDate = readOptionalString(runtime, "start_date");
+  const endDate = readOptionalString(runtime, "end_date");
+  if (toolName === TOOL_NAMES.usGetStockData) {
+    return {
+      symbol: readOptionalString(params, "symbol") ?? ticker,
+      market,
+      start_date: readOptionalString(params, "start_date") ?? startDate,
+      end_date: readOptionalString(params, "end_date") ?? endDate ?? currentDate,
+    };
+  }
+  if (toolName === TOOL_NAMES.usGetIndicators) {
+    return {
+      symbol: readOptionalString(params, "symbol") ?? ticker,
+      market,
+      indicator: readOptionalString(params, "indicator"),
+      curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
+      look_back_days: params.look_back_days,
+    };
+  }
+  if (toolName === TOOL_NAMES.usGetFundamentals) {
+    return {
+      ticker: readOptionalString(params, "ticker") ?? ticker,
+      market,
+      curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
+    };
+  }
+  if (toolName === TOOL_NAMES.usGetNews) {
+    return {
+      ticker: readOptionalString(params, "ticker") ?? ticker,
+      query: readOptionalString(params, "query"),
+      market,
+      start_date: readOptionalString(params, "start_date") ?? startDate,
+      end_date: readOptionalString(params, "end_date") ?? endDate ?? currentDate,
+    };
+  }
+  if (toolName === TOOL_NAMES.usGetGlobalNews) {
+    return {
+      market,
+      curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
+      look_back_days: params.look_back_days,
+      limit: params.limit,
+    };
+  }
+  return {
+    ticker: readOptionalString(params, "ticker") ?? ticker,
+    market,
+    freq: readOptionalString(params, "freq") ?? "quarterly",
+    curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
+  };
+}
+
 function buildRuntimeContext(runtime, toolName, toolCallId) {
   const currentDate = textValue(runtime.runtimeVars.current_date);
   return {
@@ -166,7 +302,7 @@ function buildRuntimeContext(runtime, toolName, toolCallId) {
   };
 }
 
-function assertFrontlineMarket(toolName, toolInput) {
+function assertExpectedMarket(toolName, toolInput, expectedMarket) {
   const market = readOptionalString(toolInput, "market");
   if (!market) {
     throw new FrontlineToolError(
@@ -175,10 +311,10 @@ function assertFrontlineMarket(toolName, toolInput) {
       { tool_name: toolName },
     );
   }
-  if (market !== FRONTLINE_MARKET) {
+  if (market !== expectedMarket) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.paramsInvalid,
-      `params.market must be ${FRONTLINE_MARKET}, got ${market}`,
+      `params.market must be ${expectedMarket}, got ${market}`,
       { tool_name: toolName, market },
     );
   }
@@ -497,6 +633,7 @@ function marketScriptConfig() {
   );
   return {
     expectedWorkerId: "market_analyst",
+    expectedMarket: MARKET_CN_A,
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -528,6 +665,7 @@ function fundamentalScriptConfig() {
   );
   return {
     expectedWorkerId: "fundamental_analyst",
+    expectedMarket: MARKET_CN_A,
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -557,6 +695,7 @@ function newsScriptConfig() {
   );
   return {
     expectedWorkerId: "news_analyst",
+    expectedMarket: MARKET_CN_A,
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -589,6 +728,7 @@ function socialScriptConfig() {
   );
   return {
     expectedWorkerId: "social_analyst",
+    expectedMarket: MARKET_CN_A,
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -612,11 +752,78 @@ function socialScriptConfig() {
   };
 }
 
+function usFrontlineScriptConfig(expectedWorkerId, functionName, timeoutEnvName, fallbackMs) {
+  const pythonDir = path.join(
+    REPO_ROOT,
+    "openclaw_plugins",
+    "claw-trade-frontline-tools",
+    "python",
+  );
+  return {
+    expectedWorkerId,
+    expectedMarket: MARKET_US,
+    requiredFields: ["ticker", "market"],
+    args: [
+      "-c",
+      [
+        "import json, sys",
+        "from pathlib import Path",
+        "python_dir = Path(sys.argv[1]).resolve()",
+        "function_name = sys.argv[2]",
+        "sys.path.insert(0, str(python_dir))",
+        "from frontline_data_pack.models import to_jsonable",
+        "import frontline_data_pack.us_data_pack as us_data_pack",
+        "payload = json.load(sys.stdin)",
+        "result = getattr(us_data_pack, function_name)(payload['tool_input'], payload['runtime_context'])",
+        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
+      ].join("; "),
+      pythonDir,
+      functionName,
+    ],
+    pythonPathDirs: [pythonDir],
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs(timeoutEnvName, fallbackMs),
+    ),
+  };
+}
+
 const TOOL_CONFIG_FACTORIES = Object.freeze({
-  [TOOL_NAMES.market]: marketScriptConfig,
-  [TOOL_NAMES.fundamental]: fundamentalScriptConfig,
-  [TOOL_NAMES.news]: newsScriptConfig,
-  [TOOL_NAMES.social]: socialScriptConfig,
+  [TOOL_NAMES.cnMarket]: marketScriptConfig,
+  [TOOL_NAMES.usGetStockData]: () => ({
+    ...usFrontlineScriptConfig("market_analyst", "run_us_get_stock_data", "US_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.usGetIndicators]: () => ({
+    ...usFrontlineScriptConfig("market_analyst", "run_us_get_indicators", "US_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.cnFundamental]: fundamentalScriptConfig,
+  [TOOL_NAMES.usGetFundamentals]: () => ({
+    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_fundamentals", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.usGetBalanceSheet]: () => ({
+    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_balance_sheet", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.usGetCashflow]: () => ({
+    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_cashflow", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.usGetIncomeStatement]: () => ({
+    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_income_statement", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.usGetNews]: () => ({
+    ...usFrontlineScriptConfig(["news_analyst", "social_analyst"], "run_us_get_news", "US_NEWS_PACK_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.usGetGlobalNews]: () => ({
+    ...usFrontlineScriptConfig("news_analyst", "run_us_get_global_news", "US_NEWS_PACK_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
+    inputBuilder: buildOriginalUsToolInput,
+  }),
+  [TOOL_NAMES.cnNews]: newsScriptConfig,
+  [TOOL_NAMES.cnSocial]: socialScriptConfig,
 });
 
 async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
@@ -626,8 +833,10 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   }
   const config = configFactory();
   const runtime = readCommand(ctx, config.expectedWorkerId, toolName);
-  const toolInput = buildToolInput(runtime.runtimeVars, params, config.requiredFields);
-  assertFrontlineMarket(toolName, toolInput);
+  const toolInput = config.inputBuilder
+    ? config.inputBuilder(runtime.runtimeVars, params, toolName)
+    : buildToolInput(runtime.runtimeVars, params, config.requiredFields);
+  assertExpectedMarket(toolName, toolInput, config.expectedMarket);
   const runtimeContext = buildRuntimeContext(runtime, toolName, toolCallId);
   const payload = {
     tool_input: toolInput,
@@ -647,45 +856,69 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   return toolResult(result.parsed, false);
 }
 
-async function runMarketPack(ctx, params, toolCallId) {
+async function runPack(ctx, params, toolName, expectedWorkerId, toolCallId) {
   try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.market, toolCallId);
+    return await executeFrontlineTool(ctx, params, toolName, toolCallId);
   } catch (error) {
-    return runtimeErrorToResult(TOOL_NAMES.market, "market_analyst", error);
+    return runtimeErrorToResult(toolName, expectedWorkerId, error);
   }
 }
 
-async function runFundamentalPack(ctx, params, toolCallId) {
-  try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.fundamental, toolCallId);
-  } catch (error) {
-    return runtimeErrorToResult(TOOL_NAMES.fundamental, "fundamental_analyst", error);
-  }
+async function runCnMarketPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cnMarket, "market_analyst", toolCallId);
 }
 
-async function runNewsPack(ctx, params, toolCallId) {
-  try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.news, toolCallId);
-  } catch (error) {
-    return runtimeErrorToResult(TOOL_NAMES.news, "news_analyst", error);
-  }
+async function runUsGetStockData(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetStockData, "market_analyst", toolCallId);
 }
 
-async function runSocialPack(ctx, params, toolCallId) {
-  try {
-    return await executeFrontlineTool(ctx, params, TOOL_NAMES.social, toolCallId);
-  } catch (error) {
-    return runtimeErrorToResult(TOOL_NAMES.social, "social_analyst", error);
-  }
+async function runUsGetIndicators(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetIndicators, "market_analyst", toolCallId);
 }
 
-function registerFrontlineTool(api, name, description, execute) {
+async function runCnFundamentalPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cnFundamental, "fundamental_analyst", toolCallId);
+}
+
+async function runUsGetFundamentals(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetFundamentals, "fundamental_analyst", toolCallId);
+}
+
+async function runUsGetBalanceSheet(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetBalanceSheet, "fundamental_analyst", toolCallId);
+}
+
+async function runUsGetCashflow(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetCashflow, "fundamental_analyst", toolCallId);
+}
+
+async function runUsGetIncomeStatement(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetIncomeStatement, "fundamental_analyst", toolCallId);
+}
+
+async function runUsGetNews(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetNews, ["news_analyst", "social_analyst"], toolCallId);
+}
+
+async function runUsGetGlobalNews(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.usGetGlobalNews, "news_analyst", toolCallId);
+}
+
+async function runCnNewsPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cnNews, "news_analyst", toolCallId);
+}
+
+async function runCnSocialPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cnSocial, "social_analyst", toolCallId);
+}
+
+function registerFrontlineTool(api, name, description, execute, parameters = PACK_INPUT_SCHEMA) {
   api.registerTool(
     (ctx) => ({
       name,
       label: name,
       description,
-      parameters: PACK_INPUT_SCHEMA,
+      parameters,
       async execute(_id, params) {
         return execute(ctx, params, _id);
       },
@@ -701,27 +934,83 @@ export default definePluginEntry({
   register(api) {
     registerFrontlineTool(
       api,
-      TOOL_NAMES.market,
-      "Load one structured market data package with price rows, indicators, and chart refs.",
-      runMarketPack,
+      TOOL_NAMES.cnMarket,
+      "Load one CN_A market data package with price rows, indicators, and chart refs.",
+      runCnMarketPack,
     );
     registerFrontlineTool(
       api,
-      TOOL_NAMES.fundamental,
+      TOOL_NAMES.usGetStockData,
+      "Retrieve US OHLCV stock data using the original TradingAgents yfinance shape.",
+      runUsGetStockData,
+      STOCK_DATA_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.usGetIndicators,
+      "Retrieve one US technical indicator using the original TradingAgents yfinance shape.",
+      runUsGetIndicators,
+      INDICATOR_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.cnFundamental,
       "Load one structured fundamentals package for the current CN_A ticker.",
-      runFundamentalPack,
+      runCnFundamentalPack,
     );
     registerFrontlineTool(
       api,
-      TOOL_NAMES.news,
-      "Load one structured news package covering company and macro context.",
-      runNewsPack,
+      TOOL_NAMES.usGetFundamentals,
+      "Retrieve US company fundamentals using the original TradingAgents yfinance shape.",
+      runUsGetFundamentals,
+      FUNDAMENTALS_SCHEMA,
     );
     registerFrontlineTool(
       api,
-      TOOL_NAMES.social,
-      "Load one structured social sentiment package for the current ticker.",
-      runSocialPack,
+      TOOL_NAMES.usGetBalanceSheet,
+      "Retrieve a US balance sheet using the original TradingAgents yfinance shape.",
+      runUsGetBalanceSheet,
+      STATEMENT_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.usGetCashflow,
+      "Retrieve a US cash flow statement using the original TradingAgents yfinance shape.",
+      runUsGetCashflow,
+      STATEMENT_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.usGetIncomeStatement,
+      "Retrieve a US income statement using the original TradingAgents yfinance shape.",
+      runUsGetIncomeStatement,
+      STATEMENT_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.usGetNews,
+      "Retrieve US company or ticker-specific news using the original TradingAgents yfinance shape.",
+      runUsGetNews,
+      NEWS_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.usGetGlobalNews,
+      "Retrieve broader US/global market news using the original TradingAgents yfinance shape.",
+      runUsGetGlobalNews,
+      GLOBAL_NEWS_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.cnNews,
+      "Load one CN_A news package covering company and macro context.",
+      runCnNewsPack,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.cnSocial,
+      "Load one CN_A social sentiment package for the current ticker.",
+      runCnSocialPack,
     );
   },
 });

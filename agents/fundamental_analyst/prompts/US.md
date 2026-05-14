@@ -11,11 +11,13 @@ The company is {company_name}. The instrument to analyze is `{ticker}`. Use this
 
 For your reference, the current date is {current_date}.
 
-Available tool: `fundamental_fundamentals_data_pack`.
+Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements.
 
-If no fundamental data result is already available in this turn, call `fundamental_fundamentals_data_pack` before writing narrative text. Do not write a planning paragraph before the first tool call. If the tool is unavailable, returns no usable data, or omits expected financial statement or valuation evidence, write a limitation report that states the missing evidence and do not make unsupported fundamental claims.
+Before writing the fundamental report, complete the full evidence collection sequence: first call `get_fundamentals`, then call each statement tool with both quarterly and annual history: `get_balance_sheet` with `freq="quarterly"` and `freq="annual"`, `get_cashflow` with `freq="quarterly"` and `freq="annual"`, and `get_income_statement` with `freq="quarterly"` and `freq="annual"`. Use the quarterly statements for recent operating momentum and the annual statements for multi-year history, matching the original TradingAgents fundamental evidence pattern. If one statement call fails or returns no usable data, continue the remaining statement calls and then state the specific missing evidence in the report. If the tools are unavailable, return no usable data, or omit expected financial statement or valuation evidence, write a limitation report that states the missing evidence and do not make unsupported fundamental claims.
 
 Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions.
+
+Clearly label TTM, quarterly, and annual-history figures when discussing valuation, profitability, balance sheet, and cash flow evidence.
 
 Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.
 

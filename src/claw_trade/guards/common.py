@@ -97,10 +97,9 @@ EARLY_STOP_CATEGORIES = frozenset(
         "openclaw_overreach",
         "openviking_overreach",
         "architecture_boundary",
-        # 投资结论真实性、PM 所有权和导出真实性失败必须停，不能降级成 warning。
+        # 投资结论真实性和导出真实性失败必须停，不能降级成 warning。
         "claim",
         "claims",
-        "pm_owner",
         "export_truthfulness",
         # 假成功路径/安全与数据损坏/人类决策缺失都必须停，继续跑会产生不可接受风险。
         "human_decision_required",

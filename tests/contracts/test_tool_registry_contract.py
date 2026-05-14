@@ -20,11 +20,20 @@ def test_load_tool_registry_has_minimum_intents() -> None:
     assert result.ok is True
     assert result.registry is not None
     intents = result.registry.intent_to_tools
-    assert "market_data" in intents
-    assert intents["market_data"] == ("market_market_data_pack",)
-    assert intents["fundamentals_data_pack"] == ("fundamental_fundamentals_data_pack",)
-    assert intents["news_data_pack"] == ("news_news_data_pack",)
-    assert intents["social_sentiment_pack"] == ("social_social_sentiment_pack",)
+    assert "market_data" not in intents
+    assert intents["cn_a_market_data"] == ("market_market_data_pack",)
+    assert intents["us_market_data"] == ("get_stock_data", "get_indicators")
+    assert intents["cn_a_fundamentals_data"] == ("fundamental_fundamentals_data_pack",)
+    assert intents["us_fundamentals_data"] == (
+        "get_fundamentals",
+        "get_balance_sheet",
+        "get_cashflow",
+        "get_income_statement",
+    )
+    assert intents["cn_a_news_data"] == ("news_news_data_pack",)
+    assert intents["us_news_data"] == ("get_news", "get_global_news")
+    assert intents["cn_a_social_sentiment"] == ("social_social_sentiment_pack",)
+    assert intents["us_social_sentiment"] == ("get_news",)
     assert "openviking_write" in intents
     assert intents["openviking_read"] == ("openviking_read_with_capability",)
     assert intents["openviking_write"] == ("openviking_write_material",)
@@ -36,7 +45,15 @@ def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_fi
     manifest = json.loads((plugin_root / "openclaw.plugin.json").read_text(encoding="utf-8"))
     assert set(manifest["contracts"]["tools"]) == {
         "market_market_data_pack",
+        "get_stock_data",
+        "get_indicators",
         "fundamental_fundamentals_data_pack",
+        "get_fundamentals",
+        "get_balance_sheet",
+        "get_cashflow",
+        "get_income_statement",
+        "get_news",
+        "get_global_news",
         "news_news_data_pack",
         "social_social_sentiment_pack",
     }
@@ -84,7 +101,7 @@ def test_unknown_openviking_access_fails() -> None:
         worker_id="market_analyst",
         stage=Stage.FRONTLINE,
         profile="US",
-        tool_intents=("market_data",),
+        tool_intents=("cn_a_market_data",),
         openviking_access="invalid",
         source_path=Path("agents/market_analyst/STAGES.yaml"),
     )
@@ -93,12 +110,12 @@ def test_unknown_openviking_access_fails() -> None:
 
 
 def test_openviking_required_tool_missing_fails() -> None:
-    registry = ToolRegistry({"market_data": ("market_data",)})
+    registry = ToolRegistry({"cn_a_market_data": ("market_data",)})
     policy = StagePolicy(
         worker_id="market_analyst",
         stage=Stage.FRONTLINE,
         profile="US",
-        tool_intents=("market_data",),
+        tool_intents=("cn_a_market_data",),
         openviking_access="write",
         source_path=Path("agents/market_analyst/STAGES.yaml"),
     )
@@ -107,7 +124,7 @@ def test_openviking_required_tool_missing_fails() -> None:
 
 
 def test_news_guard_blocks_missing_macro_or_company_news() -> None:
-    guard = require_global_news_capability_for_news(ToolRegistry({"market_data": ("market_market_data_pack",)}))
+    guard = require_global_news_capability_for_news(ToolRegistry({"cn_a_market_data": ("market_market_data_pack",)}))
     assert guard.ok is False
     assert guard.category == "config_blocked"
 

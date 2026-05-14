@@ -93,15 +93,6 @@ def test_validate_l1_l2_contract_rejects_manual_claim_block_in_l1(tmp_path: Path
     assert not guard.ok
 
 
-def test_validate_l1_l2_contract_rejects_manual_pm_block_in_l1(tmp_path: Path) -> None:
-    call = sample_call(tmp_path)
-    write_material_claims(call=call, evidence_id="l2-001")
-    manual = "```json\n{\"schema_version\":\"control.pm_decision.v1\"}\n```"
-    claims, guard = validate_l1_l2_contract(call, "# 正式报告\n\n" + manual, "raw", l2_with_entry("l2-001"))
-    assert not claims
-    assert not guard.ok
-
-
 def test_validate_l1_l2_contract_rejects_missing_l2_for_high_risk_claim(tmp_path: Path) -> None:
     call = sample_call(tmp_path)
     write_material_claims(call=call, evidence_id="l2-missing")

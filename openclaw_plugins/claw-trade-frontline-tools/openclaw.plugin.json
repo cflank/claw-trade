@@ -5,7 +5,15 @@
   "contracts": {
     "tools": [
       "market_market_data_pack",
+      "get_stock_data",
+      "get_indicators",
       "fundamental_fundamentals_data_pack",
+      "get_fundamentals",
+      "get_balance_sheet",
+      "get_cashflow",
+      "get_income_statement",
+      "get_news",
+      "get_global_news",
       "news_news_data_pack",
       "social_social_sentiment_pack"
     ]

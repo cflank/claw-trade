@@ -534,7 +534,7 @@ src/claw_trade/artifacts/
 - 记录材料的来源、路径、内容指纹。
 - 决定材料能不能给下游读取。
 - 从工具审计记录和 control evidence 生成结构化 claim ledger；L1 正文不靠 worker 手拼 fenced JSON claim block。
-- 对 portfolio_manager，接收其结构化工具字段提交的 `rating/final_conclusion/execution_conditions/risk_conditions`，并补齐 run/call/worker/stage/material_id/l1_sha 等机器字段。
+- 对 portfolio_manager，接收其旧结构化字段提交的 `旧评级与条件字段`，并补齐 run/call/worker/stage/material_id/l1_sha 等机器字段。
 
 建议文件：
 
@@ -555,7 +555,7 @@ src/claw_trade/artifacts/
 - 不用本地文件冒充 OpenViking 正式材料。
 - 不把 compact read 或 compact write 当成默认写作材料。
 - 不在工作者正式输出写入 OpenViking 前做截断、压缩或摘要改写。
-- 不让 Python 改写 PM 结论；Python 只能校验结构化 PM decision record 与导出一致性。
+- 不让 Python 改写 PM 结论；旧版曾设计过额外机器裁决文件，现已删除，正式路径只搬运 PM 自然语言 L1。
 
 ### 6.5 硬检查模块
 
@@ -581,7 +581,7 @@ src/claw_trade/guards/
 | `visible_tools.py` | 检查模型实际看到的工具。 |
 | `claims.py` | 检查估值、目标价、新闻、情绪、图表、工具成功等断言是否有证据。 |
 | `artifact_flow.py` | 检查未批准材料没有进入下游。 |
-| `pm_owner.py` | 检查最终评级和结论只来自组合经理。 |
+| `removed_structured_pm_guard_module` | 检查最终评级和结论只来自组合经理。 |
 
 禁止：
 
@@ -851,7 +851,7 @@ runs/
 - 每个完整运行的工作者都有 OpenViking L1 URI、L2 索引和写入回执。
 - 每个进入 approved manifest 的 OpenViking 材料都通过 URI、大小、内容指纹和调用身份校验。
 - receipt/manifest/capability/PM/export 的 SHA/size 口径统一为 OpenViking `content/download` 原始字节，并保留为审计字段；`content/read` 展示差异（例如末尾换行）和 canonical download bytes mismatch 都不能单独判定失败。
-- 流程阻断条件保持在 URI/身份不一致、capability 越权、材料不存在或不可读、内容为空/size<=0、OpenViking 后端错误、PM owner 被改写、unsupported claim。
+- 流程阻断条件保持在 URI/身份不一致、capability 越权、材料不存在或不可读、内容为空/size<=0、OpenViking 后端错误、PM final authority 被改写、unsupported claim。
 - 下游只读取 approved manifest 中的材料。
 - 下游默认读取 L1，关键事实缺口能回源 L2 或工具证据。
 - 没有 compact-first 写作主路径。

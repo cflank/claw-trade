@@ -144,7 +144,7 @@ guards
 reports
   -> artifacts.manifest
   -> artifacts.openviking_client 的 read/stat
-  -> guards.export_claims / guards.pm_owner
+  -> guards.export_claims / removed_structured_pm_guard
 ```
 
 禁止依赖方向：
@@ -176,7 +176,7 @@ flowchart TD
   H --> I[Runtime Guards]
   I -->|失败| J[WorkerResult.failed\n归因收集]
   I -->|first_response stop| K[WorkerResult.succeeded\n不批准材料]
-  I -->|完整运行| L[Approval: receipt + L1/L2 + claims + PM owner]
+  I -->|完整运行| L[Approval: receipt + L1/L2 + claims + PM final authority]
   L -->|失败| J
   L -->|通过| M[写 ApprovedManifest]
   M --> N[WorkerResult.succeeded]
@@ -188,7 +188,7 @@ flowchart TD
   D -->|ADVANCE| P[更新 RunStatus 到 READY]
   P --> D
   D -->|EXPORT_REPORT| Q[Exporter 读取 approved materials]
-  Q --> R[export truth gate + PM owner check]
+  Q --> R[export truth gate + PM final authority check]
   R -->|失败| Y[FAILED]
   R -->|通过| S[REPORT_EXPORTING]
   S --> D
@@ -228,7 +228,7 @@ sequenceDiagram
   else full worker
     Runner->>Approval: approve_worker_material(call, evidence)
     Approval->>OV: read receipt / stat L1 / read L1 / read L2 index
-    Approval->>Guards: L1/L2 / claims / PM owner
+    Approval->>Guards: L1/L2 / claims / PM final authority
     Approval-->>Runner: ApprovedMaterial
     Runner->>Manifest: add material
     Runner->>Store: save WorkerResult.succeeded
@@ -248,8 +248,8 @@ sequenceDiagram
 | `OpenClaw runtime` | 单 worker 真实模型运行时。加载 worker workspace，把可见工具发给 LLM，执行 LLM 返回的 tool call，写运行证据 | openclaw_client | LLM provider、OpenViking worker tools、其他允许工具 | agent id、runtime vars、allowed tools、evidence_dir、material target、read capabilities | provider request、visible tools、first response、tool-calls、raw output、receipt | 不接管 12 worker DAG，不维护 manifest，不做 hard gate，不导出 final report |
 | `OpenViking` | 正式材料和证据存储。保存 worker 写入的 L1/L2，提供 receipt、stat、read | OpenClaw tools、approval/read client、reports | 存储后端 | material target、read capability、URI | L1/L2 内容、receipt、stat/read 结果 | 不决定材料是否 approved，不推进 workflow，不生成投资结论 |
 | `runtime.evidence_reader` | 证据取件员。按 `OpenClawResult` 读取证据路径并组装成 guard 输入 | runner | 本地文件系统 | `OpenClawResult`、call evidence dir | `ProviderEvidence` | 不批准材料，不修补缺失证据，不用日志替代 provider request |
-| `guards` | 硬门禁。检查 provider request、visible tools、tool-calls、artifact flow、runtime reads、L1/L2、claims、PM owner | runner、approval、reports | manifest/read client 的只读能力 | call、evidence、manifest、OpenViking stat/read | `GuardResult` | 不降级 hard fail，不写材料，不生成 fallback |
-| `artifacts.approval` | 材料批准员。runtime guards 通过后，读回 receipt/L1/L2，跑 L1/L2、claim、PM owner 检查，产出 approved material | runner | OpenViking approval client、guards | `WorkerCall`、`ProviderEvidence`、receipt、raw output | `ApprovedMaterial` 或拒绝原因 | 不把 receipt 当批准，不允许 raw output 或本地文件冒充 L1 |
+| `guards` | 硬门禁。检查 provider request、visible tools、tool-calls、artifact flow、runtime reads、L1/L2、claims、PM final authority | runner、approval、reports | manifest/read client 的只读能力 | call、evidence、manifest、OpenViking stat/read | `GuardResult` | 不降级 hard fail，不写材料，不生成 fallback |
+| `artifacts.approval` | 材料批准员。runtime guards 通过后，读回 receipt/L1/L2，跑 L1/L2、claim、PM final authority 检查，产出 approved material | runner | OpenViking approval client、guards | `WorkerCall`、`ProviderEvidence`、receipt、raw output | `ApprovedMaterial` 或拒绝原因 | 不把 receipt 当批准，不允许 raw output 或本地文件冒充 L1 |
 | `artifacts.manifest` | 已批准材料清单。记录哪些材料能给下游读，并生成 manifest-scoped read capability | runner、request_builder、guards、reports | 无外部运行时 | `ApprovedMaterial` | manifest entry、`MaterialReadRef`、`OpenVikingReadCapability` | 不扫描 OpenViking latest/list，不批准材料，不保存正文 |
 
 单 worker 中最容易混淆的三个模块：
@@ -378,7 +378,7 @@ src/claw_trade/
     openviking_receipt.py
     openviking_access.py
     l1_l2.py
-    pm_owner.py
+    removed_structured_pm_guard_module
     export_claims.py
   reports/
     exporter.py
@@ -834,7 +834,7 @@ class ExportResult:
     status: str
     final_report_path: Path | None
     export_guard_result_path: Path | None
-    pm_owner_guard_result_path: Path | None
+    removed_structured_pm_guard_result_path: Path | None
     unsupported_claims: tuple[str, ...]
     failure: FailureRecord | None
 
@@ -856,7 +856,7 @@ class ExportResult:
 
 - `WorkerResult.status=SUCCEEDED` 必须意味着 OpenClaw 证据、hard gate、OpenViking receipt 和材料批准都已完成，除非本次是 `FIRST_RESPONSE` stop point。
 - `BLOCKED` 表示缺真实依赖或人类决策，不能写成成功。
-- `FailureRecord.category` 用于 collect-first 归因，例如 `provider_evidence`、`openviking_receipt`、`artifact_flow`、`pm_owner`、`config_blocked`。
+- `FailureRecord.category` 用于 collect-first 归因，例如 `provider_evidence`、`openviking_receipt`、`artifact_flow`、`removed_structured_pm_guard`、`config_blocked`。
 - `ExportResult.status=passed` 才允许 run 进入 `COMPLETED`；只有 `REPORT_EXPORTING` 状态本身不代表报告已经验真。
 
 `StageBatchResult.collect_first_report_path` 指向批次归因报告，格式见第 11.3 节。
@@ -936,9 +936,9 @@ class L1Claim:
 `OpenVikingReadCapability` 是下游读取材料的唯一正式入口。worker 实际读到的 URI 和 `result_sha256` 必须能回到 capability 和 `L2Index`。
 
 OpenViking URI 形状保持不变。正式材料完整性口径统一为 OpenViking `content/download` 原始字节：`l1_sha256`、`allowed_l1_sha256`、`allowed_l2_index_sha256`、`L2Entry.sha256`、`MaterialReceipt.sha256`、`result_sha256` 以及对应 `size_bytes` 都按 download 字节计算并记录为审计字段。
-`content/read` 只用于 worker 文本读取和展示，不作为 write receipt、approved manifest、downstream capability、PM/export truth gate 的正式 hash/size 阻断依据。展示层的末尾换行差异和 canonical download bytes mismatch 都不再单独阻断 T62；T62 阻断条件保持在 URI/身份/权限/可读性/非空/PM owner/export truthfulness。
+`content/read` 只用于 worker 文本读取和展示，不作为 write receipt、approved manifest、downstream capability、PM/export truth gate 的正式 hash/size 阻断依据。展示层的末尾换行差异和 canonical download bytes mismatch 都不再单独阻断 T62；T62 阻断条件保持在 URI/身份/权限/可读性/非空/PM final authority/export truthfulness。
 
-`L1Claim`、`PMDecision` 这类机器可读对象由工具审计记录与 control evidence 生成、校验、落盘。L1 正文是读者报告，不要求也不允许 worker 在正文末尾手拼 fenced JSON 机器块来声明 `run_id/call_id/material_id/claim_id/evidence_ids/source_worker_id`。
+`L1Claim`、`RemovedStructuredPortfolioDecisionArtifact` 这类机器可读对象由工具审计记录与 control evidence 生成、校验、落盘。L1 正文是读者报告，不要求也不允许 worker 在正文末尾手拼 fenced JSON 机器块来声明 `run_id/call_id/material_id/claim_id/evidence_ids/source_worker_id`。
 
 OpenViking 读写参数流转规则：
 
@@ -976,7 +976,7 @@ class MaterialReceipt:
 - receipt 必须和本次 `WorkerCall.material_target` 一致。
 - receipt 里的 URI、run/call/worker/stage 必须用 OpenViking stat/read 复核；SHA/size 仍按 `content/download` 原始字节记录为审计信息，不再因为不一致单独阻断。
 - `content/read` 仅用于文本读取/展示，不是 receipt 或 capability 的正式完整性口径。
-- receipt 通过后，仍要经过 L1/L2、claim、PM owner 等 hard gate，才能进入 approved manifest。
+- receipt 通过后，仍要经过 L1/L2、claim、PM final authority 等 hard gate，才能进入 approved manifest。
 
 ### 4.10 ApprovedManifest
 
@@ -1572,7 +1572,7 @@ def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMan
                     call_id=None,
                     worker_id="portfolio_manager",
                     stage=Stage.PORTFOLIO_DECISION,
-                    category="pm_owner",
+                    category="removed_structured_pm_guard",
                     reason="portfolio_manager approved material 缺失",
                     evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
                     early_stop=True,
@@ -2233,7 +2233,7 @@ hard gate 是 `claw-trade` 的越权防线。检查失败时要停在当前材�
 | runtime reads | 检查 worker 实际读取的 OpenViking URI 都来自 manifest capability | 当前 call 失败 |
 | L1/L2 | 检查 L1 完整性、raw output 关系、L2 index、L2 entry 回源和指纹 | 材料拒绝 |
 | claim | 检查高风险声明是否有 L2 evidence | 材料拒绝 |
-| PM owner | 检查 PM 评级、最终结论、执行条件、风险条件只来自 PM | PM 材料拒绝或导出失败 |
+| PM final authority | 检查 PM 评级、最终结论、执行条件、风险条件只来自 PM | PM 材料拒绝或导出失败 |
 | export truthfulness | 检查 final report 没有新增 unsupported claim，且未改写 PM 决策 | 导出失败 |
 
 高风险声明包括：
@@ -2254,15 +2254,15 @@ source_claim
 
 缺图表、缺指标、缺新闻或缺来源时，也必须有真实缺失原因和证据路径。不能把缺失内容写成已经存在。
 
-PM owner 和导出声明检查的结构化输入：
+PM final authority 和导出声明检查的结构化输入：
 
 ```python
 @dataclass(frozen=True)
-class PMDecision:
+class RemovedStructuredPortfolioDecisionArtifact:
     rating: str
-    final_conclusion: str
-    execution_conditions: tuple[str, ...]
-    risk_conditions: tuple[str, ...]
+    final conclusion removed field: str
+    execution conditions removed field: tuple[str, ...]
+    risk conditions removed field: tuple[str, ...]
     source_material_id: str
     source_l1_sha256: str
 
@@ -2277,9 +2277,9 @@ class ExportClaim:
     evidence_ids: tuple[str, ...]
 ```
 
-`validate_pm_owner()` 输出 `PMDecision`，`validate_export_does_not_rewrite_pm()` 必须逐字段比较 PM L1 和 final report 中的 rating、final conclusion、execution conditions、risk conditions。`validate_export_claims_are_supported()` 必须把 final report 的高风险 `ExportClaim` 映射回 approved material 的 `L1Claim` 和 L2 evidence。
+`validate_removed_structured_pm_guard()` 输出 `RemovedStructuredPortfolioDecisionArtifact`，`validate_export_preserves_pm_text()` 必须逐字段比较 PM L1 和 final report 中的 rating、final conclusion、execution conditions、risk conditions。`validate_export_claims_are_supported()` 必须把 final report 的高风险 `ExportClaim` 映射回 approved material 的 `L1Claim` 和 L2 evidence。
 
-PM 仍然拥有 `rating/final_conclusion/execution_conditions/risk_conditions` 的最终权威，但提交方式是通过结构化工具字段，不是 L1 正文手写 JSON decision block。工具与 control evidence 负责补齐 run/call/worker/stage/material_id/l1_sha 等机器字段；Python 只校验与比对，不改写 PM 结论。
+PM 仍然拥有 `旧评级与条件字段` 的最终权威，但提交方式是通过旧结构化字段，不是 L1 正文手写 removed JSON decision block。工具与 control evidence 负责补齐 run/call/worker/stage/material_id/l1_sha 等机器字段；Python 只校验与比对，不改写 PM 结论。
 
 ## 11. 运行循环
 
@@ -2579,7 +2579,7 @@ def should_early_stop(failure: FailureRecord) -> bool:
         "provider_evidence_untrusted",
         "openviking_integrity",
         "artifact_flow_overreach",
-        "pm_owner",
+        "removed_structured_pm_guard",
         "python_overreach",
         "openclaw_overreach",
         "openviking_overreach",
@@ -2721,9 +2721,9 @@ def approve_worker_material(self, call: WorkerCall, evidence: ProviderEvidence) 
         return ApprovalResult.failed("claim", claim_guard.reason, claim_guard.paths)
 
     if call.worker_id == "portfolio_manager":
-        pm_guard = validate_pm_owner(l1_text, evidence)
+        pm_guard = validate_removed_structured_pm_guard(l1_text, evidence)
         if not pm_guard.ok:
-            return ApprovalResult.failed("pm_owner", pm_guard.reason, pm_guard.paths)
+            return ApprovalResult.failed("removed_structured_pm_guard", pm_guard.reason, pm_guard.paths)
 
     material = ApprovedMaterial(
         material_id=make_material_id(call, receipt),
@@ -2812,13 +2812,13 @@ def export_final_report(state: WorkflowState, manifest: ApprovedManifest) -> Exp
     final_report_path = state.run_dir / "reports" / "final-report.md"
     write_text(final_report_path, final_text)
 
-    pm_guard = validate_export_does_not_rewrite_pm(pm_text, final_text)
+    pm_guard = validate_export_preserves_pm_text(pm_text, final_text)
     claim_guard = validate_export_claims_are_supported(final_text, materials)
     guard_path = state.run_dir / "reports" / "export-guard-results.json"
     write_json(guard_path, {"pm_guard": pm_guard, "claim_guard": claim_guard})
 
     if not pm_guard.ok:
-        return ExportResult.failed(state, "pm_owner", pm_guard.reason, (guard_path, final_report_path))
+        return ExportResult.failed(state, "removed_structured_pm_guard", pm_guard.reason, (guard_path, final_report_path))
     if not claim_guard.ok:
         return ExportResult.failed(state, "export_truthfulness", claim_guard.reason, (guard_path, final_report_path))
 
@@ -2996,7 +2996,7 @@ uv run pytest tests/unit tests/contracts tests/integration -q
 - Python 是否替 worker 调工具、查数据或写业务分析正文。
 - approved manifest 是否是下游材料唯一入口。
 - OpenViking receipt 是否被当成批准。
-- PM owner 是否被破坏，exporter 是否改写 PM 评级、最终结论、执行条件或风险条件。
+- PM final authority 是否被破坏，exporter 是否改写 PM 评级、最终结论、执行条件或风险条件。
 - final report 是否新增 unsupported 投资结论、评级、交易动作、风险条件、估值、新闻、情绪、图表、来源或工具成功声明。
 - 关键业务边界、hard gate、越权防线是否有中文注释。
 
@@ -3014,7 +3014,7 @@ uv run pytest tests/unit tests/contracts tests/integration -q
 - 需要改变 OpenClaw 修改范围，超出通用单 worker runtime 接缝。
 - 需要让 OpenClaw 接管 12 worker DAG、批准、hard gate 或报告导出。
 - 需要让 OpenViking 接管流程推进、批准、重试或最终结论。
-- 需要改变 PM owner。
+- 需要改变 PM final authority。
 - 需要 Python 改写 PM 投资结论、评级、执行条件或风险条件。
 - 需要保留或新增 direct LLM report path。
 - 需要新增未经批准的 worker 文案回退、fallback tool、fallback market profile、fake provider result 或 fake artifact success。

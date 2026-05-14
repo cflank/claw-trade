@@ -469,7 +469,6 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
         status="passed",
         final_report_path=state_exporting.run_dir / "reports" / "final-report.md",
         export_guard_result_path=state_exporting.run_dir / "guards" / "export-guard.json",
-        pm_owner_guard_result_path=None,
         unsupported_claims=(),
         failure=None,
     )
@@ -481,7 +480,6 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
         status="failed",
         final_report_path=None,
         export_guard_result_path=None,
-        pm_owner_guard_result_path=None,
         unsupported_claims=(),
         failure=FailureRecord(
             run_id=state_exporting.run_id,
@@ -505,7 +503,6 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
         status="failed",
         final_report_path=None,
         export_guard_result_path=None,
-        pm_owner_guard_result_path=None,
         unsupported_claims=(),
         failure=FailureRecord(
             run_id=state_exporting_cn.run_id,

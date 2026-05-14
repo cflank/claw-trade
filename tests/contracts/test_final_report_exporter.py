@@ -46,16 +46,15 @@ def test_export_final_report_fails_when_required_material_missing(tmp_path: Path
     assert "trader" in (result.failure.reason or "")
 
 
-def test_export_final_report_cn_a_passes_without_pm_decision_json(tmp_path: Path) -> None:
+def test_export_final_report_passes_with_pm_natural_language_only(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-cn-a-no-pm-json", profile="CN_A")
-    manifest, reader = _build_manifest_and_reader(state, include_pm_decision_evidence=False)
+    manifest, reader = _build_manifest_and_reader(state)
     source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
     source_chart.parent.mkdir(parents=True, exist_ok=True)
     source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-cn-a")
 
     loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
     assert loaded.ok
-    assert loaded.pm_decision is None
 
     result = export_final_report(state=state, manifest=manifest, openviking=reader)
 
@@ -64,8 +63,6 @@ def test_export_final_report_cn_a_passes_without_pm_decision_json(tmp_path: Path
     report_text = result.final_report_path.read_text(encoding="utf-8")
     assert "# 贵州茅台（600519）投资研究报告" in report_text
     assert "组合经理最终裁决：维持审慎增持" in report_text
-    mapping_payload = json.loads((state.run_dir / "reports" / "export-claims.json").read_text(encoding="utf-8"))
-    assert mapping_payload.get("pm_decision") is None
 
 
 def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
@@ -125,6 +122,37 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     assert not source_chart.exists()
     # export-result.json 由 runner/store 写，exporter 不双写。
     assert not (state.run_dir / "reports" / "export-result.json").exists()
+
+
+def test_export_final_report_places_us_chart_assets_in_technical_market_analysis(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-us-technical-market-analysis", profile="US")
+    manifest, reader = _build_manifest_and_reader(state)
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    reader._content_by_material_id[report_material.material_id] = (
+        "# Apple (AAPL) Investment Research Report\n\n"
+        "## 1. Investment Decision\n"
+        "Portfolio manager final decision: hold with conditional execution.\n\n"
+        "## 2. Technical Market Analysis\n"
+        "### Trend Structure\n"
+        "Price action remains constructive but needs volume confirmation.\n\n"
+        "## 3. Fundamental Analysis\n"
+        "Margins remain resilient while valuation needs monitoring.\n"
+    ).encode("utf-8")
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-us")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "## 2. Technical Market Analysis" in report_text
+    assert "### 技术图表" in report_text
+    assert "assets/market-01-market-structure.png" in report_text
+    assert report_text.index("## 2. Technical Market Analysis") < report_text.index("### 技术图表")
+    assert report_text.index("### 技术图表") < report_text.index("### Trend Structure")
+    assert report_text.index("### 技术图表") < report_text.index("## 3. Fundamental Analysis")
 
 
 def test_export_final_report_copies_chart_image_to_reports_assets_and_uses_relative_markdown_path(tmp_path: Path) -> None:
@@ -224,55 +252,17 @@ def test_export_final_report_cleanup_failure_is_exposed(tmp_path: Path) -> None:
     assert "cleanup failed for test" in (result.failure.reason or "")
 
 
-def test_run_export_guards_fails_when_pm_fields_rewritten(tmp_path: Path) -> None:
-    state = _sample_state(tmp_path, run_id="run-pm-rewrite")
-    manifest, reader = _build_manifest_and_reader(state)
-    loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
-    assert loaded.ok and loaded.pm_decision is not None
-
-    rendered = render_final_report(
-        materials=loaded.materials,
-        pm_decision=loaded.pm_decision,
-        report_materials=loaded.report_materials,
-    )
-    mapping = build_export_claim_mapping(rendered=rendered, materials=loaded.materials, pm_decision=loaded.pm_decision)
-    tampered = ExportClaimMapping(
-        schema_version=mapping.schema_version,
-        run_id=mapping.run_id,
-        final_report_path=mapping.final_report_path,
-        claims=mapping.claims,
-        pm_decision={
-            "source_material_id": loaded.pm_decision.material_id,
-            "rating": "sell",
-            "final_conclusion": loaded.pm_decision.final_conclusion,
-            "execution_conditions": list(loaded.pm_decision.execution_conditions),
-            "risk_conditions": list(loaded.pm_decision.risk_conditions),
-        },
-    )
-
-    guard = run_export_guards(
-        mapping=tampered,
-        materials=loaded.materials,
-        pm_decision=loaded.pm_decision,
-        state=state,
-    )
-
-    assert not guard.ok
-    assert guard.category == "pm_owner"
-
-
 def test_run_export_guards_fails_when_claim_source_mapping_missing(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-claim-missing")
     manifest, reader = _build_manifest_and_reader(state)
     loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
-    assert loaded.ok and loaded.pm_decision is not None
+    assert loaded.ok
 
     rendered = render_final_report(
         materials=loaded.materials,
-        pm_decision=loaded.pm_decision,
         report_materials=loaded.report_materials,
     )
-    mapping = build_export_claim_mapping(rendered=rendered, materials=loaded.materials, pm_decision=loaded.pm_decision)
+    mapping = build_export_claim_mapping(rendered=rendered, materials=loaded.materials)
     first = mapping.claims[0]
     broken_first = ExportClaim(
         export_claim_id=first.export_claim_id,
@@ -287,13 +277,11 @@ def test_run_export_guards_fails_when_claim_source_mapping_missing(tmp_path: Pat
         run_id=mapping.run_id,
         final_report_path=mapping.final_report_path,
         claims=(broken_first,) + mapping.claims[1:],
-        pm_decision=mapping.pm_decision,
     )
 
     guard = run_export_guards(
         mapping=broken_mapping,
         materials=loaded.materials,
-        pm_decision=loaded.pm_decision,
         state=state,
     )
 
@@ -324,13 +312,11 @@ def test_render_final_report_preserves_repeated_debate_rounds(tmp_path: Path) ->
 
     rendered = render_final_report(
         materials=(bull_round_1, bear_round_1, bull_round_2, pm_material),
-        pm_decision=None,
         report_materials=report_materials,
     )
     mapping = build_export_claim_mapping(
         rendered=rendered,
         materials=(bull_round_1, bear_round_1, bull_round_2, pm_material),
-        pm_decision=None,
     )
 
     assert "多头第一轮正文" in rendered.text
@@ -447,7 +433,7 @@ def _sample_material(state: WorkflowState, worker_id: str, stage: Stage, index: 
     l2_index_uri = f"viking://resources/workflow/{state.run_id}/{stage.value}/{worker_id}/{call_id}/evidence/index.json"
     l2_entry_uri = f"viking://resources/workflow/{state.run_id}/{stage.value}/{worker_id}/{call_id}/evidence/{evidence_id}.json"
 
-    return ApprovedMaterial(
+    material = ApprovedMaterial(
         material_id=f"mat-{worker_id}",
         run_id=state.run_id,
         call_id=call_id,
@@ -487,6 +473,7 @@ def _sample_material(state: WorkflowState, worker_id: str, stage: Stage, index: 
         approved_at="2026-05-04T12:00:00Z",
         hard_gate_result_path=gate_path,
     )
+    return material
 
 
 def _material_for_turn(
@@ -580,7 +567,6 @@ def _build_manifest_and_reader(
     broken_worker: str | None = None,
     broken_category: str | None = None,
     broken_reason: str | None = None,
-    include_pm_decision_evidence: bool = True,
 ) -> tuple[ApprovedManifest, _ControlledReader]:
     manifest = ApprovedManifest.empty()
     content_by_material_id: dict[str, bytes] = {}
@@ -590,8 +576,6 @@ def _build_manifest_and_reader(
         material = _sample_material(state=state, worker_id=worker_id, stage=stage, index=index)
         manifest.add(material)
         content_by_material_id[material.material_id] = _l1_content_bytes(material=material)
-        if worker_id == "portfolio_manager" and include_pm_decision_evidence:
-            _write_pm_decision_evidence(material)
     return (
         manifest,
         _ControlledReader(
@@ -601,23 +585,3 @@ def _build_manifest_and_reader(
             broken_reason=broken_reason,
         ),
     )
-
-
-def _write_pm_decision_evidence(material: ApprovedMaterial) -> None:
-    payload = {
-        "schema_version": "control.pm_decision.v1",
-        "run_id": material.run_id,
-        "call_id": material.call_id,
-        "worker_id": "portfolio_manager",
-        "stage": "portfolio_decision",
-        "material_id": material.material_id,
-        "rating": "buy",
-        "final_conclusion": "维持买入。",
-        "execution_conditions": ["回调分批加仓"],
-        "risk_conditions": ["若业绩不及预期则止损"],
-        "source_claim_ids": [material.l1_claims[0].claim_id],
-        "source_l1_sha256": material.l1_sha256,
-        "l1_uri": material.l1_uri,
-    }
-    pm_path = material.hard_gate_result_path.parent / "pm-decision.json"
-    pm_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

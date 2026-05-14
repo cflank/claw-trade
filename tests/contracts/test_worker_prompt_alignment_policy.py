@@ -183,11 +183,44 @@ SUPPORTED_US_PROMPT_PLACEHOLDERS = {
     "chart_assets_note",
 }
 
+US_RESEARCH_MANAGER_ALLOWED_PLACEHOLDERS = {
+    "ticker",
+    "past_memory_str",
+    "history",
+}
+
+CN_A_RESEARCH_MANAGER_REQUIRED_PLACEHOLDERS = {
+    "ticker",
+    "past_memory_str",
+    "market_research_report",
+    "sentiment_report",
+    "news_report",
+    "fundamentals_report",
+    "history",
+}
+
 FRONTLINE_WORKERS: tuple[str, ...] = (
     "market_analyst",
     "fundamental_analyst",
     "news_analyst",
     "social_analyst",
+)
+
+DOWNSTREAM_DECISION_WORKERS: tuple[str, ...] = (
+    "bull_researcher",
+    "bear_researcher",
+    "research_manager",
+    "trader",
+    "risk_challenger",
+    "risk_guardian",
+    "risk_moderator",
+    "portfolio_manager",
+)
+
+ACTION_SEMANTIC_WORKERS: tuple[str, ...] = (
+    "research_manager",
+    "trader",
+    "portfolio_manager",
 )
 
 FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS: tuple[str, ...] = (
@@ -206,6 +239,104 @@ FRONTLINE_MACHINE_PROTOCOL_KEYWORDS: tuple[str, ...] = (
     "RuntimeTarget",
     "ReportSubmission",
 )
+
+US_FRONTLINE_SELF_IMPOSED_STYLE_BANS: tuple[str, ...] = (
+    "Do not write a planning paragraph before the first tool call",
+)
+
+US_MARKET_OVERBROAD_DECISION_BANS: tuple[str, ...] = (
+    "Do not present the final portfolio decision",
+    "Do not use `FINAL TRANSACTION PROPOSAL`",
+)
+
+US_DOWNSTREAM_SELF_IMPOSED_MEMO_BANS: tuple[str, ...] = (
+    "If important evidence is missing, state the limitation instead of filling it in",
+    "write a limitation report",
+    "avoid strong opinions",
+    "avoid decisive language",
+    "avoid final recommendations",
+    "do not provide final recommendations",
+    "do not provide a final transaction proposal",
+)
+
+US_DOWNSTREAM_ROLE_STYLE_SNIPPETS: dict[str, tuple[str, ...]] = {
+    "bull_researcher": (
+        "This truthfulness rule does not prohibit a strong bull stance",
+        "direct rebuttals",
+        "clear pro-investment view",
+    ),
+    "bear_researcher": (
+        "This truthfulness rule does not prohibit a strong bear stance",
+        "direct rebuttals",
+        "clear anti-investment view",
+    ),
+    "research_manager": (
+        "This truthfulness rule does not prohibit a decisive Buy/Sell/Hold recommendation",
+        "clear commitment to the strongest side of the debate",
+        "concrete strategic actions",
+    ),
+    "trader": (
+        "This truthfulness rule does not prohibit a firm trading decision",
+        "concrete execution plan",
+        "final BUY/HOLD/SELL transaction proposal",
+    ),
+    "risk_challenger": (
+        "This truthfulness rule does not prohibit an aggressive risk stance",
+        "bold upside framing",
+        "forceful challenge to overly cautious views",
+    ),
+    "risk_guardian": (
+        "This truthfulness rule does not prohibit a forceful conservative risk stance",
+        "direct rebuttals",
+        "firm critique of excessive risk-taking",
+    ),
+    "risk_moderator": (
+        "This truthfulness rule does not prohibit a critical neutral risk stance",
+        "direct challenges to both sides",
+        "firm risk-adjusted view",
+    ),
+    "portfolio_manager": (
+        "This truthfulness rule does not prohibit a decisive rating",
+        "clear final trading decision",
+        "strong risk/reward judgment",
+    ),
+}
+
+US_ACTION_SEMANTIC_SNIPPETS: dict[str, tuple[str, ...]] = {
+    "research_manager": (
+        "If you choose Hold, do not instruct selling existing long positions",
+        "Hold means maintain the current position",
+        "choose Sell rather than Hold",
+    ),
+    "trader": (
+        "HOLD means maintain the current position",
+        "must not mean selling existing long positions",
+        "the final proposal must be SELL, not HOLD",
+    ),
+    "portfolio_manager": (
+        "**Hold** means maintain the current position",
+        "you must not say to sell existing long positions",
+        "the rating must be Underweight or Sell, not Hold",
+    ),
+}
+
+CN_A_ACTION_SEMANTIC_SNIPPETS: dict[str, tuple[str, ...]] = {
+    "research_manager": (
+        "如果选择“持有”，不得写成卖出现有多头",
+        "“持有”表示维持当前仓位",
+        "建议必须是“卖出”，不是“持有”",
+    ),
+    "trader": (
+        "“持有”表示维持当前仓位",
+        "不得把“持有”写成卖出现有多头",
+        "最终交易建议必须是“卖出”，不是“持有”",
+    ),
+    "portfolio_manager": (
+        "“持有”表示维持当前仓位",
+        "不得在“持有”下写卖出现有多头",
+        "最终建议必须是“卖出”，不是“持有”",
+    ),
+}
 
 SOCIAL_TOOL_SILENT_PROCESS_RULE_SNIPPETS: tuple[str, ...] = (
     "需要调用工具时，直接发起工具调用；不要先输出任何自然语言说明。",
@@ -289,10 +420,21 @@ def test_us_worker_prompts_do_not_contain_runtime_protocol_or_control_plane_term
 @pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
 def test_us_worker_prompt_placeholders_are_supported_runtime_vars(worker_id: str) -> None:
     text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
-    placeholders = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", text))
+    placeholders = _prompt_placeholders(text)
 
     unsupported = placeholders - SUPPORTED_US_PROMPT_PLACEHOLDERS
     assert unsupported == set()
+
+
+def test_research_manager_prompt_placeholders_follow_profile_material_boundaries() -> None:
+    us_text = (Path("agents") / "research_manager" / "prompts" / "US.md").read_text(encoding="utf-8")
+    cn_a_text = (Path("agents") / "research_manager" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+    us_placeholders = _prompt_placeholders(us_text)
+    cn_a_placeholders = _prompt_placeholders(cn_a_text)
+
+    assert us_placeholders == US_RESEARCH_MANAGER_ALLOWED_PLACEHOLDERS
+    assert cn_a_placeholders == CN_A_RESEARCH_MANAGER_REQUIRED_PLACEHOLDERS
 
 
 def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protocol_keywords() -> None:
@@ -302,6 +444,111 @@ def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protoc
             assert snippet in text, f"{worker_id} missing required process-prose rule: {snippet!r}"
         for token in FRONTLINE_MACHINE_PROTOCOL_KEYWORDS:
             assert token not in text, f"{worker_id} prompt contains machine protocol keyword {token!r}"
+
+
+def test_us_frontline_prompts_do_not_carry_self_imposed_tool_preamble_bans() -> None:
+    for worker_id in FRONTLINE_WORKERS:
+        text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
+        for snippet in US_FRONTLINE_SELF_IMPOSED_STYLE_BANS:
+            assert snippet not in text, f"{worker_id} US prompt contains self-imposed style ban: {snippet!r}"
+
+
+def test_us_market_prompt_allows_original_tradingagents_transaction_proposal() -> None:
+    text = (Path("agents") / "market_analyst" / "prompts" / "US.md").read_text(encoding="utf-8")
+
+    assert "FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**" in text
+    assert "actionable BUY/HOLD/SELL technical recommendation" in text
+    assert "Include `vwma` when evaluating volume confirmation" in text
+    for snippet in US_MARKET_OVERBROAD_DECISION_BANS:
+        assert snippet not in text
+
+
+def test_us_fundamental_prompt_requires_quarterly_and_annual_statement_history() -> None:
+    text = (Path("agents") / "fundamental_analyst" / "prompts" / "US.md").read_text(encoding="utf-8")
+
+    assert "Before writing the fundamental report, complete the full evidence collection sequence" in text
+    assert '`get_balance_sheet` with `freq="quarterly"` and `freq="annual"`' in text
+    assert '`get_cashflow` with `freq="quarterly"` and `freq="annual"`' in text
+    assert '`get_income_statement` with `freq="quarterly"` and `freq="annual"`' in text
+    assert "Use the quarterly statements for recent operating momentum" in text
+    assert "annual statements for multi-year history" in text
+    assert "continue the remaining statement calls" in text
+    assert "Clearly label TTM, quarterly, and annual-history figures" in text
+    assert 'Use `freq="quarterly"` for the statement tools unless' not in text
+    assert "If no fundamental data result is already available in this turn" not in text
+
+
+def test_report_polisher_prompts_require_chinese_long_form_output_without_summary_compression() -> None:
+    us_text = (Path("agents") / "report_polisher" / "prompts" / "US.md").read_text(encoding="utf-8")
+    cn_a_text = (Path("agents") / "report_polisher" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+    assert "The final output must be written in Chinese" in us_text
+    assert "This is long-form report polishing, not a short summary" in us_text
+    assert "Do not collapse the analyst materials into brief abstracts" in us_text
+    assert "professional sell-side / investment-bank final report" in us_text
+    assert "evidence -> interpretation -> investment implication -> risk, trigger, or invalidation condition" in us_text
+    assert "Do not move that analytical chain into an appendix" in us_text
+    assert "# {company_name}（{ticker}）投资研究报告" in us_text
+    assert "## 二、技术指标分析" in us_text
+    assert "MACD/RSI 动量信号" in us_text
+    assert "布林带/ATR 波动信号" in us_text
+    assert "成交量/VWMA 确认" in us_text
+    assert "失效条件与触发条件" in us_text
+    assert "毛利率/营业利润率/净利率" in us_text
+    assert "资产负债表、杠杆和流动性" in us_text
+    assert "七、关键分歧与跟踪条件" in us_text
+    assert "Key Debates and Monitoring Conditions" not in us_text
+    assert "output only that final report" in us_text
+
+    assert "最终输出必须使用中文" in cn_a_text
+    assert "这是完整终稿润色，不是短摘要" in cn_a_text
+    assert "不得把上游报告压缩成几个概述段" in cn_a_text
+    assert "专业卖方/投行研究终稿" in cn_a_text
+    assert "证据 -> 解读 -> 投资含义 -> 风险、触发或失效条件" in cn_a_text
+    assert "不要把分析链挪到附录" in cn_a_text
+    assert "正文主体必须覆盖：图表读法与价格结构" in cn_a_text
+    assert "趋势与价格结构" in cn_a_text
+    assert "均线系统" in cn_a_text
+    assert "MACD/RSI 动量信号" in cn_a_text
+    assert "布林带/ATR 波动信号" in cn_a_text
+    assert "成交量/VWMA 确认" in cn_a_text
+    assert "失效条件与触发条件" in cn_a_text
+    assert "毛利率/营业利润率/净利率" in cn_a_text
+    assert "资产负债表、杠杆和流动性" in cn_a_text
+    assert "这里可以简洁，但前面各节不能压缩成摘要" in cn_a_text
+
+
+def test_us_downstream_prompts_keep_truthfulness_redlines_from_becoming_memo_style_bans() -> None:
+    for worker_id in DOWNSTREAM_DECISION_WORKERS:
+        text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
+
+        for snippet in US_DOWNSTREAM_SELF_IMPOSED_MEMO_BANS:
+            assert snippet not in text, f"{worker_id} US prompt contains self-imposed memo/style ban: {snippet!r}"
+        for snippet in US_DOWNSTREAM_ROLE_STYLE_SNIPPETS[worker_id]:
+            assert snippet in text, f"{worker_id} US prompt does not preserve original strong-role style: {snippet!r}"
+
+
+def test_decision_prompts_do_not_add_self_imposed_hold_action_guards() -> None:
+    for worker_id in ACTION_SEMANTIC_WORKERS:
+        us_text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
+        cn_a_text = (Path("agents") / worker_id / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+        for snippet in US_ACTION_SEMANTIC_SNIPPETS[worker_id]:
+            assert snippet not in us_text, f"{worker_id} US prompt contains self-imposed Hold action guard: {snippet!r}"
+        for snippet in CN_A_ACTION_SEMANTIC_SNIPPETS[worker_id]:
+            assert snippet not in cn_a_text, f"{worker_id} CN_A prompt contains self-imposed Hold action guard: {snippet!r}"
+
+
+def test_cn_a_market_prompt_keeps_tradingagents_cn_visual_headings_without_emoji_ban() -> None:
+    text = (Path("agents") / "market_analyst" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+    assert "## 📊 股票基本信息" in text
+    assert "## 📈 技术指标分析" in text
+    assert "## 📉 价格趋势分析" in text
+    assert "## 💭 投资建议" in text
+    assert "不要使用emoji" not in text
+    assert "纯文本标题" not in text
+    assert "报告标题必须是" not in text
 
 
 def test_social_prompt_requires_silent_tool_call_and_hash_title_first_line() -> None:
@@ -335,6 +582,10 @@ def _front_matter(path: Path) -> dict[str, str]:
 
 def _simple_yaml(path: Path) -> dict[str, str]:
     return _parse_key_value_lines(path.read_text(encoding="utf-8").splitlines())
+
+
+def _prompt_placeholders(text: str) -> set[str]:
+    return set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", text))
 
 
 def _parse_key_value_lines(lines: list[str]) -> dict[str, str]:

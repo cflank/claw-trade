@@ -9,13 +9,13 @@ profiles:
     approved: true
     prompt: prompts/US.md
     tools:
-      - fundamentals_data_pack
+      - us_fundamentals_data
     openviking_access: none
   CN_A:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - fundamentals_data_pack
+      - cn_a_fundamentals_data
     openviking_access: none
   HK:
     approved: false
@@ -28,6 +28,7 @@ profiles:
 skills:
   mounted:
     - claw-trade-stage
+    - us-fundamental-data
     - cn-a-fundamental-data
 tool_policy:
   owner: stage_profile

@@ -729,7 +729,7 @@ class ControlRunner:
                 )
             )
 
-        prompt_vars = build_cn_a_prompt_vars(
+        prompt_vars = build_profile_prompt_vars(
             call=call,
             material_texts=material_texts,
             ordered_material_texts=tuple(ordered_material_texts),
@@ -1098,12 +1098,15 @@ def first_human_action(failures: tuple[FailureRecord, ...]) -> str | None:
     return None
 
 
-def build_cn_a_prompt_vars(
+def build_profile_prompt_vars(
     *,
     call: WorkerCall,
     material_texts: dict[tuple[str, Stage], str],
     ordered_material_texts: tuple[PromptMaterialText, ...] = (),
 ) -> dict[str, str]:
+    # Profile-specific on purpose: US follows original TradingAgents prompt
+    # boundaries, while CN_A follows TradingAgents-CN prompt boundaries.
+    # Audit refs may include more materials than the model-visible variables.
     frontline_vars = {
         "market_research_report": material_texts.get(("market_analyst", Stage.FRONTLINE), ""),
         "sentiment_report": material_texts.get(("social_analyst", Stage.FRONTLINE), ""),
@@ -1182,6 +1185,11 @@ def build_cn_a_prompt_vars(
             "past_memory_str": _default_memory_for_worker(call.worker_id),
         }
     if call.worker_id == "research_manager":
+        if call.profile == "US":
+            return {
+                "history": _conversation_history(*debate_arguments),
+                "past_memory_str": _default_memory_for_worker(call.worker_id),
+            }
         return {
             **frontline_vars,
             "history": _conversation_history(*debate_arguments),
@@ -1501,7 +1509,6 @@ def _root_component_guess(category: str) -> str:
         "openviking_integrity": "OpenViking read/stat integrity",
         "artifact_flow_overreach": "approved manifest artifact flow",
         "claim": "L1/L2 claim hard gate",
-        "pm_owner": "portfolio manager ownership guard",
         "openclaw_runtime": "OpenClaw worker runtime",
     }
     return mapping.get(category, "runner runtime pipeline")

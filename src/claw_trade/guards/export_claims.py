@@ -7,7 +7,6 @@ from typing import Any
 
 from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.guards.common import GuardResult, guard_failed, guard_passed
-from claw_trade.guards.pm_owner import PMDecision, validate_export_does_not_rewrite_pm
 from claw_trade.workflow.models import WorkflowState
 
 EXPORT_CLAIM_SCHEMA_VERSION = "control.export_claims.v1"
@@ -43,7 +42,6 @@ class ExportClaimMapping:
     run_id: str
     final_report_path: str
     claims: tuple[ExportClaim, ...]
-    pm_decision: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -74,7 +72,7 @@ def parse_export_claim_mapping(path: Path) -> ExportClaimMappingResult:
     if not isinstance(payload, dict):
         return ExportClaimMappingResult.failed("export claim mapping 根对象必须是对象")
 
-    required_fields = ("schema_version", "run_id", "final_report_path", "claims", "pm_decision")
+    required_fields = ("schema_version", "run_id", "final_report_path", "claims")
     for field in required_fields:
         if field not in payload:
             return ExportClaimMappingResult.failed(f"export claim mapping 缺少字段: {field}")
@@ -104,17 +102,12 @@ def parse_export_claim_mapping(path: Path) -> ExportClaimMappingResult:
             return ExportClaimMappingResult.failed(claim)
         claims.append(claim)
 
-    pm_decision = _parse_pm_decision(payload.get("pm_decision"))
-    if isinstance(pm_decision, str):
-        return ExportClaimMappingResult.failed(pm_decision)
-
     return ExportClaimMappingResult.passed(
         ExportClaimMapping(
             schema_version=EXPORT_CLAIM_SCHEMA_VERSION,
             run_id=run_id,
             final_report_path=final_report_path,
             claims=tuple(claims),
-            pm_decision=pm_decision,
         )
     )
 
@@ -220,42 +213,6 @@ def validate_export_claims_are_supported(
     return guard_passed(category="export_truthfulness")
 
 
-def validate_export_pm_fields(mapping: ExportClaimMapping, pm_decision: PMDecision | None) -> GuardResult:
-    if pm_decision is None:
-        if mapping.pm_decision is None:
-            return guard_passed(category="pm_owner")
-        return guard_failed(
-            category="pm_owner",
-            reason="CN_A 导出映射不应伪造结构化 pm_decision",
-            paths=(Path("reports/export-claims.json"),),
-        )
-
-    # PM owner 防线：export 映射只能复述 PM 结构化决策，不能改写字段。
-    guard = validate_export_does_not_rewrite_pm(pm_decision, mapping)
-    if not guard.ok:
-        return guard
-    if mapping.pm_decision is None:
-        return guard_failed(
-            category="pm_owner",
-            reason="export mapping 缺少 pm_decision",
-            paths=(Path("reports/export-claims.json"),),
-        )
-    source_material_id = _expect_str(mapping.pm_decision, "source_material_id")
-    if source_material_id is None:
-        return guard_failed(
-            category="pm_owner",
-            reason="export mapping pm_decision.source_material_id 必须是字符串",
-            paths=(Path("reports/export-claims.json"),),
-        )
-    if source_material_id != pm_decision.material_id:
-        return guard_failed(
-            category="pm_owner",
-            reason="export mapping pm_decision.source_material_id 与 PM material_id 不一致",
-            paths=(Path("reports/export-claims.json"),),
-        )
-    return guard_passed(category="pm_owner")
-
-
 def _parse_claim_item(index: int, claim_raw: object) -> ExportClaim | str:
     if not isinstance(claim_raw, dict):
         return f"export claim[{index}] 必须是对象"
@@ -299,40 +256,6 @@ def _parse_claim_item(index: int, claim_raw: object) -> ExportClaim | str:
         source_claim_ids=source_claim_ids,
         source_l1_sha256=source_l1_sha256,
     )
-
-
-def _parse_pm_decision(pm_raw: object) -> dict[str, object] | None | str:
-    if pm_raw is None:
-        return None
-    if not isinstance(pm_raw, dict):
-        return "export claim mapping pm_decision 必须是对象"
-    required_fields = (
-        "source_material_id",
-        "rating",
-        "final_conclusion",
-        "execution_conditions",
-        "risk_conditions",
-    )
-    for field in required_fields:
-        if field not in pm_raw:
-            return f"export claim mapping pm_decision 缺少字段: {field}"
-    if _expect_str(pm_raw, "source_material_id") is None:
-        return "export claim mapping pm_decision.source_material_id 必须是字符串"
-    if _expect_str(pm_raw, "rating") is None:
-        return "export claim mapping pm_decision.rating 必须是字符串"
-    if _expect_str(pm_raw, "final_conclusion") is None:
-        return "export claim mapping pm_decision.final_conclusion 必须是字符串"
-    if _expect_str_list(pm_raw, "execution_conditions") is None:
-        return "export claim mapping pm_decision.execution_conditions 必须是字符串数组"
-    if _expect_str_list(pm_raw, "risk_conditions") is None:
-        return "export claim mapping pm_decision.risk_conditions 必须是字符串数组"
-    return {
-        "source_material_id": pm_raw["source_material_id"],
-        "rating": pm_raw["rating"],
-        "final_conclusion": pm_raw["final_conclusion"],
-        "execution_conditions": list(pm_raw["execution_conditions"]),
-        "risk_conditions": list(pm_raw["risk_conditions"]),
-    }
 
 
 def _resolve_final_report_path(raw_path: str, state: WorkflowState) -> Path | None:

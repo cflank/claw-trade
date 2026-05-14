@@ -70,6 +70,13 @@ def load_stage_policy(agents_root: Path, worker_id: str, profile: str) -> StageP
             f"invalid openviking_access for profile {profile}: {access or '<empty>'}",
             source_path,
         )
+    if not tools and access != "none":
+        return StagePolicyResult(
+            False,
+            None,
+            f"tools cannot be empty when openviking_access={access}",
+            source_path,
+        )
 
     policy = StagePolicy(
         worker_id=worker_id,

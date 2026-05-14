@@ -33,6 +33,26 @@ def _runtime_ctx(
     }
 
 
+CN_A_TOOLS = (
+    ("market_market_data_pack", "market_analyst"),
+    ("fundamental_fundamentals_data_pack", "fundamental_analyst"),
+    ("news_news_data_pack", "news_analyst"),
+    ("social_social_sentiment_pack", "social_analyst"),
+)
+
+US_TOOLS = (
+    ("get_stock_data", "market_analyst"),
+    ("get_indicators", "market_analyst"),
+    ("get_fundamentals", "fundamental_analyst"),
+    ("get_balance_sheet", "fundamental_analyst"),
+    ("get_cashflow", "fundamental_analyst"),
+    ("get_income_statement", "fundamental_analyst"),
+    ("get_news", "news_analyst"),
+    ("get_global_news", "news_analyst"),
+    ("get_news", "social_analyst"),
+)
+
+
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     current_mode = path.stat().st_mode
@@ -161,12 +181,7 @@ echo '{{"ok": true}}'
 
 @pytest.mark.parametrize(
     ("tool_name", "worker_id"),
-    (
-        ("market_market_data_pack", "market_analyst"),
-        ("fundamental_fundamentals_data_pack", "fundamental_analyst"),
-        ("news_news_data_pack", "news_analyst"),
-        ("social_social_sentiment_pack", "social_analyst"),
-    ),
+    CN_A_TOOLS,
 )
 def test_non_cn_a_market_returns_structured_context_or_params_error_without_provider_attempts(
     tmp_path: Path,
@@ -198,12 +213,39 @@ echo '{{"ok": true}}'
 
 @pytest.mark.parametrize(
     ("tool_name", "worker_id"),
-    (
-        ("market_market_data_pack", "market_analyst"),
-        ("fundamental_fundamentals_data_pack", "fundamental_analyst"),
-        ("news_news_data_pack", "news_analyst"),
-        ("social_social_sentiment_pack", "social_analyst"),
-    ),
+    US_TOOLS,
+)
+def test_non_us_market_for_us_tools_returns_structured_params_error_without_provider_attempts(
+    tmp_path: Path,
+    tool_name: str,
+    worker_id: str,
+) -> None:
+    marker = tmp_path / "python_called.txt"
+    fake_python = tmp_path / "fake_python.sh"
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+echo called > {marker}
+echo '{{"ok": true}}'
+""",
+    )
+    result = _run_tool(
+        tool_name=tool_name,
+        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"ticker": "AAPL", "market": "CN_A"}),
+        params={"ticker": "AAPL", "market": "CN_A"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is True
+    assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
+    details = result.get("details")
+    assert isinstance(details, dict)
+    assert "provider_attempts" not in details
+    assert marker.exists() is False
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "worker_id"),
+    (*CN_A_TOOLS, *US_TOOLS),
 )
 def test_missing_required_market_returns_structured_params_error_without_spawning_python(
     tmp_path: Path,
@@ -228,6 +270,46 @@ echo '{{"ok": true}}'
     assert result.get("isError") is True
     assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
     assert marker.exists() is False
+
+
+def test_successful_us_original_tool_uses_us_profile_and_passes_runtime_market_to_python(tmp_path: Path) -> None:
+    stdin_path = tmp_path / "stdin.json"
+    fake_python = tmp_path / "fake_python_pack.sh"
+    payload = {
+        "ok": True,
+        "schema_version": "us_get_stock_data.v1",
+        "tool_name": "get_stock_data",
+        "reader_brief": "# Stock data for AAPL from 2026-04-01 to 2026-05-13\nDate,Open,High,Low,Close,Volume",
+    }
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+cat > {stdin_path}
+echo {json.dumps(json.dumps(payload))}
+""",
+    )
+    result = _run_tool(
+        tool_name="get_stock_data",
+        ctx=_runtime_ctx(
+            worker_id="market_analyst",
+            runtime_vars={
+                "ticker": "AAPL",
+                "market": "US",
+                "start_date": "2026-04-01",
+                "end_date": "2026-05-13",
+            },
+        ),
+        params={"symbol": "AAPL"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is False
+    assert result["content"][0]["text"] == payload["reader_brief"]
+    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
+    assert stdin_payload["tool_input"]["symbol"] == "AAPL"
+    assert stdin_payload["tool_input"]["market"] == "US"
+    assert stdin_payload["tool_input"]["start_date"] == "2026-04-01"
+    assert stdin_payload["tool_input"]["end_date"] == "2026-05-13"
+    assert stdin_payload["runtime_context"]["tool_name"] == "get_stock_data"
 
 
 def test_non_json_stdout_returns_protocol_error_with_redacted_stderr_summary(tmp_path: Path) -> None:
@@ -372,6 +454,7 @@ def test_news_social_wiring_uses_shared_frontline_data_pack_modules() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
     assert "from frontline_data_pack.news_data_pack import run_news_data_pack" in source
     assert "from frontline_data_pack.social_sentiment_pack import run_social_sentiment_pack" in source
+    assert "import frontline_data_pack.us_data_pack as us_data_pack" in source
     assert "from frontline_data_pack.models import to_jsonable" in source
     assert "json.dumps(to_jsonable(result), ensure_ascii=False, default=str)" in source
     assert '"cn-a-news-data"' not in source

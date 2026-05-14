@@ -384,7 +384,6 @@ class WorkflowStore:
             status=self._as_str(payload["status"], "status"),
             final_report_path=self._path_or_none(payload.get("final_report_path")),
             export_guard_result_path=self._path_or_none(payload.get("export_guard_result_path")),
-            pm_owner_guard_result_path=self._path_or_none(payload.get("pm_owner_guard_result_path")),
             unsupported_claims=tuple(str(x) for x in payload.get("unsupported_claims", [])),
             failure=failure,
         )

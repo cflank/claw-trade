@@ -64,7 +64,7 @@
 新增代码在这些位置必须有中文注释：
 
 - 控制权边界：controller、runner、request_builder、openclaw_client、approval、exporter。
-- hard gate：provider request、visible tools、tool calls、OpenViking receipt、runtime reads、L1/L2、claim、PM owner、export truthfulness。
+- hard gate：provider request、visible tools、tool calls、OpenViking receipt、runtime reads、L1/L2、claim、PM final authority、export truthfulness。
 - 越权防线：OpenClaw/OpenViking/Python 不该做但可能被误写的地方。
 - 本地审计副本：`runs/<run>/openviking/` 不是正式材料权威。
 
@@ -934,7 +934,7 @@ def validate_claims(claims: tuple[L1Claim, ...], l2_index: L2Index) -> GuardResu
 - claim ledger 缺失、JSON 非法、身份字段不匹配时 hard fail。
 - 高风险声明必须映射到 L2 evidence。
 - Python 只解析工具/控制层生成的固定结构，不从正文推断投资结论、新闻、估值、情绪或图表声明。
-- export 和 PM owner 后续任务只能使用 `L1Claim`，不能另写自然语言启发式 claim 抽取。
+- export 和 PM final authority 后续任务只能使用 `L1Claim`，不能另写自然语言启发式 claim 抽取。
 
 ### T26  实现材料批准数据流骨架
 
@@ -1594,60 +1594,60 @@ def validate_claims(claims: tuple[L1Claim, ...], l2_index: L2Index) -> GuardResu
 
 - valuation、target price、rating、trade action、risk condition、news、sentiment、chart、tool success、source claim 都要能回到 L2 evidence。
 
-### T47  PM owner guard
+### T47  PM final authority guard
 
 设计引用：§10、§12。
 
 文件范围：
 
-- `src/claw_trade/guards/pm_owner.py`
+- `src/claw_trade/guards/removed_structured_pm_guard_module`
 
 新增对象：
 
 ```python
 @dataclass(frozen=True)
-class PMDecision: ...
+class RemovedStructuredPortfolioDecisionArtifact: ...
 ```
 
 函数级动作：
 
 ```python
-def validate_pm_decision_identity(decision: PMDecision, material: ApprovedMaterial) -> GuardResult: ...
-def validate_pm_owner(pm_l1_text: str, evidence: ProviderEvidence) -> GuardResult: ...
-def validate_export_does_not_rewrite_pm(decision: PMDecision, export_mapping: ExportClaimMapping) -> GuardResult: ...
+def validate_removed_structured_portfolio_decision_artifact_identity(decision: RemovedStructuredPortfolioDecisionArtifact, material: ApprovedMaterial) -> GuardResult: ...
+def validate_removed_structured_pm_guard(pm_l1_text: str, evidence: ProviderEvidence) -> GuardResult: ...
+def validate_export_preserves_pm_text(decision: RemovedStructuredPortfolioDecisionArtifact, export_mapping: ExportClaimMapping) -> GuardResult: ...
 ```
 
 验收证据：
 
 - PM 评级、最终结论、执行条件、风险条件只能来自 PM。
 - exporter 改写 PM 决策时导出失败。
-- 本任务依赖 T47A 的结构化 PM decision record，不允许自然语言启发式抽取 PM 决策。
+- 旧 T47A 机器裁决文件方案已删除；正式路径只搬运 PM 自然语言 L1。
 
-### T47A  结构化 PM decision 合同
+### T47A  已删除的旧机器裁决文件方案
 
 设计引用：§10、§12。
 
-目标：portfolio manager 必须通过结构化工具字段提交 PM 决策。exporter 和 PM owner guard 只逐项比对结构化 PM decision record，不从 PM 正文或 final report 正文里猜评级和结论。
+目标：本节记录已废弃方案，正式路径不要求 portfolio manager 提交额外机器裁决文件，也不从 PM 正文或 final report 正文里猜评级和结论。
 
 文件范围：
 
-- `src/claw_trade/guards/pm_owner.py`
+- `src/claw_trade/guards/removed_structured_pm_guard_module`
 - `src/claw_trade/artifacts/claims.py`
 
 固定格式（tool/control evidence record）：
 
 ```json
 {
-  "schema_version": "control.pm_decision.v1",
+  "schema_version": "removed.structured_portfolio_decision_artifact.v1",
   "run_id": "run-...",
   "call_id": "call-...",
   "worker_id": "portfolio_manager",
   "stage": "portfolio_decision",
   "material_id": "mat-...",
   "rating": "buy|hold|sell|neutral|not_rated",
-  "final_conclusion": "PM 原始最终结论",
-  "execution_conditions": ["..."],
-  "risk_conditions": ["..."],
+  "final conclusion removed field": "PM 原始最终结论",
+  "execution conditions removed field": ["..."],
+  "risk conditions removed field": ["..."],
   "source_claim_ids": ["claim-..."],
   "source_l1_sha256": "..."
 }
@@ -1656,15 +1656,15 @@ def validate_export_does_not_rewrite_pm(decision: PMDecision, export_mapping: Ex
 函数级动作：
 
 ```python
-def parse_pm_decision_record(record_text: str, material: ApprovedMaterial) -> PMDecisionResult: ...
-def require_pm_decision_record(evidence: ProviderEvidence, material: ApprovedMaterial) -> tuple[PMDecision, GuardResult]: ...
-def compare_pm_decision_fields(left: PMDecision, right: PMDecision) -> GuardResult: ...
+def parse_removed_structured_portfolio_decision_artifact_record(record_text: str, material: ApprovedMaterial) -> RemovedStructuredPortfolioDecisionArtifactResult: ...
+def require_removed_structured_portfolio_decision_artifact_record(evidence: ProviderEvidence, material: ApprovedMaterial) -> tuple[RemovedStructuredPortfolioDecisionArtifact, GuardResult]: ...
+def compare_removed_structured_portfolio_decision_artifact_fields(left: RemovedStructuredPortfolioDecisionArtifact, right: RemovedStructuredPortfolioDecisionArtifact) -> GuardResult: ...
 ```
 
 验收证据：
 
-- PM decision record 缺失、JSON 非法、worker/stage/material 身份不匹配时 hard fail。
-- `rating`、`final_conclusion`、`execution_conditions`、`risk_conditions` 可逐项比对。
+- removed structured portfolio artifact 缺失、JSON 非法、worker/stage/material 身份不匹配时 hard fail。
+- `rating`、`final conclusion removed field`、`execution conditions removed field`、`risk conditions removed field` 可逐项比对。
 - Python 不从自然语言正文推断 PM 评级、结论、执行条件或风险条件。
 
 ### T48  export claims guard
@@ -1690,7 +1690,7 @@ class ExportClaimMapping: ...
 def parse_export_claim_mapping(path: Path) -> ExportClaimMappingResult: ...
 def validate_export_mapping_identity(mapping: ExportClaimMapping, state: WorkflowState) -> GuardResult: ...
 def validate_export_claims_are_supported(mapping: ExportClaimMapping, materials: tuple[ApprovedMaterial, ...]) -> GuardResult: ...
-def validate_export_pm_fields(mapping: ExportClaimMapping, pm_decision: PMDecision) -> GuardResult: ...
+def validate_removed_export_portfolio_fields(mapping: ExportClaimMapping, removed_structured_portfolio_decision_artifact: RemovedStructuredPortfolioDecisionArtifact) -> GuardResult: ...
 ```
 
 固定格式：
@@ -1710,12 +1710,12 @@ def validate_export_pm_fields(mapping: ExportClaimMapping, pm_decision: PMDecisi
       "source_l1_sha256": ["..."]
     }
   ],
-  "pm_decision": {
+  "removed_structured_portfolio_decision_artifact": {
     "source_material_id": "mat-...",
     "rating": "...",
-    "final_conclusion": "...",
-    "execution_conditions": ["..."],
-    "risk_conditions": ["..."]
+    "final conclusion removed field": "...",
+    "execution conditions removed field": ["..."],
+    "risk conditions removed field": ["..."]
   }
 }
 ```
@@ -1767,7 +1767,7 @@ def approve_worker_material(call: WorkerCall, evidence: ProviderEvidence, openvi
     receipt_guard = validate_openviking_receipt(call, candidate.receipt, openviking)
     l1_l2_claims, l1_l2_guard = validate_l1_l2_contract(call, candidate.l1_text, read_raw_output(candidate.raw_output_path), candidate.l2_index)
     claim_guard = validate_claims(l1_l2_claims, candidate.l2_index)
-    pm_guard = validate_pm_owner_if_needed(call, candidate)
+    pm_guard = validate_removed_structured_pm_guard_if_needed(call, candidate)
     combined = combine_guard_results((receipt_guard, l1_l2_guard, claim_guard, pm_guard))
     if not combined.ok:
         return ApprovalResult.failed(combined.category, combined.reason, combined.paths)
@@ -1776,7 +1776,7 @@ def approve_worker_material(call: WorkerCall, evidence: ProviderEvidence, openvi
 
 验收证据：
 
-- receipt 通过不等于批准；必须等 receipt、L1/L2、claim、PM owner 全部通过。
+- receipt 通过不等于批准；必须等 receipt、L1/L2、claim、PM final authority 全部通过。
 - approval 不写 manifest；runner 在保存 approval 结果和 guard evidence 后再调用 manifest store。
 - 任何 guard 失败都返回材料拒绝，不能写 fake approved material。
 
@@ -2095,7 +2095,7 @@ class RenderedReport:
     text: str
     claim_links: tuple[ExportClaim, ...]
 
-def render_final_report(materials: tuple[ApprovedMaterial, ...], pm_decision: PMDecision) -> RenderedReport: ...
+def render_final_report(materials: tuple[ApprovedMaterial, ...], removed_structured_portfolio_decision_artifact: RemovedStructuredPortfolioDecisionArtifact) -> RenderedReport: ...
 ```
 
 验收证据：
@@ -2111,14 +2111,14 @@ def render_final_report(materials: tuple[ApprovedMaterial, ...], pm_decision: PM
 文件范围：
 
 - `src/claw_trade/reports/exporter.py`
-- `src/claw_trade/guards/pm_owner.py`
+- `src/claw_trade/guards/removed_structured_pm_guard_module`
 - `src/claw_trade/guards/export_claims.py`
 
 函数级动作：
 
 ```python
-def build_export_claim_mapping(rendered: RenderedReport, materials: tuple[ApprovedMaterial, ...], pm_decision: PMDecision) -> ExportClaimMapping: ...
-def run_export_guards(mapping: ExportClaimMapping, materials: tuple[ApprovedMaterial, ...], pm_decision: PMDecision) -> GuardResult: ...
+def build_export_claim_mapping(rendered: RenderedReport, materials: tuple[ApprovedMaterial, ...], removed_structured_portfolio_decision_artifact: RemovedStructuredPortfolioDecisionArtifact) -> ExportClaimMapping: ...
+def run_export_guards(mapping: ExportClaimMapping, materials: tuple[ApprovedMaterial, ...], removed_structured_portfolio_decision_artifact: RemovedStructuredPortfolioDecisionArtifact) -> GuardResult: ...
 ```
 
 验收证据：
@@ -2317,20 +2317,20 @@ uv run pytest tests/contracts/test_export_claims_guard.py tests/unit/test_report
 - `runs/<run_id>/reports/export-claims.json`
 - `runs/<run_id>/reports/export-guard-results.json`
 - `runs/<run_id>/reports/export-result.json`
-- portfolio manager 的 approved material、PM decision record 和 L1 SHA。
+- portfolio manager 的 approved material、removed structured portfolio artifact 和 L1 SHA。
 
 函数级动作：
 
 ```python
 def verify_live_final_report_truth_gate(run_id: str, store: WorkflowStore) -> CompletionCheckResult: ...
-def load_live_pm_decision(run_id: str, manifest: ApprovedManifest) -> PMDecision: ...
+def load_removed_structured_portfolio_decision_artifact(run_id: str, manifest: ApprovedManifest) -> RemovedStructuredPortfolioDecisionArtifact: ...
 def load_live_export_mapping(run_id: str) -> ExportClaimMapping: ...
 ```
 
 验收证据：
 
 - `ExportResult.status == "passed"` 时必须能找到对应的 `export-guard-results.json` 和 `export-claims.json`。
-- PM 评级、最终结论、执行条件、风险条件与 PM decision record 逐项一致。
+- PM 评级、最终结论、执行条件、风险条件与 removed structured portfolio artifact 逐项一致。
 - final report 所有高风险 claim 都能映射回 approved material 的 source claim 和 L1 SHA（SHA 口径为 OpenViking `content/download` 原始字节）。
 - 若 T62 未产出完整 reports 目录，本任务写 `BLOCKED`，不能用单元级结果替代 live gate。
 
@@ -2430,7 +2430,7 @@ runs/<run_id>/reports/control-completion-review.md
 - 需要改变 OpenClaw 修改范围，超出通用单 worker runtime 接缝。
 - 需要让 OpenClaw 接管 12 worker DAG、批准、hard gate 或报告导出。
 - 需要让 OpenViking 接管流程推进、批准、重试或最终结论。
-- 需要改变 PM owner。
+- 需要改变 PM final authority。
 - 需要 Python 改写 PM 投资结论、评级、执行条件或风险条件。
 - 需要保留或新增 direct LLM report path。
 - 需要新增未经批准的 worker 文案回退、fallback tool、fallback market profile、fake provider result 或 fake artifact success。

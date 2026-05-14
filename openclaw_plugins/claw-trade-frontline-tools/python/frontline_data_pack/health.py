@@ -40,6 +40,20 @@ PROVIDER_CONFIG_INVALID = "PROVIDER_CONFIG_INVALID"
 L2_STAT_VERIFICATION_FAILED = "L2_STAT_VERIFICATION_FAILED"
 EVIDENCE_DIR_ERROR = "EVIDENCE_DIR_ERROR"
 
+EXPECTED_FRONTLINE_VISIBLE_TOOLS_BY_PROFILE: dict[str, dict[str, tuple[str, ...]]] = {
+    "CN_A": {
+        "market_analyst": ("market_market_data_pack",),
+        "fundamental_analyst": ("fundamental_fundamentals_data_pack",),
+        "news_analyst": ("news_news_data_pack",),
+        "social_analyst": ("social_social_sentiment_pack",),
+    },
+    "US": {
+        "market_analyst": ("get_stock_data", "get_indicators"),
+        "fundamental_analyst": ("get_fundamentals", "get_balance_sheet", "get_cashflow", "get_income_statement"),
+        "news_analyst": ("get_news", "get_global_news"),
+        "social_analyst": ("get_news",),
+    },
+}
 EXPECTED_FRONTLINE_VISIBLE_TOOLS: dict[str, tuple[str, ...]] = {
     "market_analyst": ("market_market_data_pack",),
     "fundamental_analyst": ("fundamental_fundamentals_data_pack",),
@@ -48,7 +62,15 @@ EXPECTED_FRONTLINE_VISIBLE_TOOLS: dict[str, tuple[str, ...]] = {
 }
 EXPECTED_FRONTLINE_TOOL_REGISTRATION = {
     "market_market_data_pack",
+    "get_stock_data",
+    "get_indicators",
     "fundamental_fundamentals_data_pack",
+    "get_fundamentals",
+    "get_balance_sheet",
+    "get_cashflow",
+    "get_income_statement",
+    "get_news",
+    "get_global_news",
     "news_news_data_pack",
     "social_social_sentiment_pack",
 }
@@ -112,7 +134,8 @@ def frontline_tool_health(*, repo_root: Path | None = None, profile: str = "CN_A
         )
 
     mismatches: dict[str, dict[str, Any]] = {}
-    for worker_id, expected_tools in EXPECTED_FRONTLINE_VISIBLE_TOOLS.items():
+    expected_visible_tools = EXPECTED_FRONTLINE_VISIBLE_TOOLS_BY_PROFILE.get(profile, EXPECTED_FRONTLINE_VISIBLE_TOOLS)
+    for worker_id, expected_tools in expected_visible_tools.items():
         policy_result = load_stage_policy(root / "agents", worker_id, profile)
         if not policy_result.ok or policy_result.policy is None:
             mismatches[worker_id] = {

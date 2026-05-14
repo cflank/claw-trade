@@ -10,9 +10,7 @@ from claw_trade.guards.export_claims import (
     parse_export_claim_mapping,
     validate_export_claims_are_supported,
     validate_export_mapping_identity,
-    validate_export_pm_fields,
 )
-from claw_trade.guards.pm_owner import PMDecision
 from claw_trade.workflow.models import RunRequest, RunStatus, Stage, WorkflowState
 
 
@@ -221,65 +219,6 @@ def test_validate_export_claims_other_with_invalid_source_fails() -> None:
     assert not guard.ok
 
 
-def test_validate_export_pm_fields_rewrite_fails() -> None:
-    mapping = sample_mapping(
-        pm_decision={
-            "source_material_id": "mat-pm-1",
-            "rating": "sell",
-            "final_conclusion": "改写结论",
-            "execution_conditions": ["回调分批加仓"],
-            "risk_conditions": ["若业绩不及预期则止损"],
-        }
-    )
-    guard = validate_export_pm_fields(mapping, sample_pm_decision())
-    assert not guard.ok
-
-
-def test_validate_export_pm_fields_match_passes() -> None:
-    baseline = sample_pm_decision()
-    mapping = sample_mapping(
-        pm_decision={
-            "source_material_id": baseline.material_id,
-            "rating": baseline.rating,
-            "final_conclusion": baseline.final_conclusion,
-            "execution_conditions": list(baseline.execution_conditions),
-            "risk_conditions": list(baseline.risk_conditions),
-        }
-    )
-    guard = validate_export_pm_fields(mapping, baseline)
-    assert guard.ok
-
-
-def test_validate_export_pm_fields_cn_a_without_pm_decision_passes() -> None:
-    mapping = ExportClaimMapping(
-        schema_version="control.export_claims.v1",
-        run_id="run-1",
-        final_report_path="reports/final-report.md",
-        claims=(),
-        pm_decision=None,
-    )
-    guard = validate_export_pm_fields(mapping, None)
-    assert guard.ok
-
-
-def test_validate_export_pm_fields_cn_a_with_synthetic_pm_decision_fails() -> None:
-    mapping = ExportClaimMapping(
-        schema_version="control.export_claims.v1",
-        run_id="run-1",
-        final_report_path="reports/final-report.md",
-        claims=(),
-        pm_decision={
-            "source_material_id": "mat-pm-1",
-            "rating": "buy",
-            "final_conclusion": "伪造",
-            "execution_conditions": [],
-            "risk_conditions": [],
-        },
-    )
-    guard = validate_export_pm_fields(mapping, None)
-    assert not guard.ok
-
-
 def sample_state(tmp_path: Path, *, run_id: str) -> WorkflowState:
     run_dir = tmp_path / "runs" / run_id
     (run_dir / "reports").mkdir(parents=True, exist_ok=True)
@@ -311,7 +250,6 @@ def sample_mapping(
     run_id: str = "run-1",
     final_report_path: str = "reports/final-report.md",
     claims: tuple[ExportClaim, ...] | None = None,
-    pm_decision: dict[str, object] | None = None,
 ) -> ExportClaimMapping:
     default_claim = ExportClaim(
         export_claim_id="export-claim-1",
@@ -326,14 +264,6 @@ def sample_mapping(
         run_id=run_id,
         final_report_path=final_report_path,
         claims=claims or (default_claim,),
-        pm_decision=pm_decision
-        or {
-            "source_material_id": "mat-pm-1",
-            "rating": "buy",
-            "final_conclusion": "维持买入。",
-            "execution_conditions": ["回调分批加仓"],
-            "risk_conditions": ["若业绩不及预期则止损"],
-        },
     )
 
 
@@ -352,13 +282,6 @@ def sample_mapping_json(*, schema_version: str = "control.export_claims.v1") -> 
                 "source_l1_sha256": ["sha-l1-1"],
             }
         ],
-        "pm_decision": {
-            "source_material_id": "mat-pm-1",
-            "rating": "buy",
-            "final_conclusion": "维持买入。",
-            "execution_conditions": ["回调分批加仓"],
-            "risk_conditions": ["若业绩不及预期则止损"],
-        },
     }
 
 
@@ -445,22 +368,4 @@ def sample_material_2() -> ApprovedMaterial:
         ),
         approved_at="2026-05-04T12:00:00Z",
         hard_gate_result_path=Path("runs/run-1/guards/guard-2.json"),
-    )
-
-
-def sample_pm_decision() -> PMDecision:
-    return PMDecision(
-        schema_version="control.pm_decision.v1",
-        run_id="run-1",
-        call_id="call-12",
-        worker_id="portfolio_manager",
-        stage=Stage.PORTFOLIO_DECISION,
-        material_id="mat-pm-1",
-        rating="buy",
-        final_conclusion="维持买入。",
-        execution_conditions=("回调分批加仓",),
-        risk_conditions=("若业绩不及预期则止损",),
-        source_claim_ids=("claim-pm-1",),
-        source_l1_sha256="sha-l1-pm-1",
-        l1_uri="viking://resources/workflow/run-1/portfolio_decision/portfolio_manager/call-12/report.md",
     )

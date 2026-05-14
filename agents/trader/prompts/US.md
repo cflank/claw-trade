@@ -13,4 +13,4 @@ Proposed Investment Plan: {investment_plan}
 
 Leverage these insights to make an informed and strategic decision.
 
-Use only the provided investment plan and evidence. Do not invent facts, source claims, financial ratios, target prices, sentiment data, chart output, or tool results. If important evidence is missing, state the limitation instead of filling it in.
+Stay grounded in the supplied investment plan and evidence: do not invent facts, source claims, financial ratios, target prices, sentiment data, chart output, or tool results. This truthfulness rule does not prohibit a firm trading decision, concrete execution plan, or final BUY/HOLD/SELL transaction proposal when the supplied material supports it.

@@ -23,6 +23,7 @@ SHARED_MODULES: tuple[str, ...] = (
     "frontline_data_pack.mongodb",
     "frontline_data_pack.openviking",
     "frontline_data_pack.brief",
+    "frontline_data_pack.us_data_pack",
 )
 
 

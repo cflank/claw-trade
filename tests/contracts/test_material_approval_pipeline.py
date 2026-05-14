@@ -51,30 +51,9 @@ def test_approve_worker_material_returns_approved_material_when_all_gates_pass(t
     assert result.material.hard_gate_result_path == call.evidence_dir / "approval-hard-gate.json"
 
 
-def test_approve_worker_material_rejects_us_portfolio_manager_without_pm_decision_evidence(tmp_path: Path) -> None:
+def test_approve_worker_material_accepts_us_portfolio_manager_natural_language_report(tmp_path: Path) -> None:
     call = _make_call(tmp_path, worker_id="portfolio_manager", stage=Stage.PORTFOLIO_DECISION)
-    l1_text = _l1_report()
-    evidence = _make_evidence(call, raw_output="和 L1 不同")
-    l2_index = _make_l2_index(call, evidence_id="l2-1")
-    client, receipt = _seed_openviking_client(call=call, evidence=evidence, l1_text=l1_text, l2_index=l2_index)
-    _write_material_claims_evidence(call=call, receipt=receipt, claim_evidence_id="l2-1")
-
-    result = approve_worker_material(call=call, evidence=evidence, openviking=client)
-
-    assert not result.ok
-    assert result.material is None
-    assert result.category == "pm_owner"
-    assert result.reason is not None
-
-
-def test_approve_worker_material_accepts_cn_a_portfolio_manager_without_pm_decision_evidence(tmp_path: Path) -> None:
-    call = _make_call(
-        tmp_path,
-        worker_id="portfolio_manager",
-        stage=Stage.PORTFOLIO_DECISION,
-        profile="CN_A",
-    )
-    l1_text = _l1_report()
+    l1_text = _pm_l1_report()
     evidence = _make_evidence(call, raw_output="和 L1 不同")
     l2_index = _make_l2_index(call, evidence_id="l2-1")
     client, receipt = _seed_openviking_client(call=call, evidence=evidence, l1_text=l1_text, l2_index=l2_index)
@@ -87,14 +66,18 @@ def test_approve_worker_material_accepts_cn_a_portfolio_manager_without_pm_decis
     assert result.material.worker_id == "portfolio_manager"
 
 
-def test_approve_worker_material_accepts_portfolio_manager_with_pm_decision_evidence(tmp_path: Path) -> None:
-    call = _make_call(tmp_path, worker_id="portfolio_manager", stage=Stage.PORTFOLIO_DECISION)
-    l1_text = _l1_report()
+def test_approve_worker_material_accepts_cn_a_portfolio_manager_natural_language_report(tmp_path: Path) -> None:
+    call = _make_call(
+        tmp_path,
+        worker_id="portfolio_manager",
+        stage=Stage.PORTFOLIO_DECISION,
+        profile="CN_A",
+    )
+    l1_text = _pm_l1_report()
     evidence = _make_evidence(call, raw_output="和 L1 不同")
     l2_index = _make_l2_index(call, evidence_id="l2-1")
     client, receipt = _seed_openviking_client(call=call, evidence=evidence, l1_text=l1_text, l2_index=l2_index)
     _write_material_claims_evidence(call=call, receipt=receipt, claim_evidence_id="l2-1")
-    _write_pm_decision_evidence(call=call, receipt=receipt)
 
     result = approve_worker_material(call=call, evidence=evidence, openviking=client)
 
@@ -286,6 +269,16 @@ def _l1_report() -> str:
     return "# 正式报告\n\n本报告面向读者展示，不在正文拼接机器 JSON。"
 
 
+def _pm_l1_report() -> str:
+    return (
+        "# Portfolio Manager Final Decision\n\n"
+        "**Rating**: Hold\n\n"
+        "Here is my call: Hold. Maintain the current position and do not initiate a new trade today.\n\n"
+        "**Execution conditions**: Reassess after the next earnings catalyst or a confirmed technical breakdown.\n\n"
+        "**Risk conditions**: If revenue growth or margin evidence deteriorates, revisit the thesis."
+    )
+
+
 def _write_material_claims_evidence(
     *,
     call: WorkerCall,
@@ -318,25 +311,6 @@ def _write_material_claims_evidence(
         ],
     }
     (call.evidence_dir / "material-claims.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-
-
-def _write_pm_decision_evidence(*, call: WorkerCall, receipt: MaterialReceipt) -> None:
-    payload = {
-        "schema_version": "control.pm_decision.v1",
-        "run_id": call.run_id,
-        "call_id": call.call_id,
-        "worker_id": call.worker_id,
-        "stage": call.stage.value,
-        "material_id": make_material_id(call, receipt),
-        "rating": "buy",
-        "final_conclusion": "维持买入。",
-        "execution_conditions": ["回调分批加仓"],
-        "risk_conditions": ["若业绩不及预期则止损"],
-        "source_claim_ids": ["claim-001"],
-        "source_l1_sha256": receipt.sha256,
-        "l1_uri": receipt.uri,
-    }
-    (call.evidence_dir / "pm-decision.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def _write_json(path: Path) -> None:

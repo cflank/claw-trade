@@ -11,7 +11,6 @@ from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Index, Materi
 from claw_trade.guards.common import ApprovalResult, combine_guard_results, guard_passed
 from claw_trade.guards.l1_l2 import validate_l1_l2_contract, validate_l2_entries
 from claw_trade.guards.openviking_receipt import validate_openviking_receipt
-from claw_trade.guards.pm_owner import pm_decision_required_for_profile, validate_pm_owner
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import WorkerCall
 
@@ -259,20 +258,7 @@ def approve_worker_material(
         raw_output=raw_output,
         l2_index=candidate.l2_index,
     )
-    # PM owner 边界：
-    # - CN_A: PM 自然语言 L1 可作为最终裁决来源，不强制 pm-decision.json。
-    # - 其余 profile: 继续要求并校验 pm-decision.json 与 receipt/claims 一致。
-    pm_guard = guard_passed(category="pm_owner")
-    if call.worker_id == "portfolio_manager":
-        _, pm_guard = validate_pm_owner(
-            call=call,
-            evidence=evidence,
-            receipt=candidate.receipt,
-            claims=claims,
-            require_structured_decision=pm_decision_required_for_profile(call.profile),
-        )
-
-    combined = combine_guard_results((receipt_guard, l2_entries_guard, l1_l2_guard, pm_guard))
+    combined = combine_guard_results((receipt_guard, l2_entries_guard, l1_l2_guard))
     if not combined.ok:
         return ApprovalResult.failed(
             category=combined.category,

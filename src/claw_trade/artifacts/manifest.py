@@ -57,7 +57,6 @@ _ALLOWED_HARD_GATE_CATEGORIES: frozenset[str] = frozenset(
         "openviking_receipt",
         "l1_l2",
         "claims",
-        "pm_owner",
         "export_truthfulness",
         "combined_hard_gate",
         "ok",

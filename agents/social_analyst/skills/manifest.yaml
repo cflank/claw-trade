@@ -1,5 +1,12 @@
 skills:
   - path: claw-trade-stage/SKILL.md
+  - path: us-social-data/SKILL.md
+    skill_id: us-social-data
+    skill_version: 0.1.0
+    workers:
+      - social_analyst
+    tool_exports:
+      - get_news
   - path: cn-a-social-data/SKILL.md
     skill_id: cn-a-social-data
     skill_version: 0.1.0

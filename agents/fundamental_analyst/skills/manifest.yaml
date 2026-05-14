@@ -1,5 +1,15 @@
 skills:
   - path: claw-trade-stage/SKILL.md
+  - path: us-fundamental-data/SKILL.md
+    skill_id: us-fundamental-data
+    skill_version: 0.1.0
+    workers:
+      - fundamental_analyst
+    tool_exports:
+      - get_fundamentals
+      - get_balance_sheet
+      - get_cashflow
+      - get_income_statement
   - path: cn-a-fundamental-data/SKILL.md
     skill_id: cn-a-fundamental-data
     skill_version: 0.1.0

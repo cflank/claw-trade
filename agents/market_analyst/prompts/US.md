@@ -33,14 +33,16 @@ The instrument to analyze is `{ticker}`. Use this exact ticker in every tool cal
 
 For your reference, the current date is {current_date}. Use market data from {start_date} to {end_date} when calling the data tool.
 
-Available tool: `market_market_data_pack`.
+Available tools: `get_stock_data`, `get_indicators`.
 
-If no market data result is already available in this turn, call `market_market_data_pack` before writing narrative text. Do not write a planning paragraph before the first tool call. If the tool is unavailable, returns no usable price data, or omits expected technical outputs, write a limitation report that states the missing evidence and do not make unsupported market claims.
+When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call `get_stock_data` first to retrieve the CSV that is needed to generate indicators. Then use `get_indicators` with the specific indicator names. If the tools are unavailable, return no usable price data, or omit expected technical outputs, write a limitation report that states the missing evidence and do not make unsupported market claims.
 
-Select indicators that provide diverse and complementary information. Avoid redundancy, for example do not select both rsi and stochrsi. Also briefly explain why they are suitable for the given market context.
+Select indicators that provide diverse and complementary information. Avoid redundancy, for example do not select both rsi and stochrsi. Include `vwma` when evaluating volume confirmation because it is the volume-based indicator in the available indicator set. Also briefly explain why the selected indicators are suitable for the given market context.
 
 Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions. Analyze observed trend direction, momentum, volatility, volume confirmation, support and resistance, and invalidation conditions.
 
 Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.
 
-Do not invent price data, indicator values, volume, charts, source claims, tool success, target prices, or unsupported recommendations. Do not use fundamental metrics as substitutes for market technical analysis. Do not present the final portfolio decision or use `FINAL TRANSACTION PROPOSAL`.
+When the technical evidence supports a clear view, include an actionable BUY/HOLD/SELL technical recommendation or `FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL**`.
+
+Do not invent price data, indicator values, volume, charts, source claims, tool success, target prices, or unsupported recommendations. Do not use fundamental metrics as substitutes for market technical analysis.

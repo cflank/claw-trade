@@ -1,0 +1,18 @@
+{
+  "company_name": "Apple Inc.",
+  "currency": "USD",
+  "currency_symbol": "$",
+  "current_date": "2026-05-14",
+  "end_date": "2026-05-14",
+  "entry_point": "report_command",
+  "frontline_execution_mode": "parallel",
+  "market": "US",
+  "max_debate_rounds": 1,
+  "max_risk_discuss_rounds": 1,
+  "profile": "US",
+  "start_date": "2025-05-14",
+  "stop_point": "none",
+  "target_stage": null,
+  "target_worker_id": null,
+  "ticker": "AAPL"
+}

@@ -424,6 +424,8 @@ current_response = 当前 worker 需要回应的上一位发言人完整正文
 
 这里不允许 Python 摘要。Python 只做有序拼接和变量填充。
 
+Prompt 材料边界必须按 profile 的原版基线确定。审计完整性可以保留在 manifest/evidence 中，但不能把更多上游材料塞进模型可见 prompt 来替代原版 turn。若原版 worker 只看 debate history，claw-trade 也只能把 debate history 放入该 worker 的 prompt 变量；后台 refs/capabilities 不能成为默认模型可见正文。
+
 ## 下游输入规则
 
 ### bull_researcher
@@ -439,9 +441,10 @@ current_response = 当前 worker 需要回应的上一位发言人完整正文
 
 ### research_manager
 
-- 读取 frontline 四份报告。
-- 读取全部 investment debate 历史。
-- 不只读最后一轮。
+- 按 profile baseline 读取材料。
+- CN_A 若基线需要 frontline 四份报告，则读取 frontline 四份报告 + 全部 investment debate 历史。
+- US 原版 TradingAgents research manager 只裁决 bull/bear debate 时，只读取全部 investment debate 历史，不额外注入 frontline 四份报告。
+- 不只读最后一轮；也不把审计材料完整性当成扩大模型可见材料范围的理由。
 
 ### risk_challenger / risk_guardian / risk_moderator
 

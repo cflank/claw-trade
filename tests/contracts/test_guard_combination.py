@@ -79,7 +79,6 @@ def test_merge_stage_failures_promotes_early_stop_for_early_stop_category() -> N
         "provider_evidence_untrusted",
         "openviking_integrity",
         "artifact_flow_overreach",
-        "pm_owner",
         "python_overreach",
         "openclaw_overreach",
         "openviking_overreach",

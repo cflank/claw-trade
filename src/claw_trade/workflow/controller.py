@@ -470,7 +470,7 @@ def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMan
                     call_id=None,
                     worker_id="portfolio_manager",
                     stage=Stage.PORTFOLIO_DECISION,
-                    category="pm_owner",
+                    category="artifact_flow",
                     reason="portfolio_manager approved material 缺失",
                     evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
                     early_stop=True,

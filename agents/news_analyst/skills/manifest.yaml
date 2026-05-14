@@ -1,5 +1,13 @@
 skills:
   - path: claw-trade-stage/SKILL.md
+  - path: us-news-data/SKILL.md
+    skill_id: us-news-data
+    skill_version: 0.1.0
+    workers:
+      - news_analyst
+    tool_exports:
+      - get_news
+      - get_global_news
   - path: cn-a-news-data/SKILL.md
     skill_id: cn-a-news-data
     skill_version: 0.1.0

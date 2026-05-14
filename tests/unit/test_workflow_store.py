@@ -206,7 +206,6 @@ def test_t50_main_persistence_methods(tmp_path: Path) -> None:
         status="passed",
         final_report_path=store.run_dir(state.run_id) / "reports" / "final-report.md",
         export_guard_result_path=store.run_dir(state.run_id) / "reports" / "export-guard-results.json",
-        pm_owner_guard_result_path=None,
         unsupported_claims=(),
         failure=None,
     )

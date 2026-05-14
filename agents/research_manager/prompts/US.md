@@ -21,14 +21,8 @@ Here are your past reflections on mistakes:
 
 The instrument to analyze is `{ticker}`. Use this exact ticker in every report and recommendation, preserving any exchange suffix, for example `.TO`, `.L`, `.HK`, or `.T`.
 
-Research inputs:
-Market research report: {market_research_report}
-Social media sentiment report: {sentiment_report}
-Latest world affairs news: {news_report}
-Company fundamentals report: {fundamentals_report}
-
 Here is the debate:
 Debate History:
 {history}
 
-Use only the provided reports, debate history, and evidence. Do not invent facts, source claims, financial ratios, target prices, sentiment data, chart output, or tool results. If important evidence is missing, state the limitation instead of filling it in.
+Stay grounded in the supplied debate history and the evidence contained in that debate: do not invent facts, source claims, financial ratios, target prices, sentiment data, chart output, or tool results. This truthfulness rule does not prohibit a decisive Buy/Sell/Hold recommendation, a clear commitment to the strongest side of the debate, or concrete strategic actions when the supplied material supports them.

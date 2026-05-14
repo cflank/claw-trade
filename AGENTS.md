@@ -13,6 +13,8 @@ The highest product standard is:
 - Do not invent PE/PB/ROE, target prices, news, sentiment, filings, source claims, chart outputs, data sources, or tool success.
 - If charts or indicator analysis should exist but are missing, investigate root cause. Do not hide the missing evidence behind a guard, fallback, or vague warning.
 - TradingAgents parity is the primary product direction for prompts, workflow behavior, final-report structure, and reader-facing output.
+- For prompt wording, worker voice, debate style, trading recommendation framing, and final-report shape, TradingAgents / TradingAgents-CN parity outranks any unapproved preference for caution, compliance tone, memo style, or internal safety narration.
+- Truthfulness constraints are redlines only. They must not be expanded into self-invented bans on strong opinions, BUY/HOLD/SELL language, final propositions, target scenarios, risk framing, debate rhetoric, or analyst voice when those are evidence-supported and present in the baseline.
 
 ## 2. Independent Judgment Rule
 
@@ -320,6 +322,8 @@ Rules:
 - Python must not rewrite natural TradingAgents prompts into engineering checklists.
 - US prompts should align with original TradingAgents.
 - CN_A prompts should align with TradingAgents-CN.
+- Alignment means preserving the baseline worker's authority, tone, debate format, and allowed recommendation language. Codex must not replace the baseline with a safer-sounding, more compliant, more cautious, or more memo-like role unless the human explicitly approves that product change.
+- If the baseline permits a worker to make an evidence-supported trading recommendation, final proposition, valuation scenario, challenge, rebuttal, or decisive risk judgment, claw-trade must not prohibit it under a portfolio-manager authority, guardrail, or safety rationale. Portfolio-manager authority only means Python/exporters do not rewrite PM conclusions.
 - HK prompts require an explicit strategy and must not silently fall back to US or CN_A.
 - CRYPTO prompts require an explicit strategy and must not pretend crypto is an equity market.
 - If HK or CRYPTO prompt strategy is not explicitly approved, fail at runtime instead of auto-falling back to another market profile.
@@ -337,12 +341,17 @@ Rules:
 - The minimum evidence set for a migrated worker is: baseline source, real provider final prompt, LLM back or worker report, and a three-layer comparison tying those files to the same run/dispatch when available.
 - Provider final prompt evidence must come from provider payload capture. Static render output, exporter output, logs, or reconstructed prompt text are not proof of runtime prompt alignment.
 - Worker-visible prompt and handoff material must remain approved full natural-language report, debate, or decision material. JSON, debug payloads, audit envelopes, provider attempts, cache objects, refs, and machine protocol fields must not become the main worker-facing material.
+- US/original TradingAgents and CN_A/TradingAgents-CN have different model-visible material boundaries. Do not normalize one into the other. In particular, US `research_manager` must follow original TradingAgents by making the provider-visible decision prompt revolve around bull/bear debate history, while CN_A `research_manager` keeps the TradingAgents-CN boundary that directly includes comprehensive frontline reports plus debate history.
+- Runtime/audit `upstream_materials` may be broader than model-visible prompt variables. Do not treat audit refs, manifest coverage, or approved-material availability as permission to expose every upstream report to the LLM.
 - Do not put `RuntimeTarget`, `ReportSubmission`, OpenViking target blocks, URI/hash/receipt/L1/L2/manifest protocol text, JSON claim blocks, provider payload audit prose, or control-plane checklist language into worker profile prompts.
 - The same ban applies to the real provider payload. For `CN_A`/`US` report workers, model-visible messages must not contain runtime wrapper prose, prompt front matter, `[ApprovedMaterials]`, `material_id`, `capability`, URI/hash/L1/L2 text, or OpenViking/OpenClaw tool protocol text. These details may exist only in runtime command payloads, manifests, receipts, logs, or evidence files.
 - Prompt front matter is agent configuration only. It must be stripped before rendering provider-visible prompt text.
 - For downstream TradingAgents-CN / original TradingAgents workers whose baseline turn is pure LLM reasoning over upstream reports, the stage policy must expose no OpenViking read/write tools to the model. Python may pass already-approved full natural-language report bodies into CN/original prompt placeholders, and the runtime may save the returned LLM text after the turn, but the LLM must not be asked to read or write artifacts.
 - Keep role, report structure, reasoning task, and voice from TradingAgents-CN/original TradingAgents unless a claw-trade architecture boundary explicitly requires a minimal substitution.
 - Allowed prompt substitutions are limited to runtime variables, approved tool/material names, market/profile wording, and concise truthfulness constraints.
+- Concise truthfulness constraints must be phrased as factual redlines, not as style instructions. They may say not to fabricate unsupported facts or tool results; they must not tell the worker to become cautious, avoid decisive language, avoid strong debate, avoid supported recommendations, or write a limitation/compliance memo by default.
+- Debate workers must remain debate workers. Bull, bear, risk challenger, risk guardian, and risk moderator prompts must preserve strong role voice, direct rebuttal, final proposition / recommendation style, and the TradingAgents "debate room" feel when present in the baseline.
+- Any deviation that makes output more memo-like, more compliance-like, less decisive, less adversarial, or less like the baseline is a product change. It requires explicit human approval and must be documented with baseline evidence and provider-payload proof.
 - Prompt alignment is not proven by static tests alone. Runtime proof requires real provider final prompt plus LLM output/report comparison.
 
 ### 6.2 Guard And Prompt Boundary
@@ -356,7 +365,39 @@ Rules:
 - Allowed no-approval guard changes are limited to truthfulness redlines: fabricated facts, fake sources, fake news, unsupported PE/PB/ROE or target-price claims, unsupported sentiment claims, fake chart/tool success, missing required chart root cause, Python rewriting PM conclusions, and artifact/receipt/provider-payload integrity failures.
 - Evidence-supported analyst opinions, valuation frameworks, target-price scenarios, risk framing, and trading conditions are report content. They are not hard-gate failures solely because they sound like a research report.
 - If a proposed guard would make the output less like TradingAgents-CN/original TradingAgents in order to make tests pass, stop and ask.
+- Do not encode "be conservative", "avoid final recommendations", "do not provide final transaction proposals", "write only limitations", "use neutral memo language", or similar style constraints unless the baseline prompt says so or the human explicitly approved it. These are expression policies, not truthfulness guards.
+- A missing-data instruction must be narrow: say what evidence is missing and avoid fabricating it. It must not become a default order to write a limitation report when sufficient evidence exists.
 - Guard changes touching expression-sensitive terms must include an explicit approval note in the task/PR evidence and must be covered by a focused contract test that proves truthfulness redlines still fail while evidence-supported report language is not blocked.
+
+### 6.3 Runtime Guard Freeze
+
+Runtime guard/gate creation is frozen by default. This is a current project
+contract, not a memory preference.
+
+Rules:
+
+- Do not add, restore, or tighten runtime guard files, hard-gate categories,
+  early-stop categories, report-boundary validators, output-semantics validators,
+  claim dictionaries, or exporter rejection rules unless the source is proven
+  before editing.
+- Allowed sources are only:
+  - original TradingAgents / TradingAgents-CN baseline evidence;
+  - active project design text in this repository;
+  - explicit human approval for this exact gate/guard.
+- If output drift is about voice, role strength, memo-ness, caution, Hold/Buy/Sell
+  wording, trading-action phrasing, debate style, report structure, or PM natural
+  language decision wording, the fix path is prompt/material/workflow alignment
+  plus provider-payload proof. It is not a runtime gate.
+- A new or restored runtime guard must cite `Guard source:` in task evidence with
+  the baseline/design/approval reference. If that citation is missing, the change
+  is invalid even if tests pass.
+- The approved runtime guard file set and early-stop category set are locked by
+  `tests/contracts/test_guard_change_requires_approval.py`. Updating that
+  allowlist is itself human-approval work.
+- Specifically disallowed without explicit human approval: PM sidecar decision
+  requirements such as `pm-decision.json`; Hold/Buy/Sell action-semantics hard
+  gates; and any rule that rejects evidence-supported analyst language because it
+  is decisive, adversarial, non-memo-like, or less conservative.
 
 ## 7. Skill / Tool Policy
 
@@ -472,7 +513,7 @@ Allowed early-stop exceptions:
 
 - Provider/runtime/root alignment is untrustworthy and continuing would pollute evidence.
 - Continuing would expand an unknown bad state.
-- The failure involves data authenticity, architecture boundary, PM owner, Python rewrite of PM conclusion, or other human-approval boundary.
+- The failure involves data authenticity, architecture boundary, PM final decision authority, Python rewrite of PM conclusion, or other human-approval boundary.
 - There is destructive, data-loss, or security risk.
 
 Every test report for such batches must include:
@@ -548,7 +589,7 @@ Every sub-agent must:
 Stop and ask the human before proceeding if any task requires:
 
 - Changing OpenClaw source outside the approved generic runtime seam scope.
-- Changing PM owner.
+- Changing PM final decision authority.
 - Letting Python rewrite PM investment conclusion or rating.
 - Keeping or adding direct LLM report path.
 - Adding fallback prompt, fallback tool, fake provider result, or fake artifact success.

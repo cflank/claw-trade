@@ -1,5 +1,13 @@
 skills:
   - path: claw-trade-stage/SKILL.md
+  - path: us-market-data/SKILL.md
+    skill_id: us-market-data
+    skill_version: 0.1.0
+    workers:
+      - market_analyst
+    tool_exports:
+      - get_stock_data
+      - get_indicators
   - path: cn-a-market-data/SKILL.md
     skill_id: cn-a-market-data
     skill_version: 0.1.0

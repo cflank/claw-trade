@@ -32,13 +32,6 @@ def validate_l1_l2_contract(
             reason="L1 正文包含手拼 control.claims.v1 机器块，必须改为 material-claims.json",
             paths=_l1_paths(call),
         )
-    if _has_schema_in_fenced_json(l1_text, "control.pm_decision.v1"):
-        return (), guard_failed(
-            category="l1_l2",
-            reason="L1 正文包含手拼 control.pm_decision.v1 机器块，必须改为 pm-decision.json",
-            paths=_l1_paths(call),
-        )
-
     # 只信工具落盘后的结构化证据文件，禁止从 L1 正文抽取或猜测 claims。
     material_claims, claims_guard = require_material_claims_evidence(call=call)
     if not claims_guard.ok or material_claims is None:

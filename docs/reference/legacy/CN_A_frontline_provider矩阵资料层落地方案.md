@@ -127,7 +127,7 @@ MongoDB 中存在记录，不代表材料已批准；OpenViking 中存在材料�
 
 不可直接接入为权威：
 
-- `alphaear-reporter`：会冲突报告链路和 PM owner。
+- `alphaear-reporter`：会冲突报告链路和 PM final authority。
 - `alphaear-predictor`：会引入难以 hard gate 的预测结论。
 - worker 自由挂多个 alphaear skill：会回到“单 worker 自己拿工具并直接回答”的模式。
 
@@ -852,7 +852,7 @@ capture:
 | MongoDB 不可用 | 缓存失效、重复请求 | 记录 cache_unavailable，允许远端尝试 |
 | OpenViking L2 写失败 | 证据不可审计 | 降级 quality，关键证据失败则 failed |
 | worker 看到太多工具 | 行为漂移 | 只暴露资料包工具 |
-| alphaear 直接接管报告 | PM owner 冲突 | 禁止接 alphaear-reporter |
+| alphaear 直接接管报告 | PM final authority 冲突 | 禁止接 alphaear-reporter |
 | Tushare 权限不足或配额耗尽 | 基本面字段缺口 | 显式失败并启用备源；不得默认关闭或伪装成功 |
 | 搜索 API 返回摘要不可靠 | 新闻/舆情误判 | 保留原始链接、匹配片段、provider payload |
 

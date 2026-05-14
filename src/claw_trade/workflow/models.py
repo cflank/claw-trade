@@ -260,7 +260,6 @@ class ExportResult:
     status: str
     final_report_path: Path | None
     export_guard_result_path: Path | None
-    pm_owner_guard_result_path: Path | None
     unsupported_claims: tuple[str, ...]
     failure: FailureRecord | None
 
@@ -271,7 +270,6 @@ class ExportResult:
             status="passed",
             final_report_path=final_report_path,
             export_guard_result_path=guard_path,
-            pm_owner_guard_result_path=None,
             unsupported_claims=(),
             failure=None,
         )
@@ -290,7 +288,6 @@ class ExportResult:
             status="failed",
             final_report_path=None,
             export_guard_result_path=None,
-            pm_owner_guard_result_path=None,
             unsupported_claims=unsupported_claims,
             failure=FailureRecord(
                 run_id=state.run_id,

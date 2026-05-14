@@ -18,9 +18,7 @@ from claw_trade.guards.export_claims import (
     ExportClaimMapping,
     validate_export_claims_are_supported,
     validate_export_mapping_identity,
-    validate_export_pm_fields,
 )
-from claw_trade.guards.pm_owner import PMDecision, load_pm_decision_for_material, pm_decision_required_for_profile
 from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids
 
@@ -61,7 +59,6 @@ class ReportMaterialsResult:
     ok: bool
     materials: tuple[ApprovedMaterial, ...]
     report_materials: tuple[ReportMaterial, ...]
-    pm_decision: PMDecision | None
     category: str | None
     reason: str | None
     paths: tuple[Path, ...]
@@ -72,13 +69,11 @@ class ReportMaterialsResult:
         *,
         materials: tuple[ApprovedMaterial, ...],
         report_materials: tuple[ReportMaterial, ...],
-        pm_decision: PMDecision | None,
     ) -> ReportMaterialsResult:
         return cls(
             ok=True,
             materials=materials,
             report_materials=report_materials,
-            pm_decision=pm_decision,
             category=None,
             reason=None,
             paths=(),
@@ -96,7 +91,6 @@ class ReportMaterialsResult:
             ok=False,
             materials=(),
             report_materials=(),
-            pm_decision=None,
             category=category,
             reason=reason,
             paths=paths,
@@ -174,24 +168,13 @@ def load_report_materials(
             reason="缺少 portfolio_manager approved material",
             paths=(state.run_dir / "openviking" / "approved-manifest.json",),
         )
-    pm_material = pm_materials[-1]
-    require_pm_decision = pm_decision_required_for_profile(state.request.profile)
-    pm_decision, pm_guard = load_pm_decision_for_material(pm_material, required=require_pm_decision)
-    if not pm_guard.ok:
-        return ReportMaterialsResult.failed(
-            category=pm_guard.category,
-            reason=pm_guard.reason or "PM decision block 校验失败",
-            paths=pm_guard.paths or (pm_material.hard_gate_result_path,),
-        )
     return ReportMaterialsResult.passed(
         materials=ordered_materials,
         report_materials=tuple(report_materials),
-        pm_decision=pm_decision,
     )
 
 def render_final_report(
     materials: tuple[ApprovedMaterial, ...],
-    pm_decision: PMDecision | None,
     *,
     report_materials: tuple[ReportMaterial, ...] = (),
     pm_report_text: str | None = None,
@@ -204,8 +187,6 @@ def render_final_report(
         for material in ordered_materials:
             for claim in material.l1_claims:
                 claim_links.append(_claim_link_from_material(material, claim))
-        if pm_decision is not None:
-            claim_links.extend(_pm_claim_links(pm_decision=pm_decision, materials=ordered_materials))
         return RenderedReport(text=polisher_text + "\n", claim_links=tuple(claim_links))
 
     lines: list[str] = ["# 最终投资报告", ""]
@@ -233,51 +214,35 @@ def render_final_report(
             for claim in material.l1_claims:
                 claim_links.append(_claim_link_from_material(material, claim))
 
-    if pm_decision is not None:
-        claim_links.extend(_pm_claim_links(pm_decision=pm_decision, materials=ordered_materials))
     return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=tuple(claim_links))
 
 
 def build_export_claim_mapping(
     rendered: RenderedReport,
     materials: tuple[ApprovedMaterial, ...],
-    pm_decision: PMDecision | None,
 ) -> ExportClaimMapping:
     if not materials:
         raise ValueError("build_export_claim_mapping 需要非空 materials")
     # 这里仅使用渲染阶段显式携带的 claim link，禁止从 final report 自然语言反向猜测 claim。
     deduped_claims = _dedupe_claim_links(rendered.claim_links)
-    pm_payload: dict[str, object] | None = None
-    if pm_decision is not None:
-        pm_payload = {
-            "source_material_id": pm_decision.material_id,
-            "rating": pm_decision.rating,
-            "final_conclusion": pm_decision.final_conclusion,
-            "execution_conditions": list(pm_decision.execution_conditions),
-            "risk_conditions": list(pm_decision.risk_conditions),
-        }
 
     return ExportClaimMapping(
         schema_version=EXPORT_CLAIM_SCHEMA_VERSION,
         run_id=materials[0].run_id,
         final_report_path="reports/final-report.md",
         claims=deduped_claims,
-        pm_decision=pm_payload,
     )
 
 
 def run_export_guards(
     mapping: ExportClaimMapping,
     materials: tuple[ApprovedMaterial, ...],
-    pm_decision: PMDecision | None,
     state: WorkflowState | None = None,
 ) -> GuardResult:
     checks: list[GuardResult] = []
     if state is not None:
         checks.append(validate_export_mapping_identity(mapping, state))
     checks.append(validate_export_claims_are_supported(mapping, materials))
-    # PM owner 防线：export 只允许复述 PM 结构化决策，不允许改写关键字段。
-    checks.append(validate_export_pm_fields(mapping, pm_decision))
     return combine_guard_results(tuple(checks))
 
 
@@ -354,7 +319,6 @@ def export_final_report(
         )
     rendered = render_final_report(
         materials=loaded.materials,
-        pm_decision=loaded.pm_decision,
         report_materials=loaded.report_materials,
         pm_report_text=_pm_report_text(loaded.report_materials),
     )
@@ -374,9 +338,8 @@ def export_final_report(
     mapping = build_export_claim_mapping(
         rendered=rendered,
         materials=loaded.materials,
-        pm_decision=loaded.pm_decision,
     )
-    guard = run_export_guards(mapping=mapping, materials=loaded.materials, pm_decision=loaded.pm_decision, state=state)
+    guard = run_export_guards(mapping=mapping, materials=loaded.materials, state=state)
     return persist_export_outputs(
         state=state,
         rendered=rendered,
@@ -467,48 +430,6 @@ def _claim_link_from_material(material: ApprovedMaterial, claim: L1Claim) -> Exp
         source_claim_ids=(claim.claim_id,),
         source_l1_sha256=(material.l1_sha256,),
     )
-
-
-def _pm_claim_links(pm_decision: PMDecision, materials: tuple[ApprovedMaterial, ...]) -> tuple[ExportClaim, ...]:
-    pm_material = next(material for material in materials if material.material_id == pm_decision.material_id)
-    shared_sources = {
-        "source_material_ids": (pm_material.material_id,),
-        "source_claim_ids": pm_decision.source_claim_ids,
-        "source_l1_sha256": (pm_decision.source_l1_sha256,),
-    }
-    claims: list[ExportClaim] = [
-        ExportClaim(
-            export_claim_id="export-claim-pm-rating",
-            text=pm_decision.rating,
-            kind="rating",
-            **shared_sources,
-        ),
-        ExportClaim(
-            export_claim_id="export-claim-pm-final-conclusion",
-            text=pm_decision.final_conclusion,
-            kind="other",
-            **shared_sources,
-        ),
-    ]
-    for index, condition in enumerate(pm_decision.execution_conditions, start=1):
-        claims.append(
-            ExportClaim(
-                export_claim_id=f"export-claim-pm-execution-{index}",
-                text=condition,
-                kind="trade_action",
-                **shared_sources,
-            )
-        )
-    for index, condition in enumerate(pm_decision.risk_conditions, start=1):
-        claims.append(
-            ExportClaim(
-                export_claim_id=f"export-claim-pm-risk-{index}",
-                text=condition,
-                kind="risk_condition",
-                **shared_sources,
-            )
-        )
-    return tuple(claims)
 
 
 def _dedupe_claim_links(claims: tuple[ExportClaim, ...]) -> tuple[ExportClaim, ...]:
@@ -608,6 +529,10 @@ def _attach_image_assets_to_technical_indicator_section(report_text: str, image_
         "\n## 二、技术指标分析\n",
         "\n## 技术指标分析\n",
         "\n### 技术指标分析\n",
+        "\n## 2. Technical Market Analysis\n",
+        "\n### 2. Technical Market Analysis\n",
+        "\n## Technical Market Analysis\n",
+        "\n### Technical Market Analysis\n",
         "\n## Technical Indicator Analysis\n",
         "\n### Technical Indicator Analysis\n",
     )

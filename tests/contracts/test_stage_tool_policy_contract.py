@@ -50,7 +50,11 @@ def test_market_data_intent_resolves_to_provider_visible_mcp_tools(
     policy_result = load_stage_policy(agents_root, "market_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    assert "market_market_data_pack" in tools
+    expected_tools = ("get_stock_data", "get_indicators") if profile == "US" else ("market_market_data_pack",)
+    unexpected_tools = ("market_market_data_pack", "us_market_data_pack") if profile == "US" else ("get_stock_data", "get_indicators")
+    assert tools == expected_tools
+    for unexpected_tool in unexpected_tools:
+        assert unexpected_tool not in tools
     assert "market.stock_price" not in tools
     assert "market.techlab_analyze" not in tools
     assert "openviking_write_material" not in tools
@@ -82,7 +86,11 @@ def test_news_analyst_must_include_company_and_macro_news(agents_root: Path, pro
     policy_result = load_stage_policy(agents_root, "news_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    assert "news_news_data_pack" in tools
+    expected_tools = ("get_news", "get_global_news") if profile == "US" else ("news_news_data_pack",)
+    unexpected_tools = ("news_news_data_pack", "us_news_data_pack") if profile == "US" else ("get_news", "get_global_news")
+    assert tools == expected_tools
+    for unexpected_tool in unexpected_tools:
+        assert unexpected_tool not in tools
 
 
 def test_unknown_openviking_access_fails() -> None:
@@ -93,7 +101,7 @@ def test_unknown_openviking_access_fails() -> None:
         worker_id="market_analyst",
         stage=Stage.FRONTLINE,
         profile="US",
-        tool_intents=("market_data",),
+        tool_intents=("cn_a_market_data",),
         openviking_access="unknown",
         source_path=Path("agents/market_analyst/STAGES.yaml"),
     )
@@ -133,12 +141,12 @@ def test_empty_intents_are_allowed_for_pure_prompt_workers() -> None:
 
 
 def test_missing_openviking_tool_mapping_fails() -> None:
-    registry = ToolRegistry({"market_data": ("market_data",)})
+    registry = ToolRegistry({"cn_a_market_data": ("market_data",)})
     policy = StagePolicy(
         worker_id="market_analyst",
         stage=Stage.FRONTLINE,
         profile="US",
-        tool_intents=("market_data",),
+        tool_intents=("cn_a_market_data",),
         openviking_access="write",
         source_path=Path("agents/market_analyst/STAGES.yaml"),
     )

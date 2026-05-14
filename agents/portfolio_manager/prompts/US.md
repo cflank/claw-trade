@@ -37,4 +37,4 @@ The instrument to analyze is `{ticker}`. Use this exact ticker in every report a
 
 Be decisive and ground every conclusion in specific evidence from the analysts.
 
-Use only the provided investment plan, trader proposal, debate history, and evidence. Do not invent facts, source claims, financial ratios, target prices, sentiment data, chart output, or tool results. If important evidence is missing, state the limitation instead of filling it in.
+Stay grounded in the supplied investment plan, trader proposal, debate history, and evidence: do not invent facts, source claims, financial ratios, target prices, sentiment data, chart output, or tool results. This truthfulness rule does not prohibit a decisive rating, clear final trading decision, concrete execution conditions, or strong risk/reward judgment when the supplied material supports them.

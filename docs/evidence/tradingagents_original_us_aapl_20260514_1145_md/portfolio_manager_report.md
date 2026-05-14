@@ -1,0 +1,21 @@
+**1. Rating**: Overweight
+
+**2. Executive Summary**:
+- **Entry Strategy**: Immediately initiate a 25% position at current levels (~$299). Set a GTC limit order to add 25% at $287 (10 EMA zone) and another 25% at $281.60 (VWMA zone). The final 25% will be deployed only if the stock breaks above $305 on strong volume, adding at $305-310 with a $295 stop.
+- **Position Sizing**: Maximum total exposure of 60% of intended full position initially, scaling up to 100% only if catalysts confirm. For existing positions, tighten stops to $278 (1.5x ATR below 10 EMA) to protect gains while allowing the trend to run.
+- **Key Risk Levels**: Hard stop at $260 (plan’s sell trigger). If the China summit yields no concrete outcomes by May 15, reduce to 50% exposure. If WWDC AI announcements disappoint in June, exit entirely.
+- **Time Horizon**: 3-6 months. First catalyst window: China summit (2-3 weeks). Second catalyst window: WWDC (June). Full thesis resolution by Q3 2025.
+
+**3. Investment Thesis**:
+
+**The Aggressive Analyst’s edge I am adopting**: The structural setup is materially different from historical RSI extremes. Tim Cook’s presence at a Trump-Xi summit, combined with Foxconn’s beat (AI server rack doubling) and Dan Ives’ $400 target, creates a catalyst cluster that extends overbought conditions. The 85% bullish social sentiment is a short-term caution, but the MACD histogram at +2.07 shows no divergence—momentum is still accelerating, not maturing. The 5.5:1 reward-to-risk the Aggressive Analyst calculates (40% rally probability vs. 30% pullback) is directionally correct, though I weight the rally probability lower at 35%.
+
+**The Conservative Analyst’s risk I am respecting**: The valuation math is unforgiving—2.58 PEG on 4% revenue deceleration with RSI at 76 for four consecutive days. The 65% mean reversion probability within 10 days when price rides the upper Bollinger Band ($299.67 vs. price at $298.87) is a real edge that demands position scaling, not full commitment. The Conservative Analyst correctly identifies that the $400 target is a 12-month view, not a 3-week sprint. I respect this by capping initial exposure at 25% and requiring a $287-281.60 pullback for full deployment.
+
+**The Neutral Analyst’s synthesis I am executing**: The moderate path—partial entry with clear scaling levels—solves the false binary between “buy aggressively” and “hold completely.” The VWMA at $281.60 is fair value anchor; the 10 EMA at $287.78 is the first technical re-entry zone. The 3:1 upside-to-downside ratio (33% to $400 vs. 11% to $264 50 SMA) favors a modest long bias, not a flat hold. The Neutral Analyst’s key insight: “stop at $287 on a $299 entry” is a guaranteed whipsaw loss, as the ATR of $6.29 produces daily swings of 2.1%. My $278 stop (1.5x ATR below 10 EMA) avoids this trap.
+
+**Why Overweight, not Buy**: I concur with the Trader’s assessment that forcing a full Buy at $299 ignores the 50% probability of consolidation. However, the 2:1 payout ratio in the bull’s favor (33% upside vs. 17% downside per the plan) and the unique catalyst sequence (China summit + WWDC + Foxconn momentum) justify a gradual, rules-based entry rather than the plan’s passive Hold. The trader’s “Buy trigger at $265-275” is too conservative—waiting that long risks missing the catalyst move entirely.
+
+**My divergence from the plan**: The plan recommends “reduce position by 20-30%” for existing longs and “do not initiate” for new positions. I reject both. Selling into a structurally supported rally with no bearish divergence sacrifices compounding. Instead, tighten stops for existing positions and use the dip levels ($287, $281.60) to build a measured long. This captures the Aggressive Analyst’s upside while honoring the Conservative Analyst’s statistical probability of mean reversion.
+
+**Final conviction**: The market is pricing a 3:1 asymmetric payoff skewed to the upside, supported by a real catalyst sequence that historical RSI data cannot fully capture. The disciplined response is to get positioned now at small size, scale aggressively on dips, and let the China summit and WWDC resolve the uncertainty. The biggest risk is not a 5-7% pullback—it is being on the sidelines when the catalysts hit.
