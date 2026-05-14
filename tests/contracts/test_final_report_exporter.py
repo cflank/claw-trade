@@ -9,6 +9,7 @@ from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Inde
 from claw_trade.guards.export_claims import ExportClaim, ExportClaimMapping, parse_export_claim_mapping
 from claw_trade.reports.exporter import (
     build_export_claim_mapping,
+    build_worker_appendices,
     export_final_report,
     load_report_materials,
     render_final_report,
@@ -119,9 +120,56 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     copied_asset = state.run_dir / "reports" / "assets" / "market-01-market-structure.png"
     assert copied_asset.exists()
     assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\nreport-asset-pass"
+    appendix_dir = state.run_dir / "reports" / "worker-appendix"
+    assert (appendix_dir / "index.md").exists()
+    assert (appendix_dir / "01-market_analyst.md").exists()
+    assert (appendix_dir / "12-portfolio_manager.md").exists()
+    assert "技术面结论：量价结构改善" in (appendix_dir / "01-market_analyst.md").read_text(encoding="utf-8")
+    assert "`market_analyst`" in (appendix_dir / "index.md").read_text(encoding="utf-8")
     assert not source_chart.exists()
     # export-result.json 由 runner/store 写，exporter 不双写。
     assert not (state.run_dir / "reports" / "export-result.json").exists()
+
+
+def test_render_final_report_keeps_reader_report_clean_when_polisher_exists(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-clean-reader-report")
+    manifest, reader = _build_manifest_and_reader(state)
+    loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
+    assert loaded.ok
+
+    rendered = render_final_report(
+        materials=loaded.materials,
+        report_materials=loaded.report_materials,
+    )
+
+    assert rendered.text.startswith("# 贵州茅台（600519）投资研究报告\n")
+    assert "组合经理最终裁决：维持审慎增持" in rendered.text
+    assert "## 最终裁决 / 最终投资决策" not in rendered.text
+    assert "## 读者版最终报告" not in rendered.text
+    assert "## 图表与技术面分析" not in rendered.text
+    assert "## 风险辩论（挑战方）" not in rendered.text
+
+    claim_ids = {claim.export_claim_id for claim in rendered.claim_links}
+    assert "export-claim-report_polisher-t00-claim-report_polisher" in claim_ids
+    assert "export-claim-market_analyst-t00-claim-market_analyst" in claim_ids
+
+
+def test_worker_appendices_preserve_raw_worker_sections_when_polisher_exists(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-worker-appendices")
+    manifest, reader = _build_manifest_and_reader(state)
+    loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
+    assert loaded.ok
+
+    appendices = build_worker_appendices(
+        materials=loaded.materials,
+        report_materials=loaded.report_materials,
+    )
+
+    assert len(appendices) == 12
+    assert appendices[0].relative_path.as_posix() == "worker-appendix/01-market_analyst.md"
+    assert appendices[-1].relative_path.as_posix() == "worker-appendix/12-portfolio_manager.md"
+    assert "技术面结论：量价结构改善，趋势仍需成交量确认。" in appendices[0].text
+    assert "组合经理最终裁决：维持审慎增持" in appendices[-1].text
 
 
 def test_export_final_report_places_us_chart_assets_in_technical_market_analysis(tmp_path: Path) -> None:

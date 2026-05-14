@@ -104,6 +104,14 @@ class RenderedReport:
 
 
 @dataclass(frozen=True)
+class WorkerAppendix:
+    material: ApprovedMaterial
+    relative_path: Path
+    title: str
+    text: str
+
+
+@dataclass(frozen=True)
 class ReportImageAsset:
     source_path: Path
     relative_path: Path
@@ -181,13 +189,10 @@ def render_final_report(
 ) -> RenderedReport:
     ordered_materials = _ordered_materials(materials)
     report_text_by_material_id = _report_text_by_material_id(report_materials)
-    claim_links: list[ExportClaim] = []
+    claim_links = _claim_links_from_materials(ordered_materials)
     polisher_text = _latest_report_text(report_materials, _REPORT_POLISHER_WORKER_ID).strip()
     if polisher_text:
-        for material in ordered_materials:
-            for claim in material.l1_claims:
-                claim_links.append(_claim_link_from_material(material, claim))
-        return RenderedReport(text=polisher_text + "\n", claim_links=tuple(claim_links))
+        return RenderedReport(text=polisher_text + "\n", claim_links=claim_links)
 
     lines: list[str] = ["# 最终投资报告", ""]
     pm_text = _latest_report_text(report_materials, _PM_WORKER_ID)
@@ -201,20 +206,39 @@ def render_final_report(
     )
 
     for material in ordered_materials:
-        if material.worker_id == _PM_WORKER_ID:
-            if material.l1_claims:
-                for claim in material.l1_claims:
-                    claim_links.append(_claim_link_from_material(material, claim))
+        if material.worker_id in {_PM_WORKER_ID, _REPORT_POLISHER_WORKER_ID}:
             continue
         lines.append("")
         lines.append(f"## {_section_title(material)}")
         section_text = report_text_by_material_id.get(material.material_id, "").strip()
         lines.append(section_text or "（报告原文缺失）")
-        if material.l1_claims:
-            for claim in material.l1_claims:
-                claim_links.append(_claim_link_from_material(material, claim))
 
-    return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=tuple(claim_links))
+    return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=claim_links)
+
+
+def build_worker_appendices(
+    materials: tuple[ApprovedMaterial, ...],
+    *,
+    report_materials: tuple[ReportMaterial, ...] = (),
+) -> tuple[WorkerAppendix, ...]:
+    report_text_by_material_id = _report_text_by_material_id(report_materials)
+    appendix_materials = tuple(
+        material for material in _ordered_materials(materials) if material.worker_id != _REPORT_POLISHER_WORKER_ID
+    )
+    appendices: list[WorkerAppendix] = []
+    for index, material in enumerate(appendix_materials, start=1):
+        title = _section_title(material)
+        section_text = report_text_by_material_id.get(material.material_id, "").strip() or "（报告原文缺失）"
+        file_name = f"{index:02d}-{_safe_filename_token(material.worker_id)}.md"
+        appendices.append(
+            WorkerAppendix(
+                material=material,
+                relative_path=Path("worker-appendix") / file_name,
+                title=title,
+                text=f"# {title}\n\n{section_text}\n",
+            )
+        )
+    return tuple(appendices)
 
 
 def build_export_claim_mapping(
@@ -250,6 +274,7 @@ def persist_export_outputs(
     state: WorkflowState,
     rendered: RenderedReport,
     image_assets: tuple[ReportImageAsset, ...],
+    worker_appendices: tuple[WorkerAppendix, ...],
     mapping: ExportClaimMapping,
     guard: GuardResult,
     chart_cleanup: Callable[[WorkflowState, tuple[ReportImageAsset, ...]], _CopyResult] | None = None,
@@ -270,10 +295,18 @@ def persist_export_outputs(
         )
 
     final_report_path.write_text(rendered.text, encoding="utf-8")
+    appendix_result = _write_worker_appendices(reports_dir=reports_dir, appendices=worker_appendices)
+    if not appendix_result.ok:
+        return ExportResult.failed(
+            state=state,
+            category=appendix_result.category or "export_worker_appendix",
+            reason=appendix_result.reason or "worker 原文附录写入失败",
+            paths=appendix_result.paths or (reports_dir / "worker-appendix",),
+        )
     _write_json(mapping_path, mapping)
     _write_json(guard_path, guard)
 
-    fail_paths: list[Path] = [final_report_path, mapping_path, guard_path]
+    fail_paths: list[Path] = [final_report_path, mapping_path, guard_path, *appendix_result.paths]
     for path in guard.paths:
         if path not in fail_paths:
             fail_paths.append(path)
@@ -322,6 +355,10 @@ def export_final_report(
         report_materials=loaded.report_materials,
         pm_report_text=_pm_report_text(loaded.report_materials),
     )
+    worker_appendices = build_worker_appendices(
+        materials=loaded.materials,
+        report_materials=loaded.report_materials,
+    )
     image_assets = _collect_report_image_assets(
         state=state,
         materials=loaded.materials,
@@ -344,6 +381,7 @@ def export_final_report(
         state=state,
         rendered=rendered,
         image_assets=image_assets,
+        worker_appendices=worker_appendices,
         mapping=mapping,
         guard=guard,
         chart_cleanup=chart_cleanup,
@@ -432,6 +470,14 @@ def _claim_link_from_material(material: ApprovedMaterial, claim: L1Claim) -> Exp
     )
 
 
+def _claim_links_from_materials(materials: tuple[ApprovedMaterial, ...]) -> tuple[ExportClaim, ...]:
+    return tuple(
+        _claim_link_from_material(material, claim)
+        for material in materials
+        for claim in material.l1_claims
+    )
+
+
 def _dedupe_claim_links(claims: tuple[ExportClaim, ...]) -> tuple[ExportClaim, ...]:
     seen: set[tuple[Any, ...]] = set()
     out: list[ExportClaim] = []
@@ -461,6 +507,47 @@ def _normalize_export_claim_kind(kind: str) -> str:
 
 def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(_to_jsonable(payload), ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_worker_appendices(*, reports_dir: Path, appendices: tuple[WorkerAppendix, ...]) -> _CopyResult:
+    appendix_dir = reports_dir / "worker-appendix"
+    written_paths: list[Path] = []
+    try:
+        if appendix_dir.exists():
+            shutil.rmtree(appendix_dir)
+        appendix_dir.mkdir(parents=True, exist_ok=True)
+        for appendix in appendices:
+            path = reports_dir / appendix.relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(appendix.text, encoding="utf-8")
+            written_paths.append(path)
+        index_path = appendix_dir / "index.md"
+        index_path.write_text(_render_worker_appendix_index(appendices), encoding="utf-8")
+        written_paths.append(index_path)
+    except OSError as exc:
+        return _CopyResult(
+            ok=False,
+            category="export_worker_appendix",
+            reason=f"worker 原文附录写入失败: {exc}",
+            paths=tuple(written_paths + [appendix_dir]),
+        )
+    return _CopyResult(ok=True, paths=tuple(written_paths))
+
+
+def _render_worker_appendix_index(appendices: tuple[WorkerAppendix, ...]) -> str:
+    lines = [
+        "# Worker 原文附录索引",
+        "",
+        "| order | worker | stage | section | file | chars |",
+        "|---:|---|---|---|---|---:|",
+    ]
+    for index, appendix in enumerate(appendices, start=1):
+        file_name = appendix.relative_path.name
+        lines.append(
+            f"| {index} | `{appendix.material.worker_id}` | `{appendix.material.stage.value}` | "
+            f"{appendix.title} | [{file_name}]({file_name}) | {len(appendix.text)} |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 @dataclass(frozen=True)
@@ -536,11 +623,14 @@ def _attach_image_assets_to_technical_indicator_section(report_text: str, image_
         "\n## Technical Indicator Analysis\n",
         "\n### Technical Indicator Analysis\n",
     )
-    for marker in heading_markers:
-        if marker in report_text:
-            before_heading, _, after_heading = report_text.partition(marker)
-            heading = marker.strip()
-            return f"{before_heading.rstrip()}\n\n{heading}\n\n{image_block}\n\n{after_heading.lstrip()}"
+    marker_positions = ((report_text.find(marker), marker) for marker in heading_markers)
+    matches = [(position, marker) for position, marker in marker_positions if position >= 0]
+    if matches:
+        position, marker = min(matches, key=lambda item: item[0])
+        before_heading = report_text[:position]
+        after_heading = report_text[position + len(marker) :]
+        heading = marker.strip()
+        return f"{before_heading.rstrip()}\n\n{heading}\n\n{image_block}\n\n{after_heading.lstrip()}"
     return report_text
 
 

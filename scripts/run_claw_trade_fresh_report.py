@@ -43,6 +43,8 @@ class WorkerExport:
     stage: str
     status: str
     final_prompt_path: str
+    provider_prompt_initial_path: str
+    provider_prompt_final_path: str
     llm_back_path: str
     report_path: str
     final_prompt_chars: int
@@ -57,6 +59,17 @@ def safe_token(value: str) -> str:
 
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict):
+            entries.append(payload)
+    return entries
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -90,6 +103,29 @@ def response_text(value: Any) -> str:
     return str(value)
 
 
+def format_tool_calls(message: dict[str, Any]) -> str:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return ""
+
+    lines = ["### tool_calls"]
+    for index, tool_call in enumerate(tool_calls, 1):
+        if not isinstance(tool_call, dict):
+            lines.append(f"- call {index}: {tool_call}")
+            continue
+        function = tool_call.get("function")
+        if isinstance(function, dict):
+            name = function.get("name") or tool_call.get("name") or "unknown"
+            arguments = function.get("arguments")
+        else:
+            name = tool_call.get("name") or "unknown"
+            arguments = tool_call.get("arguments")
+        lines.append(f"- call {index}: `{name}`")
+        if arguments is not None:
+            lines.append(f"  args: `{arguments}`")
+    return "\n".join(lines)
+
+
 def extract_final_prompt_text(provider_request_payload: dict[str, Any]) -> str:
     payload = provider_request_payload.get("payload")
     if not isinstance(payload, dict):
@@ -102,10 +138,26 @@ def extract_final_prompt_text(provider_request_payload: dict[str, Any]) -> str:
         if not isinstance(message, dict):
             continue
         role = str(message.get("role") or f"message_{index}")
+        content_parts: list[str] = []
         content = response_text(message.get("content"))
         if content:
-            parts.append(f"## message {index}: {role}\n\n{content}")
+            content_parts.append(content)
+        tool_call_text = format_tool_calls(message)
+        if tool_call_text:
+            content_parts.append(tool_call_text)
+        if content_parts:
+            parts.append(f"## message {index}: {role}\n\n" + "\n\n".join(content_parts))
     return "\n\n".join(parts).strip()
+
+
+def provider_request_payloads_for_export(call_dir: Path, provider_request_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    requests_jsonl = call_dir / "provider-requests.jsonl"
+    if requests_jsonl.exists():
+        entries = read_jsonl(requests_jsonl)
+        if entries:
+            return entries[0], entries[-1]
+    payload = read_json(provider_request_path)
+    return payload, payload
 
 
 def call_dirs_for_run(run_dir: Path) -> list[Path]:
@@ -142,15 +194,24 @@ def export_worker_evidence(call_dir: Path, output_dir: Path) -> WorkerExport:
     if raw_output_path is None or not raw_output_path.exists():
         raise RuntimeError(f"{worker_id}: raw output missing: {raw_output_path}")
 
-    final_prompt = extract_final_prompt_text(read_json(provider_request_path))
+    initial_provider_request, final_provider_request = provider_request_payloads_for_export(
+        call_dir,
+        provider_request_path,
+    )
+    initial_prompt = extract_final_prompt_text(initial_provider_request)
+    final_prompt = extract_final_prompt_text(final_provider_request)
     raw_output = raw_output_path.read_text(encoding="utf-8")
 
     prefix = safe_token(worker_id)
     final_prompt_out = output_dir / f"{prefix}_final_prompt.md"
+    provider_prompt_initial_out = output_dir / f"{prefix}_provider_prompt_initial.md"
+    provider_prompt_final_out = output_dir / f"{prefix}_provider_prompt_final.md"
     llm_back_out = output_dir / f"{prefix}_llm_back.md"
     report_out = output_dir / f"{prefix}_report.md"
 
     final_prompt_out.write_text(final_prompt + "\n", encoding="utf-8")
+    provider_prompt_initial_out.write_text(initial_prompt + "\n", encoding="utf-8")
+    provider_prompt_final_out.write_text(final_prompt + "\n", encoding="utf-8")
     llm_back_out.write_text(raw_output, encoding="utf-8")
     report_out.write_text(raw_output, encoding="utf-8")
 
@@ -159,6 +220,8 @@ def export_worker_evidence(call_dir: Path, output_dir: Path) -> WorkerExport:
         stage=stage,
         status=status,
         final_prompt_path=final_prompt_out.name,
+        provider_prompt_initial_path=provider_prompt_initial_out.name,
+        provider_prompt_final_path=provider_prompt_final_out.name,
         llm_back_path=llm_back_out.name,
         report_path=report_out.name,
         final_prompt_chars=len(final_prompt),
@@ -168,7 +231,7 @@ def export_worker_evidence(call_dir: Path, output_dir: Path) -> WorkerExport:
     )
 
 
-def copy_final_report(run_dir: Path, output_dir: Path) -> tuple[Path, int, int]:
+def copy_final_report(run_dir: Path, output_dir: Path) -> tuple[Path, int, int, int]:
     report_path = run_dir / "reports" / "final-report.md"
     if not report_path.exists():
         raise RuntimeError(f"final report missing: {report_path}")
@@ -184,13 +247,25 @@ def copy_final_report(run_dir: Path, output_dir: Path) -> tuple[Path, int, int]:
             shutil.rmtree(target_assets)
         shutil.copytree(assets_dir, target_assets)
         asset_count = sum(1 for path in target_assets.rglob("*") if path.is_file())
-    return target, len(report_text), asset_count
+
+    appendix_count = 0
+    appendix_dir = run_dir / "reports" / "worker-appendix"
+    if appendix_dir.exists():
+        target_appendix = output_dir / "worker-appendix"
+        if target_appendix.exists():
+            shutil.rmtree(target_appendix)
+        shutil.copytree(appendix_dir, target_appendix)
+        appendix_count = sum(1 for path in target_appendix.rglob("*") if path.is_file())
+    return target, len(report_text), asset_count, appendix_count
 
 
 def export_run_evidence(run_dir: Path, output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=False)
     worker_exports = [export_worker_evidence(call_dir, output_dir) for call_dir in ordered_call_dirs(run_dir)]
-    final_report_path, final_report_chars, final_report_asset_count = copy_final_report(run_dir, output_dir)
+    final_report_path, final_report_chars, final_report_asset_count, worker_appendix_count = copy_final_report(
+        run_dir,
+        output_dir,
+    )
     for relative in ("request.json", "state.json"):
         source = run_dir / relative
         if source.exists():
@@ -206,11 +281,14 @@ def export_run_evidence(run_dir: Path, output_dir: Path) -> dict[str, Any]:
             "path": final_report_path.name,
             "chars": final_report_chars,
             "asset_count": final_report_asset_count,
+            "worker_appendix_count": worker_appendix_count,
         },
         "notes": [
             "Markdown-only worker evidence exported from real OpenClaw provider request and raw output files.",
+            "final_prompt.md is the last captured provider request for that worker; provider_prompt_initial.md and provider_prompt_final.md preserve the turn boundary.",
             "llm_back.md and report.md are identical here because the approved worker report is the model raw output saved by claw-trade.",
             "provider_request.json and other raw JSON remain in runs/; this directory keeps reader-reviewable Markdown plus request/state identity files.",
+            "worker-appendix/ mirrors the final user package appendix for approved worker raw reports.",
         ],
     }
     write_json(output_dir / "capture_summary.json", summary)
@@ -223,6 +301,7 @@ def export_run_evidence(run_dir: Path, output_dir: Path) -> dict[str, Any]:
         f"- worker_count: `{len(worker_exports)}`",
         f"- final_report: `{final_report_path.name}`",
         f"- final_report_assets: `{final_report_asset_count}`",
+        f"- worker_appendix_files: `{worker_appendix_count}`",
         "- mock/stub/fake/fallback/capture-only: `none`",
         "",
         "| worker | stage | status | final prompt | LLM back | report | prompt chars | report chars |",
@@ -240,8 +319,10 @@ def export_run_evidence(run_dir: Path, output_dir: Path) -> dict[str, Any]:
             "## Notes",
             "",
             "- 本目录是 claw-trade `/report` fresh live 证据包，不是原版 TradingAgents 运行结果。",
-            "- 每个 worker 的 final prompt 来自真实 provider payload capture，不来自静态 render 或日志重构。",
+            "- 每个 worker 的 final prompt 来自最后一条真实 provider payload capture，不来自静态 render 或日志重构。",
+            "- 每个 worker 额外保留 `provider_prompt_initial.md` 和 `provider_prompt_final.md`，用于审计多轮工具调用边界。",
             "- `final_report.md` 的图片依赖保存在 `assets/`。",
+            "- `worker-appendix/` 保存最终用户包中的 worker 原文附录。",
         ]
     )
     (output_dir / "capture_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
