@@ -61,8 +61,34 @@ def call_tushare_pro_bar(
     return payload
 
 
+def call_tushare_hk_daily_adj(
+    spec: ProviderSpec,
+    query: ProviderQuery,
+    runtime_context: ToolRuntimeContext,
+    call_context: ProviderCallContext,
+) -> dict[str, Any]:
+    _ = runtime_context
+    call_context.raise_if_cancelled()
+    try:
+        pro = create_tushare_pro()
+    except TushareClientConfigError as exc:
+        raise ProviderCallError("PROVIDER_KEY_MISSING", str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ProviderCallError("PROVIDER_ERROR", str(exc)) from exc
+    if not hasattr(pro, "hk_daily_adj"):
+        raise ProviderCallError("PROVIDER_ERROR", "tushare pro 缺少 hk_daily_adj 接口")
+
+    dataframe = pro.hk_daily_adj(
+        ts_code=query.ticker,
+        start_date=_yyyymmdd(query.start_date),
+        end_date=_yyyymmdd(query.end_date),
+    )
+    return _to_market_payload(dataframe, spec=spec, query=query, adjusted_price_factor="adj_factor")
+
+
 TUSHARE_MARKET_CALL_REGISTRY: dict[tuple[str, str], ProviderCallable] = {
     ("tushare", "pro_bar"): call_tushare_pro_bar,
+    ("tushare", "hk_daily_adj"): call_tushare_hk_daily_adj,
 }
 
 
@@ -118,6 +144,7 @@ def _to_market_payload(
     *,
     spec: ProviderSpec,
     query: ProviderQuery,
+    adjusted_price_factor: str | None = None,
 ) -> dict[str, Any]:
     _validate_dataframe(dataframe)
     if bool(dataframe.empty):
@@ -130,6 +157,8 @@ def _to_market_payload(
         for field_name, aliases in _REQUIRED_COLUMN_ALIASES.items()
         if not any(alias in columns for alias in aliases)
     ]
+    if adjusted_price_factor is not None and adjusted_price_factor not in columns:
+        missing_fields.append(adjusted_price_factor)
     if missing_fields:
         return {
             "provider": spec.provider,
@@ -144,13 +173,14 @@ def _to_market_payload(
     rows: list[dict[str, Any]] = []
     adjust = _resolve_adjust(query)
     for row in raw_rows:
+        factor = _to_float_or_none(row.get(adjusted_price_factor)) if adjusted_price_factor is not None else None
         rows.append(
             {
                 "trade_date": _normalize_date(_pick_first(row, _REQUIRED_COLUMN_ALIASES["trade_date"])),
-                "open": _pick_first(row, _REQUIRED_COLUMN_ALIASES["open"]),
-                "close": _pick_first(row, _REQUIRED_COLUMN_ALIASES["close"]),
-                "high": _pick_first(row, _REQUIRED_COLUMN_ALIASES["high"]),
-                "low": _pick_first(row, _REQUIRED_COLUMN_ALIASES["low"]),
+                "open": _adjust_price(_pick_first(row, _REQUIRED_COLUMN_ALIASES["open"]), factor),
+                "close": _adjust_price(_pick_first(row, _REQUIRED_COLUMN_ALIASES["close"]), factor),
+                "high": _adjust_price(_pick_first(row, _REQUIRED_COLUMN_ALIASES["high"]), factor),
+                "low": _adjust_price(_pick_first(row, _REQUIRED_COLUMN_ALIASES["low"]), factor),
                 "volume": _pick_first(row, _REQUIRED_COLUMN_ALIASES["volume"]),
                 "amount": _pick_first(row, _REQUIRED_COLUMN_ALIASES["amount"]),
                 "adjust": adjust,
@@ -159,6 +189,8 @@ def _to_market_payload(
         for key, aliases in _OPTIONAL_COLUMN_ALIASES.items():
             value = _pick_first(row, aliases)
             if value is not None:
+                if key in {"pre_close", "change"}:
+                    value = _adjust_price(value, factor)
                 rows[-1][key] = value
 
     return {
@@ -207,6 +239,25 @@ def _json_scalar(value: Any) -> Any:
     return str(value)
 
 
+def _to_float_or_none(value: Any) -> float | None:
+    scalar = _json_scalar(value)
+    if scalar is None:
+        return None
+    try:
+        return float(scalar)
+    except (TypeError, ValueError):
+        return None
+
+
+def _adjust_price(value: Any, factor: float | None) -> Any:
+    if factor is None:
+        return value
+    try:
+        return float(value) * factor
+    except (TypeError, ValueError):
+        return value
+
+
 def _normalize_date(value: Any) -> Any:
     normalized = _json_scalar(value)
     if isinstance(normalized, str):
@@ -227,5 +278,6 @@ def _yyyymmdd(iso_date: str) -> str:
 
 __all__ = [
     "TUSHARE_MARKET_CALL_REGISTRY",
+    "call_tushare_hk_daily_adj",
     "call_tushare_pro_bar",
 ]

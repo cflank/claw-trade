@@ -372,8 +372,8 @@ def _ensure_non_empty(field_name: str, value: object) -> str:
 
 def _ensure_market(value: object) -> str:
     market = _ensure_non_empty("market", value)
-    if market != "CN_A":
-        raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "normalized 写入只支持 market=CN_A")
+    if market not in {"CN_A", "HK"}:
+        raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "normalized 写入只支持 market=CN_A 或 market=HK")
     return market
 
 

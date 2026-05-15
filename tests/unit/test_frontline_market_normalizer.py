@@ -39,6 +39,34 @@ def test_t_mkt_001_normalize_market_input_defaults_to_technical_window() -> None
     assert normalized.adjust == "qfq"
 
 
+def test_t_mkt_001_normalize_market_input_preserves_hk_market() -> None:
+    normalized = normalize_market_input(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+        },
+        today=date(2026, 5, 8),
+    )
+
+    assert normalized.ticker == "00700.HK"
+    assert normalized.market == "HK"
+
+
+def test_t_mkt_001_build_market_provider_query_preserves_hk_market() -> None:
+    query = build_market_provider_query(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+            "start_date": "2026-04-01",
+            "end_date": "2026-05-08",
+        },
+        today=date(2026, 5, 8),
+    )
+
+    assert query.ticker == "00700.HK"
+    assert query.market == "HK"
+
+
 def test_t_mkt_001_explicit_short_start_date_expands_to_technical_window() -> None:
     normalized = normalize_market_input(
         {

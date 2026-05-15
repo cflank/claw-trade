@@ -68,6 +68,11 @@ def test_t_pvd_002_eastmoney_symbol_rule_for_sh() -> None:
     assert ticker_to_eastmoney_symbol("600519.SH") == "100.600519"
 
 
+def test_t_pvd_002_eastmoney_rules_for_hk() -> None:
+    assert ticker_to_eastmoney_secid("00700.HK") == "116.00700"
+    assert ticker_to_eastmoney_symbol("00700.HK") == "116.00700"
+
+
 def test_t_pvd_002_tool_param_provider_noise_does_not_change_plan() -> None:
     config = load_frontline_provider_config(_base_env())
     base_params = {
@@ -89,6 +94,50 @@ def test_t_pvd_002_tool_param_provider_noise_does_not_change_plan() -> None:
 
     assert query_a == query_b
     assert plan_a == plan_b
+
+
+def test_t_pvd_002_hk_market_plan_uses_hk_price_sources() -> None:
+    config = load_frontline_provider_config(_base_env())
+    query = build_provider_query_from_tool_params(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+            "start_date": "2026-01-01",
+            "end_date": "2026-02-01",
+            "company_name": "腾讯控股",
+            "industry": "互联网",
+        }
+    )
+
+    plan = build_provider_plan(domain="market", query=query, config=config, cache_inspection=[])
+    endpoints = {(item.provider, item.endpoint) for item in plan}
+
+    assert query.market == "HK"
+    assert ("tushare", "hk_daily_adj") in endpoints
+    assert ("akshare", "stock_hk_hist") in endpoints
+    assert ("eastmoney_direct", "push2his_kline") in endpoints
+    assert ("tushare", "pro_bar") not in endpoints
+    assert ("akshare", "stock_zh_a_hist") not in endpoints
+
+
+def test_t_pvd_002_hk_query_parameter_mapping_preserves_market() -> None:
+    config = load_frontline_provider_config(_base_env())
+    query = build_provider_query_from_tool_params(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+            "start_date": "2026-01-01",
+            "end_date": "2026-02-01",
+            "company_name": "腾讯控股",
+            "industry": "互联网",
+        }
+    )
+    plan = build_provider_plan(domain="news", query=query, config=config, cache_inspection=[])
+    search_spec = next(item for item in plan if item.provider == "bocha" and item.endpoint == "cn_web_search")
+
+    resolved = materialize_provider_query_parameters(spec=search_spec, query=query, config=config)
+
+    assert resolved["market"] == "HK"
 
 
 def test_t_pvd_002_market_eastmoney_query_parameter_mapping_uses_secid() -> None:

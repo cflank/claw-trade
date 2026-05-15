@@ -93,6 +93,32 @@ def test_parse_args_supports_single_worker_request_shape() -> None:
     assert request.target_stage == Stage.FRONTLINE
 
 
+def test_parse_args_normalizes_hk_ticker_without_approving_profile() -> None:
+    request = parse_args(
+        [
+            "--ticker",
+            "700",
+            "--company-name",
+            "Tencent",
+            "--market",
+            "HK",
+            "--current-date",
+            "2026-05-14",
+            "--start-date",
+            "2026-01-01",
+            "--end-date",
+            "2026-05-14",
+        ]
+    )
+
+    assert request.ticker == "00700.HK"
+    assert request.market == "HK"
+    assert request.profile == "HK"
+    assert request.currency == "HKD"
+    assert request.currency_symbol == "HK$"
+    assert request.entry_point == WorkflowEntryPoint.REPORT_COMMAND
+
+
 def test_main_returns_non_zero_when_real_runtime_dependency_config_missing(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

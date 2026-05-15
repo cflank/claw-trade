@@ -57,6 +57,33 @@ def test_t_soc_002_target_signal_with_l2_yields_complete_or_partial_and_bucket_p
     assert len(pack.domain_data["attention_signals"]) + len(pack.domain_data["topic_keyword_signals"]) >= 1
 
 
+def test_t_soc_002_hk_market_uses_existing_pack_and_matches_five_digit_code() -> None:
+    pack = _build_runner(
+        call_registry={
+            ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="00700"),
+            ("eastmoney_akshare", "hot_keyword"): _keyword_provider(target_code="00700", keyword="腾讯"),
+            ("eastmoney_akshare", "related_hot_rank"): _empty_provider(),
+            ("eastmoney_direct", "full_hot_rank_board"): _empty_provider(),
+        }
+    ).build(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+            "company_name": "腾讯控股",
+            "industry": "互联网",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-08",
+            "aliases": ["腾讯"],
+            "approved_aliases": ["腾讯"],
+        },
+        _runtime_context_payload(market="HK"),
+    )
+
+    assert pack.input.market == "HK"
+    assert pack.input.ticker == "00700.HK"
+    assert len(pack.domain_data["attention_signals"]) + len(pack.domain_data["topic_keyword_signals"]) >= 1
+
+
 def test_t_soc_002_target_accepted_signal_zero_must_failed() -> None:
     pack = _build_runner(
         call_registry={

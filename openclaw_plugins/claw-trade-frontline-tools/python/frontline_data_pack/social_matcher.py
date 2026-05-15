@@ -10,7 +10,7 @@ from .security import normalize_ticker
 
 
 SocialTargetProfile = NewsTargetProfile
-_CODE_RE = re.compile(r"(\d{6})")
+_CODE_RE = re.compile(r"(\d{5,6})")
 _TEXT_EVIDENCE_KEYS = (
     "text_excerpt",
     "text",
@@ -312,6 +312,8 @@ def _normalize_related_ticker(value: Any) -> str | None:
     if code_match is None:
         return text
     code = code_match.group(1)
+    if len(code) == 5:
+        return f"{code}.HK"
     exchange = "SH" if code.startswith("6") else "SZ"
     return f"{code}.{exchange}"
 

@@ -88,8 +88,8 @@ def execute_provider_attempt(
     monotonic_fn = time.monotonic if monotonic is None else monotonic
 
     _ = context
-    if query.market != "CN_A":
-        raise FrontlineValidationError(MARKET_INVALID, "provider query.market 必须为 CN_A")
+    if query.market not in {"CN_A", "HK"}:
+        raise FrontlineValidationError(MARKET_INVALID, "provider query.market 必须为 CN_A 或 HK")
 
     started_at = now_utc_fn()
     started_monotonic = monotonic_fn()

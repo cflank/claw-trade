@@ -38,7 +38,7 @@ _RANK_CHANGE_ALIASES: tuple[str, ...] = ("排名变化", "排名较昨日变动"
 _OBSERVED_AT_ALIASES: tuple[str, ...] = ("更新时间", "时间", "日期", "update_time", "observed_at")
 _ITEM_KEY_ALIASES: tuple[str, ...] = ("item", "项目", "字段", "key", "name")
 _ITEM_VALUE_ALIASES: tuple[str, ...] = ("value", "值", "内容")
-_CODE_RE = re.compile(r"(\d{6})")
+_CODE_RE = re.compile(r"(\d{5,6})")
 
 
 def call_akshare_stock_hot_rank_latest_em(
@@ -663,6 +663,8 @@ def _to_eastmoney_symbol(ticker: str) -> str:
     code, exchange = _split_ticker(ticker)
     if exchange == "SH":
         return f"SH{code}"
+    if exchange == "HK":
+        return f"HK{code}"
     return f"SZ{code}"
 
 
@@ -674,10 +676,10 @@ def _ticker_code_6(ticker: str) -> str:
 def _split_ticker(ticker: str) -> tuple[str, str]:
     code, _, exchange = ticker.partition(".")
     if not code or not exchange:
-        raise ValueError("ticker 必须是 NNNNNN.SH/SZ")
+        raise ValueError("ticker 必须是 NNNNNN.SH/SZ 或 NNNNN.HK")
     exchange_upper = exchange.upper()
-    if exchange_upper not in {"SH", "SZ"}:
-        raise ValueError("ticker 交易所必须为 SH/SZ")
+    if exchange_upper not in {"SH", "SZ", "HK"}:
+        raise ValueError("ticker 交易所必须为 SH/SZ/HK")
     return code, exchange_upper
 
 

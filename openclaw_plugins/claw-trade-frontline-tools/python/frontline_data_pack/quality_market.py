@@ -9,9 +9,11 @@ from .models import ChartRef, EvidenceRef, MarketIndicators, MarketPriceRow, Pro
 _CORE_MARKET_ENDPOINTS = frozenset(
     {
         ("akshare", "stock_zh_a_hist"),
+        ("akshare", "stock_hk_hist"),
         ("eastmoney_direct", "push2his_kline"),
         ("sina", "stock_zh_a_daily"),
         ("tencent", "stock_zh_a_hist_tx"),
+        ("tushare", "hk_daily_adj"),
     }
 )
 _FAILED_ATTEMPT_STATUSES = frozenset({"timeout", "error", "schema_invalid", "empty", "config_blocked"})

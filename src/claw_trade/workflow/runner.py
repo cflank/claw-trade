@@ -1227,6 +1227,8 @@ def build_profile_prompt_vars(
     if call.worker_id == "portfolio_manager":
         return {
             "ticker": call.ticker,
+            "currency": call.currency,
+            "currency_symbol": call.currency_symbol,
             "research_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "trader_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),

@@ -21,7 +21,9 @@ class _ProviderTemplate:
 _MARKET_PROVIDER_TEMPLATES: tuple[_ProviderTemplate, ...] = (
     _ProviderTemplate("P0", "mongodb", "fresh_normalized_ohlcv_cache", "p0_price_cache", "cache", False),
     _ProviderTemplate("P0", "tushare", "pro_bar", "p0_price_history", "remote", True),
+    _ProviderTemplate("P0", "tushare", "hk_daily_adj", "p0_hk_adjusted_price_history", "remote", True),
     _ProviderTemplate("P1", "akshare", "stock_zh_a_hist", "p1_price_history", "remote", True),
+    _ProviderTemplate("P1", "akshare", "stock_hk_hist", "p1_hk_price_history", "remote", True),
     _ProviderTemplate("P1", "eastmoney_direct", "push2his_kline", "p1_price_history_backup", "remote", False),
     _ProviderTemplate("P1", "sina", "stock_zh_a_daily", "p1_price_history", "remote", False),
     _ProviderTemplate("P1", "tencent", "stock_zh_a_hist_tx", "p1_price_history", "remote", False),

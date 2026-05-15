@@ -24,14 +24,15 @@ REQUIRED_WORKERS: tuple[str, ...] = (
     "report_polisher",
 )
 
-APPROVED_PROMPT_PROFILES = ("US", "CN_A")
-UNAPPROVED_PROMPT_PROFILES = ("HK", "CRYPTO")
+APPROVED_PROMPT_PROFILES = ("US", "CN_A", "HK")
+UNAPPROVED_PROMPT_PROFILES = ("CRYPTO",)
 REPORT_POLISHER = "report_polisher"
 APPROVED_PROMPT_CASES = tuple(
     (worker_id, profile)
     for worker_id in REQUIRED_WORKERS
     for profile in APPROVED_PROMPT_PROFILES
 )
+HK_PROMPT_CASES = tuple((worker_id, "HK") for worker_id in REQUIRED_WORKERS)
 UNAPPROVED_PROMPT_CASES = tuple(
     (worker_id, profile)
     for worker_id in REQUIRED_WORKERS
@@ -182,6 +183,7 @@ SUPPORTED_US_PROMPT_PLACEHOLDERS = {
     "supporting_worker_reports",
     "chart_assets_note",
 }
+SUPPORTED_HK_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS
 
 US_RESEARCH_MANAGER_ALLOWED_PLACEHOLDERS = {
     "ticker",
@@ -205,6 +207,13 @@ FRONTLINE_WORKERS: tuple[str, ...] = (
     "news_analyst",
     "social_analyst",
 )
+HK_FRONTLINE_TOOLS = {
+    "market_analyst": "market_market_data_pack",
+    "fundamental_analyst": "fundamental_fundamentals_data_pack",
+    "news_analyst": "news_news_data_pack",
+    "social_analyst": "social_social_sentiment_pack",
+}
+HK_SPECIFIC_TOOL_TOKENS = ("hk_market_data", "hk_fundamental_data", "hk_news_data", "hk_social_sentiment")
 
 DOWNSTREAM_DECISION_WORKERS: tuple[str, ...] = (
     "bull_researcher",
@@ -386,12 +395,31 @@ def test_unapproved_profiles_fail_closed_without_fallback(worker_id: str, profil
     assert "Do not fallback to CN_A" in text
 
 
+@pytest.mark.parametrize(("worker_id", "profile"), HK_PROMPT_CASES)
+def test_hk_worker_prompts_are_real_prompts_not_fail_closed_placeholders(worker_id: str, profile: str) -> None:
+    prompt_path = Path("agents") / worker_id / "prompts" / f"{profile}.md"
+    metadata = _front_matter(prompt_path)
+    text = prompt_path.read_text(encoding="utf-8")
+
+    assert metadata["profile"] == "HK"
+    assert metadata["profile_status"] == "approved"
+    assert metadata["worker_id"] == worker_id
+    assert metadata["stage"] == worker_by_id(worker_id).stage.value
+    assert "not been approved" not in text
+    assert "Fail explicitly" not in text
+    assert "Do not fallback to US" not in text
+    assert "Do not fallback to CN_A" not in text
+    assert "港股" in text or "香港交易所" in text
+    assert "报告" in text or "分析" in text or "辩论" in text
+
+
 @pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
 def test_agent_facing_text_does_not_contain_machine_protocol(worker_id: str) -> None:
     worker_dir = Path("agents") / worker_id
     paths = [
         worker_dir / "prompts" / "US.md",
         worker_dir / "prompts" / "CN_A.md",
+        worker_dir / "prompts" / "HK.md",
         *(worker_dir / relative for relative in AGENT_FACING_RELATIVE_PATHS),
     ]
 
@@ -444,6 +472,74 @@ def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protoc
             assert snippet in text, f"{worker_id} missing required process-prose rule: {snippet!r}"
         for token in FRONTLINE_MACHINE_PROTOCOL_KEYWORDS:
             assert token not in text, f"{worker_id} prompt contains machine protocol keyword {token!r}"
+
+
+def test_hk_frontline_prompts_reuse_existing_domain_pack_tools() -> None:
+    us_tool_tokens = (
+        "get_stock_data",
+        "get_indicators",
+        "get_fundamentals",
+        "get_balance_sheet",
+        "get_cashflow",
+        "get_income_statement",
+        "get_news",
+        "get_global_news",
+    )
+    for worker_id in FRONTLINE_WORKERS:
+        text = (Path("agents") / worker_id / "prompts" / "HK.md").read_text(encoding="utf-8")
+        assert HK_FRONTLINE_TOOLS[worker_id] in text
+        for hk_specific_tool in HK_SPECIFIC_TOOL_TOKENS:
+            assert hk_specific_tool not in text
+        assert "`HK`" in text or "HK（香港交易所）" in text
+        for us_tool in us_tool_tokens:
+            assert us_tool not in text
+        for snippet in FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS:
+            assert snippet in text, f"{worker_id} HK prompt missing required process-prose rule: {snippet!r}"
+        for token in FRONTLINE_MACHINE_PROTOCOL_KEYWORDS:
+            assert token not in text, f"{worker_id} HK prompt contains machine protocol keyword {token!r}"
+
+
+@pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
+def test_hk_worker_prompt_placeholders_are_supported_runtime_vars(worker_id: str) -> None:
+    text = (Path("agents") / worker_id / "prompts" / "HK.md").read_text(encoding="utf-8")
+    placeholders = _prompt_placeholders(text)
+
+    unsupported = placeholders - SUPPORTED_HK_PROMPT_PLACEHOLDERS
+    assert unsupported == set()
+
+
+def test_hk_prompts_preserve_tradingagents_cn_voice_without_memo_style_bans() -> None:
+    expected_snippets = {
+        "market_analyst": ("## 📊 股票基本信息", "## 📈 技术指标分析", "## 💭 投资建议"),
+        "fundamental_analyst": ("港股基本面分析师", "投资建议（买入/持有/卖出）", "不得编造公司信息"),
+        "news_analyst": ("港股财经新闻分析师", "关键新闻与事件梳理", "港交所披露"),
+        "social_analyst": ("港股市场社交情绪分析师", "社交讨论热度", "数据限制与风险提示"),
+        "bull_researcher": ("看涨分析师", "反驳看跌观点", "强有力的看涨立场"),
+        "bear_researcher": ("看跌分析师", "反驳看涨观点", "强有力的看跌立场"),
+        "research_manager": ("买入、卖出或持有", "做出承诺", "目标价格分析"),
+        "trader": ("最终交易建议: **买入/持有/卖出**", "具体交易决策"),
+        "risk_challenger": ("激进风险分析师", "高回报、高风险", "数据驱动的反驳"),
+        "risk_guardian": ("安全/保守风险分析师", "保护资产", "直接回应他们的观点"),
+        "risk_moderator": ("中性风险分析师", "平衡的港股风险视角", "挑战激进和安全分析师"),
+        "portfolio_manager": ("买入、卖出或持有", "清晰和果断", "最终交易决策"),
+        "report_polisher": ("完整终稿润色，不是短摘要", "专业卖方/投行研究终稿"),
+    }
+    assert set(expected_snippets) == set(REQUIRED_WORKERS)
+    banned_style_snippets = (
+        "避免强观点",
+        "避免明确建议",
+        "不要给买卖结论",
+        "不要提供最终建议",
+        "默认保守",
+        "写成限制报告",
+    )
+
+    for worker_id, snippets in expected_snippets.items():
+        text = (Path("agents") / worker_id / "prompts" / "HK.md").read_text(encoding="utf-8")
+        for snippet in snippets:
+            assert snippet in text, f"{worker_id} HK prompt missing role-style snippet: {snippet!r}"
+        for snippet in banned_style_snippets:
+            assert snippet not in text, f"{worker_id} HK prompt contains self-imposed style ban: {snippet!r}"
 
 
 def test_us_frontline_prompts_do_not_carry_self_imposed_tool_preamble_bans() -> None:
@@ -532,11 +628,23 @@ def test_decision_prompts_do_not_add_self_imposed_hold_action_guards() -> None:
     for worker_id in ACTION_SEMANTIC_WORKERS:
         us_text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
         cn_a_text = (Path("agents") / worker_id / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+        hk_text = (Path("agents") / worker_id / "prompts" / "HK.md").read_text(encoding="utf-8")
 
         for snippet in US_ACTION_SEMANTIC_SNIPPETS[worker_id]:
             assert snippet not in us_text, f"{worker_id} US prompt contains self-imposed Hold action guard: {snippet!r}"
         for snippet in CN_A_ACTION_SEMANTIC_SNIPPETS[worker_id]:
             assert snippet not in cn_a_text, f"{worker_id} CN_A prompt contains self-imposed Hold action guard: {snippet!r}"
+            assert snippet not in hk_text, f"{worker_id} HK prompt contains self-imposed Hold action guard: {snippet!r}"
+
+
+def test_hk_portfolio_manager_prompt_uses_research_plan_and_trader_decision_variables() -> None:
+    text = (Path("agents") / "portfolio_manager" / "prompts" / "HK.md").read_text(encoding="utf-8")
+
+    assert "{research_plan}" in text
+    assert "{trader_decision}" in text
+    assert "{trader_plan}" not in text
+    assert "研究经理投资计划" in text
+    assert "交易员交易计划" in text
 
 
 def test_cn_a_market_prompt_keeps_tradingagents_cn_visual_headings_without_emoji_ban() -> None:

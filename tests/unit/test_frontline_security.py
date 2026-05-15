@@ -38,7 +38,11 @@ def test_t_sec_001_normalize_ticker_accepts_cn_a_variants() -> None:
     assert normalize_ticker("SH600519") == "600519.SH"
 
 
-def test_t_sec_001_provider_query_rejects_non_cn_a_market() -> None:
+def test_t_sec_001_normalize_ticker_accepts_hk_suffix() -> None:
+    assert normalize_ticker("00700.HK") == "00700.HK"
+
+
+def test_t_sec_001_provider_query_rejects_unsupported_market() -> None:
     with pytest.raises(FrontlineValidationError) as error:
         build_cn_a_provider_query(
             {
@@ -90,6 +94,7 @@ def test_t_sec_001_provider_error_summary_redacts_full_url_host_path_and_query()
     assert "user" not in summary
     assert "pass" not in summary
     assert "<redacted-url>" in summary
+    assert "://" not in summary
 
 
 def test_validate_tool_params_rejects_non_object() -> None:

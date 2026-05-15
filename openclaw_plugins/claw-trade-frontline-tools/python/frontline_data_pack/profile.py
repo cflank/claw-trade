@@ -89,7 +89,7 @@ def build_market_provider_query(
         )
     )
     return build_provider_query(
-        market="CN_A",
+        market=normalized.market,
         ticker=normalized.ticker,
         company_name=normalized.company_name,
         industry=None,

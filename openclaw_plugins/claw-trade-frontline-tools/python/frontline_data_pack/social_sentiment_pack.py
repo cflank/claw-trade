@@ -246,7 +246,7 @@ class BuildSocialSentimentPack:
                 domain="social",
                 input=PackInput(
                     ticker=ticker,
-                    market="CN_A",
+                    market=market,
                     company_name=profile.company_name,
                     industry=profile.industry,
                     start_date=start_date,
@@ -273,6 +273,7 @@ class BuildSocialSentimentPack:
         expires_at = (_normalize_context_time(context.current_time) + timedelta(hours=1)).isoformat()
         upsert_result = upsert_social_signals(
             ticker=ticker,
+            market=market,
             signals=accepted_signals,
             fetched_at=fetched_at,
             expires_at=expires_at,
@@ -299,6 +300,7 @@ class BuildSocialSentimentPack:
             attempts=all_attempts,
             context=context,
             ticker=ticker,
+            market=market,
             collection=attempts_collection,
             diagnostic_flags=diagnostic_flags,
         )
@@ -317,7 +319,7 @@ class BuildSocialSentimentPack:
             context=context,
             input=PackInput(
                 ticker=ticker,
-                market="CN_A",
+                market=market,
                 company_name=profile.company_name,
                 industry=profile.industry,
                 start_date=start_date,
@@ -528,8 +530,8 @@ def _validate_runtime_context_market(runtime_context: Mapping[str, Any]) -> None
     raw_market = runtime_context.get("market")
     if not isinstance(raw_market, str) or not raw_market.strip():
         raise FrontlineValidationError(TOOL_CONTEXT_INCOMPLETE, "runtime_context.market 必须是非空字符串")
-    if raw_market.strip().upper() != "CN_A":
-        raise FrontlineValidationError(TOOL_WORKER_MISMATCH, "runtime_context.market 必须为 CN_A")
+    if raw_market.strip().upper() not in {"CN_A", "HK"}:
+        raise FrontlineValidationError(TOOL_WORKER_MISMATCH, "runtime_context.market 必须为 CN_A 或 HK")
 
 
 def _coerce_social_tool_input(tool_input: SocialToolInput | Mapping[str, Any]) -> SocialToolInput:
@@ -611,7 +613,7 @@ def _inspect_social_cache(
     refs: list[str] = []
     for index, spec in enumerate(plan, start=1):
         key = ProviderCacheKey(
-            market="CN_A",
+            market=query.market,
             domain="social",
             ticker=query.ticker,
             provider=spec.provider,
@@ -852,7 +854,7 @@ def _upsert_provider_cache_documents(
         if not _is_valid_l2_ref(raw_ref):
             continue
         key = ProviderCacheKey(
-            market="CN_A",
+            market=query.market,
             domain="social",
             ticker=query.ticker,
             provider=result.attempt.provider,
@@ -890,6 +892,7 @@ def _insert_provider_attempt_rows(
     attempts: list[ProviderAttempt],
     context: ToolRuntimeContext,
     ticker: str,
+    market: str,
     collection: Any | None,
     diagnostic_flags: list[str],
 ) -> None:
@@ -900,6 +903,7 @@ def _insert_provider_attempt_rows(
                 run_id=context.run_id,
                 call_id=context.call_id,
                 ticker=ticker,
+                market=market,
                 domain="social",
                 worker_id=context.worker_id,
                 collection=collection,

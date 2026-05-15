@@ -139,7 +139,7 @@ class _RunnerHarness:
 
 def test_boot_profile_blocked_writes_failed_state_without_runtime_evidence(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
-    request = _request(profile="HK")
+    request = _request(profile="CRYPTO")
 
     state = harness.runner.run(request)
 

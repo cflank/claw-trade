@@ -259,7 +259,7 @@ class BuildNewsDataPack:
                 domain="news",
                 input=PackInput(
                     ticker=ticker,
-                    market="CN_A",
+                    market=market,
                     company_name=profile.company_name,
                     industry=profile.industry,
                     start_date=start_date,
@@ -286,6 +286,7 @@ class BuildNewsDataPack:
 
         upsert_result = upsert_news_items(
             ticker=ticker,
+            market=market,
             items=accepted_items,
             fetched_at=fetched_at,
             expires_at=expires_at,
@@ -313,6 +314,7 @@ class BuildNewsDataPack:
             attempts=all_attempts,
             context=context,
             ticker=ticker,
+            market=market,
             collection=attempts_collection,
             diagnostic_flags=diagnostic_flags,
         )
@@ -329,7 +331,7 @@ class BuildNewsDataPack:
             context=context,
             input=PackInput(
                 ticker=ticker,
-                market="CN_A",
+                market=market,
                 company_name=profile.company_name,
                 industry=profile.industry,
                 start_date=start_date,
@@ -556,10 +558,10 @@ def _validate_runtime_context_market(runtime_context: Mapping[str, Any]) -> None
             TOOL_CONTEXT_INCOMPLETE,
             "runtime_context.market 必须是非空字符串",
         )
-    if raw_market.strip().upper() != "CN_A":
+    if raw_market.strip().upper() not in {"CN_A", "HK"}:
         raise FrontlineValidationError(
             TOOL_WORKER_MISMATCH,
-            "runtime_context.market 必须为 CN_A",
+            "runtime_context.market 必须为 CN_A 或 HK",
         )
 
 
@@ -656,7 +658,7 @@ def _inspect_news_cache(
     refs: list[str] = []
     for index, spec in enumerate(plan, start=1):
         key = ProviderCacheKey(
-            market="CN_A",
+            market=query.market,
             domain="news",
             ticker=query.ticker,
             provider=spec.provider,
@@ -877,7 +879,7 @@ def _upsert_provider_cache_documents(
         if not _is_valid_l2_ref(raw_ref):
             continue
         key = ProviderCacheKey(
-            market="CN_A",
+            market=query.market,
             domain="news",
             ticker=query.ticker,
             provider=result.attempt.provider,
@@ -915,6 +917,7 @@ def _insert_provider_attempt_rows(
     attempts: list[ProviderAttempt],
     context: ToolRuntimeContext,
     ticker: str,
+    market: str,
     collection: Any | None,
     diagnostic_flags: list[str],
 ) -> None:
@@ -925,6 +928,7 @@ def _insert_provider_attempt_rows(
                 run_id=context.run_id,
                 call_id=context.call_id,
                 ticker=ticker,
+                market=market,
                 domain="news",
                 worker_id=context.worker_id,
                 collection=collection,

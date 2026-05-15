@@ -39,6 +39,48 @@ def test_load_tool_registry_has_minimum_intents() -> None:
     assert intents["openviking_write"] == ("openviking_write_material",)
 
 
+def test_hk_frontline_stage_policy_declares_approved_pack_tools() -> None:
+    expected_tools = {
+        "market_analyst": ["cn_a_market_data"],
+        "fundamental_analyst": ["cn_a_fundamentals_data"],
+        "news_analyst": ["cn_a_news_data"],
+        "social_analyst": ["cn_a_social_sentiment"],
+    }
+    for worker_id, tool_intents in expected_tools.items():
+        stage_path = Path("agents") / worker_id / "STAGES.yaml"
+        parsed = yaml.safe_load(stage_path.read_text(encoding="utf-8"))
+        hk_profile = parsed["profiles"]["HK"]
+        assert hk_profile["approved"] is True
+        assert hk_profile["prompt"] == "prompts/HK.md"
+        assert hk_profile["tools"] == tool_intents
+        assert hk_profile["openviking_access"] == "none"
+        assert "failure" not in hk_profile
+
+
+def test_hk_frontline_reuses_existing_pack_tool_contracts_without_hk_specific_visible_tools() -> None:
+    hk_specific_tools = {
+        "hk_market_data",
+        "hk_fundamental_data",
+        "hk_news_data",
+        "hk_social_sentiment",
+    }
+    root = Path(__file__).resolve().parents[2]
+    plugin_root = root / "openclaw_plugins" / "claw-trade-frontline-tools"
+    manifest = json.loads((plugin_root / "openclaw.plugin.json").read_text(encoding="utf-8"))
+    registered_tools = set(manifest["contracts"]["tools"])
+    registry = load_tool_registry().registry
+    assert registry is not None
+
+    assert {
+        "market_market_data_pack",
+        "fundamental_fundamentals_data_pack",
+        "news_news_data_pack",
+        "social_social_sentiment_pack",
+    }.issubset(registered_tools)
+    assert registered_tools.isdisjoint(hk_specific_tools)
+    assert set(registry.intent_to_tools).isdisjoint(hk_specific_tools)
+
+
 def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_files() -> None:
     root = Path(__file__).resolve().parents[2]
     plugin_root = root / "openclaw_plugins" / "claw-trade-frontline-tools"

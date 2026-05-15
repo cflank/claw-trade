@@ -87,6 +87,35 @@ def test_t_mkt_002_given_p0_success_and_l2_and_indicator_and_chart_quality_is_co
     assert any(attempt.provider == "tushare" and attempt.status == "error" for attempt in pack.provider_attempts)
 
 
+def test_t_mkt_002_hk_market_uses_existing_pack_with_hk_provider_plan() -> None:
+    pack = _build_runner(
+        call_registry={
+            ("tushare", "hk_daily_adj"): _market_rows_provider(25),
+            ("akshare", "stock_hk_hist"): _empty_rows_provider(),
+            ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
+        },
+        techlab_compute=_techlab_complete,
+    ).build(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+            "company_name": "腾讯控股",
+            "start_date": "2026-03-01",
+            "end_date": "2026-05-08",
+        },
+        _runtime_context_payload(market="HK"),
+    )
+
+    endpoints = {(attempt.provider, attempt.endpoint) for attempt in pack.provider_attempts}
+
+    assert pack.input.market == "HK"
+    assert pack.input.ticker == "00700.HK"
+    assert ("tushare", "hk_daily_adj") in endpoints
+    assert ("akshare", "stock_hk_hist") in endpoints
+    assert ("tushare", "pro_bar") not in endpoints
+    assert ("akshare", "stock_zh_a_hist") not in endpoints
+
+
 def test_t_mkt_002_under_20_valid_ohlcv_cannot_be_complete_even_with_other_signals_ready() -> None:
     pack = _build_runner(
         call_registry={

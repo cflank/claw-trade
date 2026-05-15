@@ -27,8 +27,10 @@ REDACTED = "***"
 _TICKER_PLAIN_RE = re.compile(r"^\d{6}$")
 _TICKER_SUFFIX_RE = re.compile(r"^(?P<code>\d{6})\.(?P<exchange>SH|SZ)$")
 _TICKER_PREFIX_RE = re.compile(r"^(?P<exchange>SH|SZ)(?P<code>\d{6})$")
+_HK_TICKER_SUFFIX_RE = re.compile(r"^(?P<code>\d{5})\.HK$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _URL_RE = re.compile(r"(?P<url>[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"<>]+)")
+_REDACTED_URL_WITH_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://<redacted-url>")
 _LONG_ALNUM_RE = re.compile(r"\b(?P<value>[A-Za-z0-9]{20,})\b")
 
 _SENSITIVE_INLINE_KEYS = (
@@ -108,6 +110,10 @@ def normalize_ticker(ticker: str) -> str:
             )
         return f"{code}.{exchange}"
 
+    hk_suffix_match = _HK_TICKER_SUFFIX_RE.fullmatch(text)
+    if hk_suffix_match is not None:
+        return f"{hk_suffix_match.group('code')}.HK"
+
     prefix_match = _TICKER_PREFIX_RE.fullmatch(text)
     if prefix_match is not None:
         code = prefix_match.group("code")
@@ -122,7 +128,7 @@ def normalize_ticker(ticker: str) -> str:
 
     raise FrontlineValidationError(
         TICKER_INVALID,
-        "ticker 只接受 6 位代码、NNNNNN.SH/SZ 或 SH/SZNNNNNN",
+        "ticker 只接受 6 位代码、NNNNNN.SH/SZ、SH/SZNNNNNN 或 NNNNN.HK",
     )
 
 
@@ -130,8 +136,8 @@ def validate_market(market: str) -> str:
     if not isinstance(market, str) or not market.strip():
         raise FrontlineValidationError(MARKET_INVALID, "market 不能为空")
     normalized = market.strip().upper()
-    if normalized != "CN_A":
-        raise FrontlineValidationError(MARKET_INVALID, "当前只支持 market=CN_A")
+    if normalized not in {"CN_A", "HK"}:
+        raise FrontlineValidationError(MARKET_INVALID, "当前只支持 market=CN_A 或 market=HK")
     return normalized
 
 
@@ -253,6 +259,7 @@ def redact_secret(text: object) -> str:
 
 def summarize_provider_error(text: object) -> str:
     summary = redact_secret(text)
+    summary = _REDACTED_URL_WITH_SCHEME_RE.sub("<redacted-url>", summary)
     if len(summary) > MAX_PROVIDER_ERROR_SUMMARY_LENGTH:
         return summary[:MAX_PROVIDER_ERROR_SUMMARY_LENGTH]
     return summary

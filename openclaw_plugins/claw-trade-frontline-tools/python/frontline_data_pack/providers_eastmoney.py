@@ -89,6 +89,8 @@ def _build_params(query: ProviderQuery) -> dict[str, str]:
 
 def _to_secid(ticker: str) -> str:
     code, exchange = _split_ticker(ticker)
+    if exchange == "HK":
+        return f"116.{code}"
     if exchange == "SH":
         return f"1.{code}"
     return f"0.{code}"
@@ -97,10 +99,10 @@ def _to_secid(ticker: str) -> str:
 def _split_ticker(ticker: str) -> tuple[str, str]:
     code, _, exchange = ticker.partition(".")
     if not code or not exchange:
-        raise ValueError("ticker 必须是 NNNNNN.SH/SZ")
+        raise ValueError("ticker 必须是 NNNNNN.SH/SZ 或 NNNNN.HK")
     exchange_upper = exchange.upper()
-    if exchange_upper not in {"SH", "SZ"}:
-        raise ValueError("ticker 交易所必须为 SH/SZ")
+    if exchange_upper not in {"SH", "SZ", "HK"}:
+        raise ValueError("ticker 交易所必须为 SH/SZ/HK")
     return code, exchange_upper
 
 

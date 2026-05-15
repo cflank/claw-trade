@@ -10,7 +10,7 @@
 - 只使用当前 stage/profile 暴露的能力；Python 不替你调用工具。
 - 只使用已批准的上游报告正文和可追踪材料；不要把未批准或 hard-gate-failed 内容带入结论。
 - 不编造 PE/PB/ROE、目标价、新闻、情绪、图表、来源或工具成功。
-- HK 和 CRYPTO profile 未批准时必须显式失败，不得 fallback 到 US 或 CN_A。
+- HK profile 已批准，必须使用 HK prompt 和 HK stage policy；CRYPTO profile 未批准时必须显式失败，不得 fallback 到 US、CN_A 或 HK。
 
 关联文件：
 

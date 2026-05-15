@@ -88,8 +88,29 @@ def call_akshare_tencent_hist_tx(
     return _to_market_payload(dataframe, spec=spec, query=query)
 
 
+def call_akshare_stock_hk_hist(
+    spec: ProviderSpec,
+    query: ProviderQuery,
+    runtime_context: ToolRuntimeContext,
+    call_context: ProviderCallContext,
+) -> dict[str, Any]:
+    _ = runtime_context
+    call_context.raise_if_cancelled()
+    akshare = _load_akshare_module()
+    dataframe = _call_stock_hk_hist_with_budget_timeout(
+        func=akshare.stock_hk_hist,
+        symbol=_ticker_hk_code(query.ticker),
+        start_date=_yyyymmdd(query.start_date),
+        end_date=_yyyymmdd(query.end_date),
+        adjust=_resolve_adjust(query),
+        call_context=call_context,
+    )
+    return _to_market_payload(dataframe, spec=spec, query=query)
+
+
 AKSHARE_MARKET_CALL_REGISTRY: dict[tuple[str, str], ProviderCallable] = {
     ("akshare", "stock_zh_a_hist"): call_akshare_stock_zh_a_hist,
+    ("akshare", "stock_hk_hist"): call_akshare_stock_hk_hist,
     ("sina", "stock_zh_a_daily"): call_akshare_sina_daily,
     ("tencent", "stock_zh_a_hist_tx"): call_akshare_tencent_hist_tx,
 }
@@ -255,6 +276,37 @@ def _call_stock_zh_a_daily_with_budget_timeout(
     )
 
 
+def _call_stock_hk_hist_with_budget_timeout(
+    *,
+    func: Callable[..., Any],
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust: str,
+    call_context: ProviderCallContext,
+) -> Any:
+    call_context.raise_if_cancelled()
+    timeout_seconds = _remaining_timeout_seconds(call_context)
+    try:
+        return func(
+            symbol=symbol,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+            timeout=timeout_seconds,
+        )
+    except TypeError:
+        call_context.raise_if_cancelled()
+        return func(
+            symbol=symbol,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
+
+
 class _RequestsBudgetProxy:
     def __init__(self, requests_module: Any, call_context: ProviderCallContext) -> None:
         self._requests = requests_module
@@ -293,7 +345,16 @@ def _ticker_exchange_prefix(ticker: str) -> str:
     code, exchange = _split_ticker(ticker)
     if exchange == "SH":
         return f"sh{code}"
+    if exchange == "HK":
+        return f"hk{code}"
     return f"sz{code}"
+
+
+def _ticker_hk_code(ticker: str) -> str:
+    code, exchange = _split_ticker(ticker)
+    if exchange != "HK":
+        raise ValueError("ticker 必须是 NNNNN.HK")
+    return code
 
 
 def _split_ticker(ticker: str) -> tuple[str, str]:
@@ -310,6 +371,7 @@ def _yyyymmdd(iso_date: str) -> str:
 __all__ = [
     "AKSHARE_MARKET_CALL_REGISTRY",
     "call_akshare_sina_daily",
+    "call_akshare_stock_hk_hist",
     "call_akshare_stock_zh_a_hist",
     "call_akshare_tencent_hist_tx",
 ]

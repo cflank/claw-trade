@@ -12,6 +12,7 @@ from .errors import PACK_SCHEMA_INVALID, FrontlineValidationError
 
 
 Domain = Literal["market", "fundamental", "news", "social"]
+Market = Literal["CN_A", "HK"]
 QualityStatus = Literal["complete", "partial", "failed"]
 FreshnessStatus = Literal["fresh", "stale", "unknown"]
 AttemptStatus = Literal[
@@ -135,7 +136,7 @@ def stable_json_bytes(value: Any) -> bytes:
 @dataclass(frozen=True)
 class PackInput:
     ticker: str
-    market: Literal["CN_A"]
+    market: Market
     company_name: str | None
     industry: str | None
     start_date: str
@@ -143,7 +144,7 @@ class PackInput:
 
     def __post_init__(self) -> None:
         _ensure_non_empty_str("input.ticker", self.ticker)
-        _ensure_cn_a_market("input.market", self.market)
+        _ensure_supported_market("input.market", self.market)
         _ensure_date("input.start_date", self.start_date)
         _ensure_date("input.end_date", self.end_date)
         if self.end_date < self.start_date:
@@ -344,7 +345,7 @@ class ProviderSpec:
 
 @dataclass(frozen=True)
 class ProviderQuery:
-    market: Literal["CN_A"]
+    market: Market
     ticker: str
     company_name: str | None
     industry: str | None
@@ -354,7 +355,7 @@ class ProviderQuery:
     query_fingerprint: str
 
     def __post_init__(self) -> None:
-        _ensure_cn_a_market("provider_query.market", self.market)
+        _ensure_supported_market("provider_query.market", self.market)
         _ensure_non_empty_str("provider_query.ticker", self.ticker)
         _ensure_optional_str("provider_query.company_name", self.company_name)
         _ensure_optional_str("provider_query.industry", self.industry)
@@ -399,7 +400,7 @@ def replace_attempt_evidence(
 
 @dataclass(frozen=True)
 class ProviderCacheKey:
-    market: Literal["CN_A"]
+    market: Market
     domain: Domain
     ticker: str
     provider: str
@@ -408,7 +409,7 @@ class ProviderCacheKey:
     schema_version: str
 
     def __post_init__(self) -> None:
-        _ensure_cn_a_market("provider_cache_key.market", self.market)
+        _ensure_supported_market("provider_cache_key.market", self.market)
         _ensure_non_empty_str("provider_cache_key.ticker", self.ticker)
         _ensure_non_empty_str("provider_cache_key.provider", self.provider)
         _ensure_non_empty_str("provider_cache_key.endpoint", self.endpoint)
@@ -516,14 +517,14 @@ class L2WriteReceipt:
 @dataclass(frozen=True)
 class MarketToolInput:
     ticker: str
-    market: Literal["CN_A"]
+    market: Market
     company_name: str | None
     start_date: str | None
     end_date: str | None
 
     def __post_init__(self) -> None:
         _ensure_non_empty_str("market_input.ticker", self.ticker)
-        _ensure_cn_a_market("market_input.market", self.market)
+        _ensure_supported_market("market_input.market", self.market)
         _ensure_optional_str("market_input.company_name", self.company_name)
         _ensure_optional_date("market_input.start_date", self.start_date)
         _ensure_optional_date("market_input.end_date", self.end_date)
@@ -738,7 +739,7 @@ class MarketDomainData:
 @dataclass(frozen=True)
 class NewsToolInput:
     ticker: str
-    market: Literal["CN_A"]
+    market: Market
     company_name: str | None
     industry: str | None
     start_date: str | None
@@ -749,7 +750,7 @@ class NewsToolInput:
 
     def __post_init__(self) -> None:
         _ensure_non_empty_str("news_input.ticker", self.ticker)
-        _ensure_cn_a_market("news_input.market", self.market)
+        _ensure_supported_market("news_input.market", self.market)
         _ensure_optional_str("news_input.company_name", self.company_name)
         _ensure_optional_str("news_input.industry", self.industry)
         _ensure_optional_date("news_input.start_date", self.start_date)
@@ -827,7 +828,7 @@ class NewsDomainData:
 @dataclass(frozen=True)
 class SocialToolInput:
     ticker: str
-    market: Literal["CN_A"]
+    market: Market
     company_name: str | None
     industry: str | None
     start_date: str | None
@@ -837,7 +838,7 @@ class SocialToolInput:
 
     def __post_init__(self) -> None:
         _ensure_non_empty_str("social_input.ticker", self.ticker)
-        _ensure_cn_a_market("social_input.market", self.market)
+        _ensure_supported_market("social_input.market", self.market)
         _ensure_optional_str("social_input.company_name", self.company_name)
         _ensure_optional_str("social_input.industry", self.industry)
         _ensure_optional_date("social_input.start_date", self.start_date)
@@ -1072,6 +1073,11 @@ def _ensure_optional_str(name: str, value: object) -> None:
         return
     if not isinstance(value, str):
         _schema_error(f"{name} 必须是字符串或 None")
+
+
+def _ensure_supported_market(name: str, value: object) -> None:
+    if value not in {"CN_A", "HK"}:
+        _schema_error(f"{name} 必须是 CN_A 或 HK")
 
 
 def _ensure_cn_a_market(name: str, value: object) -> None:

@@ -16,9 +16,10 @@ profiles:
     tools: []
     openviking_access: none
   HK:
-    approved: false
+    approved: true
     prompt: prompts/HK.md
-    failure: HK report polishing strategy is not approved; fail explicitly.
+    tools: []
+    openviking_access: none
   CRYPTO:
     approved: false
     prompt: prompts/CRYPTO.md

@@ -379,6 +379,8 @@ def test_cn_a_portfolio_manager_prompt_materials_use_research_plan_and_risk_hist
     assert result.ok is True
     assert result.call is not None
     prompt_vars = result.call.prompt_runtime_vars
+    assert prompt_vars["currency"] == "CNY"
+    assert prompt_vars["currency_symbol"] == "¥"
     assert prompt_vars["trader_plan"] == "# 投资计划\n完整研究经理报告正文"
     assert prompt_vars["research_plan"] == "# 投资计划\n完整研究经理报告正文"
     assert prompt_vars["trader_decision"] == "# 交易决策\n完整交易员报告正文"

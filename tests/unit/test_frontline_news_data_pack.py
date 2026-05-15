@@ -57,6 +57,35 @@ def test_t_news_002_valid_context_with_company_hard_match_has_company_news_and_r
         assert item["raw_payload_ref"].startswith("viking://")
 
 
+def test_t_news_002_hk_market_uses_existing_pack_without_a_share_company_news_endpoint() -> None:
+    pack = _build_runner(
+        call_registry={
+            ("akshare", "stock_info_global_cls"): _empty_news_provider(),
+            ("akshare", "stock_info_global_em"): _empty_news_provider(),
+            ("akshare", "news_cctv"): _empty_news_provider(),
+            ("tushare", "anns_d"): _hk_announcement_provider(),
+        }
+    ).build(
+        {
+            "ticker": "00700.HK",
+            "market": "HK",
+            "company_name": "腾讯控股",
+            "industry": "互联网",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-08",
+            "approved_artifact_refs": [],
+        },
+        _runtime_context_payload(market="HK"),
+    )
+
+    endpoints = {(attempt.provider, attempt.endpoint) for attempt in pack.provider_attempts}
+
+    assert pack.input.market == "HK"
+    assert pack.input.ticker == "00700.HK"
+    assert ("tushare", "anns_d") in endpoints
+    assert ("akshare", "stock_news_em") not in endpoints
+
+
 def test_t_news_002_only_background_without_company_match_caps_quality_at_partial() -> None:
     pack = _build_runner(
         call_registry={
@@ -430,6 +459,24 @@ def _macro_news_provider(count: int):
 def _empty_news_provider():
     def _provider(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         return {"rows": []}
+
+    return _provider
+
+
+def _hk_announcement_provider():
+    def _provider(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "rows": [
+                {
+                    "title": "腾讯控股 00700.HK 发布公告",
+                    "summary": "腾讯控股公告摘要",
+                    "source": "tushare_anns_d",
+                    "publish_time": "2026-05-08",
+                    "url": "https://example.com/hk/announcement/1",
+                    "announcement_subject": "腾讯控股",
+                }
+            ]
+        }
 
     return _provider
 

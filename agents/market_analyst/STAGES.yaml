@@ -18,9 +18,11 @@ profiles:
       - cn_a_market_data
     openviking_access: none
   HK:
-    approved: false
+    approved: true
     prompt: prompts/HK.md
-    failure: HK prompt strategy is not approved; fail explicitly.
+    tools:
+      - cn_a_market_data
+    openviking_access: none
   CRYPTO:
     approved: false
     prompt: prompts/CRYPTO.md

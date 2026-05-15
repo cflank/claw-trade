@@ -111,8 +111,8 @@ def upsert_provider_cache(
 ) -> str:
     if collection is None:
         raise FrontlineValidationError(MONGO_CONFIG_INVALID, "MongoDB collection 未配置")
-    if document.key.market != "CN_A":
-        raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "provider cache 只允许 CN_A")
+    if document.key.market not in {"CN_A", "HK"}:
+        raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "provider cache 只允许 CN_A 或 HK")
 
     expected_id = build_provider_cache_document_id(document.key)
     if document._id != expected_id:
@@ -152,14 +152,14 @@ def insert_provider_attempt(
     worker_id: str,
     collection: Any | None,
     stage: str = "frontline",
-    market: Literal["CN_A"] = "CN_A",
+    market: Literal["CN_A", "HK"] = "CN_A",
 ) -> str:
     if collection is None:
         raise FrontlineValidationError(MONGO_CONFIG_INVALID, "MongoDB collection 未配置")
     if stage != "frontline":
         raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "provider attempt.stage 必须为 frontline")
-    if market != "CN_A":
-        raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "provider attempt.market 必须为 CN_A")
+    if market not in {"CN_A", "HK"}:
+        raise FrontlineValidationError(MONGO_SCHEMA_INVALID, "provider attempt.market 必须为 CN_A 或 HK")
 
     _ensure_non_empty("run_id", run_id)
     _ensure_non_empty("call_id", call_id)

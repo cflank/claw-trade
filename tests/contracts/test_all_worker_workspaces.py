@@ -55,7 +55,7 @@ def test_all_worker_workspaces_exist_and_validate_for_us_cn_a(
 
 
 @pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
-@pytest.mark.parametrize("profile", ("US", "CN_A"))
+@pytest.mark.parametrize("profile", ("US", "CN_A", "HK"))
 def test_worker_prompts_are_non_empty(agents_root: Path, worker_id: str, profile: str) -> None:
     prompt_path = agents_root / worker_id / "prompts" / f"{profile}.md"
     prompt = prompt_path.read_text(encoding="utf-8")
@@ -63,7 +63,7 @@ def test_worker_prompts_are_non_empty(agents_root: Path, worker_id: str, profile
 
 
 @pytest.mark.parametrize("worker_id", REQUIRED_WORKERS)
-@pytest.mark.parametrize("profile", ("US", "CN_A"))
+@pytest.mark.parametrize("profile", ("US", "CN_A", "HK"))
 def test_all_worker_stage_policy_is_loadable_and_resolvable(
     agents_root: Path,
     worker_id: str,
@@ -117,4 +117,4 @@ def _assert_openviking_access_tools(access: str, tools: tuple[str, ...]) -> None
 
 def _approved_policy_profiles(worker_id: str) -> tuple[str, ...]:
     _ = worker_id
-    return ("US", "CN_A")
+    return ("US", "CN_A", "HK")

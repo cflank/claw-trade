@@ -21,7 +21,7 @@ if str(SRC_ROOT) not in sys.path:
 from claw_trade.providers.tushare_client import TushareClientConfigError  # noqa: E402
 from frontline_data_pack.models import ProviderQuery, ProviderSpec  # noqa: E402
 from frontline_data_pack.provider_executor import ProviderCallContext, execute_provider_attempt  # noqa: E402
-from frontline_data_pack.providers_tushare_market import call_tushare_pro_bar  # noqa: E402
+from frontline_data_pack.providers_tushare_market import call_tushare_hk_daily_adj, call_tushare_pro_bar  # noqa: E402
 from frontline_data_pack.runtime_context import ToolRuntimeContext  # noqa: E402
 
 
@@ -95,6 +95,53 @@ def test_tushare_pro_bar_missing_token_is_explicit_error(monkeypatch: pytest.Mon
     assert result.attempt.error_code == "PROVIDER_KEY_MISSING"
 
 
+def test_tushare_hk_daily_adj_maps_adjusted_ohlcv_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakePro:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def hk_daily_adj(self, **kwargs: object) -> pd.DataFrame:
+            self.calls.append(dict(kwargs))
+            return pd.DataFrame(
+                [
+                    {
+                        "trade_date": "20260508",
+                        "open": 100.0,
+                        "close": 102.0,
+                        "high": 103.0,
+                        "low": 99.0,
+                        "pre_close": 98.0,
+                        "change": 4.0,
+                        "pct_change": 4.08,
+                        "vol": 12345,
+                        "amount": 67890.0,
+                        "adj_factor": 0.5,
+                    }
+                ]
+            )
+
+    fake_pro = _FakePro()
+    monkeypatch.setattr(
+        "frontline_data_pack.providers_tushare_market.create_tushare_pro",
+        lambda: fake_pro,
+    )
+
+    spec = _spec(endpoint="hk_daily_adj")
+    result = execute_provider_attempt(
+        spec,
+        _hk_query(),
+        _context(),
+        call_registry={(spec.provider, spec.endpoint): call_tushare_hk_daily_adj},
+    )
+
+    assert result.attempt.status == "success"
+    assert fake_pro.calls[0]["ts_code"] == "00700.HK"
+    assert result.normalized_rows[0]["open"] == 50.0
+    assert result.normalized_rows[0]["close"] == 51.0
+    assert result.normalized_rows[0]["pre_close"] == 49.0
+    assert result.normalized_rows[0]["change"] == 2.0
+
+
 def test_tushare_pro_bar_stdout_pollution_is_isolated(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     class _FakeTushareModule:
         def pro_bar(self, **kwargs: object) -> pd.DataFrame:
@@ -146,12 +193,12 @@ def test_tushare_pro_bar_stdout_pollution_is_isolated(monkeypatch: pytest.Monkey
     assert "super_secret_token" not in summary
 
 
-def _spec() -> ProviderSpec:
+def _spec(endpoint: str = "pro_bar") -> ProviderSpec:
     return ProviderSpec(
         domain="market",
         priority="P0",
         provider="tushare",
-        endpoint="pro_bar",
+        endpoint=endpoint,
         role="p0_price_history",
         enabled=True,
         mode="remote",
@@ -167,6 +214,19 @@ def _query() -> ProviderQuery:
         ticker="600519.SH",
         company_name="贵州茅台",
         industry="白酒",
+        start_date="2026-05-01",
+        end_date="2026-05-09",
+        adjust="qfq",
+        query_fingerprint=QUERY_FINGERPRINT,
+    )
+
+
+def _hk_query() -> ProviderQuery:
+    return ProviderQuery(
+        market="HK",
+        ticker="00700.HK",
+        company_name="腾讯控股",
+        industry="互联网",
         start_date="2026-05-01",
         end_date="2026-05-09",
         adjust="qfq",

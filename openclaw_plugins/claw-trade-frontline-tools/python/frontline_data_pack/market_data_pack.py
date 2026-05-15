@@ -113,7 +113,7 @@ class BuildMarketDataPack:
             window_days=_DEFAULT_WINDOW_DAYS,
         )
         query = build_provider_query(
-            market="CN_A",
+            market=normalized_input.market,
             ticker=normalized_input.ticker,
             company_name=normalized_input.company_name,
             industry=None,
@@ -277,7 +277,7 @@ class BuildMarketDataPack:
                 domain="market",
                 input=PackInput(
                     ticker=normalized_input.ticker,
-                    market="CN_A",
+                    market=normalized_input.market,
                     company_name=normalized_input.company_name,
                     industry=None,
                     start_date=normalized_input.start_date,
@@ -312,6 +312,7 @@ class BuildMarketDataPack:
             market_rows=market_rows,
             attempts=remote_attempts,
             ticker=normalized_input.ticker,
+            market=normalized_input.market,
             fetched_at=fetched_at,
             expires_at=normalized_expires_at,
             collection=normalized_collection,
@@ -333,6 +334,7 @@ class BuildMarketDataPack:
             attempts=all_attempts,
             context=context,
             ticker=normalized_input.ticker,
+            market=normalized_input.market,
             collection=attempts_collection,
             diagnostic_flags=diagnostic_flags,
         )
@@ -350,7 +352,7 @@ class BuildMarketDataPack:
             context=context,
             input=PackInput(
                 ticker=normalized_input.ticker,
-                market="CN_A",
+                market=normalized_input.market,
                 company_name=normalized_input.company_name,
                 industry=None,
                 start_date=normalized_input.start_date,
@@ -577,10 +579,10 @@ def _validate_runtime_context_market(runtime_context: Mapping[str, Any]) -> None
             TOOL_CONTEXT_INCOMPLETE,
             "runtime_context.market 必须是非空字符串",
         )
-    if raw_market.strip().upper() != "CN_A":
+    if raw_market.strip().upper() not in {"CN_A", "HK"}:
         raise FrontlineValidationError(
             TOOL_WORKER_MISMATCH,
-            "runtime_context.market 必须为 CN_A",
+            "runtime_context.market 必须为 CN_A 或 HK",
         )
 
 
@@ -642,7 +644,7 @@ def _inspect_market_cache(
     refs: list[str] = []
     for index, spec in enumerate(plan, start=1):
         key = ProviderCacheKey(
-            market="CN_A",
+            market=query.market,
             domain="market",
             ticker=query.ticker,
             provider=spec.provider,
@@ -786,6 +788,7 @@ def _upsert_market_rows(
     market_rows: list[MarketPriceRow],
     attempts: list[ProviderAttempt],
     ticker: str,
+    market: str,
     fetched_at: str,
     expires_at: str,
     collection: Any | None,
@@ -814,6 +817,7 @@ def _upsert_market_rows(
             continue
         upsert_result = upsert_market_prices(
             ticker=ticker,
+            market=market,
             rows=rows,
             provider=provider,
             endpoint=endpoint,
@@ -852,7 +856,7 @@ def _upsert_provider_cache_documents(
         if not _is_valid_l2_ref(raw_ref):
             continue
         key = ProviderCacheKey(
-            market="CN_A",
+            market=query.market,
             domain="market",
             ticker=query.ticker,
             provider=result.attempt.provider,
@@ -890,6 +894,7 @@ def _insert_provider_attempt_rows(
     attempts: list[ProviderAttempt],
     context: ToolRuntimeContext,
     ticker: str,
+    market: str,
     collection: Any | None,
     diagnostic_flags: list[str],
 ) -> None:
@@ -900,6 +905,7 @@ def _insert_provider_attempt_rows(
                 run_id=context.run_id,
                 call_id=context.call_id,
                 ticker=ticker,
+                market=market,
                 domain="market",
                 worker_id=context.worker_id,
                 collection=collection,
@@ -1193,9 +1199,11 @@ def _to_float_or_none(value: Any) -> float | None:
 def _has_p0_p1_success(attempts: list[ProviderAttempt]) -> bool:
     allowed = {
         ("akshare", "stock_zh_a_hist"),
+        ("akshare", "stock_hk_hist"),
         ("eastmoney_direct", "push2his_kline"),
         ("sina", "stock_zh_a_daily"),
         ("tencent", "stock_zh_a_hist_tx"),
+        ("tushare", "hk_daily_adj"),
     }
     for attempt in attempts:
         if (attempt.provider, attempt.endpoint) in allowed and attempt.status == "success":

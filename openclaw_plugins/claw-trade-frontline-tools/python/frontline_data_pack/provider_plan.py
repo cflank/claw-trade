@@ -30,6 +30,19 @@ _DEFAULT_LOCALE = "zh-CN"
 _EASTMONEY_FIELDS1 = "f1,f2,f3,f4,f5,f6"
 _EASTMONEY_FIELDS2 = "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116"
 _PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2}
+_CN_A_ONLY_PROVIDER_ENDPOINTS = {
+    ("market", "tushare", "pro_bar"),
+    ("market", "akshare", "stock_zh_a_hist"),
+    ("market", "sina", "stock_zh_a_daily"),
+    ("market", "tencent", "stock_zh_a_hist_tx"),
+    ("market", "baostock", "daily_history_quotes"),
+    ("market", "efinance", "history_quotes"),
+    ("news", "akshare", "stock_news_em"),
+}
+_HK_ONLY_PROVIDER_ENDPOINTS = {
+    ("market", "tushare", "hk_daily_adj"),
+    ("market", "akshare", "stock_hk_hist"),
+}
 
 
 def build_provider_query_from_tool_params(
@@ -44,7 +57,7 @@ def build_provider_query_from_tool_params(
 
     normalized = build_cn_a_provider_query(params)
     return build_provider_query(
-        market="CN_A",
+        market=normalized.market,
         ticker=normalized.ticker,
         company_name=normalized.company_name,
         industry=normalized.industry,
@@ -76,7 +89,7 @@ def build_provider_query(
         }
     )
     return ProviderQuery(
-        market="CN_A",
+        market=market,
         ticker=ticker,
         company_name=company_name,
         industry=industry,
@@ -107,6 +120,8 @@ def build_provider_plan(
         specs,
         key=lambda item: (_PRIORITY_ORDER[item.priority], item.role, item.provider, item.endpoint),
     ):
+        if not _provider_matches_market(spec=spec, market=query.market):
+            continue
         assert_provider_approved(domain=domain, provider=spec.provider)
         plan.append(replace(spec, query_parameters=_build_query_parameters(spec)))
     return plan
@@ -127,8 +142,19 @@ def materialize_provider_query_parameters(
     return resolved
 
 
+def _provider_matches_market(*, spec: ProviderSpec, market: str) -> bool:
+    key = (spec.domain, spec.provider, spec.endpoint)
+    if market == "CN_A":
+        return key not in _HK_ONLY_PROVIDER_ENDPOINTS
+    if market == "HK":
+        return key not in _CN_A_ONLY_PROVIDER_ENDPOINTS
+    return False
+
+
 def ticker_to_eastmoney_secid(ticker: str) -> str:
     code, exchange = _split_ticker(ticker)
+    if exchange == "HK":
+        return f"116.{code}"
     if exchange == "SH":
         return f"1.{code}"
     return f"0.{code}"
@@ -136,6 +162,8 @@ def ticker_to_eastmoney_secid(ticker: str) -> str:
 
 def ticker_to_eastmoney_symbol(ticker: str) -> str:
     code, exchange = _split_ticker(ticker)
+    if exchange == "HK":
+        return f"116.{code}"
     if exchange == "SH":
         return f"100.{code}"
     return f"0.{code}"
@@ -285,7 +313,7 @@ def _resolve_parameter_value(
     if parameter.source == "adjust_qfq":
         return query.adjust or _DEFAULT_MARKET_ADJUST
     if parameter.source == "market_cn_a":
-        return "CN_A"
+        return query.market
     if parameter.source == "company_name":
         return query.company_name
     if parameter.source == "industry":

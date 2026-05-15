@@ -22,6 +22,7 @@ const TOOL_NAMES = Object.freeze({
 });
 const FRONTLINE_STAGE = "frontline";
 const MARKET_CN_A = "CN_A";
+const MARKET_HK = "HK";
 const MARKET_US = "US";
 const TOOL_ERROR_CODES = Object.freeze({
   runtimeContextMissing: "TOOL_RUNTIME_CONTEXT_MISSING",
@@ -311,10 +312,11 @@ function assertExpectedMarket(toolName, toolInput, expectedMarket) {
       { tool_name: toolName },
     );
   }
-  if (market !== expectedMarket) {
+  const expectedMarkets = Array.isArray(expectedMarket) ? expectedMarket : [expectedMarket];
+  if (!expectedMarkets.includes(market)) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.paramsInvalid,
-      `params.market must be ${expectedMarket}, got ${market}`,
+      `params.market must be ${expectedMarkets.join(" or ")}, got ${market}`,
       { tool_name: toolName, market },
     );
   }
@@ -633,7 +635,7 @@ function marketScriptConfig() {
   );
   return {
     expectedWorkerId: "market_analyst",
-    expectedMarket: MARKET_CN_A,
+    expectedMarket: [MARKET_CN_A, MARKET_HK],
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -665,24 +667,39 @@ function fundamentalScriptConfig() {
   );
   return {
     expectedWorkerId: "fundamental_analyst",
-    expectedMarket: MARKET_CN_A,
+    expectedMarket: [MARKET_CN_A, MARKET_HK],
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
       [
         "import json, sys",
         "from pathlib import Path",
-        "scripts_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(scripts_dir))",
-        "from fundamental_data_pack import tool_entrypoint",
+        "cn_scripts_dir = Path(sys.argv[1]).resolve()",
+        "python_dir = Path(sys.argv[2]).resolve()",
+        "sys.path.insert(0, str(python_dir))",
+        "sys.path.insert(0, str(cn_scripts_dir))",
         "payload = json.load(sys.stdin)",
-        "result = tool_entrypoint(payload['tool_input'], payload['runtime_context'])",
+        "market = str(payload['tool_input'].get('market', '')).strip().upper()",
+        "if market == 'HK':",
+        "    from frontline_data_pack.hk_data_pack import run_hk_fundamentals_data_pack",
+        "    from frontline_data_pack.models import to_jsonable",
+        "    result = run_hk_fundamentals_data_pack(payload['tool_input'], payload['runtime_context'])",
+        "    result = to_jsonable(result)",
+        "else:",
+        "    from fundamental_data_pack import tool_entrypoint",
+        "    result = tool_entrypoint(payload['tool_input'], payload['runtime_context'])",
         "print(json.dumps(result, ensure_ascii=False, default=str))",
-      ].join("; "),
+      ].join("\n"),
       scriptsDir,
+      path.join(REPO_ROOT, "openclaw_plugins", "claw-trade-frontline-tools", "python"),
     ],
-    pythonPathDirs: [scriptsDir],
-    totalTimeoutMs: positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    pythonPathDirs: [scriptsDir, path.join(REPO_ROOT, "openclaw_plugins", "claw-trade-frontline-tools", "python")],
+    totalTimeoutMs: domainToolTimeoutMs(
+      Math.max(
+        positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+        positiveSecondsEnvToMs("HK_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+      ),
+    ),
   };
 }
 
@@ -695,7 +712,7 @@ function newsScriptConfig() {
   );
   return {
     expectedWorkerId: "news_analyst",
-    expectedMarket: MARKET_CN_A,
+    expectedMarket: [MARKET_CN_A, MARKET_HK],
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -728,7 +745,7 @@ function socialScriptConfig() {
   );
   return {
     expectedWorkerId: "social_analyst",
-    expectedMarket: MARKET_CN_A,
+    expectedMarket: [MARKET_CN_A, MARKET_HK],
     requiredFields: ["ticker", "market"],
     args: [
       "-c",
@@ -935,7 +952,7 @@ export default definePluginEntry({
     registerFrontlineTool(
       api,
       TOOL_NAMES.cnMarket,
-      "Load one CN_A market data package with price rows, indicators, and chart refs.",
+      "Load one market-specific CN_A/HK market data package with price rows, indicators, and chart refs.",
       runCnMarketPack,
     );
     registerFrontlineTool(
@@ -955,7 +972,7 @@ export default definePluginEntry({
     registerFrontlineTool(
       api,
       TOOL_NAMES.cnFundamental,
-      "Load one structured fundamentals package for the current CN_A ticker.",
+      "Load one structured fundamentals package for the current CN_A/HK ticker.",
       runCnFundamentalPack,
     );
     registerFrontlineTool(
@@ -1003,13 +1020,13 @@ export default definePluginEntry({
     registerFrontlineTool(
       api,
       TOOL_NAMES.cnNews,
-      "Load one CN_A news package covering company and macro context.",
+      "Load one market-specific CN_A/HK news package covering company and macro context.",
       runCnNewsPack,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.cnSocial,
-      "Load one CN_A social sentiment package for the current ticker.",
+      "Load one market-specific CN_A/HK social sentiment package for the current ticker.",
       runCnSocialPack,
     );
   },

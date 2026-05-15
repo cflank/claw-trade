@@ -53,6 +53,16 @@ US_TOOLS = (
 )
 
 
+def test_domain_pack_tool_descriptions_cover_hk_not_cn_a_only() -> None:
+    source = PLUGIN_PATH.read_text(encoding="utf-8")
+
+    assert "Load one CN_A market data package" not in source
+    assert "Load one CN_A news package" not in source
+    assert "Load one CN_A social sentiment package" not in source
+    assert "current CN_A ticker" not in source
+    assert source.count("CN_A/HK") >= 4
+
+
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     current_mode = path.stat().st_mode
@@ -245,6 +255,48 @@ echo '{{"ok": true}}'
 
 @pytest.mark.parametrize(
     ("tool_name", "worker_id"),
+    CN_A_TOOLS,
+)
+def test_existing_domain_pack_tools_accept_hk_market_at_js_boundary(
+    tmp_path: Path,
+    tool_name: str,
+    worker_id: str,
+) -> None:
+    stdin_path = tmp_path / "stdin.json"
+    fake_python = tmp_path / "fake_python_pack.sh"
+    payload = {
+        "ok": True,
+        "schema_version": f"{tool_name}.test.v1",
+        "tool_name": tool_name,
+        "reader_brief": f"HK pack accepted by {tool_name}",
+    }
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+cat > {stdin_path}
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+    result = _run_tool(
+        tool_name=tool_name,
+        ctx=_runtime_ctx(
+            worker_id=worker_id,
+            runtime_vars={"ticker": "00700.HK", "market": "HK"},
+        ),
+        params={"ticker": "00700.HK", "market": "HK"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is False
+    assert result["content"][0]["text"] == payload["reader_brief"]
+    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
+    assert stdin_payload["tool_input"]["ticker"] == "00700.HK"
+    assert stdin_payload["tool_input"]["market"] == "HK"
+    assert stdin_payload["runtime_context"]["tool_name"] == tool_name
+    assert stdin_payload["runtime_context"]["worker_id"] == worker_id
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "worker_id"),
     (*CN_A_TOOLS, *US_TOOLS),
 )
 def test_missing_required_market_returns_structured_params_error_without_spawning_python(
@@ -310,6 +362,45 @@ echo {json.dumps(json.dumps(payload))}
     assert stdin_payload["tool_input"]["start_date"] == "2026-04-01"
     assert stdin_payload["tool_input"]["end_date"] == "2026-05-13"
     assert stdin_payload["runtime_context"]["tool_name"] == "get_stock_data"
+
+
+def test_successful_domain_pack_tool_passes_hk_market_to_python(tmp_path: Path) -> None:
+    stdin_path = tmp_path / "stdin.json"
+    fake_python = tmp_path / "fake_python_pack.sh"
+    payload = {
+        "ok": True,
+        "schema_version": "hk_fundamental_pack.v1",
+        "tool_name": "fundamental_fundamentals_data_pack",
+        "reader_brief": "港股基本面资料包：00700.HK。主源策略：优先使用 Tushare。",
+    }
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+cat > {stdin_path}
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+    result = _run_tool(
+        tool_name="fundamental_fundamentals_data_pack",
+        ctx=_runtime_ctx(
+            worker_id="fundamental_analyst",
+            runtime_vars={
+                "ticker": "00700.HK",
+                "market": "HK",
+                "start_date": "2025-01-01",
+                "end_date": "2026-05-14",
+            },
+        ),
+        params={"ticker": "00700.HK", "market": "HK"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is False
+    assert result["content"][0]["text"] == payload["reader_brief"]
+    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
+    assert stdin_payload["tool_input"]["ticker"] == "00700.HK"
+    assert stdin_payload["tool_input"]["market"] == "HK"
+    assert stdin_payload["runtime_context"]["tool_name"] == "fundamental_fundamentals_data_pack"
+    assert stdin_payload["runtime_context"]["worker_id"] == "fundamental_analyst"
 
 
 def test_non_json_stdout_returns_protocol_error_with_redacted_stderr_summary(tmp_path: Path) -> None:
