@@ -19,7 +19,7 @@ from claw_trade.workflow.models import (
 
 
 def test_build_request_context_rejects_unapproved_profile(tmp_path: Path) -> None:
-    state = _state(tmp_path=tmp_path, profile="HK")
+    state = _state(tmp_path=tmp_path, profile="MARS")
     result = build_request_context(
         state=state,
         worker_id="market_analyst",
@@ -29,7 +29,7 @@ def test_build_request_context_rejects_unapproved_profile(tmp_path: Path) -> Non
     assert result.ok is False
     assert result.failure is not None
     assert result.failure.category == "config_blocked"
-    assert "not approved" in result.failure.reason
+    assert "unknown profile" in result.failure.reason
 
 
 def test_build_request_context_rejects_worker_stage_mismatch(tmp_path: Path) -> None:

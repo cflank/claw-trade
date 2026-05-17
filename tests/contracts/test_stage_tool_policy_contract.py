@@ -11,6 +11,21 @@ from claw_trade.workflow.models import Stage
 from claw_trade.workflow.workers import all_worker_ids, worker_by_id
 
 SOCIAL_POLICY_PATH = Path("agents/social_analyst/skills/cn-a-social-data/scripts/policy.py")
+FORMAL_CRYPTO_WORKERS: tuple[str, ...] = (
+    "market_analyst",
+    "fundamental_analyst",
+    "news_analyst",
+    "social_analyst",
+    "bull_researcher",
+    "bear_researcher",
+    "research_manager",
+    "trader",
+    "risk_challenger",
+    "risk_guardian",
+    "risk_moderator",
+    "portfolio_manager",
+    "report_polisher",
+)
 
 
 @pytest.fixture
@@ -58,6 +73,41 @@ def test_market_data_intent_resolves_to_provider_visible_mcp_tools(
     assert "market.stock_price" not in tools
     assert "market.techlab_analyze" not in tools
     assert "openviking_write_material" not in tools
+
+
+def test_crypto_market_data_intent_resolves_to_single_compact_market_pack(agents_root: Path) -> None:
+    registry = load_tool_registry().registry
+    assert registry is not None
+
+    policy_result = load_stage_policy(agents_root, "market_analyst", "CRYPTO")
+    assert policy_result.ok is True and policy_result.policy is not None
+    assert policy_result.policy.tool_intents == ("crypto_market_data",)
+    assert resolve_tools(policy_result.policy, registry) == ("crypto_market_data_pack",)
+
+
+def test_crypto_formal_workers_are_approved(agents_root: Path) -> None:
+    for worker_id in FORMAL_CRYPTO_WORKERS:
+        policy_result = load_stage_policy(agents_root, worker_id, "CRYPTO")
+        assert policy_result.ok is True, worker_id
+        assert policy_result.policy is not None
+
+
+def test_crypto_frontline_tool_policy_matches_current_real_tool_boundary(agents_root: Path) -> None:
+    registry = load_tool_registry().registry
+    assert registry is not None
+
+    expected = {
+        "market_analyst": (("crypto_market_data",), ("crypto_market_data_pack",)),
+        "fundamental_analyst": (("crypto_fundamentals_data",), ("crypto_fundamental_data_pack",)),
+        "news_analyst": (("crypto_news_data",), ("crypto_news_data_pack",)),
+        "social_analyst": (("crypto_social_sentiment",), ("crypto_social_sentiment_pack",)),
+    }
+    for worker_id, (expected_intents, expected_tools) in expected.items():
+        policy_result = load_stage_policy(agents_root, worker_id, "CRYPTO")
+        assert policy_result.ok is True and policy_result.policy is not None
+        policy = policy_result.policy
+        assert policy.tool_intents == expected_intents
+        assert resolve_tools(policy, registry) == expected_tools
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))

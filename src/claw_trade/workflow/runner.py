@@ -19,10 +19,9 @@ from claw_trade.guards.common import (
     BootResult,
     GuardResult,
     combine_guard_results,
-    guard_failed,
-    guard_passed,
     should_early_stop,
 )
+from claw_trade.guards.artifact_flow import validate_artifact_flow
 from claw_trade.guards.openviking_access import validate_openviking_runtime_reads
 from claw_trade.guards.provider_request import validate_provider_request
 from claw_trade.guards.tool_calls import validate_tool_calls
@@ -656,7 +655,7 @@ class ControlRunner:
         )
 
     def attach_prompt_materials(self, call: WorkerCall, manifest: ApprovedManifest) -> PromptMaterialResult:
-        if call.profile not in {"CN_A", "US"} or call.stage == Stage.FRONTLINE:
+        if call.profile not in {"CN_A", "US", "HK", "CRYPTO"} or call.stage == Stage.FRONTLINE:
             return PromptMaterialResult(ok=True, call=call, failure=None)
 
         material_texts: dict[tuple[str, Stage], str] = {}
@@ -979,51 +978,7 @@ class ControlRunner:
             raise ValueError(f"export-result.status={exported.status}，禁止 completed")
 
     def _validate_artifact_flow(self, call: WorkerCall, manifest: ApprovedManifest) -> GuardResult:
-        # 边界防线：下游只允许读取 approved manifest 发放的材料引用和 capability。
-        if call.stage == Stage.FRONTLINE:
-            if call.upstream_materials or call.openviking_read_capabilities:
-                return guard_failed(
-                    category="artifact_flow_overreach",
-                    reason="frontline 不允许携带 upstream_materials/openviking_read_capabilities",
-                    paths=(call.evidence_dir / "call.json",),
-                    early_stop=True,
-                )
-            return guard_passed(category="artifact_flow")
-        try:
-            expected_refs = manifest.for_worker_call(
-                call.stage,
-                worker_id=call.worker_id,
-                run_id=call.run_id,
-                turn_index=call.turn_index,
-            )
-            expected_caps = manifest.capabilities_for_worker_call(
-                call.stage,
-                worker_id=call.worker_id,
-                run_id=call.run_id,
-                turn_index=call.turn_index,
-            )
-        except Exception as exc:
-            return guard_failed(
-                category="artifact_flow_overreach",
-                reason=f"manifest 下游引用加载失败: {exc}",
-                paths=(call.evidence_dir / "call.json",),
-                early_stop=True,
-            )
-        if tuple(call.upstream_materials) != tuple(expected_refs):
-            return guard_failed(
-                category="artifact_flow_overreach",
-                reason="upstream_materials 与 approved manifest 不一致",
-                paths=(call.evidence_dir / "call.json",),
-                early_stop=True,
-            )
-        if tuple(call.openviking_read_capabilities) != tuple(expected_caps):
-            return guard_failed(
-                category="artifact_flow_overreach",
-                reason="openviking_read_capabilities 与 approved manifest 不一致",
-                paths=(call.evidence_dir / "call.json",),
-                early_stop=True,
-            )
-        return guard_passed(category="artifact_flow")
+        return validate_artifact_flow(call, manifest)
 
     def _prompt_material_failure(
         self,
@@ -1249,6 +1204,16 @@ def build_profile_prompt_vars(
                 "If the market analysis report generated verified technical charts, the final export will place "
                 "those verified charts in the technical market analysis section; do not invent image paths or chart conclusions."
             )
+        elif call.profile == "CRYPTO":
+            supporting_sources = (
+                ("bull_researcher", Stage.INVESTMENT_DEBATE, "看涨研究员"),
+                ("bear_researcher", Stage.INVESTMENT_DEBATE, "看跌研究员"),
+                ("research_manager", Stage.INVESTMENT_DECISION, "研究经理"),
+                ("risk_challenger", Stage.RISK_DEBATE, "风险挑战方"),
+                ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
+                ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
+            )
+            chart_assets_note = "如市场分析报告已生成技术图表，最终导出会把已验证图表放入市场结构与技术指标分析段；不要编造图片路径或图表结论。"
         else:
             supporting_sources = (
                 ("bull_researcher", Stage.INVESTMENT_DEBATE, "多头研究员"),

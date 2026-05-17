@@ -11,7 +11,7 @@ _PROFILE_POLICY: dict[str, bool] = {
     "US": True,
     "CN_A": True,
     "HK": True,
-    "CRYPTO": False,
+    "CRYPTO": True,
 }
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from claw_trade.artifacts.claims import (
@@ -23,6 +24,14 @@ def validate_l1_l2_contract(
     del raw_output
     if not l1_text.strip():
         return (), guard_failed(category="l1_l2", reason="L1 不能为空", paths=_l1_paths(call))
+    if _l1_is_json_document(l1_text):
+        # Guard source: AGENTS.md §6.1/§8 and 2026-05-16 explicit user approval:
+        # every worker must hand off a natural-language report, not a JSON document.
+        return (), guard_failed(
+            category="l1_l2",
+            reason="L1 正文不能是 JSON 文档；worker 之间只能传自然语言报告",
+            paths=_l1_paths(call),
+        )
     if l1_declares_compact_material(l1_text):
         return (), guard_failed(category="l1_l2", reason="L1 不能是 compact 摘要", paths=_l1_paths(call))
     if l1_has_manual_claim_block(l1_text):
@@ -115,6 +124,19 @@ def validate_l2_entries(
         if not verify_guard.ok:
             return verify_guard
     return guard_passed(category="l1_l2")
+
+
+def _l1_is_json_document(text: str) -> bool:
+    stripped = text.strip()
+    if stripped.startswith("```json") and stripped.endswith("```"):
+        stripped = stripped.removeprefix("```json").removesuffix("```").strip()
+    if not stripped.startswith(("{", "[")):
+        return False
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, (dict, list))
 
 
 def _verify_uri_sha_size(

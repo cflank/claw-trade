@@ -23,6 +23,7 @@ from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids
 
 _PM_WORKER_ID = "portfolio_manager"
+_MARKET_WORKER_ID = "market_analyst"
 _REPORT_POLISHER_WORKER_ID = "report_polisher"
 _REPORT_WORKER_ORDER = all_worker_ids()
 # 导出输入边界：报告必须覆盖完整报告链路的 approved materials，不能按“现有多少算多少”降级。
@@ -42,6 +43,24 @@ _WORKER_SECTION_TITLES: dict[str, str] = {
     "portfolio_manager": "最终裁决 / 最终投资决策",
     "report_polisher": "读者版最终报告",
 }
+_MARKET_ANALYSIS_DETAIL_HEADING = "### 市场分析师完整指标材料"
+_TECHNICAL_SECTION_HEADING_MARKERS = (
+    "\n## 二、市场结构与技术指标分析\n",
+    "\n## 市场结构与技术指标分析\n",
+    "\n### 市场结构与技术指标分析\n",
+    "\n## 二、技术指标与交易结构分析\n",
+    "\n## 技术指标与交易结构分析\n",
+    "\n### 技术指标与交易结构分析\n",
+    "\n## 二、技术指标分析\n",
+    "\n## 技术指标分析\n",
+    "\n### 技术指标分析\n",
+    "\n## 2. Technical Market Analysis\n",
+    "\n### 2. Technical Market Analysis\n",
+    "\n## Technical Market Analysis\n",
+    "\n### Technical Market Analysis\n",
+    "\n## Technical Indicator Analysis\n",
+    "\n### Technical Indicator Analysis\n",
+)
 
 
 class OpenVikingApprovedL1Reader(Protocol):
@@ -192,7 +211,9 @@ def render_final_report(
     claim_links = _claim_links_from_materials(ordered_materials)
     polisher_text = _latest_report_text(report_materials, _REPORT_POLISHER_WORKER_ID).strip()
     if polisher_text:
-        return RenderedReport(text=polisher_text + "\n", claim_links=claim_links)
+        market_text = _latest_report_text(report_materials, _MARKET_WORKER_ID)
+        final_text = _attach_market_analysis_details(polisher_text, market_text)
+        return RenderedReport(text=final_text.strip() + "\n", claim_links=claim_links)
 
     lines: list[str] = ["# 最终投资报告", ""]
     pm_text = _latest_report_text(report_materials, _PM_WORKER_ID)
@@ -214,6 +235,40 @@ def render_final_report(
         lines.append(section_text or "（报告原文缺失）")
 
     return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=claim_links)
+
+
+def _attach_market_analysis_details(report_text: str, market_text: str) -> str:
+    market_body = market_text.strip()
+    if not market_body or _MARKET_ANALYSIS_DETAIL_HEADING in report_text:
+        return report_text
+
+    detail_block = "\n\n".join(
+        (
+            _MARKET_ANALYSIS_DETAIL_HEADING,
+            _demote_markdown_headings(market_body, levels=2),
+        )
+    )
+    heading_match = _find_technical_section_heading(report_text)
+    if heading_match is None:
+        return f"{report_text.rstrip()}\n\n{detail_block}\n"
+
+    position, marker = heading_match
+    before_heading = report_text[:position]
+    after_heading = report_text[position + len(marker) :]
+    heading = marker.strip()
+    return f"{before_heading.rstrip()}\n\n{heading}\n\n{detail_block}\n\n{after_heading.lstrip()}"
+
+
+def _demote_markdown_headings(text: str, *, levels: int) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^(#{1,6})(\s+.*)$", line)
+        if match:
+            depth = min(6, len(match.group(1)) + levels)
+            lines.append(f"{'#' * depth}{match.group(2)}")
+        else:
+            lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def build_worker_appendices(
@@ -612,26 +667,22 @@ def _render_report_image_asset_block(image_assets: tuple[ReportImageAsset, ...])
 
 
 def _attach_image_assets_to_technical_indicator_section(report_text: str, image_block: str) -> str:
-    heading_markers = (
-        "\n## 二、技术指标分析\n",
-        "\n## 技术指标分析\n",
-        "\n### 技术指标分析\n",
-        "\n## 2. Technical Market Analysis\n",
-        "\n### 2. Technical Market Analysis\n",
-        "\n## Technical Market Analysis\n",
-        "\n### Technical Market Analysis\n",
-        "\n## Technical Indicator Analysis\n",
-        "\n### Technical Indicator Analysis\n",
-    )
-    marker_positions = ((report_text.find(marker), marker) for marker in heading_markers)
-    matches = [(position, marker) for position, marker in marker_positions if position >= 0]
-    if matches:
-        position, marker = min(matches, key=lambda item: item[0])
+    heading_match = _find_technical_section_heading(report_text)
+    if heading_match is not None:
+        position, marker = heading_match
         before_heading = report_text[:position]
         after_heading = report_text[position + len(marker) :]
         heading = marker.strip()
         return f"{before_heading.rstrip()}\n\n{heading}\n\n{image_block}\n\n{after_heading.lstrip()}"
     return report_text
+
+
+def _find_technical_section_heading(report_text: str) -> tuple[int, str] | None:
+    marker_positions = ((report_text.find(marker), marker) for marker in _TECHNICAL_SECTION_HEADING_MARKERS)
+    matches = [(position, marker) for position, marker in marker_positions if position >= 0]
+    if not matches:
+        return None
+    return min(matches, key=lambda item: item[0])
 
 
 def _collect_report_image_assets(

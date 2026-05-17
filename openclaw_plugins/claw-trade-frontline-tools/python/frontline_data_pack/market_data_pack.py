@@ -298,7 +298,6 @@ class BuildMarketDataPack:
                     accepted_rows=accepted_rows,
                     indicators=indicators,
                     chart_refs=chart_refs,
-                    attempts=all_attempts,
                 ),
             )
         )
@@ -1049,26 +1048,18 @@ def _build_evidence_summary(
     accepted_rows: list[Mapping[str, Any]],
     indicators: MarketIndicators | None,
     chart_refs: list[ChartRef],
-    attempts: list[ProviderAttempt],
 ) -> list[str]:
     summary: list[str] = []
     if rows:
         first = rows[0]
         latest = rows[-1]
         summary.append(
-            f"行情区间为 {first.trade_date} 至 {latest.trade_date}，共 {len(rows)} 个交易日，复权口径为 {_MARKET_ADJUST}。"
-        )
-        summary.append(
-            "最新交易日 "
+            f"行情区间为 {first.trade_date} 至 {latest.trade_date}，共 {len(rows)} 个交易日，"
+            f"复权口径为 {_MARKET_ADJUST}；最新交易日 "
             f"{latest.trade_date}：开盘 {_format_number(latest.open)}，最高 {_format_number(latest.high)}，"
             f"最低 {_format_number(latest.low)}，收盘 {_format_number(latest.close)}，"
-            f"成交量 {_format_number(latest.volume)}，成交额 {_format_optional_number(latest.amount)}。"
-        )
-        summary.append(
-            _build_latest_change_summary(
-                rows=rows,
-                accepted_rows=accepted_rows,
-            )
+            f"成交量 {_format_number(latest.volume)}，成交额 {_format_optional_number(latest.amount)}；"
+            f"{_build_latest_change_summary(rows=rows, accepted_rows=accepted_rows).rstrip('。')}。"
         )
         window_high = max(row.high for row in rows)
         window_low = min(row.low for row in rows)
@@ -1077,22 +1068,26 @@ def _build_evidence_summary(
             f"区间最高价 {_format_number(window_high)}，区间最低价 {_format_number(window_low)}，"
             f"区间累计成交量 {_format_number(total_volume)}。"
         )
+        summary.append(_build_recent_rows_summary(rows))
     if indicators is not None:
         summary.extend(_format_indicator_lines(indicators))
-    for attempt in attempts:
-        if attempt.status not in {"success", "cache_hit"}:
-            continue
-        if attempt.accepted_count <= 0:
-            continue
-        summary.append(
-            f"来源 {attempt.provider}/{attempt.endpoint} 提供 {attempt.accepted_count} 条可用行情记录。"
-        )
-        if len(summary) >= 8:
-            break
     if chart_refs:
         kinds = "、".join(_deduplicate_text_refs([ref.kind for ref in chart_refs]))
         summary.append(f"已生成 {len(chart_refs)} 张技术图，图表类型包括 {kinds}；最终报告应复制图像资产后引用。")
     return summary
+
+
+def _build_recent_rows_summary(rows: list[MarketPriceRow]) -> str:
+    recent_rows = rows[-10:]
+    parts = [
+        (
+            f"{row.trade_date} 开{_format_number(row.open)} 高{_format_number(row.high)} "
+            f"低{_format_number(row.low)} 收{_format_number(row.close)} "
+            f"量{_format_number(row.volume)} 额{_format_optional_number(row.amount)}"
+        )
+        for row in recent_rows
+    ]
+    return f"最近 {len(recent_rows)} 个交易日 OHLCV 明细（按交易日升序）：{'；'.join(parts)}。"
 
 
 def _format_indicator_lines(indicators: MarketIndicators) -> list[str]:

@@ -24,15 +24,18 @@ profiles:
       - cn_a_market_data
     openviking_access: none
   CRYPTO:
-    approved: false
+    approved: true
     prompt: prompts/CRYPTO.md
-    failure: CRYPTO prompt strategy is not approved; fail explicitly.
+    tools:
+      - crypto_market_data
+    openviking_access: none
 skills:
   mounted:
     - claw-trade-stage
     - us-market-data
     - alphaear-stock
     - alphaear-techlab
+    - crypto-trading-analysis
 tool_policy:
   owner: stage_profile
   python_calls_tools: false

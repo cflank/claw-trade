@@ -20,6 +20,9 @@ MONGO_HEALTH_MAX_LATENCY_MS = 200
 
 COLLECTION_PROVIDER_CACHE = "cn_a_provider_cache"
 COLLECTION_PROVIDER_ATTEMPTS = "cn_a_provider_attempts"
+COLLECTION_CRYPTO_PROVIDER_CACHE = "crypto_provider_cache"
+COLLECTION_CRYPTO_PROVIDER_ATTEMPTS = "crypto_provider_attempts"
+COLLECTION_CRYPTO_PROVIDER_RATE_LIMITS = "crypto_provider_rate_limits"
 COLLECTION_NORMALIZED_MARKET_PRICES = "cn_a_normalized_market_prices"
 COLLECTION_NORMALIZED_NEWS_ITEMS = "cn_a_normalized_news_items"
 COLLECTION_NORMALIZED_SOCIAL_SIGNALS = "cn_a_normalized_social_signals"
@@ -126,6 +129,34 @@ def build_collection_index_models() -> Mapping[str, tuple[IndexModel, ...]]:
             IndexModel([("run_id", 1), ("call_id", 1), ("provider", 1), ("endpoint", 1)]),
             IndexModel([("market", 1), ("domain", 1), ("ticker", 1), ("started_at", -1)]),
             IndexModel([("status", 1), ("started_at", -1)]),
+        ),
+        COLLECTION_CRYPTO_PROVIDER_CACHE: (
+            IndexModel(
+                [
+                    ("market", 1),
+                    ("domain", 1),
+                    ("ticker", 1),
+                    ("provider", 1),
+                    ("endpoint", 1),
+                    ("method", 1),
+                    ("query_fingerprint", 1),
+                    ("schema_version", 1),
+                    ("source_role", 1),
+                ],
+                unique=True,
+            ),
+            IndexModel([("market", 1), ("domain", 1), ("ticker", 1), ("fetched_at", -1)]),
+            IndexModel([("expires_at", 1)], expireAfterSeconds=0),
+            IndexModel([("payload_hash", 1)]),
+        ),
+        COLLECTION_CRYPTO_PROVIDER_ATTEMPTS: (
+            IndexModel([("run_id", 1), ("call_id", 1), ("provider", 1), ("endpoint", 1)]),
+            IndexModel([("market", 1), ("domain", 1), ("ticker", 1), ("started_at", -1)]),
+            IndexModel([("status", 1), ("started_at", -1)]),
+        ),
+        COLLECTION_CRYPTO_PROVIDER_RATE_LIMITS: (
+            IndexModel([("provider", 1), ("endpoint", 1), ("window_start", 1)], unique=True),
+            IndexModel([("window_expires_at", 1)], expireAfterSeconds=0),
         ),
         COLLECTION_NORMALIZED_MARKET_PRICES: (
             IndexModel([("market", 1), ("ticker", 1), ("adjust", 1), ("trade_date", 1)], unique=True),

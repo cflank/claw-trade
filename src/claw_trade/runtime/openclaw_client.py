@@ -9,6 +9,13 @@ from claw_trade.guards.common import GuardResult
 from claw_trade.runtime.evidence_reader import OpenClawResult
 from claw_trade.workflow.models import OpenClawCommand, ReadPolicy, Stage, WorkerCall
 
+_CRYPTO_FRONTLINE_SINGLE_PACK_TOOLS = {
+    "market_analyst": "crypto_market_data_pack",
+    "fundamental_analyst": "crypto_fundamental_data_pack",
+    "news_analyst": "crypto_news_data_pack",
+    "social_analyst": "crypto_social_sentiment_pack",
+}
+
 
 @dataclass(frozen=True)
 class ProbeResult:
@@ -115,6 +122,7 @@ def build_openclaw_command(call: WorkerCall) -> OpenClawCommand:
         evidence_dir=call.evidence_dir,
         stop_after_first_response=call.stop_after_first_response,
         system_context_policy=_required_str(call.system_context_policy, "system_context_policy"),
+        initial_tool_choice=_initial_tool_choice_for_call(call),
     )
     if command.agent != command.worker_id:
         raise ValueError("OpenClawCommand.agent 必须等于 worker_id")
@@ -132,7 +140,7 @@ def _required_runtime_var_map(values: dict[str, str]) -> dict[str, str]:
 
 
 def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "agent": command.agent,
         "worker_id": command.worker_id,
         "profile": command.profile,
@@ -149,6 +157,21 @@ def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, ob
         "stop_after_first_response": command.stop_after_first_response,
         "system_context_policy": command.system_context_policy,
     }
+    if command.initial_tool_choice:
+        payload["initial_tool_choice"] = {
+            "type": "tool",
+            "name": command.initial_tool_choice,
+        }
+    return payload
+
+
+def _initial_tool_choice_for_call(call: WorkerCall) -> str | None:
+    if call.profile != "CRYPTO" or call.stage != Stage.FRONTLINE:
+        return None
+    tool_name = _CRYPTO_FRONTLINE_SINGLE_PACK_TOOLS.get(call.worker_id)
+    if tool_name is None or tool_name not in call.allowed_tools:
+        return None
+    return tool_name
 
 
 def parse_openclaw_result(payload: dict[str, object]) -> OpenClawResult:

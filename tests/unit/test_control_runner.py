@@ -137,16 +137,29 @@ class _RunnerHarness:
         )
 
 
-def test_boot_profile_blocked_writes_failed_state_without_runtime_evidence(tmp_path: Path) -> None:
+def test_crypto_market_worker_reaches_openclaw_with_compact_market_pack(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
-    request = _request(profile="CRYPTO")
+    request = replace(
+        _request(profile="CRYPTO"),
+        ticker="BTC",
+        company_name="Bitcoin",
+        market="CRYPTO",
+        currency="USDT",
+        currency_symbol="USDT",
+        stop_point=StopPoint.SINGLE_WORKER_COMPLETE,
+        target_worker_id="market_analyst",
+        target_stage=Stage.FRONTLINE,
+    )
 
     state = harness.runner.run(request)
 
     assert state.status == RunStatus.FAILED
     call_results = list((state.run_dir / "calls").glob("*/openclaw-result.json"))
-    assert call_results == []
-    assert harness.openviking.ensure_namespace_calls == []
+    assert len(call_results) == 1
+    call_payload = json.loads((call_results[0].parent / "call.json").read_text(encoding="utf-8"))
+    assert call_payload["profile"] == "CRYPTO"
+    assert call_payload["allowed_tools"] == ["crypto_market_data_pack"]
+    assert harness.openviking.ensure_namespace_calls == [state.openviking_namespace]
 
 
 def test_run_saves_decision_before_export_action(monkeypatch, tmp_path: Path) -> None:

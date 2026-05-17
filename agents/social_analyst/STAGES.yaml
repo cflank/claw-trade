@@ -24,14 +24,17 @@ profiles:
       - cn_a_social_sentiment
     openviking_access: none
   CRYPTO:
-    approved: false
+    approved: true
     prompt: prompts/CRYPTO.md
-    failure: CRYPTO prompt strategy is not approved; fail explicitly.
+    tools:
+      - crypto_social_sentiment
+    openviking_access: none
 skills:
   mounted:
     - claw-trade-stage
     - us-social-data
     - cn-a-social-data
+    - crypto-social-sentiment
 tool_policy:
   owner: stage_profile
   python_calls_tools: false

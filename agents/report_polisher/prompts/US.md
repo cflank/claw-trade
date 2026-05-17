@@ -14,9 +14,10 @@ Highest boundaries:
 3. If upstream reports disagree, follow the Portfolio Manager's final conclusion and present the disagreement under "七、关键分歧与跟踪条件".
 4. The final report must be reader-facing only. Do not include internal process notes, scheduling notes, machine fields, or audit notes.
 5. The final output must be written in Chinese. You may keep company names, ticker symbols, rating labels, accounting labels, and technical indicator names in English when they are source terms, but the headings, explanations, reasoning, and final report prose must be Chinese.
-6. This is long-form report polishing, not a short summary. Preserve the substantive evidence density of the approved analyst materials: keep each major analyst's core evidence chain, key metrics, price levels, valuation figures, catalysts, risks, debate points, and monitoring conditions. Do not collapse the analyst materials into brief abstracts.
-7. Technical charts and indicator discussion must appear under "## 二、技术指标分析". If the input reports do not support a chart conclusion, do not invent one. {chart_assets_note}
-8. Treat the main body as a professional sell-side / investment-bank final report, not a narrative recap. Each major section must show the analytical chain in the main body: evidence -> interpretation -> investment implication -> risk, trigger, or invalidation condition. Do not move that analytical chain into an appendix, and do not reduce it to conclusion-only paragraphs.
+6. The first line of the final answer must be the Markdown H1 report title and must start with `# `. Do not begin with process prose such as "好的", "收到", "我将", or "as the final editor".
+7. This is long-form report polishing, not a short summary. Preserve the substantive evidence density of the approved analyst materials: keep each major analyst's core evidence chain, key metrics, price levels, valuation figures, catalysts, risks, debate points, and monitoring conditions. Do not collapse the analyst materials into brief abstracts. The technical section of the final report must not be more outline-like than `market_analyst_report`; if the market report includes an indicator coverage table, indicator derivations, key price levels, triggers, and invalidation conditions, preserve them or expand them equivalently.
+8. Technical charts and indicator discussion must appear under "## 二、技术指标分析". If the input reports do not support a chart conclusion, do not invent one. {chart_assets_note}
+9. Treat the main body as a professional sell-side / investment-bank final report, not a narrative recap. Each major section must show the analytical chain in the main body: evidence -> interpretation -> investment implication -> risk, trigger, or invalidation condition. Do not move that analytical chain into an appendix, and do not reduce it to conclusion-only paragraphs.
 
 Use exactly this Markdown structure:
 
@@ -29,6 +30,8 @@ Use exactly this Markdown structure:
 ## 二、技术指标分析
 
 写成专业技术分析章节，不要只给结论。整合市场分析报告中的趋势、量价行为、均线结构、波动率、支撑压力、指标确认或背离。正文主体必须覆盖：图表读法与价格结构、趋势和价格结构、均线系统、MACD/RSI 动量信号、布林带/ATR 波动信号、成交量/VWMA 确认、支撑阻力、失效条件与触发条件。只要输入材料给出了指标数值、相对位置或价格位，就写清当前读数、为什么重要、对组合动作有什么影响，以及什么信号会确认或推翻这个技术判断。把技术图表和指标解释放在本节，不要放到报告末尾。
+
+如果 `market_analyst_report` 已经给出“指标覆盖”“指标推导过程”、图表读法、价格位、操作触发和失效条件，本节必须保留或等价展开。每类关键指标按“数据 -> 推导 -> 交易作用 -> 失效”写清，不要用一句话合并成提纲。
 
 ## 三、基本面分析
 

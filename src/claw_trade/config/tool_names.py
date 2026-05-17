@@ -32,12 +32,16 @@ def load_tool_registry() -> ToolRegistryResult:
             # no-sidecar 路径：禁止使用 openvikingArtifact__* 触发 1944 MCP sidecar。
             "cn_a_market_data": ("market_market_data_pack",),
             "us_market_data": ("get_stock_data", "get_indicators"),
+            "crypto_market_data": ("crypto_market_data_pack",),
             "cn_a_fundamentals_data": ("fundamental_fundamentals_data_pack",),
             "us_fundamentals_data": ("get_fundamentals", "get_balance_sheet", "get_cashflow", "get_income_statement"),
+            "crypto_fundamentals_data": ("crypto_fundamental_data_pack",),
             "cn_a_news_data": ("news_news_data_pack",),
             "us_news_data": ("get_news", "get_global_news"),
+            "crypto_news_data": ("crypto_news_data_pack",),
             "cn_a_social_sentiment": ("social_social_sentiment_pack",),
             "us_social_sentiment": ("get_news",),
+            "crypto_social_sentiment": ("crypto_social_sentiment_pack",),
             # 这里是 intent 到 provider-visible 工具名的边界：stage policy 保留 intent，
             # 但最终发给模型可见的工具名必须对齐 OpenViking 设计合同。
             "openviking_read": ("openviking_read_with_capability",),
@@ -49,7 +53,11 @@ def load_tool_registry() -> ToolRegistryResult:
 
 def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...]:
     stage_value = getattr(policy.stage, "value", policy.stage)
-    if not policy.tool_intents and stage_value == "frontline" and policy.openviking_access != "read":
+    if (
+        not policy.tool_intents
+        and stage_value == "frontline"
+        and policy.openviking_access != "read"
+    ):
         raise ConfigError(
             f"frontline policy must include profile-specific data tools: "
             f"{policy.worker_id}/{policy.profile}"
@@ -68,12 +76,20 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
             if mapped not in tools:
                 tools.append(mapped)
 
-    if policy.worker_id == "news_analyst":
+    if policy.worker_id == "news_analyst" and policy.profile == "CRYPTO":
+        if "crypto_news_data_pack" not in tools:
+            raise ConfigError("news_analyst CRYPTO must include crypto_news_data_pack")
+
+    if policy.worker_id == "news_analyst" and policy.profile != "CRYPTO":
         require_global_news = require_global_news_capability_for_news(registry)
         if not require_global_news.ok:
             raise ConfigError(require_global_news.reason or "news capability missing")
         if "news_news_data_pack" not in tools and not {"get_news", "get_global_news"}.issubset(tools):
             raise ConfigError("news_analyst must include profile-specific news tools")
+
+    if policy.worker_id == "social_analyst" and policy.profile == "CRYPTO":
+        if "crypto_social_sentiment_pack" not in tools:
+            raise ConfigError("social_analyst CRYPTO must include crypto_social_sentiment_pack")
 
     if not tools and policy.openviking_access != "none":
         raise ConfigError(

@@ -24,14 +24,17 @@ profiles:
       - cn_a_fundamentals_data
     openviking_access: none
   CRYPTO:
-    approved: false
+    approved: true
     prompt: prompts/CRYPTO.md
-    failure: CRYPTO prompt strategy is not approved; fail explicitly.
+    tools:
+      - crypto_fundamentals_data
+    openviking_access: none
 skills:
   mounted:
     - claw-trade-stage
     - us-fundamental-data
     - cn-a-fundamental-data
+    - crypto-fundamental-data
 tool_policy:
   owner: stage_profile
   python_calls_tools: false

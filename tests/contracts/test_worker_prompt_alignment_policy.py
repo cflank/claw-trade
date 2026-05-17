@@ -25,7 +25,7 @@ REQUIRED_WORKERS: tuple[str, ...] = (
 )
 
 APPROVED_PROMPT_PROFILES = ("US", "CN_A", "HK")
-UNAPPROVED_PROMPT_PROFILES = ("CRYPTO",)
+UNAPPROVED_PROMPT_PROFILES: tuple[str, ...] = ()
 REPORT_POLISHER = "report_polisher"
 APPROVED_PROMPT_CASES = tuple(
     (worker_id, profile)
@@ -33,10 +33,15 @@ APPROVED_PROMPT_CASES = tuple(
     for profile in APPROVED_PROMPT_PROFILES
 )
 HK_PROMPT_CASES = tuple((worker_id, "HK") for worker_id in REQUIRED_WORKERS)
+APPROVED_CRYPTO_PROMPT_CASES = tuple(
+    (worker_id, "CRYPTO")
+    for worker_id in REQUIRED_WORKERS
+)
 UNAPPROVED_PROMPT_CASES = tuple(
     (worker_id, profile)
     for worker_id in REQUIRED_WORKERS
     for profile in UNAPPROVED_PROMPT_PROFILES
+    if (worker_id, profile) not in APPROVED_CRYPTO_PROMPT_CASES
 )
 
 FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS = (
@@ -184,6 +189,7 @@ SUPPORTED_US_PROMPT_PLACEHOLDERS = {
     "chart_assets_note",
 }
 SUPPORTED_HK_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS
+SUPPORTED_CRYPTO_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS | {"trader_plan"}
 
 US_RESEARCH_MANAGER_ALLOWED_PLACEHOLDERS = {
     "ticker",
@@ -395,6 +401,115 @@ def test_unapproved_profiles_fail_closed_without_fallback(worker_id: str, profil
     assert "Do not fallback to CN_A" in text
 
 
+@pytest.mark.parametrize(("worker_id", "profile"), APPROVED_CRYPTO_PROMPT_CASES)
+def test_approved_crypto_worker_prompts_are_real_prompts_not_fail_closed_placeholders(
+    worker_id: str,
+    profile: str,
+) -> None:
+    prompt_path = Path("agents") / worker_id / "prompts" / f"{profile}.md"
+    metadata = _front_matter(prompt_path)
+    text = prompt_path.read_text(encoding="utf-8")
+
+    assert metadata["profile"] == "CRYPTO"
+    assert metadata["profile_status"] == "approved"
+    assert metadata["worker_id"] == worker_id
+    assert metadata["stage"] == worker_by_id(worker_id).stage.value
+    assert "not been approved" not in text
+    assert "Fail explicitly" not in text
+    assert "fallback" not in text.lower()
+    assert "加密" in text or "CRYPTO" in text
+    assert "报告" in text or "辩论" in text or "决策" in text
+
+
+def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
+    text = (Path("agents") / "market_analyst" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+
+    assert "可用工具：`crypto_market_data_pack`" in text
+    assert "worker 不直接读取 BB 原始大 JSON" in text
+    assert "资料就绪度只能说明资料覆盖和通道质量" in text
+    assert "最终市场报告是给中文读者看的，不要把内部字段名写进正文" in text
+    assert "上方最近清算簇" in text
+    assert "主动买卖量累计差值" in text
+    assert "不得推断其正常、过热或极端" in text
+
+
+def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> None:
+    expected_snippets = {
+        "fundamental_analyst": ("加密资产基本面分析师", "代币经济分析", "FDV/TVL", "买入/持有/卖出"),
+        "news_analyst": ("加密市场新闻与事件分析师", "监管", "ETF", "Markdown 表格"),
+        "social_analyst": ("加密社区与市场情绪分析师", "X、Telegram、Discord、Reddit", "1-5 天市场反应"),
+        "bull_researcher": ("看涨加密资产研究员", "反驳看跌观点", "清算挤压"),
+        "bear_researcher": ("看跌加密资产研究员", "反驳看涨观点", "代币释放/解锁"),
+        "research_manager": ("买入、卖出或持有", "避免仅仅因为双方都有有效观点就默认选择持有", "价格区间与交易条件分析"),
+        "trader": ("最终交易建议: **买入/持有/卖出**", "入场条件", "止损/失效位"),
+        "risk_challenger": ("激进风险分析师", "高回报、高风险", "清算空头挤压"),
+        "risk_guardian": ("安全/保守风险分析师", "保护资产", "交易所风险"),
+        "risk_moderator": ("中性风险分析师", "平衡的加密资产风险视角", "降低杠杆"),
+        "portfolio_manager": ("买入、卖出或持有", "清晰和果断", "调整后的交易员计划"),
+        "report_polisher": ("加密资产投资研究终稿编辑", "完整终稿润色，不是短摘要", "专业加密资产研究终稿"),
+    }
+    for worker_id, snippets in expected_snippets.items():
+        text = (Path("agents") / worker_id / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+        for snippet in snippets:
+            assert snippet in text, f"{worker_id} CRYPTO prompt missing role-style snippet: {snippet!r}"
+        if worker_id in {
+            "fundamental_analyst",
+            "bull_researcher",
+            "bear_researcher",
+            "research_manager",
+            "trader",
+            "portfolio_manager",
+        }:
+            assert "PE/PB/ROE" in text
+
+
+def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() -> None:
+    expected_snippets = {
+        "fundamental_analyst": (
+            "crypto_fundamental_data_pack",
+            "资料包未可用 / 未调用成功 / 覆盖不足",
+            "不得用模型常识、历史印象或上游未提供的证据补写缺失事实",
+        ),
+        "news_analyst": (
+            "crypto_news_data_pack",
+            "不得写真实新闻、真实公告、真实监管事件或真实市场反应结论",
+            "搜索摘要只能作为发现线索",
+            "Polymarket 只能表达事件预期或盘口概率",
+            "Alternative.me 是市场级情绪指标，不是新闻源",
+        ),
+        "social_analyst": (
+            "crypto_social_sentiment_pack",
+            "不得写真实社交平台观点、真实 KOL 立场、真实社区共识或真实情绪结论",
+            "搜索摘要只能作为公开讨论线索",
+            "Polymarket 只能表达事件预期或盘口概率",
+            "Alternative.me 只能表达市场级恐惧/贪婪情绪",
+        ),
+    }
+    for worker_id, snippets in expected_snippets.items():
+        text = (Path("agents") / worker_id / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+        for snippet in snippets:
+            assert snippet in text, f"{worker_id} CRYPTO prompt missing missing-data boundary: {snippet!r}"
+
+
+def test_crypto_downstream_prompts_condition_on_upstream_data_gaps_without_filling_facts() -> None:
+    for worker_id in DOWNSTREAM_DECISION_WORKERS:
+        text = (Path("agents") / worker_id / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+        assert "资料包未可用、未调用成功、覆盖不足或内容为空" in text
+        assert "不得补写缺失事实" in text
+
+
+@pytest.mark.parametrize(("worker_id", "profile"), APPROVED_CRYPTO_PROMPT_CASES)
+def test_crypto_worker_prompt_placeholders_are_supported_runtime_vars(
+    worker_id: str,
+    profile: str,
+) -> None:
+    text = (Path("agents") / worker_id / "prompts" / f"{profile}.md").read_text(encoding="utf-8")
+    placeholders = _prompt_placeholders(text)
+
+    unsupported = placeholders - SUPPORTED_CRYPTO_PROMPT_PLACEHOLDERS
+    assert unsupported == set()
+
+
 @pytest.mark.parametrize(("worker_id", "profile"), HK_PROMPT_CASES)
 def test_hk_worker_prompts_are_real_prompts_not_fail_closed_placeholders(worker_id: str, profile: str) -> None:
     prompt_path = Path("agents") / worker_id / "prompts" / f"{profile}.md"
@@ -577,13 +692,20 @@ def test_us_fundamental_prompt_requires_quarterly_and_annual_statement_history()
 def test_report_polisher_prompts_require_chinese_long_form_output_without_summary_compression() -> None:
     us_text = (Path("agents") / "report_polisher" / "prompts" / "US.md").read_text(encoding="utf-8")
     cn_a_text = (Path("agents") / "report_polisher" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+    hk_text = (Path("agents") / "report_polisher" / "prompts" / "HK.md").read_text(encoding="utf-8")
+    crypto_text = (Path("agents") / "report_polisher" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+    user_text = (Path("agents") / "report_polisher" / "USER.md").read_text(encoding="utf-8")
 
     assert "The final output must be written in Chinese" in us_text
+    assert "The first line of the final answer must be the Markdown H1 report title" in us_text
     assert "This is long-form report polishing, not a short summary" in us_text
     assert "Do not collapse the analyst materials into brief abstracts" in us_text
+    assert "must not be more outline-like than `market_analyst_report`" in us_text
     assert "professional sell-side / investment-bank final report" in us_text
     assert "evidence -> interpretation -> investment implication -> risk, trigger, or invalidation condition" in us_text
     assert "Do not move that analytical chain into an appendix" in us_text
+    assert "指标覆盖" in us_text
+    assert "数据 -> 推导 -> 交易作用 -> 失效" in us_text
     assert "# {company_name}（{ticker}）投资研究报告" in us_text
     assert "## 二、技术指标分析" in us_text
     assert "MACD/RSI 动量信号" in us_text
@@ -597,11 +719,15 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "output only that final report" in us_text
 
     assert "最终输出必须使用中文" in cn_a_text
+    assert "最终回答第一行必须是 Markdown H1 标题" in cn_a_text
     assert "这是完整终稿润色，不是短摘要" in cn_a_text
     assert "不得把上游报告压缩成几个概述段" in cn_a_text
+    assert "终稿中的技术指标章节不得比 `market_analyst_report` 更提纲化" in cn_a_text
     assert "专业卖方/投行研究终稿" in cn_a_text
     assert "证据 -> 解读 -> 投资含义 -> 风险、触发或失效条件" in cn_a_text
     assert "不要把分析链挪到附录" in cn_a_text
+    assert "指标覆盖" in cn_a_text
+    assert "数据 -> 推导 -> 交易作用 -> 失效" in cn_a_text
     assert "正文主体必须覆盖：图表读法与价格结构" in cn_a_text
     assert "趋势与价格结构" in cn_a_text
     assert "均线系统" in cn_a_text
@@ -612,6 +738,43 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "毛利率/营业利润率/净利率" in cn_a_text
     assert "资产负债表、杠杆和流动性" in cn_a_text
     assert "这里可以简洁，但前面各节不能压缩成摘要" in cn_a_text
+
+    assert "最终输出必须使用中文" in hk_text
+    assert "最终回答第一行必须是 Markdown H1 标题" in hk_text
+    assert "这是完整终稿润色，不是短摘要" in hk_text
+    assert "不得把上游报告压缩成几个概述段" in hk_text
+    assert "终稿中的技术指标与交易结构章节不得比 `market_analyst_report` 更提纲化" in hk_text
+    assert "专业卖方/投行研究终稿" in hk_text
+    assert "证据 -> 解读 -> 投资含义 -> 风险、触发或失效条件" in hk_text
+    assert "不要把分析链挪到附录" in hk_text
+    assert "指标覆盖" in hk_text
+    assert "数据 -> 推导 -> 交易作用 -> 失效" in hk_text
+    assert "## 二、技术指标与交易结构分析" in hk_text
+
+    assert "最终输出必须使用中文" in crypto_text
+    assert "最终回答第一行必须是 Markdown H1 标题" in crypto_text
+    assert "这是完整终稿润色，不是短摘要" in crypto_text
+    assert "不得把上游报告压缩成几个概述段" in crypto_text
+    assert "终稿中的市场结构与技术指标章节不得比 `market_analyst_report` 更提纲化" in crypto_text
+    assert "专业加密资产研究终稿" in crypto_text
+    assert "证据 -> 解读 -> 投资含义 -> 风险、触发或失效条件" in crypto_text
+    assert "不要把分析链挪到附录" in crypto_text
+    assert "# {company_name}（{ticker}）加密资产投资研究报告" in crypto_text
+    assert "## 二、市场结构与技术指标分析" in crypto_text
+    assert "数据状态" in crypto_text
+    assert "指标覆盖" in crypto_text
+    assert "OB/订单块" in crypto_text
+    assert "FVG" in crypto_text
+    assert "AHR999" in crypto_text
+    assert "数据 -> 推导 -> 交易作用 -> 失效" in crypto_text
+    assert "资金费率、OI、多空比、清算地图" in crypto_text
+    assert "项目与代币基本面分析" in crypto_text
+    assert "FDV、市值、TVL、协议收入" in crypto_text
+    assert "不得把搜索摘要写成事实" in crypto_text
+    assert "这里可以简洁，但前面各节不能压缩成摘要" in crypto_text
+    assert "第一行必须是正式报告的 Markdown H1 标题" in user_text
+    assert "不要以“好的”“收到”“我将”等过程性回应开头" in user_text
+    assert "不能把它们压成几个提纲式结论" in user_text
 
 
 def test_us_downstream_prompts_keep_truthfulness_redlines_from_becoming_memo_style_bans() -> None:
