@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 import sys
 from pathlib import Path
@@ -155,7 +156,7 @@ def test_t_pvd_008_stock_zh_a_spot_em_filters_target_and_maps_valuation(monkeypa
         ("eastmoney_direct", "quote_valuation_snapshot"),
         ("baostock", "candidate_financials"),
         ("efinance", "candidate_enrichment"),
-        ("tushare", "pro_enrichment"),
+        ("tushare", "stock_basic"),
     ],
 )
 def test_t_pvd_008_disabled_fundamental_sources_are_config_blocked_without_network(
@@ -164,11 +165,12 @@ def test_t_pvd_008_disabled_fundamental_sources_are_config_blocked_without_netwo
 ) -> None:
     called = False
     config = load_frontline_provider_config(_base_env())
-    disabled_spec = next(
+    enabled_spec = next(
         spec
         for spec in load_fundamental_provider_specs(config)
         if spec.provider == provider and spec.endpoint == endpoint
     )
+    disabled_spec = replace(enabled_spec, enabled=False)
 
     def _never_call(
         spec: ProviderSpec,

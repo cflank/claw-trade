@@ -52,6 +52,13 @@ US_TOOLS = (
     ("get_news", "social_analyst"),
 )
 
+CRYPTO_TOOLS = (
+    ("crypto_market_data_pack", "market_analyst"),
+    ("crypto_fundamental_data_pack", "fundamental_analyst"),
+    ("crypto_news_data_pack", "news_analyst"),
+    ("crypto_social_sentiment_pack", "social_analyst"),
+)
+
 
 def test_domain_pack_tool_descriptions_cover_hk_not_cn_a_only() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
@@ -255,6 +262,38 @@ echo '{{"ok": true}}'
 
 @pytest.mark.parametrize(
     ("tool_name", "worker_id"),
+    CRYPTO_TOOLS,
+)
+def test_non_crypto_market_for_crypto_tools_returns_structured_params_error_without_provider_attempts(
+    tmp_path: Path,
+    tool_name: str,
+    worker_id: str,
+) -> None:
+    marker = tmp_path / "python_called.txt"
+    fake_python = tmp_path / "fake_python.sh"
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+echo called > {marker}
+echo '{{"ok": true}}'
+""",
+    )
+    result = _run_tool(
+        tool_name=tool_name,
+        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"ticker": "BTC", "market": "US"}),
+        params={"ticker": "BTC", "market": "US"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is True
+    assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
+    details = result.get("details")
+    assert isinstance(details, dict)
+    assert "provider_attempts" not in details
+    assert marker.exists() is False
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "worker_id"),
     CN_A_TOOLS,
 )
 def test_existing_domain_pack_tools_accept_hk_market_at_js_boundary(
@@ -297,7 +336,7 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 
 @pytest.mark.parametrize(
     ("tool_name", "worker_id"),
-    (*CN_A_TOOLS, *US_TOOLS),
+    (*CN_A_TOOLS, *US_TOOLS, *CRYPTO_TOOLS),
 )
 def test_missing_required_market_returns_structured_params_error_without_spawning_python(
     tmp_path: Path,
@@ -401,6 +440,47 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert stdin_payload["tool_input"]["market"] == "HK"
     assert stdin_payload["runtime_context"]["tool_name"] == "fundamental_fundamentals_data_pack"
     assert stdin_payload["runtime_context"]["worker_id"] == "fundamental_analyst"
+
+
+def test_successful_crypto_market_pack_passes_crypto_market_to_python(tmp_path: Path) -> None:
+    stdin_path = tmp_path / "stdin.json"
+    fake_python = tmp_path / "fake_python_pack.sh"
+    payload = {
+        "ok": True,
+        "schema_version": "crypto_market_pack.v1",
+        "tool_name": "crypto_market_data_pack",
+        "reader_brief": "BTC CRYPTO 本地市场资料包：已生成图表资产。",
+    }
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+cat > {stdin_path}
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+    result = _run_tool(
+        tool_name="crypto_market_data_pack",
+        ctx=_runtime_ctx(
+            worker_id="market_analyst",
+            runtime_vars={
+                "ticker": "BTC",
+                "market": "CRYPTO",
+                "start_date": "2026-05-01",
+                "end_date": "2026-05-15",
+            },
+        ),
+        params={"ticker": "BTC", "market": "CRYPTO"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is False
+    assert result["content"][0]["text"] == payload["reader_brief"]
+    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
+    assert stdin_payload["tool_input"]["ticker"] == "BTC"
+    assert stdin_payload["tool_input"]["market"] == "CRYPTO"
+    assert stdin_payload["runtime_context"]["tool_name"] == "crypto_market_data_pack"
+    assert stdin_payload["runtime_context"]["worker_id"] == "market_analyst"
+    assert stdin_payload["runtime_context"]["start_date"] == "2026-05-01"
+    assert stdin_payload["runtime_context"]["end_date"] == "2026-05-15"
 
 
 def test_non_json_stdout_returns_protocol_error_with_redacted_stderr_summary(tmp_path: Path) -> None:
@@ -532,6 +612,52 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert isinstance(details, dict)
     assert details.get("provider_attempts") == payload["provider_attempts"]
     assert details.get("openviking_l2_refs") == payload["openviking_l2_refs"]
+
+
+def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(tmp_path: Path) -> None:
+    fake_python = tmp_path / "fake_python_pack.sh"
+    payload = {
+        "ok": False,
+        "schema_version": "crypto_news_pack.v1",
+        "tool_name": "crypto_news_data_pack",
+        "reader_brief": (
+            "BTC 的 CRYPTO 新闻资料包已返回，readiness=insufficient："
+            "没有原始新闻事实源。数据缺口：搜索发现不能替代新闻事实。"
+        ),
+        "readiness": {"status": "insufficient", "reason": "没有原始新闻事实源。"},
+        "provider_attempts": [
+            {
+                "provider": "Brave Search",
+                "status": "config_blocked",
+                "raw_payload_ref": "viking://resources/workflow/run/frontline/news/raw.json",
+            }
+        ],
+    }
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+
+    result = _run_tool(
+        tool_name="crypto_news_data_pack",
+        ctx=_runtime_ctx(
+            worker_id="news_analyst",
+            runtime_vars={"ticker": "BTC", "market": "CRYPTO"},
+        ),
+        params={"ticker": "BTC", "market": "CRYPTO"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+
+    assert result.get("isError") is False
+    text = result["content"][0]["text"]
+    assert text.startswith("资料包工具已返回，但资料就绪状态为 insufficient")
+    assert "不证明资料覆盖完成" in text
+    assert payload["reader_brief"] in text
+    assert "viking://" not in text
+    assert "provider_attempts" not in text
+    assert result.get("details", {}).get("provider_attempts") == payload["provider_attempts"]
 
 
 def test_provider_total_timeout_contract_keeps_subprocess_plus_five_seconds_buffer() -> None:

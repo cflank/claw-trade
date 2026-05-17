@@ -53,6 +53,12 @@ EXPECTED_FRONTLINE_VISIBLE_TOOLS_BY_PROFILE: dict[str, dict[str, tuple[str, ...]
         "news_analyst": ("get_news", "get_global_news"),
         "social_analyst": ("get_news",),
     },
+    "CRYPTO": {
+        "market_analyst": ("crypto_market_data_pack",),
+        "fundamental_analyst": ("crypto_fundamental_data_pack",),
+        "news_analyst": ("crypto_news_data_pack",),
+        "social_analyst": ("crypto_social_sentiment_pack",),
+    },
 }
 EXPECTED_FRONTLINE_VISIBLE_TOOLS: dict[str, tuple[str, ...]] = {
     "market_analyst": ("market_market_data_pack",),
@@ -65,6 +71,10 @@ EXPECTED_FRONTLINE_TOOL_REGISTRATION = {
     "get_stock_data",
     "get_indicators",
     "fundamental_fundamentals_data_pack",
+    "crypto_market_data_pack",
+    "crypto_fundamental_data_pack",
+    "crypto_news_data_pack",
+    "crypto_social_sentiment_pack",
     "get_fundamentals",
     "get_balance_sheet",
     "get_cashflow",

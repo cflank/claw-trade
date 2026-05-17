@@ -11,6 +11,12 @@ from claw_trade.workflow.models import WorkerCall
 _TOOL_CALLS_STATUS = {"none", "recorded"}
 _CALL_STATUS = {"success", "error"}
 _REQUIRED_CALL_FIELDS = ("tool_name", "action", "status", "result_sha256")
+_CRYPTO_FRONTLINE_REQUIRED_PACK_TOOLS = {
+    "market_analyst": "crypto_market_data_pack",
+    "fundamental_analyst": "crypto_fundamental_data_pack",
+    "news_analyst": "crypto_news_data_pack",
+    "social_analyst": "crypto_social_sentiment_pack",
+}
 
 
 def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardResult:
@@ -66,8 +72,16 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
                 reason="tool-calls status=none 时 calls 必须为空",
                 paths=(evidence.tool_calls_path,),
             )
+        required_tool = _required_crypto_frontline_pack_tool(call)
+        if required_tool is not None:
+            return guard_failed(
+                category="tool_calls",
+                reason=f"CRYPTO frontline worker 未调用必需资料包工具: {required_tool}",
+                paths=(evidence.tool_calls_path,),
+            )
         return guard_passed(category="tool_calls")
 
+    seen_tools: set[str] = set()
     for index, item in enumerate(calls):
         if not isinstance(item, dict):
             return guard_failed(
@@ -89,7 +103,26 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
                 reason=f"tool-calls calls[{index}].status 非法: {item.get('status')!r}",
                 paths=(evidence.tool_calls_path,),
             )
+        seen_tools.add(item["tool_name"].strip())
+    required_tool = _required_crypto_frontline_pack_tool(call)
+    if required_tool is not None and required_tool not in seen_tools:
+        return guard_failed(
+            category="tool_calls",
+            reason=f"CRYPTO frontline worker 未调用必需资料包工具: {required_tool}",
+            paths=(evidence.tool_calls_path,),
+        )
     return guard_passed(category="tool_calls")
+
+
+def _required_crypto_frontline_pack_tool(call: WorkerCall) -> str | None:
+    # Guard source: 2026-05-16 user CRYPTO authenticity request; AGENTS Truthfulness Hard Gates
+    # require missing tool data to fail visibly instead of passing as fake/silent success.
+    if call.profile != "CRYPTO" or call.stage.value != "frontline":
+        return None
+    tool_name = _CRYPTO_FRONTLINE_REQUIRED_PACK_TOOLS.get(call.worker_id)
+    if tool_name is None or tool_name not in call.allowed_tools:
+        return None
+    return tool_name
 
 
 def _validate_identity(

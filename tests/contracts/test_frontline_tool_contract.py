@@ -23,6 +23,12 @@ EXPECTED_US_FRONTLINE_VISIBLE_TOOLS = {
     "news_analyst": ("get_news", "get_global_news"),
     "social_analyst": ("get_news",),
 }
+EXPECTED_CRYPTO_FRONTLINE_VISIBLE_TOOLS = {
+    "market_analyst": ("crypto_market_data_pack",),
+    "fundamental_analyst": ("crypto_fundamental_data_pack",),
+    "news_analyst": ("crypto_news_data_pack",),
+    "social_analyst": ("crypto_social_sentiment_pack",),
+}
 
 PACK_TOOL_PARAM_FIELDS = {
     "ticker",
@@ -44,16 +50,22 @@ FORBIDDEN_PROVIDER_ATOMIC_TOOL_HINTS = (
 )
 
 EXPECTED_WORKER_PACK_EXPORTS = {
-    "market_analyst": {"market_market_data_pack", "get_stock_data", "get_indicators"},
+    "market_analyst": {
+        "market_market_data_pack",
+        "get_stock_data",
+        "get_indicators",
+        "crypto_market_data_pack",
+    },
     "fundamental_analyst": {
         "fundamental_fundamentals_data_pack",
+        "crypto_fundamental_data_pack",
         "get_fundamentals",
         "get_balance_sheet",
         "get_cashflow",
         "get_income_statement",
     },
-    "news_analyst": {"news_news_data_pack", "get_news", "get_global_news"},
-    "social_analyst": {"social_social_sentiment_pack", "get_news"},
+    "news_analyst": {"news_news_data_pack", "crypto_news_data_pack", "get_news", "get_global_news"},
+    "social_analyst": {"social_social_sentiment_pack", "crypto_social_sentiment_pack", "get_news"},
 }
 
 
@@ -76,6 +88,18 @@ def test_us_frontline_visible_tools_match_original_profile_tools() -> None:
 
     for worker_id, expected_tools in EXPECTED_US_FRONTLINE_VISIBLE_TOOLS.items():
         policy_result = load_stage_policy(Path("agents"), worker_id, "US")
+        assert policy_result.ok is True and policy_result.policy is not None
+        actual_tools = resolve_tools(policy_result.policy, registry)
+        assert actual_tools == expected_tools
+
+
+def test_crypto_frontline_visible_tools_match_real_implemented_tool_boundary() -> None:
+    registry_result = load_tool_registry()
+    assert registry_result.ok is True and registry_result.registry is not None
+    registry = registry_result.registry
+
+    for worker_id, expected_tools in EXPECTED_CRYPTO_FRONTLINE_VISIBLE_TOOLS.items():
+        policy_result = load_stage_policy(Path("agents"), worker_id, "CRYPTO")
         assert policy_result.ok is True and policy_result.policy is not None
         actual_tools = resolve_tools(policy_result.policy, registry)
         assert actual_tools == expected_tools
@@ -162,9 +186,13 @@ console.log(JSON.stringify(registrations));
     names = {item["name"] for item in registrations}
     assert names == {
         "market_market_data_pack",
+        "crypto_market_data_pack",
         "get_stock_data",
         "get_indicators",
         "fundamental_fundamentals_data_pack",
+        "crypto_fundamental_data_pack",
+        "crypto_news_data_pack",
+        "crypto_social_sentiment_pack",
         "get_fundamentals",
         "get_balance_sheet",
         "get_cashflow",

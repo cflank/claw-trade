@@ -11,4 +11,4 @@ Follow `STAGES.yaml` for the current worker/profile/stage.
 - Write the canonical artifact named `bull_case`.
 - Do not call tools through Python or assume Python already fetched evidence.
 - Do not emit unsupported investment claims.
-- If the current profile is CRYPTO, fail explicitly until that profile strategy is approved.
+- If the current profile is CRYPTO, use the approved CRYPTO prompt only when STAGES.yaml approves that profile; do not fallback to US, CN_A, or HK.

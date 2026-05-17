@@ -22,7 +22,7 @@ class _FakeTushareModule:
 def test_create_tushare_pro_does_not_set_private_http_url_when_not_configured() -> None:
     module = _FakeTushareModule()
 
-    pro = create_tushare_pro(token="token-a", tushare_module=module)
+    pro = create_tushare_pro(token="token-a", env={}, tushare_module=module)
 
     assert pro is module.pro
     assert module.tokens == ["token-a"]

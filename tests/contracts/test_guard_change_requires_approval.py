@@ -11,6 +11,7 @@ from claw_trade.workflow.models import FailureRecord, Stage
 APPROVED_RUNTIME_GUARD_FILES = frozenset(
     {
         "__init__.py",
+        "artifact_flow.py",
         "common.py",
         "export_claims.py",
         "fundamental_claim_dictionaries_v1.json",
@@ -30,6 +31,7 @@ APPROVED_RUNTIME_GUARD_FILES = frozenset(
 
 APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     "__init__.py": "094768affec41e45129e9e12472334f6dae1c1e2c51529a071f7baaf81a34b58",
+    "artifact_flow.py": "af193f2206ac1f22bdb954372fa44580f170985db620a591744c24aa9cf41528",
     "common.py": "38491c28306cf1845dc245f7257d2a24d195d6b82a46fa6d2c0595d6bba4f803",
     "export_claims.py": "944ddf521f8f2cd5f8e0755fe6acb57d4a8a8ee73c0a6fd45096859f8e280e6d",
     "fundamental_claim_dictionaries_v1.json": "e1a9eff6f9c4d6ba97d2cfa2530101b90544f443bf15c652b1a279451e593a7b",
@@ -37,11 +39,11 @@ APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     "fundamental_claim_rules.py": "ba1d62c0c8808e13921202ab2f11d9052d8546d88f6c005b0b56fdcb4077ca28",
     "fundamental_gate_inputs.py": "a76c2bfffc1c476fa6f8103299df981aac2261ccb4c59fa054f49dbc86b6a0f0",
     "fundamental_gate_outcome.py": "5b72c9d4f3f7464b380fa8256204f355b8c7e1fb8ec0235177e452ddb7dccd83",
-    "l1_l2.py": "8c012fcc35325cc369184ce4fab4559b60f8700831ec3f7fd5d7f8deb2a1a8fc",
+    "l1_l2.py": "c409bf6c0f3f66e619d0677328a272d45417abba599e9042c81cd0b69599f551",
     "openviking_access.py": "70905f71358275d140abf8dcc8d71f63db8c6a2724793d429f716f6309b8d8f7",
     "openviking_receipt.py": "50cb4f10d40fd9a387073f44bcaf09d915937adb469f4636d00e0bcc3e9ec634",
-    "provider_request.py": "3b71ee622d495c4c8a422521e52fb084e18ccacdaaa47eb446067b190b099e11",
-    "tool_calls.py": "d56918e98e1bd9e4c50c029e808ec0f1d780d16ac2893310f6f4a53ec9fba333",
+    "provider_request.py": "e67abbb5b76017d812b8b98dbc90eb9b5839e571ba45fd7c3f09661c5250aa7e",
+    "tool_calls.py": "8d207c7cd28626e3c9b85f1083d9e41dbcd3e0a67a2683082a489e3122770b29",
     "visible_tools.py": "0b18078feda9cb416e05ad4d6bbf8dacbc3118c895cf8947c84a5f7dc61695a5",
     "workspace_evidence.py": "332420a1ebac0af35fac0101a0c8d5814e57888a39dd84440e80f75f409319ab",
 }
@@ -79,7 +81,6 @@ APPROVED_GUARD_LIKE_REJECTION_CALL_COUNTS = {
     "src/claw_trade/config/tool_names.py": 1,
     "src/claw_trade/runtime/openclaw_client.py": 5,
     "src/claw_trade/workflow/controller.py": 1,
-    "src/claw_trade/workflow/runner.py": 4,
 }
 
 TRUTHFULNESS_REDLINE_CATEGORIES = (

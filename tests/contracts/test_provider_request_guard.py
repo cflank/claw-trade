@@ -146,19 +146,34 @@ def test_validate_provider_request_allows_no_tools_for_pure_prompt_worker(tmp_pa
     assert guard.ok
 
 
-def test_validate_provider_request_rejects_model_visible_protocol_pollution(tmp_path: Path) -> None:
+@pytest.mark.parametrize("profile", ("US", "CN_A", "HK", "CRYPTO"))
+@pytest.mark.parametrize(
+    "pollution",
+    (
+        "material_id=mat-1",
+        "viking://run-1/materials/mat-1",
+        "[ApprovedMaterials]",
+        "OpenViking",
+        "OpenClaw",
+        "openviking_read_with_capability",
+        "你正在执行当前分析师的一轮任务。",
+    ),
+)
+def test_validate_provider_request_rejects_model_visible_protocol_pollution(
+    tmp_path: Path,
+    profile: str,
+    pollution: str,
+) -> None:
     call, evidence = sample_call_and_evidence(tmp_path)
-    call = _replace_call_tools(call, profile="CN_A", allowed_tools=())
+    call = _replace_call_tools(call, profile=profile, allowed_tools=())
     payload = provider_request_payload(call, evidence)
     payload_body = payload["payload"]
     assert isinstance(payload_body, dict)
     payload_body["tools"] = []
-    payload_body["messages"] = [
-        {"role": "user", "content": "你正在执行当前分析师的一轮任务。\n[ApprovedMaterials]\nmaterial_id=mat-1"}
-    ]
+    payload_body["messages"] = [{"role": "user", "content": f"正常报告正文\n{pollution}"}]
     runtime_markers = payload["runtime_markers"]
     assert isinstance(runtime_markers, dict)
-    runtime_markers["profile"] = "CN_A"
+    runtime_markers["profile"] = profile
     write_json(evidence.provider_request_path, payload)
 
     guard = validate_provider_request(call, evidence)

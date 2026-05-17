@@ -21,9 +21,10 @@ profiles:
     tools: []
     openviking_access: none
   CRYPTO:
-    approved: false
+    approved: true
     prompt: prompts/CRYPTO.md
-    failure: CRYPTO prompt strategy is not approved; fail explicitly.
+    tools: []
+    openviking_access: none
 skills:
   mounted:
     - claw-trade-stage

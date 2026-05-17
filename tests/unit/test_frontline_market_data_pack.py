@@ -113,6 +113,19 @@ def test_t_mkt_002_hk_market_uses_existing_pack_with_hk_provider_plan() -> None:
     assert ("tushare", "hk_daily_adj") in endpoints
     assert ("akshare", "stock_hk_hist") in endpoints
     assert ("tushare", "pro_bar") not in endpoints
+    assert "最近 10 个交易日 OHLCV 明细" in pack.reader_brief
+    assert "2026-04-30 开1515 高1535 低1495 收1520 量1000015 额3000015" in pack.reader_brief
+    assert "2026-05-09 开1524 高1544 低1504 收1529 量1000024 额3000024" in pack.reader_brief
+    assert "均线指标" in pack.reader_brief
+    assert "已生成" in pack.reader_brief
+    assert "来源：" in pack.reader_brief
+    assert "material_id" not in pack.reader_brief
+    assert "viking://" not in pack.reader_brief
+    assert "ApprovedMaterials" not in pack.reader_brief
+    assert "capability" not in pack.reader_brief
+    assert "receipt" not in pack.reader_brief
+    assert "其余" not in pack.reader_brief
+    assert len(pack.reader_brief) <= 3000
     assert ("akshare", "stock_zh_a_hist") not in endpoints
 
 
@@ -397,6 +410,32 @@ def test_t_mkt_002_reader_brief_includes_latest_change_and_pct_without_placehold
     assert "日涨跌额" in pack.reader_brief
     assert "日涨跌幅" in pack.reader_brief
     assert "待计算" not in pack.reader_brief
+
+
+def test_t_mkt_002_reader_brief_includes_recent_ohlcv_body_without_machine_protocol() -> None:
+    pack = _build_runner(
+        call_registry={
+            ("akshare", "stock_zh_a_hist"): _market_rows_provider(25),
+            ("eastmoney_direct", "push2his_kline"): _empty_rows_provider(),
+            ("sina", "stock_zh_a_daily"): _empty_rows_provider(),
+            ("tencent", "stock_zh_a_hist_tx"): _empty_rows_provider(),
+        },
+        techlab_compute=_techlab_complete,
+    ).build(_tool_input(), _runtime_context())
+
+    assert "最近 10 个交易日 OHLCV 明细" in pack.reader_brief
+    assert "2026-04-30 开1515 高1535 低1495 收1520 量1000015 额3000015" in pack.reader_brief
+    assert "2026-05-09 开1524 高1544 低1504 收1529 量1000024 额3000024" in pack.reader_brief
+    assert "均线指标" in pack.reader_brief
+    assert "已生成" in pack.reader_brief
+    assert "来源：" in pack.reader_brief
+    assert "material_id" not in pack.reader_brief
+    assert "viking://" not in pack.reader_brief
+    assert "ApprovedMaterials" not in pack.reader_brief
+    assert "capability" not in pack.reader_brief
+    assert "receipt" not in pack.reader_brief
+    assert "其余" not in pack.reader_brief
+    assert len(pack.reader_brief) <= 3000
 
 
 def test_t_mkt_002_reader_brief_marks_change_fields_missing_without_placeholder() -> None:

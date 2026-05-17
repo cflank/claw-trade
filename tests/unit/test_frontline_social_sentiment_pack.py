@@ -242,7 +242,12 @@ def test_t_soc_002_context_errors_do_not_touch_provider_registry_l2_or_mongo_or_
     assert error.value.code == expected_code
 
 
-def test_t_soc_002_matrix_enhancement_sources_keep_explicit_failure_attempts_without_fake_success() -> None:
+def test_t_soc_002_matrix_enhancement_sources_keep_explicit_failure_attempts_without_fake_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for env_name in ("CN_A_NEWS_BOCHA_API_KEY", "JINA_API_KEY", "CN_A_NEWS_TAVILY_API_KEY"):
+        monkeypatch.delenv(env_name, raising=False)
+
     pack = _build_runner(
         call_registry={
             ("eastmoney_akshare", "hot_rank_latest"): _attention_provider(target_code="600519"),

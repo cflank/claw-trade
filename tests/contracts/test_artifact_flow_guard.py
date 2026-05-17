@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
+import tempfile
 
 from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index, make_material_target
@@ -30,10 +32,9 @@ def test_stage_contains_non_legal_upstream_worker_even_if_approved_fails() -> No
     manifest = frontline_and_manager_manifest()
     refs = manifest.for_downstream_stage(Stage.INVESTMENT_DEBATE)
     caps = manifest.capabilities_for_downstream_stage(Stage.INVESTMENT_DEBATE)
-    manager_entry = manifest.lookup("mat-investment-manager")
-    assert manager_entry is not None
-    extra_ref = manager_entry.to_read_ref()
-    extra_cap = manager_entry.to_read_capability()
+    assert manifest.lookup("mat-investment-manager") is not None
+    extra_ref = manifest.for_worker_call(Stage.TRADE_DECISION, worker_id="trader")[0]
+    extra_cap = manifest.capabilities_for_worker_call(Stage.TRADE_DECISION, worker_id="trader")[0]
     call = fake_call(
         stage=Stage.INVESTMENT_DEBATE,
         worker_id="bull_researcher",
@@ -229,5 +230,11 @@ def fake_approved_material(
             ),
         ),
         approved_at="2026-05-03T16:10:00Z",
-        hard_gate_result_path=Path("runs/run-1/evidence/guards/result.json"),
+        hard_gate_result_path=_hard_gate_pass_path(),
     )
+
+
+def _hard_gate_pass_path() -> Path:
+    path = Path(tempfile.gettempdir()) / "claw_trade_artifact_flow_guard_pass.json"
+    path.write_text(json.dumps({"category": "hard_gate", "ok": True}), encoding="utf-8")
+    return path

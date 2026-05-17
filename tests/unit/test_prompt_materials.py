@@ -230,6 +230,125 @@ def test_cn_a_research_manager_prompt_materials_inline_frontline_and_debate(tmp_
     _assert_no_model_visible_protocol(prompt_vars)
 
 
+def test_crypto_research_manager_prompt_materials_inline_frontline_and_debate(tmp_path: Path) -> None:
+    run_id = "run-crypto-research-manager-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# 市场结构\n完整 CRYPTO 市场报告正文",
+            ("fundamental_analyst", Stage.FRONTLINE): "# 代币基本面\n完整 CRYPTO 基本面报告正文",
+            ("news_analyst", Stage.FRONTLINE): "# 新闻事件\n完整 CRYPTO 新闻报告正文",
+            ("social_analyst", Stage.FRONTLINE): "# 社区情绪\n完整 CRYPTO 舆情报告正文",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 看涨观点\n完整看涨报告正文",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 看跌观点\n完整看跌报告正文",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="research_manager",
+        profile="CRYPTO",
+        market="CRYPTO",
+        ticker="BTC",
+        company_name="Bitcoin",
+        currency="USD",
+        currency_symbol="$",
+        stage=Stage.INVESTMENT_DECISION,
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    prompt_vars = result.call.prompt_runtime_vars
+    assert prompt_vars["market_research_report"] == "# 市场结构\n完整 CRYPTO 市场报告正文"
+    assert prompt_vars["fundamentals_report"] == "# 代币基本面\n完整 CRYPTO 基本面报告正文"
+    assert prompt_vars["news_report"] == "# 新闻事件\n完整 CRYPTO 新闻报告正文"
+    assert prompt_vars["sentiment_report"] == "# 社区情绪\n完整 CRYPTO 舆情报告正文"
+    assert prompt_vars["history"] == (
+        "\nBull Analyst: # 看涨观点\n完整看涨报告正文"
+        "\nBear Analyst: # 看跌观点\n完整看跌报告正文"
+    )
+    _assert_no_model_visible_protocol(prompt_vars)
+
+
+def test_hk_research_manager_prompt_materials_inline_frontline_and_debate(tmp_path: Path) -> None:
+    run_id = "run-hk-research-manager-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# 港股技术分析\n完整 HK 市场报告正文",
+            ("fundamental_analyst", Stage.FRONTLINE): "# 港股基本面\n完整 HK 基本面报告正文",
+            ("news_analyst", Stage.FRONTLINE): "# 港股新闻与宏观\n完整 HK 新闻报告正文",
+            ("social_analyst", Stage.FRONTLINE): "# 港股情绪\n完整 HK 舆情报告正文",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 多方观点\n完整 HK 多方报告正文",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 空方观点\n完整 HK 空方报告正文",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="research_manager",
+        profile="HK",
+        market="HK",
+        ticker="0700.HK",
+        company_name="腾讯控股",
+        currency="HKD",
+        currency_symbol="HK$",
+        stage=Stage.INVESTMENT_DECISION,
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    prompt_vars = result.call.prompt_runtime_vars
+    assert prompt_vars["market_research_report"] == "# 港股技术分析\n完整 HK 市场报告正文"
+    assert prompt_vars["fundamentals_report"] == "# 港股基本面\n完整 HK 基本面报告正文"
+    assert prompt_vars["news_report"] == "# 港股新闻与宏观\n完整 HK 新闻报告正文"
+    assert prompt_vars["sentiment_report"] == "# 港股情绪\n完整 HK 舆情报告正文"
+    assert prompt_vars["history"] == (
+        "\nBull Analyst: # 多方观点\n完整 HK 多方报告正文"
+        "\nBear Analyst: # 空方观点\n完整 HK 空方报告正文"
+    )
+    assert prompt_vars["past_memory_str"] == ""
+    _assert_no_model_visible_protocol(prompt_vars)
+
+
 def test_us_research_manager_prompt_materials_use_debate_only(tmp_path: Path) -> None:
     run_id = "run-us-research-manager-materials"
     manifest, openviking = _manifest_with_texts(
@@ -452,6 +571,72 @@ def test_cn_a_report_polisher_prompt_materials_inline_full_final_report_inputs(t
     _assert_no_model_visible_protocol(prompt_vars)
 
 
+def test_crypto_report_polisher_prompt_materials_inline_full_final_report_inputs(tmp_path: Path) -> None:
+    run_id = "run-crypto-report-polisher-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# 市场结构\n完整 CRYPTO 市场报告正文",
+            ("fundamental_analyst", Stage.FRONTLINE): "# 代币基本面\n完整 CRYPTO 基本面报告正文",
+            ("news_analyst", Stage.FRONTLINE): "# 新闻事件\n完整 CRYPTO 新闻报告正文",
+            ("social_analyst", Stage.FRONTLINE): "# 社区情绪\n完整 CRYPTO 舆情报告正文",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 看涨观点\n完整看涨报告正文",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 看跌观点\n完整看跌报告正文",
+            ("research_manager", Stage.INVESTMENT_DECISION): "# 投资计划\n完整研究经理报告正文",
+            ("trader", Stage.TRADE_DECISION): "# 交易决策\n完整交易员报告正文",
+            ("risk_challenger", Stage.RISK_DEBATE): "# 激进风险\n完整激进报告正文",
+            ("risk_guardian", Stage.RISK_DEBATE): "# 保守风险\n完整保守报告正文",
+            ("risk_moderator", Stage.RISK_DEBATE): "# 中性风险\n完整中性报告正文",
+            ("portfolio_manager", Stage.PORTFOLIO_DECISION): "# 组合经理\n完整 CRYPTO 组合经理最终裁决正文",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="report_polisher",
+        profile="CRYPTO",
+        market="CRYPTO",
+        ticker="BTC",
+        company_name="Bitcoin",
+        currency="USD",
+        currency_symbol="$",
+        stage=Stage.FINAL_REPORT,
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.FINAL_REPORT,
+            worker_id="report_polisher",
+            run_id=run_id,
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.FINAL_REPORT,
+            worker_id="report_polisher",
+            run_id=run_id,
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    prompt_vars = result.call.prompt_runtime_vars
+    assert prompt_vars["portfolio_manager_report"] == "# 组合经理\n完整 CRYPTO 组合经理最终裁决正文"
+    assert prompt_vars["market_analyst_report"] == "# 市场结构\n完整 CRYPTO 市场报告正文"
+    assert prompt_vars["fundamental_analyst_report"] == "# 代币基本面\n完整 CRYPTO 基本面报告正文"
+    assert prompt_vars["news_analyst_report"] == "# 新闻事件\n完整 CRYPTO 新闻报告正文"
+    assert prompt_vars["social_analyst_report"] == "# 社区情绪\n完整 CRYPTO 舆情报告正文"
+    assert prompt_vars["trader_report"] == "# 交易决策\n完整交易员报告正文"
+    assert "### 看涨研究员\n# 看涨观点\n完整看涨报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "### 风险整合方\n# 中性风险\n完整中性报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "市场结构与技术指标分析段" in prompt_vars["chart_assets_note"]
+    _assert_no_model_visible_protocol(prompt_vars)
+
+
 def test_us_report_polisher_prompt_materials_inline_full_final_report_inputs(tmp_path: Path) -> None:
     run_id = "run-us-report-polisher-materials"
     manifest, openviking = _manifest_with_texts(
@@ -664,6 +849,11 @@ def _worker_call(
     openviking_read_capabilities,
     stage: Stage = Stage.INVESTMENT_DEBATE,
     profile: str = "CN_A",
+    ticker: str = "600519",
+    company_name: str = "贵州茅台",
+    market: str = "CN_A",
+    currency: str = "CNY",
+    currency_symbol: str = "¥",
     turn_index: int = 0,
     round_index: int = 1,
     role_turn_index: int = 1,
@@ -684,11 +874,11 @@ def _worker_call(
         worker_id=worker_id,
         stage=stage,
         profile=profile,
-        ticker="600519",
-        company_name="贵州茅台",
-        market="CN_A",
-        currency="CNY",
-        currency_symbol="¥",
+        ticker=ticker,
+        company_name=company_name,
+        market=market,
+        currency=currency,
+        currency_symbol=currency_symbol,
         current_date="2026-05-11",
         start_date="2026-04-11",
         end_date="2026-05-11",

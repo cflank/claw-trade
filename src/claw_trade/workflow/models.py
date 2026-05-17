@@ -227,6 +227,7 @@ class OpenClawCommand:
     evidence_dir: Path
     stop_after_first_response: bool
     system_context_policy: str = "openclaw_default"
+    initial_tool_choice: str | None = None
 
 
 @dataclass(frozen=True)

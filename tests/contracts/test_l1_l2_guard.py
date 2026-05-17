@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from claw_trade.artifacts.openviking_client import OpenVikingClient, OpenVikingStat
 from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialTarget, make_material_target
 from claw_trade.guards.l1_l2 import validate_l1_l2_contract, validate_l2_entries
@@ -107,6 +109,24 @@ def test_validate_l1_l2_contract_rejects_compact_l1(tmp_path: Path) -> None:
     claims, guard = validate_l1_l2_contract(call, "# compact", "raw", l2_with_entry("l2-001"))
     assert not claims
     assert not guard.ok
+
+
+@pytest.mark.parametrize(
+    "l1",
+    (
+        '{"report":"这不是自然语言报告"}',
+        '```json\n{"report":"这不是自然语言报告"}\n```',
+    ),
+)
+def test_validate_l1_l2_contract_rejects_json_document_l1(tmp_path: Path, l1: str) -> None:
+    call = sample_call(tmp_path)
+    write_material_claims(call=call, evidence_id="l2-001")
+
+    claims, guard = validate_l1_l2_contract(call, l1, "raw", l2_with_entry("l2-001"))
+
+    assert not claims
+    assert not guard.ok
+    assert guard.reason is not None and "自然语言报告" in guard.reason
 
 
 def test_validate_l1_l2_contract_allows_verified_l1_even_if_text_equals_raw_output(tmp_path: Path) -> None:

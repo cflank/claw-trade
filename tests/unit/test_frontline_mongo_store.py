@@ -13,6 +13,9 @@ if str(SHARED_PYTHON_ROOT) not in sys.path:
 
 from frontline_data_pack.errors import MONGO_CONFIG_INVALID, FrontlineConfigError  # noqa: E402
 from frontline_data_pack.mongo_store import (  # noqa: E402
+    COLLECTION_CRYPTO_PROVIDER_ATTEMPTS,
+    COLLECTION_CRYPTO_PROVIDER_CACHE,
+    COLLECTION_CRYPTO_PROVIDER_RATE_LIMITS,
     COLLECTION_NORMALIZED_FUNDAMENTAL_FIELDS,
     COLLECTION_NORMALIZED_MARKET_PRICES,
     COLLECTION_NORMALIZED_NEWS_ITEMS,
@@ -109,6 +112,9 @@ def test_initialize_mongo_indexes_builds_required_indexes_and_ttl() -> None:
     created = initialize_mongo_indexes(store.database)
 
     expected_collections = {
+        COLLECTION_CRYPTO_PROVIDER_ATTEMPTS,
+        COLLECTION_CRYPTO_PROVIDER_CACHE,
+        COLLECTION_CRYPTO_PROVIDER_RATE_LIMITS,
         COLLECTION_PROVIDER_CACHE,
         COLLECTION_PROVIDER_ATTEMPTS,
         COLLECTION_NORMALIZED_MARKET_PRICES,
@@ -134,6 +140,43 @@ def test_initialize_mongo_indexes_builds_required_indexes_and_ttl() -> None:
         for doc in provider_cache_docs
     )
     assert any(doc["key"] == {"expires_at": 1} and doc.get("expireAfterSeconds") == 0 for doc in provider_cache_docs)
+
+    crypto_provider_cache_docs = [
+        model.document for model in store.database[COLLECTION_CRYPTO_PROVIDER_CACHE].received_index_models
+    ]
+    assert any(
+        doc["key"]
+        == {
+            "market": 1,
+            "domain": 1,
+            "ticker": 1,
+            "provider": 1,
+            "endpoint": 1,
+            "method": 1,
+            "query_fingerprint": 1,
+            "schema_version": 1,
+            "source_role": 1,
+        }
+        and doc.get("unique") is True
+        for doc in crypto_provider_cache_docs
+    )
+    assert any(
+        doc["key"] == {"expires_at": 1} and doc.get("expireAfterSeconds") == 0
+        for doc in crypto_provider_cache_docs
+    )
+
+    crypto_rate_limit_docs = [
+        model.document for model in store.database[COLLECTION_CRYPTO_PROVIDER_RATE_LIMITS].received_index_models
+    ]
+    assert any(
+        doc["key"] == {"provider": 1, "endpoint": 1, "window_start": 1}
+        and doc.get("unique") is True
+        for doc in crypto_rate_limit_docs
+    )
+    assert any(
+        doc["key"] == {"window_expires_at": 1} and doc.get("expireAfterSeconds") == 0
+        for doc in crypto_rate_limit_docs
+    )
 
     market_docs = [model.document for model in store.database[COLLECTION_NORMALIZED_MARKET_PRICES].received_index_models]
     assert any(
@@ -170,6 +213,9 @@ def test_check_mongo_health_returns_unhealthy_when_ping_is_slow_or_fails() -> No
 def test_build_collection_index_models_contains_all_required_collections() -> None:
     index_models = build_collection_index_models()
     assert set(index_models.keys()) == {
+        COLLECTION_CRYPTO_PROVIDER_ATTEMPTS,
+        COLLECTION_CRYPTO_PROVIDER_CACHE,
+        COLLECTION_CRYPTO_PROVIDER_RATE_LIMITS,
         COLLECTION_PROVIDER_CACHE,
         COLLECTION_PROVIDER_ATTEMPTS,
         COLLECTION_NORMALIZED_MARKET_PRICES,

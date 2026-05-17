@@ -8,9 +8,13 @@ const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(PLUGIN_DIR, "..", "..");
 const TOOL_NAMES = Object.freeze({
   cnMarket: "market_market_data_pack",
+  cryptoMarket: "crypto_market_data_pack",
   usGetStockData: "get_stock_data",
   usGetIndicators: "get_indicators",
   cnFundamental: "fundamental_fundamentals_data_pack",
+  cryptoFundamental: "crypto_fundamental_data_pack",
+  cryptoNews: "crypto_news_data_pack",
+  cryptoSocial: "crypto_social_sentiment_pack",
   usGetFundamentals: "get_fundamentals",
   usGetBalanceSheet: "get_balance_sheet",
   usGetCashflow: "get_cashflow",
@@ -24,6 +28,7 @@ const FRONTLINE_STAGE = "frontline";
 const MARKET_CN_A = "CN_A";
 const MARKET_HK = "HK";
 const MARKET_US = "US";
+const MARKET_CRYPTO = "CRYPTO";
 const TOOL_ERROR_CODES = Object.freeze({
   runtimeContextMissing: "TOOL_RUNTIME_CONTEXT_MISSING",
   paramsInvalid: "TOOL_PARAMS_INVALID",
@@ -33,6 +38,7 @@ const TOOL_ERROR_CODES = Object.freeze({
   protocolError: "TOOL_PROTOCOL_ERROR",
 });
 const DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS = 30000;
+const DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS = 120000;
 const DEFAULT_NEWS_TOTAL_TIMEOUT_MS = 20000;
 const DEFAULT_SOCIAL_PACK_TIMEOUT_MS = 20000;
 const DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS = 25000;
@@ -289,6 +295,8 @@ function buildOriginalUsToolInput(runtimeVars, params, toolName) {
 
 function buildRuntimeContext(runtime, toolName, toolCallId) {
   const currentDate = textValue(runtime.runtimeVars.current_date);
+  const startDate = textValue(runtime.runtimeVars.start_date);
+  const endDate = textValue(runtime.runtimeVars.end_date);
   return {
     run_id: runtime.runId,
     stage: runtime.stage,
@@ -299,6 +307,8 @@ function buildRuntimeContext(runtime, toolName, toolCallId) {
     tool_name: toolName,
     evidence_root: path.join(runtime.evidenceDir, "pack-tool-evidence"),
     current_date: currentDate,
+    start_date: startDate,
+    end_date: endDate,
     current_time: new Date().toISOString(),
   };
 }
@@ -506,6 +516,15 @@ function modelFacingToolText(payload, isError = false) {
   if (isRecord(payload)) {
     const readerBrief = textValue(payload.reader_brief);
     if (!isError && readerBrief) {
+      const readiness = isRecord(payload.readiness) ? textValue(payload.readiness.status) : undefined;
+      if (payload.ok === false || (readiness && readiness !== "ready")) {
+        const statusText = readiness ? `资料就绪状态为 ${readiness}` : "资料未标记为可用";
+        return [
+          `资料包工具已返回，但${statusText}；这只证明工具调用完成，不证明资料覆盖完成。`,
+          `请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。`,
+          readerBrief,
+        ].join("\n");
+      }
       return readerBrief;
     }
     const error = isRecord(payload.error) ? payload.error : undefined;
@@ -703,6 +722,138 @@ function fundamentalScriptConfig() {
   };
 }
 
+function cryptoFundamentalScriptConfig() {
+  const pythonDir = path.join(
+    REPO_ROOT,
+    "openclaw_plugins",
+    "claw-trade-frontline-tools",
+    "python",
+  );
+  return {
+    expectedWorkerId: "fundamental_analyst",
+    expectedMarket: MARKET_CRYPTO,
+    requiredFields: ["ticker", "market"],
+    args: [
+      "-c",
+      [
+        "import json, sys",
+        "from pathlib import Path",
+        "python_dir = Path(sys.argv[1]).resolve()",
+        "sys.path.insert(0, str(python_dir))",
+        "from frontline_data_pack.models import to_jsonable",
+        "from frontline_data_pack.crypto_fundamental_data_pack import run_crypto_fundamental_data_pack",
+        "payload = json.load(sys.stdin)",
+        "result = run_crypto_fundamental_data_pack(payload['tool_input'], payload['runtime_context'])",
+        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
+      ].join("; "),
+      pythonDir,
+    ],
+    pythonPathDirs: [pythonDir],
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs("CRYPTO_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
+    ),
+  };
+}
+
+function cryptoMarketScriptConfig() {
+  const pythonDir = path.join(
+    REPO_ROOT,
+    "openclaw_plugins",
+    "claw-trade-frontline-tools",
+    "python",
+  );
+  return {
+    expectedWorkerId: "market_analyst",
+    expectedMarket: MARKET_CRYPTO,
+    requiredFields: ["ticker", "market"],
+    args: [
+      "-c",
+      [
+        "import json, sys",
+        "from pathlib import Path",
+        "python_dir = Path(sys.argv[1]).resolve()",
+        "sys.path.insert(0, str(python_dir))",
+        "from frontline_data_pack.models import to_jsonable",
+        "from frontline_data_pack.crypto_market_data_pack import run_crypto_market_data_pack",
+        "payload = json.load(sys.stdin)",
+        "result = run_crypto_market_data_pack(payload['tool_input'], payload['runtime_context'])",
+        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
+      ].join("; "),
+      pythonDir,
+    ],
+    pythonPathDirs: [pythonDir],
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs("CRYPTO_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS),
+    ),
+  };
+}
+
+function cryptoNewsScriptConfig() {
+  const pythonDir = path.join(
+    REPO_ROOT,
+    "openclaw_plugins",
+    "claw-trade-frontline-tools",
+    "python",
+  );
+  return {
+    expectedWorkerId: "news_analyst",
+    expectedMarket: MARKET_CRYPTO,
+    requiredFields: ["ticker", "market"],
+    args: [
+      "-c",
+      [
+        "import json, sys",
+        "from pathlib import Path",
+        "python_dir = Path(sys.argv[1]).resolve()",
+        "sys.path.insert(0, str(python_dir))",
+        "from frontline_data_pack.models import to_jsonable",
+        "from frontline_data_pack.crypto_news_data_pack import run_crypto_news_data_pack",
+        "payload = json.load(sys.stdin)",
+        "result = run_crypto_news_data_pack(payload['tool_input'], payload['runtime_context'])",
+        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
+      ].join("; "),
+      pythonDir,
+    ],
+    pythonPathDirs: [pythonDir],
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs("CRYPTO_NEWS_PACK_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
+    ),
+  };
+}
+
+function cryptoSocialScriptConfig() {
+  const pythonDir = path.join(
+    REPO_ROOT,
+    "openclaw_plugins",
+    "claw-trade-frontline-tools",
+    "python",
+  );
+  return {
+    expectedWorkerId: "social_analyst",
+    expectedMarket: MARKET_CRYPTO,
+    requiredFields: ["ticker", "market"],
+    args: [
+      "-c",
+      [
+        "import json, sys",
+        "from pathlib import Path",
+        "python_dir = Path(sys.argv[1]).resolve()",
+        "sys.path.insert(0, str(python_dir))",
+        "from frontline_data_pack.models import to_jsonable",
+        "from frontline_data_pack.crypto_social_sentiment_pack import run_crypto_social_sentiment_pack",
+        "payload = json.load(sys.stdin)",
+        "result = run_crypto_social_sentiment_pack(payload['tool_input'], payload['runtime_context'])",
+        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
+      ].join("; "),
+      pythonDir,
+    ],
+    pythonPathDirs: [pythonDir],
+    totalTimeoutMs: domainToolTimeoutMs(
+      positiveSecondsEnvToMs("CRYPTO_SOCIAL_PACK_TIMEOUT_SECONDS", DEFAULT_SOCIAL_PACK_TIMEOUT_MS),
+    ),
+  };
+}
+
 function newsScriptConfig() {
   const pythonDir = path.join(
     REPO_ROOT,
@@ -806,6 +957,7 @@ function usFrontlineScriptConfig(expectedWorkerId, functionName, timeoutEnvName,
 
 const TOOL_CONFIG_FACTORIES = Object.freeze({
   [TOOL_NAMES.cnMarket]: marketScriptConfig,
+  [TOOL_NAMES.cryptoMarket]: cryptoMarketScriptConfig,
   [TOOL_NAMES.usGetStockData]: () => ({
     ...usFrontlineScriptConfig("market_analyst", "run_us_get_stock_data", "US_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
     inputBuilder: buildOriginalUsToolInput,
@@ -815,6 +967,9 @@ const TOOL_CONFIG_FACTORIES = Object.freeze({
     inputBuilder: buildOriginalUsToolInput,
   }),
   [TOOL_NAMES.cnFundamental]: fundamentalScriptConfig,
+  [TOOL_NAMES.cryptoFundamental]: cryptoFundamentalScriptConfig,
+  [TOOL_NAMES.cryptoNews]: cryptoNewsScriptConfig,
+  [TOOL_NAMES.cryptoSocial]: cryptoSocialScriptConfig,
   [TOOL_NAMES.usGetFundamentals]: () => ({
     ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_fundamentals", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
     inputBuilder: buildOriginalUsToolInput,
@@ -885,6 +1040,10 @@ async function runCnMarketPack(ctx, params, toolCallId) {
   return runPack(ctx, params, TOOL_NAMES.cnMarket, "market_analyst", toolCallId);
 }
 
+async function runCryptoMarketPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cryptoMarket, "market_analyst", toolCallId);
+}
+
 async function runUsGetStockData(ctx, params, toolCallId) {
   return runPack(ctx, params, TOOL_NAMES.usGetStockData, "market_analyst", toolCallId);
 }
@@ -895,6 +1054,18 @@ async function runUsGetIndicators(ctx, params, toolCallId) {
 
 async function runCnFundamentalPack(ctx, params, toolCallId) {
   return runPack(ctx, params, TOOL_NAMES.cnFundamental, "fundamental_analyst", toolCallId);
+}
+
+async function runCryptoFundamentalPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cryptoFundamental, "fundamental_analyst", toolCallId);
+}
+
+async function runCryptoNewsPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cryptoNews, "news_analyst", toolCallId);
+}
+
+async function runCryptoSocialPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.cryptoSocial, "social_analyst", toolCallId);
 }
 
 async function runUsGetFundamentals(ctx, params, toolCallId) {
@@ -957,6 +1128,12 @@ export default definePluginEntry({
     );
     registerFrontlineTool(
       api,
+      TOOL_NAMES.cryptoMarket,
+      "Load one CRYPTO market package that internally reads compact BB/CoinGlass market structure plus public exchange OHLCV, local indicators, and PNG chart files.",
+      runCryptoMarketPack,
+    );
+    registerFrontlineTool(
+      api,
       TOOL_NAMES.usGetStockData,
       "Retrieve US OHLCV stock data using the original TradingAgents yfinance shape.",
       runUsGetStockData,
@@ -974,6 +1151,24 @@ export default definePluginEntry({
       TOOL_NAMES.cnFundamental,
       "Load one structured fundamentals package for the current CN_A/HK ticker.",
       runCnFundamentalPack,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.cryptoFundamental,
+      "Load one structured CRYPTO fundamentals package with CoinGecko metadata and DefiLlama DeFi operating metrics.",
+      runCryptoFundamentalPack,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.cryptoNews,
+      "Load one structured CRYPTO news package with source attempts, gaps, event background, prediction-market context, and search discoveries.",
+      runCryptoNewsPack,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.cryptoSocial,
+      "Load one structured CRYPTO social-sentiment package with market-level sentiment, event expectations, discussion discoveries, and explicit social gaps.",
+      runCryptoSocialPack,
     );
     registerFrontlineTool(
       api,

@@ -1,13 +1,17 @@
 {
   "id": "claw-trade-frontline-tools",
   "name": "claw-trade frontline tools",
-  "description": "Registers claw-trade frontline data pack tools for report worker turns.",
+  "description": "Registers local claw-trade CN_A/HK/US frontline data pack tools plus CRYPTO market/fundamental/news/social data packs for report worker turns. CRYPTO market pack internally compacts BB/CoinGlass market structure before exposing natural-language material to the worker.",
   "contracts": {
     "tools": [
       "market_market_data_pack",
+      "crypto_market_data_pack",
       "get_stock_data",
       "get_indicators",
       "fundamental_fundamentals_data_pack",
+      "crypto_fundamental_data_pack",
+      "crypto_news_data_pack",
+      "crypto_social_sentiment_pack",
       "get_fundamentals",
       "get_balance_sheet",
       "get_cashflow",

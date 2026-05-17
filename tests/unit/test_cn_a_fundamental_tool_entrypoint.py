@@ -10,16 +10,17 @@ SCRIPTS_ROOT = Path("agents/fundamental_analyst/skills/cn-a-fundamental-data/scr
 
 def test_tool_entrypoint_returns_pack_dict_without_overwriting_quality_status() -> None:
     captured: dict[str, object] = {}
-    original_policy = FUNDAMENTAL_PACK_MODULE.resolve_fundamental_visible_tools
-    original_build = FUNDAMENTAL_PACK_MODULE.BuildCnAFundamentalPack
-    FUNDAMENTAL_PACK_MODULE.resolve_fundamental_visible_tools = lambda worker_id, market: captured.update(
-        {"worker_id": worker_id, "market": market}
-    )
-    FUNDAMENTAL_PACK_MODULE.BuildCnAFundamentalPack = lambda request: {
-        "ok": True,
-        "quality": {"status": "failed"},
-        "profile": {"ticker": request.ticker},
-    }
+    original_loader = FUNDAMENTAL_PACK_MODULE._load_frontline_pack_runtime
+
+    def fake_run(payload, runtime_context):
+        captured.update({"payload": payload, "runtime_context": runtime_context})
+        return {
+            "ok": True,
+            "quality": {"status": "failed"},
+            "profile": {"ticker": payload["ticker"]},
+        }
+
+    FUNDAMENTAL_PACK_MODULE._load_frontline_pack_runtime = lambda: (fake_run, lambda value: value, ValueError)
     try:
         payload = {
             "ticker": "600519",
@@ -35,10 +36,12 @@ def test_tool_entrypoint_returns_pack_dict_without_overwriting_quality_status() 
         }
         result = FUNDAMENTAL_PACK_MODULE.tool_entrypoint(payload, runtime_context)
         assert result["quality"]["status"] == "failed"
-        assert captured == {"worker_id": "fundamental_analyst", "market": "CN_A"}
+        assert captured["payload"] == payload
+        assert captured["runtime_context"]["worker_id"] == "fundamental_analyst"
+        assert captured["runtime_context"]["run_id"] == "run-ep-1"
+        assert captured["runtime_context"]["call_id"] == "dispatch-ep-1"
     finally:
-        FUNDAMENTAL_PACK_MODULE.resolve_fundamental_visible_tools = original_policy
-        FUNDAMENTAL_PACK_MODULE.BuildCnAFundamentalPack = original_build
+        FUNDAMENTAL_PACK_MODULE._load_frontline_pack_runtime = original_loader
 
 
 def test_tool_entrypoint_accepts_attribute_objects_and_requires_fields() -> None:
@@ -54,23 +57,31 @@ def test_tool_entrypoint_accepts_attribute_objects_and_requires_fields() -> None
         dispatch_id = "dispatch-ep-2"
         worker_id = "fundamental_analyst"
 
-    original_policy = FUNDAMENTAL_PACK_MODULE.resolve_fundamental_visible_tools
-    original_build = FUNDAMENTAL_PACK_MODULE.BuildCnAFundamentalPack
-    FUNDAMENTAL_PACK_MODULE.resolve_fundamental_visible_tools = lambda worker_id, market: None
-    FUNDAMENTAL_PACK_MODULE.BuildCnAFundamentalPack = lambda request: {"ok": True, "ticker": request.ticker}
+    original_loader = FUNDAMENTAL_PACK_MODULE._load_frontline_pack_runtime
+
+    class _ValidationError(Exception):
+        code = FUNDAMENTAL_PACK_MODULE.FND_TOOL_ENTRYPOINT_INVALID_INPUT
+        message = "missing ticker"
+
+    def fake_run(payload, runtime_context):
+        _ = runtime_context
+        ticker = getattr(payload, "ticker", None)
+        if ticker is None and isinstance(payload, dict):
+            ticker = payload.get("ticker")
+        if not ticker:
+            raise _ValidationError("missing ticker")
+        return {"ok": True, "ticker": ticker}
+
+    FUNDAMENTAL_PACK_MODULE._load_frontline_pack_runtime = lambda: (fake_run, lambda value: value, _ValidationError)
     try:
         result = FUNDAMENTAL_PACK_MODULE.tool_entrypoint(_Payload(), _Runtime())
         assert result["ticker"] == "600519"
 
-        try:
-            FUNDAMENTAL_PACK_MODULE.tool_entrypoint({}, _Runtime())
-        except Exception as exc:  # noqa: BLE001
-            assert getattr(exc, "code", None) == FUNDAMENTAL_PACK_MODULE.FND_TOOL_ENTRYPOINT_INVALID_INPUT
-        else:
-            raise AssertionError("missing payload.ticker must fail")
+        error = FUNDAMENTAL_PACK_MODULE.tool_entrypoint({}, _Runtime())
+        assert error["ok"] is False
+        assert error["error"]["code"] == FUNDAMENTAL_PACK_MODULE.FND_TOOL_ENTRYPOINT_INVALID_INPUT
     finally:
-        FUNDAMENTAL_PACK_MODULE.resolve_fundamental_visible_tools = original_policy
-        FUNDAMENTAL_PACK_MODULE.BuildCnAFundamentalPack = original_build
+        FUNDAMENTAL_PACK_MODULE._load_frontline_pack_runtime = original_loader
 
 
 def _load_script_module(module_basename: str):

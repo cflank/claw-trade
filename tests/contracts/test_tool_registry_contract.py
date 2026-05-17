@@ -23,6 +23,7 @@ def test_load_tool_registry_has_minimum_intents() -> None:
     assert "market_data" not in intents
     assert intents["cn_a_market_data"] == ("market_market_data_pack",)
     assert intents["us_market_data"] == ("get_stock_data", "get_indicators")
+    assert intents["crypto_market_data"] == ("crypto_market_data_pack",)
     assert intents["cn_a_fundamentals_data"] == ("fundamental_fundamentals_data_pack",)
     assert intents["us_fundamentals_data"] == (
         "get_fundamentals",
@@ -30,10 +31,13 @@ def test_load_tool_registry_has_minimum_intents() -> None:
         "get_cashflow",
         "get_income_statement",
     )
+    assert intents["crypto_fundamentals_data"] == ("crypto_fundamental_data_pack",)
     assert intents["cn_a_news_data"] == ("news_news_data_pack",)
     assert intents["us_news_data"] == ("get_news", "get_global_news")
+    assert intents["crypto_news_data"] == ("crypto_news_data_pack",)
     assert intents["cn_a_social_sentiment"] == ("social_social_sentiment_pack",)
     assert intents["us_social_sentiment"] == ("get_news",)
+    assert intents["crypto_social_sentiment"] == ("crypto_social_sentiment_pack",)
     assert "openviking_write" in intents
     assert intents["openviking_read"] == ("openviking_read_with_capability",)
     assert intents["openviking_write"] == ("openviking_write_material",)
@@ -87,9 +91,13 @@ def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_fi
     manifest = json.loads((plugin_root / "openclaw.plugin.json").read_text(encoding="utf-8"))
     assert set(manifest["contracts"]["tools"]) == {
         "market_market_data_pack",
+        "crypto_market_data_pack",
         "get_stock_data",
         "get_indicators",
         "fundamental_fundamentals_data_pack",
+        "crypto_fundamental_data_pack",
+        "crypto_news_data_pack",
+        "crypto_social_sentiment_pack",
         "get_fundamentals",
         "get_balance_sheet",
         "get_cashflow",
@@ -136,6 +144,23 @@ def test_empty_stage_tool_intents_fail() -> None:
         resolve_tools(policy, registry)
 
 
+@pytest.mark.parametrize("worker_id", ("news_analyst", "social_analyst"))
+def test_crypto_news_and_social_frontline_no_longer_allow_empty_tools(worker_id: str) -> None:
+    registry = load_tool_registry().registry
+    assert registry is not None
+    policy = StagePolicy(
+        worker_id=worker_id,
+        stage=Stage.FRONTLINE,
+        profile="CRYPTO",
+        tool_intents=(),
+        openviking_access="none",
+        source_path=Path(f"agents/{worker_id}/STAGES.yaml"),
+    )
+
+    with pytest.raises(ConfigError):
+        resolve_tools(policy, registry)
+
+
 def test_unknown_openviking_access_fails() -> None:
     registry = load_tool_registry().registry
     assert registry is not None
@@ -169,6 +194,23 @@ def test_news_guard_blocks_missing_macro_or_company_news() -> None:
     guard = require_global_news_capability_for_news(ToolRegistry({"cn_a_market_data": ("market_market_data_pack",)}))
     assert guard.ok is False
     assert guard.category == "config_blocked"
+
+
+@pytest.mark.parametrize("profile", ("US", "CN_A"))
+def test_news_analyst_still_requires_profile_specific_news_tools(profile: str) -> None:
+    registry = load_tool_registry().registry
+    assert registry is not None
+    policy = StagePolicy(
+        worker_id="news_analyst",
+        stage=Stage.FRONTLINE,
+        profile=profile,
+        tool_intents=(),
+        openviking_access="none",
+        source_path=Path("agents/news_analyst/STAGES.yaml"),
+    )
+
+    with pytest.raises(ConfigError):
+        resolve_tools(policy, registry)
 
 
 def test_social_analyst_skill_manifest_must_mount_cn_a_social_data_skill() -> None:

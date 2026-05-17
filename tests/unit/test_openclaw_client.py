@@ -12,6 +12,7 @@ from claw_trade.runtime.openclaw_client import (
     ProbeResult,
     build_openclaw_command,
     parse_openclaw_result,
+    serialize_openclaw_command_payload,
     validate_openclaw_result_shape,
 )
 from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall
@@ -85,6 +86,58 @@ def test_cn_a_pure_prompt_worker_command_can_have_no_visible_tools() -> None:
     )
 
     assert command.allowed_tools == ()
+
+
+def test_crypto_single_pack_frontline_command_sets_initial_tool_choice() -> None:
+    command = build_openclaw_command(
+        replace(
+            _valid_call(),
+            worker_id="social_analyst",
+            stage=Stage.FRONTLINE,
+            profile="CRYPTO",
+            ticker="BTC",
+            company_name="Bitcoin",
+            market="CRYPTO",
+            currency="USD",
+            currency_symbol="$",
+            allowed_tools=("crypto_social_sentiment_pack",),
+            upstream_materials=(),
+            openviking_read_capabilities=(),
+        )
+    )
+    payload = serialize_openclaw_command_payload(command)
+
+    assert command.initial_tool_choice == "crypto_social_sentiment_pack"
+    assert payload["initial_tool_choice"] == {
+        "type": "tool",
+        "name": "crypto_social_sentiment_pack",
+    }
+
+
+def test_crypto_single_market_pack_command_forces_initial_tool_choice() -> None:
+    command = build_openclaw_command(
+        replace(
+            _valid_call(),
+            worker_id="market_analyst",
+            stage=Stage.FRONTLINE,
+            profile="CRYPTO",
+            ticker="BTC",
+            company_name="Bitcoin",
+            market="CRYPTO",
+            currency="USD",
+            currency_symbol="$",
+            allowed_tools=("crypto_market_data_pack",),
+            upstream_materials=(),
+            openviking_read_capabilities=(),
+        )
+    )
+    payload = serialize_openclaw_command_payload(command)
+
+    assert command.initial_tool_choice == "crypto_market_data_pack"
+    assert payload["initial_tool_choice"] == {
+        "type": "tool",
+        "name": "crypto_market_data_pack",
+    }
 
 
 def test_parse_openclaw_result_converts_paths() -> None:

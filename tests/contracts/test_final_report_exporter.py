@@ -154,6 +154,63 @@ def test_render_final_report_keeps_reader_report_clean_when_polisher_exists(tmp_
     assert "export-claim-market_analyst-t00-claim-market_analyst" in claim_ids
 
 
+def test_render_final_report_preserves_full_market_indicator_material_when_polisher_exists(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-polisher-keeps-market-details", profile="CRYPTO")
+    manifest, reader = _build_manifest_and_reader(state)
+    market_material = next(
+        material
+        for material in manifest.materials_for_stage(Stage.FRONTLINE, run_id=state.run_id)
+        if material.worker_id == "market_analyst"
+    )
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    reader._content_by_material_id[market_material.material_id] = (
+        "## 数据状态\n"
+        "- readiness：overall ready，score 89。\n\n"
+        "## 指标覆盖\n"
+        "| 模块 | 状态 | 影响 |\n"
+        "|---|---|---|\n"
+        "| TD 9/13 | 已引用 | 反弹信号与周线风险冲突 |\n"
+        "| 谐波形态 | 有数据但未构成信号 | 当前没有有效谐波形态 |\n\n"
+        "## 指标推导过程\n"
+        "### TD Sequential\n"
+        "数据：4h/1d buy countdown 13；1w sell countdown 13。\n"
+        "推导：短中线有反弹条件，但周线仍提示上方压力。\n"
+        "交易作用：只支持等确认反弹。\n"
+        "失效：4h 继续收在支撑下方。\n\n"
+        "### 谐波形态\n"
+        "数据：candidates []。\n"
+        "推导：当前没有有效谐波形态。\n"
+    ).encode("utf-8")
+    reader._content_by_material_id[report_material.material_id] = (
+        "# Bitcoin（BTC）加密资产投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终裁决：等待确认。\n\n"
+        "## 二、市场结构与技术指标分析\n"
+        "终稿编辑自己的市场结构叙述。\n\n"
+        "## 三、项目与代币基本面分析\n"
+        "基本面正文。\n"
+    ).encode("utf-8")
+    loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
+    assert loaded.ok
+
+    rendered = render_final_report(
+        materials=loaded.materials,
+        report_materials=loaded.report_materials,
+    )
+
+    assert "### 市场分析师完整指标材料" in rendered.text
+    assert "#### 数据状态" in rendered.text
+    assert "#### 指标覆盖" in rendered.text
+    assert "##### TD Sequential" in rendered.text
+    assert "##### 谐波形态" in rendered.text
+    assert "readiness：overall ready，score 89" in rendered.text
+    assert "| TD 9/13 | 已引用 | 反弹信号与周线风险冲突 |" in rendered.text
+    assert "数据：4h/1d buy countdown 13；1w sell countdown 13。" in rendered.text
+    assert rendered.text.index("## 二、市场结构与技术指标分析") < rendered.text.index("### 市场分析师完整指标材料")
+    assert rendered.text.index("### 市场分析师完整指标材料") < rendered.text.index("终稿编辑自己的市场结构叙述。")
+    assert rendered.text.index("终稿编辑自己的市场结构叙述。") < rendered.text.index("## 三、项目与代币基本面分析")
+
+
 def test_worker_appendices_preserve_raw_worker_sections_when_polisher_exists(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-worker-appendices")
     manifest, reader = _build_manifest_and_reader(state)
@@ -201,6 +258,68 @@ def test_export_final_report_places_us_chart_assets_in_technical_market_analysis
     assert report_text.index("## 2. Technical Market Analysis") < report_text.index("### 技术图表")
     assert report_text.index("### 技术图表") < report_text.index("### Trend Structure")
     assert report_text.index("### 技术图表") < report_text.index("## 3. Fundamental Analysis")
+
+
+def test_export_final_report_places_crypto_chart_assets_in_market_structure_section(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-crypto-market-structure-analysis", profile="CRYPTO")
+    manifest, reader = _build_manifest_and_reader(state)
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    reader._content_by_material_id[report_material.material_id] = (
+        "# Bitcoin（BTC）加密资产投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终裁决：等待确认后条件做多。\n\n"
+        "## 二、市场结构与技术指标分析\n"
+        "### 指标覆盖\n"
+        "价格位、清算地图、资金费率和 OI 均有真实材料。\n\n"
+        "## 三、项目与代币基本面分析\n"
+        "链上和估值材料为部分覆盖。\n"
+    ).encode("utf-8")
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "BTC_indicator_panels.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-crypto")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "## 二、市场结构与技术指标分析" in report_text
+    assert "### 技术图表" in report_text
+    assert "assets/market-01-BTC_indicator_panels.png" in report_text
+    assert report_text.index("## 二、市场结构与技术指标分析") < report_text.index("### 技术图表")
+    assert report_text.index("### 技术图表") < report_text.index("### 指标覆盖")
+    assert report_text.index("### 技术图表") < report_text.index("## 三、项目与代币基本面分析")
+
+
+def test_export_final_report_places_hk_chart_assets_in_trade_structure_section(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-hk-trade-structure-analysis", profile="HK")
+    manifest, reader = _build_manifest_and_reader(state)
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    reader._content_by_material_id[report_material.material_id] = (
+        "# 腾讯控股（00700）港股投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终裁决：维持审慎增持。\n\n"
+        "## 二、技术指标与交易结构分析\n"
+        "### 图表读法\n"
+        "均线、成交额和支撑压力均有真实材料。\n\n"
+        "## 三、基本面与估值分析\n"
+        "基本面和估值材料为部分覆盖。\n"
+    ).encode("utf-8")
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "00700_indicator_panels.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-hk")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "## 二、技术指标与交易结构分析" in report_text
+    assert "### 技术图表" in report_text
+    assert "assets/market-01-00700_indicator_panels.png" in report_text
+    assert report_text.index("## 二、技术指标与交易结构分析") < report_text.index("### 技术图表")
+    assert report_text.index("### 技术图表") < report_text.index("### 图表读法")
+    assert report_text.index("### 技术图表") < report_text.index("## 三、基本面与估值分析")
 
 
 def test_export_final_report_copies_chart_image_to_reports_assets_and_uses_relative_markdown_path(tmp_path: Path) -> None:

@@ -29,6 +29,82 @@ def test_tool_calls_accepts_none_status() -> None:
     assert guard.ok
 
 
+def test_crypto_frontline_tool_calls_rejects_silent_required_pack_skip() -> None:
+    call = _crypto_social_call()
+    evidence = _provider_evidence(call, tool_calls_status="none")
+    _write_tool_calls(
+        evidence.tool_calls_path,
+        {
+            "source": "model_tool_events",
+            "status": "none",
+            "run_id": call.run_id,
+            "call_id": call.call_id,
+            "worker_id": call.worker_id,
+            "stage": call.stage.value,
+            "openclaw_run_id": evidence.openclaw_run_id,
+            "calls": [],
+        },
+    )
+    guard = validate_tool_calls(call, evidence)
+    assert not guard.ok
+    assert guard.reason is not None and "crypto_social_sentiment_pack" in guard.reason
+
+
+def test_crypto_frontline_tool_calls_rejects_recorded_without_required_pack() -> None:
+    call = _crypto_social_call()
+    evidence = _provider_evidence(call, tool_calls_status="recorded")
+    _write_tool_calls(
+        evidence.tool_calls_path,
+        {
+            "source": "model_tool_events",
+            "status": "recorded",
+            "run_id": call.run_id,
+            "call_id": call.call_id,
+            "worker_id": call.worker_id,
+            "stage": call.stage.value,
+            "openclaw_run_id": evidence.openclaw_run_id,
+            "calls": [
+                {
+                    "tool_name": "openviking_write_material",
+                    "action": "write",
+                    "status": "success",
+                    "result_sha256": "w" * 64,
+                }
+            ],
+        },
+    )
+    guard = validate_tool_calls(call, evidence)
+    assert not guard.ok
+    assert guard.reason is not None and "crypto_social_sentiment_pack" in guard.reason
+
+
+def test_crypto_frontline_tool_calls_accepts_required_pack_call() -> None:
+    call = _crypto_social_call()
+    evidence = _provider_evidence(call, tool_calls_status="recorded")
+    _write_tool_calls(
+        evidence.tool_calls_path,
+        {
+            "source": "model_tool_events",
+            "status": "recorded",
+            "run_id": call.run_id,
+            "call_id": call.call_id,
+            "worker_id": call.worker_id,
+            "stage": call.stage.value,
+            "openclaw_run_id": evidence.openclaw_run_id,
+            "calls": [
+                {
+                    "tool_name": "crypto_social_sentiment_pack",
+                    "action": "call",
+                    "status": "error",
+                    "result_sha256": "s" * 64,
+                }
+            ],
+        },
+    )
+    guard = validate_tool_calls(call, evidence)
+    assert guard.ok
+
+
 def test_tool_calls_rejects_non_model_source() -> None:
     call = _worker_call()
     evidence = _provider_evidence(call, tool_calls_status="none")
@@ -139,6 +215,32 @@ def _worker_call() -> WorkerCall:
         start_date="2026-01-01",
         end_date="2026-05-04",
         allowed_tools=("openviking_read_with_capability", "openviking_write_material"),
+        upstream_materials=(),
+        openviking_read_capabilities=(),
+        material_target=target,
+        read_policy=ReadPolicy(),
+        evidence_dir=Path("runs/run-1/calls/call-8/evidence"),
+        stop_after_first_response=False,
+    )
+
+
+def _crypto_social_call() -> WorkerCall:
+    target = make_material_target("run-1", Stage.FRONTLINE, "social_analyst", "call-8")
+    return WorkerCall(
+        call_id=target.call_id,
+        run_id=target.run_id,
+        worker_id=target.worker_id,
+        stage=target.stage,
+        profile="CRYPTO",
+        ticker="BTC",
+        company_name="Bitcoin",
+        market="CRYPTO",
+        currency="USD",
+        currency_symbol="$",
+        current_date="2026-05-16",
+        start_date="2026-04-01",
+        end_date="2026-05-16",
+        allowed_tools=("crypto_social_sentiment_pack",),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

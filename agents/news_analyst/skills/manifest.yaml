@@ -15,3 +15,10 @@ skills:
       - news_analyst
     tool_exports:
       - news_news_data_pack
+  - path: crypto-news-data/SKILL.md
+    skill_id: crypto-news-data
+    skill_version: 0.1.0
+    workers:
+      - news_analyst
+    tool_exports:
+      - crypto_news_data_pack

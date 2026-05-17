@@ -110,7 +110,9 @@ def _validate_model_visible_prompt_text(
     messages: list[object],
     provider_request_path: Path,
 ) -> GuardResult:
-    if call.profile not in {"US", "CN_A"}:
+    # Guard source: AGENTS.md §6.1/§8 and 2026-05-16 explicit user approval:
+    # worker-visible handoff must be natural-language reports, not protocol fields.
+    if call.profile not in {"US", "CN_A", "HK", "CRYPTO"}:
         return guard_passed(category="provider_request")
     text = "\n".join(_message_text(item) for item in messages)
     for token in _FORBIDDEN_MODEL_VISIBLE_PROMPT_TOKENS:

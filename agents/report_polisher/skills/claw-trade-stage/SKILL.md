@@ -13,4 +13,5 @@ Follow `STAGES.yaml` for the current worker, profile, and stage.
 - Improve readability, structure, language quality, and report presentation only.
 - Do not add unsupported investment claims.
 - Do not call tools through Python or assume missing evidence has already been fetched.
-- If the current profile is CRYPTO, fail explicitly until that profile strategy is approved.
+- CRYPTO is approved. Preserve crypto-specific evidence boundaries: do not invent market
+  structure, tokenomics, news, social sentiment, on-chain data, or chart conclusions.

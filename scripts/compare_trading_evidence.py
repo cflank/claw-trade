@@ -24,6 +24,7 @@ WORKERS = (
     "risk_guardian",
     "risk_moderator",
     "portfolio_manager",
+    "report_polisher",
 )
 
 ACTION_TERMS = (

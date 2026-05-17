@@ -205,6 +205,9 @@ class ApprovedManifest:
     def all_for_run(self, run_id: str) -> tuple[ApprovedMaterial, ...]:
         return tuple(self._by_run.get(run_id, ()))
 
+    def lookup(self, material_id: str) -> ApprovedMaterial | None:
+        return self._by_id.get(material_id)
+
     def materials_for_stage(self, stage: Stage, run_id: str | None = None) -> tuple[ApprovedMaterial, ...]:
         return tuple(
             sorted(

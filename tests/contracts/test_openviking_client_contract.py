@@ -17,6 +17,11 @@ from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialReceipt, Materia
 from claw_trade.workflow.models import Stage
 
 
+@pytest.fixture(autouse=True)
+def _use_static_probe_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CLAW_TRADE_OPENVIKING_PROBE_RUN_ID", raising=False)
+
+
 @dataclass
 class FakeBackend:
     content_by_uri: dict[str, bytes]

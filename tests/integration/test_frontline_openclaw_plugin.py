@@ -12,7 +12,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_PATH = REPO_ROOT / "openclaw_plugins" / "claw-trade-frontline-tools" / "index.js"
 
 
-def _runtime_ctx(worker_id: str, *, tool_name: str, call_id: str) -> dict[str, object]:
+def _runtime_ctx(
+    worker_id: str,
+    *,
+    tool_name: str,
+    call_id: str,
+    ticker: str = "600519.SH",
+    market: str = "CN_A",
+) -> dict[str, object]:
     return {
         "singleWorkerCommand": {
             "run_id": "it-plugin-run",
@@ -21,8 +28,8 @@ def _runtime_ctx(worker_id: str, *, tool_name: str, call_id: str) -> dict[str, o
             "call_id": call_id,
             "evidence_dir": f"/tmp/evidence/it-plugin-run/{call_id}",
             "runtime_vars": {
-                "ticker": "600519.SH",
-                "market": "CN_A",
+                "ticker": ticker,
+                "market": market,
                 "current_date": "2026-05-09",
             },
         }
@@ -75,7 +82,7 @@ process.stdout.write(JSON.stringify(result));
     return json.loads(completed.stdout)
 
 
-def test_t_test_004_openclaw_plugin_all_four_tools_receive_runtime_context(tmp_path: Path) -> None:
+def test_t_test_004_openclaw_plugin_data_pack_tools_receive_runtime_context(tmp_path: Path) -> None:
     capture_dir = tmp_path / "captures"
     capture_dir.mkdir(parents=True, exist_ok=True)
     fake_python = tmp_path / "capture_python.py"
@@ -101,18 +108,22 @@ sys.stdout.write("\\n")
     )
 
     tools = [
-        ("market_market_data_pack", "market_analyst"),
-        ("fundamental_fundamentals_data_pack", "fundamental_analyst"),
-        ("news_news_data_pack", "news_analyst"),
-        ("social_social_sentiment_pack", "social_analyst"),
+        ("market_market_data_pack", "market_analyst", "600519.SH", "CN_A"),
+        ("crypto_market_data_pack", "market_analyst", "BTC", "CRYPTO"),
+        ("fundamental_fundamentals_data_pack", "fundamental_analyst", "600519.SH", "CN_A"),
+        ("crypto_fundamental_data_pack", "fundamental_analyst", "BTC", "CRYPTO"),
+        ("crypto_news_data_pack", "news_analyst", "BTC", "CRYPTO"),
+        ("crypto_social_sentiment_pack", "social_analyst", "BTC", "CRYPTO"),
+        ("news_news_data_pack", "news_analyst", "600519.SH", "CN_A"),
+        ("social_social_sentiment_pack", "social_analyst", "600519.SH", "CN_A"),
     ]
 
-    for index, (tool_name, worker_id) in enumerate(tools, start=1):
+    for index, (tool_name, worker_id, ticker, market) in enumerate(tools, start=1):
         call_id = f"it-plugin-call-{index}"
         result = _run_tool(
             tool_name=tool_name,
-            ctx=_runtime_ctx(worker_id, tool_name=tool_name, call_id=call_id),
-            params={"ticker": "600519.SH", "market": "CN_A"},
+            ctx=_runtime_ctx(worker_id, tool_name=tool_name, call_id=call_id, ticker=ticker, market=market),
+            params={"ticker": ticker, "market": market},
             env_overrides={
                 "CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python),
                 "FRONTLINE_CAPTURE_DIR": str(capture_dir),
@@ -124,7 +135,7 @@ sys.stdout.write("\\n")
         assert details.get("ok") is True
         assert details.get("tool_name") == tool_name
 
-    for index, (tool_name, worker_id) in enumerate(tools, start=1):
+    for index, (tool_name, worker_id, _ticker, _market) in enumerate(tools, start=1):
         capture_path = capture_dir / f"{tool_name}.json"
         assert capture_path.exists(), f"missing capture for {tool_name}"
         payload = json.loads(capture_path.read_text(encoding="utf-8"))
