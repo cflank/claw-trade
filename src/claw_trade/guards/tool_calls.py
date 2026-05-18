@@ -12,10 +12,10 @@ _TOOL_CALLS_STATUS = {"none", "recorded"}
 _CALL_STATUS = {"success", "error"}
 _REQUIRED_CALL_FIELDS = ("tool_name", "action", "status", "result_sha256")
 _CRYPTO_FRONTLINE_REQUIRED_PACK_TOOLS = {
-    "market_analyst": "crypto_market_data_pack",
-    "fundamental_analyst": "crypto_fundamental_data_pack",
-    "news_analyst": "crypto_news_data_pack",
-    "social_analyst": "crypto_social_sentiment_pack",
+    "market_analyst": "claw_get_market_pack",
+    "fundamental_analyst": "claw_get_fundamental_pack",
+    "news_analyst": "claw_get_news_pack",
+    "social_analyst": "claw_get_social_pack",
 }
 
 

@@ -37,11 +37,11 @@ Do not use model memory as current market data.
 
 ## Data Routing
 
-Call OpenClaw visible tool `crypto_market_data_pack` first. This pack centrally reads BB/CoinGlass market structure, derivatives, liquidation, on-chain, macro, events, and AHR999, then adds local OHLCV-derived indicators and PNG chart assets.
+Call OpenClaw visible tool `claw_get_market_pack` first. This pack centrally reads OpenBB-routed market structure, derivatives, liquidation, on-chain, macro, events, and AHR999 when those sources are configured, then adds local OHLCV-derived indicators and PNG chart assets.
 
 The worker should use the pack's natural-language `reader_brief`, compact data summary, `provider_attempts`, `data_gaps`, `conflicts`, and `readiness`. Do not use raw BB JSON as the report body; raw provider payload is evidence storage only.
 
-Default call fields: ticker is the asset symbol, market is CRYPTO, company_name is the readable asset name, and the runtime start/end dates define the analysis window.
+The data tool call does not need model-supplied ticker, market, company_name, or date fields; those values are locked by runtime context.
 
 Rules:
 
@@ -53,7 +53,7 @@ Rules:
 
 ## BB/CoinGlass Unavailable Path
 
-If `crypto_market_data_pack` reports that the BB/CoinGlass route is unavailable:
+If `claw_get_market_pack` reports that the CRYPTO market route is unavailable:
 
 1. Check whether the BB MCP is not built, not registered, or Codex has not been restarted.
 2. If `mcp/crypto-data-mcp/dist/server.js` is missing, report `BB_MCP_NOT_BUILT` with the build/register commands from the repo docs.

@@ -1,0 +1,178 @@
+## message 1: user
+
+您是一位专业的加密市场新闻与事件分析师，请输出面向投资读者的中文新闻事件分析报告。
+
+分析对象：Bitcoin（BTC），所属市场 CRYPTO，当前日期：2026-05-17，分析区间：2025-05-17 至 2026-05-17。
+请始终使用精确代码 `BTC`，不要把它改写成股票代码、股票简称或其它资产。
+
+写作边界（必须遵守）：
+- 最终报告正文必须直接从报告标题或正文第一句开始，不要先写过程说明。
+- 不要输出“我将调用工具”“数据已获取完成”“我已经获取了数据”“现在撰写报告”“根据获得的数据我可以……”这类过程话。
+- 不要编造新闻、公告、监管事件、ETF 资金流、交易所动作、安全事件、治理提案、代币解锁、黑客攻击、合作或市场反应。
+- 如果新闻时效、来源覆盖、官方公告验证或跨语言覆盖存在限制，请在“数据限制与风险提示”部分客观说明，不要把限制说明写在开场。
+
+资料使用要求：
+- 如果本 turn 可见 `claw_get_news_pack`，先调用该资料包，再基于返回的官方公告、交易所公告、监管来源、DefiLlama 安全/融资背景、搜索发现、Polymarket 事件预期和数据质量说明写报告；若官方公告、交易所公告或监管来源为空，只能写缺口，不能补写。
+- 如果 `claw_get_news_pack` 不可见、未调用成功或返回空结果，你的 L1 报告必须明确写出“新闻资料包未可用 / 未调用成功 / 缺少哪些新闻资料”，不得写真实新闻、真实公告、真实监管事件或真实市场反应结论；只能写资料缺口、影响范围和后续取数需求。
+- 搜索摘要只能作为发现线索，不是已确认新闻事实；即使搜索摘要提到 ETF、机构、资金流、监管或链上活动，也不能写成已验证事实。只有官方、交易所、监管或可靠媒体原文可作为事实来源。
+- Polymarket 只能表达事件预期或盘口概率，不能写成新闻事实、事件已经发生或市场共识。
+- Alternative.me 是市场级情绪指标，不是新闻源；新闻报告中不得把它写成新闻事实或社交舆情。
+- 报告是给中文投资读者看的，不要把内部工具名或英文状态词写进正文。不要输出 `claw_get_news_pack`、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`feed` 这类内部字段或状态词；要写成“新闻资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“监管原始来源”。
+
+报告至少覆盖以下内容：
+1. 关键新闻与事件梳理：覆盖项目官方公告、协议升级、治理提案、代币解锁、空投、质押规则变化、生态合作、安全漏洞、黑客攻击、桥风险、交易所上币/下架、监管执法和 ETF/机构资金动态。
+2. 宏观与行业背景：说明美联储、美元流动性、利率预期、稳定币供给、ETF 申赎、交易所政策、主要公链生态事件对该资产的影响。
+3. 来源可靠性与时效性：区分官方公告、监管文件、交易所公告、链上数据、媒体报道、KOL 传闻和社区转述。未经可靠来源确认的内容不得当成事实。
+4. 对价格与市场情绪的短中期影响：区分利好、利空、中性和噪音；说明影响周期是日内、1-5 天、数周还是中长期。
+5. 对项目基本面与投资逻辑的潜在影响：说明事件改变的是需求、供给、监管风险、安全假设、生态扩张、流动性还是单纯叙事。
+6. 数据限制与风险提示：仅在此处说明缺口、未验证来源、覆盖不足、时间窗口限制和潜在误读。
+
+要求：
+- 全文使用中文。
+- 聚焦新闻和事件驱动分析，不用技术指标替代新闻结论。
+- 对每条关键事件说明方向、影响周期、证据强度和需要跟踪的后续确认信号。
+- 在报告末尾附上 Markdown 表格，总结关键事件、方向、影响周期、证据强度和跟踪条件。
+
+## message 2: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17"}`
+
+## message 3: tool
+
+## 新闻资料包（CRYPTO）
+可用性：就绪
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：30 条。
+官方原文：10 条。
+全球/宏观新闻：20 条。
+搜索发现：20 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：远端获取成功；global_macro/macro_news：远端获取成功；google_news/search_discovery：远端获取成功。
+
+## message 4: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17","freshness_max_age_seconds":86400}`
+
+## message 5: tool
+
+资料包工具已返回，但资料就绪状态为 insufficient；这只证明工具调用完成，不证明资料覆盖完成。
+请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。
+## 新闻资料包（CRYPTO）
+可用性：资料不足
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：0 条。
+官方原文：0 条。
+全球/宏观新闻：0 条。
+搜索发现：0 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：evidence_write_failed；global_macro/macro_news：evidence_write_failed；google_news/search_discovery：evidence_write_failed。
+资料缺口：attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.project_official.crypto:announcements；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.macro.crypto:macro_news；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.google_news.crypto:search_discovery。
+
+## message 6: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17","freshness_max_age_seconds":172800}`
+
+## message 7: tool
+
+资料包工具已返回，但资料就绪状态为 insufficient；这只证明工具调用完成，不证明资料覆盖完成。
+请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。
+## 新闻资料包（CRYPTO）
+可用性：资料不足
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：0 条。
+官方原文：0 条。
+全球/宏观新闻：0 条。
+搜索发现：0 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：evidence_write_failed；global_macro/macro_news：evidence_write_failed；google_news/search_discovery：evidence_write_failed。
+资料缺口：attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.project_official.crypto:announcements；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.macro.crypto:macro_news；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.google_news.crypto:search_discovery。
+
+## message 8: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17","freshness_max_age_seconds":604800}`
+
+## message 9: tool
+
+资料包工具已返回，但资料就绪状态为 insufficient；这只证明工具调用完成，不证明资料覆盖完成。
+请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。
+## 新闻资料包（CRYPTO）
+可用性：资料不足
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：0 条。
+官方原文：0 条。
+全球/宏观新闻：0 条。
+搜索发现：0 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：evidence_write_failed；global_macro/macro_news：evidence_write_failed；google_news/search_discovery：evidence_write_failed。
+资料缺口：attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.project_official.crypto:announcements；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.macro.crypto:macro_news；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.google_news.crypto:search_discovery。
+
+## message 10: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17","freshness_max_age_seconds":2592000}`
+
+## message 11: tool
+
+资料包工具已返回，但资料就绪状态为 insufficient；这只证明工具调用完成，不证明资料覆盖完成。
+请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。
+## 新闻资料包（CRYPTO）
+可用性：资料不足
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：0 条。
+官方原文：0 条。
+全球/宏观新闻：0 条。
+搜索发现：0 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：evidence_write_failed；global_macro/macro_news：evidence_write_failed；google_news/search_discovery：evidence_write_failed。
+资料缺口：attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.project_official.crypto:announcements；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.macro.crypto:macro_news；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.google_news.crypto:search_discovery。
+
+## message 12: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17","freshness_max_age_seconds":86400000}`
+
+## message 13: tool
+
+资料包工具已返回，但资料就绪状态为 insufficient；这只证明工具调用完成，不证明资料覆盖完成。
+请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。
+## 新闻资料包（CRYPTO）
+可用性：资料不足
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：0 条。
+官方原文：0 条。
+全球/宏观新闻：0 条。
+搜索发现：0 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：evidence_write_failed；global_macro/macro_news：evidence_write_failed；google_news/search_discovery：evidence_write_failed。
+资料缺口：attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.project_official.crypto:announcements；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.macro.crypto:macro_news；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.google_news.crypto:search_discovery。
+
+## message 14: assistant
+
+### tool_calls
+- call 1: `claw_get_news_pack`
+  args: `{"ticker":"BTC","market":"CRYPTO","current_date":"2026-05-17","start_date":"2025-05-17","end_date":"2026-05-17","freshness_max_age_seconds":31536000}`
+
+## message 15: tool
+
+资料包工具已返回，但资料就绪状态为 insufficient；这只证明工具调用完成，不证明资料覆盖完成。
+请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。
+## 新闻资料包（CRYPTO）
+可用性：资料不足
+说明：本资料包只呈现事实来源与缺口，不包含投资判断。
+新闻事实来源（官方原文或宏观新闻）：0 条。
+官方原文：0 条。
+全球/宏观新闻：0 条。
+搜索发现：0 条，仅作线索，不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明。
+事件预期：0 条，仅表示市场预期。
+来源尝试：project_official/announcements：evidence_write_failed；global_macro/macro_news：evidence_write_failed；google_news/search_discovery：evidence_write_failed。
+资料缺口：attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.project_official.crypto:announcements；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.macro.crypto:macro_news；attempt id conflict with different payload: run-20260518-020629-ee224f78:run-20260518-020629-ee224f78-frontline-t00-news_analyst-20260518T020629256663Z-cde17b41:news.google_news.crypto:search_discovery。

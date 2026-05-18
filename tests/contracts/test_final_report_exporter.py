@@ -358,6 +358,10 @@ def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path
         / "pack-tool-evidence"
         / "techlab"
         / "charts-local"
+        / "runs"
+        / state.run_id
+        / "call-01"
+        / "charts"
         / "600519.SH_indicator_panels.png"
     )
     source_chart.parent.mkdir(parents=True, exist_ok=True)

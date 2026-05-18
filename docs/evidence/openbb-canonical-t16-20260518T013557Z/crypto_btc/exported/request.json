@@ -1,0 +1,19 @@
+{
+  "company_name": "Bitcoin",
+  "currency": "USD",
+  "currency_symbol": "$",
+  "current_date": "2026-05-17",
+  "data_gateway": "openbb",
+  "end_date": "2026-05-17",
+  "entry_point": "report_command",
+  "frontline_execution_mode": "parallel",
+  "market": "CRYPTO",
+  "max_debate_rounds": 1,
+  "max_risk_discuss_rounds": 1,
+  "profile": "CRYPTO",
+  "start_date": "2025-05-17",
+  "stop_point": "none",
+  "target_stage": null,
+  "target_worker_id": null,
+  "ticker": "BTC"
+}

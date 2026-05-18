@@ -1,0 +1,3 @@
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+FAILED run_id=run-20260518-011543-01c28e6c status=failed reason=export_report_assets: 报告导出失败：未找到可复制的图表资产

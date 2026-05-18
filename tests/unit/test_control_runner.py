@@ -119,6 +119,36 @@ class _AssetFailExporter:
         )
 
 
+class _PassedExporter:
+    def export(self, state: WorkflowState, manifest) -> ExportResult:  # type: ignore[no-untyped-def]
+        _ = manifest
+        reports_dir = state.run_dir / "reports"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        report_path = reports_dir / "final-report.md"
+        guard_path = reports_dir / "export-guard-results.json"
+        report_path.write_text("# report\n", encoding="utf-8")
+        guard_path.write_text("{}", encoding="utf-8")
+        return ExportResult.passed(state=state, final_report_path=report_path, guard_path=guard_path)
+
+
+class _LineageWriter:
+    def __init__(self, ok: bool = True) -> None:
+        self.ok = ok
+        self.calls = 0
+
+    def link_after_export(self, *, state: WorkflowState, manifest, export_result: ExportResult):  # type: ignore[no-untyped-def]
+        from claw_trade.data_gateway.openviking import LineageWriteResult
+
+        self.calls += 1
+        _ = (state, manifest, export_result)
+        if self.ok:
+            return LineageWriteResult.passed(relation_count=1, paths=(state.run_dir / "openviking" / "lineage.json",))
+        return LineageWriteResult.failed(
+            "relations API unavailable",
+            paths=(state.run_dir / "openviking" / "approved-manifest.json",),
+        )
+
+
 class _RunnerHarness:
     def __init__(self, tmp_path: Path) -> None:
         self.root = tmp_path / "runs"
@@ -158,7 +188,7 @@ def test_crypto_market_worker_reaches_openclaw_with_compact_market_pack(tmp_path
     assert len(call_results) == 1
     call_payload = json.loads((call_results[0].parent / "call.json").read_text(encoding="utf-8"))
     assert call_payload["profile"] == "CRYPTO"
-    assert call_payload["allowed_tools"] == ["crypto_market_data_pack"]
+    assert call_payload["allowed_tools"] == ["claw_get_market_pack"]
     assert harness.openviking.ensure_namespace_calls == [state.openviking_namespace]
 
 
@@ -221,6 +251,47 @@ def test_cn_a_export_asset_failure_does_not_fail_workflow(monkeypatch, tmp_path:
     assert exported.status == "failed"
     assert exported.failure is not None
     assert exported.failure.category == "export_report_assets"
+
+
+def test_passed_export_calls_openviking_lineage_writer(monkeypatch, tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    lineage = _LineageWriter(ok=True)
+    harness.runner.exporter = _PassedExporter()
+    harness.runner.lineage_writer = lineage
+    decisions = iter(
+        (
+            Decision(kind=DecisionKind.EXPORT_REPORT, next_status=RunStatus.REPORT_EXPORTING),
+            Decision(kind=DecisionKind.COMPLETE, next_status=RunStatus.COMPLETED),
+        )
+    )
+
+    def _decide_sequence(input) -> Decision:  # type: ignore[no-untyped-def]
+        del input
+        return next(decisions)
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _decide_sequence)
+    state = harness.runner.run(_request())
+
+    assert state.status == RunStatus.COMPLETED
+    assert lineage.calls == 1
+
+
+def test_openviking_lineage_failure_blocks_completion(monkeypatch, tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    lineage = _LineageWriter(ok=False)
+    harness.runner.exporter = _PassedExporter()
+    harness.runner.lineage_writer = lineage
+
+    def _decide_once(input) -> Decision:  # type: ignore[no-untyped-def]
+        del input
+        return Decision(kind=DecisionKind.EXPORT_REPORT, next_status=RunStatus.REPORT_EXPORTING)
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _decide_once)
+    state = harness.runner.run(_request())
+
+    assert state.status == RunStatus.FAILED
+    assert lineage.calls == 1
+    assert "openviking_lineage" in (state.failure_reason or "")
 
 
 def test_single_worker_openclaw_failed_does_not_read_evidence(tmp_path: Path) -> None:

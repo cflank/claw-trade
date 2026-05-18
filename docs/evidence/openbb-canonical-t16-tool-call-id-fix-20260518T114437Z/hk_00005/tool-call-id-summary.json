@@ -1,0 +1,23 @@
+{
+  "run_id": "run-20260518-120426-96544e5b",
+  "attempt_count": 47,
+  "attempt_call_ids": [
+    "run-20260518-120426-96544e5b-frontline-t00-fundamental_analyst-20260518T120426172675Z-6f472a3e__tool-call_00_dqIVWL3JGi3bedLHyydj9270",
+    "run-20260518-120426-96544e5b-frontline-t00-market_analyst-20260518T120426172310Z-c365d3ef__tool-call_00_wL7ogWNveYZiXonATYDq2060",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_0cTCzIun52y3dgLOwv273529",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_AMVcQdOd9erPgm41DpnX1996",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_EHZIC92P8Uck4C3vNldn4918",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_HBncz5pDtmdArWyuXyDW0756",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_JtMCnifJD6uVTYi4ISv52689",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_KtQwQ0BwBChCxnRiqpGK6268",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_RWpuvLDbNVTGVHUyhPLL0904",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_Xa2eBuD5RC1QYXpyabkj8686",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_bRK2lLmwwf3stEsQzKK00026",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_isqz0pmjQBR31yChKmXx4844",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_jbY5iuVWs0l5l6ZXS45k4781",
+    "run-20260518-120426-96544e5b-frontline-t00-news_analyst-20260518T120426172981Z-41998297__tool-call_00_zC8cBvbW9lFVHOiJ1Klo2622",
+    "run-20260518-120426-96544e5b-frontline-t00-social_analyst-20260518T120426173307Z-c0ed7d4b__tool-call_00_0KqgyrecephoxC3Z8zKX9696"
+  ],
+  "derived_call_id_count": 47,
+  "evidence_write_failed": []
+}

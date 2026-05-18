@@ -1,0 +1,1025 @@
+{
+  "context_index": [
+    {
+      "index_level": "L0",
+      "reason": "L0 URI tree index available via control-plane wrappers",
+      "searchable_by_control_plane": true,
+      "status": "ok",
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+      "vectorized": false,
+      "visible_to_worker": false
+    },
+    {
+      "index_level": "L1",
+      "reason": "L1 approved material metadata index available via control-plane wrappers",
+      "searchable_by_control_plane": true,
+      "status": "ok",
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+      "vectorized": false,
+      "visible_to_worker": false
+    },
+    {
+      "index_level": "semantic",
+      "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+      "searchable_by_control_plane": false,
+      "status": "blocked",
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+      "vectorized": false,
+      "visible_to_worker": false
+    }
+  ],
+  "glob": {
+    "matches": [
+      "{'matches': [], 'count': 0}"
+    ],
+    "pattern": "**/approved-manifest.json",
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+    "status": "ok"
+  },
+  "grep": {
+    "matches": [
+      {
+        "content": "  \"call_id\": \"run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d\",",
+        "line": "5",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/evidence/index.json"
+      },
+      {
+        "content": "  \"worker_id\": \"portfolio_manager\",",
+        "line": "6",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/evidence/index.json"
+      }
+    ],
+    "pattern": "portfolio_manager",
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+    "status": "ok"
+  },
+  "ovpack_export": {
+    "bundle_path": "docs/evidence/openbb-canonical-t16-tool-call-id-fix-20260518T114437Z/crypto_btc/ovpack/run-20260518-121513-52d74f84.ovpack",
+    "bundle_uri": "viking://resources/workflow/run-20260518-121513-52d74f84/evidence/bundles/run-20260518-121513-52d74f84.ovpack",
+    "exported_at": "2026-05-18T12:24:25Z",
+    "external_store_refs": [],
+    "import_status": null,
+    "imported_run_id": null,
+    "portability_status": "metadata_verified",
+    "raw_payload_policy": "external_store_required",
+    "root_cause": null,
+    "run_id": "run-20260518-121513-52d74f84",
+    "sha256": "sha256:f8978db61a0487b27b234028e3ae68efe299436e810da151e6a04d2afa7d637c",
+    "size_bytes": 8812
+  },
+  "ovpack_import": {
+    "bundle_path": "docs/evidence/openbb-canonical-t16-tool-call-id-fix-20260518T114437Z/crypto_btc/ovpack/run-20260518-121513-52d74f84.ovpack",
+    "bundle_uri": "viking://resources/workflow/imported/import-check-run-20260518-121513-52d74f84/run-20260518-121513-52d74f84",
+    "exported_at": "2026-05-18T12:24:25Z",
+    "external_store_refs": [],
+    "import_status": "ok",
+    "imported_run_id": "import-check-run-20260518-121513-52d74f84",
+    "portability_status": "metadata_verified",
+    "raw_payload_policy": "external_store_required",
+    "root_cause": null,
+    "run_id": "import-check-run-20260518-121513-52d74f84",
+    "sha256": "sha256:f8978db61a0487b27b234028e3ae68efe299436e810da151e6a04d2afa7d637c",
+    "size_bytes": 8812
+  },
+  "relation_queries": [
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"c8fb1d78ebd381ed7e83b3baf7aba0de8a48884194e9270ae7e1a731f3369da5\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:c2c21601ff2e4e07efaeb8e1a4420e0781df3fa3cd7f50e3f79ea4afc61229f3\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/social\"}",
+          "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/social"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:fdb1cc357b4653221007c0447aadb44b5af373a1c784ce4cfc36b1e786b4dcea\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/social\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:1633902c6cbba5e7770dbed172df754a25078bb76efe1f23474edc87f1a47655\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:1633902c6cbba5e7770dbed172df754a25078bb76efe1f23474edc87f1a47655"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9b9a37c6f97cdedc9beec1efb36a6e396f2f9bccb3fa23ee801384d6923871cf\"}",
+          "uri": "mongo://openbb_normalized/sha256:9b9a37c6f97cdedc9beec1efb36a6e396f2f9bccb3fa23ee801384d6923871cf"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:bc6691ae42166f63fa539bb1ea8d0807a16b1d7454d3e8057296d1a73dfa54e4\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/social\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:51c1f269afe37d377ec9b8f6e9fcade40927c2d656b2918aed794efc53fd0108\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:51c1f269afe37d377ec9b8f6e9fcade40927c2d656b2918aed794efc53fd0108"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:ba6c020632ececfa30af538a61b29d3ca63a8f56dabc9f51f5348d327a9f2b19\"}",
+          "uri": "mongo://openbb_normalized/sha256:ba6c020632ececfa30af538a61b29d3ca63a8f56dabc9f51f5348d327a9f2b19"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:4d5a43417561420e33ffd0b3bc4d41a2a36d006aa2e3e9b046df8d769485b68e\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/social\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:aeeded342b7a43ef0051af7e800044a5f86b76c453c0891b136c7b83e183ccf8\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:aeeded342b7a43ef0051af7e800044a5f86b76c453c0891b136c7b83e183ccf8"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:76e02540aec9962c314dd1f11b2085f33857cb349c21f4a5ca3a9558ea15589d\"}",
+          "uri": "mongo://openbb_normalized/sha256:76e02540aec9962c314dd1f11b2085f33857cb349c21f4a5ca3a9558ea15589d"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"1a521c6f1f786e7d904e03f312e61098d31c92b878711834f168e4ebd01efb1a\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:d6171957ab0e260bb850e273cb6603f707aa28e74389d4e7d42a76ed50a9158e\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/fundamental\"}",
+          "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/fundamental"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:c6531492bbfd4c90136cb2f1db5e35e2fde1dcc7b4a812d7f85dcaab282fa329\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:ecc2355f11aed513d15c0fa13be61405d2088f158f08305cf35b414cbb5974bc\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:ecc2355f11aed513d15c0fa13be61405d2088f158f08305cf35b414cbb5974bc"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7e23ade767a8fceff316e24c1ddfbad50d2761930ea192e32078728f77ba845c\"}",
+          "uri": "mongo://openbb_normalized/sha256:7e23ade767a8fceff316e24c1ddfbad50d2761930ea192e32078728f77ba845c"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:d300183a298c150752cbb2a50536eb5c129aef36d1c76d2184f2cc3ef3ef228e\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:b685e1a1edd7c3becdcbbbeae0644ac8fe224409e207fa7d36c2a81a190d8eca\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:b685e1a1edd7c3becdcbbbeae0644ac8fe224409e207fa7d36c2a81a190d8eca"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:941a6dd65827e41f84998f7bc64511fabe671d0a5327a36137da2530be738e52\"}",
+          "uri": "mongo://openbb_normalized/sha256:941a6dd65827e41f84998f7bc64511fabe671d0a5327a36137da2530be738e52"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"675d98a52017c5796398c9fefa6f22a8212f1d8e766e2c4cd6a10f771bb7718b\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:7cbd9b9974ee9d7f8b823915eb63d5190d1887d19c7dce24e360560b2a3e095a\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\"}",
+          "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:7a3ccb83667bf6d6cf736ec597ffb45200a5b48653f4af477b10a89c08db38fb\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0\"}",
+          "uri": "mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:495b9f04f10ebcc52b11e5bb71fce62e891fb02bf724d9a3970867445a80e413\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3\"}",
+          "uri": "mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:01182821094823b0e1099281e34a51df35d61c5a372acdfd56462ec6d39279c1\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db\"}",
+          "uri": "mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:c16bc5fde943bcf0edbcb6b17dcd56d512ef77268b2626487064346562ce6d6e\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0\"}",
+          "uri": "mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:18bcda20b203fc82eaa387fa4a3182492dc280c4f906ac4fd80bd60552034d26\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3\"}",
+          "uri": "mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:e2a732751e428352bf1fe6931d9c88bef968609248b722b6167cecce036c0deb\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db\"}",
+          "uri": "mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:53f478c14a280f70e0928cf4b8053cc9f5d5d7ce10090f24b938f52d7ab6b82e\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0\"}",
+          "uri": "mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:768be2859d3ca84e975712366cf98e0fd24cd6974c2cc3ff9950e0c51f64e581\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3\"}",
+          "uri": "mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:f5bd740aed9f481c6fe0af8e0d0bf73f8df3e31bfabf9355e41d11429c799dee\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db\"}",
+          "uri": "mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"2b7f6f74e32cafe43d50345cd53c803e14000b186693ccce5f1b4e255cdca14e\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:de4f597b5481fcf42052de3ef34f3b4cfa5f7fdd11ac55293e075550755ae704\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/market\"}",
+          "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/market"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:88e657c4d7aebe08e042849e2bd571ac8b612f75250a7991768bdd322ececebe\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical\", \"semantic_from_uri\": \"audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/market\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:4d217c2afbb911c0b3d295a818915e63805b0176b5d44bd43c48d21eb0c1955f\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:4d217c2afbb911c0b3d295a818915e63805b0176b5d44bd43c48d21eb0c1955f"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:32d74de6e7a584f65a4ffe4c52ebed57ffbfe8613ebcd9c8d2b465153f051059\"}",
+          "uri": "mongo://openbb_normalized/sha256:32d74de6e7a584f65a4ffe4c52ebed57ffbfe8613ebcd9c8d2b465153f051059"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"worker_l1_to_chart_asset\", \"note\": \"report chart: market-01-indicator_panels-05a5208aab5e90e7\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/report.md\", \"semantic_to_uri\": \"file:///home/frank/src/claw-trade/runs/run-20260518-121513-52d74f84/reports/assets/market-01-indicator_panels-05a5208aab5e90e7.png\"}",
+          "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-121513-52d74f84/reports/assets/market-01-indicator_panels-05a5208aab5e90e7.png"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"worker_l1_to_chart_asset\", \"note\": \"report chart: market-02-market_structure-1ffb1bc73c9667fc\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/report.md\", \"semantic_to_uri\": \"file:///home/frank/src/claw-trade/runs/run-20260518-121513-52d74f84/reports/assets/market-02-market_structure-1ffb1bc73c9667fc.png\"}",
+          "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-121513-52d74f84/reports/assets/market-02-market_structure-1ffb1bc73c9667fc.png"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"e5fa20ae5efaecdd2db4733544d5640f0d17f63828d8a4c7a293229af72245df\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: social_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"664b27f476c9f3714a7f038465d4903f74dd1a16ce213d9e3451bb7f2623b063\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: fundamental_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"513bb26f5d3ee54d8eee34fadfa3db6b5cdcd7ae39a881ebb75e6000f62c9fa4\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: news_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"94f9fb70ceb33951bba2556a3e07b68eda10ed05443cb9d6f06e45bd75a14004\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: market_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"7d6e4c5cf5d08a5b9b3810504b7497fe1f22e264bb8873a2a6c2b806be5fe198\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: bull_researcher\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"ae0c9de22a44adb1560854ebc79f84ac1cb8b22f1b6dda57efae7695f5e12a6c\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: bear_researcher\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"57b9f9ff92259257e56b84287a6492ecb0142fc01a012ce6f39d586629724486\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: research_manager\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"8a90265fc0a384ff8bc8555a995800e3db5c80b8273e34ef37c11bd3367ce115\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: trader\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"5d3a03be34633b8111432bd05d5a22f660d96ca5e43ab34bf6b3e39e5c6eeb1a\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: risk_challenger\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"24e25c950f822ae96f3d0558acf3bdfa608abbf95b88de514e20089134045a39\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: risk_guardian\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"afa40e24fd8386c598e8c27bcc94ec6a6483b1435d4710621a387d04a21956ed\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: risk_moderator\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d/report.md"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"d213f1cf4e4a344e68cb678720c35d9abb7c56ec93b02dc75c0b2699483e8c33\", \"kind\": \"final_report_claim_to_pm_l1\", \"note\": \"final report is anchored to PM L1; structured final claim map is empty\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:4d069c83b4cd4f6d3a59f9e3fe47a42a1706c2237d88075260c88e49189d9c99\", \"kind\": \"final_report_claim_to_pm_l1\", \"note\": \"final report relation manifest\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/relations/manifest.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/relations/manifest.json"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91/social"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.polymarket.crypto:event_markets"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:1633902c6cbba5e7770dbed172df754a25078bb76efe1f23474edc87f1a47655"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:9b9a37c6f97cdedc9beec1efb36a6e396f2f9bccb3fa23ee801384d6923871cf"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.google_news.crypto:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:51c1f269afe37d377ec9b8f6e9fcade40927c2d656b2918aed794efc53fd0108"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:ba6c020632ececfa30af538a61b29d3ca63a8f56dabc9f51f5348d327a9f2b19"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91__tool-call_00_BQ648VFpvcIW8doVM32k3066:social.alternative_me.crypto:fear_greed"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:aeeded342b7a43ef0051af7e800044a5f86b76c453c0891b136c7b83e183ccf8"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:76e02540aec9962c314dd1f11b2085f33857cb349c21f4a5ca3a9558ea15589d"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d/fundamental"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.coingecko.crypto:coin_profile+market_cap+supply"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:ecc2355f11aed513d15c0fa13be61405d2088f158f08305cf35b414cbb5974bc"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:7e23ade767a8fceff316e24c1ddfbad50d2761930ea192e32078728f77ba845c"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d__tool-call_00_zIKuXtn4bjNHdCMYm62t4337:fundamental.defillama.crypto:tvl+fees+revenue+security+funding"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:b685e1a1edd7c3becdcbbbeae0644ac8fe224409e207fa7d36c2a81a190d8eca"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:941a6dd65827e41f84998f7bc64511fabe671d0a5327a36137da2530be738e52"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f/news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.project_official.crypto:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:b713191223e1da69f154363a2c86c2286fb3f931a2649c430b965be81d82001b"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:930c13fabac61ee7acd14462e3ba620ea339fc44a44f04fd49d073d73a00a5c0"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.macro.crypto:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:058ab86d72b2c2aeae95593b462a84797ce0d8be8b4f2a0322027c20c05c4362"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:2691a243f5c641d4cc0fc052725491c73df6d811b365141e1cdbc5edfebcecc3"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_VDEYdfpkqcYHFmyFsm2C8483:news.google_news.crypto:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:9079ab8e4c9135fa6edc63b213f48506ffbca181dcdb7534b5e004d9fba56a06"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:c6161829623818a67a63f2f9fec640d551ddfa7a9efebe6c5771c563f9c054db"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.project_official.crypto:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.macro.crypto:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_m2lMGoiXzxUy6hoyx85b9751:news.google_news.crypto:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.project_official.crypto:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.macro.crypto:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f__tool-call_00_movGyaH56UoKmvPxebbc1968:news.google_news.crypto:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-121513-52d74f84/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3/market"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-121513-52d74f84:run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3__tool-call_00_3eyxXzKRpWMvuY7iZMCu9593:project.crypto.market:crypto_price_historical"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:4d217c2afbb911c0b3d295a818915e63805b0176b5d44bd43c48d21eb0c1955f"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:32d74de6e7a584f65a4ffe4c52ebed57ffbfe8613ebcd9c8d2b465153f051059"
+    },
+    {
+      "relations": [],
+      "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-121513-52d74f84/reports/assets/market-01-indicator_panels-05a5208aab5e90e7.png"
+    },
+    {
+      "relations": [],
+      "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-121513-52d74f84/reports/assets/market-02-market_structure-1ffb1bc73c9667fc.png"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4/relations/manifest.json"
+    }
+  ],
+  "relations": [],
+  "relations_non_empty": true,
+  "run_id": "run-20260518-121513-52d74f84",
+  "run_root_uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+  "runtime_health": {
+    "checked_at": "2026-05-18T12:24:25Z",
+    "lock_status": "ok",
+    "metrics_status": "unavailable",
+    "observer_status": "ok",
+    "queue_status": "blocked",
+    "raw_refs": [],
+    "recovery_status": "unavailable",
+    "root_cause": "metrics endpoint unavailable; OpenViking semantic/vector queue is disabled in claw-trade report runtime; upstream public recovery API 未确认",
+    "status": "blocked"
+  },
+  "tree": {
+    "node_count": 33,
+    "nodes": [
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:21:58",
+        "rel_path": "risk_debate",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:21:16",
+        "rel_path": "risk_debate/risk_guardian",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:21:16",
+        "rel_path": "risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_guardian/run-20260518-121513-52d74f84-risk_debate-t01-risk_guardian-20260518T122035261771Z-03bda1f4"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:21:58",
+        "rel_path": "risk_debate/risk_moderator",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:21:58",
+        "rel_path": "risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_moderator/run-20260518-121513-52d74f84-risk_debate-t02-risk_moderator-20260518T122116736412Z-274f393d"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:20:34",
+        "rel_path": "risk_debate/risk_challenger",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:20:34",
+        "rel_path": "risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/risk_debate/risk_challenger/run-20260518-121513-52d74f84-risk_debate-t00-risk_challenger-20260518T121940808591Z-5007232c"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:16:33",
+        "rel_path": "frontline",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:15:46",
+        "rel_path": "frontline/social_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/social_analyst/run-20260518-121513-52d74f84-frontline-t00-social_analyst-20260518T121513341880Z-95a6ad91"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:16:33",
+        "rel_path": "frontline/market_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:23",
+        "rel_path": "frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/market_analyst/run-20260518-121513-52d74f84-frontline-t00-market_analyst-20260518T121513340976Z-619130a3"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:16:20",
+        "rel_path": "frontline/fundamental_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/fundamental_analyst/run-20260518-121513-52d74f84-frontline-t00-fundamental_analyst-20260518T121513341328Z-adee257d"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:16:27",
+        "rel_path": "frontline/news_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/frontline/news_analyst/run-20260518-121513-52d74f84-frontline-t00-news_analyst-20260518T121513341633Z-f06c270f"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:19:40",
+        "rel_path": "trade_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:19:40",
+        "rel_path": "trade_decision/trader",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:19:40",
+        "rel_path": "trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/trade_decision/trader/run-20260518-121513-52d74f84-trade_decision-t00-trader-20260518T121905455434Z-e5174424"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:19:05",
+        "rel_path": "investment_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:19:05",
+        "rel_path": "investment_decision/research_manager",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:19:05",
+        "rel_path": "investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_decision/research_manager/run-20260518-121513-52d74f84-investment_decision-t00-research_manager-20260518T121825101679Z-15cc73be"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "final_report",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "final_report/report_polisher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/final_report/report_polisher/run-20260518-121513-52d74f84-final_report-t00-report_polisher-20260518T122249713982Z-680f3ac4"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:22:49",
+        "rel_path": "portfolio_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:22:49",
+        "rel_path": "portfolio_decision/portfolio_manager",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:24:22",
+        "rel_path": "portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/portfolio_decision/portfolio_manager/run-20260518-121513-52d74f84-portfolio_decision-t00-portfolio_manager-20260518T122158813914Z-9c4ec37d"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:18:24",
+        "rel_path": "investment_debate",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:17:28",
+        "rel_path": "investment_debate/bull_researcher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:17:28",
+        "rel_path": "investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bull_researcher/run-20260518-121513-52d74f84-investment_debate-t00-bull_researcher-20260518T121634158896Z-d0d43c4d"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:18:24",
+        "rel_path": "investment_debate/bear_researcher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "12:18:24",
+        "rel_path": "investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-121513-52d74f84/investment_debate/bear_researcher/run-20260518-121513-52d74f84-investment_debate-t01-bear_researcher-20260518T121728971908Z-529d03d7"
+      }
+    ],
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-121513-52d74f84/",
+    "status": "ok"
+  }
+}

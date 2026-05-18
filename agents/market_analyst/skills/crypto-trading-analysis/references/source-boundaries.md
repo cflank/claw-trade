@@ -6,7 +6,7 @@ This file defines what counts as evidence and what cannot be used to close data 
 
 ## Source Hierarchy
 
-1. `crypto_market_data_pack` natural-language brief plus compact BB/CoinGlass structured summary.
+1. `claw_get_market_pack` natural-language brief plus OpenBB-routed structured summary.
 2. Raw BB/CoinGlass payload saved by the pack under provider evidence, used for audit rather than report body.
 3. Single-domain BB/provider tools only for targeted debugging or gap investigation outside the normal worker turn.
 4. Browser evidence only as low-confidence visual observation.

@@ -4,3 +4,6 @@
 [submodule "third_party/openviking"]
 	path = third_party/openviking
 	url = https://github.com/volcengine/OpenViking.git
+[submodule "third_party/openbb"]
+	path = third_party/openbb
+	url = https://github.com/OpenBB-finance/OpenBB

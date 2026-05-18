@@ -22,9 +22,19 @@ _DEFAULT_DOWNLOAD_PATH = "/api/v1/content/download"
 _DEFAULT_READ_PATH = "/api/v1/content/read"
 _DEFAULT_STAT_PATH = "/api/v1/fs/stat"
 _DEFAULT_MKDIR_PATH = "/api/v1/fs/mkdir"
+_DEFAULT_TREE_PATH = "/api/v1/fs/tree"
 _DEFAULT_WRITE_PATH = "/api/v1/content/write"
+_DEFAULT_SEARCH_FIND_PATH = "/api/v1/search/find"
+_DEFAULT_SEARCH_GREP_PATH = "/api/v1/search/grep"
+_DEFAULT_SEARCH_GLOB_PATH = "/api/v1/search/glob"
+_DEFAULT_RELATIONS_PATH = "/api/v1/relations"
+_DEFAULT_PACK_EXPORT_PATH = "/api/v1/pack/export"
 _DEFAULT_TEMP_UPLOAD_PATH = "/api/v1/resources/temp_upload"
 _DEFAULT_PACK_IMPORT_PATH = "/api/v1/pack/import"
+_DEFAULT_OBSERVER_SYSTEM_PATH = "/api/v1/observer/system"
+_DEFAULT_OBSERVER_LOCK_PATH = "/api/v1/observer/lock"
+_DEFAULT_OBSERVER_QUEUE_PATH = "/api/v1/observer/queue"
+_DEFAULT_METRICS_PATH = "/metrics"
 
 
 def create_default_backend() -> OpenVikingHttpBackend:
@@ -207,6 +217,149 @@ class OpenVikingHttpBackend:
             index_sha256=digest,
             index_size_bytes=len(content),
         )
+
+    def tree_run(self, uri: str) -> object:
+        raw = self._call_json_api("GET", _DEFAULT_TREE_PATH, query={"uri": uri})
+        return {"nodes": _extract_node_rows(raw), "status": "ok"}
+
+    def grep_run(self, uri: str, pattern: str) -> object:
+        raw = self._call_json_api(
+            "POST",
+            _DEFAULT_SEARCH_GREP_PATH,
+            body={"uri": uri, "pattern": pattern, "node_limit": 1000},
+        )
+        return {"matches": _extract_node_rows(raw), "status": "ok"}
+
+    def glob(self, uri: str, pattern: str) -> object:
+        raw = self._call_json_api(
+            "POST",
+            _DEFAULT_SEARCH_GLOB_PATH,
+            body={"uri": uri, "pattern": pattern, "node_limit": 1000},
+        )
+        return {"matches": _extract_string_rows(raw), "status": "ok"}
+
+    def find_approved_materials(self, uri: str, query: str) -> object:
+        raw = self._call_json_api(
+            "POST",
+            _DEFAULT_SEARCH_FIND_PATH,
+            body={"target_uri": uri, "query": query, "limit": 10},
+        )
+        return {"matches": _extract_node_rows(raw), "status": "ok"}
+
+    def relations(self, uri: str) -> object:
+        return self._call_json_api("GET", _DEFAULT_RELATIONS_PATH, query={"uri": uri})
+
+    def link_relation(self, relation: dict[str, object]) -> object:
+        from_uri = _required_str(relation, "from_uri")
+        to_uri = _required_str(relation, "to_uri")
+        reason = str(relation.get("note") or relation.get("kind") or "claw-trade evidence relation")
+        return self._call_json_api(
+            "POST",
+            f"{_DEFAULT_RELATIONS_PATH}/link",
+            body={"from_uri": from_uri, "to_uris": [to_uri], "reason": reason},
+        )
+
+    def export_run_pack(self, uri: str, output_dir: str) -> dict[str, object]:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        response = self._request(
+            "POST",
+            _DEFAULT_PACK_EXPORT_PATH,
+            query=None,
+            body={"uri": uri},
+            body_content_type=None,
+            accept="application/zip,application/octet-stream",
+        )
+        bundle_bytes = response.body
+        if not bundle_bytes:
+            raise OpenVikingAccessError("pack/export 返回空 ovpack", category="backend_unavailable")
+        run_id = uri.rstrip("/").split("/")[-1] or "run"
+        bundle_path = Path(output_dir) / f"{run_id}.ovpack"
+        bundle_path.write_bytes(bundle_bytes)
+        sha256 = "sha256:" + hashlib.sha256(bundle_bytes).hexdigest()
+        return {
+            "run_id": run_id,
+            "bundle_uri": f"{uri.rstrip('/')}/evidence/bundles/{bundle_path.name}",
+            "bundle_path": str(bundle_path),
+            "sha256": sha256,
+            "size_bytes": len(bundle_bytes),
+            "portability_status": "metadata_verified",
+            "raw_payload_policy": "external_store_required",
+            "external_store_refs": (),
+            "exported_at": _now_text(),
+        }
+
+    def import_run_pack(self, bundle_path: str, parent: str, verify_hashes: bool) -> dict[str, object]:
+        path = Path(bundle_path)
+        bundle_bytes = path.read_bytes()
+        multipart_body, multipart_content_type = _encode_multipart_form_file(
+            file_name=path.name,
+            file_bytes=bundle_bytes,
+        )
+        upload_result = self._call_json_api(
+            "POST",
+            _DEFAULT_TEMP_UPLOAD_PATH,
+            body=multipart_body,
+            body_content_type=multipart_content_type,
+        )
+        temp_file_id = _extract_temp_file_id(upload_result)
+        parent_uri = _import_parent_uri(parent)
+        raw = self._call_json_api(
+            "POST",
+            _DEFAULT_PACK_IMPORT_PATH,
+            body={
+                "temp_file_id": temp_file_id,
+                "parent": parent_uri,
+                "force": True,
+                "vectorize": False,
+            },
+        )
+        if verify_hashes and len(bundle_bytes) <= 0:
+            raise OpenVikingAccessError("pack/import 输入 ovpack 为空", category="backend_unavailable")
+        return {
+            "run_id": parent_uri.rstrip("/").split("/")[-1],
+            "bundle_uri": _extract_import_uri(raw) or parent_uri,
+            "bundle_path": str(path),
+            "sha256": "sha256:" + hashlib.sha256(bundle_bytes).hexdigest(),
+            "size_bytes": len(bundle_bytes),
+            "portability_status": "metadata_verified",
+            "raw_payload_policy": "external_store_required",
+            "external_store_refs": (),
+            "exported_at": _now_text(),
+            "import_status": "ok",
+        }
+
+    def semantic_index_status(self, uri: str) -> dict[str, object]:
+        del uri
+        return {
+            "status": "blocked",
+            "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+        }
+
+    def runtime_metrics(self) -> dict[str, object]:
+        self._request(
+            "GET",
+            _DEFAULT_METRICS_PATH,
+            query=None,
+            body=None,
+            body_content_type=None,
+            accept="text/plain",
+        )
+        return {"status": "ok", "reason": "metrics endpoint reachable"}
+
+    def runtime_observer(self) -> dict[str, object]:
+        raw = self._call_json_api("GET", _DEFAULT_OBSERVER_SYSTEM_PATH)
+        return {"status": _observer_health_status(raw), "reason": _observer_reason(raw)}
+
+    def runtime_locks(self) -> dict[str, object]:
+        raw = self._call_json_api("GET", _DEFAULT_OBSERVER_LOCK_PATH)
+        return {"status": _observer_health_status(raw), "reason": _observer_reason(raw)}
+
+    def runtime_semantic_queue(self) -> dict[str, object]:
+        self._call_json_api("GET", _DEFAULT_OBSERVER_QUEUE_PATH)
+        return {
+            "status": "blocked",
+            "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+        }
 
     def _write_verified_content(
         self,
@@ -532,6 +685,96 @@ def _as_record(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return value
     return {}
+
+
+def _extract_node_rows(raw: object) -> list[dict[str, str]]:
+    rows = _extract_list_payload(raw)
+    if not rows and isinstance(raw, dict):
+        rows = [raw]
+    normalized: list[dict[str, str]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            normalized.append({str(key): str(value) for key, value in row.items()})
+        else:
+            normalized.append({"value": str(row)})
+    return normalized
+
+
+def _extract_string_rows(raw: object) -> list[str]:
+    rows = _extract_list_payload(raw)
+    if not rows and isinstance(raw, dict):
+        rows = [raw]
+    rendered: list[str] = []
+    for row in rows:
+        if isinstance(row, str):
+            rendered.append(row)
+        elif isinstance(row, dict):
+            value = _first_non_none(row.get("uri"), row.get("path"), row.get("name"), row.get("value"))
+            rendered.append(str(value if value is not None else row))
+        else:
+            rendered.append(str(row))
+    return rendered
+
+
+def _extract_list_payload(raw: object) -> list[object]:
+    if isinstance(raw, list):
+        return list(raw)
+    if not isinstance(raw, dict):
+        return []
+    for key in ("nodes", "matches", "items", "entries", "children", "files"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            return list(value)
+    result = raw.get("result")
+    if isinstance(result, list):
+        return list(result)
+    if isinstance(result, dict):
+        return _extract_list_payload(result)
+    return []
+
+
+def _import_parent_uri(parent: str) -> str:
+    text = parent.strip().rstrip("/")
+    if text.startswith("viking://"):
+        return f"{text}/"
+    if text.startswith("workflow/"):
+        return f"viking://resources/{text}/"
+    raise OpenVikingAccessError("pack/import parent 必须是 workflow/<path> 或 viking:// URI", category="invalid_uri")
+
+
+def _extract_import_uri(raw: object) -> str | None:
+    record = _as_record(raw)
+    value = _first_non_none(record.get("uri"), record.get("bundle_uri"), record.get("imported_uri"))
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _observer_health_status(raw: object) -> str:
+    record = _as_record(raw)
+    status = str(_first_non_none(record.get("status"), record.get("state"), "")).strip().lower()
+    if status in {"ok", "healthy", "ready", "running"}:
+        return "ok"
+    if status in {"degraded", "warning", "warn"}:
+        return "degraded"
+    if status in {"blocked", "disabled"}:
+        return "blocked"
+    if status in {"unavailable", "error", "failed", "down"}:
+        return "unavailable"
+    healthy = record.get("healthy")
+    if healthy is True:
+        return "ok"
+    if healthy is False:
+        return "degraded"
+    return "ok" if record else "unavailable"
+
+
+def _observer_reason(raw: object) -> str | None:
+    record = _as_record(raw)
+    value = _first_non_none(record.get("reason"), record.get("message"), record.get("detail"), record.get("error"))
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _to_non_negative_int(value: object) -> int | None:

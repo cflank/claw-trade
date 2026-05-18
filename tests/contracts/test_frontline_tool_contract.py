@@ -12,34 +12,25 @@ from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 
 
 EXPECTED_FRONTLINE_VISIBLE_TOOLS = {
-    "market_analyst": ("market_market_data_pack",),
-    "fundamental_analyst": ("fundamental_fundamentals_data_pack",),
-    "news_analyst": ("news_news_data_pack",),
-    "social_analyst": ("social_social_sentiment_pack",),
+    "market_analyst": ("claw_get_market_pack",),
+    "fundamental_analyst": ("claw_get_fundamental_pack",),
+    "news_analyst": ("claw_get_news_pack",),
+    "social_analyst": ("claw_get_social_pack",),
 }
 EXPECTED_US_FRONTLINE_VISIBLE_TOOLS = {
-    "market_analyst": ("get_stock_data", "get_indicators"),
-    "fundamental_analyst": ("get_fundamentals", "get_balance_sheet", "get_cashflow", "get_income_statement"),
-    "news_analyst": ("get_news", "get_global_news"),
-    "social_analyst": ("get_news",),
+    "market_analyst": ("claw_get_market_pack",),
+    "fundamental_analyst": ("claw_get_fundamental_pack",),
+    "news_analyst": ("claw_get_news_pack",),
+    "social_analyst": ("claw_get_social_pack",),
 }
 EXPECTED_CRYPTO_FRONTLINE_VISIBLE_TOOLS = {
-    "market_analyst": ("crypto_market_data_pack",),
-    "fundamental_analyst": ("crypto_fundamental_data_pack",),
-    "news_analyst": ("crypto_news_data_pack",),
-    "social_analyst": ("crypto_social_sentiment_pack",),
+    "market_analyst": ("claw_get_market_pack",),
+    "fundamental_analyst": ("claw_get_fundamental_pack",),
+    "news_analyst": ("claw_get_news_pack",),
+    "social_analyst": ("claw_get_social_pack",),
 }
 
-PACK_TOOL_PARAM_FIELDS = {
-    "ticker",
-    "market",
-    "company_name",
-    "industry",
-    "start_date",
-    "end_date",
-    "aliases",
-    "approved_artifact_refs",
-}
+OPENBB_PACK_TOOL_PARAM_FIELDS: set[str] = set()
 
 FORBIDDEN_PROVIDER_ATOMIC_TOOL_HINTS = (
     "akshare",
@@ -50,22 +41,10 @@ FORBIDDEN_PROVIDER_ATOMIC_TOOL_HINTS = (
 )
 
 EXPECTED_WORKER_PACK_EXPORTS = {
-    "market_analyst": {
-        "market_market_data_pack",
-        "get_stock_data",
-        "get_indicators",
-        "crypto_market_data_pack",
-    },
-    "fundamental_analyst": {
-        "fundamental_fundamentals_data_pack",
-        "crypto_fundamental_data_pack",
-        "get_fundamentals",
-        "get_balance_sheet",
-        "get_cashflow",
-        "get_income_statement",
-    },
-    "news_analyst": {"news_news_data_pack", "crypto_news_data_pack", "get_news", "get_global_news"},
-    "social_analyst": {"social_social_sentiment_pack", "crypto_social_sentiment_pack", "get_news"},
+    "market_analyst": {"claw_get_market_pack"},
+    "fundamental_analyst": {"claw_get_fundamental_pack"},
+    "news_analyst": {"claw_get_news_pack"},
+    "social_analyst": {"claw_get_social_pack"},
 }
 
 
@@ -185,34 +164,45 @@ console.log(JSON.stringify(registrations));
     registrations = json.loads(result.stdout)
     names = {item["name"] for item in registrations}
     assert names == {
-        "market_market_data_pack",
-        "crypto_market_data_pack",
-        "get_stock_data",
-        "get_indicators",
-        "fundamental_fundamentals_data_pack",
-        "crypto_fundamental_data_pack",
-        "crypto_news_data_pack",
-        "crypto_social_sentiment_pack",
-        "get_fundamentals",
-        "get_balance_sheet",
-        "get_cashflow",
-        "get_income_statement",
-        "get_news",
-        "get_global_news",
-        "news_news_data_pack",
-        "social_social_sentiment_pack",
-    }
-    expected_fields_by_name = {
-        "get_stock_data": {"symbol", "start_date", "end_date"},
-        "get_indicators": {"symbol", "indicator", "curr_date", "look_back_days"},
-        "get_fundamentals": {"ticker", "curr_date"},
-        "get_balance_sheet": {"ticker", "freq", "curr_date"},
-        "get_cashflow": {"ticker", "freq", "curr_date"},
-        "get_income_statement": {"ticker", "freq", "curr_date"},
-        "get_news": {"ticker", "query", "start_date", "end_date"},
-        "get_global_news": {"curr_date", "look_back_days", "limit"},
+        "claw_get_market_pack",
+        "claw_get_fundamental_pack",
+        "claw_get_news_pack",
+        "claw_get_social_pack",
     }
     for item in registrations:
         assert item["schemaType"] == "object"
         assert item["additionalProperties"] is False
-        assert set(item["fields"]) == expected_fields_by_name.get(item["name"], PACK_TOOL_PARAM_FIELDS)
+        assert set(item["fields"]) == OPENBB_PACK_TOOL_PARAM_FIELDS
+
+
+def test_frontline_plugin_legacy_rollback_flag_still_registers_only_openbb_tools() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    plugin_path = repo_root / "openclaw_plugins" / "claw-trade-frontline-tools" / "index.js"
+    script = f"""
+import plugin from {json.dumps(str(plugin_path))};
+const registrations = [];
+process.env.CLAW_TRADE_LEGACY_ROLLBACK_ENABLED = "true";
+const api = {{
+  registerTool(factory) {{
+    const tool = factory({{ singleWorkerCommand: {{}} }});
+    registrations.push(tool.name);
+  }},
+}};
+plugin.register(api);
+console.log(JSON.stringify(registrations));
+"""
+    result = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    names = set(json.loads(result.stdout))
+    assert {
+        "claw_get_market_pack",
+        "claw_get_fundamental_pack",
+        "claw_get_news_pack",
+        "claw_get_social_pack",
+    } == names

@@ -1,0 +1,18 @@
+{
+  "run_id": "run-20260518-130056-134774a3",
+  "attempt_count": 30,
+  "attempt_call_ids": [
+    "run-20260518-130056-134774a3-frontline-t00-fundamental_analyst-20260518T130056083454Z-a1d88c66__tool-call_00_YBHaRRPVw9wbjdZJqwek1201",
+    "run-20260518-130056-134774a3-frontline-t00-market_analyst-20260518T130056083089Z-ba7cdbdd__tool-call_00_VtWccdleHGbnTJZiIBFd5094",
+    "run-20260518-130056-134774a3-frontline-t00-market_analyst-20260518T130056083089Z-ba7cdbdd__tool-call_00_XkwNTJHPkyM6lcrETzG34357",
+    "run-20260518-130056-134774a3-frontline-t00-news_analyst-20260518T130056083724Z-89e259b7__tool-call_00_2lPmOYsb0NY0mQi9u3bO8563",
+    "run-20260518-130056-134774a3-frontline-t00-news_analyst-20260518T130056083724Z-89e259b7__tool-call_00_Q4M87BhkU2KDEKD5fBKw6015",
+    "run-20260518-130056-134774a3-frontline-t00-news_analyst-20260518T130056083724Z-89e259b7__tool-call_00_QzlJGibAZ1VZ7MTlqG3s0304",
+    "run-20260518-130056-134774a3-frontline-t00-news_analyst-20260518T130056083724Z-89e259b7__tool-call_00_YCQHzc7FzdPu9iu8gtZc6241",
+    "run-20260518-130056-134774a3-frontline-t00-news_analyst-20260518T130056083724Z-89e259b7__tool-call_00_gophh0ISbvtpXEb92G3d1308",
+    "run-20260518-130056-134774a3-frontline-t00-news_analyst-20260518T130056083724Z-89e259b7__tool-call_00_nkH1Byug4HamrvJrIR2T9308",
+    "run-20260518-130056-134774a3-frontline-t00-social_analyst-20260518T130056083958Z-2d6965fc__tool-call_00_hAz7aUJ1tB5GuA5jdae98866"
+  ],
+  "derived_call_id_count": 30,
+  "evidence_write_failed": []
+}

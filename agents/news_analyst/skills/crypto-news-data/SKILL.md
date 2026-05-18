@@ -1,16 +1,16 @@
 ---
 id: crypto-news-data
 name: CRYPTO news data pack
-tool: crypto_news_data_pack
-tool_name: crypto_news_data_pack
-schema_version: crypto_news_data_pack.v1
+tool: claw_get_news_pack
+tool_name: claw_get_news_pack
+schema_version: openbb_news_pack.v1
 bound_workers:
   - news_analyst
 profiles:
   - CRYPTO
 ---
 
-该 skill 只负责向 `news_analyst` 暴露 `crypto_news_data_pack` 资料包能力，不负责生成报告正文、投资判断或新闻结论。
+该 skill 只负责向 `news_analyst` 暴露 `claw_get_news_pack` OpenBB 新闻资料包能力，不负责生成报告正文、投资判断或新闻结论。
 
 边界：
 

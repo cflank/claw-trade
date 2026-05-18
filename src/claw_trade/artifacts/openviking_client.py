@@ -418,6 +418,68 @@ class OpenVikingClient:
         except Exception as exc:
             raise OpenVikingAccessError(f"读取 L2 index 失败: {index_uri} ({exc})", category="backend_unavailable") from exc
 
+    # ---- Optional OpenViking control-plane wrappers (tree/search/relations/pack/health/memory) ----
+    # 这些方法只做通用透传，不改变 claw-trade 的 worker 可见工具边界。
+
+    def tree_run(self, *, run_id: str) -> object:
+        uri = f"viking://resources/workflow/{run_id}/"
+        return self._call_backend_extension(("tree_run", "tree"), uri)
+
+    def grep_run(self, *, run_id: str, pattern: str) -> object:
+        uri = f"viking://resources/workflow/{run_id}/"
+        return self._call_backend_extension(("grep_run", "grep"), uri, pattern)
+
+    def glob_run(self, *, run_id: str, pattern: str) -> object:
+        uri = f"viking://resources/workflow/{run_id}/"
+        return self._call_backend_extension(("glob_run", "glob"), uri, pattern)
+
+    def find_approved_materials(self, *, run_id: str, query: str) -> object:
+        uri = f"viking://resources/workflow/{run_id}/"
+        return self._call_backend_extension(("find_approved_materials", "find"), uri, query)
+
+    def relations(self, *, uri: VikingUri) -> object:
+        return self._call_backend_extension(("relations", "get_relations"), uri)
+
+    def link_relation(self, relation: dict[str, object]) -> object:
+        return self._call_backend_extension(("link_relation", "relations_link"), relation)
+
+    def export_run_pack(self, *, run_id: str, output_dir: str) -> object:
+        uri = f"viking://resources/workflow/{run_id}/"
+        return self._call_backend_extension(("export_run_pack", "pack_export"), uri, output_dir)
+
+    def import_run_pack(self, *, bundle_path: str, target_run_id: str, verify_hashes: bool = True) -> object:
+        return self._call_backend_extension(
+            ("import_run_pack", "pack_import"),
+            bundle_path,
+            f"workflow/imported/{target_run_id}",
+            verify_hashes,
+        )
+
+    def semantic_index_status(self, *, run_id: str) -> object:
+        uri = f"viking://resources/workflow/{run_id}/"
+        return self._call_backend_extension(("semantic_index_status",), uri)
+
+    def write_engineering_memory(self, payload: dict[str, object]) -> object:
+        return self._call_backend_extension(("write_engineering_memory", "memory_write"), payload)
+
+    def read_engineering_memory(self, *, run_id: str, query: str) -> object:
+        return self._call_backend_extension(("read_engineering_memory", "memory_read"), run_id, query)
+
+    def runtime_metrics(self) -> object:
+        return self._call_backend_extension(("runtime_metrics", "metrics_status"))
+
+    def runtime_observer(self) -> object:
+        return self._call_backend_extension(("runtime_observer", "observer_status"))
+
+    def runtime_locks(self) -> object:
+        return self._call_backend_extension(("runtime_locks", "lock_status"))
+
+    def runtime_recovery(self) -> object:
+        return self._call_backend_extension(("runtime_recovery", "recovery_status"))
+
+    def runtime_semantic_queue(self) -> object:
+        return self._call_backend_extension(("runtime_semantic_queue", "queue_status"))
+
     def _stat_raw(self, uri: VikingUri) -> OpenVikingStat:
         try:
             stat = self._backend.fetch_stat_by_uri(uri)
@@ -457,6 +519,20 @@ class OpenVikingClient:
             return _failed_read(uri, exc.category, str(exc))
         except Exception as exc:
             return _failed_read(uri, "backend_unavailable", str(exc))
+
+    def _call_backend_extension(self, names: tuple[str, ...], *args: object) -> object:
+        for name in names:
+            fn = getattr(self._backend, name, None)
+            if not callable(fn):
+                continue
+            try:
+                return fn(*args)
+            except OpenVikingAccessError:
+                raise
+            except Exception as exc:
+                raise OpenVikingAccessError(f"openviking {name} 调用失败: {exc}", category="backend_unavailable") from exc
+        methods = ",".join(names)
+        raise OpenVikingAccessError(f"openviking 后端未实现能力: {methods}", category="backend_unavailable")
 
     def _check_capability_uri(self, capability: OpenVikingReadCapability, uri: VikingUri) -> ProbeResult:
         run_id, stage, worker_id, call_id = _identity_from_uri(capability.allowed_l1_uri)

@@ -10,10 +10,10 @@ from claw_trade.runtime.evidence_reader import OpenClawResult
 from claw_trade.workflow.models import OpenClawCommand, ReadPolicy, Stage, WorkerCall
 
 _CRYPTO_FRONTLINE_SINGLE_PACK_TOOLS = {
-    "market_analyst": "crypto_market_data_pack",
-    "fundamental_analyst": "crypto_fundamental_data_pack",
-    "news_analyst": "crypto_news_data_pack",
-    "social_analyst": "crypto_social_sentiment_pack",
+    "market_analyst": "claw_get_market_pack",
+    "fundamental_analyst": "claw_get_fundamental_pack",
+    "news_analyst": "claw_get_news_pack",
+    "social_analyst": "claw_get_social_pack",
 }
 
 

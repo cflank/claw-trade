@@ -14,6 +14,10 @@ from claw_trade.artifacts.openviking_client import OpenVikingReadResult
 from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.config.profiles import require_profile
 from claw_trade.config.tool_names import load_tool_registry
+from claw_trade.data_gateway.openviking import LineageWriteResult
+from claw_trade.data_gateway.models import RunProviderPlan
+from claw_trade.data_gateway.providers.registry import ProviderRegistry
+from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner, build_report_run_plan
 from claw_trade.guards.common import (
     ApprovalResult,
     BootResult,
@@ -46,6 +50,7 @@ from claw_trade.workflow.models import (
     WorkerResult,
     WorkerStatus,
     WorkflowState,
+    WorkflowEntryPoint,
     export_result_allows_workflow_completion,
 )
 from claw_trade.workflow.store import WorkflowStore
@@ -86,6 +91,20 @@ class ToolRegistryProbeLike(Protocol):
 
 class ExporterLike(Protocol):
     def export(self, state: WorkflowState, manifest: ApprovedManifest) -> ExportResult: ...
+
+
+class LineageWriterLike(Protocol):
+    def link_after_export(
+        self,
+        *,
+        state: WorkflowState,
+        manifest: ApprovedManifest,
+        export_result: ExportResult,
+    ) -> LineageWriteResult: ...
+
+
+class RunProviderPlanStoreLike(Protocol):
+    def write(self, plan: RunProviderPlan) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -149,6 +168,11 @@ class ControlRunner:
         exporter: ExporterLike | None = None,
         now_text: Callable[[], str] | None = None,
         agents_root: Path | None = None,
+        run_provider_planner: RunProviderPlanner | None = None,
+        run_provider_plan_store: RunProviderPlanStoreLike | None = None,
+        run_provider_registry: ProviderRegistry | None = None,
+        provider_config_version_resolver: Callable[[], str] | None = None,
+        lineage_writer: LineageWriterLike | None = None,
     ) -> None:
         self.store = store
         self.manifest_store = manifest_store
@@ -160,6 +184,11 @@ class ControlRunner:
         self.exporter = exporter
         self.now_text = now_text or _utc_now_iso_text
         self.agents_root = agents_root or (Path(__file__).resolve().parents[3] / "agents")
+        self.run_provider_planner = run_provider_planner
+        self.run_provider_plan_store = run_provider_plan_store
+        self.run_provider_registry = run_provider_registry
+        self.provider_config_version_resolver = provider_config_version_resolver
+        self.lineage_writer = lineage_writer
         self._manifest_write_lock = Lock()
 
     def boot(self, request: RunRequest) -> BootResult:
@@ -231,6 +260,13 @@ class ControlRunner:
             return self.fail_before_run(request, boot)
 
         state = self.store.create_run(request)
+        run_plan_failure = self._initialize_report_run_plan(state)
+        if run_plan_failure is not None:
+            return self.fail_run(
+                state,
+                run_plan_failure,
+                decision_path=state.run_dir / "decisions" / "bootstrap-failed.json",
+            )
         try:
             self.openviking.ensure_namespace(state.openviking_namespace)
         except Exception as exc:
@@ -265,6 +301,70 @@ class ControlRunner:
                 return state
             if state.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
                 return state
+
+    def _initialize_report_run_plan(self, state: WorkflowState) -> FailureRecord | None:
+        if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
+            return None
+        if self.run_provider_planner is None or self.run_provider_plan_store is None or self.run_provider_registry is None:
+            return FailureRecord(
+                run_id=state.run_id,
+                call_id=None,
+                worker_id=None,
+                stage=None,
+                category="run_provider_plan",
+                reason="report_command 缺少 run provider plan 依赖",
+                evidence_paths=(state.run_dir / "request.json",),
+                early_stop=True,
+                human_action_required=None,
+            )
+        if self.provider_config_version_resolver is None:
+            return FailureRecord(
+                run_id=state.run_id,
+                call_id=None,
+                worker_id=None,
+                stage=None,
+                category="run_provider_plan",
+                reason="report_command 缺少 provider_config_version snapshot resolver",
+                evidence_paths=(state.run_dir / "request.json",),
+                early_stop=True,
+                human_action_required=None,
+            )
+
+        try:
+            provider_config_version = self.provider_config_version_resolver()
+            plan = build_report_run_plan(
+                request=state.request,
+                run_id=state.run_id,
+                provider_config_version=provider_config_version,
+                planner=self.run_provider_planner,
+                registry=self.run_provider_registry,
+            )
+            if plan is None:
+                return FailureRecord(
+                    run_id=state.run_id,
+                    call_id=None,
+                    worker_id=None,
+                    stage=None,
+                    category="run_provider_plan",
+                    reason="report_command run plan 生成失败",
+                    evidence_paths=(state.run_dir / "request.json",),
+                    early_stop=True,
+                    human_action_required=None,
+                )
+            self.run_provider_plan_store.write(plan)
+        except Exception as exc:
+            return FailureRecord(
+                run_id=state.run_id,
+                call_id=None,
+                worker_id=None,
+                stage=None,
+                category="run_provider_plan",
+                reason=f"report_command run plan 写入失败: {exc}",
+                evidence_paths=(state.run_dir / "request.json",),
+                early_stop=True,
+                human_action_required=None,
+            )
+        return None
 
     def apply_decision(self, state: WorkflowState, decision: Decision, decision_path: Path) -> WorkflowState:
         if decision.kind == DecisionKind.WAIT:
@@ -338,6 +438,27 @@ class ControlRunner:
             manifest = self.manifest_store.load(exporting.run_id)
             exported = self.export_final_report(exporting, manifest)
             self.store.save_export_result(exported)
+            if exported.status == "passed" and self.lineage_writer is not None:
+                lineage = self.lineage_writer.link_after_export(
+                    state=exporting,
+                    manifest=manifest,
+                    export_result=exported,
+                )
+                if not lineage.ok:
+                    failure = FailureRecord(
+                        run_id=exporting.run_id,
+                        call_id=None,
+                        worker_id=None,
+                        stage=Stage.FINAL_REPORT,
+                        category=lineage.category or "openviking_lineage",
+                        reason=lineage.reason or "OpenViking lineage 写入失败",
+                        evidence_paths=lineage.paths or (
+                            exporting.run_dir / "openviking" / "approved-manifest.json",
+                        ),
+                        early_stop=True,
+                        human_action_required=None,
+                    )
+                    return self.fail_run(exporting, failure, decision_path)
             if not export_result_allows_workflow_completion(exporting.request.profile, exported):
                 failure = exported.failure or FailureRecord(
                     run_id=exporting.run_id,

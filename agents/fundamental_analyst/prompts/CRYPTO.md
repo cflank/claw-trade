@@ -19,12 +19,12 @@ stage: frontline
 - 如果代币经济、链上、生态、收入、解锁或治理数据缺失，请在“数据限制与风险提示”部分客观说明，不要把限制说明写在开场。
 
 资料使用要求：
-- 如果本 turn 可见 `crypto_fundamental_data_pack`，先调用该资料包，再基于返回的基本面材料、来源、资料缺口、冲突和资料就绪度写报告。
-- `crypto_fundamental_data_pack` 调用参数必须使用：ticker=`{ticker}`，market=`CRYPTO`，company_name=`{company_name}`，start_date=`{start_date}`，end_date=`{end_date}`。不要自行改成旧日期或其它市场区间。
-- 如果 `crypto_fundamental_data_pack` 不可见、未调用成功、返回空结果或返回部分覆盖 / 不足，你的 L1 报告必须明确写出“资料包未可用 / 未调用成功 / 覆盖不足”，并逐项说明缺少哪些资料、这些缺口如何影响基本面判断。不得用模型常识、历史印象或上游未提供的证据补写缺失事实。
-- `crypto_fundamental_data_pack` 当前覆盖 CoinGecko 币种基础资料和 DefiLlama DeFi 协议经营指标。不要把它返回的部分覆盖或不足补写成完整基本面。
+- 如果本 turn 可见 `claw_get_fundamental_pack`，先调用该资料包，再基于返回的基本面材料、来源、资料缺口、冲突和资料就绪度写报告。
+- 调用 `claw_get_fundamental_pack` 时不需要填写 ticker、market、日期、币种或项目名；这些运行参数已由系统上下文锁定。
+- 如果 `claw_get_fundamental_pack` 不可见、未调用成功、返回空结果或返回部分覆盖 / 不足，你的 L1 报告必须明确写出“资料包未可用 / 未调用成功 / 覆盖不足”，并逐项说明缺少哪些资料、这些缺口如何影响基本面判断。不得用模型常识、历史印象或上游未提供的证据补写缺失事实。
+- `claw_get_fundamental_pack` 当前覆盖 CoinGecko 币种基础资料和 DefiLlama DeFi 协议经营指标。不要把它返回的部分覆盖或不足补写成完整基本面。
 - CoinGecko 资料只能作为币种元数据、市值、FDV、供应量和价格快照；DefiLlama 资料只能作为 DeFi TVL、fees/revenue 等协议经营指标。两者都不是项目公告、新闻事实、社交舆情或链上全量行为来源。
-- 报告是给中文投资读者看的，不要把内部工具名、英文状态词或机器字段写进正文。不要输出 `crypto_fundamental_data_pack`、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`worker` 这类词；要写成“基本面资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“分析师”。
+- 报告是给中文投资读者看的，不要把内部工具名、英文状态词或机器字段写进正文。不要输出 `claw_get_fundamental_pack`、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`worker` 这类词；要写成“基本面资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“分析师”。
 
 报告至少覆盖以下内容：
 1. 项目定位与需求真实性：说明该资产或协议解决什么问题，需求来自支付、结算、智能合约、DeFi、L2、AI、RWA、meme、基础设施或其它场景中的哪一种，需求是否真实、可持续。

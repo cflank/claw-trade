@@ -1,0 +1,14 @@
+{
+  "run_id": "run-20260518-125138-cd49cb72",
+  "attempt_count": 17,
+  "attempt_call_ids": [
+    "run-20260518-125138-cd49cb72-frontline-t00-fundamental_analyst-20260518T125138393806Z-43f24790__tool-call_00_xv6lZ6jJlKvEgawuffSD7561",
+    "run-20260518-125138-cd49cb72-frontline-t00-market_analyst-20260518T125138393466Z-0c151985__tool-call_00_AYvJmmyRs00UbJbuFHij6017",
+    "run-20260518-125138-cd49cb72-frontline-t00-news_analyst-20260518T125138394115Z-8cf8ceb1__tool-call_00_4IJBhRQQXmIWmjwKSdn07838",
+    "run-20260518-125138-cd49cb72-frontline-t00-news_analyst-20260518T125138394115Z-8cf8ceb1__tool-call_00_AoeaSZmOWlYPMYPL0pMx8487",
+    "run-20260518-125138-cd49cb72-frontline-t00-news_analyst-20260518T125138394115Z-8cf8ceb1__tool-call_00_O8BTLQjv4HioIW8xKNub1873",
+    "run-20260518-125138-cd49cb72-frontline-t00-social_analyst-20260518T125138394435Z-47d87458__tool-call_00_5HCmQi372QA8FDdEMv6v7264"
+  ],
+  "derived_call_id_count": 17,
+  "evidence_write_failed": []
+}

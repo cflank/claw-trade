@@ -1,0 +1,10 @@
+{
+  "root": "docs/evidence/openbb-lineage-fix-focused-cn-a-20260518T030319Z",
+  "run_id": "run-20260518-030324-02645c3c",
+  "audit_passed": true,
+  "attempts": null,
+  "http_evidence": null,
+  "raw_refs": null,
+  "relations_non_empty": true,
+  "relation_query_count": 86
+}

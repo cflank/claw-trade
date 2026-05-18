@@ -1,0 +1,63 @@
+{
+  "case": "us_aapl",
+  "ticker": "AAPL",
+  "market": "US",
+  "profile": "US",
+  "run_id": "run-20260518-110549-03749f00",
+  "state_status": "completed",
+  "export_status": "passed",
+  "failure_reason": "",
+  "case_dir": "docs/evidence/openbb-canonical-t16-lineage-20260518T104114Z/us_aapl",
+  "run_exit": 0,
+  "audit_exit": 0,
+  "collect_exit": 0,
+  "chart_count": 2,
+  "provider_prompt_count": 13,
+  "audit_passed": true,
+  "attempt_count": 9,
+  "http_evidence_count": 15,
+  "raw_ref_count": 8,
+  "invalid_raw_refs": [],
+  "missing_raw_refs": [],
+  "http_missing_source": [],
+  "relations_non_empty": true,
+  "relation_query_count": 85,
+  "relation_kind_counts": [
+    {
+      "kind": "final_report_claim_to_pm_l1",
+      "count": 2
+    },
+    {
+      "kind": "l2_evidence_to_pack_audit",
+      "count": 4
+    },
+    {
+      "kind": "pack_audit_to_provider_attempt",
+      "count": 9
+    },
+    {
+      "kind": "pm_l1_to_worker_l1",
+      "count": 11
+    },
+    {
+      "kind": "provider_attempt_to_normalized_result",
+      "count": 8
+    },
+    {
+      "kind": "provider_attempt_to_raw_payload",
+      "count": 8
+    },
+    {
+      "kind": "worker_l1_to_chart_asset",
+      "count": 2
+    },
+    {
+      "kind": "worker_l1_to_l2_evidence",
+      "count": 4
+    }
+  ],
+  "semantic_status": "blocked",
+  "ovpack_export": "metadata_verified",
+  "ovpack_import": "ok",
+  "runtime_health": "blocked"
+}

@@ -114,6 +114,9 @@ UV_CACHE_DIR="${UV_CACHE_DIR:-${RUNTIME_DIR}/uv-cache}"
 UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export UV_CACHE_DIR UV_LINK_MODE
 OPENVIKING_RUNTIME_DIR="${RUNTIME_DIR}/openviking"
+OPENBB_RUNTIME_DIR="${RUNTIME_DIR}/openbb"
+OPENBB_ENV_TEMPLATE_PATH="${OPENBB_RUNTIME_DIR}/openbb.env.template"
+OPENBB_ENV_PATH="${OPENBB_RUNTIME_DIR}/openbb.env"
 OPENVIKING_SOURCE_CONFIG_PATH="${OPENVIKING_SOURCE_CONFIG_PATH:-${HOME}/.openviking/ov.conf}"
 OPENVIKING_CONFIG_FILE="${OPENVIKING_CONFIG_FILE:-${OPENVIKING_RUNTIME_DIR}/ov.conf}"
 OPENVIKING_DATA_DIR="${OPENVIKING_DATA_DIR:-${OPENVIKING_RUNTIME_DIR}/data}"
@@ -685,6 +688,20 @@ fs.writeFileSync(outputPath, `${JSON.stringify(mergedConfig, null, 2)}\n`, "utf8
 NODE
 }
 
+prepare_openbb_runtime_template() {
+  mkdir -p "${OPENBB_RUNTIME_DIR}"
+  cat > "${OPENBB_ENV_TEMPLATE_PATH}" <<'EOF'
+# OpenBB local runtime template for claw-trade dev only.
+# Do not start MCP/provider services from this template.
+OPENBB_HOME=.runtime/dev-services/openbb/home
+OPENBB_USER_SETTINGS_DIRECTORY=.runtime/dev-services/openbb/user_settings
+OPENBB_LOG_DIRECTORY=.runtime/dev-services/openbb/logs
+EOF
+  if [[ ! -f "${OPENBB_ENV_PATH}" ]]; then
+    cp "${OPENBB_ENV_TEMPLATE_PATH}" "${OPENBB_ENV_PATH}"
+  fi
+}
+
 prepare_openviking_runtime_config() {
   mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
   if [[ "${OPENVIKING_CONFIG_FILE}" != "${OPENVIKING_RUNTIME_DIR}/ov.conf" ]]; then
@@ -812,6 +829,7 @@ mkdir -p "${LOG_DIR}" "${PID_DIR}"
 mkdir -p "${OPENCLAW_STATE_DIR}"
 mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+prepare_openbb_runtime_template
 prepare_openclaw_trade_agent_config
 prepare_openviking_runtime_config
 start_local_mongodb_if_needed

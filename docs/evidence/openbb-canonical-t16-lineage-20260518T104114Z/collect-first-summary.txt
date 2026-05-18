@@ -1,0 +1,28 @@
+OpenBB canonical T16 lineage batch
+started_utc=20260518T104114Z
+root=docs/evidence/openbb-canonical-t16-lineage-20260518T104114Z
+Runtime profile:
+- start: scripts/start-control-runtime.sh -- <batch>
+- OpenViking: 127.0.0.1:1933
+- OpenClaw gateway: 127.0.0.1:18789
+- Mongo: mongodb://127.0.0.1:27017/claw_trade_openbb
+- data_gateway: openbb
+- collect_first: true
+
+
+[cn_a_600519] start ticker=600519.SH profile=CN_A
+[cn_a_600519] run_id=run-20260518-104120-6de59a97 run_exit=0 audit_exit=0 collect_exit=0 status=completed export=passed audit=true relations=true charts=2 prompts=13
+
+[hk_00700] start ticker=00700.HK profile=HK
+[hk_00700] run_id=run-20260518-104843-c9f3d205 run_exit=0 audit_exit=0 collect_exit=0 status=completed export=passed audit=true relations=true charts=2 prompts=13
+
+[hk_00005] start ticker=00005.HK profile=HK
+[hk_00005] run_id=run-20260518-105729-a8501fde run_exit=0 audit_exit=0 collect_exit=0 status=completed export=passed audit=true relations=true charts=2 prompts=13
+
+[us_aapl] start ticker=AAPL profile=US
+[us_aapl] run_id=run-20260518-110549-03749f00 run_exit=0 audit_exit=0 collect_exit=0 status=completed export=passed audit=true relations=true charts=2 prompts=13
+
+[crypto_btc] start ticker=BTC profile=CRYPTO
+[crypto_btc] run_id=run-20260518-111317-de27cff2 run_exit=0 audit_exit=0 collect_exit=0 status=completed export=passed audit=true relations=true charts=2 prompts=13
+
+Batch summary JSON: docs/evidence/openbb-canonical-t16-lineage-20260518T104114Z/batch-summary.json

@@ -6,21 +6,18 @@ skills:
     workers:
       - fundamental_analyst
     tool_exports:
-      - get_fundamentals
-      - get_balance_sheet
-      - get_cashflow
-      - get_income_statement
+      - claw_get_fundamental_pack
   - path: cn-a-fundamental-data/SKILL.md
     skill_id: cn-a-fundamental-data
     skill_version: 0.1.0
     workers:
       - fundamental_analyst
     tool_exports:
-      - fundamental_fundamentals_data_pack
+      - claw_get_fundamental_pack
   - path: crypto-fundamental-data/SKILL.md
     skill_id: crypto-fundamental-data
     skill_version: 0.1.0
     workers:
       - fundamental_analyst
     tool_exports:
-      - crypto_fundamental_data_pack
+      - claw_get_fundamental_pack

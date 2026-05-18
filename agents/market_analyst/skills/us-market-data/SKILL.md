@@ -1,14 +1,13 @@
 ---
 name: us-market-data
 version: 0.1.0
-description: Original TradingAgents-style US yfinance market tools for market_analyst.
+description: Canonical OpenBB market pack tool for market_analyst.
 tools:
-  - get_stock_data
-  - get_indicators
-entrypoint: openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/us_data_pack.py
-schema_version: original_tradingagents_us_market_tools.v1
+  - claw_get_market_pack
+entrypoint: openclaw_plugins/claw-trade-frontline-tools/index.js
+schema_version: openbb_market_pack.v1
 ---
 
 # us-market-data
 
-This skill provides only the original TradingAgents-style `get_stock_data` and `get_indicators` yfinance tool capabilities. It does not write the final report, investment decision, rating, or target price.
+This skill provides only the canonical `claw_get_market_pack` OpenBB market pack capability. It does not write the final report, investment decision, rating, or target price.

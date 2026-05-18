@@ -13,9 +13,9 @@ def test_cn_a_social_skill_metadata_contains_required_fields() -> None:
     text = skill_path.read_text(encoding="utf-8")
 
     assert "name: cn-a-social-data" in text
-    assert "tool: social_social_sentiment_pack" in text
-    assert "entrypoint: scripts/social_data_pack.py" in text
-    assert "schema_version: cn_a_social_pack.v1" in text
+    assert "tool: claw_get_social_pack" in text
+    assert "entrypoint: openclaw_plugins/claw-trade-frontline-tools/index.js" in text
+    assert "schema_version: openbb_social_pack.v1" in text
 
 
 def test_cn_a_social_analyst_visible_tools_are_exactly_approved_set() -> None:
@@ -27,7 +27,7 @@ def test_cn_a_social_analyst_visible_tools_are_exactly_approved_set() -> None:
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
 
-    assert set(tools) == {"social_social_sentiment_pack"}
+    assert set(tools) == {"claw_get_social_pack"}
 
 
 def test_social_analyst_visible_tools_do_not_leak_provider_atomic_interfaces() -> None:

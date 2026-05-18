@@ -42,8 +42,8 @@ APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     "l1_l2.py": "c409bf6c0f3f66e619d0677328a272d45417abba599e9042c81cd0b69599f551",
     "openviking_access.py": "70905f71358275d140abf8dcc8d71f63db8c6a2724793d429f716f6309b8d8f7",
     "openviking_receipt.py": "50cb4f10d40fd9a387073f44bcaf09d915937adb469f4636d00e0bcc3e9ec634",
-    "provider_request.py": "e67abbb5b76017d812b8b98dbc90eb9b5839e571ba45fd7c3f09661c5250aa7e",
-    "tool_calls.py": "8d207c7cd28626e3c9b85f1083d9e41dbcd3e0a67a2683082a489e3122770b29",
+    "provider_request.py": "cce82afc14107ea55a344c5677a5efb3d15bfd2c20db29a0c0856f5f9a028ab4",
+    "tool_calls.py": "c0ecaa1c6d34f2aba1cf489388e2497ab40e006188a7a8473c5ab535bf4f0c8a",
     "visible_tools.py": "0b18078feda9cb416e05ad4d6bbf8dacbc3118c895cf8947c84a5f7dc61695a5",
     "workspace_evidence.py": "332420a1ebac0af35fac0101a0c8d5814e57888a39dd84440e80f75f409319ab",
 }

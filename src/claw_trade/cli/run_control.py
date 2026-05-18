@@ -5,6 +5,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from claw_trade.artifacts.manifest import ManifestStore
 from claw_trade.artifacts.openviking_client import OpenVikingClient
@@ -13,6 +14,12 @@ from claw_trade.config.report_workflow_settings import (
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
 )
+from claw_trade.data_gateway.providers.defaults import default_provider_config_version, load_default_system_capabilities
+from claw_trade.data_gateway.providers.registry import ProviderRegistry
+from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner
+from claw_trade.data_gateway.openviking import OpenBBMongoLineageWriter
+from claw_trade.data_gateway.store import MongoRunProviderPlanStore, ensure_openbb_store_indexes
+from claw_trade.data_gateway.store.mongo import OPENBB_RUN_PROVIDER_PLANS
 from claw_trade.instruments.resolver import InstrumentResolveError, resolve_instrument_identity
 from claw_trade.reports.exporter import FinalReportExporter
 from claw_trade.runtime.openclaw_client import OpenClawClient
@@ -22,6 +29,8 @@ from claw_trade.workflow.store import WorkflowStore
 
 _ENV_OPENCLAW_RUNNER = "CLAW_TRADE_OPENCLAW_RUNNER"
 _ENV_OPENVIKING_BACKEND = "CLAW_TRADE_OPENVIKING_BACKEND"
+_ENV_DATA_GATEWAY_MONGODB_URI = "DATA_GATEWAY_MONGODB_URI"
+_ENV_DATA_GATEWAY_MONGODB_DATABASE = "DATA_GATEWAY_MONGODB_DATABASE"
 
 
 class CliBlockedError(RuntimeError):
@@ -69,6 +78,7 @@ def _namespace_to_request(namespace: argparse.Namespace, settings: ReportWorkflo
         current_date=namespace.current_date,
         start_date=namespace.start_date,
         end_date=namespace.end_date,
+        data_gateway=_data_gateway_mode_from_env(),
         stop_point=StopPoint(namespace.stop_point),
         target_worker_id=namespace.target_worker_id,
         target_stage=target_stage,
@@ -92,6 +102,10 @@ def _profile_from_args(raw_profile: str | None, resolved_profile: str) -> str:
 def _value_or_default(raw_value: str | None, default: str) -> str:
     value = str(raw_value or "").strip()
     return value or default
+
+
+def _data_gateway_mode_from_env() -> str:
+    return "openbb"
 
 
 def parse_args(argv: list[str]) -> RunRequest:
@@ -132,6 +146,47 @@ def _require_callable(obj: object, name: str, *, env_key: str) -> None:
         raise CliBlockedError(f"{env_key} 对象缺少方法: {name}")
 
 
+def _data_gateway_mongo_uri() -> str:
+    uri = (
+        os.environ.get(_ENV_DATA_GATEWAY_MONGODB_URI, "").strip()
+        or os.environ.get("CN_A_MONGODB_URI", "").strip()
+    )
+    if not uri:
+        raise CliBlockedError(f"缺少真实依赖配置: {_ENV_DATA_GATEWAY_MONGODB_URI}/CN_A_MONGODB_URI")
+    return uri
+
+
+def _data_gateway_database_name(uri: str) -> str:
+    configured = os.environ.get(_ENV_DATA_GATEWAY_MONGODB_DATABASE, "").strip()
+    if configured:
+        return configured
+    parsed = urlparse(uri)
+    path_name = parsed.path.strip("/")
+    if path_name:
+        return path_name.split("/", 1)[0]
+    return "claw_trade_openbb"
+
+
+def _build_run_provider_plan_store(uri: str) -> MongoRunProviderPlanStore:
+    from pymongo import MongoClient
+
+    database_name = _data_gateway_database_name(uri)
+    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    db = client[database_name]
+    ensure_openbb_store_indexes(db)
+    return MongoRunProviderPlanStore(db[OPENBB_RUN_PROVIDER_PLANS])
+
+
+def _build_openbb_lineage_writer(uri: str, openviking_client: OpenVikingClient) -> OpenBBMongoLineageWriter:
+    from pymongo import MongoClient
+
+    database_name = _data_gateway_database_name(uri)
+    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    db = client[database_name]
+    ensure_openbb_store_indexes(db)
+    return OpenBBMongoLineageWriter(openviking=openviking_client, database=db)
+
+
 def _build_runner(run_dir: Path) -> ControlRunner:
     # 控制迁移硬边界：缺真实 OpenClaw/OpenViking 依赖时直接 BLOCKED，禁止 CLI 自行兜底成功。
     openclaw_runner_spec = os.environ.get(_ENV_OPENCLAW_RUNNER, "").strip()
@@ -155,12 +210,20 @@ def _build_runner(run_dir: Path) -> ControlRunner:
     openviking_client = OpenVikingClient(backend=openviking_backend)
     store = WorkflowStore(run_dir)
     manifest_store = ManifestStore(run_dir)
+    mongo_uri = _data_gateway_mongo_uri()
+    capabilities = load_default_system_capabilities()
+    provider_registry = ProviderRegistry(capabilities=capabilities)
     return ControlRunner(
         store=store,
         manifest_store=manifest_store,
         openclaw=OpenClawClient(runner=openclaw_runner),
         openviking=openviking_client,
         exporter=FinalReportExporter(openviking=openviking_client),
+        run_provider_planner=RunProviderPlanner(),
+        run_provider_plan_store=_build_run_provider_plan_store(mongo_uri),
+        run_provider_registry=provider_registry,
+        provider_config_version_resolver=lambda: default_provider_config_version(capabilities),
+        lineage_writer=_build_openbb_lineage_writer(mongo_uri, openviking_client),
     )
 
 

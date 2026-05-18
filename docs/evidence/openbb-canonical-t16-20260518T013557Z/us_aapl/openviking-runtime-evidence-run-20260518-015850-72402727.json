@@ -1,0 +1,372 @@
+{
+  "context_index": [
+    {
+      "index_level": "L0",
+      "reason": "L0 URI tree index available via control-plane wrappers",
+      "searchable_by_control_plane": true,
+      "status": "ok",
+      "uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+      "vectorized": false,
+      "visible_to_worker": false
+    },
+    {
+      "index_level": "L1",
+      "reason": "L1 approved material metadata index available via control-plane wrappers",
+      "searchable_by_control_plane": true,
+      "status": "ok",
+      "uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+      "vectorized": false,
+      "visible_to_worker": false
+    },
+    {
+      "index_level": "semantic",
+      "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+      "searchable_by_control_plane": false,
+      "status": "blocked",
+      "uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+      "vectorized": false,
+      "visible_to_worker": false
+    }
+  ],
+  "glob": {
+    "matches": [
+      "{'matches': [], 'count': 0}"
+    ],
+    "pattern": "**/approved-manifest.json",
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+    "status": "ok"
+  },
+  "grep": {
+    "matches": [
+      {
+        "content": "  \"call_id\": \"run-20260518-015850-72402727-portfolio_decision-t00-portfolio_manager-20260518T020353434154Z-42f563bf\",",
+        "line": "5",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/portfolio_decision/portfolio_manager/run-20260518-015850-72402727-portfolio_decision-t00-portfolio_manager-20260518T020353434154Z-42f563bf/evidence/index.json"
+      },
+      {
+        "content": "  \"worker_id\": \"portfolio_manager\",",
+        "line": "6",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/portfolio_decision/portfolio_manager/run-20260518-015850-72402727-portfolio_decision-t00-portfolio_manager-20260518T020353434154Z-42f563bf/evidence/index.json"
+      }
+    ],
+    "pattern": "portfolio_manager",
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+    "status": "ok"
+  },
+  "ovpack_export": {
+    "bundle_path": "docs/evidence/openbb-canonical-t16-20260518T013557Z/us_aapl/ovpack/run-20260518-015850-72402727.ovpack",
+    "bundle_uri": "viking://resources/workflow/run-20260518-015850-72402727/evidence/bundles/run-20260518-015850-72402727.ovpack",
+    "exported_at": "2026-05-18T02:06:24Z",
+    "external_store_refs": [],
+    "import_status": null,
+    "imported_run_id": null,
+    "portability_status": "metadata_verified",
+    "raw_payload_policy": "external_store_required",
+    "root_cause": null,
+    "run_id": "run-20260518-015850-72402727",
+    "sha256": "sha256:ab93a801ca1cd5181e9642b6842568d7be2f3bd28ae891b6b935dff3f9cee2d8",
+    "size_bytes": 8812
+  },
+  "ovpack_import": {
+    "bundle_path": "docs/evidence/openbb-canonical-t16-20260518T013557Z/us_aapl/ovpack/run-20260518-015850-72402727.ovpack",
+    "bundle_uri": "viking://resources/workflow/imported/import-check-run-20260518-015850-72402727/run-20260518-015850-72402727",
+    "exported_at": "2026-05-18T02:06:24Z",
+    "external_store_refs": [],
+    "import_status": "ok",
+    "imported_run_id": "import-check-run-20260518-015850-72402727",
+    "portability_status": "metadata_verified",
+    "raw_payload_policy": "external_store_required",
+    "root_cause": null,
+    "run_id": "import-check-run-20260518-015850-72402727",
+    "sha256": "sha256:ab93a801ca1cd5181e9642b6842568d7be2f3bd28ae891b6b935dff3f9cee2d8",
+    "size_bytes": 8812
+  },
+  "relations": [],
+  "run_id": "run-20260518-015850-72402727",
+  "run_root_uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+  "runtime_health": {
+    "checked_at": "2026-05-18T02:06:24Z",
+    "lock_status": "ok",
+    "metrics_status": "unavailable",
+    "observer_status": "ok",
+    "queue_status": "blocked",
+    "raw_refs": [],
+    "recovery_status": "unavailable",
+    "root_cause": "metrics endpoint unavailable; OpenViking semantic/vector queue is disabled in claw-trade report runtime; upstream public recovery API 未确认",
+    "status": "blocked"
+  },
+  "tree": {
+    "node_count": 33,
+    "nodes": [
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:03:53",
+        "rel_path": "risk_debate",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:03:22",
+        "rel_path": "risk_debate/risk_guardian",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate/risk_guardian"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:03:22",
+        "rel_path": "risk_debate/risk_guardian/run-20260518-015850-72402727-risk_debate-t01-risk_guardian-20260518T020248169822Z-4811aeb1",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate/risk_guardian/run-20260518-015850-72402727-risk_debate-t01-risk_guardian-20260518T020248169822Z-4811aeb1"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:03:53",
+        "rel_path": "risk_debate/risk_moderator",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate/risk_moderator"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:03:53",
+        "rel_path": "risk_debate/risk_moderator/run-20260518-015850-72402727-risk_debate-t02-risk_moderator-20260518T020322819159Z-cff6531e",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate/risk_moderator/run-20260518-015850-72402727-risk_debate-t02-risk_moderator-20260518T020322819159Z-cff6531e"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:02:47",
+        "rel_path": "risk_debate/risk_challenger",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate/risk_challenger"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:02:47",
+        "rel_path": "risk_debate/risk_challenger/run-20260518-015850-72402727-risk_debate-t00-risk_challenger-20260518T020217818026Z-3126d7d7",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/risk_debate/risk_challenger/run-20260518-015850-72402727-risk_debate-t00-risk_challenger-20260518T020217818026Z-3126d7d7"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:00:03",
+        "rel_path": "frontline",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "01:59:49",
+        "rel_path": "frontline/social_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/social_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "01:59:49",
+        "rel_path": "frontline/social_analyst/run-20260518-015850-72402727-frontline-t00-social_analyst-20260518T015850102383Z-e9c97764",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/social_analyst/run-20260518-015850-72402727-frontline-t00-social_analyst-20260518T015850102383Z-e9c97764"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "01:59:40",
+        "rel_path": "frontline/market_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/market_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "01:59:40",
+        "rel_path": "frontline/market_analyst/run-20260518-015850-72402727-frontline-t00-market_analyst-20260518T015850101442Z-188bc335",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/market_analyst/run-20260518-015850-72402727-frontline-t00-market_analyst-20260518T015850101442Z-188bc335"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:00:03",
+        "rel_path": "frontline/fundamental_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/fundamental_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:00:03",
+        "rel_path": "frontline/fundamental_analyst/run-20260518-015850-72402727-frontline-t00-fundamental_analyst-20260518T015850101774Z-7f44e38d",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/fundamental_analyst/run-20260518-015850-72402727-frontline-t00-fundamental_analyst-20260518T015850101774Z-7f44e38d"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "01:59:29",
+        "rel_path": "frontline/news_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/news_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "01:59:29",
+        "rel_path": "frontline/news_analyst/run-20260518-015850-72402727-frontline-t00-news_analyst-20260518T015850102138Z-f4a7369b",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/frontline/news_analyst/run-20260518-015850-72402727-frontline-t00-news_analyst-20260518T015850102138Z-f4a7369b"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:02:17",
+        "rel_path": "trade_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/trade_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:02:17",
+        "rel_path": "trade_decision/trader",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/trade_decision/trader"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:02:17",
+        "rel_path": "trade_decision/trader/run-20260518-015850-72402727-trade_decision-t00-trader-20260518T020159628062Z-704f784f",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/trade_decision/trader/run-20260518-015850-72402727-trade_decision-t00-trader-20260518T020159628062Z-704f784f"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:01:59",
+        "rel_path": "investment_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:01:59",
+        "rel_path": "investment_decision/research_manager",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_decision/research_manager"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:01:59",
+        "rel_path": "investment_decision/research_manager/run-20260518-015850-72402727-investment_decision-t00-research_manager-20260518T020118946883Z-fa22d15e",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_decision/research_manager/run-20260518-015850-72402727-investment_decision-t00-research_manager-20260518T020118946883Z-fa22d15e"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:06:22",
+        "rel_path": "final_report",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/final_report"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:06:22",
+        "rel_path": "final_report/report_polisher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/final_report/report_polisher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:06:22",
+        "rel_path": "final_report/report_polisher/run-20260518-015850-72402727-final_report-t00-report_polisher-20260518T020425460487Z-3b9a95cc",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/final_report/report_polisher/run-20260518-015850-72402727-final_report-t00-report_polisher-20260518T020425460487Z-3b9a95cc"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:04:25",
+        "rel_path": "portfolio_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/portfolio_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:04:25",
+        "rel_path": "portfolio_decision/portfolio_manager",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/portfolio_decision/portfolio_manager"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:04:25",
+        "rel_path": "portfolio_decision/portfolio_manager/run-20260518-015850-72402727-portfolio_decision-t00-portfolio_manager-20260518T020353434154Z-42f563bf",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/portfolio_decision/portfolio_manager/run-20260518-015850-72402727-portfolio_decision-t00-portfolio_manager-20260518T020353434154Z-42f563bf"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:01:18",
+        "rel_path": "investment_debate",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_debate"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:00:35",
+        "rel_path": "investment_debate/bull_researcher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_debate/bull_researcher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:00:35",
+        "rel_path": "investment_debate/bull_researcher/run-20260518-015850-72402727-investment_debate-t00-bull_researcher-20260518T020003516297Z-03972a3e",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_debate/bull_researcher/run-20260518-015850-72402727-investment_debate-t00-bull_researcher-20260518T020003516297Z-03972a3e"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:01:18",
+        "rel_path": "investment_debate/bear_researcher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_debate/bear_researcher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "02:01:18",
+        "rel_path": "investment_debate/bear_researcher/run-20260518-015850-72402727-investment_debate-t01-bear_researcher-20260518T020035952366Z-47427d5a",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-015850-72402727/investment_debate/bear_researcher/run-20260518-015850-72402727-investment_debate-t01-bear_researcher-20260518T020035952366Z-47427d5a"
+      }
+    ],
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-015850-72402727/",
+    "status": "ok"
+  }
+}

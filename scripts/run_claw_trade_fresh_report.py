@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from claw_trade.cli.run_control import _build_runner
+from claw_trade.cli.run_control import _build_runner, _data_gateway_mode_from_env
 from claw_trade.config.report_workflow_settings import load_report_workflow_settings
 from claw_trade.workflow.models import RunRequest, RunStatus, StopPoint, WorkflowEntryPoint
 
@@ -360,6 +360,7 @@ def main() -> int:
         current_date=args.current_date,
         start_date=args.start_date,
         end_date=args.end_date,
+        data_gateway=_data_gateway_mode_from_env(),
         stop_point=StopPoint.NONE,
         entry_point=WorkflowEntryPoint.REPORT_COMMAND,
         max_debate_rounds=settings.max_debate_rounds,

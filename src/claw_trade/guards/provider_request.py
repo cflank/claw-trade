@@ -89,9 +89,6 @@ _FORBIDDEN_MODEL_VISIBLE_PROMPT_TOKENS = (
     "[ReportSubmission]",
     "[OpenVikingReadableMaterials]",
     "[OpenVikingWriteTarget]",
-    "profile:",
-    "profile_status:",
-    "worker_id:",
     "material_id",
     "capability=",
     "capability_id",
@@ -102,6 +99,13 @@ _FORBIDDEN_MODEL_VISIBLE_PROMPT_TOKENS = (
     "OpenClaw",
     "openviking_read_with_capability",
     "openviking_write_material",
+)
+
+_FORBIDDEN_MODEL_VISIBLE_PROMPT_FIELD_PREFIXES = (
+    "profile:",
+    "profile_status:",
+    "worker_id:",
+    "stage:",
 )
 
 
@@ -118,6 +122,14 @@ def _validate_model_visible_prompt_text(
     for token in _FORBIDDEN_MODEL_VISIBLE_PROMPT_TOKENS:
         if token in text:
             return _failed(f"模型可见 prompt 含机器协议或运行包装: {token}", provider_request_path)
+    for line in text.splitlines():
+        stripped = line.strip().lower()
+        for field_prefix in _FORBIDDEN_MODEL_VISIBLE_PROMPT_FIELD_PREFIXES:
+            if stripped.startswith(field_prefix):
+                return _failed(
+                    f"模型可见 prompt 含机器协议或运行包装: {field_prefix}",
+                    provider_request_path,
+                )
     return guard_passed(category="provider_request")
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from claw_trade.cli.run_control import main, parse_args
+from claw_trade.cli.run_control import CliBlockedError, _build_runner, _data_gateway_database_name, main, parse_args
 from claw_trade.workflow.models import (
     RunRequest,
     RunStatus,
@@ -66,6 +66,7 @@ def test_parse_args_builds_run_request_with_all_fields(monkeypatch: pytest.Monke
     assert request.current_date == "2026-05-03"
     assert request.start_date == "2026-04-03"
     assert request.end_date == "2026-05-03"
+    assert request.data_gateway == "openbb"
     assert request.stop_point == StopPoint.FRONTLINE_READY
     assert request.target_worker_id == "market_analyst"
     assert request.target_stage == Stage.FRONTLINE
@@ -91,6 +92,14 @@ def test_parse_args_supports_single_worker_request_shape() -> None:
     assert request.stop_point == StopPoint.SINGLE_WORKER_COMPLETE
     assert request.target_worker_id == "market_analyst"
     assert request.target_stage == Stage.FRONTLINE
+
+
+def test_parse_args_ignores_legacy_rollback_env_and_records_openbb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", "true")
+
+    request = parse_args(_base_args())
+
+    assert request.data_gateway == "openbb"
 
 
 def test_parse_args_normalizes_hk_ticker_without_approving_profile() -> None:
@@ -144,6 +153,84 @@ class _CompletedRunner:
     def run(self, request: RunRequest) -> WorkflowState:
         _ = request
         return self.state
+
+
+class _RuntimeObject:
+    def probe(self) -> object:
+        return object()
+
+    def run_worker(self, command: object) -> object:
+        _ = command
+        return object()
+
+    def ensure_namespace(self, namespace: str) -> None:
+        _ = namespace
+
+    def fetch_receipt_by_path(self, receipt_path: Path) -> object:
+        _ = receipt_path
+        return object()
+
+    def fetch_stat_by_uri(self, uri: str) -> object:
+        _ = uri
+        return object()
+
+    def fetch_content_by_uri(self, uri: str) -> bytes:
+        _ = uri
+        return b""
+
+    def fetch_l2_index_by_uri(self, uri: str | None) -> object:
+        _ = uri
+        return object()
+
+
+class _PlanStore:
+    pass
+
+
+class _LineageWriter:
+    pass
+
+
+def test_build_runner_blocks_report_runtime_when_mongo_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CLAW_TRADE_OPENCLAW_RUNNER", "tests.fake:openclaw")
+    monkeypatch.setenv("CLAW_TRADE_OPENVIKING_BACKEND", "tests.fake:openviking")
+    monkeypatch.delenv("DATA_GATEWAY_MONGODB_URI", raising=False)
+    monkeypatch.delenv("CN_A_MONGODB_URI", raising=False)
+    monkeypatch.setattr("claw_trade.cli.run_control._load_runtime_object", lambda *_args, **_kwargs: _RuntimeObject())
+
+    with pytest.raises(CliBlockedError, match="DATA_GATEWAY_MONGODB_URI"):
+        _build_runner(tmp_path / "runs")
+
+
+def test_build_runner_injects_run_provider_plan_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLAW_TRADE_OPENCLAW_RUNNER", "tests.fake:openclaw")
+    monkeypatch.setenv("CLAW_TRADE_OPENVIKING_BACKEND", "tests.fake:openviking")
+    monkeypatch.setenv("DATA_GATEWAY_MONGODB_URI", "mongodb://127.0.0.1:27017")
+    monkeypatch.setattr("claw_trade.cli.run_control._load_runtime_object", lambda *_args, **_kwargs: _RuntimeObject())
+    monkeypatch.setattr("claw_trade.cli.run_control._build_run_provider_plan_store", lambda _uri: _PlanStore())
+    monkeypatch.setattr("claw_trade.cli.run_control._build_openbb_lineage_writer", lambda _uri, _client: _LineageWriter())
+
+    runner = _build_runner(tmp_path / "runs")
+
+    assert runner.run_provider_planner is not None
+    assert runner.run_provider_plan_store is not None
+    assert runner.run_provider_registry is not None
+    assert runner.provider_config_version_resolver is not None
+    assert runner.lineage_writer is not None
+    assert runner.provider_config_version_resolver().startswith("sha256:")
+
+
+def test_data_gateway_database_name_uses_uri_path_or_dev_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATA_GATEWAY_MONGODB_DATABASE", raising=False)
+
+    assert _data_gateway_database_name("mongodb://127.0.0.1:27017/claw_trade_prod") == "claw_trade_prod"
+    assert _data_gateway_database_name("mongodb://127.0.0.1:27017") == "claw_trade_openbb"
+
+    monkeypatch.setenv("DATA_GATEWAY_MONGODB_DATABASE", "configured_db")
+    assert _data_gateway_database_name("mongodb://127.0.0.1:27017/ignored") == "configured_db"
 
 
 def test_main_prints_completed_status_and_report_path(

@@ -1,0 +1,44 @@
+{
+  "root": "docs/evidence/openbb-lineage-fix-dedup-focused-cn-a-20260518T031452Z",
+  "run_id": "run-20260518-031458-fb894ea6",
+  "audit_passed": true,
+  "attempt_count": 11,
+  "http_evidence_count": 16,
+  "raw_ref_count": 7,
+  "relations_non_empty": true,
+  "relation_query_count": 86,
+  "relation_kind_counts": [
+    {
+      "kind": "final_report_claim_to_pm_l1",
+      "count": 2
+    },
+    {
+      "kind": "l2_evidence_to_pack_audit",
+      "count": 4
+    },
+    {
+      "kind": "pack_audit_to_provider_attempt",
+      "count": 11
+    },
+    {
+      "kind": "pm_l1_to_worker_l1",
+      "count": 11
+    },
+    {
+      "kind": "provider_attempt_to_normalized_result",
+      "count": 8
+    },
+    {
+      "kind": "provider_attempt_to_raw_payload",
+      "count": 8
+    },
+    {
+      "kind": "worker_l1_to_chart_asset",
+      "count": 2
+    },
+    {
+      "kind": "worker_l1_to_l2_evidence",
+      "count": 4
+    }
+  ]
+}

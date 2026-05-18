@@ -6,7 +6,7 @@ FUNDAMENTAL_WORKER_ID = "fundamental_analyst"
 FUNDAMENTAL_MARKET_PROFILE = "CN_A"
 APPROVED_VISIBLE_TOOLS = frozenset(
     {
-        "fundamental_fundamentals_data_pack",
+        "claw_get_fundamental_pack",
     }
 )
 FORBIDDEN_PROVIDER_TOOLS = frozenset(

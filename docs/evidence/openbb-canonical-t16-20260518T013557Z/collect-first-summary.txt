@@ -1,0 +1,45 @@
+case=cn_a_600519 ticker=600519.SH market=CN_A
+run_exit=0
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+COMPLETED run_id=run-20260518-013603-6f876fea output_dir=docs/evidence/openbb-canonical-t16-20260518T013557Z/cn_a_600519/exported workers=13 final_report=final_report.md
+run_id=run-20260518-013603-6f876fea
+audit_exit=0
+openviking_collect_exit=0
+---
+case=hk_00700 ticker=00700.HK market=HK
+run_exit=0
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+COMPLETED run_id=run-20260518-014315-149a9ab3 output_dir=docs/evidence/openbb-canonical-t16-20260518T013557Z/hk_00700/exported workers=13 final_report=final_report.md
+run_id=run-20260518-014315-149a9ab3
+audit_exit=0
+openviking_collect_exit=0
+---
+case=hk_00005 ticker=00005.HK market=HK
+run_exit=0
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+COMPLETED run_id=run-20260518-015123-3746b2d1 output_dir=docs/evidence/openbb-canonical-t16-20260518T013557Z/hk_00005/exported workers=13 final_report=final_report.md
+run_id=run-20260518-015123-3746b2d1
+audit_exit=0
+openviking_collect_exit=0
+---
+case=us_aapl ticker=AAPL market=US
+run_exit=0
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+COMPLETED run_id=run-20260518-015850-72402727 output_dir=docs/evidence/openbb-canonical-t16-20260518T013557Z/us_aapl/exported workers=13 final_report=final_report.md
+run_id=run-20260518-015850-72402727
+audit_exit=0
+openviking_collect_exit=0
+---
+case=crypto_btc ticker=BTC market=CRYPTO
+run_exit=0
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+COMPLETED run_id=run-20260518-020629-ee224f78 output_dir=docs/evidence/openbb-canonical-t16-20260518T013557Z/crypto_btc/exported workers=13 final_report=final_report.md
+run_id=run-20260518-020629-ee224f78
+audit_exit=0
+openviking_collect_exit=0
+---

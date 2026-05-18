@@ -7,28 +7,21 @@ import { definePluginEntry } from "../../third_party/openclaw/dist/plugin-sdk/pl
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(PLUGIN_DIR, "..", "..");
 const TOOL_NAMES = Object.freeze({
-  cnMarket: "market_market_data_pack",
-  cryptoMarket: "crypto_market_data_pack",
-  usGetStockData: "get_stock_data",
-  usGetIndicators: "get_indicators",
-  cnFundamental: "fundamental_fundamentals_data_pack",
-  cryptoFundamental: "crypto_fundamental_data_pack",
-  cryptoNews: "crypto_news_data_pack",
-  cryptoSocial: "crypto_social_sentiment_pack",
-  usGetFundamentals: "get_fundamentals",
-  usGetBalanceSheet: "get_balance_sheet",
-  usGetCashflow: "get_cashflow",
-  usGetIncomeStatement: "get_income_statement",
-  usGetNews: "get_news",
-  usGetGlobalNews: "get_global_news",
-  cnNews: "news_news_data_pack",
-  cnSocial: "social_social_sentiment_pack",
+  clawGetMarketPack: "claw_get_market_pack",
+  clawGetFundamentalPack: "claw_get_fundamental_pack",
+  clawGetNewsPack: "claw_get_news_pack",
+  clawGetSocialPack: "claw_get_social_pack",
 });
 const FRONTLINE_STAGE = "frontline";
+const OPENBB_PACK_DOMAIN_MARKET = "market";
+const OPENBB_PACK_DOMAIN_FUNDAMENTAL = "fundamental";
+const OPENBB_PACK_DOMAIN_NEWS = "news";
+const OPENBB_PACK_DOMAIN_SOCIAL = "social";
 const MARKET_CN_A = "CN_A";
 const MARKET_HK = "HK";
 const MARKET_US = "US";
 const MARKET_CRYPTO = "CRYPTO";
+const ALL_MARKETS = [MARKET_CN_A, MARKET_HK, MARKET_US, MARKET_CRYPTO];
 const TOOL_ERROR_CODES = Object.freeze({
   runtimeContextMissing: "TOOL_RUNTIME_CONTEXT_MISSING",
   paramsInvalid: "TOOL_PARAMS_INVALID",
@@ -71,71 +64,10 @@ const PACK_INPUT_SCHEMA = {
   },
 };
 
-const STOCK_DATA_SCHEMA = {
+const OPENBB_PACK_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  properties: {
-    symbol: OPTIONAL_TEXT,
-    start_date: OPTIONAL_TEXT,
-    end_date: OPTIONAL_TEXT,
-  },
-};
-
-const INDICATOR_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    symbol: OPTIONAL_TEXT,
-    indicator: OPTIONAL_TEXT,
-    curr_date: OPTIONAL_TEXT,
-    look_back_days: {
-      type: "number",
-    },
-  },
-};
-
-const FUNDAMENTALS_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    ticker: OPTIONAL_TEXT,
-    curr_date: OPTIONAL_TEXT,
-  },
-};
-
-const STATEMENT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    ticker: OPTIONAL_TEXT,
-    freq: OPTIONAL_TEXT,
-    curr_date: OPTIONAL_TEXT,
-  },
-};
-
-const NEWS_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    ticker: OPTIONAL_TEXT,
-    query: OPTIONAL_TEXT,
-    start_date: OPTIONAL_TEXT,
-    end_date: OPTIONAL_TEXT,
-  },
-};
-
-const GLOBAL_NEWS_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    curr_date: OPTIONAL_TEXT,
-    look_back_days: {
-      type: "number",
-    },
-    limit: {
-      type: "number",
-    },
-  },
+  properties: {},
 };
 
 function isRecord(value) {
@@ -144,6 +76,16 @@ function isRecord(value) {
 
 function textValue(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function safeToken(value, fallback = "unknown") {
+  const raw = textValue(value) ?? fallback;
+  const safe = raw.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
+  return safe || fallback;
+}
+
+function packEvidenceCallId(workerCallId, toolCallId) {
+  return `${workerCallId}__tool-${safeToken(toolCallId)}`;
 }
 
 function listValue(value, fieldName) {
@@ -204,6 +146,36 @@ function runtimeText(runtimeVars, params, fieldName, required = false) {
   return value;
 }
 
+function runtimeOnlyText(runtimeVars, fieldName, required = false) {
+  const value = readOptionalRuntimeString(runtimeVars, fieldName);
+  if (required && value === undefined) {
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `runtime_vars.${fieldName} is required`);
+  }
+  return value;
+}
+
+function runtimeOnlyPositiveNumber(runtimeVars, fieldName) {
+  const raw = runtimeVars?.[fieldName];
+  if (raw === undefined || raw === null || raw === "") {
+    return undefined;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new FrontlineToolError(
+      TOOL_ERROR_CODES.paramsInvalid,
+      `runtime_vars.${fieldName} must be a positive number`,
+    );
+  }
+  return value;
+}
+
+function ignoredModelInputFields(params) {
+  if (!isRecord(params)) {
+    return [];
+  }
+  return Object.keys(params).sort();
+}
+
 function buildToolInput(runtimeVars, params, requiredFields = []) {
   if (!isRecord(params)) {
     throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool params must be a JSON object");
@@ -234,75 +206,41 @@ function buildToolInput(runtimeVars, params, requiredFields = []) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
-function buildOriginalUsToolInput(runtimeVars, params, toolName) {
+function buildOpenbbPackToolInput(runtimeVars, params) {
   if (!isRecord(params)) {
     throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool params must be a JSON object");
   }
   const runtime = isRecord(runtimeVars) ? runtimeVars : {};
-  const ticker = readOptionalString(runtime, "ticker");
-  const market = readOptionalString(params, "market") ?? readOptionalString(runtime, "market");
-  const currentDate = readOptionalString(runtime, "current_date");
-  const startDate = readOptionalString(runtime, "start_date");
-  const endDate = readOptionalString(runtime, "end_date");
-  if (toolName === TOOL_NAMES.usGetStockData) {
-    return {
-      symbol: readOptionalString(params, "symbol") ?? ticker,
-      market,
-      start_date: readOptionalString(params, "start_date") ?? startDate,
-      end_date: readOptionalString(params, "end_date") ?? endDate ?? currentDate,
-    };
-  }
-  if (toolName === TOOL_NAMES.usGetIndicators) {
-    return {
-      symbol: readOptionalString(params, "symbol") ?? ticker,
-      market,
-      indicator: readOptionalString(params, "indicator"),
-      curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
-      look_back_days: params.look_back_days,
-    };
-  }
-  if (toolName === TOOL_NAMES.usGetFundamentals) {
-    return {
-      ticker: readOptionalString(params, "ticker") ?? ticker,
-      market,
-      curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
-    };
-  }
-  if (toolName === TOOL_NAMES.usGetNews) {
-    return {
-      ticker: readOptionalString(params, "ticker") ?? ticker,
-      query: readOptionalString(params, "query"),
-      market,
-      start_date: readOptionalString(params, "start_date") ?? startDate,
-      end_date: readOptionalString(params, "end_date") ?? endDate ?? currentDate,
-    };
-  }
-  if (toolName === TOOL_NAMES.usGetGlobalNews) {
-    return {
-      market,
-      curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
-      look_back_days: params.look_back_days,
-      limit: params.limit,
-    };
-  }
-  return {
-    ticker: readOptionalString(params, "ticker") ?? ticker,
+  const market = runtimeOnlyText(runtime, "market", true);
+  const profile = runtimeOnlyText(runtime, "profile", false) ?? market;
+  const freshnessMaxAgeSeconds = runtimeOnlyPositiveNumber(runtime, "freshness_max_age_seconds");
+  const input = {
+    ticker: runtimeOnlyText(runtime, "ticker", true),
     market,
-    freq: readOptionalString(params, "freq") ?? "quarterly",
-    curr_date: readOptionalString(params, "curr_date") ?? currentDate ?? endDate,
+    profile,
+    company_name: runtimeOnlyText(runtime, "company_name", true),
+    start_date: runtimeOnlyText(runtime, "start_date", true),
+    end_date: runtimeOnlyText(runtime, "end_date", true),
+    current_date: runtimeOnlyText(runtime, "current_date", true),
+    currency: runtimeOnlyText(runtime, "currency", true),
+    freshness_max_age_seconds: freshnessMaxAgeSeconds,
   };
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
 function buildRuntimeContext(runtime, toolName, toolCallId) {
   const currentDate = textValue(runtime.runtimeVars.current_date);
   const startDate = textValue(runtime.runtimeVars.start_date);
   const endDate = textValue(runtime.runtimeVars.end_date);
+  const workerCallId = runtime.callId;
+  const providerCallId = packEvidenceCallId(workerCallId, toolCallId);
   return {
     run_id: runtime.runId,
     stage: runtime.stage,
     worker_id: runtime.workerId,
-    call_id: runtime.callId,
-    dispatch_id: runtime.callId,
+    call_id: providerCallId,
+    dispatch_id: workerCallId,
+    worker_call_id: workerCallId,
     tool_call_id: textValue(toolCallId) || null,
     tool_name: toolName,
     evidence_root: path.join(runtime.evidenceDir, "pack-tool-evidence"),
@@ -514,7 +452,7 @@ function toolResult(payload, isError = false) {
 
 function modelFacingToolText(payload, isError = false) {
   if (isRecord(payload)) {
-    const readerBrief = textValue(payload.reader_brief);
+    const readerBrief = textValue(payload.reader_brief) ?? textValue(payload.reader_brief_md);
     if (!isError && readerBrief) {
       const readiness = isRecord(payload.readiness) ? textValue(payload.readiness.status) : undefined;
       if (payload.ok === false || (readiness && readiness !== "ready")) {
@@ -572,6 +510,18 @@ function readOptionalString(payload, fieldName) {
   }
   if (typeof value !== "string") {
     throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `params.${fieldName} must be a string`);
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function readOptionalRuntimeString(payload, fieldName) {
+  const value = payload?.[fieldName];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `runtime_vars.${fieldName} must be a string`);
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
@@ -643,359 +593,102 @@ function runtimeErrorToResult(toolName, expectedWorkerId, error) {
   });
 }
 
-function marketScriptConfig() {
-  const scriptsDir = path.join(
-    REPO_ROOT,
-    "agents",
-    "market_analyst",
-    "skills",
-    "cn-a-market-data",
-    "scripts",
-  );
-  return {
-    expectedWorkerId: "market_analyst",
-    expectedMarket: [MARKET_CN_A, MARKET_HK],
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "scripts_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(scripts_dir))",
-        "from market_data_pack import run_market_data_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_market_data_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(result, ensure_ascii=False, default=str))",
-      ].join("; "),
-      scriptsDir,
-    ],
-    pythonPathDirs: [scriptsDir],
-    totalTimeoutMs: positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-  };
-}
-
-function fundamentalScriptConfig() {
-  const scriptsDir = path.join(
-    REPO_ROOT,
-    "agents",
-    "fundamental_analyst",
-    "skills",
-    "cn-a-fundamental-data",
-    "scripts",
-  );
-  return {
-    expectedWorkerId: "fundamental_analyst",
-    expectedMarket: [MARKET_CN_A, MARKET_HK],
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "cn_scripts_dir = Path(sys.argv[1]).resolve()",
-        "python_dir = Path(sys.argv[2]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "sys.path.insert(0, str(cn_scripts_dir))",
-        "payload = json.load(sys.stdin)",
-        "market = str(payload['tool_input'].get('market', '')).strip().upper()",
-        "if market == 'HK':",
-        "    from frontline_data_pack.hk_data_pack import run_hk_fundamentals_data_pack",
-        "    from frontline_data_pack.models import to_jsonable",
-        "    result = run_hk_fundamentals_data_pack(payload['tool_input'], payload['runtime_context'])",
-        "    result = to_jsonable(result)",
-        "else:",
-        "    from fundamental_data_pack import tool_entrypoint",
-        "    result = tool_entrypoint(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(result, ensure_ascii=False, default=str))",
-      ].join("\n"),
-      scriptsDir,
-      path.join(REPO_ROOT, "openclaw_plugins", "claw-trade-frontline-tools", "python"),
-    ],
-    pythonPathDirs: [scriptsDir, path.join(REPO_ROOT, "openclaw_plugins", "claw-trade-frontline-tools", "python")],
-    totalTimeoutMs: domainToolTimeoutMs(
-      Math.max(
-        positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-        positiveSecondsEnvToMs("HK_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-      ),
-    ),
-  };
-}
-
-function cryptoFundamentalScriptConfig() {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
-  return {
-    expectedWorkerId: "fundamental_analyst",
-    expectedMarket: MARKET_CRYPTO,
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "from frontline_data_pack.crypto_fundamental_data_pack import run_crypto_fundamental_data_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_crypto_fundamental_data_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-    ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs("CRYPTO_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    ),
-  };
-}
-
-function cryptoMarketScriptConfig() {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
-  return {
-    expectedWorkerId: "market_analyst",
-    expectedMarket: MARKET_CRYPTO,
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "from frontline_data_pack.crypto_market_data_pack import run_crypto_market_data_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_crypto_market_data_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-    ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs("CRYPTO_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS),
-    ),
-  };
-}
-
-function cryptoNewsScriptConfig() {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
-  return {
-    expectedWorkerId: "news_analyst",
-    expectedMarket: MARKET_CRYPTO,
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "from frontline_data_pack.crypto_news_data_pack import run_crypto_news_data_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_crypto_news_data_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-    ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs("CRYPTO_NEWS_PACK_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
-    ),
-  };
-}
-
-function cryptoSocialScriptConfig() {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
-  return {
-    expectedWorkerId: "social_analyst",
-    expectedMarket: MARKET_CRYPTO,
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "from frontline_data_pack.crypto_social_sentiment_pack import run_crypto_social_sentiment_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_crypto_social_sentiment_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-    ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs("CRYPTO_SOCIAL_PACK_TIMEOUT_SECONDS", DEFAULT_SOCIAL_PACK_TIMEOUT_MS),
-    ),
-  };
-}
-
-function newsScriptConfig() {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
-  return {
-    expectedWorkerId: "news_analyst",
-    expectedMarket: [MARKET_CN_A, MARKET_HK],
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "from frontline_data_pack.news_data_pack import run_news_data_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_news_data_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-    ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs("CN_A_NEWS_TOTAL_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
-    ),
-  };
-}
-
-function socialScriptConfig() {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
-  return {
-    expectedWorkerId: "social_analyst",
-    expectedMarket: [MARKET_CN_A, MARKET_HK],
-    requiredFields: ["ticker", "market"],
-    args: [
-      "-c",
-      [
-        "import json, sys",
-        "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "from frontline_data_pack.social_sentiment_pack import run_social_sentiment_pack",
-        "payload = json.load(sys.stdin)",
-        "result = run_social_sentiment_pack(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-    ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs("CN_A_SOCIAL_PACK_TIMEOUT_SECONDS", DEFAULT_SOCIAL_PACK_TIMEOUT_MS),
-    ),
-  };
-}
-
-function usFrontlineScriptConfig(expectedWorkerId, functionName, timeoutEnvName, fallbackMs) {
-  const pythonDir = path.join(
-    REPO_ROOT,
-    "openclaw_plugins",
-    "claw-trade-frontline-tools",
-    "python",
-  );
+function openbbPackScriptConfig(expectedWorkerId, packDomain) {
   return {
     expectedWorkerId,
-    expectedMarket: MARKET_US,
-    requiredFields: ["ticker", "market"],
+    expectedMarket: ALL_MARKETS,
     args: [
       "-c",
       [
-        "import json, sys",
+        "import json, os, sys",
         "from pathlib import Path",
-        "python_dir = Path(sys.argv[1]).resolve()",
-        "function_name = sys.argv[2]",
-        "sys.path.insert(0, str(python_dir))",
-        "from frontline_data_pack.models import to_jsonable",
-        "import frontline_data_pack.us_data_pack as us_data_pack",
+        "from urllib.parse import urlparse",
+        "try:",
+        "    from pymongo import MongoClient",
+        "except Exception as exc:",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'pack_runtime_blocked', 'message': f'pymongo unavailable: {exc}'}}, ensure_ascii=False))",
+        "    raise SystemExit(0)",
+        "from claw_trade.data_gateway.errors import DataGatewayError",
+        "from claw_trade.data_gateway.mcp.runtime_wrapper import OpenBBRuntimeWrapper, PackToolInput",
+        "from claw_trade.data_gateway.models import GatewaySettings, PackDomain",
+        "from claw_trade.data_gateway.packs.service import DomainPackService",
+        "from claw_trade.data_gateway.providers.defaults import default_provider_config_version, load_default_system_capabilities",
+        "from claw_trade.data_gateway.providers.defaults import build_default_provider_adapters",
+        "from claw_trade.data_gateway.store import OPENBB_RUN_PROVIDER_PLANS, MongoRunProviderPlanStore, ensure_openbb_store_indexes",
         "payload = json.load(sys.stdin)",
-        "result = getattr(us_data_pack, function_name)(payload['tool_input'], payload['runtime_context'])",
-        "print(json.dumps(to_jsonable(result), ensure_ascii=False, default=str))",
-      ].join("; "),
-      pythonDir,
-      functionName,
+        "tool_input = dict(payload.get('tool_input') or {})",
+        "runtime_context = dict(payload.get('runtime_context') or {})",
+        "tool_input.setdefault('run_id', runtime_context.get('run_id') or '')",
+        "tool_input.setdefault('call_id', runtime_context.get('call_id') or '')",
+        "tool_input.setdefault('worker_id', runtime_context.get('worker_id') or '')",
+        "tool_input.setdefault('start_date', runtime_context.get('start_date') or '')",
+        "tool_input.setdefault('end_date', runtime_context.get('end_date') or '')",
+        "tool_input.setdefault('current_date', runtime_context.get('current_date') or '')",
+        "evidence_root = str(runtime_context.get('evidence_root') or '').strip()",
+        "default_object_store_uri = (Path(evidence_root) / 'techlab' / 'charts-local').resolve().as_uri() if evidence_root else Path('.runtime/dev-services/openbb-evidence').resolve().as_uri()",
+        "mongo_uri = (os.environ.get('DATA_GATEWAY_MONGODB_URI') or '').strip() or (os.environ.get('CN_A_MONGODB_URI') or '').strip()",
+        "if not mongo_uri:",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'pack_runtime_blocked', 'message': 'DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI is not configured'}}, ensure_ascii=False))",
+        "    raise SystemExit(0)",
+        "db_name = (os.environ.get('DATA_GATEWAY_MONGODB_DATABASE') or '').strip()",
+        "if not db_name:",
+        "    parsed = urlparse(mongo_uri)",
+        "    path_name = parsed.path.strip('/')",
+        "    db_name = path_name.split('/', 1)[0] if path_name else 'claw_trade_openbb'",
+        "capabilities = load_default_system_capabilities()",
+        "provider_config_version = default_provider_config_version(capabilities)",
+        "allowed_domains_raw = (os.environ.get('DATA_GATEWAY_ALLOWED_DECLARATIVE_PROVIDER_DOMAINS') or 'example.com')",
+        "allowed_domains = tuple(item.strip() for item in allowed_domains_raw.split(',') if item.strip())",
+        "settings = GatewaySettings(",
+        "    openbb_runtime_url=(os.environ.get('OPENBB_RUNTIME_URL') or 'http://127.0.0.1:8001').strip(),",
+        "    openbb_home=(os.environ.get('OPENBB_HOME') or '.runtime/dev-services/openbb').strip(),",
+        "    mongo_uri=mongo_uri,",
+        "    provider_config_version=provider_config_version,",
+        "    provider_catalog_path=(os.environ.get('DATA_GATEWAY_PROVIDER_CATALOG_PATH') or '.runtime/dev-services/openbb/provider-catalog.json').strip(),",
+        "    provider_catalog={},",
+        "    provider_settings={},",
+        "    secret_store_uri=(os.environ.get('DATA_GATEWAY_SECRET_STORE_URI') or 'env://').strip(),",
+        "    object_store_uri=(os.environ.get('DATA_GATEWAY_OBJECT_STORE_URI') or default_object_store_uri).strip(),",
+        "    single_flight_lease_seconds=int((os.environ.get('DATA_GATEWAY_SINGLE_FLIGHT_LEASE_SECONDS') or '60').strip()),",
+        "    raw_payload_inline_max_bytes=int((os.environ.get('DATA_GATEWAY_RAW_PAYLOAD_INLINE_MAX_BYTES') or '4096').strip()),",
+        "    allowed_declarative_provider_domains=allowed_domains,",
+        ")",
+        "client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)",
+        "db = client[db_name]",
+        "ensure_openbb_store_indexes(db)",
+        "plan_store = MongoRunProviderPlanStore(db[OPENBB_RUN_PROVIDER_PLANS])",
+        "adapters = build_default_provider_adapters(provider_config_version=provider_config_version)",
+        "pack_service = DomainPackService(settings=settings, adapters=adapters)",
+        "wrapper = OpenBBRuntimeWrapper(",
+        "    settings=settings,",
+        "    adapters=adapters,",
+        "    pack_service=pack_service,",
+        "    run_provider_plan_store=plan_store,",
+        ")",
+        "try:",
+        "    result = wrapper.get_pack(PackDomain(sys.argv[1]), PackToolInput.from_payload(tool_input))",
+        "except DataGatewayError as exc:",
+        "    print(json.dumps({'ok': False, 'error': {'code': exc.code.value, 'message': exc.root_cause}}, ensure_ascii=False, default=str))",
+        "    raise SystemExit(0)",
+        "except Exception as exc:",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'pack_runtime_blocked', 'message': str(exc)}}, ensure_ascii=False, default=str))",
+        "    raise SystemExit(0)",
+        "print(json.dumps({'ok': True, 'status': result.readiness.status.value, 'readiness': {'status': result.readiness.status.value}, 'reader_brief': result.reader_brief_md}, ensure_ascii=False, default=str))",
+      ].join("\n"),
+      packDomain,
     ],
-    pythonPathDirs: [pythonDir],
-    totalTimeoutMs: domainToolTimeoutMs(
-      positiveSecondsEnvToMs(timeoutEnvName, fallbackMs),
-    ),
+    pythonPathDirs: [path.join(REPO_ROOT, "src")],
+    inputBuilder: buildOpenbbPackToolInput,
+    totalTimeoutMs: domainToolTimeoutMs(providerTotalTimeoutMs()),
+    packDomain,
   };
 }
 
 const TOOL_CONFIG_FACTORIES = Object.freeze({
-  [TOOL_NAMES.cnMarket]: marketScriptConfig,
-  [TOOL_NAMES.cryptoMarket]: cryptoMarketScriptConfig,
-  [TOOL_NAMES.usGetStockData]: () => ({
-    ...usFrontlineScriptConfig("market_analyst", "run_us_get_stock_data", "US_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.usGetIndicators]: () => ({
-    ...usFrontlineScriptConfig("market_analyst", "run_us_get_indicators", "US_MARKET_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.cnFundamental]: fundamentalScriptConfig,
-  [TOOL_NAMES.cryptoFundamental]: cryptoFundamentalScriptConfig,
-  [TOOL_NAMES.cryptoNews]: cryptoNewsScriptConfig,
-  [TOOL_NAMES.cryptoSocial]: cryptoSocialScriptConfig,
-  [TOOL_NAMES.usGetFundamentals]: () => ({
-    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_fundamentals", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.usGetBalanceSheet]: () => ({
-    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_balance_sheet", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.usGetCashflow]: () => ({
-    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_cashflow", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.usGetIncomeStatement]: () => ({
-    ...usFrontlineScriptConfig("fundamental_analyst", "run_us_get_income_statement", "US_FUNDAMENTAL_PACK_TIMEOUT_SECONDS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.usGetNews]: () => ({
-    ...usFrontlineScriptConfig(["news_analyst", "social_analyst"], "run_us_get_news", "US_NEWS_PACK_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.usGetGlobalNews]: () => ({
-    ...usFrontlineScriptConfig("news_analyst", "run_us_get_global_news", "US_NEWS_PACK_TIMEOUT_SECONDS", DEFAULT_NEWS_TOTAL_TIMEOUT_MS),
-    inputBuilder: buildOriginalUsToolInput,
-  }),
-  [TOOL_NAMES.cnNews]: newsScriptConfig,
-  [TOOL_NAMES.cnSocial]: socialScriptConfig,
+  [TOOL_NAMES.clawGetMarketPack]: () => openbbPackScriptConfig("market_analyst", OPENBB_PACK_DOMAIN_MARKET),
+  [TOOL_NAMES.clawGetFundamentalPack]: () => openbbPackScriptConfig("fundamental_analyst", OPENBB_PACK_DOMAIN_FUNDAMENTAL),
+  [TOOL_NAMES.clawGetNewsPack]: () => openbbPackScriptConfig("news_analyst", OPENBB_PACK_DOMAIN_NEWS),
+  [TOOL_NAMES.clawGetSocialPack]: () => openbbPackScriptConfig("social_analyst", OPENBB_PACK_DOMAIN_SOCIAL),
 });
 
 async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
@@ -1010,6 +703,13 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
     : buildToolInput(runtime.runtimeVars, params, config.requiredFields);
   assertExpectedMarket(toolName, toolInput, config.expectedMarket);
   const runtimeContext = buildRuntimeContext(runtime, toolName, toolCallId);
+  if (config.packDomain) {
+    runtimeContext.pack_domain = config.packDomain;
+  }
+  const ignoredFields = ignoredModelInputFields(params);
+  if (ignoredFields.length > 0) {
+    runtimeContext.ignored_model_input_fields = ignoredFields;
+  }
   const payload = {
     tool_input: toolInput,
     runtime_context: runtimeContext,
@@ -1036,68 +736,20 @@ async function runPack(ctx, params, toolName, expectedWorkerId, toolCallId) {
   }
 }
 
-async function runCnMarketPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cnMarket, "market_analyst", toolCallId);
+async function runClawGetMarketPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetMarketPack, "market_analyst", toolCallId);
 }
 
-async function runCryptoMarketPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cryptoMarket, "market_analyst", toolCallId);
+async function runClawGetFundamentalPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetFundamentalPack, "fundamental_analyst", toolCallId);
 }
 
-async function runUsGetStockData(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetStockData, "market_analyst", toolCallId);
+async function runClawGetNewsPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetNewsPack, "news_analyst", toolCallId);
 }
 
-async function runUsGetIndicators(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetIndicators, "market_analyst", toolCallId);
-}
-
-async function runCnFundamentalPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cnFundamental, "fundamental_analyst", toolCallId);
-}
-
-async function runCryptoFundamentalPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cryptoFundamental, "fundamental_analyst", toolCallId);
-}
-
-async function runCryptoNewsPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cryptoNews, "news_analyst", toolCallId);
-}
-
-async function runCryptoSocialPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cryptoSocial, "social_analyst", toolCallId);
-}
-
-async function runUsGetFundamentals(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetFundamentals, "fundamental_analyst", toolCallId);
-}
-
-async function runUsGetBalanceSheet(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetBalanceSheet, "fundamental_analyst", toolCallId);
-}
-
-async function runUsGetCashflow(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetCashflow, "fundamental_analyst", toolCallId);
-}
-
-async function runUsGetIncomeStatement(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetIncomeStatement, "fundamental_analyst", toolCallId);
-}
-
-async function runUsGetNews(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetNews, ["news_analyst", "social_analyst"], toolCallId);
-}
-
-async function runUsGetGlobalNews(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.usGetGlobalNews, "news_analyst", toolCallId);
-}
-
-async function runCnNewsPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cnNews, "news_analyst", toolCallId);
-}
-
-async function runCnSocialPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.cnSocial, "social_analyst", toolCallId);
+async function runClawGetSocialPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetSocialPack, "social_analyst", toolCallId);
 }
 
 function registerFrontlineTool(api, name, description, execute, parameters = PACK_INPUT_SCHEMA) {
@@ -1122,107 +774,31 @@ export default definePluginEntry({
   register(api) {
     registerFrontlineTool(
       api,
-      TOOL_NAMES.cnMarket,
-      "Load one market-specific CN_A/HK market data package with price rows, indicators, and chart refs.",
-      runCnMarketPack,
+      TOOL_NAMES.clawGetMarketPack,
+      "Load one market pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetMarketPack,
+      OPENBB_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
-      TOOL_NAMES.cryptoMarket,
-      "Load one CRYPTO market package that internally reads compact BB/CoinGlass market structure plus public exchange OHLCV, local indicators, and PNG chart files.",
-      runCryptoMarketPack,
+      TOOL_NAMES.clawGetFundamentalPack,
+      "Load one fundamental pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetFundamentalPack,
+      OPENBB_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
-      TOOL_NAMES.usGetStockData,
-      "Retrieve US OHLCV stock data using the original TradingAgents yfinance shape.",
-      runUsGetStockData,
-      STOCK_DATA_SCHEMA,
+      TOOL_NAMES.clawGetNewsPack,
+      "Load one news pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetNewsPack,
+      OPENBB_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
-      TOOL_NAMES.usGetIndicators,
-      "Retrieve one US technical indicator using the original TradingAgents yfinance shape.",
-      runUsGetIndicators,
-      INDICATOR_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.cnFundamental,
-      "Load one structured fundamentals package for the current CN_A/HK ticker.",
-      runCnFundamentalPack,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.cryptoFundamental,
-      "Load one structured CRYPTO fundamentals package with CoinGecko metadata and DefiLlama DeFi operating metrics.",
-      runCryptoFundamentalPack,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.cryptoNews,
-      "Load one structured CRYPTO news package with source attempts, gaps, event background, prediction-market context, and search discoveries.",
-      runCryptoNewsPack,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.cryptoSocial,
-      "Load one structured CRYPTO social-sentiment package with market-level sentiment, event expectations, discussion discoveries, and explicit social gaps.",
-      runCryptoSocialPack,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.usGetFundamentals,
-      "Retrieve US company fundamentals using the original TradingAgents yfinance shape.",
-      runUsGetFundamentals,
-      FUNDAMENTALS_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.usGetBalanceSheet,
-      "Retrieve a US balance sheet using the original TradingAgents yfinance shape.",
-      runUsGetBalanceSheet,
-      STATEMENT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.usGetCashflow,
-      "Retrieve a US cash flow statement using the original TradingAgents yfinance shape.",
-      runUsGetCashflow,
-      STATEMENT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.usGetIncomeStatement,
-      "Retrieve a US income statement using the original TradingAgents yfinance shape.",
-      runUsGetIncomeStatement,
-      STATEMENT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.usGetNews,
-      "Retrieve US company or ticker-specific news using the original TradingAgents yfinance shape.",
-      runUsGetNews,
-      NEWS_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.usGetGlobalNews,
-      "Retrieve broader US/global market news using the original TradingAgents yfinance shape.",
-      runUsGetGlobalNews,
-      GLOBAL_NEWS_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.cnNews,
-      "Load one market-specific CN_A/HK news package covering company and macro context.",
-      runCnNewsPack,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.cnSocial,
-      "Load one market-specific CN_A/HK social sentiment package for the current ticker.",
-      runCnSocialPack,
+      TOOL_NAMES.clawGetSocialPack,
+      "Load one social pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetSocialPack,
+      OPENBB_PACK_INPUT_SCHEMA,
     );
   },
 });

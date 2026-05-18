@@ -1,16 +1,16 @@
 ---
 id: crypto-social-sentiment
 name: CRYPTO social sentiment data pack
-tool: crypto_social_sentiment_pack
-tool_name: crypto_social_sentiment_pack
-schema_version: crypto_social_sentiment_pack.v1
+tool: claw_get_social_pack
+tool_name: claw_get_social_pack
+schema_version: openbb_social_pack.v1
 bound_workers:
   - social_analyst
 profiles:
   - CRYPTO
 ---
 
-该 skill 只负责向 `social_analyst` 暴露 `crypto_social_sentiment_pack` 资料包能力，不负责生成报告正文、投资判断或舆情结论。
+该 skill 只负责向 `social_analyst` 暴露 `claw_get_social_pack` OpenBB 社交资料包能力，不负责生成报告正文、投资判断或舆情结论。
 
 边界：
 

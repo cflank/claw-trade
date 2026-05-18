@@ -339,6 +339,7 @@ class WorkflowStore:
             current_date=self._as_str(payload["current_date"], "current_date"),
             start_date=self._as_str(payload["start_date"], "start_date"),
             end_date=self._as_str(payload["end_date"], "end_date"),
+            data_gateway=self._as_str(payload.get("data_gateway", "openbb"), "data_gateway"),
             stop_point=StopPoint(self._as_str(payload.get("stop_point", StopPoint.NONE.value), "stop_point")),
             target_worker_id=self._optional_str(payload.get("target_worker_id"), "target_worker_id"),
             target_stage=self._stage_or_none(payload.get("target_stage")),

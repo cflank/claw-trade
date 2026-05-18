@@ -65,10 +65,8 @@ def test_market_data_intent_resolves_to_provider_visible_mcp_tools(
     policy_result = load_stage_policy(agents_root, "market_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    expected_tools = ("get_stock_data", "get_indicators") if profile == "US" else ("market_market_data_pack",)
-    unexpected_tools = ("market_market_data_pack", "us_market_data_pack") if profile == "US" else ("get_stock_data", "get_indicators")
-    assert tools == expected_tools
-    for unexpected_tool in unexpected_tools:
+    assert tools == ("claw_get_market_pack",)
+    for unexpected_tool in ("market_market_data_pack", "us_market_data_pack", "get_stock_data", "get_indicators"):
         assert unexpected_tool not in tools
     assert "market.stock_price" not in tools
     assert "market.techlab_analyze" not in tools
@@ -82,7 +80,7 @@ def test_crypto_market_data_intent_resolves_to_single_compact_market_pack(agents
     policy_result = load_stage_policy(agents_root, "market_analyst", "CRYPTO")
     assert policy_result.ok is True and policy_result.policy is not None
     assert policy_result.policy.tool_intents == ("crypto_market_data",)
-    assert resolve_tools(policy_result.policy, registry) == ("crypto_market_data_pack",)
+    assert resolve_tools(policy_result.policy, registry) == ("claw_get_market_pack",)
 
 
 def test_crypto_formal_workers_are_approved(agents_root: Path) -> None:
@@ -97,10 +95,10 @@ def test_crypto_frontline_tool_policy_matches_current_real_tool_boundary(agents_
     assert registry is not None
 
     expected = {
-        "market_analyst": (("crypto_market_data",), ("crypto_market_data_pack",)),
-        "fundamental_analyst": (("crypto_fundamentals_data",), ("crypto_fundamental_data_pack",)),
-        "news_analyst": (("crypto_news_data",), ("crypto_news_data_pack",)),
-        "social_analyst": (("crypto_social_sentiment",), ("crypto_social_sentiment_pack",)),
+        "market_analyst": (("crypto_market_data",), ("claw_get_market_pack",)),
+        "fundamental_analyst": (("crypto_fundamentals_data",), ("claw_get_fundamental_pack",)),
+        "news_analyst": (("crypto_news_data",), ("claw_get_news_pack",)),
+        "social_analyst": (("crypto_social_sentiment",), ("claw_get_social_pack",)),
     }
     for worker_id, (expected_intents, expected_tools) in expected.items():
         policy_result = load_stage_policy(agents_root, worker_id, "CRYPTO")
@@ -136,10 +134,8 @@ def test_news_analyst_must_include_company_and_macro_news(agents_root: Path, pro
     policy_result = load_stage_policy(agents_root, "news_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    expected_tools = ("get_news", "get_global_news") if profile == "US" else ("news_news_data_pack",)
-    unexpected_tools = ("news_news_data_pack", "us_news_data_pack") if profile == "US" else ("get_news", "get_global_news")
-    assert tools == expected_tools
-    for unexpected_tool in unexpected_tools:
+    assert tools == ("claw_get_news_pack",)
+    for unexpected_tool in ("news_news_data_pack", "us_news_data_pack", "get_news", "get_global_news"):
         assert unexpected_tool not in tools
 
 
@@ -206,7 +202,7 @@ def test_missing_openviking_tool_mapping_fails() -> None:
 
 def test_social_visible_tools_validator_passes_for_exact_approved_set() -> None:
     result = SOCIAL_POLICY_MODULE.validate_social_visible_tools(
-        ["social_social_sentiment_pack"]
+        ["claw_get_social_pack"]
     )
     assert result.ok is True
     assert result.code is None
@@ -215,7 +211,7 @@ def test_social_visible_tools_validator_passes_for_exact_approved_set() -> None:
 def test_social_visible_tools_validator_fails_for_unapproved_extra_tool() -> None:
     result = SOCIAL_POLICY_MODULE.validate_social_visible_tools(
         [
-            "social_social_sentiment_pack",
+            "claw_get_social_pack",
             "openviking_write_material",
             "stock_hot_keyword_em",
         ]

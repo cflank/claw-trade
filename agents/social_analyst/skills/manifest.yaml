@@ -6,18 +6,18 @@ skills:
     workers:
       - social_analyst
     tool_exports:
-      - get_news
+      - claw_get_social_pack
   - path: cn-a-social-data/SKILL.md
     skill_id: cn-a-social-data
     skill_version: 0.1.0
     workers:
       - social_analyst
     tool_exports:
-      - social_social_sentiment_pack
+      - claw_get_social_pack
   - path: crypto-social-sentiment/SKILL.md
     skill_id: crypto-social-sentiment
     skill_version: 0.1.0
     workers:
       - social_analyst
     tool_exports:
-      - crypto_social_sentiment_pack
+      - claw_get_social_pack

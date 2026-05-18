@@ -214,10 +214,10 @@ FRONTLINE_WORKERS: tuple[str, ...] = (
     "social_analyst",
 )
 HK_FRONTLINE_TOOLS = {
-    "market_analyst": "market_market_data_pack",
-    "fundamental_analyst": "fundamental_fundamentals_data_pack",
-    "news_analyst": "news_news_data_pack",
-    "social_analyst": "social_social_sentiment_pack",
+    "market_analyst": "claw_get_market_pack",
+    "fundamental_analyst": "claw_get_fundamental_pack",
+    "news_analyst": "claw_get_news_pack",
+    "social_analyst": "claw_get_social_pack",
 }
 HK_SPECIFIC_TOOL_TOKENS = ("hk_market_data", "hk_fundamental_data", "hk_news_data", "hk_social_sentiment")
 
@@ -424,13 +424,14 @@ def test_approved_crypto_worker_prompts_are_real_prompts_not_fail_closed_placeho
 def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
     text = (Path("agents") / "market_analyst" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
 
-    assert "可用工具：`crypto_market_data_pack`" in text
+    assert "可用工具：`claw_get_market_pack`" in text
     assert "worker 不直接读取 BB 原始大 JSON" in text
     assert "资料就绪度只能说明资料覆盖和通道质量" in text
     assert "最终市场报告是给中文读者看的，不要把内部字段名写进正文" in text
     assert "上方最近清算簇" in text
     assert "主动买卖量累计差值" in text
     assert "不得推断其正常、过热或极端" in text
+    assert "如果资料包只列出价格历史和本地技术指标成功" in text
 
 
 def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> None:
@@ -466,21 +467,23 @@ def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> N
 def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() -> None:
     expected_snippets = {
         "fundamental_analyst": (
-            "crypto_fundamental_data_pack",
+            "claw_get_fundamental_pack",
             "资料包未可用 / 未调用成功 / 覆盖不足",
             "不得用模型常识、历史印象或上游未提供的证据补写缺失事实",
         ),
         "news_analyst": (
-            "crypto_news_data_pack",
+            "claw_get_news_pack",
             "不得写真实新闻、真实公告、真实监管事件或真实市场反应结论",
             "搜索摘要只能作为发现线索",
+            "即使搜索摘要提到 ETF、机构、资金流、监管或链上活动，也不能写成已验证事实",
             "Polymarket 只能表达事件预期或盘口概率",
             "Alternative.me 是市场级情绪指标，不是新闻源",
         ),
         "social_analyst": (
-            "crypto_social_sentiment_pack",
+            "claw_get_social_pack",
             "不得写真实社交平台观点、真实 KOL 立场、真实社区共识或真实情绪结论",
             "搜索摘要只能作为公开讨论线索",
+            "即使搜索摘要提到 ETF、机构、资金流、链上大户或交易所行为，也不能写成已验证事实",
             "Polymarket 只能表达事件预期或盘口概率",
             "Alternative.me 只能表达市场级恐惧/贪婪情绪",
         ),
@@ -496,6 +499,7 @@ def test_crypto_downstream_prompts_condition_on_upstream_data_gaps_without_filli
         text = (Path("agents") / worker_id / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
         assert "资料包未可用、未调用成功、覆盖不足或内容为空" in text
         assert "不得补写缺失事实" in text
+        assert "搜索发现、公共知识或历史印象不能填补 ETF/机构资金、链上、衍生品、清算或社交共识缺口" in text
 
 
 @pytest.mark.parametrize(("worker_id", "profile"), APPROVED_CRYPTO_PROMPT_CASES)
@@ -591,14 +595,14 @@ def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protoc
 
 def test_hk_frontline_prompts_reuse_existing_domain_pack_tools() -> None:
     us_tool_tokens = (
-        "get_stock_data",
-        "get_indicators",
-        "get_fundamentals",
-        "get_balance_sheet",
-        "get_cashflow",
-        "get_income_statement",
-        "get_news",
-        "get_global_news",
+        "`get_stock_data`",
+        "`get_indicators`",
+        "`get_fundamentals`",
+        "`get_balance_sheet`",
+        "`get_cashflow`",
+        "`get_income_statement`",
+        "`get_news`",
+        "`get_global_news`",
     )
     for worker_id in FRONTLINE_WORKERS:
         text = (Path("agents") / worker_id / "prompts" / "HK.md").read_text(encoding="utf-8")
@@ -677,13 +681,11 @@ def test_us_market_prompt_allows_original_tradingagents_transaction_proposal() -
 def test_us_fundamental_prompt_requires_quarterly_and_annual_statement_history() -> None:
     text = (Path("agents") / "fundamental_analyst" / "prompts" / "US.md").read_text(encoding="utf-8")
 
-    assert "Before writing the fundamental report, complete the full evidence collection sequence" in text
-    assert '`get_balance_sheet` with `freq="quarterly"` and `freq="annual"`' in text
-    assert '`get_cashflow` with `freq="quarterly"` and `freq="annual"`' in text
-    assert '`get_income_statement` with `freq="quarterly"` and `freq="annual"`' in text
-    assert "Use the quarterly statements for recent operating momentum" in text
-    assert "annual statements for multi-year history" in text
-    assert "continue the remaining statement calls" in text
+    assert "Use the available tool: `claw_get_fundamental_pack`" in text
+    assert "quarterly/annual financial statement coverage" in text
+    assert "valuation metrics" in text
+    assert "source notes" in text
+    assert "data gaps" in text
     assert "Clearly label TTM, quarterly, and annual-history figures" in text
     assert 'Use `freq="quarterly"` for the statement tools unless' not in text
     assert "If no fundamental data result is already available in this turn" not in text

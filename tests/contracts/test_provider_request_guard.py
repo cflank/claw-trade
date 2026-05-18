@@ -182,6 +182,48 @@ def test_validate_provider_request_rejects_model_visible_protocol_pollution(
     assert guard.reason is not None and "模型可见 prompt 含机器协议" in guard.reason
 
 
+@pytest.mark.parametrize("pollution", ("profile: US", "profile_status: approved", "worker_id: bull_researcher", "stage: investment_debate"))
+def test_validate_provider_request_rejects_prompt_front_matter_field_lines(
+    tmp_path: Path,
+    pollution: str,
+) -> None:
+    call, evidence = sample_call_and_evidence(tmp_path)
+    call = _replace_call_tools(call, allowed_tools=())
+    payload = provider_request_payload(call, evidence)
+    payload_body = payload["payload"]
+    assert isinstance(payload_body, dict)
+    payload_body["tools"] = []
+    payload_body["messages"] = [{"role": "user", "content": f"正常报告正文\n{pollution}\n继续正文"}]
+    write_json(evidence.provider_request_path, payload)
+
+    guard = validate_provider_request(call, evidence)
+
+    assert not guard.ok
+    assert guard.reason is not None and "模型可见 prompt 含机器协议" in guard.reason
+
+
+def test_validate_provider_request_allows_natural_language_profile_phrase(
+    tmp_path: Path,
+) -> None:
+    call, evidence = sample_call_and_evidence(tmp_path)
+    call = _replace_call_tools(call, allowed_tools=())
+    payload = provider_request_payload(call, evidence)
+    payload_body = payload["payload"]
+    assert isinstance(payload_body, dict)
+    payload_body["tools"] = []
+    payload_body["messages"] = [
+        {
+            "role": "user",
+            "content": "Below is the analytical assessment based on the available evidence profile: confirmed facts and gaps.",
+        }
+    ]
+    write_json(evidence.provider_request_path, payload)
+
+    guard = validate_provider_request(call, evidence)
+
+    assert guard.ok
+
+
 def sample_call_and_evidence(tmp_path: Path) -> tuple[WorkerCall, ProviderEvidence]:
     evidence_dir = tmp_path / "runs" / "run-1" / "calls" / "call-1" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)

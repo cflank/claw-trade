@@ -22,6 +22,9 @@ class _RecordingHandler(BaseHTTPRequestHandler):
     requests: list[tuple[str, str]] = []
     write_payloads: list[dict[str, object]] = []
     pack_import_payloads: list[dict[str, object]] = []
+    pack_export_payloads: list[dict[str, object]] = []
+    relation_payloads: list[dict[str, object]] = []
+    search_payloads: list[dict[str, object]] = []
     temp_upload_payloads: list[bytes] = []
     stat_result: dict[str, object] = {"uri": "viking://resources/workflow/run-1/", "size": 1, "sha256": "a" * 64}
     read_result: object = "# report"
@@ -37,8 +40,55 @@ class _RecordingHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         self.requests.append(("GET", self.path))
+        path = parse.urlsplit(self.path).path
         query = parse.parse_qs(parse.urlsplit(self.path).query)
         uri = query.get("uri", [""])[0]
+        if path == "/api/v1/fs/tree":
+            self._json_response(
+                {
+                    "status": "ok",
+                    "result": {
+                        "nodes": (
+                            {"uri": uri, "name": uri.rstrip("/").split("/")[-1], "kind": "dir"},
+                            {"uri": f"{uri.rstrip('/')}/frontline", "name": "frontline", "kind": "dir"},
+                        )
+                    },
+                }
+            )
+            return
+        if path == "/api/v1/relations":
+            self._json_response(
+                {
+                    "status": "ok",
+                    "result": {
+                        "relations": (
+                            {
+                                "from_uri": uri,
+                                "to_uri": f"{uri.rstrip('/')}/frontline",
+                                "reason": "test relation",
+                            },
+                        )
+                    },
+                }
+            )
+            return
+        if path == "/api/v1/observer/system":
+            self._json_response({"status": "ok", "result": {"status": "healthy", "message": "system reachable"}})
+            return
+        if path == "/api/v1/observer/lock":
+            self._json_response({"status": "ok", "result": {"healthy": True}})
+            return
+        if path == "/api/v1/observer/queue":
+            self._json_response({"status": "ok", "result": {"status": "healthy"}})
+            return
+        if path == "/metrics":
+            body = b"# HELP openviking_test 1\nopenviking_test 1\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith("/api/v1/fs/stat"):
             if self.stat_status != 200:
                 payload = self.mkdir_error_payload or {"status": "error", "error": "stat unavailable"}
@@ -121,6 +171,53 @@ class _RecordingHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         self.requests.append(("POST", self.path))
+        if self.path in {"/api/v1/search/grep", "/api/v1/search/glob", "/api/v1/search/find"}:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            self.search_payloads.append(payload)
+            if self.path == "/api/v1/search/glob":
+                self._json_response(
+                    {
+                        "status": "ok",
+                        "result": {"matches": [f"{payload.get('uri', '').rstrip('/')}/openviking/approved-manifest.json"]},
+                    }
+                )
+                return
+            self._json_response(
+                {
+                    "status": "ok",
+                    "result": {
+                        "matches": [
+                            {
+                                "uri": f"{payload.get('uri') or payload.get('target_uri')}/openviking/approved-manifest.json",
+                                "snippet": payload.get("pattern") or payload.get("query"),
+                            }
+                        ]
+                    },
+                }
+            )
+            return
+        if self.path == "/api/v1/relations/link":
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            self.relation_payloads.append(payload)
+            self._json_response({"status": "ok", "result": payload})
+            return
+        if self.path == "/api/v1/pack/export":
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            self.pack_export_payloads.append(payload)
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("run-1/_._meta.json", json.dumps({"uri": payload.get("uri")}))
+                zf.writestr("run-1/openviking/approved-manifest.json", "{}")
+            body = buffer.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/api/v1/fs/mkdir":
             if self.mkdir_status != 200:
                 payload = self.mkdir_error_payload or {"status": "error", "error": "already exists"}
@@ -223,6 +320,9 @@ def http_server() -> tuple[str, type[_RecordingHandler]]:
     _RecordingHandler.requests = []
     _RecordingHandler.write_payloads = []
     _RecordingHandler.pack_import_payloads = []
+    _RecordingHandler.pack_export_payloads = []
+    _RecordingHandler.relation_payloads = []
+    _RecordingHandler.search_payloads = []
     _RecordingHandler.temp_upload_payloads = []
     _RecordingHandler.stat_result = {"uri": "viking://resources/workflow/run-1/", "size": 1, "sha256": "a" * 64}
     _RecordingHandler.read_result = "# report"
@@ -257,6 +357,72 @@ def test_factory_returns_backend_with_required_methods(monkeypatch: pytest.Monke
     assert callable(getattr(backend, "fetch_content_by_uri", None))
     assert callable(getattr(backend, "fetch_l2_index_by_uri", None))
     assert callable(getattr(backend, "prepare_probe_receipt", None))
+    assert callable(getattr(backend, "tree_run", None))
+    assert callable(getattr(backend, "grep_run", None))
+    assert callable(getattr(backend, "glob", None))
+    assert callable(getattr(backend, "link_relation", None))
+    assert callable(getattr(backend, "export_run_pack", None))
+    assert callable(getattr(backend, "runtime_semantic_queue", None))
+
+
+def test_control_plane_wrappers_call_real_openviking_http_endpoints(
+    http_server: tuple[str, type[_RecordingHandler]],
+) -> None:
+    endpoint, handler_cls = http_server
+    backend = OpenVikingHttpBackend(endpoint=endpoint)
+    run_uri = "viking://resources/workflow/run-1/"
+
+    tree = backend.tree_run(run_uri)
+    grep = backend.grep_run(run_uri, "portfolio_manager")
+    glob = backend.glob(run_uri, "**/approved-manifest.json")
+    found = backend.find_approved_materials(run_uri, "approved")
+    relations = backend.relations(run_uri)
+    backend.link_relation({"from_uri": run_uri, "to_uri": f"{run_uri}frontline", "note": "lineage"})
+    observer = backend.runtime_observer()
+    locks = backend.runtime_locks()
+    queue = backend.runtime_semantic_queue()
+    metrics = backend.runtime_metrics()
+
+    assert tree["nodes"][0]["uri"] == run_uri
+    assert grep["matches"][0]["snippet"] == "portfolio_manager"
+    assert glob["matches"] == [f"{run_uri.rstrip('/')}/openviking/approved-manifest.json"]
+    assert found["matches"][0]["snippet"] == "approved"
+    assert isinstance(relations, dict)
+    assert handler_cls.relation_payloads[0]["from_uri"] == run_uri
+    assert observer["status"] == "ok"
+    assert locks["status"] == "ok"
+    assert queue["status"] == "blocked"
+    assert metrics["status"] == "ok"
+    paths = [path for _, path in handler_cls.requests]
+    assert any(path.startswith("/api/v1/fs/tree") for path in paths)
+    assert any(path == "/api/v1/search/grep" for path in paths)
+    assert any(path == "/api/v1/search/glob" for path in paths)
+    assert any(path == "/api/v1/search/find" for path in paths)
+    assert any(path.startswith("/api/v1/relations") for path in paths)
+    assert any(path == "/api/v1/observer/queue" for path in paths)
+    assert any(path == "/metrics" for path in paths)
+
+
+def test_pack_export_import_uses_openviking_http_pack_endpoints(
+    http_server: tuple[str, type[_RecordingHandler]],
+    tmp_path: Path,
+) -> None:
+    endpoint, handler_cls = http_server
+    backend = OpenVikingHttpBackend(endpoint=endpoint)
+
+    export_receipt = backend.export_run_pack("viking://resources/workflow/run-1/", str(tmp_path))
+    import_receipt = backend.import_run_pack(
+        export_receipt["bundle_path"],
+        "workflow/imported/run-1",
+        verify_hashes=True,
+    )
+
+    assert Path(str(export_receipt["bundle_path"])).exists()
+    assert str(export_receipt["sha256"]).startswith("sha256:")
+    assert import_receipt["import_status"] == "ok"
+    assert handler_cls.pack_export_payloads == [{"uri": "viking://resources/workflow/run-1/"}]
+    assert handler_cls.pack_import_payloads[-1]["parent"] == "viking://resources/workflow/imported/run-1/"
+    assert handler_cls.pack_import_payloads[-1]["vectorize"] is False
 
 
 def test_ensure_namespace_uses_mkdir_and_stat_without_latest_list_compact(

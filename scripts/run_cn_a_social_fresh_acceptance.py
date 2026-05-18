@@ -17,7 +17,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
 SOCIAL_SCRIPTS_ROOT = REPO_ROOT / "agents" / "social_analyst" / "skills" / "cn-a-social-data" / "scripts"
-EXPECTED_VISIBLE_TOOLS = ("openviking_write_material", "social_social_sentiment_pack")
+EXPECTED_VISIBLE_TOOLS = ("claw_get_social_pack",)
 EXPECTED_WORKER = "social_analyst"
 EXPECTED_STAGE = "frontline"
 RUN_ID_RE = re.compile(r"run_id=([A-Za-z0-9._-]+)")
@@ -387,18 +387,13 @@ def _validate_existing(args: argparse.Namespace, *, run_id: str, call_id: str | 
         blocking.append("tool-calls payload missing calls array")
         tool_calls = []
     social_call = None
-    write_call = None
     for item in tool_calls:
         if not isinstance(item, dict):
             continue
-        if item.get("tool_name") == "social_social_sentiment_pack":
+        if item.get("tool_name") == "claw_get_social_pack":
             social_call = item
-        if item.get("tool_name") == "openviking_write_material":
-            write_call = item
     if social_call is None:
-        blocking.append("tool-calls missing social_social_sentiment_pack call")
-    if write_call is None:
-        blocking.append("tool-calls missing openviking_write_material call")
+        blocking.append("tool-calls missing claw_get_social_pack call")
 
     if receipt_payload.get("source") != "openviking_adapter_verified_receipt":
         blocking.append("openviking receipt source is not adapter_verified")

@@ -1,0 +1,3 @@
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+COMPLETED run_id=run-20260518-012750-b4fbfaa0 output_dir=docs/evidence/openbb-canonical-t16-focused-cn-a-20260518T012744Z/exported workers=13 final_report=final_report.md

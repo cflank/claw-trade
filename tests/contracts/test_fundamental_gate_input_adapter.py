@@ -23,7 +23,7 @@ def test_material_gate_input_passes_when_visible_tools_and_receipt_valid(tmp_pat
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("fundamental_fundamentals_data_pack", "openviking_write_material"),
+        tools=("claw_get_fundamental_pack", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(call=call, evidence=evidence, receipt_content=b"fundamental report")
     result = build_material_gate_input(call=call, evidence=evidence, openviking=openviking)
@@ -39,7 +39,7 @@ def test_material_gate_input_emits_visible_tools_invalid_reason_code(tmp_path: P
     _write_provider_and_visible_tools(
         evidence=evidence,
         tools=(
-            "fundamental_fundamentals_data_pack",
+            "claw_get_fundamental_pack",
             "openviking_write_material",
             "tushare.fina_indicator",
         ),
@@ -57,7 +57,7 @@ def test_material_gate_input_emits_openviking_receipt_invalid_for_hash_mismatch(
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("fundamental_fundamentals_data_pack", "openviking_write_material"),
+        tools=("claw_get_fundamental_pack", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(
         call=call,
@@ -77,7 +77,7 @@ def test_build_fundamental_gate_inputs_emits_unsupported_claim_reason_code(tmp_p
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("fundamental_fundamentals_data_pack", "openviking_write_material"),
+        tools=("claw_get_fundamental_pack", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(call=call, evidence=evidence, receipt_content=b"fundamental report")
     report_path = call.evidence_dir / "report.md"
@@ -144,7 +144,7 @@ def test_build_fundamental_gate_inputs_marks_claim_input_invalid_when_pack_missi
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("fundamental_fundamentals_data_pack", "openviking_write_material"),
+        tools=("claw_get_fundamental_pack", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(call=call, evidence=evidence, receipt_content=b"fundamental report")
     report_path = call.evidence_dir / "report.md"
@@ -180,7 +180,7 @@ def _sample_call_and_evidence(tmp_path: Path) -> tuple[WorkerCall, ProviderEvide
         current_date="2026-05-07",
         start_date="2026-01-01",
         end_date="2026-05-07",
-        allowed_tools=("fundamental_fundamentals_data_pack", "openviking_write_material"),
+        allowed_tools=("claw_get_fundamental_pack", "openviking_write_material"),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

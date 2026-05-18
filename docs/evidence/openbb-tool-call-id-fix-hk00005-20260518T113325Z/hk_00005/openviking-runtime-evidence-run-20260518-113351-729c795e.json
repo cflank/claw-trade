@@ -1,0 +1,1369 @@
+{
+  "context_index": [
+    {
+      "index_level": "L0",
+      "reason": "L0 URI tree index available via control-plane wrappers",
+      "searchable_by_control_plane": true,
+      "status": "ok",
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+      "vectorized": false,
+      "visible_to_worker": false
+    },
+    {
+      "index_level": "L1",
+      "reason": "L1 approved material metadata index available via control-plane wrappers",
+      "searchable_by_control_plane": true,
+      "status": "ok",
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+      "vectorized": false,
+      "visible_to_worker": false
+    },
+    {
+      "index_level": "semantic",
+      "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+      "searchable_by_control_plane": false,
+      "status": "blocked",
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+      "vectorized": false,
+      "visible_to_worker": false
+    }
+  ],
+  "glob": {
+    "matches": [
+      "{'matches': [], 'count': 0}"
+    ],
+    "pattern": "**/approved-manifest.json",
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+    "status": "ok"
+  },
+  "grep": {
+    "matches": [
+      {
+        "content": "  \"call_id\": \"run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0\",",
+        "line": "5",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/evidence/index.json"
+      },
+      {
+        "content": "  \"worker_id\": \"portfolio_manager\",",
+        "line": "6",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/evidence/index.json"
+      }
+    ],
+    "pattern": "portfolio_manager",
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+    "status": "ok"
+  },
+  "ovpack_export": {
+    "bundle_path": "docs/evidence/openbb-tool-call-id-fix-hk00005-20260518T113325Z/hk_00005/ovpack/run-20260518-113351-729c795e.ovpack",
+    "bundle_uri": "viking://resources/workflow/run-20260518-113351-729c795e/evidence/bundles/run-20260518-113351-729c795e.ovpack",
+    "exported_at": "2026-05-18T11:43:09Z",
+    "external_store_refs": [],
+    "import_status": null,
+    "imported_run_id": null,
+    "portability_status": "metadata_verified",
+    "raw_payload_policy": "external_store_required",
+    "root_cause": null,
+    "run_id": "run-20260518-113351-729c795e",
+    "sha256": "sha256:dcae715212e492b9179f32cc6cd8bcaf787c9dec08df297712f4a88e1dc738a3",
+    "size_bytes": 8812
+  },
+  "ovpack_import": {
+    "bundle_path": "docs/evidence/openbb-tool-call-id-fix-hk00005-20260518T113325Z/hk_00005/ovpack/run-20260518-113351-729c795e.ovpack",
+    "bundle_uri": "viking://resources/workflow/imported/import-check-run-20260518-113351-729c795e/run-20260518-113351-729c795e",
+    "exported_at": "2026-05-18T11:43:09Z",
+    "external_store_refs": [],
+    "import_status": "ok",
+    "imported_run_id": "import-check-run-20260518-113351-729c795e",
+    "portability_status": "metadata_verified",
+    "raw_payload_policy": "external_store_required",
+    "root_cause": null,
+    "run_id": "import-check-run-20260518-113351-729c795e",
+    "sha256": "sha256:dcae715212e492b9179f32cc6cd8bcaf787c9dec08df297712f4a88e1dc738a3",
+    "size_bytes": 8812
+  },
+  "relation_queries": [
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"7c9d98eeca85b12ea659a0bbbab071cb873c5aea33612c391f40830be9fa2911\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:42828d1d01c2e8985388cdfaad7e6b08d566c7be624756d50b42a1979fbe9104\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/social\"}",
+          "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/social"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:2b05a9de10c387769411990f63d509d476928e325c05bdf92fe89f0a35874a0f\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/social\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:1633902c6cbba5e7770dbed172df754a25078bb76efe1f23474edc87f1a47655\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:1633902c6cbba5e7770dbed172df754a25078bb76efe1f23474edc87f1a47655"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7bb1d087fc654f8517d4c1d757654ee0a7603d393936dede6214ffb69e1d0797\"}",
+          "uri": "mongo://openbb_normalized/sha256:7bb1d087fc654f8517d4c1d757654ee0a7603d393936dede6214ffb69e1d0797"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:9066eef85120453b660bcf13536fdb44f6cef10b46892aa83b61d70fdef56c73\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.eastmoney_hk_guba.hk:social_metrics\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/social\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.eastmoney_hk_guba.hk:social_metrics\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.eastmoney_hk_guba.hk:social_metrics"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:f9aa8478d269b59989a44a20232810ab1446e159cec5eb98a789ed87bc33e3eb\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.xueqiu_hk.hk:posts\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/social\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.xueqiu_hk.hk:posts\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.xueqiu_hk.hk:posts"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"a11f685276a3a3f8c9863792b7177956340276f93004b0aa02ddc6eb79fa1d51\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:61fa6a4f208e1810bf60b196ac88f42f01babd70c54c1008ef0e948e003917f0\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental\"}",
+          "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:362fd068ea7c8bb48b0d97191ac5c8495e192094ea9b7c831675996e9a79ef6e\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:936b4ca74e2d3316d6d90710334b639b3fc217b537a9e79fc722043bd45afb92\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:936b4ca74e2d3316d6d90710334b639b3fc217b537a9e79fc722043bd45afb92"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:cbed7f583335969caaa107f63cd46ad87b749678c0dc709399e9e3de30b6fc7a\"}",
+          "uri": "mongo://openbb_normalized/sha256:cbed7f583335969caaa107f63cd46ad87b749678c0dc709399e9e3de30b6fc7a"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:681582abe7156d2957bf8f87dd7fc8937147facc5290a4b1f1498191e7cd25d5\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.tushare.hk:hk_fina_indicator\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.tushare.hk:hk_fina_indicator\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.tushare.hk:hk_fina_indicator"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:aeee1e9ee2d15b09affb610dee2d516004dfcb6baafec405a305adedf30cf3d6\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:db5410079d6ff788e08ca22038af1e748eccc1f89ccafcdbbb325239fdeb0d05\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:db5410079d6ff788e08ca22038af1e748eccc1f89ccafcdbbb325239fdeb0d05"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:2ef6f6ad9999c5d3cb6830a11ca11968c8bd643d2ebe3b5e3151c0427d0d8727\"}",
+          "uri": "mongo://openbb_normalized/sha256:2ef6f6ad9999c5d3cb6830a11ca11968c8bd643d2ebe3b5e3151c0427d0d8727"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:e25f0bbdf32c6b1c56887a8cc341ca2a53f8c97fd43dca5918cc0336bcad5ecc\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:4bafa74f569e14cf1be7d13696ab1e7021080831ba8af5934fdd4b780a754920\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:4bafa74f569e14cf1be7d13696ab1e7021080831ba8af5934fdd4b780a754920"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:ddc400b5c5bbdf84ee229d95e94d287f6919d7c332fa59825125e74eb99f6a14\"}",
+          "uri": "mongo://openbb_normalized/sha256:ddc400b5c5bbdf84ee229d95e94d287f6919d7c332fa59825125e74eb99f6a14"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:7e0bdb4eab01c9de12c512f484d423701d8f0d8506799d5daf02290575bc4102\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:b8fc35802260196368078f468999f52a4e209b90fef80de48db3108937a6cb5c\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:b8fc35802260196368078f468999f52a4e209b90fef80de48db3108937a6cb5c"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:17a9fe7f8de7e699aec6087af90009a6e04847697ed0ab161e0dced696ec999c\"}",
+          "uri": "mongo://openbb_normalized/sha256:17a9fe7f8de7e699aec6087af90009a6e04847697ed0ab161e0dced696ec999c"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"3a4783bef44b907a7666ebf4ee0b23fe7e99e1808ffac1b54290be18f8458396\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:51554ea69eaeb350ef1970bb01bb041a71938a9f1ab8cc4ec938f6f2665950b7\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/market\"}",
+          "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/market"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:e49d68522661d902929d3b4972d779db5d306b37ea2cda7430ab31f096155055\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:quote\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/market\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:quote\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:quote"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:4767300009d1b162ee4956705d4a76619cfe83a463e2321cd29cd8a39d6701eb\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/market\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:a006fac69b77a1cc4498715ddc110af6be2b9b9786b24aa91e617eace698a54d\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:a006fac69b77a1cc4498715ddc110af6be2b9b9786b24aa91e617eace698a54d"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:a741d7d0543b8e16d2b85e64c5880be0416c23d14f2b71d5bc54ea74df7361aa\"}",
+          "uri": "mongo://openbb_normalized/sha256:a741d7d0543b8e16d2b85e64c5880be0416c23d14f2b71d5bc54ea74df7361aa"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:2c15098a4597492a99afa387024be493db7a2483f2cf735da63dc449422d0c42\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/market\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:0189c64ce0a2707d2c28a24e54fc01e99573fd54188ee2875a62ecb388471c78\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:0189c64ce0a2707d2c28a24e54fc01e99573fd54188ee2875a62ecb388471c78"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:c290310c5c83c6681d16c1281a86ef88587fb15d83d0f747d84fb1e66b1767a9\"}",
+          "uri": "mongo://openbb_normalized/sha256:c290310c5c83c6681d16c1281a86ef88587fb15d83d0f747d84fb1e66b1767a9"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"worker_l1_to_chart_asset\", \"note\": \"report chart: market-01-indicator_panels-ae3af081820d54ec\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/report.md\", \"semantic_to_uri\": \"file:///home/frank/src/claw-trade/runs/run-20260518-113351-729c795e/reports/assets/market-01-indicator_panels-ae3af081820d54ec.png\"}",
+          "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-113351-729c795e/reports/assets/market-01-indicator_panels-ae3af081820d54ec.png"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"worker_l1_to_chart_asset\", \"note\": \"report chart: market-02-market_structure-78c2333379938f49\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/report.md\", \"semantic_to_uri\": \"file:///home/frank/src/claw-trade/runs/run-20260518-113351-729c795e/reports/assets/market-02-market_structure-78c2333379938f49.png\"}",
+          "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-113351-729c795e/reports/assets/market-02-market_structure-78c2333379938f49.png"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"a235d56846fe9993079146e22c4cf7c31923aa26ce8663acdb0e6c0362737255\", \"kind\": \"worker_l1_to_l2_evidence\", \"note\": \"worker report declares this L2 evidence index\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/evidence/index.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/evidence/index.json"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:42040f1848147dbe24846759be75101f46c35d43262cf49bf5afff30df78daf2\", \"kind\": \"l2_evidence_to_pack_audit\", \"note\": \"L2 evidence index contains pack audit\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/evidence/index.json\", \"semantic_to_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\"}",
+          "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:172c84644b9210d36eca00be57ca224028e650f7d98711e636c28e554885db5d\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:a788713b788da4091a541fae455d5799d2f881f8387b737f090e4ec0da377fe9\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:639f2e97588d1449326066e5fb8b604f47c1fd5a77f4fb68abb6f7b764c1adac\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:62d4545351961bdbf2077cb9f52768e07c46448e5fc40d3fa919702b5cc62fa4\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:dc926522f6e02d80ff940162942352e9aba129fd946b2b8e8cde4a0a80a12da2\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:3ec5b4339a1bda81b0986321acfdae5f9520635b64636b2df250237a3fb904ee\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:c3e0bbe73a783b8b77103ac937a5de26bb8863a54969ba432e05c6c2d38e3912\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:85196897cb7ac63e2ac9d831f5c7dc35a44bccb06e0b2c33b0144233474da26e\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:9c145152638fabcfecddd032f16398ba8aa450b968ea5cd1313f4085c8f7f9b7\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:ba6d2ee4b14218021bd1ebbc39ba78d6b90c35cbb95c0366378a726f50d679e1\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:00e707899fdc5e869613c41e4d4552adbcfe6852a54a44ef4ee6db359dcaa44a\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:29b2a170c4c48c267870f70487c550b1c54ac031da0fd7ba0488b05e3c8cb448\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:a0fc540f70f430b08f767907bcc8a226244060c1d2287929f5cfe51e49332fe3\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:0bb791aa0a4c95f853261c1ae6bdff0230310b87cc47df2f924429d915173cbc\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:28564811e47b1c3ecff6f7062a62d1fb5790acde67b6f4adc67279b1511aa606\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:3b56cbb76f39c255280625fd7444de9dd1da7371fea1c2afcdfb5587ef394ed6\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:409949a9456cf600a157ae1fb5425ad1f692d3e3c6cd59b8136e13631baee6ca\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:464e05e115a260603f9a39d68d885570e1e28252813a6544daf24b591b6303c1\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:b3445d353ca2cb1f22a2a740813eceaa9e414e09c9160311e7c6bcba416ac7f8\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:48fdadb28e669095332bc8c30a0eab3d21ed99ea5e9d3d0336078cc716215ac9\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:4af496154ca78037026941f9e68250894a3e6d75e2962a250e4564df920b3e88\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:586878898cd22a651b79aae6775cc9a4b5604be1f57e71e46663b058eaa01b9f\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:a590473e49bbd478f489e26f103abd840e8b23a792c5bb7ca3154814468b2948\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:5f8321a9e0cc260f36ed6f3ad467978dc7411b23a690ad7a2d77f9c2b96fa89f\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:c1adf959044c532f3dfc9413c62eb8a743b84dcde6fbb761b819cf9eb39b0454\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847\"}",
+          "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:c925bcd143a95dda8f54990ab6f79ad56207ae2e8151e772613737863cb14c95\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e\"}",
+          "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:3ddb8b27d71a422b3d078e768f0af5557ec07bbeeb9417a91515b21edd6dfe64\", \"kind\": \"pack_audit_to_provider_attempt\", \"note\": \"pack audit references provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery\", \"semantic_from_uri\": \"audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news\", \"semantic_to_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery\"}",
+          "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_raw_payload\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery references raw payload hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1\"}",
+          "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+        },
+        {
+          "reason": "{\"evidence_hash\": null, \"kind\": \"provider_attempt_to_normalized_result\", \"note\": \"provider attempt run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery references normalized result hash/ref\", \"semantic_from_uri\": \"mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery\", \"semantic_to_uri\": \"mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f\"}",
+          "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866/report.md"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"5594e1e7a5dc4e9706b7fe52ff662f42a32d6728a6dc88b8aa44a07d007508ce\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: social_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"1332ff02cb6d1081de75231a9292d8a6e235ec94934182e96214151e1428e190\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: fundamental_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"0d900817d2dd286cd99ad250bf000006aa3a60c2da798614212719128bc7bd54\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: market_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"91c45cfbf36e4c11266a526743d9886793b9c65cfc694589afc6de513ef62b76\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: news_analyst\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"f0cec23cc8a75f5da46bcfbf201c64c7f37ab56768428fcdb9106a949b528ded\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: bull_researcher\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"0c3fa04baeae137c3ecebe9c461a46bdf24c6f44cb0337cec7a185b3a4f082a6\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: bear_researcher\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"b8a5cd5559b361a57bb6fe85996acf625bd5d30c1f2f51db444dce17f428d4ba\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: research_manager\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"f903b5eb83f8027795672187945b40f8e59f886fe82d840c467ef6b9337337a3\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: trader\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"9c403a83eec7a921cd22d94b260bdc970d84eceac4fa3910f11fff3b089c9e3f\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: risk_challenger\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"b9d9d6521f37962334dba8c13c8a47f3d5dfbe493eb4db488213a33ddf8decf5\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: risk_guardian\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"413cba90c8c0b9be84a485a9655e11d9add82286c5c666f1912ed74837fb6073\", \"kind\": \"pm_l1_to_worker_l1\", \"note\": \"PM material depends on approved worker L1: risk_moderator\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866/report.md"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/report.md"
+    },
+    {
+      "relations": [
+        {
+          "reason": "{\"evidence_hash\": \"322b3ff51af6d210132bba9623b425d1ecf7a851c31b32a9553004d2da9cd74d\", \"kind\": \"final_report_claim_to_pm_l1\", \"note\": \"final report is anchored to PM L1; structured final claim map is empty\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0/report.md"
+        },
+        {
+          "reason": "{\"evidence_hash\": \"sha256:ec03cc04401f60552e47399bdb7635b9a2c9402f4e39d2814166dcee71f3c8cc\", \"kind\": \"final_report_claim_to_pm_l1\", \"note\": \"final report relation manifest\", \"semantic_from_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/report.md\", \"semantic_to_uri\": \"viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/relations/manifest.json\"}",
+          "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/relations/manifest.json"
+        }
+      ],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/evidence/index.json"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/evidence/"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5/social"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:1633902c6cbba5e7770dbed172df754a25078bb76efe1f23474edc87f1a47655"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:7bb1d087fc654f8517d4c1d757654ee0a7603d393936dede6214ffb69e1d0797"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.eastmoney_hk_guba.hk:social_metrics"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5__tool-call_00_HeqEoRPEhUchoZzHKxi92485:social.xueqiu_hk.hk:posts"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53/fundamental"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.hk.official:hkexnews_filings"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:936b4ca74e2d3316d6d90710334b639b3fc217b537a9e79fc722043bd45afb92"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:cbed7f583335969caaa107f63cd46ad87b749678c0dc709399e9e3de30b6fc7a"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.tushare.hk:hk_fina_indicator"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk:stock_financial_hk_analysis_indicator_em"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:db5410079d6ff788e08ca22038af1e748eccc1f89ccafcdbbb325239fdeb0d05"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:2ef6f6ad9999c5d3cb6830a11ca11968c8bd643d2ebe3b5e3151c0427d0d8727"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.yfinance.hk:equity_fundamentals_yfinance"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:4bafa74f569e14cf1be7d13696ab1e7021080831ba8af5934fdd4b780a754920"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:ddc400b5c5bbdf84ee229d95e94d287f6919d7c332fa59825125e74eb99f6a14"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53__tool-call_00_rXO5ZYcF5fcFYD9bCE8A1910:fundamental.akshare.hk.income:stock_financial_hk_report_em:income"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:b8fc35802260196368078f468999f52a4e209b90fef80de48db3108937a6cb5c"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:17a9fe7f8de7e699aec6087af90009a6e04847697ed0ab161e0dced696ec999c"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384/market"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:quote"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:hk_daily"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:a006fac69b77a1cc4498715ddc110af6be2b9b9786b24aa91e617eace698a54d"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:a741d7d0543b8e16d2b85e64c5880be0416c23d14f2b71d5bc54ea74df7361aa"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384__tool-call_00_qeWFuw88RXm3z6OsXfw06329:project.hk.market:stock_hk_daily"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:0189c64ce0a2707d2c28a24e54fc01e99573fd54188ee2875a62ecb388471c78"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:c290310c5c83c6681d16c1281a86ef88587fb15d83d0f747d84fb1e66b1767a9"
+    },
+    {
+      "relations": [],
+      "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-113351-729c795e/reports/assets/market-01-indicator_panels-ae3af081820d54ec.png"
+    },
+    {
+      "relations": [],
+      "uri": "file:///home/frank/src/claw-trade/runs/run-20260518-113351-729c795e/reports/assets/market-02-market_structure-78c2333379938f49.png"
+    },
+    {
+      "relations": [],
+      "uri": "audit://run-20260518-113351-729c795e/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003/news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:bee80deea74316e050f5cf0675b031f5fe9616dc4753f20eaed0270fa98e6ce3"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:164dbf02a6de0318ed1d6c2c04b67a936ea7bc3a4143e70c17d16778289d7847"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:25d5ce7fe6c68783ca42534f80a207d57e5e94a886122873f5bad689b6432435"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:7ff17cef5636ffd51ba2c7cd5490c8caa88c83e1afdf8887bb394e3735eb742e"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_0Rgn6hpkw4moorhSoBq79305:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_raw_payloads/sha256:6919f9c3090ee4e89e04c47eae0964df46206fee6f93bef88d5bed20ff4ddcf1"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_normalized/sha256:9ace66801f62460d29b69cc98adf2158cd6262740c1ea97a1300cb99eb9cea3f"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6ZN5zTkFcYiBIjY3gfP17490:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_6pFYAsddk5x4yc5JQNyW6242:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_DMas62U2RXlZ2pgwPsfc0086:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_TpA3kr8xsFnF49XjZiau0456:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_gQTd8yMnbMb996mZ9miy5742:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_oFiaxc1e0l5clTRVoiYl0735:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_qAQF14ZMbwvBENypD5VJ9584:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.hkexnews.hk:announcements"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.macro.hk:macro_news"
+    },
+    {
+      "relations": [],
+      "uri": "mongo://openbb_provider_attempts/run-20260518-113351-729c795e:run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003__tool-call_00_uWFx9yJo181QoXteHb3c6492:news.google_news.hk:search_discovery"
+    },
+    {
+      "relations": [],
+      "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227/relations/manifest.json"
+    }
+  ],
+  "relations": [],
+  "relations_non_empty": true,
+  "run_id": "run-20260518-113351-729c795e",
+  "run_root_uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+  "runtime_health": {
+    "checked_at": "2026-05-18T11:43:09Z",
+    "lock_status": "ok",
+    "metrics_status": "unavailable",
+    "observer_status": "ok",
+    "queue_status": "blocked",
+    "raw_refs": [],
+    "recovery_status": "unavailable",
+    "root_cause": "metrics endpoint unavailable; OpenViking semantic/vector queue is disabled in claw-trade report runtime; upstream public recovery API 未确认",
+    "status": "blocked"
+  },
+  "tree": {
+    "node_count": 33,
+    "nodes": [
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:40:33",
+        "rel_path": "risk_debate",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:39:55",
+        "rel_path": "risk_debate/risk_guardian",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:39:55",
+        "rel_path": "risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_guardian/run-20260518-113351-729c795e-risk_debate-t01-risk_guardian-20260518T113920677086Z-3b4e64ea"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:40:33",
+        "rel_path": "risk_debate/risk_moderator",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:40:34",
+        "rel_path": "risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_moderator/run-20260518-113351-729c795e-risk_debate-t02-risk_moderator-20260518T113955592256Z-e59a9866"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:39:20",
+        "rel_path": "risk_debate/risk_challenger",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:39:20",
+        "rel_path": "risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/risk_debate/risk_challenger/run-20260518-113351-729c795e-risk_debate-t00-risk_challenger-20260518T113844974726Z-e9daa3f6"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:35:38",
+        "rel_path": "frontline",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:34:31",
+        "rel_path": "frontline/social_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:07",
+        "rel_path": "frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/social_analyst/run-20260518-113351-729c795e-frontline-t00-social_analyst-20260518T113351752875Z-e7ad63a5"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:35:21",
+        "rel_path": "frontline/market_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:07",
+        "rel_path": "frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/market_analyst/run-20260518-113351-729c795e-frontline-t00-market_analyst-20260518T113351751996Z-cf938384"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:34:58",
+        "rel_path": "frontline/fundamental_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:07",
+        "rel_path": "frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/fundamental_analyst/run-20260518-113351-729c795e-frontline-t00-fundamental_analyst-20260518T113351752337Z-52d6ea53"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:35:38",
+        "rel_path": "frontline/news_analyst",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:07",
+        "rel_path": "frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/frontline/news_analyst/run-20260518-113351-729c795e-frontline-t00-news_analyst-20260518T113351752612Z-297e8003"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:38:44",
+        "rel_path": "trade_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:38:44",
+        "rel_path": "trade_decision/trader",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:38:44",
+        "rel_path": "trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/trade_decision/trader/run-20260518-113351-729c795e-trade_decision-t00-trader-20260518T113805066607Z-14839090"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:38:04",
+        "rel_path": "investment_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:38:04",
+        "rel_path": "investment_decision/research_manager",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:38:04",
+        "rel_path": "investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_decision/research_manager/run-20260518-113351-729c795e-investment_decision-t00-research_manager-20260518T113721350912Z-ca543c85"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:06",
+        "rel_path": "final_report",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:06",
+        "rel_path": "final_report/report_polisher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:07",
+        "rel_path": "final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/final_report/report_polisher/run-20260518-113351-729c795e-final_report-t00-report_polisher-20260518T114110650981Z-7d225227"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:41:10",
+        "rel_path": "portfolio_decision",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:41:10",
+        "rel_path": "portfolio_decision/portfolio_manager",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:43:07",
+        "rel_path": "portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/portfolio_decision/portfolio_manager/run-20260518-113351-729c795e-portfolio_decision-t00-portfolio_manager-20260518T114034278862Z-95bddfd0"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:37:21",
+        "rel_path": "investment_debate",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:36:25",
+        "rel_path": "investment_debate/bull_researcher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:36:25",
+        "rel_path": "investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bull_researcher/run-20260518-113351-729c795e-investment_debate-t00-bull_researcher-20260518T113538324454Z-7171f689"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:37:21",
+        "rel_path": "investment_debate/bear_researcher",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher"
+      },
+      {
+        "abstract": "[.abstract.md is not ready]",
+        "isDir": "True",
+        "modTime": "11:37:21",
+        "rel_path": "investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd",
+        "size": "4096",
+        "uri": "viking://resources/workflow/run-20260518-113351-729c795e/investment_debate/bear_researcher/run-20260518-113351-729c795e-investment_debate-t01-bear_researcher-20260518T113626257387Z-ac7889dd"
+      }
+    ],
+    "root_cause": null,
+    "root_uri": "viking://resources/workflow/run-20260518-113351-729c795e/",
+    "status": "ok"
+  }
+}

@@ -2,14 +2,14 @@
 name: crypto-fundamental-data
 version: 0.1.0
 description: CRYPTO 基本面资料包数据服务 skill，仅向 fundamental_analyst 提供 CoinGecko 与 DefiLlama 资料包能力。
-tool: crypto_fundamental_data_pack
-tool_name: crypto_fundamental_data_pack
-schema_version: crypto_fundamental_pack.v1
+tool: claw_get_fundamental_pack
+tool_name: claw_get_fundamental_pack
+schema_version: openbb_fundamental_pack.v1
 ---
 
 # crypto-fundamental-data
 
-该 skill 只负责提供 `crypto_fundamental_data_pack` 资料包能力，不负责生成最终报告正文、投资结论、评级或目标价。
+该 skill 只负责提供 `claw_get_fundamental_pack` OpenBB 基本面资料包能力，不负责生成最终报告正文、投资结论、评级或目标价。
 
 使用边界：
 

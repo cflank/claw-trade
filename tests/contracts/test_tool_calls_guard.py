@@ -47,7 +47,7 @@ def test_crypto_frontline_tool_calls_rejects_silent_required_pack_skip() -> None
     )
     guard = validate_tool_calls(call, evidence)
     assert not guard.ok
-    assert guard.reason is not None and "crypto_social_sentiment_pack" in guard.reason
+    assert guard.reason is not None and "claw_get_social_pack" in guard.reason
 
 
 def test_crypto_frontline_tool_calls_rejects_recorded_without_required_pack() -> None:
@@ -75,7 +75,7 @@ def test_crypto_frontline_tool_calls_rejects_recorded_without_required_pack() ->
     )
     guard = validate_tool_calls(call, evidence)
     assert not guard.ok
-    assert guard.reason is not None and "crypto_social_sentiment_pack" in guard.reason
+    assert guard.reason is not None and "claw_get_social_pack" in guard.reason
 
 
 def test_crypto_frontline_tool_calls_accepts_required_pack_call() -> None:
@@ -93,7 +93,7 @@ def test_crypto_frontline_tool_calls_accepts_required_pack_call() -> None:
             "openclaw_run_id": evidence.openclaw_run_id,
             "calls": [
                 {
-                    "tool_name": "crypto_social_sentiment_pack",
+                    "tool_name": "claw_get_social_pack",
                     "action": "call",
                     "status": "error",
                     "result_sha256": "s" * 64,
@@ -240,7 +240,7 @@ def _crypto_social_call() -> WorkerCall:
         current_date="2026-05-16",
         start_date="2026-04-01",
         end_date="2026-05-16",
-        allowed_tools=("crypto_social_sentiment_pack",),
+        allowed_tools=("claw_get_social_pack",),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

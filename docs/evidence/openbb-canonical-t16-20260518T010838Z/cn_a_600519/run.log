@@ -1,0 +1,15 @@
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+Traceback (most recent call last):
+  File "/home/frank/src/claw-trade/scripts/run_claw_trade_fresh_report.py", line 390, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/frank/src/claw-trade/scripts/run_claw_trade_fresh_report.py", line 381, in main
+    summary = export_run_evidence(state.run_dir, output_dir)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/frank/src/claw-trade/scripts/run_claw_trade_fresh_report.py", line 265, in export_run_evidence
+    final_report_path, final_report_chars, final_report_asset_count, worker_appendix_count = copy_final_report(
+                                                                                             ^^^^^^^^^^^^^^^^^^
+  File "/home/frank/src/claw-trade/scripts/run_claw_trade_fresh_report.py", line 237, in copy_final_report
+    raise RuntimeError(f"final report missing: {report_path}")
+RuntimeError: final report missing: /home/frank/src/claw-trade/runs/run-20260518-010841-bcfe5c33/reports/final-report.md

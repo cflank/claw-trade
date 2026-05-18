@@ -1,0 +1,243 @@
+{
+  "required_evidence_fields": [
+    "visible_tools",
+    "provider_request",
+    "tool_calls",
+    "data_pack_raw_output",
+    "provider_attempts",
+    "field_sources",
+    "missing_fields",
+    "openviking_receipt",
+    "guard_result",
+    "report"
+  ],
+  "samples": [
+    {
+      "sample_id": "sample_1",
+      "evidence": {
+        "visible_tools": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/visible_tools"
+        },
+        "provider_request": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/provider_request"
+        },
+        "tool_calls": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/tool_calls"
+        },
+        "data_pack_raw_output": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/data_pack_raw_output"
+        },
+        "provider_attempts": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/provider_attempts"
+        },
+        "field_sources": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/field_sources"
+        },
+        "missing_fields": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/missing_fields"
+        },
+        "openviking_receipt": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/openviking_receipt"
+        },
+        "guard_result": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/guard_result"
+        },
+        "report": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_1/report"
+        }
+      }
+    },
+    {
+      "sample_id": "sample_2",
+      "evidence": {
+        "visible_tools": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/visible_tools"
+        },
+        "provider_request": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/provider_request"
+        },
+        "tool_calls": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/tool_calls"
+        },
+        "data_pack_raw_output": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/data_pack_raw_output"
+        },
+        "provider_attempts": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/provider_attempts"
+        },
+        "field_sources": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/field_sources"
+        },
+        "missing_fields": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/missing_fields"
+        },
+        "openviking_receipt": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/openviking_receipt"
+        },
+        "guard_result": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/guard_result"
+        },
+        "report": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_2/report"
+        }
+      }
+    },
+    {
+      "sample_id": "sample_3",
+      "evidence": {
+        "visible_tools": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/visible_tools"
+        },
+        "provider_request": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/provider_request"
+        },
+        "tool_calls": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/tool_calls"
+        },
+        "data_pack_raw_output": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/data_pack_raw_output"
+        },
+        "provider_attempts": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/provider_attempts"
+        },
+        "field_sources": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/field_sources"
+        },
+        "missing_fields": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/missing_fields"
+        },
+        "openviking_receipt": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/openviking_receipt"
+        },
+        "guard_result": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/guard_result"
+        },
+        "report": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_3/report"
+        }
+      }
+    },
+    {
+      "sample_id": "sample_4",
+      "evidence": {
+        "visible_tools": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/visible_tools"
+        },
+        "provider_request": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/provider_request"
+        },
+        "tool_calls": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/tool_calls"
+        },
+        "data_pack_raw_output": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/data_pack_raw_output"
+        },
+        "provider_attempts": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/provider_attempts"
+        },
+        "field_sources": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/field_sources"
+        },
+        "missing_fields": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/missing_fields"
+        },
+        "openviking_receipt": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/openviking_receipt"
+        },
+        "guard_result": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/guard_result"
+        },
+        "report": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_4/report"
+        }
+      }
+    },
+    {
+      "sample_id": "sample_5",
+      "compare_index": "docs/evidence/cn_a_fundamental/same_ticker_compare_index_600519_2026-05-06.md",
+      "evidence": {
+        "visible_tools": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/visible_tools"
+        },
+        "provider_request": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/provider_request"
+        },
+        "tool_calls": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/tool_calls"
+        },
+        "data_pack_raw_output": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/data_pack_raw_output"
+        },
+        "provider_attempts": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/provider_attempts"
+        },
+        "field_sources": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/field_sources"
+        },
+        "missing_fields": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/missing_fields"
+        },
+        "openviking_receipt": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/openviking_receipt"
+        },
+        "guard_result": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/guard_result"
+        },
+        "report": {
+          "status": "pending_t_fnd_047_real_run",
+          "path": "pending://t_fnd_047/sample_5/report"
+        }
+      }
+    }
+  ]
+}
+

@@ -10,9 +10,9 @@ def test_cn_a_news_skill_metadata_contains_required_fields() -> None:
     text = skill_path.read_text(encoding="utf-8")
 
     assert "name: cn-a-news-data" in text
-    assert "tool: news_news_data_pack" in text
-    assert "entrypoint: scripts/news_data_pack.py" in text
-    assert "schema_version: cn_a_news_pack.v1" in text
+    assert "tool: claw_get_news_pack" in text
+    assert "entrypoint: openclaw_plugins/claw-trade-frontline-tools/index.js" in text
+    assert "schema_version: openbb_news_pack.v1" in text
 
 
 def test_cn_a_news_skill_only_binds_to_news_analyst_worker() -> None:
@@ -36,7 +36,7 @@ def test_cn_a_news_skill_manifest_exports_only_news_data_pack() -> None:
     target = [entry for entry in entries if entry.get("path") == "cn-a-news-data/SKILL.md"]
     assert len(target) == 1
     entry = target[0]
-    assert entry.get("tool_exports") == ["news_news_data_pack"]
+    assert entry.get("tool_exports") == ["claw_get_news_pack"]
 
 
 def _load_skill_manifest_entries(manifest_path: Path) -> list[dict[str, object]]:

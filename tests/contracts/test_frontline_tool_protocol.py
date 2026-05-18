@@ -12,13 +12,29 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_PATH = REPO_ROOT / "openclaw_plugins" / "claw-trade-frontline-tools" / "index.js"
 
+CANONICAL_TOOLS = (
+    ("claw_get_market_pack", "market_analyst", "market"),
+    ("claw_get_fundamental_pack", "fundamental_analyst", "fundamental"),
+    ("claw_get_news_pack", "news_analyst", "news"),
+    ("claw_get_social_pack", "social_analyst", "social"),
+)
+
 
 def _runtime_ctx(
     worker_id: str,
     stage: str = "frontline",
     runtime_vars: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    vars_payload: dict[str, object] = {"ticker": "600519", "market": "CN_A"}
+    vars_payload: dict[str, object] = {
+        "ticker": "00700.HK",
+        "market": "HK",
+        "profile": "HK",
+        "company_name": "腾讯控股",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-17",
+        "current_date": "2026-05-17",
+        "currency": "HKD",
+    }
     if runtime_vars:
         vars_payload.update(runtime_vars)
     return {
@@ -31,43 +47,6 @@ def _runtime_ctx(
             "runtime_vars": vars_payload,
         }
     }
-
-
-CN_A_TOOLS = (
-    ("market_market_data_pack", "market_analyst"),
-    ("fundamental_fundamentals_data_pack", "fundamental_analyst"),
-    ("news_news_data_pack", "news_analyst"),
-    ("social_social_sentiment_pack", "social_analyst"),
-)
-
-US_TOOLS = (
-    ("get_stock_data", "market_analyst"),
-    ("get_indicators", "market_analyst"),
-    ("get_fundamentals", "fundamental_analyst"),
-    ("get_balance_sheet", "fundamental_analyst"),
-    ("get_cashflow", "fundamental_analyst"),
-    ("get_income_statement", "fundamental_analyst"),
-    ("get_news", "news_analyst"),
-    ("get_global_news", "news_analyst"),
-    ("get_news", "social_analyst"),
-)
-
-CRYPTO_TOOLS = (
-    ("crypto_market_data_pack", "market_analyst"),
-    ("crypto_fundamental_data_pack", "fundamental_analyst"),
-    ("crypto_news_data_pack", "news_analyst"),
-    ("crypto_social_sentiment_pack", "social_analyst"),
-)
-
-
-def test_domain_pack_tool_descriptions_cover_hk_not_cn_a_only() -> None:
-    source = PLUGIN_PATH.read_text(encoding="utf-8")
-
-    assert "Load one CN_A market data package" not in source
-    assert "Load one CN_A news package" not in source
-    assert "Load one CN_A social sentiment package" not in source
-    assert "current CN_A ticker" not in source
-    assert source.count("CN_A/HK") >= 4
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -130,17 +109,66 @@ def _error_code(result: dict[str, object]) -> str:
     return code
 
 
+def test_plugin_registers_only_canonical_openbb_pack_tools() -> None:
+    script = f"""
+import plugin from {json.dumps(str(PLUGIN_PATH))};
+const tools = [];
+const api = {{
+  registerTool(factory) {{
+    const tool = factory({{ singleWorkerCommand: {{}} }});
+    tools.push({{
+      name: tool.name,
+      schemaType: tool.parameters?.type,
+      additionalProperties: tool.parameters?.additionalProperties,
+      fields: Object.keys(tool.parameters?.properties ?? {{}}),
+    }});
+  }},
+}};
+plugin.register(api);
+process.stdout.write(JSON.stringify(tools));
+"""
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tools = json.loads(completed.stdout)
+    assert [item["name"] for item in tools] == [
+        "claw_get_market_pack",
+        "claw_get_fundamental_pack",
+        "claw_get_news_pack",
+        "claw_get_social_pack",
+    ]
+    for item in tools:
+        assert item["schemaType"] == "object"
+        assert item["additionalProperties"] is False
+        assert set(item["fields"]) == set()
+
+
+def test_plugin_source_uses_openbb_runtime_and_not_legacy_provider_executor() -> None:
+    source = PLUGIN_PATH.read_text(encoding="utf-8")
+
+    assert "OpenBBRuntimeWrapper" in source
+    assert "DomainPackService" in source
+    assert "build_default_provider_adapters" in source
+    assert "frontline_data_pack.provider_executor" not in source
+    assert "import frontline_data_pack.us_data_pack" not in source
+    assert "get_stock_data" not in source
+
+
 def test_missing_single_worker_command_returns_runtime_context_missing() -> None:
-    result = _run_tool(tool_name="market_market_data_pack", ctx={}, params={"ticker": "600519"})
+    result = _run_tool(tool_name="claw_get_market_pack", ctx={}, params={"ticker": "00700.HK"})
     assert result.get("isError") is True
     assert _error_code(result) == "TOOL_RUNTIME_CONTEXT_MISSING"
 
 
 def test_worker_mismatch_returns_worker_mismatch_error() -> None:
     result = _run_tool(
-        tool_name="news_news_data_pack",
+        tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="market_analyst"),
-        params={"ticker": "600519", "market": "CN_A"},
+        params={"ticker": "00700.HK", "market": "HK"},
     )
     assert result.get("isError") is True
     assert _error_code(result) == "TOOL_WORKER_MISMATCH"
@@ -157,9 +185,9 @@ echo '{{"ok": true}}'
 """,
     )
     result = _run_tool(
-        tool_name="news_news_data_pack",
+        tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst", stage="investment_debate"),
-        params={"ticker": "600519", "market": "CN_A"},
+        params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
     assert result.get("isError") is True
@@ -186,9 +214,9 @@ echo '{{"ok": true}}'
     assert isinstance(command, dict)
     command[missing_field] = ""
     result = _run_tool(
-        tool_name="market_market_data_pack",
+        tool_name="claw_get_market_pack",
         ctx=ctx,
-        params={"ticker": "600519", "market": "CN_A"},
+        params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
     assert result.get("isError") is True
@@ -196,14 +224,12 @@ echo '{{"ok": true}}'
     assert marker.exists() is False
 
 
-@pytest.mark.parametrize(
-    ("tool_name", "worker_id"),
-    CN_A_TOOLS,
-)
-def test_non_cn_a_market_returns_structured_context_or_params_error_without_provider_attempts(
+@pytest.mark.parametrize(("tool_name", "worker_id", "_pack_domain"), CANONICAL_TOOLS)
+def test_missing_required_openbb_pack_field_returns_params_error_without_spawning_python(
     tmp_path: Path,
     tool_name: str,
     worker_id: str,
+    _pack_domain: str,
 ) -> None:
     marker = tmp_path / "python_called.txt"
     fake_python = tmp_path / "fake_python.sh"
@@ -216,90 +242,21 @@ echo '{{"ok": true}}'
     )
     result = _run_tool(
         tool_name=tool_name,
-        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"market": "US"}),
-        params={"ticker": "600519", "market": "US"},
+        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"company_name": ""}),
+        params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
     assert result.get("isError") is True
-    assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
-    details = result.get("details")
-    assert isinstance(details, dict)
-    assert "provider_attempts" not in details
+    assert _error_code(result) == "TOOL_PARAMS_INVALID"
     assert marker.exists() is False
 
 
-@pytest.mark.parametrize(
-    ("tool_name", "worker_id"),
-    US_TOOLS,
-)
-def test_non_us_market_for_us_tools_returns_structured_params_error_without_provider_attempts(
+@pytest.mark.parametrize(("tool_name", "worker_id", "pack_domain"), CANONICAL_TOOLS)
+def test_successful_canonical_pack_passes_openbb_context_to_python(
     tmp_path: Path,
     tool_name: str,
     worker_id: str,
-) -> None:
-    marker = tmp_path / "python_called.txt"
-    fake_python = tmp_path / "fake_python.sh"
-    _write_executable(
-        fake_python,
-        f"""#!/usr/bin/env bash
-echo called > {marker}
-echo '{{"ok": true}}'
-""",
-    )
-    result = _run_tool(
-        tool_name=tool_name,
-        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"ticker": "AAPL", "market": "CN_A"}),
-        params={"ticker": "AAPL", "market": "CN_A"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
-    )
-    assert result.get("isError") is True
-    assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
-    details = result.get("details")
-    assert isinstance(details, dict)
-    assert "provider_attempts" not in details
-    assert marker.exists() is False
-
-
-@pytest.mark.parametrize(
-    ("tool_name", "worker_id"),
-    CRYPTO_TOOLS,
-)
-def test_non_crypto_market_for_crypto_tools_returns_structured_params_error_without_provider_attempts(
-    tmp_path: Path,
-    tool_name: str,
-    worker_id: str,
-) -> None:
-    marker = tmp_path / "python_called.txt"
-    fake_python = tmp_path / "fake_python.sh"
-    _write_executable(
-        fake_python,
-        f"""#!/usr/bin/env bash
-echo called > {marker}
-echo '{{"ok": true}}'
-""",
-    )
-    result = _run_tool(
-        tool_name=tool_name,
-        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"ticker": "BTC", "market": "US"}),
-        params={"ticker": "BTC", "market": "US"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
-    )
-    assert result.get("isError") is True
-    assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
-    details = result.get("details")
-    assert isinstance(details, dict)
-    assert "provider_attempts" not in details
-    assert marker.exists() is False
-
-
-@pytest.mark.parametrize(
-    ("tool_name", "worker_id"),
-    CN_A_TOOLS,
-)
-def test_existing_domain_pack_tools_accept_hk_market_at_js_boundary(
-    tmp_path: Path,
-    tool_name: str,
-    worker_id: str,
+    pack_domain: str,
 ) -> None:
     stdin_path = tmp_path / "stdin.json"
     fake_python = tmp_path / "fake_python_pack.sh"
@@ -307,7 +264,7 @@ def test_existing_domain_pack_tools_accept_hk_market_at_js_boundary(
         "ok": True,
         "schema_version": f"{tool_name}.test.v1",
         "tool_name": tool_name,
-        "reader_brief": f"HK pack accepted by {tool_name}",
+        "reader_brief": f"{tool_name} returned natural-language material.",
     }
     _write_executable(
         fake_python,
@@ -318,10 +275,7 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     )
     result = _run_tool(
         tool_name=tool_name,
-        ctx=_runtime_ctx(
-            worker_id=worker_id,
-            runtime_vars={"ticker": "00700.HK", "market": "HK"},
-        ),
+        ctx=_runtime_ctx(worker_id=worker_id),
         params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
@@ -330,157 +284,80 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
     assert stdin_payload["tool_input"]["ticker"] == "00700.HK"
     assert stdin_payload["tool_input"]["market"] == "HK"
+    assert stdin_payload["tool_input"]["company_name"] == "腾讯控股"
+    assert stdin_payload["tool_input"]["current_date"] == "2026-05-17"
     assert stdin_payload["runtime_context"]["tool_name"] == tool_name
     assert stdin_payload["runtime_context"]["worker_id"] == worker_id
+    assert stdin_payload["runtime_context"]["pack_domain"] == pack_domain
 
 
-@pytest.mark.parametrize(
-    ("tool_name", "worker_id"),
-    (*CN_A_TOOLS, *US_TOOLS, *CRYPTO_TOOLS),
-)
-def test_missing_required_market_returns_structured_params_error_without_spawning_python(
-    tmp_path: Path,
-    tool_name: str,
-    worker_id: str,
-) -> None:
-    marker = tmp_path / "python_called.txt"
-    fake_python = tmp_path / "fake_python.sh"
-    _write_executable(
-        fake_python,
-        f"""#!/usr/bin/env bash
-echo called > {marker}
-echo '{{"ok": true}}'
-""",
-    )
-    result = _run_tool(
-        tool_name=tool_name,
-        ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"market": ""}),
-        params={"ticker": "600519"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
-    )
-    assert result.get("isError") is True
-    assert _error_code(result) in {"TOOL_CONTEXT_INCOMPLETE", "TOOL_PARAMS_INVALID"}
-    assert marker.exists() is False
-
-
-def test_successful_us_original_tool_uses_us_profile_and_passes_runtime_market_to_python(tmp_path: Path) -> None:
+def test_model_supplied_openbb_runtime_fields_are_ignored_in_favor_of_python_context(tmp_path: Path) -> None:
     stdin_path = tmp_path / "stdin.json"
     fake_python = tmp_path / "fake_python_pack.sh"
     payload = {
         "ok": True,
-        "schema_version": "us_get_stock_data.v1",
-        "tool_name": "get_stock_data",
-        "reader_brief": "# Stock data for AAPL from 2026-04-01 to 2026-05-13\nDate,Open,High,Low,Close,Volume",
+        "reader_brief": "资料包已返回。",
     }
     _write_executable(
         fake_python,
         f"""#!/usr/bin/env bash
 cat > {stdin_path}
-echo {json.dumps(json.dumps(payload))}
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 """,
     )
+    ctx = _runtime_ctx(
+        worker_id="market_analyst",
+        runtime_vars={
+            "ticker": "AAPL",
+            "market": "US",
+            "profile": "US",
+            "company_name": "Apple Inc.",
+            "start_date": "2026-05-01",
+            "end_date": "2026-05-17",
+            "current_date": "2026-05-17",
+            "currency": "USD",
+            "freshness_max_age_seconds": 600,
+        },
+    )
     result = _run_tool(
-        tool_name="get_stock_data",
-        ctx=_runtime_ctx(
-            worker_id="market_analyst",
-            runtime_vars={
-                "ticker": "AAPL",
-                "market": "US",
-                "start_date": "2026-04-01",
-                "end_date": "2026-05-13",
-            },
-        ),
-        params={"symbol": "AAPL"},
+        tool_name="claw_get_market_pack",
+        ctx=ctx,
+        params={
+            "ticker": "MSFT",
+            "market": "NASDAQ",
+            "profile": "NASDAQ",
+            "company_name": "Wrong Company",
+            "start_date": "2000-01-01",
+            "end_date": "2000-01-02",
+            "current_date": "2000-01-03",
+            "currency": "EUR",
+            "freshness_max_age_seconds": -1,
+        },
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
+
     assert result.get("isError") is False
-    assert result["content"][0]["text"] == payload["reader_brief"]
     stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
-    assert stdin_payload["tool_input"]["symbol"] == "AAPL"
+    assert stdin_payload["tool_input"]["ticker"] == "AAPL"
     assert stdin_payload["tool_input"]["market"] == "US"
-    assert stdin_payload["tool_input"]["start_date"] == "2026-04-01"
-    assert stdin_payload["tool_input"]["end_date"] == "2026-05-13"
-    assert stdin_payload["runtime_context"]["tool_name"] == "get_stock_data"
-
-
-def test_successful_domain_pack_tool_passes_hk_market_to_python(tmp_path: Path) -> None:
-    stdin_path = tmp_path / "stdin.json"
-    fake_python = tmp_path / "fake_python_pack.sh"
-    payload = {
-        "ok": True,
-        "schema_version": "hk_fundamental_pack.v1",
-        "tool_name": "fundamental_fundamentals_data_pack",
-        "reader_brief": "港股基本面资料包：00700.HK。主源策略：优先使用 Tushare。",
-    }
-    _write_executable(
-        fake_python,
-        f"""#!/usr/bin/env bash
-cat > {stdin_path}
-echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
-""",
-    )
-    result = _run_tool(
-        tool_name="fundamental_fundamentals_data_pack",
-        ctx=_runtime_ctx(
-            worker_id="fundamental_analyst",
-            runtime_vars={
-                "ticker": "00700.HK",
-                "market": "HK",
-                "start_date": "2025-01-01",
-                "end_date": "2026-05-14",
-            },
-        ),
-        params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
-    )
-    assert result.get("isError") is False
-    assert result["content"][0]["text"] == payload["reader_brief"]
-    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
-    assert stdin_payload["tool_input"]["ticker"] == "00700.HK"
-    assert stdin_payload["tool_input"]["market"] == "HK"
-    assert stdin_payload["runtime_context"]["tool_name"] == "fundamental_fundamentals_data_pack"
-    assert stdin_payload["runtime_context"]["worker_id"] == "fundamental_analyst"
-
-
-def test_successful_crypto_market_pack_passes_crypto_market_to_python(tmp_path: Path) -> None:
-    stdin_path = tmp_path / "stdin.json"
-    fake_python = tmp_path / "fake_python_pack.sh"
-    payload = {
-        "ok": True,
-        "schema_version": "crypto_market_pack.v1",
-        "tool_name": "crypto_market_data_pack",
-        "reader_brief": "BTC CRYPTO 本地市场资料包：已生成图表资产。",
-    }
-    _write_executable(
-        fake_python,
-        f"""#!/usr/bin/env bash
-cat > {stdin_path}
-echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
-""",
-    )
-    result = _run_tool(
-        tool_name="crypto_market_data_pack",
-        ctx=_runtime_ctx(
-            worker_id="market_analyst",
-            runtime_vars={
-                "ticker": "BTC",
-                "market": "CRYPTO",
-                "start_date": "2026-05-01",
-                "end_date": "2026-05-15",
-            },
-        ),
-        params={"ticker": "BTC", "market": "CRYPTO"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
-    )
-    assert result.get("isError") is False
-    assert result["content"][0]["text"] == payload["reader_brief"]
-    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
-    assert stdin_payload["tool_input"]["ticker"] == "BTC"
-    assert stdin_payload["tool_input"]["market"] == "CRYPTO"
-    assert stdin_payload["runtime_context"]["tool_name"] == "crypto_market_data_pack"
-    assert stdin_payload["runtime_context"]["worker_id"] == "market_analyst"
-    assert stdin_payload["runtime_context"]["start_date"] == "2026-05-01"
-    assert stdin_payload["runtime_context"]["end_date"] == "2026-05-15"
+    assert stdin_payload["tool_input"]["profile"] == "US"
+    assert stdin_payload["tool_input"]["company_name"] == "Apple Inc."
+    assert stdin_payload["tool_input"]["start_date"] == "2026-05-01"
+    assert stdin_payload["tool_input"]["end_date"] == "2026-05-17"
+    assert stdin_payload["tool_input"]["current_date"] == "2026-05-17"
+    assert stdin_payload["tool_input"]["currency"] == "USD"
+    assert stdin_payload["tool_input"]["freshness_max_age_seconds"] == 600
+    assert stdin_payload["runtime_context"]["ignored_model_input_fields"] == [
+        "company_name",
+        "currency",
+        "current_date",
+        "end_date",
+        "freshness_max_age_seconds",
+        "market",
+        "profile",
+        "start_date",
+        "ticker",
+    ]
 
 
 def test_non_json_stdout_returns_protocol_error_with_redacted_stderr_summary(tmp_path: Path) -> None:
@@ -496,9 +373,9 @@ exit 0
 """,
     )
     result = _run_tool(
-        tool_name="news_news_data_pack",
+        tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst"),
-        params={"ticker": "600519", "market": "CN_A"},
+        params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
     assert result.get("isError") is True
@@ -537,13 +414,13 @@ const api = {{
   }},
 }};
 plugin.register(api);
-const tool = tools.find((item) => item.name === "news_news_data_pack");
+const tool = tools.find((item) => item.name === "claw_get_news_pack");
 if (!tool) {{
-  throw new Error("news_news_data_pack not found");
+  throw new Error("claw_get_news_pack not found");
 }}
 const params = {{
-  ticker: "600519",
-  market: "CN_A",
+  ticker: "00700.HK",
+  market: "HK",
   aliases: Array.from({{ length: 512 }}, () => "x".repeat(1024)),
 }};
 const result = await tool.execute("call", params);
@@ -569,20 +446,19 @@ process.stdout.write(JSON.stringify(result));
     summary = error.get("stderr_summary")
     assert isinstance(summary, str)
     assert len(summary) <= 2000
-    assert "EPIPE" in summary
 
 
 def test_successful_pack_only_exposes_natural_material_to_model_and_keeps_details_off_prompt(tmp_path: Path) -> None:
     fake_python = tmp_path / "fake_python_pack.sh"
     payload = {
         "ok": True,
-        "schema_version": "cn_a_frontline_pack.v1",
-        "tool_name": "news_news_data_pack",
-        "reader_brief": "资料范围：已采集公司新闻十条。材料正文：公司新闻包括茅台发布经营进展公告。证据缺口：宏观新闻不足。只可按这些事实写报告。",
+        "schema_version": "openbb_news_pack.v1",
+        "tool_name": "claw_get_news_pack",
+        "reader_brief": "资料范围：已采集公司新闻十条。材料正文：公司新闻包括腾讯发布经营进展公告。证据缺口：宏观新闻不足。",
         "provider_attempts": [
             {
-                "provider": "akshare",
-                "endpoint": "stock_news_em",
+                "provider": "openbb",
+                "endpoint": "news/company",
                 "raw_payload_ref": "viking://resources/workflow/run/frontline/news/raw.json",
             }
         ],
@@ -596,9 +472,9 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 """,
     )
     result = _run_tool(
-        tool_name="news_news_data_pack",
+        tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst"),
-        params={"ticker": "600519", "market": "CN_A"},
+        params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
     assert result.get("isError") is False
@@ -614,22 +490,58 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert details.get("openviking_l2_refs") == payload["openviking_l2_refs"]
 
 
+def test_pack_runtime_uses_tool_call_scoped_provider_call_id(tmp_path: Path) -> None:
+    fake_python = tmp_path / "fake_python_pack.py"
+    _write_executable(
+        fake_python,
+        """#!/usr/bin/env python3
+import json
+import sys
+
+payload = json.load(sys.stdin)
+runtime = payload["runtime_context"]
+print(json.dumps({
+    "ok": True,
+    "reader_brief": "资料包已返回。",
+    "runtime_call_id": runtime["call_id"],
+    "dispatch_id": runtime["dispatch_id"],
+    "worker_call_id": runtime["worker_call_id"],
+    "tool_call_id": runtime["tool_call_id"],
+}, ensure_ascii=False))
+""",
+    )
+    result = _run_tool(
+        tool_name="claw_get_news_pack",
+        ctx=_runtime_ctx(worker_id="news_analyst"),
+        params={"ticker": "00700.HK", "market": "HK"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+
+    assert result.get("isError") is False
+    details = result.get("details")
+    assert isinstance(details, dict)
+    assert details["dispatch_id"] == "call-1"
+    assert details["worker_call_id"] == "call-1"
+    assert details["tool_call_id"] == "call"
+    assert details["runtime_call_id"] == "call-1__tool-call"
+
+
 def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(tmp_path: Path) -> None:
     fake_python = tmp_path / "fake_python_pack.sh"
     payload = {
         "ok": False,
-        "schema_version": "crypto_news_pack.v1",
-        "tool_name": "crypto_news_data_pack",
+        "schema_version": "openbb_social_pack.v1",
+        "tool_name": "claw_get_social_pack",
         "reader_brief": (
-            "BTC 的 CRYPTO 新闻资料包已返回，readiness=insufficient："
-            "没有原始新闻事实源。数据缺口：搜索发现不能替代新闻事实。"
+            "00700.HK 的 HK 舆情资料包已返回，readiness=insufficient："
+            "没有原始社交事实源。数据缺口：搜索发现不能替代舆情事实。"
         ),
-        "readiness": {"status": "insufficient", "reason": "没有原始新闻事实源。"},
+        "readiness": {"status": "insufficient", "reason": "没有原始社交事实源。"},
         "provider_attempts": [
             {
-                "provider": "Brave Search",
+                "provider": "openbb",
                 "status": "config_blocked",
-                "raw_payload_ref": "viking://resources/workflow/run/frontline/news/raw.json",
+                "raw_payload_ref": "viking://resources/workflow/run/frontline/social/raw.json",
             }
         ],
     }
@@ -641,12 +553,9 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     )
 
     result = _run_tool(
-        tool_name="crypto_news_data_pack",
-        ctx=_runtime_ctx(
-            worker_id="news_analyst",
-            runtime_vars={"ticker": "BTC", "market": "CRYPTO"},
-        ),
-        params={"ticker": "BTC", "market": "CRYPTO"},
+        tool_name="claw_get_social_pack",
+        ctx=_runtime_ctx(worker_id="social_analyst"),
+        params={"ticker": "00700.HK", "market": "HK"},
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
 
@@ -662,18 +571,6 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 
 def test_provider_total_timeout_contract_keeps_subprocess_plus_five_seconds_buffer() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
-    assert "CN_A_PROVIDER_TOTAL_TIMEOUT_MS" in source
+    assert "DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS" in source
     assert "SUBPROCESS_TIMEOUT_BUFFER_MS = 5000" in source
     assert "Math.max(totalTimeout + SUBPROCESS_TIMEOUT_BUFFER_MS, DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS)" in source
-
-
-def test_news_social_wiring_uses_shared_frontline_data_pack_modules() -> None:
-    source = PLUGIN_PATH.read_text(encoding="utf-8")
-    assert "from frontline_data_pack.news_data_pack import run_news_data_pack" in source
-    assert "from frontline_data_pack.social_sentiment_pack import run_social_sentiment_pack" in source
-    assert "import frontline_data_pack.us_data_pack as us_data_pack" in source
-    assert "from frontline_data_pack.models import to_jsonable" in source
-    assert "json.dumps(to_jsonable(result), ensure_ascii=False, default=str)" in source
-    assert '"cn-a-news-data"' not in source
-    assert '"cn-a-social-data"' not in source
-    assert '"social_data_pack.py"' not in source

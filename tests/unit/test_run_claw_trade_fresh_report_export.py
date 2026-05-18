@@ -36,7 +36,7 @@ def test_export_worker_evidence_uses_last_provider_request(tmp_path):
                         {
                             "type": "function",
                             "function": {
-                                "name": "get_fundamentals",
+                                "name": "claw_get_fundamental_pack",
                                 "arguments": '{"ticker":"AAPL"}',
                             },
                         }
@@ -78,6 +78,6 @@ def test_export_worker_evidence_uses_last_provider_request(tmp_path):
 
     assert "TOOL_RESULT: revenue evidence" in final_prompt
     assert "### tool_calls" in final_prompt
-    assert "`get_fundamentals`" in final_prompt
+    assert "`claw_get_fundamental_pack`" in final_prompt
     assert "TOOL_RESULT: revenue evidence" not in initial_prompt
     assert provider_final_prompt == final_prompt

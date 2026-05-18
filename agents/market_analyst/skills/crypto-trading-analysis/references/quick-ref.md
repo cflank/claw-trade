@@ -10,7 +10,7 @@ market/macro context -> on-chain and derivatives -> multi-timeframe technicals -
 
 ## Data First
 
-- Start with `crypto_market_data_pack`; it internally reads BB/CoinGlass and returns compact natural-language material for the worker.
+- Start with `claw_get_market_pack`; it returns compact natural-language market material for the worker.
 - Preserve `status`, `as_of`, `sources[]`, `confidence`, `readiness`, `warnings[]`, `data_gaps[]`, `conflicts[]`, and `next_actions[]`.
 - Do not re-query domains that are already `ready` unless stale, incomplete, conflicting, or explicitly requested.
 - Browser or user-observed chart evidence stays low confidence and cannot close structured gaps.

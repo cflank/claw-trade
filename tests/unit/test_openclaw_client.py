@@ -100,17 +100,17 @@ def test_crypto_single_pack_frontline_command_sets_initial_tool_choice() -> None
             market="CRYPTO",
             currency="USD",
             currency_symbol="$",
-            allowed_tools=("crypto_social_sentiment_pack",),
+            allowed_tools=("claw_get_social_pack",),
             upstream_materials=(),
             openviking_read_capabilities=(),
         )
     )
     payload = serialize_openclaw_command_payload(command)
 
-    assert command.initial_tool_choice == "crypto_social_sentiment_pack"
+    assert command.initial_tool_choice == "claw_get_social_pack"
     assert payload["initial_tool_choice"] == {
         "type": "tool",
-        "name": "crypto_social_sentiment_pack",
+        "name": "claw_get_social_pack",
     }
 
 
@@ -126,17 +126,17 @@ def test_crypto_single_market_pack_command_forces_initial_tool_choice() -> None:
             market="CRYPTO",
             currency="USD",
             currency_symbol="$",
-            allowed_tools=("crypto_market_data_pack",),
+            allowed_tools=("claw_get_market_pack",),
             upstream_materials=(),
             openviking_read_capabilities=(),
         )
     )
     payload = serialize_openclaw_command_payload(command)
 
-    assert command.initial_tool_choice == "crypto_market_data_pack"
+    assert command.initial_tool_choice == "claw_get_market_pack"
     assert payload["initial_tool_choice"] == {
         "type": "tool",
-        "name": "crypto_market_data_pack",
+        "name": "claw_get_market_pack",
     }
 
 

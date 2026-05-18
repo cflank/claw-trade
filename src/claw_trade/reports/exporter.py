@@ -739,7 +739,9 @@ def _discover_market_chart_images(*, state: WorkflowState, materials: tuple[Appr
         for chart_dir in candidate_dirs:
             if not chart_dir.exists() or not chart_dir.is_dir():
                 continue
-            for path in sorted(chart_dir.glob("*")):
+            for path in sorted(chart_dir.rglob("*")):
+                if not path.is_file():
+                    continue
                 path_key = str(path.resolve())
                 if path_key in seen:
                     continue
