@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import json
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index
-from claw_trade.guards.export_claims import ExportClaim, ExportClaimMapping, parse_export_claim_mapping
+from claw_trade.guards.export_claims import (
+    ExportClaim,
+    ExportClaimMapping,
+    parse_export_claim_mapping,
+)
 from claw_trade.reports.exporter import (
+    ReportMaterial,
     build_export_claim_mapping,
     build_worker_appendices,
     export_final_report,
     load_report_materials,
     render_final_report,
-    ReportMaterial,
     run_export_guards,
 )
 from claw_trade.workflow.models import RunRequest, RunStatus, Stage, WorkflowState
@@ -131,6 +135,43 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     assert not (state.run_dir / "reports" / "export-result.json").exists()
 
 
+def test_export_final_report_fails_when_report_polisher_missing_required_sections(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-missing-final-report-sections")
+    manifest, reader = _build_manifest_and_reader(state)
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    reader._content_by_material_id[report_material.material_id] = (
+        "# 贵州茅台（600519）投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终裁决：维持审慎增持。\n\n"
+        "## 二、技术指标分析\n"
+        "技术面结论：量价结构改善。\n\n"
+        "## 三、基本面分析\n"
+        "基本面结论：盈利韧性尚可。\n\n"
+        "## 六、交易计划与组合风险\n"
+        "交易计划：分批执行。\n\n"
+        "## 七、关键分歧与跟踪条件\n"
+        "分歧集中在估值安全边际。\n\n"
+        "## 八、最终结论\n"
+        "维持组合经理结论。"
+    ).encode("utf-8")
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-missing-sections")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.category == "final_report_structure"
+    assert "四,五" in (result.failure.reason or "")
+    assert result.final_report_path is None
+    structure_path = state.run_dir / "reports" / "final-report-structure.json"
+    assert structure_path.exists()
+    structure_payload = json.loads(structure_path.read_text(encoding="utf-8"))
+    assert structure_payload["ok"] is False
+    assert structure_payload["guard_source"].startswith("human approval")
+
+
 def test_render_final_report_keeps_reader_report_clean_when_polisher_exists(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-clean-reader-report")
     manifest, reader = _build_manifest_and_reader(state)
@@ -154,7 +195,73 @@ def test_render_final_report_keeps_reader_report_clean_when_polisher_exists(tmp_
     assert "export-claim-market_analyst-t00-claim-market_analyst" in claim_ids
 
 
-def test_render_final_report_preserves_full_market_indicator_material_when_polisher_exists(tmp_path: Path) -> None:
+def test_render_final_report_concatenates_multiple_report_polisher_l1_by_turn_order(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-multi-polisher-report")
+    polisher_turn_0 = _sample_material(state=state, worker_id="report_polisher", stage=Stage.FINAL_REPORT, index=13)
+    polisher_turn_1 = _material_for_turn(
+        state=state,
+        material=polisher_turn_0,
+        material_id="mat-report-polisher-t1",
+        call_id="call-14",
+        turn_index=1,
+        round_index=1,
+        claim_id="claim-report-polisher-t1",
+    )
+    polisher_turn_2 = _material_for_turn(
+        state=state,
+        material=polisher_turn_0,
+        material_id="mat-report-polisher-t2",
+        call_id="call-15",
+        turn_index=2,
+        round_index=1,
+        claim_id="claim-report-polisher-t2",
+    )
+    report_materials = (
+        ReportMaterial(
+            material=polisher_turn_2,
+            l1_text=(
+                "# Apple（AAPL）投资研究报告\n\n"
+                "# 六、交易计划\n六\n\n"
+                "# 七、风险条件\n七\n\n"
+                "# 八、最终结论\n八"
+            ),
+        ),
+        ReportMaterial(
+            material=polisher_turn_0,
+            l1_text="# Apple（AAPL）投资研究报告\n\n## 一、投资结论\n一\n\n## 二、市场结构\n二",
+        ),
+        ReportMaterial(
+            material=polisher_turn_1,
+            l1_text="# 三、基本面分析\n三\n\n# 四、消息面分析\n四\n\n# 五、情绪结构\n五",
+        ),
+    )
+
+    rendered = render_final_report(
+        materials=(polisher_turn_2, polisher_turn_0, polisher_turn_1),
+        report_materials=report_materials,
+    )
+    mapping = build_export_claim_mapping(
+        rendered=rendered,
+        materials=(polisher_turn_2, polisher_turn_0, polisher_turn_1),
+    )
+
+    assert rendered.text.startswith("# Apple（AAPL）投资研究报告\n")
+    assert rendered.text.count("# Apple（AAPL）投资研究报告") == 1
+    assert "## 八、最终结论" in rendered.text
+    assert "## 一、投资结论" in rendered.text
+    assert "## 三、基本面分析" in rendered.text
+    assert "\n# 三、基本面分析" not in rendered.text
+    assert "\n# 六、交易计划" not in rendered.text
+    assert rendered.text.index("## 一、投资结论") < rendered.text.index("## 三、基本面分析")
+    assert rendered.text.index("## 三、基本面分析") < rendered.text.index("## 六、交易计划")
+    assert rendered.text.index("## 六、交易计划") < rendered.text.index("## 八、最终结论")
+    claim_ids = {claim.export_claim_id for claim in mapping.claims}
+    assert "export-claim-report_polisher-t00-claim-report_polisher" in claim_ids
+    assert "export-claim-report_polisher-t01-claim-report-polisher-t1" in claim_ids
+    assert "export-claim-report_polisher-t02-claim-report-polisher-t2" in claim_ids
+
+
+def test_render_final_report_uses_polisher_body_without_raw_market_detail_injection(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-polisher-keeps-market-details", profile="CRYPTO")
     manifest, reader = _build_manifest_and_reader(state)
     market_material = next(
@@ -198,16 +305,10 @@ def test_render_final_report_preserves_full_market_indicator_material_when_polis
         report_materials=loaded.report_materials,
     )
 
-    assert "### 市场分析师完整指标材料" in rendered.text
-    assert "#### 数据状态" in rendered.text
-    assert "#### 指标覆盖" in rendered.text
-    assert "##### TD Sequential" in rendered.text
-    assert "##### 谐波形态" in rendered.text
-    assert "readiness：overall ready，score 89" in rendered.text
-    assert "| TD 9/13 | 已引用 | 反弹信号与周线风险冲突 |" in rendered.text
-    assert "数据：4h/1d buy countdown 13；1w sell countdown 13。" in rendered.text
-    assert rendered.text.index("## 二、市场结构与技术指标分析") < rendered.text.index("### 市场分析师完整指标材料")
-    assert rendered.text.index("### 市场分析师完整指标材料") < rendered.text.index("终稿编辑自己的市场结构叙述。")
+    assert "### 市场分析师完整指标材料" not in rendered.text
+    assert "readiness：overall ready，score 89" not in rendered.text
+    assert "数据：4h/1d buy countdown 13；1w sell countdown 13。" not in rendered.text
+    assert "终稿编辑自己的市场结构叙述。" in rendered.text
     assert rendered.text.index("终稿编辑自己的市场结构叙述。") < rendered.text.index("## 三、项目与代币基本面分析")
 
 
@@ -234,14 +335,24 @@ def test_export_final_report_places_us_chart_assets_in_technical_market_analysis
     manifest, reader = _build_manifest_and_reader(state)
     report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
     reader._content_by_material_id[report_material.material_id] = (
-        "# Apple (AAPL) Investment Research Report\n\n"
-        "## 1. Investment Decision\n"
+        "# Apple（AAPL）投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
         "Portfolio manager final decision: hold with conditional execution.\n\n"
-        "## 2. Technical Market Analysis\n"
+        "## 二、技术指标分析\n"
         "### Trend Structure\n"
         "Price action remains constructive but needs volume confirmation.\n\n"
-        "## 3. Fundamental Analysis\n"
-        "Margins remain resilient while valuation needs monitoring.\n"
+        "## 三、基本面分析\n"
+        "Margins remain resilient while valuation needs monitoring.\n\n"
+        "## 四、消息面、行业与宏观环境\n"
+        "News flow remains balanced.\n\n"
+        "## 五、市场情绪与交易结构\n"
+        "Sentiment is constructive but crowded.\n\n"
+        "## 六、交易计划与组合风险\n"
+        "Execution remains conditional.\n\n"
+        "## 七、关键分歧与跟踪条件\n"
+        "Track volume confirmation.\n\n"
+        "## 八、最终结论\n"
+        "Maintain the PM decision."
     ).encode("utf-8")
     source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
     source_chart.parent.mkdir(parents=True, exist_ok=True)
@@ -252,12 +363,12 @@ def test_export_final_report_places_us_chart_assets_in_technical_market_analysis
     assert result.status == "passed"
     assert result.final_report_path is not None
     report_text = result.final_report_path.read_text(encoding="utf-8")
-    assert "## 2. Technical Market Analysis" in report_text
+    assert "## 二、技术指标分析" in report_text
     assert "### 技术图表" in report_text
     assert "assets/market-01-market-structure.png" in report_text
-    assert report_text.index("## 2. Technical Market Analysis") < report_text.index("### 技术图表")
+    assert report_text.index("## 二、技术指标分析") < report_text.index("### 技术图表")
     assert report_text.index("### 技术图表") < report_text.index("### Trend Structure")
-    assert report_text.index("### 技术图表") < report_text.index("## 3. Fundamental Analysis")
+    assert report_text.index("### 技术图表") < report_text.index("## 三、基本面分析")
 
 
 def test_export_final_report_places_crypto_chart_assets_in_market_structure_section(tmp_path: Path) -> None:
@@ -272,7 +383,17 @@ def test_export_final_report_places_crypto_chart_assets_in_market_structure_sect
         "### 指标覆盖\n"
         "价格位、清算地图、资金费率和 OI 均有真实材料。\n\n"
         "## 三、项目与代币基本面分析\n"
-        "链上和估值材料为部分覆盖。\n"
+        "链上和估值材料为部分覆盖。\n\n"
+        "## 四、新闻、监管与事件驱动\n"
+        "监管和事件材料为部分覆盖。\n\n"
+        "## 五、社区情绪、事件预期与交易拥挤度\n"
+        "情绪材料为部分覆盖。\n\n"
+        "## 六、交易计划与组合风险\n"
+        "交易计划保持条件执行。\n\n"
+        "## 七、关键分歧与跟踪条件\n"
+        "跟踪资金费率和链上确认。\n\n"
+        "## 八、最终结论\n"
+        "维持组合经理结论。"
     ).encode("utf-8")
     source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "BTC_indicator_panels.png"
     source_chart.parent.mkdir(parents=True, exist_ok=True)
@@ -303,7 +424,17 @@ def test_export_final_report_places_hk_chart_assets_in_trade_structure_section(t
         "### 图表读法\n"
         "均线、成交额和支撑压力均有真实材料。\n\n"
         "## 三、基本面与估值分析\n"
-        "基本面和估值材料为部分覆盖。\n"
+        "基本面和估值材料为部分覆盖。\n\n"
+        "## 四、公告、消息面与行业环境\n"
+        "公告和行业材料为部分覆盖。\n\n"
+        "## 五、市场情绪、港股通与交易拥挤度\n"
+        "情绪和港股通材料为部分覆盖。\n\n"
+        "## 六、交易计划与组合风险\n"
+        "交易计划保持条件执行。\n\n"
+        "## 七、关键分歧与跟踪条件\n"
+        "跟踪成交额和资金流。\n\n"
+        "## 八、最终结论\n"
+        "维持组合经理结论。"
     ).encode("utf-8")
     source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "00700_indicator_panels.png"
     source_chart.parent.mkdir(parents=True, exist_ok=True)

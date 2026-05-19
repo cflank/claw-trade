@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import shutil
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -15,7 +16,6 @@ from typing import Any
 from claw_trade.cli.run_control import _build_runner, _data_gateway_mode_from_env
 from claw_trade.config.report_workflow_settings import load_report_workflow_settings
 from claw_trade.workflow.models import RunRequest, RunStatus, StopPoint, WorkflowEntryPoint
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "docs" / "evidence"
@@ -41,6 +41,7 @@ WORKER_ORDER = (
 class WorkerExport:
     worker_id: str
     stage: str
+    turn_index: int
     status: str
     final_prompt_path: str
     provider_prompt_initial_path: str
@@ -55,6 +56,13 @@ class WorkerExport:
 
 def safe_token(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip() or "unknown")
+
+
+def call_turn_index(payload: dict[str, Any]) -> int:
+    try:
+        return int(payload.get("turn_index") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -174,17 +182,18 @@ def ordered_call_dirs(run_dir: Path) -> list[Path]:
         except Exception:
             return (999, 999, call_dir.name)
         worker = str(payload.get("worker_id") or "")
-        turn = int(payload.get("turn_index") or 0)
+        turn = call_turn_index(payload)
         return (order.get(worker, 900), turn, call_dir.name)
 
     return sorted(call_dirs, key=sort_key)
 
 
-def export_worker_evidence(call_dir: Path, output_dir: Path) -> WorkerExport:
+def export_worker_evidence(call_dir: Path, output_dir: Path, *, file_prefix: str | None = None) -> WorkerExport:
     call_payload = read_json(call_dir / "call.json")
     result_payload = read_json(call_dir / "openclaw-result.json")
     worker_id = str(call_payload.get("worker_id") or "unknown_worker")
     stage = str(call_payload.get("stage") or "unknown_stage")
+    turn_index = call_turn_index(call_payload)
     status = str(result_payload.get("status") or "unknown")
 
     provider_request_path = resolve_evidence_path(result_payload.get("provider_request_path"), call_dir)
@@ -202,7 +211,7 @@ def export_worker_evidence(call_dir: Path, output_dir: Path) -> WorkerExport:
     final_prompt = extract_final_prompt_text(final_provider_request)
     raw_output = raw_output_path.read_text(encoding="utf-8")
 
-    prefix = safe_token(worker_id)
+    prefix = safe_token(file_prefix or worker_id)
     final_prompt_out = output_dir / f"{prefix}_final_prompt.md"
     provider_prompt_initial_out = output_dir / f"{prefix}_provider_prompt_initial.md"
     provider_prompt_final_out = output_dir / f"{prefix}_provider_prompt_final.md"
@@ -218,6 +227,7 @@ def export_worker_evidence(call_dir: Path, output_dir: Path) -> WorkerExport:
     return WorkerExport(
         worker_id=worker_id,
         stage=stage,
+        turn_index=turn_index,
         status=status,
         final_prompt_path=final_prompt_out.name,
         provider_prompt_initial_path=provider_prompt_initial_out.name,
@@ -261,7 +271,25 @@ def copy_final_report(run_dir: Path, output_dir: Path) -> tuple[Path, int, int, 
 
 def export_run_evidence(run_dir: Path, output_dir: Path) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=False)
-    worker_exports = [export_worker_evidence(call_dir, output_dir) for call_dir in ordered_call_dirs(run_dir)]
+    call_dirs = ordered_call_dirs(run_dir)
+    worker_ids = [
+        str(read_json(call_dir / "call.json").get("worker_id") or "unknown_worker")
+        for call_dir in call_dirs
+    ]
+    duplicate_workers = {worker_id for worker_id, count in Counter(worker_ids).items() if count > 1}
+    used_prefixes: set[str] = set()
+    worker_exports: list[WorkerExport] = []
+    for call_dir in call_dirs:
+        call_payload = read_json(call_dir / "call.json")
+        worker_id = str(call_payload.get("worker_id") or "unknown_worker")
+        file_prefix = worker_id
+        if worker_id in duplicate_workers:
+            turn_index = call_turn_index(call_payload)
+            file_prefix = f"{worker_id}_t{turn_index:02d}"
+            if safe_token(file_prefix) in used_prefixes:
+                file_prefix = f"{file_prefix}_{safe_token(call_dir.name)}"
+        used_prefixes.add(safe_token(file_prefix))
+        worker_exports.append(export_worker_evidence(call_dir, output_dir, file_prefix=file_prefix))
     final_report_path, final_report_chars, final_report_asset_count, worker_appendix_count = copy_final_report(
         run_dir,
         output_dir,

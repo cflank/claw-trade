@@ -479,7 +479,7 @@ def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMan
             )
 
     if stage == Stage.FINAL_REPORT:
-        if not manifest.has_worker("report_polisher", Stage.FINAL_REPORT):
+        if not manifest.has_worker("report_polisher", Stage.FINAL_REPORT, state.run_id):
             return Decision(
                 kind=DecisionKind.FAIL,
                 next_status=RunStatus.FAILED,

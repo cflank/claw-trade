@@ -31,6 +31,26 @@ _FORBIDDEN_US_ATOMICS = {
     "get_global_news",
 }
 
+_FORBIDDEN_LEGACY_ALIASES = {
+    "market_market_data_pack",
+    "us_market_data_pack",
+    "cn_a_market_data_pack",
+    "crypto_market_data_pack",
+    "fundamental_fundamentals_data_pack",
+    "us_fundamentals_data_pack",
+    "cn_a_fundamentals_data_pack",
+    "crypto_fundamental_data_pack",
+    "news_news_data_pack",
+    "us_news_data_pack",
+    "cn_a_news_data_pack",
+    "crypto_news_data_pack",
+    "social_social_sentiment_pack",
+    "us_social_sentiment_pack",
+    "cn_a_social_sentiment_pack",
+    "crypto_social_sentiment_pack",
+    "bb_crypto_data",
+}
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -111,7 +131,10 @@ def test_openbb_mcp_visible_tools_are_pack_only() -> None:
         "claw_get_social_pack",
     )
     assert set(tools).isdisjoint(_FORBIDDEN_US_ATOMICS)
+    assert set(tools).isdisjoint(_FORBIDDEN_LEGACY_ALIASES)
     for name in tools:
+        assert name.startswith("claw_get_")
+        assert name.endswith("_pack")
         assert not any(pattern in name for pattern in _FORBIDDEN_OPENBB_PATTERNS)
 
 
@@ -187,6 +210,27 @@ def test_openclaw_llm_provider_payload_scan_rejects_us_atomic_tools(forbidden: s
         _scan_openclaw_llm_provider_payload(payload)
 
 
+@pytest.mark.parametrize("forbidden", sorted(_FORBIDDEN_LEGACY_ALIASES))
+def test_openclaw_llm_provider_payload_scan_rejects_legacy_alias_tools(forbidden: str) -> None:
+    payload = {
+        "source": "provider_request_capture",
+        "runtime_markers": {
+            "run_id": "run-1",
+            "call_id": "call-1",
+            "worker_id": "research_manager",
+            "stage": "investment_decision",
+            "profile": "CRYPTO",
+            "openclaw_run_id": "oc-1",
+        },
+        "payload": {
+            "messages": [{"role": "user", "content": "分析"}],
+            "tools": [{"name": forbidden}],
+        },
+    }
+    with pytest.raises(ValueError, match="forbidden tool"):
+        _scan_openclaw_llm_provider_payload(payload)
+
+
 def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str, ...]:
     source = payload.get("source")
     if source != "provider_request_capture":
@@ -208,6 +252,10 @@ def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str
         if not name:
             raise ValueError("invalid tool item in payload.tools")
         if name in _FORBIDDEN_US_ATOMICS:
+            raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {name}")
+        if name in _FORBIDDEN_LEGACY_ALIASES:
+            raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {name}")
+        if not (name.startswith("claw_get_") and name.endswith("_pack")):
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {name}")
         if any(pattern in name for pattern in _FORBIDDEN_OPENBB_PATTERNS):
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {name}")

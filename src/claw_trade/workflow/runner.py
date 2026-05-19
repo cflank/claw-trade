@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-import json
 from pathlib import Path
 from threading import Lock
 from typing import Callable, Protocol
@@ -14,10 +14,11 @@ from claw_trade.artifacts.openviking_client import OpenVikingReadResult
 from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.config.profiles import require_profile
 from claw_trade.config.tool_names import load_tool_registry
-from claw_trade.data_gateway.openviking import LineageWriteResult
 from claw_trade.data_gateway.models import RunProviderPlan
+from claw_trade.data_gateway.openviking import LineageWriteResult
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
 from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner, build_report_run_plan
+from claw_trade.guards.artifact_flow import validate_artifact_flow
 from claw_trade.guards.common import (
     ApprovalResult,
     BootResult,
@@ -25,16 +26,26 @@ from claw_trade.guards.common import (
     combine_guard_results,
     should_early_stop,
 )
-from claw_trade.guards.artifact_flow import validate_artifact_flow
 from claw_trade.guards.openviking_access import validate_openviking_runtime_reads
 from claw_trade.guards.provider_request import validate_provider_request
 from claw_trade.guards.tool_calls import validate_tool_calls
 from claw_trade.guards.visible_tools import validate_visible_tools
 from claw_trade.guards.workspace_evidence import validate_workspace_evidence
-from claw_trade.runtime.evidence_reader import EvidenceReadResult, EvidenceReader, OpenClawResult, ProviderEvidence
+from claw_trade.reports.structure import validate_report_polisher_segment_text
+from claw_trade.runtime.evidence_reader import (
+    EvidenceReader,
+    EvidenceReadResult,
+    OpenClawResult,
+    ProviderEvidence,
+)
 from claw_trade.runtime.openclaw_client import build_openclaw_command
 from claw_trade.runtime.request_builder import RequestBuildResult, build_worker_call
 from claw_trade.workflow.controller import ControllerInput, decide_next
+from claw_trade.workflow.final_report_plan import (
+    FinalReportSectionPlan,
+    build_final_report_section_plan,
+    parse_final_report_section_instruction,
+)
 from claw_trade.workflow.models import (
     Decision,
     DecisionKind,
@@ -49,8 +60,8 @@ from claw_trade.workflow.models import (
     WorkerCall,
     WorkerResult,
     WorkerStatus,
-    WorkflowState,
     WorkflowEntryPoint,
+    WorkflowState,
     export_result_allows_workflow_completion,
 )
 from claw_trade.workflow.store import WorkflowStore
@@ -122,6 +133,15 @@ class PromptMaterialText:
     turn_index: int = 0
     round_index: int = 1
     role_turn_index: int = 1
+
+
+@dataclass(frozen=True)
+class _BatchCallSpec:
+    worker_id: str
+    turn_index: int
+    round_index: int
+    role_turn_index: int
+    section_plan: FinalReportSectionPlan | None = None
 
 
 class _DefaultRequestBuilder:
@@ -560,32 +580,37 @@ class ControlRunner:
         early_stop_used = False
         early_stop_failures: list[FailureRecord] = []
 
+        batch_manifest = self.manifest_store.load(batch.run_id)
         # collect-first 语义在这里执行：同阶段可恢复失败继续收集，命中早停类再中止。
-        for worker_id in batch.worker_ids:
-            manifest = self.manifest_store.load(batch.run_id)
-            call_result = self.request_builder.build_worker_call(
+        for spec in _batch_call_specs(batch, batch_manifest):
+            worker_id = spec.worker_id
+            turn_index = spec.turn_index
+            round_index = spec.round_index
+            role_turn_index = spec.role_turn_index
+            prepared = self._build_worker_call_with_materials(
                 state=state,
+                batch=batch,
                 worker_id=worker_id,
-                stage=batch.stage,
-                manifest=manifest,
-                turn_index=batch.turn_index,
-                round_index=batch.round_index,
-                role_turn_index=batch.role_turn_index,
+                turn_index=turn_index,
+                round_index=round_index,
+                role_turn_index=role_turn_index,
             )
-            if not call_result.ok or call_result.call is None:
-                failure = self._normalize_build_failure(batch, worker_id, call_result)
-                result = WorkerResult(
-                    run_id=batch.run_id,
-                    call_id=failure.call_id or _synthetic_blocked_call_id(batch.run_id, batch.stage, worker_id),
+            if not prepared.ok or prepared.call is None:
+                failure = prepared.failure or self._unknown_prepare_failure(
+                    state=state,
+                    batch=batch,
                     worker_id=worker_id,
-                    stage=batch.stage,
-                    status=WorkerStatus.BLOCKED,
-                    openclaw_result_path=None,
-                    approved_material_id=None,
+                    turn_index=turn_index,
+                    round_index=round_index,
+                    role_turn_index=role_turn_index,
+                )
+                result = _blocked_worker_result_from_failure(
+                    batch=batch,
+                    worker_id=worker_id,
                     failure=failure,
-                    turn_index=batch.turn_index,
-                    round_index=batch.round_index,
-                    role_turn_index=batch.role_turn_index,
+                    turn_index=turn_index,
+                    round_index=round_index,
+                    role_turn_index=role_turn_index,
                 )
                 self.store.save_worker_result(result)
                 worker_results.append(result)
@@ -599,45 +624,69 @@ class ControlRunner:
                     break
                 continue
 
-            prompt_result = self.attach_prompt_materials(call=call_result.call, manifest=manifest)
-            if not prompt_result.ok or prompt_result.call is None:
-                failure = prompt_result.failure or FailureRecord(
-                    run_id=batch.run_id,
-                    call_id=call_result.call.call_id,
-                    worker_id=worker_id,
-                    stage=batch.stage,
-                    category="prompt_materials",
-                    reason="prompt 材料注入失败",
-                    evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
-                    early_stop=True,
-                    human_action_required=None,
+            call = prepared.call
+            if spec.section_plan is not None:
+                call = _with_prompt_runtime_var(
+                    call,
+                    "final_report_section_instruction",
+                    spec.section_plan.instruction,
                 )
-                result = WorkerResult(
-                    run_id=batch.run_id,
-                    call_id=failure.call_id or call_result.call.call_id,
-                    worker_id=worker_id,
-                    stage=batch.stage,
-                    status=WorkerStatus.BLOCKED,
-                    openclaw_result_path=None,
-                    approved_material_id=None,
-                    failure=failure,
-                    turn_index=batch.turn_index,
-                    round_index=batch.round_index,
-                    role_turn_index=batch.role_turn_index,
-                )
-                self.store.save_worker_result(result)
-                worker_results.append(result)
-                failures.append(failure)
-                early_stop_used = True
-                early_stop_failures.append(failure)
-                break
-
-            call = prompt_result.call
             result = self.run_single_worker(call)
             self.store.save_worker_result(result)
             worker_results.append(result)
             if result.failure is None:
                 continue
+
+            if _should_retry_report_polisher_structure_failure(batch=batch, spec=spec, failure=result.failure):
+                retry_prepared = self._build_worker_call_with_materials(
+                    state=state,
+                    batch=batch,
+                    worker_id=worker_id,
+                    turn_index=turn_index,
+                    round_index=round_index,
+                    role_turn_index=role_turn_index,
+                )
+                if not retry_prepared.ok or retry_prepared.call is None:
+                    failure = retry_prepared.failure or self._unknown_prepare_failure(
+                        state=state,
+                        batch=batch,
+                        worker_id=worker_id,
+                        turn_index=turn_index,
+                        round_index=round_index,
+                        role_turn_index=role_turn_index,
+                    )
+                    retry_result = _blocked_worker_result_from_failure(
+                        batch=batch,
+                        worker_id=worker_id,
+                        failure=failure,
+                        turn_index=turn_index,
+                        round_index=round_index,
+                        role_turn_index=role_turn_index,
+                    )
+                    self.store.save_worker_result(retry_result)
+                    worker_results.append(retry_result)
+                    failures.append(failure)
+                    if should_early_stop(failure):
+                        early_stop_used = True
+                        early_stop_failures.append(failure)
+                        break
+                    if not batch.collect_first:
+                        early_stop_used = True
+                        break
+                    continue
+
+                retry_call = retry_prepared.call
+                retry_call = _with_prompt_runtime_var(
+                    retry_call,
+                    "final_report_section_instruction",
+                    _report_polisher_structure_retry_instruction(spec.section_plan, result.failure),
+                )
+                retry_result = self.run_single_worker(retry_call)
+                self.store.save_worker_result(retry_result)
+                worker_results.append(retry_result)
+                if retry_result.failure is None:
+                    continue
+                result = retry_result
 
             failures.append(result.failure)
             if should_early_stop(result.failure):
@@ -662,6 +711,87 @@ class ControlRunner:
             failures=tuple(failures),
             early_stop_used=early_stop_used,
             collect_first_report_path=report_path,
+        )
+
+    def _build_worker_call_with_materials(
+        self,
+        *,
+        state: WorkflowState,
+        batch: StageBatch,
+        worker_id: str,
+        turn_index: int,
+        round_index: int,
+        role_turn_index: int,
+    ) -> PromptMaterialResult:
+        batch_for_turn = replace(
+            batch,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=role_turn_index,
+        )
+        manifest = self.manifest_store.load(batch.run_id)
+        call_result = self.request_builder.build_worker_call(
+            state=state,
+            worker_id=worker_id,
+            stage=batch.stage,
+            manifest=manifest,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=role_turn_index,
+        )
+        if not call_result.ok or call_result.call is None:
+            return PromptMaterialResult(
+                ok=False,
+                call=None,
+                failure=self._normalize_build_failure(batch_for_turn, worker_id, call_result),
+            )
+
+        prompt_result = self.attach_prompt_materials(call=call_result.call, manifest=manifest)
+        if not prompt_result.ok or prompt_result.call is None:
+            return PromptMaterialResult(
+                ok=False,
+                call=None,
+                failure=prompt_result.failure
+                or FailureRecord(
+                    run_id=batch.run_id,
+                    call_id=call_result.call.call_id,
+                    worker_id=worker_id,
+                    stage=batch.stage,
+                    category="prompt_materials",
+                    reason="prompt 材料注入失败",
+                    evidence_paths=(state.run_dir / "openviking" / "approved-manifest.json",),
+                    early_stop=True,
+                    human_action_required=None,
+                    turn_index=turn_index,
+                    round_index=round_index,
+                    role_turn_index=role_turn_index,
+                ),
+            )
+        return prompt_result
+
+    def _unknown_prepare_failure(
+        self,
+        *,
+        state: WorkflowState,
+        batch: StageBatch,
+        worker_id: str,
+        turn_index: int,
+        round_index: int,
+        role_turn_index: int,
+    ) -> FailureRecord:
+        return FailureRecord(
+            run_id=batch.run_id,
+            call_id=_synthetic_blocked_call_id(batch.run_id, batch.stage, worker_id),
+            worker_id=worker_id,
+            stage=batch.stage,
+            category="blocked",
+            reason="worker call 准备失败但 failure 为空",
+            evidence_paths=(state.run_dir / "request.json",),
+            early_stop=True,
+            human_action_required=None,
+            turn_index=turn_index,
+            round_index=round_index,
+            role_turn_index=role_turn_index,
         )
 
     def _run_stage_batch_concurrent(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
@@ -899,6 +1029,18 @@ class ControlRunner:
                 early_stop=guard_result.early_stop,
             )
 
+        segment_result, segment_path = self.validate_final_report_segment(call, evidence)
+        if segment_result is not None and not segment_result.ok:
+            segment_paths = (segment_path, evidence.raw_output_path) if evidence.raw_output_path is not None else (segment_path,)
+            return _failed_worker_result(
+                call=call,
+                category=segment_result.category,
+                reason=segment_result.reason or "report_polisher segment 章节结构验收失败",
+                paths=segment_paths,
+                openclaw_result_path=openclaw_result_path,
+                early_stop=True,
+            )
+
         if call.stop_after_first_response:
             return WorkerResult(
                 run_id=call.run_id,
@@ -982,6 +1124,67 @@ class ControlRunner:
     def run_material_approval(self, call: WorkerCall, evidence: ProviderEvidence) -> ApprovalResult:
         # 材料批准权在 claw-trade；OpenClaw 成功不等于材料可进入 approved manifest。
         return approve_worker_material(call=call, evidence=evidence, openviking=self.openviking)
+
+    def validate_final_report_segment(self, call: WorkerCall, evidence: ProviderEvidence):
+        if call.worker_id != "report_polisher" or call.stage != Stage.FINAL_REPORT:
+            return None, call.evidence_dir / "final-report-segment-structure.json"
+        scope = parse_final_report_section_instruction(call.prompt_runtime_vars.get("final_report_section_instruction", ""))
+        if scope is None:
+            return None, call.evidence_dir / "final-report-segment-structure.json"
+        evidence_path = call.evidence_dir / "final-report-segment-structure.json"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        if evidence.raw_output_path is None:
+            result = validate_report_polisher_segment_text(
+                "",
+                required_sections=scope.required_sections,
+                allow_h1=scope.allow_h1,
+            )
+            result = replace(result, reason="report_polisher raw_output_path 缺失")
+            payload = {
+                **result.to_payload(),
+                "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+                "raw_output_path": None,
+            }
+            evidence_path.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return result, evidence_path
+        try:
+            text = evidence.raw_output_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            result = validate_report_polisher_segment_text(
+                "",
+                required_sections=scope.required_sections,
+                allow_h1=scope.allow_h1,
+            )
+            payload = {
+                **result.to_payload(),
+                "reason": f"report_polisher raw_output 读取失败: {exc}",
+                "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+                "raw_output_path": str(evidence.raw_output_path),
+            }
+            evidence_path.write_text(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return replace(result, reason=payload["reason"]), evidence_path
+
+        result = validate_report_polisher_segment_text(
+            text,
+            required_sections=scope.required_sections,
+            allow_h1=scope.allow_h1,
+        )
+        payload = {
+            **result.to_payload(),
+            "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+            "raw_output_path": str(evidence.raw_output_path),
+        }
+        evidence_path.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return result, evidence_path
 
     def write_collect_first_report(
         self,
@@ -1323,7 +1526,9 @@ def build_profile_prompt_vars(
             )
             chart_assets_note = (
                 "If the market analysis report generated verified technical charts, the final export will place "
-                "those verified charts in the technical market analysis section; do not invent image paths or chart conclusions."
+                "those verified charts in the technical market analysis section; do not invent image paths or chart conclusions. "
+                "Do not carry forward runtime-level chart asset missing wording into the reader report; chart assets are "
+                "an export requirement, and export failure handles truly missing charts."
             )
         elif call.profile == "CRYPTO":
             supporting_sources = (
@@ -1334,7 +1539,11 @@ def build_profile_prompt_vars(
                 ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
                 ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
             )
-            chart_assets_note = "如市场分析报告已生成技术图表，最终导出会把已验证图表放入市场结构与技术指标分析段；不要编造图片路径或图表结论。"
+            chart_assets_note = (
+                "最终导出会把已验证图表放入市场结构与技术指标分析段；不要编造图片路径或图表结论。"
+                "不要把上游材料中的“图表资产缺失/未生成独立图表文件”当作读者报告的最终风险结论；"
+                "图表资产是导出验收项，真正缺图会由导出失败处理。"
+            )
         else:
             supporting_sources = (
                 ("bull_researcher", Stage.INVESTMENT_DEBATE, "多头研究员"),
@@ -1344,7 +1553,11 @@ def build_profile_prompt_vars(
                 ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
                 ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
             )
-            chart_assets_note = "如市场分析报告已生成技术图表，最终导出会把已验证图表放入技术指标分析段；不要编造图片路径或图表结论。"
+            chart_assets_note = (
+                "最终导出会把已验证图表放入技术指标分析段；不要编造图片路径或图表结论。"
+                "不要把上游材料中的“图表资产缺失/未生成独立图表文件”当作读者报告的最终风险结论；"
+                "图表资产是导出验收项，真正缺图会由导出失败处理。"
+            )
         supporting_reports = _report_bundle(
             material_texts,
             supporting_sources,
@@ -1366,8 +1579,102 @@ def build_profile_prompt_vars(
             "trader_report": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
             "supporting_worker_reports": supporting_reports,
             "chart_assets_note": chart_assets_note,
+            "final_report_section_instruction": "",
         }
     return {}
+
+
+def _batch_call_specs(batch: StageBatch, manifest: ApprovedManifest) -> tuple[_BatchCallSpec, ...]:
+    if batch.stage == Stage.FINAL_REPORT and batch.worker_ids == ("report_polisher",):
+        section_plans = build_final_report_section_plan(
+            material_sizes_by_worker=_final_report_material_sizes(manifest=manifest, run_id=batch.run_id)
+        )
+        return tuple(
+            _BatchCallSpec(
+                worker_id="report_polisher",
+                turn_index=turn_index,
+                round_index=batch.round_index,
+                role_turn_index=batch.role_turn_index,
+                section_plan=section_plan,
+            )
+            for turn_index, section_plan in enumerate(section_plans)
+        )
+    return tuple(
+        _BatchCallSpec(
+            worker_id=worker_id,
+            turn_index=batch.turn_index,
+            round_index=batch.round_index,
+            role_turn_index=batch.role_turn_index,
+            section_plan=None,
+        )
+        for worker_id in batch.worker_ids
+    )
+
+
+def _final_report_material_sizes(*, manifest: ApprovedManifest, run_id: str) -> dict[str, int]:
+    material_sizes: dict[str, int] = {}
+    for material in manifest.all_for_run(run_id):
+        if material.worker_id == "report_polisher":
+            continue
+        material_sizes[material.worker_id] = material_sizes.get(material.worker_id, 0) + material.l1_size_bytes
+    return material_sizes
+
+
+def _with_prompt_runtime_var(call: WorkerCall, key: str, value: str) -> WorkerCall:
+    return replace(call, prompt_runtime_vars={**call.prompt_runtime_vars, key: value})
+
+
+def _blocked_worker_result_from_failure(
+    *,
+    batch: StageBatch,
+    worker_id: str,
+    failure: FailureRecord,
+    turn_index: int,
+    round_index: int,
+    role_turn_index: int,
+) -> WorkerResult:
+    return WorkerResult(
+        run_id=batch.run_id,
+        call_id=failure.call_id or _synthetic_blocked_call_id(batch.run_id, batch.stage, worker_id),
+        worker_id=worker_id,
+        stage=batch.stage,
+        status=WorkerStatus.BLOCKED,
+        openclaw_result_path=None,
+        approved_material_id=None,
+        failure=failure,
+        turn_index=turn_index,
+        round_index=round_index,
+        role_turn_index=role_turn_index,
+    )
+
+
+def _should_retry_report_polisher_structure_failure(
+    *,
+    batch: StageBatch,
+    spec: _BatchCallSpec,
+    failure: FailureRecord,
+) -> bool:
+    return (
+        batch.stage == Stage.FINAL_REPORT
+        and spec.worker_id == "report_polisher"
+        and spec.section_plan is not None
+        and failure.category == "final_report_structure"
+    )
+
+
+def _report_polisher_structure_retry_instruction(
+    section_plan: FinalReportSectionPlan | None,
+    failure: FailureRecord,
+) -> str:
+    original_instruction = section_plan.instruction if section_plan is not None else ""
+    return (
+        f"{original_instruction}\n\n"
+        "【格式重试】上一次输出没有通过终稿分段结构验收："
+        f"{failure.reason}。本次仍然只重写本段，不要补写前后章节。"
+        "如果原指令要求严禁 H1，第一行必须直接是指定的 `##` 二级标题；"
+        "整段不得包含任何以 `# ` 开头的行，不得输出完整报告标题或报告封面。"
+        "不要解释错误原因，不要道歉，直接输出 Markdown 正文。"
+    )
 
 
 def _role_argument(

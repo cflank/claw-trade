@@ -4,6 +4,7 @@ import pytest
 
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, ProviderStatus, SourceRole
 from claw_trade.data_gateway.providers import news as news_providers
+from claw_trade.data_gateway.providers import polymarket as polymarket_providers
 from claw_trade.data_gateway.providers import social as social_providers
 from claw_trade.data_gateway.providers.news import build_default_news_adapters, news_capabilities
 from claw_trade.data_gateway.providers.social import build_default_social_adapters, social_capabilities
@@ -99,6 +100,114 @@ def test_social_alternative_and_polymarket_source_roles_locked() -> None:
     assert polymarket
     assert all(cap.source_role == SourceRole.SOCIAL_AGGREGATE_METRIC for cap in alternative)
     assert all(cap.source_role == SourceRole.EVENT_EXPECTATION for cap in polymarket)
+
+
+def test_news_crypto_polymarket_event_expectation_source_role_locked() -> None:
+    caps = news_capabilities()
+    polymarket = [cap for cap in caps if cap.adapter_id == "news.polymarket.crypto"]
+
+    assert polymarket
+    assert all(cap.source_role == SourceRole.EVENT_EXPECTATION for cap in polymarket)
+
+
+def test_polymarket_public_search_finds_bitcoin_when_ticker_is_btc(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_get_json(url: str, *, params=None):
+        calls.append((url, dict(params or {})))
+        if params and params.get("q") == "Bitcoin":
+            return {
+                "events": [
+                    {
+                        "id": "event-1",
+                        "slug": "when-will-bitcoin-hit-150k",
+                        "title": "When will Bitcoin hit $150k?",
+                        "active": True,
+                        "closed": False,
+                        "endDate": "2026-12-31T00:00:00Z",
+                        "markets": [
+                            {
+                                "question": "Will Bitcoin hit $150k by December 31?",
+                                "active": True,
+                                "closed": False,
+                                "outcomes": '["Yes", "No"]',
+                                "outcomePrices": '["0.42", "0.58"]',
+                            }
+                        ],
+                    }
+                ]
+            }
+        return {"events": []}
+
+    monkeypatch.setattr(polymarket_providers, "_http_get_json", _fake_get_json)
+
+    rows, source_url = polymarket_providers.fetch_polymarket_events(
+        params={"ticker": "BTC", "company_name": "Bitcoin"},
+    )
+
+    assert source_url == "https://gamma-api.polymarket.com/public-search"
+    assert calls[0][1]["q"] == "Bitcoin"
+    assert len(rows) == 1
+    assert "When will Bitcoin hit $150k?" in rows[0]["title"]
+    assert "Yes=42.0%" in rows[0]["title"]
+
+
+def test_social_polymarket_adapter_returns_public_search_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = _request(market=Market.CRYPTO, domain=PackDomain.SOCIAL, ticker="BTC", company_name="Bitcoin")
+    adapter = next(item for item in build_default_social_adapters(provider_config_version="cfg", env={}) if item.adapter_id == "social.polymarket.crypto")
+    spec = adapter.build_call_specs(request)[0]
+
+    def _fake_polymarket(*, params, limit=10):
+        assert params["ticker"] == "BTC"
+        return (
+            (
+                {
+                    "title": "When will Bitcoin hit $150k?；Yes=42.0% / No=58.0%",
+                    "url": "https://polymarket.com/event/when-will-bitcoin-hit-150k",
+                    "published_at": "2026-12-31T00:00:00Z",
+                    "summary": "polymarket_event_expectation",
+                },
+            ),
+            "https://gamma-api.polymarket.com/public-search",
+        )
+
+    monkeypatch.setattr(social_providers, "fetch_polymarket_events", _fake_polymarket)
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "crypto.social.event_expectation.v1"
+    assert normalized.row_count == 1
+    assert "Yes=42.0%" in normalized.rows[0]["title"]
+
+
+def test_news_polymarket_adapter_returns_event_expectation_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = _request(market=Market.CRYPTO, domain=PackDomain.NEWS, ticker="BTC", company_name="Bitcoin")
+    adapter = next(item for item in build_default_news_adapters(provider_config_version="cfg", env={}) if item.adapter_id == "news.polymarket.crypto")
+    spec = adapter.build_call_specs(request)[0]
+
+    def _fake_polymarket(*, params, limit=10):
+        assert params["company_name"] == "Bitcoin"
+        return (
+            (
+                {
+                    "title": "When will Bitcoin hit $150k?；Yes=42.0% / No=58.0%",
+                    "url": "https://polymarket.com/event/when-will-bitcoin-hit-150k",
+                    "published_at": "2026-12-31T00:00:00Z",
+                    "summary": "polymarket_event_expectation",
+                },
+            ),
+            "https://gamma-api.polymarket.com/public-search",
+        )
+
+    monkeypatch.setattr(news_providers, "fetch_polymarket_events", _fake_polymarket)
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "crypto.news.event_expectation.v1"
+    assert normalized.row_count == 1
+    assert "When will Bitcoin hit $150k?" in normalized.rows[0]["title"]
 
 
 def test_social_alternative_fetch_and_normalize(monkeypatch: pytest.MonkeyPatch) -> None:

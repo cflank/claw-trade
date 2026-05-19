@@ -118,6 +118,44 @@ class GapSeverity(StrEnum):
     INFO = "info"
 
 
+class DomainReadiness(StrEnum):
+    READY = "ready"
+    PARTIAL = "partial"
+    INSUFFICIENT = "insufficient"
+    MISSING = "missing"
+    ERROR = "error"
+    STALE = "stale"
+    LICENSE_BLOCKED = "license_blocked"
+
+
+CRYPTO_DOMAIN_KEYS = (
+    "market",
+    "ohlcv",
+    "derivatives",
+    "liquidation_map",
+    "onchain",
+    "macro",
+    "events",
+    "ahr999",
+)
+
+CRYPTO_INPUT_POLLUTION_KEYS = frozenset(
+    {
+        "provider_raw_payload",
+        "raw_payload",
+        "debug_envelope",
+        "openclaw_provider_payload",
+        "openviking_protocol",
+        "prompt_material",
+        "prompt_material_body",
+        "runtime_target",
+        "report_submission",
+        "material_id",
+        "capability",
+    }
+)
+
+
 PRIMARY_FACT_SOURCE_ROLES = frozenset(
     {
         SourceRole.OFFICIAL_ORIGINAL,
@@ -155,6 +193,8 @@ CACHE_NON_REMOTE_STATUSES = frozenset(
     }
 )
 
+RAW_EXPORT_POLICIES = frozenset({"metadata_only", "redacted", "full"})
+
 
 def _require_enum(name: str, value: object, enum_type: type[StrEnum]) -> None:
     if not isinstance(value, enum_type):
@@ -167,6 +207,24 @@ def source_role_can_be_primary_fact(role: SourceRole) -> bool:
 
 def source_role_is_discovery_only(role: SourceRole) -> bool:
     return role in DISCOVERY_ONLY_SOURCE_ROLES
+
+
+def _assert_no_crypto_input_pollution(value: object, path: str = "domains") -> None:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            key_str = str(key)
+            if key_str in CRYPTO_INPUT_POLLUTION_KEYS:
+                raise ValueError(f"crypto input contains forbidden field: {path}.{key_str}")
+            _assert_no_crypto_input_pollution(nested, f"{path}.{key_str}")
+        return
+    if isinstance(value, tuple):
+        for idx, nested in enumerate(value):
+            _assert_no_crypto_input_pollution(nested, f"{path}[{idx}]")
+        return
+    if isinstance(value, list):
+        for idx, nested in enumerate(value):
+            _assert_no_crypto_input_pollution(nested, f"{path}[{idx}]")
+        return
 
 
 @dataclass(frozen=True)
@@ -222,6 +280,7 @@ class ProviderCapability:
     coverage_quorum: int | None
     priority: int
     priority_source: PrioritySource = PrioritySource.SYSTEM_DEFAULT
+    raw_export_policy: str = "metadata_only"
 
     def __post_init__(self) -> None:
         _require_enum("provider_kind", self.provider_kind, ProviderKind)
@@ -229,6 +288,8 @@ class ProviderCapability:
         _require_enum("domain", self.domain, PackDomain)
         _require_enum("source_role", self.source_role, SourceRole)
         _require_enum("priority_source", self.priority_source, PrioritySource)
+        if self.raw_export_policy not in RAW_EXPORT_POLICIES:
+            raise ValueError(f"raw_export_policy must be one of {sorted(RAW_EXPORT_POLICIES)}")
         if self.coverage_quorum is not None and self.coverage_quorum <= 0:
             raise ValueError("coverage_quorum must be > 0")
 
@@ -255,6 +316,7 @@ class ProviderCallSpec:
     priority: int
     priority_source: PrioritySource
     user_preferred: bool
+    raw_export_policy: str = "metadata_only"
 
     def __post_init__(self) -> None:
         _require_enum("provider_kind", self.provider_kind, ProviderKind)
@@ -262,6 +324,8 @@ class ProviderCallSpec:
         _require_enum("market", self.market, Market)
         _require_enum("domain", self.domain, PackDomain)
         _require_enum("priority_source", self.priority_source, PrioritySource)
+        if self.raw_export_policy not in RAW_EXPORT_POLICIES:
+            raise ValueError(f"raw_export_policy must be one of {sorted(RAW_EXPORT_POLICIES)}")
         if self.cache_ttl_seconds < 0:
             raise ValueError("cache_ttl_seconds must be >= 0")
 
@@ -659,6 +723,108 @@ class Conflict:
 
 
 @dataclass(frozen=True)
+class ProviderSourceRef:
+    ref_id: str
+    provider: str
+    adapter_id: str
+    endpoint: str
+    source_role: SourceRole
+    status: ProviderStatus
+    normalized_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_enum("source_role", self.source_role, SourceRole)
+        _require_enum("status", self.status, ProviderStatus)
+
+
+@dataclass(frozen=True)
+class CryptoDomainBundle:
+    market: Mapping[str, Any] | None
+    ohlcv: Mapping[str, Any] | None
+    derivatives: Mapping[str, Any] | None
+    liquidation_map: Mapping[str, Any] | None
+    onchain: Mapping[str, Any] | None
+    macro: Mapping[str, Any] | None
+    events: Mapping[str, Any] | None
+    ahr999: Mapping[str, Any] | None
+
+    def to_mapping(self) -> Mapping[str, Mapping[str, Any] | None]:
+        return {
+            "market": self.market,
+            "ohlcv": self.ohlcv,
+            "derivatives": self.derivatives,
+            "liquidation_map": self.liquidation_map,
+            "onchain": self.onchain,
+            "macro": self.macro,
+            "events": self.events,
+            "ahr999": self.ahr999,
+        }
+
+
+@dataclass(frozen=True)
+class NormalizedCryptoMarketBundle:
+    run_id: str
+    call_id: str
+    ticker: str
+    market: Market
+    quote: str
+    as_of: str
+    start_date: str
+    end_date: str
+    freshness: FreshnessStatus
+    domains: CryptoDomainBundle
+    domain_status: Mapping[str, DomainReadiness]
+    data_gaps: tuple[DataGap, ...]
+    conflicts: tuple[Conflict, ...]
+    source_refs: tuple[ProviderSourceRef, ...]
+    attempt_refs: tuple[str, ...]
+    raw_refs: tuple[str, ...]
+    normalized_refs: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _require_enum("market", self.market, Market)
+        _require_enum("freshness", self.freshness, FreshnessStatus)
+        if self.market != Market.CRYPTO:
+            raise ValueError("NormalizedCryptoMarketBundle.market must be CRYPTO")
+        expected_keys = set(CRYPTO_DOMAIN_KEYS)
+        if set(self.domain_status) != expected_keys:
+            raise ValueError("domain_status must include all crypto domains")
+        domain_payloads = self.domains.to_mapping()
+        for domain_key in CRYPTO_DOMAIN_KEYS:
+            status = self.domain_status[domain_key]
+            _require_enum(f"domain_status[{domain_key}]", status, DomainReadiness)
+            payload = domain_payloads[domain_key]
+            if payload is None and status in (
+                DomainReadiness.READY,
+                DomainReadiness.PARTIAL,
+                DomainReadiness.INSUFFICIENT,
+                DomainReadiness.STALE,
+            ):
+                raise ValueError(f"{domain_key} payload missing for readiness={status}")
+            if payload is not None:
+                _assert_no_crypto_input_pollution(payload, f"domains.{domain_key}")
+
+    def to_worker_material_contract(self) -> Mapping[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "call_id": self.call_id,
+            "ticker": self.ticker,
+            "market": self.market.value,
+            "quote": self.quote,
+            "as_of": self.as_of,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "freshness": self.freshness.value,
+            "domain_status": {k: v.value for k, v in self.domain_status.items()},
+            "data_gaps": tuple(gap.gap_id for gap in self.data_gaps),
+            "conflicts": tuple(conflict.conflict_id for conflict in self.conflicts),
+            "source_refs": tuple(ref.ref_id for ref in self.source_refs),
+            "attempt_refs": self.attempt_refs,
+            "normalized_refs": self.normalized_refs,
+        }
+
+
+@dataclass(frozen=True)
 class Readiness:
     status: ReadinessStatus
     coverage: Mapping[str, str]
@@ -711,6 +877,7 @@ class PackAuditPayload:
     normalized_bundle_ref: str | None
     payload_hash: str
     generated_at: str
+    analysis_evidence_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

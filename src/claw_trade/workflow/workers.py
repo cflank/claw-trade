@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from claw_trade.workflow.models import RunStatus, Stage, StagePlan, WorkerSpec
 
-
 # 核心 12 个决策 worker 加 1 个读者版终稿 worker 在这里固定声明，LLM 不能临场决定“下一步叫谁”。
 WORKER_SPECS: tuple[WorkerSpec, ...] = (
     WorkerSpec("market_analyst", Stage.FRONTLINE),

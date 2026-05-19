@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from claw_trade.workflow.controller import ControllerInput, decide_next
 from claw_trade.workflow.models import (
     DecisionKind,
@@ -29,19 +28,37 @@ class ManifestView:
     def __init__(
         self,
         approved: set[tuple[str, Stage]] | None = None,
+        approved_turns: set[tuple[str, Stage, int]] | None = None,
         stage_turn_counts: dict[Stage, int] | None = None,
     ) -> None:
         self._approved = approved or set()
+        self._approved_turns = approved_turns or set()
         self._stage_turn_counts = stage_turn_counts or {}
 
     def has_worker(self, worker_id: str, stage: Stage, run_id: str | None = None) -> bool:
         _ = run_id
-        return (worker_id, stage) in self._approved
+        return (worker_id, stage) in self._approved or any(
+            approved_worker == worker_id and approved_stage == stage
+            for approved_worker, approved_stage, _turn_index in self._approved_turns
+        )
+
+    def has_worker_turn(self, worker_id: str, stage: Stage, turn_index: int, run_id: str | None = None) -> bool:
+        _ = run_id
+        return (worker_id, stage, turn_index) in self._approved_turns or (
+            turn_index == 0 and (worker_id, stage) in self._approved
+        )
 
     def stage_turn_count(self, stage: Stage, run_id: str | None = None) -> int:
         _ = run_id
         if stage in self._stage_turn_counts:
             return self._stage_turn_counts[stage]
+        turn_indexes = {
+            turn_index
+            for _worker_id, approved_stage, turn_index in self._approved_turns
+            if approved_stage == stage
+        }
+        if turn_indexes:
+            return len(turn_indexes)
         return sum(1 for worker_id, approved_stage in self._approved if approved_stage == stage)
 
 
@@ -454,7 +471,11 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
     assert report_decision.batch.worker_ids == ("report_polisher",)
 
     state_final_ready = make_state(tmp_path=tmp_path, status=RunStatus.FINAL_REPORT_READY)
-    final_approved = ManifestView(approved={("report_polisher", Stage.FINAL_REPORT)})
+    final_approved = ManifestView(
+        approved_turns={
+            ("report_polisher", Stage.FINAL_REPORT, 0),
+        }
+    )
     export_decision = decide_next(make_input(state=state_final_ready, manifest=final_approved))
 
     assert export_decision.kind == DecisionKind.EXPORT_REPORT
@@ -518,6 +539,23 @@ def test_portfolio_ready_exports_and_report_exporting_decisions(tmp_path: Path):
     )
     complete_cn = decide_next(make_input(state=state_exporting_cn, manifest=final_approved, export_result=asset_failed))
     assert complete_cn.kind == DecisionKind.COMPLETE
+
+
+def test_final_report_ready_requires_report_polisher_material(tmp_path: Path):
+    state_final_ready = make_state(tmp_path=tmp_path, status=RunStatus.FINAL_REPORT_READY)
+
+    decision = decide_next(make_input(state=state_final_ready, manifest=ManifestView()))
+
+    assert decision.kind == DecisionKind.FAIL
+    assert decision.failure is not None
+    assert decision.failure.category == "final_report"
+    assert "report_polisher approved material 缺失" in decision.failure.reason
+
+    approved = ManifestView(approved_turns={("report_polisher", Stage.FINAL_REPORT, 0)})
+    ready = decide_next(make_input(state=state_final_ready, manifest=approved))
+
+    assert ready.kind == DecisionKind.EXPORT_REPORT
+    assert ready.next_status == RunStatus.REPORT_EXPORTING
 
 
 def test_runner_failure_grouping_and_merge():

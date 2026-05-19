@@ -171,6 +171,12 @@ def test_planner_builds_plan_without_provider_fetch() -> None:
     assert plan.remote_prefetch_allowed is False
     assert len(plan.call_specs) == 1
     assert plan.call_specs[0].provider_config_version == "cfg-v1"
+    assert plan.call_specs[0].adapter_id == "project.tushare"
+    assert plan.call_specs[0].source_role == SourceRole.MARKET_DATA
+    assert plan.call_specs[0].coverage_group == "core_market"
+    assert plan.call_specs[0].coverage_quorum == 1
+    assert plan.call_specs[0].license_policy_id == "personal_research"
+    assert plan.call_specs[0].raw_export_policy == "metadata_only"
     assert plan.shared_call_keys == (plan.call_specs[0].call_key,)
     assert len(plan.cache_keys) == 1
     assert len(plan.rate_limit_plan) == 1

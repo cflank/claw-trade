@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import os
@@ -14,6 +15,7 @@ from claw_trade.config.tool_names import load_tool_registry
 _OLD_PROVIDER_MODULES = (
     "frontline_data_pack",
     "frontline_data_pack.provider_executor",
+    "crypto_market_data_pack",
     "claw_trade.providers",
 )
 
@@ -27,6 +29,7 @@ _FORBIDDEN_SOURCE_TOKENS = (
     "get_cashflow",
     "get_income_statement",
     "get_global_news",
+    "bb_crypto_data",
 )
 
 _CANONICAL_PACK_TOOLS = (
@@ -38,13 +41,22 @@ _CANONICAL_PACK_TOOLS = (
 
 _LEGACY_FRONTLINE_TOOLS = (
     "market_market_data_pack",
+    "us_market_data_pack",
+    "cn_a_market_data_pack",
     "crypto_market_data_pack",
     "fundamental_fundamentals_data_pack",
+    "us_fundamentals_data_pack",
+    "cn_a_fundamentals_data_pack",
     "crypto_fundamental_data_pack",
     "news_news_data_pack",
+    "us_news_data_pack",
+    "cn_a_news_data_pack",
     "crypto_news_data_pack",
     "social_social_sentiment_pack",
+    "us_social_sentiment_pack",
+    "cn_a_social_sentiment_pack",
     "crypto_social_sentiment_pack",
+    "bb_crypto_data",
     "get_stock_data",
     "get_indicators",
     "get_fundamentals",
@@ -53,6 +65,31 @@ _LEGACY_FRONTLINE_TOOLS = (
     "get_income_statement",
     "get_news",
     "get_global_news",
+)
+
+_PROVIDER_IMPORT_BOUNDARY_ROOTS = (
+    "src/claw_trade/workflow",
+    "src/claw_trade/cli",
+    "src/claw_trade/reports",
+)
+
+_ALLOWED_PROVIDER_IMPORT_MODULES = {
+    "claw_trade.data_gateway.providers.defaults",
+    "claw_trade.data_gateway.providers.registry",
+    "claw_trade.data_gateway.providers.run_plan",
+}
+
+_FORBIDDEN_PROVIDER_IMPORT_MODULE_PREFIXES = (
+    "claw_trade.data_gateway.providers.market_adapters",
+    "claw_trade.data_gateway.providers.execution",
+    "claw_trade.data_gateway.providers.market",
+    "claw_trade.data_gateway.providers.fundamental",
+    "claw_trade.data_gateway.providers.news",
+    "claw_trade.data_gateway.providers.social",
+    "claw_trade.data_gateway.providers.tushare_client",
+    "claw_trade.providers",
+    "frontline_data_pack",
+    "provider_executor",
 )
 
 
@@ -74,6 +111,7 @@ def test_openbb_pack_runtime_works_when_legacy_provider_modules_are_blocked() ->
         BLOCKED = (
             "frontline_data_pack",
             "frontline_data_pack.provider_executor",
+            "crypto_market_data_pack",
             "claw_trade.providers",
         )
 
@@ -225,6 +263,72 @@ def test_frontline_plugin_canonical_openbb_bridge_does_not_call_legacy_executor(
     assert "frontline_data_pack.provider_executor" not in canonical_slice
     assert "provider_executor" not in canonical_slice
     assert "frontline_data_pack." not in canonical_slice
+    assert "crypto_market_data_pack" not in canonical_slice
+    assert "bb_crypto_data" not in canonical_slice
+
+
+def test_start_control_runtime_config_does_not_require_legacy_bb_mcp_by_default() -> None:
+    source = (_repo_root() / "scripts" / "start-control-runtime.sh").read_text(encoding="utf-8")
+    assert 'process.env.BB_MCP_SERVER_PATH || "/mnt/d/src/BB/mcp/crypto-data-mcp/dist/server.js"' not in source
+    assert 'process.env.BB_MCP_CWD || "/mnt/d/src/BB/mcp/crypto-data-mcp"' not in source
+    assert "BB_MCP_SERVER_PATH" not in source
+    assert "BB_MCP_CWD" not in source
+    assert "delete mergedMcpServers.bb_crypto_data;" in source
+    assert "if (enableBbMcp) {" not in source
+    assert "mergedMcpServers.bb_crypto_data =" not in source
+
+
+def test_workflow_controller_cli_exporter_do_not_import_or_call_provider_fetch_paths() -> None:
+    repo = _repo_root()
+    provider_prefix = "claw_trade.data_gateway.providers"
+    python_files = _iter_provider_boundary_python_files(repo)
+    for source_path in python_files:
+        source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(source_path))
+        imported_modules = _provider_import_modules_from_ast(tree, provider_prefix)
+        disallowed = sorted(
+            module
+            for module in imported_modules
+            if module.startswith(provider_prefix) and module not in _ALLOWED_PROVIDER_IMPORT_MODULES
+        )
+        assert not disallowed, f"{source_path} imported disallowed provider modules: {disallowed}"
+        for forbidden_prefix in _FORBIDDEN_PROVIDER_IMPORT_MODULE_PREFIXES:
+            assert forbidden_prefix not in source, (
+                f"{source_path} must not reference provider fetch path: {forbidden_prefix}"
+            )
+
+
+def _iter_provider_boundary_python_files(repo: Path) -> tuple[Path, ...]:
+    files: list[Path] = []
+    for relative_root in _PROVIDER_IMPORT_BOUNDARY_ROOTS:
+        root = repo / relative_root
+        files.extend(sorted(path for path in root.rglob("*.py") if path.is_file()))
+    return tuple(files)
+
+
+def _provider_import_modules_from_ast(tree: ast.AST, provider_prefix: str) -> set[str]:
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name.strip()
+                if name.startswith(provider_prefix):
+                    modules.add(name)
+        elif isinstance(node, ast.ImportFrom):
+            module = (node.module or "").strip()
+            if not module:
+                continue
+            if module.startswith(provider_prefix + "."):
+                modules.add(module)
+                continue
+            if module == provider_prefix:
+                for alias in node.names:
+                    child = alias.name.strip()
+                    if child == "*":
+                        modules.add(module + ".*")
+                    elif child:
+                        modules.add(f"{module}.{child}")
+    return modules
 
 
 def test_openbb_flag_uses_canonical_frontline_tools_without_legacy_fallback() -> None:

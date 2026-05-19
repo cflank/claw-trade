@@ -579,6 +579,16 @@ function protocolError(toolName, runtime, result) {
   );
 }
 
+function shouldMarkToolResultAsError(payload) {
+  if (!isRecord(payload)) {
+    return false;
+  }
+  if (payload.ok === false) {
+    return true;
+  }
+  return isRecord(payload.error);
+}
+
 function runtimeErrorToResult(toolName, expectedWorkerId, error) {
   if (error instanceof FrontlineToolError) {
     return toolErrorResult(error.code, error.message, {
@@ -725,7 +735,7 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   if (result.parsed === undefined) {
     return protocolError(toolName, runtime, result);
   }
-  return toolResult(result.parsed, false);
+  return toolResult(result.parsed, shouldMarkToolResultAsError(result.parsed));
 }
 
 async function runPack(ctx, params, toolName, expectedWorkerId, toolCallId) {

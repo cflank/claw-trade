@@ -56,6 +56,34 @@ class ProviderExecutionEvidenceHelper:
     http_evidence_store: HttpEvidenceStoreLike | None = None
     provider_settings: Mapping[str, Mapping[str, Any]] | None = None
 
+    def record_attempt_only(self, result: ProviderResult) -> ProviderResult:
+        try:
+            self.attempt_store.write(result.attempt)
+        except Exception as exc:  # noqa: BLE001
+            gateway_error = self._as_gateway_error(exc)
+            evidence_failed_attempt = replace(
+                result.attempt,
+                status=ProviderStatus.EVIDENCE_WRITE_FAILED,
+                row_count=0,
+                raw_ref=None,
+                normalized_ref=None,
+                error_code=gateway_error.code.value,
+                error_message=gateway_error.root_cause,
+            )
+            return replace(
+                result,
+                status=ProviderStatus.EVIDENCE_WRITE_FAILED,
+                freshness=FreshnessStatus.NOT_FETCHED,
+                raw_ref=None,
+                normalized_ref=None,
+                rows=(),
+                row_count=0,
+                attempt=evidence_failed_attempt,
+                error_code=gateway_error.code.value,
+                error_message=gateway_error.root_cause,
+            )
+        return result
+
     def execute(
         self,
         *,
@@ -304,6 +332,7 @@ class ProviderExecutionEvidenceHelper:
         )
 
     def _resolve_raw_export_policy(self, spec: ProviderCallSpec) -> str:
+        spec_policy = spec.raw_export_policy if spec.raw_export_policy in _ALLOWED_RAW_EXPORT_POLICIES else _DEFAULT_RAW_EXPORT_POLICY
         settings = self.provider_settings or {}
         candidates: tuple[object, ...] = (
             settings.get(spec.adapter_id),
@@ -316,7 +345,7 @@ class ProviderExecutionEvidenceHelper:
             policy = candidate.get("raw_export_policy")
             if isinstance(policy, str) and policy in _ALLOWED_RAW_EXPORT_POLICIES:
                 return policy
-        return _DEFAULT_RAW_EXPORT_POLICY
+        return spec_policy
 
     def _result(
         self,

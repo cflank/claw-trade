@@ -1,0 +1,32 @@
+{
+  "active_stage": null,
+  "completed_workers": [],
+  "created_at": "2026-05-19T02:31:19Z",
+  "failed_workers": [],
+  "failure_reason": null,
+  "last_decision_path": "/home/frank/src/claw-trade/runs/run-20260519-023119-9aa30f4d/decisions/20260519T024308190415Z-complete.json",
+  "openviking_namespace": "workflow/run-20260519-023119-9aa30f4d",
+  "request": {
+    "company_name": "贵州茅台",
+    "currency": "CNY",
+    "currency_symbol": "¥",
+    "current_date": "2026-05-18",
+    "data_gateway": "openbb",
+    "end_date": "2026-05-18",
+    "entry_point": "report_command",
+    "frontline_execution_mode": "parallel",
+    "market": "CN_A",
+    "max_debate_rounds": 1,
+    "max_risk_discuss_rounds": 1,
+    "profile": "CN_A",
+    "start_date": "2025-05-18",
+    "stop_point": "none",
+    "target_stage": null,
+    "target_worker_id": null,
+    "ticker": "600519.SH"
+  },
+  "run_dir": "/home/frank/src/claw-trade/runs/run-20260519-023119-9aa30f4d",
+  "run_id": "run-20260519-023119-9aa30f4d",
+  "status": "completed",
+  "updated_at": "2026-05-19T02:43:08Z"
+}

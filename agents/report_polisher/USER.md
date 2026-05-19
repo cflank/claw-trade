@@ -19,9 +19,10 @@
 - trader_report
 - supporting_worker_reports
 - chart_assets_note
+- final_report_section_instruction
 
 输出必须是 `reader_final_report` 的 Markdown 正文。
-第一行必须是正式报告的 Markdown H1 标题，且必须以 `# ` 开头。不要以“好的”“收到”“我将”等过程性回应开头。
+当 `final_report_section_instruction` 为空或要求生成首段时，第一行必须是正式报告的 Markdown H1 标题，且必须以 `# ` 开头；当它要求严禁 H1 时，第一行必须以指定的 `##` 二级标题开头。不要以“好的”“收到”“我将”等过程性回应开头。
 
 核心边界：
 
@@ -32,3 +33,4 @@
 - 如果输入之间存在冲突，保留组合经理结论，并在报告里说明分歧和需要跟踪的验证条件。
 - 最终报告必须面向读者，不要写内部流程说明、机器字段或审计说明。
 - 终稿不是摘要。市场/技术章节必须保留上游市场分析报告已经给出的关键指标、图表读法、价格位、触发条件、失效条件和推导链，不能把它们压成几个提纲式结论。
+- `final_report_section_instruction` 只是写作范围，不是报告正文内容；当它为空时写完整终稿，当它给定时只写指定章节，且不要在正文中提到这个变量。

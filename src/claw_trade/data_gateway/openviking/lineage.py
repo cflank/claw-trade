@@ -28,7 +28,7 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.openviking.models import FinalReportClaim, OpenVikingRelation
-from claw_trade.data_gateway.store.mongo import OPENBB_PROVIDER_ATTEMPTS
+from claw_trade.data_gateway.store.mongo import CRYPTO_LENS_ANALYSIS_EVIDENCE, OPENBB_PROVIDER_ATTEMPTS
 from claw_trade.guards.export_claims import parse_export_claim_mapping
 from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
 
@@ -109,10 +109,12 @@ class OpenBBMongoLineageWriter:
             if material.worker_id not in {_PM_WORKER_ID, _FINAL_WORKER_ID}
         )
         attempts = self._load_attempts(state.run_id)
+        analysis_refs = self._load_crypto_lens_analysis_refs(state.run_id)
         pack_result = self._build_pack_results(
             state=state,
             upstream_materials=upstream_materials,
             attempts=attempts,
+            analysis_refs_by_call=analysis_refs,
         )
         if not pack_result.ok:
             return LineageWriteResult.failed(
@@ -161,12 +163,26 @@ class OpenBBMongoLineageWriter:
         rows = self._database[OPENBB_PROVIDER_ATTEMPTS].find({"run_id": run_id})
         return tuple(_attempt_from_doc(row) for row in rows)
 
+    def _load_crypto_lens_analysis_refs(self, run_id: str) -> dict[str, tuple[str, ...]]:
+        rows = self._database[CRYPTO_LENS_ANALYSIS_EVIDENCE].find({"run_id": run_id})
+        refs_by_call: dict[str, list[str]] = {}
+        for row in rows:
+            call_id = _optional_str(row.get("call_id"))
+            if not call_id:
+                continue
+            document_id = _optional_str(row.get("_id"))
+            if document_id is None:
+                continue
+            refs_by_call.setdefault(call_id, []).append(f"mongo://{CRYPTO_LENS_ANALYSIS_EVIDENCE}/{document_id}")
+        return {call_id: tuple(refs) for call_id, refs in refs_by_call.items()}
+
     def _build_pack_results(
         self,
         *,
         state: WorkflowState,
         upstream_materials: tuple[ApprovedMaterial, ...],
         attempts: tuple[ProviderAttempt, ...],
+        analysis_refs_by_call: dict[str, tuple[str, ...]],
     ) -> "_PackResultsResult":
         attempts_by_call_pack: dict[tuple[str, str], list[ProviderAttempt]] = {}
         for attempt in attempts:
@@ -186,12 +202,17 @@ class OpenBBMongoLineageWriter:
             if not material_attempts:
                 missing.append(f"{material.worker_id}:{material.call_id}:{domain.value}")
                 continue
+            analysis_refs = _analysis_refs_for_material_call(
+                analysis_refs_by_call=analysis_refs_by_call,
+                material_call_id=material.call_id,
+            )
             pack_results.append(
                 _pack_result_from_attempts(
                     state=state,
                     material=material,
                     domain=domain,
                     attempts=material_attempts,
+                    analysis_evidence_refs=analysis_refs,
                     now_text=self._now_text(),
                 )
             )
@@ -220,6 +241,20 @@ def _attempts_for_material_call(
     return tuple(attempts)
 
 
+def _analysis_refs_for_material_call(
+    *,
+    analysis_refs_by_call: dict[str, tuple[str, ...]],
+    material_call_id: str,
+) -> tuple[str, ...]:
+    refs: list[str] = []
+    refs.extend(analysis_refs_by_call.get(material_call_id, ()))
+    tool_call_prefix = f"{material_call_id}__tool-"
+    for call_id, rows in analysis_refs_by_call.items():
+        if call_id.startswith(tool_call_prefix):
+            refs.extend(rows)
+    return tuple(dict.fromkeys(refs))
+
+
 @dataclass(frozen=True)
 class _PackResultsResult:
     ok: bool
@@ -241,6 +276,7 @@ def _pack_result_from_attempts(
     material: ApprovedMaterial,
     domain: PackDomain,
     attempts: tuple[ProviderAttempt, ...],
+    analysis_evidence_refs: tuple[str, ...],
     now_text: str,
 ) -> DomainPackResult:
     request = PackRequest(
@@ -283,6 +319,7 @@ def _pack_result_from_attempts(
             "attempt_ids": [attempt.attempt_id for attempt in attempts],
             "raw_refs": raw_refs,
             "normalized_refs": normalized_refs,
+            "analysis_evidence_refs": analysis_evidence_refs,
         }
     )
     audit = PackAuditPayload(
@@ -302,6 +339,7 @@ def _pack_result_from_attempts(
         normalized_bundle_ref=None,
         payload_hash=payload_hash,
         generated_at=now_text,
+        analysis_evidence_refs=analysis_evidence_refs,
     )
     return DomainPackResult(
         request=request,

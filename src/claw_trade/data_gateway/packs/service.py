@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from pymongo import MongoClient
 
+from claw_trade.data_gateway.analysis.crypto_lens import CryptoLensAnalysisEvidenceStore
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
     DataGap,
@@ -13,6 +14,7 @@ from claw_trade.data_gateway.models import (
     DomainPackResult,
     FreshnessStatus,
     GapSeverity,
+    Market,
     PackDomain,
     PackRequest,
     ProviderAttempt,
@@ -36,6 +38,7 @@ from claw_trade.data_gateway.store.mongo import (
     OPENBB_PROVIDER_ATTEMPTS,
     OPENBB_PROVIDER_HTTP_EVIDENCE,
     OPENBB_RAW_PAYLOADS,
+    CRYPTO_LENS_ANALYSIS_EVIDENCE,
 )
 from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
 from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
@@ -53,6 +56,7 @@ class DomainPackService:
     def __post_init__(self) -> None:
         self._adapters_by_id = {adapter.adapter_id: adapter for adapter in self.adapters}
         self._mongo_client: MongoClient[Any] | None = None
+        self._crypto_lens_evidence_store: CryptoLensAnalysisEvidenceStore | None = None
         if self.provider_execution_helper is None:
             self.provider_execution_helper = self._build_execution_helper()
 
@@ -113,6 +117,9 @@ class DomainPackService:
             results=results,
             data_gaps=tuple(gap for gap in run_plan.initial_gaps if gap.domain == PackDomain.MARKET),
             chart_object_store_uri=_chart_object_store_uri(self.settings),
+            crypto_lens_evidence_store=self._build_crypto_lens_evidence_store()
+            if request.market == Market.CRYPTO
+            else None,
         )
 
     def _execute_market_spec(self, *, request: PackRequest, spec: ProviderCallSpec) -> ProviderResult:
@@ -120,7 +127,7 @@ class DomainPackService:
         t0 = time.perf_counter()
         adapter = self._adapters_by_id.get(spec.adapter_id)
         if adapter is None:
-            return self._market_result(
+            result = self._market_result(
                 request=request,
                 spec=spec,
                 started=started,
@@ -136,10 +143,11 @@ class DomainPackService:
                 adapter_kind=spec.provider_kind.value,
                 provider_kind=spec.provider_kind,
             )
+            return self._record_attempt_only(result)
 
         credential = adapter.validate_credentials()
         if credential.status == AdmissionCheckStatus.MISSING:
-            return self._market_result(
+            result = self._market_result(
                 request=request,
                 spec=spec,
                 started=started,
@@ -155,6 +163,7 @@ class DomainPackService:
                 adapter_kind=adapter.adapter_kind,
                 provider_kind=adapter.provider_kind,
             )
+            return self._record_attempt_only(result)
 
         helper = self.provider_execution_helper
         if helper is not None:
@@ -222,6 +231,18 @@ class DomainPackService:
             http_evidence_store=MongoProviderHttpEvidenceStore(database[OPENBB_PROVIDER_HTTP_EVIDENCE]),
             provider_settings=provider_settings if isinstance(provider_settings, Mapping) else None,
         )
+
+    def _build_crypto_lens_evidence_store(self) -> CryptoLensAnalysisEvidenceStore | None:
+        if self._crypto_lens_evidence_store is not None:
+            return self._crypto_lens_evidence_store
+        mongo_uri = getattr(self.settings, "mongo_uri", None)
+        if not isinstance(mongo_uri, str) or not mongo_uri.strip():
+            return None
+        if self._mongo_client is None:
+            self._mongo_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        database = self._mongo_client.get_default_database("claw_trade_openbb")
+        self._crypto_lens_evidence_store = CryptoLensAnalysisEvidenceStore(database[CRYPTO_LENS_ANALYSIS_EVIDENCE])
+        return self._crypto_lens_evidence_store
 
     def _market_result(
         self,
@@ -295,6 +316,12 @@ class DomainPackService:
             error_code=error_code,
             error_message=error_message,
         )
+
+    def _record_attempt_only(self, result: ProviderResult) -> ProviderResult:
+        helper = self.provider_execution_helper
+        if helper is None:
+            return result
+        return helper.record_attempt_only(result)
 
 
 def _elapsed_ms(start: float) -> int:

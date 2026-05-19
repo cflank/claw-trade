@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import re
 from typing import Any, Iterator, Mapping
 from urllib.error import HTTPError
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import urllib.request
 
 _HEADER_ALLOWLIST = frozenset(
@@ -26,6 +28,19 @@ _HEADER_ALLOWLIST = frozenset(
         "x-ratelimit-remaining",
         "x-ratelimit-reset",
         "x-request-id",
+    }
+)
+
+_SENSITIVE_QUERY_KEYS_NORMALIZED = frozenset(
+    {
+        "xapikey",
+        "apikey",
+        "key",
+        "token",
+        "accesstoken",
+        "secret",
+        "authorization",
+        "auth",
     }
 )
 
@@ -79,7 +94,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
                 capture.exchanges.append(
                     CapturedHttpExchange(
                         method=str(method or "GET").upper(),
-                        url=_response_url(response) or str(url),
+                        url=_response_url(response) or _sanitize_captured_url(str(url)),
                         response_status_code=_response_status(response),
                         response_headers_summary=_headers_summary(_response_headers(response)),
                         error_code=type(exc).__name__,
@@ -90,7 +105,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
             capture.exchanges.append(
                 CapturedHttpExchange(
                     method=str(method or "GET").upper(),
-                    url=_response_url(response) or str(url),
+                    url=_response_url(response) or _sanitize_captured_url(str(url)),
                     response_status_code=_response_status(response),
                     response_headers_summary=_headers_summary(_response_headers(response)),
                 )
@@ -122,7 +137,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
                 capture.exchanges.append(
                     CapturedHttpExchange(
                         method=str(method or "GET").upper(),
-                        url=_response_url(response) or str(url),
+                        url=_response_url(response) or _sanitize_captured_url(str(url)),
                         response_status_code=_response_status(response),
                         response_headers_summary=_headers_summary(_response_headers(response)),
                         error_code=type(exc).__name__,
@@ -133,7 +148,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
             capture.exchanges.append(
                 CapturedHttpExchange(
                     method=str(method or "GET").upper(),
-                    url=_response_url(response) or str(url),
+                    url=_response_url(response) or _sanitize_captured_url(str(url)),
                     response_status_code=_response_status(response),
                     response_headers_summary=_headers_summary(_response_headers(response)),
                 )
@@ -165,7 +180,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
                 capture.exchanges.append(
                     CapturedHttpExchange(
                         method=str(method or "GET").upper(),
-                        url=_response_url(response) or str(url),
+                        url=_response_url(response) or _sanitize_captured_url(str(url)),
                         response_status_code=_response_status(response),
                         response_headers_summary=_headers_summary(_response_headers(response)),
                         error_code=type(exc).__name__,
@@ -176,7 +191,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
             capture.exchanges.append(
                 CapturedHttpExchange(
                     method=str(method or "GET").upper(),
-                    url=_response_url(response) or str(url),
+                    url=_response_url(response) or _sanitize_captured_url(str(url)),
                     response_status_code=_response_status(response),
                     response_headers_summary=_headers_summary(_response_headers(response)),
                 )
@@ -208,7 +223,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
                 capture.exchanges.append(
                     CapturedHttpExchange(
                         method=str(method or "GET").upper(),
-                        url=_response_url(response) or str(url),
+                        url=_response_url(response) or _sanitize_captured_url(str(url)),
                         response_status_code=_response_status(response),
                         response_headers_summary=_headers_summary(_response_headers(response)),
                         error_code=type(exc).__name__,
@@ -219,7 +234,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
             capture.exchanges.append(
                 CapturedHttpExchange(
                     method=str(method or "GET").upper(),
-                    url=_response_url(response) or str(url),
+                    url=_response_url(response) or _sanitize_captured_url(str(url)),
                     response_status_code=_response_status(response),
                     response_headers_summary=_headers_summary(_response_headers(response)),
                 )
@@ -240,7 +255,7 @@ def _install_patches(capture: HttpCapture) -> list[tuple[Any, str, Any]]:
             capture.exchanges.append(
                 CapturedHttpExchange(
                     method=_request_method(url),
-                    url=getattr(exc, "url", None) or _request_url(url),
+                    url=_sanitize_captured_url(getattr(exc, "url", None)) or _request_url(url),
                     response_status_code=int(exc.code),
                     response_headers_summary=_headers_summary(getattr(exc, "headers", None)),
                     error_code=type(exc).__name__,
@@ -322,10 +337,10 @@ def _response_headers(response: Any) -> Any:
 def _response_url(response: Any) -> str | None:
     value = getattr(response, "url", None)
     if value:
-        return str(value)
+        return _sanitize_captured_url(str(value))
     if hasattr(response, "geturl"):
         try:
-            return str(response.geturl())
+            return _sanitize_captured_url(str(response.geturl()))
         except Exception:  # noqa: BLE001
             return None
     return None
@@ -333,12 +348,12 @@ def _response_url(response: Any) -> str | None:
 
 def _request_url(request: Any) -> str | None:
     if isinstance(request, str):
-        return request
+        return _sanitize_captured_url(request)
     value = getattr(request, "full_url", None)
     if value:
-        return str(value)
+        return _sanitize_captured_url(str(value))
     value = getattr(request, "url", None)
-    return str(value) if value else None
+    return _sanitize_captured_url(str(value)) if value else None
 
 
 def _request_method(request: Any) -> str:
@@ -348,3 +363,39 @@ def _request_method(request: Any) -> str:
         except Exception:  # noqa: BLE001
             return "GET"
     return "GET"
+
+
+def _sanitize_captured_url(url: str | None) -> str | None:
+    if not url:
+        return url
+    try:
+        split = urlsplit(url)
+        host_part = split.netloc.rsplit("@", maxsplit=1)[-1]
+        if split.username is not None or split.password is not None or "@" in split.netloc:
+            netloc = f"[REDACTED]@{host_part}"
+        else:
+            netloc = split.netloc
+        query_pairs = parse_qsl(split.query, keep_blank_values=True)
+        redacted_pairs: list[tuple[str, str]] = []
+        for key, value in query_pairs:
+            if _is_sensitive_query_key(key):
+                redacted_pairs.append((key, "[REDACTED]"))
+            else:
+                redacted_pairs.append((key, value))
+        redacted_query = urlencode(redacted_pairs, doseq=True) if redacted_pairs else split.query
+        return urlunsplit((split.scheme, netloc, split.path, redacted_query, split.fragment))
+    except Exception:  # noqa: BLE001
+        return url
+
+
+def _is_sensitive_query_key(key: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
+    if not normalized:
+        return False
+    if normalized in _SENSITIVE_QUERY_KEYS_NORMALIZED:
+        return True
+    if normalized.endswith("token") or normalized.endswith("apikey"):
+        return True
+    if "secret" in normalized:
+        return True
+    return False

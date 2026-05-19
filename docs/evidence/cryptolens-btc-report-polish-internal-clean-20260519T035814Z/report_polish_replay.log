@@ -1,0 +1,40 @@
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+{
+  "run_id": "run-20260519-035922-dfefacc8",
+  "output_dir": "docs/evidence/cryptolens-btc-report-polish-internal-clean-20260519T035814Z",
+  "source_run_id": "run-20260519-034550-0c4e9196",
+  "worker_count": 8,
+  "final_report_path": "docs/evidence/cryptolens-btc-report-polish-internal-clean-20260519T035814Z/exported/final_report.md",
+  "final_report_structure": {
+    "ok": true,
+    "category": "ok",
+    "reason": null,
+    "required_sections": [
+      "一",
+      "二",
+      "三",
+      "四",
+      "五",
+      "六",
+      "七",
+      "八"
+    ],
+    "present_sections": [
+      "一",
+      "二",
+      "三",
+      "四",
+      "五",
+      "六",
+      "七",
+      "八"
+    ],
+    "h1_count": 1,
+    "duplicate_title_headings": [],
+    "extra_sections": []
+  },
+  "report_polisher_segment_count": 8,
+  "segment_ok": true,
+  "forbidden_reader_terms": {}
+}

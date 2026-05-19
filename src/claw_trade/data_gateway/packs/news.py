@@ -446,6 +446,9 @@ class NewsPackBuilder:
                 f"{len(compact_facts.get('event_expectation', []))} 条，仅表示市场预期。"
             ),
         ]
+        event_expectations = compact_facts.get("event_expectation", [])
+        if event_expectations:
+            lines.append("事件预期样本：" + "；".join(item["title"] for item in event_expectations[:3]) + "。")
         if attempts:
             lines.append(
                 "来源尝试："

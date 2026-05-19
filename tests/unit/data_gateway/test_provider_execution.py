@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Mapping
 
+from claw_trade.data_gateway.providers import market_adapters
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
     CredentialStatus,
@@ -143,6 +144,18 @@ class _AiohttpAdapter(_ContractAdapter):
         )
 
 
+@dataclass
+class _RequestsFailureAdapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        market_adapters._http_get_json(
+            "https://user:very-secret@api.example.com/fail?symbol=AAPL"
+            "&api_key=secret-token&auth=top-secret"
+            "&accessToken=camel-secret&x-api-key=x-secret&api-key=dash-secret"
+        )
+        raise AssertionError("expected _http_get_json to raise before this line")
+
+
 def _request() -> PackRequest:
     return PackRequest(
         run_id="run-provider-exec",
@@ -248,7 +261,11 @@ def test_success_captures_real_requests_http_metadata_when_fetch_omits_it(monkey
                 "X-Request-Id": "transport-req-1",
                 "Set-Cookie": "must-not-enter-evidence",
             },
-            url=f"{url}?symbol=AAPL",
+            url=(
+                "https://user:super-secret@api.example.com/live?"
+                "symbol=AAPL&api_key=secret-token&auth=top-secret"
+                "&accessToken=camel-secret&x-api-key=x-secret&api-key=dash-secret"
+            ),
         )
 
     import requests
@@ -265,7 +282,19 @@ def test_success_captures_real_requests_http_metadata_when_fetch_omits_it(monkey
     assert result.status == ProviderStatus.REMOTE_SUCCESS
     http_docs = tuple(http_collection.docs.values())
     assert len(http_docs) == 1
-    assert http_docs[0]["source_url"] == "https://api.example.com/live?symbol=AAPL"
+    assert "symbol=AAPL" in http_docs[0]["source_url"]
+    assert "api_key=" in http_docs[0]["source_url"]
+    assert "auth=" in http_docs[0]["source_url"]
+    assert "accessToken=" in http_docs[0]["source_url"]
+    assert "x-api-key=" in http_docs[0]["source_url"]
+    assert "api-key=" in http_docs[0]["source_url"]
+    assert "[REDACTED]@api.example.com" in http_docs[0]["source_url"]
+    assert "secret-token" not in http_docs[0]["source_url"]
+    assert "top-secret" not in http_docs[0]["source_url"]
+    assert "camel-secret" not in http_docs[0]["source_url"]
+    assert "x-secret" not in http_docs[0]["source_url"]
+    assert "dash-secret" not in http_docs[0]["source_url"]
+    assert "user:super-secret@" not in http_docs[0]["source_url"]
     assert http_docs[0]["response_status_code"] == 202
     assert http_docs[0]["response_headers_summary"] == {
         "content-type": "application/json",
@@ -284,7 +313,7 @@ def test_success_captures_real_aiohttp_metadata_when_fetch_omits_it(monkeypatch:
                 "Server": "aiohttp-test",
                 "Authorization": "must-not-enter-evidence",
             },
-            url=url,
+            url="https://user:plain-secret@api.example.com/aiohttp",
         )
 
     import aiohttp
@@ -301,7 +330,8 @@ def test_success_captures_real_aiohttp_metadata_when_fetch_omits_it(monkeypatch:
     assert result.status == ProviderStatus.REMOTE_SUCCESS
     http_docs = tuple(http_collection.docs.values())
     assert len(http_docs) == 1
-    assert http_docs[0]["source_url"] == "https://api.example.com/aiohttp"
+    assert http_docs[0]["source_url"] == "https://[REDACTED]@api.example.com/aiohttp"
+    assert "plain-secret" not in http_docs[0]["source_url"]
     assert http_docs[0]["response_status_code"] == 206
     assert http_docs[0]["response_headers_summary"] == {
         "content-type": "application/json",
@@ -372,3 +402,51 @@ def test_http_evidence_write_failure_maps_to_evidence_write_failed() -> None:
     assert result.error_code == "evidence_write_failed"
     assert result.raw_ref is not None
     assert result.normalized_ref is not None
+
+
+def test_remote_error_message_and_http_source_url_redact_secrets(monkeypatch: Any) -> None:
+    import requests
+
+    def _request_transport(_session: Any, method: str, url: str, **_: Any) -> SimpleNamespace:
+        del method
+        raise requests.RequestException(f"403 Client Error: Forbidden for url: {url}")
+
+    monkeypatch.setattr(requests.sessions.Session, "request", _request_transport)
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(request=_request(), spec=_spec(), adapter=_RequestsFailureAdapter(), started_at=utc_now_iso())
+
+    assert result.status == ProviderStatus.REMOTE_ERROR
+    assert result.error_message is not None
+    assert "secret-token" not in result.error_message
+    assert "top-secret" not in result.error_message
+    assert "camel-secret" not in result.error_message
+    assert "x-secret" not in result.error_message
+    assert "dash-secret" not in result.error_message
+    assert "api_key=" in result.error_message
+    assert "auth=" in result.error_message
+    assert "accessToken=" in result.error_message
+    assert "x-api-key=" in result.error_message
+    assert "api-key=" in result.error_message
+    assert "[REDACTED]@api.example.com" in result.error_message
+    assert "user:very-secret@" not in result.error_message
+
+    http_docs = tuple(http_collection.docs.values())
+    assert len(http_docs) == 1
+    assert "symbol=AAPL" in http_docs[0]["source_url"]
+    assert "api_key=" in http_docs[0]["source_url"]
+    assert "auth=" in http_docs[0]["source_url"]
+    assert "accessToken=" in http_docs[0]["source_url"]
+    assert "x-api-key=" in http_docs[0]["source_url"]
+    assert "api-key=" in http_docs[0]["source_url"]
+    assert "[REDACTED]@api.example.com" in http_docs[0]["source_url"]
+    assert "secret-token" not in http_docs[0]["source_url"]
+    assert "top-secret" not in http_docs[0]["source_url"]
+    assert "camel-secret" not in http_docs[0]["source_url"]
+    assert "x-secret" not in http_docs[0]["source_url"]
+    assert "dash-secret" not in http_docs[0]["source_url"]
+    assert "user:very-secret@" not in http_docs[0]["source_url"]

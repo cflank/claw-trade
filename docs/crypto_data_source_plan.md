@@ -8,21 +8,25 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 目标架构是：
 
-- CoinGlass / BB 做加密市场结构主源。
+- OpenBB/data_gateway 统一调用 CoinGlass、Binance、Bybit、Deribit、CoinGecko、FRED、Glassnode、DefiLlama 等 approved provider，并写入 provider evidence。
+- CryptoLens 是加密指标分析引擎，只消费 OpenBB normalized crypto bundle，不作为数据源或 provider。
 - DefiLlama / CoinGecko 做项目资料和基本面补充。
 - 商业搜索与官方公告源做新闻事件层。
 - LunarCrush / Polymarket 做舆情和事件预期层。
 - OpenViking 继续做 approved material、L1/L2 报告和证据存储，不当作行情、新闻、舆情或链上数据源。
 - OpenClaw worker 只看到按 worker 分域封装后的资料包工具，不直接看到一堆底层 provider 原子接口。
 
-最新人类决策：正式 12 个 CRYPTO TradingAgents worker 和 `report_polisher` 全部打开。当前不声称完整数据覆盖：`market_analyst` 使用 BB / CoinGlass 作为市场结构主源，并补充调用本地 `crypto_market_data_pack` 生成公开交易所 OHLCV、技术指标和 PNG 图表资产；`fundamental_analyst` 使用已实现的 `crypto_fundamental_data_pack`，`news_analyst` 使用 `crypto_news_data_pack`，`social_analyst` 使用 `crypto_social_sentiment_pack`。新闻/舆情资料包若缺 key、失败、返回空或覆盖不足，worker 必须在自己的 L1 报告中直接说明缺哪些资料。`report_polisher` 只能整理已批准上游报告，不能补写新闻、舆情、基本面事实或投资结论。Python 不补写新闻、舆情或基本面事实，也不静默 fallback。
+最新人类决策：正式 12 个 CRYPTO TradingAgents worker 和 `report_polisher` 全部打开。当前 OpenBB 迁移后的统一入口是 `claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`。`market_analyst` 只通过 `claw_get_market_pack` 获取自然语言市场资料包；CRYPTO 市场资料包由 OpenBB/data_gateway 取数、归一化，再交给 CryptoLens 做离线指标分析。新闻/舆情资料包若缺 key、失败、返回空或覆盖不足，worker 必须在自己的 L1 报告中直接说明缺哪些资料。`report_polisher` 只能整理已批准上游报告，不能补写新闻、舆情、基本面事实或投资结论。Python 不补写新闻、舆情或基本面事实，也不静默 fallback。
 
 新闻与舆情资料包的详细实现边界见 [CRYPTO 新闻与舆情资料包详细设计](crypto_news_social_data_pack_design.md)。
 
+CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens接入方案.md)。
+
 ## 2. 设计原则
 
-1. 优先使用已经付费并跑通的数据源。
-   - BB / CoinGlass 是当前 CRYPTO 市场结构核心源。
+1. 优先使用已经付费并跑通的数据源，但数据源入口只能是 OpenBB/data_gateway。
+   - CoinGlass 等外部 provider 必须经 OpenBB/data_gateway adapter 进入证据链。
+   - CryptoLens 只分析 OpenBB normalized bundle，不读取 key、不出网、不写 provider evidence。
    - 不能用 CoinGecko、DefiLlama 或免费爬虫替代 CoinGlass 的衍生品结构数据。
 
 2. 免费源只能做补充。
@@ -45,7 +49,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 | 数据层 | 主源 | 补充源 | 主要 worker | 说明 |
 |---|---|---|---|---|
-| 市场结构 | BB / CoinGlass | CoinGecko OHLC、交易所流动性 | `market_analyst` | 资金费率、OI、清算、多空比、期权、ETF、链上周期指标 |
+| 市场结构 | OpenBB provider adapters：CoinGlass / Binance / Bybit / Deribit 等 approved source | CoinGecko OHLC、交易所流动性 | `market_analyst` | 资金费率、OI、清算、多空比、期权、ETF、链上周期指标；CryptoLens 只做分析层 |
 | 项目资料 / 基本面 | DefiLlama + CoinGecko | Dune、The Graph、项目官网、白皮书、治理论坛 | `fundamental_analyst` | TVL、fees、revenue、stablecoins、bridges、hacks、unlocks、metadata、FDV、流通量 |
 | 新闻事件 | 商业搜索 API + 官方公告源 | CoinGlass ETF / 链上事件、Polymarket 事件盘口 | `news_analyst` | 项目公告、协议升级、交易所公告、监管、ETF、安全事件 |
 | 舆情 / 情绪 | LunarCrush | X / Reddit / Telegram / Discord 搜索、Polymarket | `social_analyst` | 社交热度、KOL 叙事、社区分歧、机器人噪音、事件预期 |
@@ -54,9 +58,9 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 ## 4. 数据源逐项判断
 
-### 4.1 BB / CoinGlass
+### 4.1 OpenBB CRYPTO market providers + CryptoLens
 
-定位：CRYPTO 市场结构主源。
+定位：OpenBB/data_gateway 是 CRYPTO 市场结构的外部取数入口；CryptoLens 是指标分析引擎，不是数据源。
 
 适合：
 
@@ -77,9 +81,10 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- `market_analyst` 已接入 `crypto_market_data_pack`。
-- 当前由本地 `crypto_market_data_pack` 内部集中读取 BB / CoinGlass 市场结构主源，并补充公开交易所 OHLCV、技术指标和 PNG 图表资产。
-- 不建议让所有 worker 直接调用 BB。下游 worker 默认读取前线已批准报告。
+- `market_analyst` 只看到 `claw_get_market_pack`。
+- `claw_get_market_pack` 内部通过 OpenBB/data_gateway 执行 CoinGlass、Binance、Bybit、FRED 等 approved provider adapter，并写 OpenBB HTTP/raw/normalized evidence。
+- CryptoLens 只读取 OpenBB normalized crypto bundle 做离线分析，输出指标解释、条件场景、失效条件和数据缺口。
+- 禁止任何 worker 直接调用旧 BB MCP、CryptoLens raw tool 或 OpenBB atomic provider tool。下游 worker 默认读取前线已批准报告。
 
 ### 4.2 CoinGecko
 
@@ -102,7 +107,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- 放入 `crypto_fundamental_data_pack`。
+- 放入 `claw_get_fundamental_pack`。
 - 对于没有 DeFi 经营数据的资产，CoinGecko 只能提供基础资料补充；资料包必须同时标明 DeFi/链上经营数据覆盖不足，不能把 CoinGecko 基础资料写成完整基本面。
 
 ### 4.3 DefiLlama
@@ -130,17 +135,17 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- 放入 `crypto_fundamental_data_pack`。
+- 放入 `claw_get_fundamental_pack`。
 - 对 DeFi 协议、公链生态、L2、DEX、借贷、稳定币和桥类项目优先使用。
 - 对非 DeFi 资产，资料包必须明确说明 DefiLlama 覆盖不足。
 
 ### 4.4 OpenBB
 
-定位：统一数据接入平台，不是单一数据源。
+定位：当前目标态的唯一外部数据入口、唯一 provider 接口层和唯一数据 MCP；它是统一数据接入平台，不是单一数据源。
 
 适合：
 
-- 未来统一接商业授权数据源。
+- 统一接商业授权数据源。
 - 把多 provider 通过同一接口管理。
 - 与 MCP 生态整合。
 
@@ -152,8 +157,8 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- 暂不作为第一阶段 CRYPTO 主干。
-- 后续如果采用 OpenBB，应只在资料包内部使用，不能把 OpenBB 全量工具暴露给 worker。
+- 作为 OpenBB 迁移后的 CRYPTO provider 主干，但只能在资料包内部使用。
+- 不能把 OpenBB 全量工具、discovery/admin tool 或 atomic provider tool 暴露给 worker。
 
 ### 4.5 商业搜索 API
 
@@ -184,7 +189,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- 放入 `crypto_news_data_pack`。
+- 放入 `claw_get_news_pack`。
 - 允许用户按需填写 `BRAVE_SEARCH_API_KEY`、`BOCHA_API_KEY`、`NEWSAPI_API_KEY`、`SERPAPI_API_KEY`、`TAVILY_API_KEY`、`EXA_API_KEY`；未填写的 provider 不发起请求，但必须写入 `provider_attempts` / `data_gaps`，不能从资料包里静默消失。
 - 每条新闻必须记录来源、时间、标题、URL、摘要、证据强度和是否官方确认。
 - 官方公告、交易所公告、监管源、商业搜索结果和社区/KOL 传闻必须分层展示；商业搜索只能做发现入口，不能把搜索摘要直接当成事实。
@@ -208,7 +213,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- 放入 `crypto_social_sentiment_pack`。
+- 放入 `claw_get_social_pack`。
 - 社交指标必须和价格、成交量、OI、清算等市场结构交叉验证。
 - LunarCrush 适合作为聚合指标源；X / Reddit / Telegram / Discord 适合作为原帖与社区样本源；Polymarket 只能表达事件预期或盘口概率，不能写成社交共识或新闻事实。
 
@@ -230,7 +235,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 接入建议：
 
-- 放入 `crypto_news_data_pack` 或 `crypto_social_sentiment_pack` 的辅助域。
+- 放入 `claw_get_news_pack` 或 `claw_get_social_pack` 的辅助域。
 - 报告中应写成“事件盘口预期”，不要写成已发生事实。
 
 ### 4.8 daily_stock_analysis / Awesome-finance-skills
@@ -265,18 +270,19 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 ## 5. 建议暴露给 worker 的四个资料包
 
-### 5.1 `crypto_market_data_pack`
+### 5.1 `claw_get_market_pack`
 
 第一阶段 CRYPTO 市场分析只有一个 worker 可见工具：
 
-- `crypto_market_data_pack`，由 `openclaw_plugins/claw-trade-frontline-tools` 本地插件注册和执行。它内部集中读取 BB/CoinGlass 市场结构、衍生品、清算、链上、宏观和 AHR999，并补充公开交易所 OHLCV、技术指标和 PNG 图表资产。
-- worker 只看到资料包的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；BB 原始大 payload 只进入 `provider_raw` 证据文件。
+- `claw_get_market_pack`。它是 market worker 的统一资料包入口，不是数据源、不是 CryptoLens、不是 OpenBB 本体。
+- CRYPTO 下的内部链路是：`claw_get_market_pack -> OpenBB/data_gateway 取数 -> normalized crypto bundle -> CryptoLens analysis engine -> reader_brief`。
+- worker 只看到资料包的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；OpenBB raw payload、CryptoLens raw result、Mongo raw/cache object 都不得成为 worker 主材料。
 
 注册边界：
 
-- `bb_crypto_data__build_trade_context` 不暴露给 `market_analyst` 的 CRYPTO stage，避免 worker 直接接收 BB 原始大 JSON。
-- `crypto_market_data_pack` 可以写入本地插件合同，因为它由本地插件执行，并负责把 BB/CoinGlass 原始数据压缩成 worker 可读材料。
-- `crypto_market_data_pack` 不能把缺失的 OI、资金费率、清算、多空比、主动买卖、期权、ETF 或链上周期指标补写成已覆盖；缺失必须进入 `data_gaps`。
+- `bb_crypto_data__build_trade_context` 不暴露给 `market_analyst` 的 CRYPTO stage，避免 worker 直接接收旧 BB 原始大 JSON。
+- 旧 `crypto_market_data_pack` 只作为历史实现/迁移 alias 讨论；目标态不得作为 OpenBB 失败后的 fallback。
+- `claw_get_market_pack` 不能把缺失的 OI、资金费率、清算、多空比、主动买卖、期权、ETF 或链上周期指标补写成已覆盖；缺失必须进入 `data_gaps`。
 - CRYPTO market stage 是否真实可用，必须看 fresh provider payload 中的 visible tool schema 和真实 tool call 证据，不能只看静态合同。
 
 目标覆盖：
@@ -290,13 +296,13 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 - 主动买卖。
 - ETF。
 - 链上周期指标。
-- 图表资产：本地 `crypto_market_data_pack` 只负责公开交易所 OHLCV 衍生的技术图表，供最终报告复制图片时使用。
+- 图表资产：目标态由 `claw_get_market_pack` 的 OpenBB market pack 生成真实 OHLCV 衍生技术图表，供最终报告复制图片时使用；旧 `crypto_market_data_pack` 只作为历史实现说明。
 
-### 5.2 `crypto_fundamental_data_pack`
+### 5.2 `claw_get_fundamental_pack`
 
 当前实现状态：
 
-- 已有本地资料包工具 `crypto_fundamental_data_pack`，由 `openclaw_plugins/claw-trade-frontline-tools` 注册。
+- 目标 worker-visible 工具名是 `claw_get_fundamental_pack`；旧 `crypto_fundamental_data_pack` 只作为历史实现路径和迁移对象。
 - 当前实现接入 CoinGecko 与 DefiLlama：CoinGecko 负责币种基础资料、市值、FDV、供应量和价格快照；DefiLlama 负责 DeFi 协议 TVL 与 fees/revenue。
 - CoinGecko 必须配置 `COINGECKO_DEMO_API_KEY` 或 `COINGECKO_PRO_API_KEY`；缺 key 时资料包记录 credential missing，不走 public no-key 静默 fallback。DefiLlama 免费 API 可无 key，`DEFILLAMA_API_KEY` 只用于 Pro 路径。
 - `fundamental_analyst` 的 CRYPTO stage 仍不应仅凭静态工具注册打开；打开前还需要 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告证据。
@@ -319,7 +325,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 - hacks / unlocks / treasuries。
 - 生态和竞争格局。
 
-### 5.3 `crypto_news_data_pack`
+### 5.3 `claw_get_news_pack`
 
 底层候选：
 
@@ -340,7 +346,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 - ETF / 机构资金新闻。
 - 安全事件和黑客攻击。
 
-### 5.4 `crypto_social_sentiment_pack`
+### 5.4 `claw_get_social_pack`
 
 底层候选：
 
@@ -392,10 +398,10 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 ### 7.1 已打开
 
-- `market_analyst` / CRYPTO：已接 BB / CoinGlass，并补充挂载本地 `crypto_market_data_pack`。worker 必须先调用 BB 市场结构主源，再调用本地资料包拿 OHLCV/技术指标/PNG 图表资产；本地资料包不能替代 BB。
-- `fundamental_analyst` / CRYPTO：挂载已实现的 `crypto_fundamental_data_pack`，当前覆盖 CoinGecko 与 DefiLlama 边界。
-- `news_analyst` / CRYPTO：挂载 `crypto_news_data_pack`；该包覆盖官方公告/RSS/页面、GitHub releases、交易所公告配置源、监管 feed、DefiLlama 安全/融资背景、Polymarket 事件预期和商业搜索发现。
-- `social_analyst` / CRYPTO：挂载 `crypto_social_sentiment_pack`；该包覆盖 Alternative.me、LunarCrush、X、Reddit、Telegram、Discord、Polymarket 和公开讨论搜索发现。只有真实 provider payload 返回的平台才算覆盖。
+- `market_analyst` / CRYPTO：只挂 `claw_get_market_pack`。OpenBB/data_gateway 负责所有外部 provider 取数，CryptoLens 负责对 normalized bundle 做离线指标分析。
+- `fundamental_analyst` / CRYPTO：只挂 `claw_get_fundamental_pack`，当前目标覆盖 CoinGecko 与 DefiLlama 边界。
+- `news_analyst` / CRYPTO：只挂 `claw_get_news_pack`；该包覆盖官方公告/RSS/页面、GitHub releases、交易所公告配置源、监管 feed、DefiLlama 安全/融资背景、Polymarket 事件预期和商业搜索发现。
+- `social_analyst` / CRYPTO：只挂 `claw_get_social_pack`；该包覆盖 Alternative.me、LunarCrush、X、Reddit、Telegram、Discord、Polymarket 和公开讨论搜索发现。只有真实 provider payload 返回的平台才算覆盖。
 - 下游 8 个正式 worker：`bull_researcher`、`bear_researcher`、`research_manager`、`trader`、`risk_challenger`、`risk_guardian`、`risk_moderator`、`portfolio_manager` 均打开，但不挂外部数据工具，只读取上游 approved L1 报告并对缺口做条件化推理。
 
 ### 7.2 下游纯推理 worker 边界
@@ -424,8 +430,8 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 这些 worker 已打开，且已挂真实资料包，但当前覆盖边界如下：
 
-- `news_analyst`：必须调用 `crypto_news_data_pack`；如果只得到搜索发现、Polymarket 或 DefiLlama 背景，必须写明缺少官方公告、GitHub、交易所公告和监管原始源。
-- `social_analyst`：必须调用 `crypto_social_sentiment_pack`；如果只得到 Alternative.me、Polymarket 或搜索发现，必须写明缺少真实社交平台原始舆情覆盖。
+- `news_analyst`：必须调用 `claw_get_news_pack`；如果只得到搜索发现、Polymarket 或 DefiLlama 背景，必须写明缺少官方公告、GitHub、交易所公告和监管原始源。
+- `social_analyst`：必须调用 `claw_get_social_pack`；如果只得到 Alternative.me、Polymarket 或搜索发现，必须写明缺少真实社交平台原始舆情覆盖。
 
 原因：
 
@@ -436,10 +442,10 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 | worker | CRYPTO 工具策略 |
 |---|---|
-| `market_analyst` | 只挂 `crypto_market_data_pack`；资料包内部集中读取 BB / CoinGlass 市场结构主源，并补充 OHLCV、技术指标和 PNG 图表资产 |
-| `fundamental_analyst` | 挂已实现的 `crypto_fundamental_data_pack`；缺 key、失败、partial 或 insufficient 必须写入 L1 缺口 |
-| `news_analyst` | 挂 `crypto_news_data_pack`；搜索发现、Polymarket 和 DefiLlama 背景不能被写成新闻事实，缺原始源必须上报 |
-| `social_analyst` | 挂 `crypto_social_sentiment_pack`；Alternative.me / Polymarket / 搜索发现不能被写成完整社交舆情，缺原始平台必须上报 |
+| `market_analyst` | 只挂 `claw_get_market_pack`；工具内部经 OpenBB/data_gateway 获取 CRYPTO 市场资料，再调用 CryptoLens 离线分析引擎生成自然语言资料包 |
+| `fundamental_analyst` | 只挂 `claw_get_fundamental_pack`；缺 key、失败、partial 或 insufficient 必须写入 L1 缺口 |
+| `news_analyst` | 只挂 `claw_get_news_pack`；搜索发现、Polymarket 和 DefiLlama 背景不能被写成新闻事实，缺原始源必须上报 |
+| `social_analyst` | 只挂 `claw_get_social_pack`；Alternative.me / Polymarket / 搜索发现不能被写成完整社交舆情，缺原始平台必须上报 |
 | `bull_researcher` | 不挂外部数据工具；读四份前线 approved L1 报告，缺口必须条件化处理 |
 | `bear_researcher` | 不挂外部数据工具；读四份前线报告和 bull 发言，缺口必须条件化处理 |
 | `research_manager` | 不挂外部数据工具；读前线报告和牛熊辩论，不能替缺失前线材料补事实 |
@@ -453,7 +459,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 | 数据源 | 收费判断 | 稳定性判断 | 备注 |
 |---|---|---|---|
-| CoinGlass / BB | 已付费 | 高，当前项目已跑通 | CRYPTO 市场结构主源 |
+| CoinGlass 等 OpenBB CRYPTO provider（CryptoLens 仅分析） | CoinGlass 已付费；CryptoLens 是项目内部分析代码 | 高，旧 BB 项目已跑通但目标态需迁入本仓库 | CoinGlass 等外部源只经 OpenBB/data_gateway；CryptoLens 不作为数据源 |
 | DefiLlama | 免费 API + Pro/API plan | 中高，DeFi 覆盖强 | MCP/API 高额度通常需要计划 |
 | CoinGecko | Freemium / Pro | 中高，币种基础覆盖强 | 高频和高级能力需付费 |
 | LunarCrush | 商业 / Freemium 倾向 | 待确认 | 社交舆情候选主源 |
@@ -465,7 +471,7 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 | Polymarket | 市场数据公开程度高 | 中 | 事件预期，不是新闻事实 |
 | Dune | Freemium / paid | 高 | 深度链上，成本和查询维护较高 |
 | The Graph | Freemium / paid | 中高 | 链上查询，依赖 subgraph/API 覆盖 |
-| OpenBB | 框架开源，数据源另算 | 取决于底层 provider | 不建议第一阶段当主干 |
+| OpenBB | 框架开源，数据源另算 | 取决于底层 provider | 当前目标态唯一外部数据入口；不得把全量工具暴露给 worker |
 | Awesome-finance-skills | 代码免费 | 取决于底层免费源 | 适合参考 skill 设计 |
 | daily_stock_analysis | 代码免费 | 取决于底层免费/商业源 | 适合参考配置设计 |
 | Kronos | 模型开源 | 取决于输入数据和回测 | 不是数据源 |
@@ -473,10 +479,10 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 ## 10. 推荐实施顺序
 
 1. 保持正式 12 个 CRYPTO worker 与 `report_polisher` 打开；当前能力标记为“CRYPTO 全链路，新闻/舆情覆盖不完整”，不声称完整新闻或完整社交舆情覆盖。
-2. 用 fresh provider payload 证明 `market_analyst` 实际只看到 `crypto_market_data_pack`，并由该资料包内部真实调用 BB/CoinGlass 产出市场结构材料，同时补充 OHLCV/技术指标/PNG 图表资产。
-3. 对 `crypto_fundamental_data_pack` 做 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告验证。
-4. 为 `crypto_news_data_pack` 配置项目官方公告 / GitHub releases / 交易所公告 / 监管源，并验证 provider attempts 与 source URL。
-5. 为 `crypto_social_sentiment_pack` 配置 LunarCrush、X、Reddit、Telegram、Discord 等真实社交源，并验证 provider attempts 与平台覆盖状态。
+2. 用 fresh provider payload 证明 `market_analyst` 实际只看到 `claw_get_market_pack`，并由该资料包内部真实调用 OpenBB/data_gateway provider adapters 产出市场结构材料，再由 CryptoLens 生成指标分析材料。
+3. 对 `claw_get_fundamental_pack` 做 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告验证。
+4. 为 `claw_get_news_pack` 配置项目官方公告 / GitHub releases / 交易所公告 / 监管源，并验证 provider attempts 与 source URL。
+5. 为 `claw_get_social_pack` 配置 LunarCrush、X、Reddit、Telegram、Discord 等真实社交源，并验证 provider attempts 与平台覆盖状态。
 6. 每接一个资料包，就更新对应 CRYPTO prompt 的“可用工具 / 先调用工具”段落。
 7. 每打开或调整一个 worker 的 CRYPTO stage，都要用 provider payload 证明：
    - 模型实际看到的工具集合正确。

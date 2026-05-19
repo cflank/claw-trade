@@ -167,8 +167,8 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE" in text
     assert "const sourcePath = process.env.OPENCLAW_SOURCE_CONFIG_PATH_VALUE;" in text
     assert "const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;" in text
-    assert "const bbMcpServerPath = (process.env.BB_MCP_SERVER_PATH" in text
-    assert "const bbMcpCwd = (process.env.BB_MCP_CWD" in text
+    assert "BB_MCP_SERVER_PATH" not in text
+    assert "BB_MCP_CWD" not in text
     assert "const llmIdleTimeoutSeconds = Number.parseInt(String(rawLlmIdleTimeoutSeconds ?? \"\"), 10);" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS 必须是正整数" in text
     assert "const workers = [" in text
@@ -202,12 +202,11 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "paths: [clawTradeFrontlinePluginPath]" in text
     assert '"claw-trade-frontline-tools": {' in text
     assert "plugins: mergedPlugins," in text
+    assert "const mergedMcpServers = {" in text
+    assert "delete mergedMcpServers.bb_crypto_data;" in text
     assert "const mergedMcp = {" in text
-    assert "bb_crypto_data: {" in text
-    assert 'command: "node"' in text
-    assert "args: [bbMcpServerPath]" in text
-    assert "cwd: bbMcpCwd" in text
-    assert '"COINGLASS_API_KEY"' in text
+    assert "mergedMcpServers.bb_crypto_data =" not in text
+    assert "servers: mergedMcpServers," in text
     assert "mcp: mergedMcp," in text
     assert "idleTimeoutSeconds: llmIdleTimeoutSeconds" not in text
     assert "defaults.llm" not in text

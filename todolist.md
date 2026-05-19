@@ -23,6 +23,15 @@
 - [ ] Verify the model-visible tool list contains only approved pack endpoints.
 - [ ] Do not rely on OpenBB category settings alone as the pack exposure boundary.
 
+## OpenViking Runtime Health Follow-Up
+
+- [ ] Split OpenViking health reporting into two reader-visible statuses: `/report` material/evidence chain health and optional OpenViking enhanced capability health.
+- [ ] Keep current evidence wording honest: report chain can be OK while semantic/vector queue, metrics, or recovery remain unavailable.
+- [ ] Decide whether to connect `/metrics` for local report runtime, or explicitly document it as unsupported in this runtime profile.
+- [ ] Confirm whether OpenViking exposes a stable public recovery/redo API; if not, keep `recovery_status=unavailable` and do not substitute `/health`.
+- [ ] Decide whether semantic/vector indexing is needed for claw-trade; if enabled later, prove it with live evidence and keep it control-plane only, not worker-visible or investment-fact authority.
+- [ ] UI requirement: do not show `runtime_health.status=blocked` as a single scary global failure when `/report`, relations, ovpack, and evidence audit passed.
+
 ## Evidence Docs To Write Before D0
 
 - [x] `docs/evidence/openbb-submodule-version.md`

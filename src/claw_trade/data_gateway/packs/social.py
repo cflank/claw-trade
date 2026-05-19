@@ -447,6 +447,9 @@ class SocialPackBuilder:
                 f"{_crypto_social_discovery_boundary(request)}。"
             ),
         ]
+        event_expectations = compact_facts.get("event_expectation", [])
+        if event_expectations:
+            lines.append("Polymarket 事件样本：" + "；".join(item["title"] for item in event_expectations[:3]) + "。")
         if attempts:
             lines.append(
                 "来源尝试："

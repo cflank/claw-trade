@@ -28,6 +28,7 @@ from claw_trade.data_gateway.packs import service as service_module
 from claw_trade.data_gateway.packs.service import DomainPackService
 from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
 from claw_trade.data_gateway.store.attempts import MongoAttemptStore
+from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
 from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
 from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
 
@@ -94,7 +95,8 @@ class _Adapter:
 
 
 class _Collection:
-    def __init__(self) -> None:
+    def __init__(self, name: str = "test_collection") -> None:
+        self.name = name
         self.docs: dict[str, dict[str, Any]] = {}
         self.raise_write: Exception | None = None
 
@@ -114,6 +116,27 @@ class _Collection:
         if self.raise_write is not None:
             raise self.raise_write
         self.docs[doc["_id"]] = dict(doc)
+
+
+class _Database:
+    def __init__(self) -> None:
+        self.collections: dict[str, _Collection] = {}
+
+    def __getitem__(self, name: str) -> _Collection:
+        if name not in self.collections:
+            self.collections[name] = _Collection(name)
+        return self.collections[name]
+
+
+class _MongoClient:
+    database = _Database()
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+    def get_default_database(self, name: str) -> _Database:
+        del name
+        return self.database
 
 
 def _request(domain: PackDomain, market: Market = Market.US) -> PackRequest:
@@ -199,6 +222,82 @@ def test_domain_pack_service_routes_market_and_records_missing_adapter_without_s
     assert pack.readiness.status.value in {"blocked", "insufficient"}
     assert "来源未配置" in pack.reader_brief_md
     assert "raw://" not in pack.reader_brief_md
+
+
+def test_domain_pack_service_persists_missing_adapter_attempt_without_raw_or_http_evidence() -> None:
+    request = _request(PackDomain.MARKET)
+    missing = _Adapter(
+        adapter_id="missing.market",
+        provider_id="missing_market",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=(),
+    )
+    spec = _spec(request=request, adapter=missing, endpoint="equity_price_historical")
+    attempt_collection = _Collection()
+    raw_collection = _Collection()
+    normalized_collection = _Collection()
+    http_collection = _Collection()
+    helper = ProviderExecutionEvidenceHelper(
+        raw_store=MongoRawPayloadStore(raw_collection),
+        normalized_store=MongoNormalizedStore(normalized_collection),
+        attempt_store=MongoAttemptStore(attempt_collection),
+        http_evidence_store=MongoProviderHttpEvidenceStore(http_collection),
+    )
+
+    pack = DomainPackService(
+        settings=object(),
+        adapters=(),
+        provider_execution_helper=helper,
+    ).get_pack(request, _plan(request, (spec,)))
+
+    assert {attempt.status for attempt in pack.attempts} == {ProviderStatus.SKIPPED_NOT_CONFIGURED}
+    [attempt_doc] = attempt_collection.docs.values()
+    assert attempt_doc["status"] == "skipped_not_configured"
+    assert attempt_doc["raw_ref"] is None
+    assert attempt_doc["normalized_ref"] is None
+    assert raw_collection.docs == {}
+    assert normalized_collection.docs == {}
+    assert http_collection.docs == {}
+
+
+def test_domain_pack_service_persists_credential_missing_attempt_without_raw_or_http_evidence() -> None:
+    request = _request(PackDomain.MARKET)
+    adapter = _Adapter(
+        adapter_id="market.openbb.us",
+        provider_id="market_openbb",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=(),
+        credential_missing=True,
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
+    attempt_collection = _Collection()
+    raw_collection = _Collection()
+    normalized_collection = _Collection()
+    http_collection = _Collection()
+    helper = ProviderExecutionEvidenceHelper(
+        raw_store=MongoRawPayloadStore(raw_collection),
+        normalized_store=MongoNormalizedStore(normalized_collection),
+        attempt_store=MongoAttemptStore(attempt_collection),
+        http_evidence_store=MongoProviderHttpEvidenceStore(http_collection),
+    )
+
+    pack = DomainPackService(
+        settings=object(),
+        adapters=(adapter,),
+        provider_execution_helper=helper,
+    ).get_pack(request, _plan(request, (spec,)))
+
+    assert {attempt.status for attempt in pack.attempts} == {ProviderStatus.CREDENTIAL_MISSING}
+    [attempt_doc] = attempt_collection.docs.values()
+    assert attempt_doc["status"] == "credential_missing"
+    assert attempt_doc["error_code"] == "credential_missing"
+    assert attempt_doc["raw_ref"] is None
+    assert attempt_doc["normalized_ref"] is None
+    assert raw_collection.docs == {}
+    assert normalized_collection.docs == {}
+    assert http_collection.docs == {}
 
 
 def test_domain_pack_service_routes_market_success_to_market_builder() -> None:
@@ -306,6 +405,72 @@ def test_domain_pack_service_market_pack_attempts_include_mongo_refs() -> None:
     assert attempt.normalized_ref is not None and attempt.normalized_ref.startswith("mongo://openbb_normalized/")
     assert pack.raw_refs == (attempt.raw_ref,)
     assert pack.normalized_refs == (attempt.normalized_ref,)
+
+
+def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when_mongo_configured(monkeypatch) -> None:
+    _MongoClient.database = _Database()
+    monkeypatch.setattr(service_module, "MongoClient", _MongoClient)
+    request = PackRequest(
+        run_id="run-crypto-market",
+        call_id="call-crypto-market",
+        worker_id="market_analyst",
+        market=Market.CRYPTO,
+        domain=PackDomain.MARKET,
+        ticker="BTC",
+        company_name="Bitcoin",
+        start_date="2026-04-01",
+        end_date="2026-05-17",
+        current_date="2026-05-17",
+        currency="USD",
+        profile="CRYPTO",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    rows = tuple(
+        {
+            "date": f"2026-04-{day:02d}",
+            "open": 80000 + day,
+            "high": 81000 + day,
+            "low": 79000 + day,
+            "close": 80500 + day,
+            "volume": 1000 + day,
+            "currency": "USD",
+            "timezone": "UTC",
+        }
+        for day in range(1, 29)
+    ) + tuple(
+        {
+            "date": f"2026-05-{day:02d}",
+            "open": 81000 + day,
+            "high": 82000 + day,
+            "low": 80000 + day,
+            "close": 81500 + day,
+            "volume": 1100 + day,
+            "currency": "USD",
+            "timezone": "UTC",
+        }
+        for day in range(1, 12)
+    )
+    adapter = _Adapter(
+        adapter_id="market.openbb.crypto",
+        provider_id="openbb_yfinance",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=rows,
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="crypto_price_historical")
+    settings = type("_Settings", (), {"mongo_uri": "mongodb://localhost/claw_trade_openbb"})()
+
+    service = DomainPackService(settings=settings, adapters=(adapter,))
+    pack = service.get_pack(request, _plan(request, (spec,)))
+
+    assert len(pack.audit_payload.analysis_evidence_refs) == 1
+    [analysis_ref] = pack.audit_payload.analysis_evidence_refs
+    assert analysis_ref.startswith("mongo://crypto_lens_analysis_evidence/")
+    assert analysis_ref not in pack.reader_brief_md
+    evidence_docs = _MongoClient.database.collections["crypto_lens_analysis_evidence"].docs
+    [document] = evidence_docs.values()
+    assert document["referenced_normalized_refs"] == pack.normalized_refs
+    assert "raw_ref" not in document
 
 
 def test_domain_pack_service_market_evidence_write_failure_maps_to_evidence_write_failed() -> None:

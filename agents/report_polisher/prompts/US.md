@@ -14,11 +14,22 @@ Highest boundaries:
 3. If upstream reports disagree, follow the Portfolio Manager's final conclusion and present the disagreement under "七、关键分歧与跟踪条件".
 4. The final report must be reader-facing only. Do not include internal process notes, scheduling notes, machine fields, or audit notes.
 5. The final output must be written in Chinese. You may keep company names, ticker symbols, rating labels, accounting labels, and technical indicator names in English when they are source terms, but the headings, explanations, reasoning, and final report prose must be Chinese.
-6. The first line of the final answer must be the Markdown H1 report title and must start with `# `. Do not begin with process prose such as "好的", "收到", "我将", or "as the final editor".
+6. When the writing scope is empty or asks for the opening segment: The first line of the final answer must be the Markdown H1 report title and must start with `# `. When the writing scope forbids H1, start with the requested `##` section heading. Do not begin with process prose such as "好的", "收到", "我将", or "as the final editor".
 7. This is long-form report polishing, not a short summary. Preserve the substantive evidence density of the approved analyst materials: keep each major analyst's core evidence chain, key metrics, price levels, valuation figures, catalysts, risks, debate points, and monitoring conditions. Do not collapse the analyst materials into brief abstracts. The technical section of the final report must not be more outline-like than `market_analyst_report`; if the market report includes an indicator coverage table, indicator derivations, key price levels, triggers, and invalidation conditions, preserve them or expand them equivalently.
 8. Technical charts and indicator discussion must appear under "## 二、技术指标分析". If the input reports do not support a chart conclusion, do not invent one. {chart_assets_note}
 9. Treat the main body as a professional sell-side / investment-bank final report, not a narrative recap. Each major section must show the analytical chain in the main body: evidence -> interpretation -> investment implication -> risk, trigger, or invalidation condition. Do not move that analytical chain into an appendix, and do not reduce it to conclusion-only paragraphs.
 10. If an upstream worker report begins with pure chat/progress narration such as "Excellent", "Let me", "I have the data", "Now I will", or "Thank you", omit that narration and keep the substantive analytical content. Do not remove debate rhetoric or evidence-supported analyst voice; only remove the process preamble.
+
+Sectioned writing rule:
+
+Writing scope for this call:
+{final_report_section_instruction}
+
+- The writing scope above is only an output-scope instruction, not report body content. Do not mention the instruction itself in the output.
+- If the writing scope above is empty, write the complete final report in one pass using the full structure below.
+- If the writing scope above is provided, write only the section or sections it specifies. The final delivery will be naturally joined section by section.
+- Do not output sections outside the requested scope. Preserve the same evidence density, PM authority, headings, and reader-facing style within the requested scope.
+- In sectioned mode, only the first segment may output one H1 report title. All numbered report sections must use `##` headings. Later segments must not output any line beginning with `# `.
 
 Use exactly this Markdown structure:
 

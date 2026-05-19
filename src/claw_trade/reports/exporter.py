@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import json
-from pathlib import Path
 import re
 import shutil
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from claw_trade.artifacts.manifest import ApprovedManifest
@@ -19,6 +19,7 @@ from claw_trade.guards.export_claims import (
     validate_export_claims_are_supported,
     validate_export_mapping_identity,
 )
+from claw_trade.reports.structure import validate_final_report_text
 from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids
 
@@ -43,7 +44,6 @@ _WORKER_SECTION_TITLES: dict[str, str] = {
     "portfolio_manager": "最终裁决 / 最终投资决策",
     "report_polisher": "读者版最终报告",
 }
-_MARKET_ANALYSIS_DETAIL_HEADING = "### 市场分析师完整指标材料"
 _TECHNICAL_SECTION_HEADING_MARKERS = (
     "\n## 二、市场结构与技术指标分析\n",
     "\n## 市场结构与技术指标分析\n",
@@ -209,11 +209,9 @@ def render_final_report(
     ordered_materials = _ordered_materials(materials)
     report_text_by_material_id = _report_text_by_material_id(report_materials)
     claim_links = _claim_links_from_materials(ordered_materials)
-    polisher_text = _latest_report_text(report_materials, _REPORT_POLISHER_WORKER_ID).strip()
+    polisher_text = _combined_report_text(ordered_materials, report_materials, _REPORT_POLISHER_WORKER_ID).strip()
     if polisher_text:
-        market_text = _latest_report_text(report_materials, _MARKET_WORKER_ID)
-        final_text = _attach_market_analysis_details(polisher_text, market_text)
-        return RenderedReport(text=final_text.strip() + "\n", claim_links=claim_links)
+        return RenderedReport(text=polisher_text.strip() + "\n", claim_links=claim_links)
 
     lines: list[str] = ["# 最终投资报告", ""]
     pm_text = _latest_report_text(report_materials, _PM_WORKER_ID)
@@ -235,40 +233,6 @@ def render_final_report(
         lines.append(section_text or "（报告原文缺失）")
 
     return RenderedReport(text="\n".join(lines).strip() + "\n", claim_links=claim_links)
-
-
-def _attach_market_analysis_details(report_text: str, market_text: str) -> str:
-    market_body = market_text.strip()
-    if not market_body or _MARKET_ANALYSIS_DETAIL_HEADING in report_text:
-        return report_text
-
-    detail_block = "\n\n".join(
-        (
-            _MARKET_ANALYSIS_DETAIL_HEADING,
-            _demote_markdown_headings(market_body, levels=2),
-        )
-    )
-    heading_match = _find_technical_section_heading(report_text)
-    if heading_match is None:
-        return f"{report_text.rstrip()}\n\n{detail_block}\n"
-
-    position, marker = heading_match
-    before_heading = report_text[:position]
-    after_heading = report_text[position + len(marker) :]
-    heading = marker.strip()
-    return f"{before_heading.rstrip()}\n\n{heading}\n\n{detail_block}\n\n{after_heading.lstrip()}"
-
-
-def _demote_markdown_headings(text: str, *, levels: int) -> str:
-    lines: list[str] = []
-    for line in text.splitlines():
-        match = re.match(r"^(#{1,6})(\s+.*)$", line)
-        if match:
-            depth = min(6, len(match.group(1)) + levels)
-            lines.append(f"{'#' * depth}{match.group(2)}")
-        else:
-            lines.append(line)
-    return "\n".join(lines).strip()
 
 
 def build_worker_appendices(
@@ -427,6 +391,23 @@ def export_final_report(
             paths=(state.run_dir / "calls",),
         )
     rendered = _attach_report_image_assets(rendered=rendered, image_assets=image_assets)
+    structure = validate_final_report_text(rendered.text)
+    structure_path = state.run_dir / "reports" / "final-report-structure.json"
+    structure_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        structure_path,
+        {
+            **structure.to_payload(),
+            "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+        },
+    )
+    if not structure.ok:
+        return ExportResult.failed(
+            state=state,
+            category=structure.category,
+            reason=structure.reason or "最终报告章节结构验收失败",
+            paths=(structure_path, state.run_dir / "openviking" / "approved-manifest.json"),
+        )
     mapping = build_export_claim_mapping(
         rendered=rendered,
         materials=loaded.materials,
@@ -504,6 +485,51 @@ def _latest_report_text(report_materials: tuple[ReportMaterial, ...], worker_id:
         if item.material.worker_id == worker_id:
             return item.l1_text
     return ""
+
+
+def _combined_report_text(
+    ordered_materials: tuple[ApprovedMaterial, ...],
+    report_materials: tuple[ReportMaterial, ...],
+    worker_id: str,
+) -> str:
+    report_text_by_material_id = _report_text_by_material_id(report_materials)
+    raw_parts = [
+        report_text_by_material_id.get(material.material_id, "").strip()
+        for material in ordered_materials
+        if material.worker_id == worker_id
+    ]
+    if worker_id == _REPORT_POLISHER_WORKER_ID:
+        parts = [
+            _normalize_report_polisher_segment(part, is_first=index == 0)
+            for index, part in enumerate(raw_parts)
+        ]
+    else:
+        parts = raw_parts
+    return "\n\n".join(part for part in parts if part)
+
+
+_NUMBERED_H1_SECTION_RE = re.compile(r"^# ([一二三四五六七八][、.．].*)$")
+
+
+def _normalize_report_polisher_segment(text: str, *, is_first: bool) -> str:
+    # Segment joining is an exporter formatting step: keep analyst text intact, but prevent duplicated H1s
+    # and accidental top-level section headings from making the final Markdown unreadable.
+    lines = text.strip().splitlines()
+    normalized: list[str] = []
+    skipped_late_title = False
+    for line in lines:
+        stripped = line.strip()
+        if not is_first and not skipped_late_title and stripped.startswith("# ") and "投资研究报告" in stripped:
+            skipped_late_title = True
+            continue
+        section_match = _NUMBERED_H1_SECTION_RE.match(stripped)
+        if section_match is not None:
+            normalized.append(f"## {section_match.group(1)}")
+            continue
+        normalized.append(line)
+    while normalized and not normalized[0].strip():
+        normalized.pop(0)
+    return "\n".join(normalized).strip()
 
 
 def _section_title(material: ApprovedMaterial) -> str:

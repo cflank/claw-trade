@@ -45,12 +45,19 @@ class _Collection:
 
 
 class _Database:
-    def __init__(self, rows: tuple[dict[str, Any], ...]) -> None:
-        self._collection = _Collection(rows)
+    def __init__(
+        self,
+        rows: tuple[dict[str, Any], ...],
+        *,
+        crypto_lens_rows: tuple[dict[str, Any], ...] = (),
+    ) -> None:
+        self._collections = {
+            "openbb_provider_attempts": _Collection(rows),
+            "crypto_lens_analysis_evidence": _Collection(crypto_lens_rows),
+        }
 
     def __getitem__(self, name: str) -> _Collection:
-        assert name == "openbb_provider_attempts"
-        return self._collection
+        return self._collections.get(name, _Collection(()))
 
 
 class _Manifest:
@@ -129,6 +136,50 @@ def test_lineage_writer_accepts_tool_call_scoped_provider_attempts(tmp_path: Pat
     assert "mongo://openbb_provider_attempts/attempt-1" in linked_text
 
 
+def test_lineage_writer_rebuilds_crypto_lens_analysis_refs_from_mongo(tmp_path: Path) -> None:
+    from claw_trade.artifacts.openviking_client import OpenVikingClient
+
+    run_id = "run-lineage"
+    state = _state(tmp_path, run_id=run_id, market="CRYPTO", ticker="BTC", currency="USD")
+    _write_export_claims(state)
+    market = _material(run_id, "market_analyst", Stage.FRONTLINE, "call-market")
+    pm = _material(run_id, "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-pm")
+    final = _material(run_id, "report_polisher", Stage.FINAL_REPORT, "call-final")
+    backend = _Backend(linked=[])
+    writer = OpenBBMongoLineageWriter(
+        openviking=OpenVikingClient(backend=backend),
+        database=_Database(
+            (_attempt_doc(run_id=run_id, call_id="call-market"),),
+            crypto_lens_rows=(
+                {
+                    "_id": "crypto_lens:run-lineage:call-market:evidence",
+                    "run_id": run_id,
+                    "call_id": "call-market",
+                    "referenced_normalized_refs": ("mongo://openbb_normalized/norm-1",),
+                },
+            ),
+        ),
+        now_text=lambda: "2026-05-18T00:00:00Z",
+    )
+    export_result = ExportResult.passed(
+        state=state,
+        final_report_path=state.run_dir / "reports" / "final-report.md",
+        guard_path=state.run_dir / "reports" / "export-guard-results.json",
+    )
+
+    result = writer.link_after_export(
+        state=state,
+        manifest=_Manifest((market, pm, final)),  # type: ignore[arg-type]
+        export_result=export_result,
+    )
+
+    assert result.ok is True
+    linked_text = "\n".join(str(item) for item in backend.linked)
+    assert "mongo://crypto_lens_analysis_evidence/crypto_lens:run-lineage:call-market:evidence" in linked_text
+    assert "pack_audit_to_provider_attempt" in linked_text
+    assert "crypto_lens_analysis_evidence/crypto_lens" in linked_text
+
+
 def test_lineage_writer_fails_when_frontline_provider_attempts_are_missing(tmp_path: Path) -> None:
     from claw_trade.artifacts.openviking_client import OpenVikingClient
 
@@ -160,18 +211,25 @@ def test_lineage_writer_fails_when_frontline_provider_attempts_are_missing(tmp_p
     assert "缺少 OpenBB provider attempts" in (result.reason or "")
 
 
-def _state(tmp_path: Path, *, run_id: str) -> WorkflowState:
+def _state(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    market: str = "US",
+    ticker: str = "AAPL",
+    currency: str = "USD",
+) -> WorkflowState:
     run_dir = tmp_path / "runs" / run_id
     (run_dir / "reports").mkdir(parents=True)
     (run_dir / "openviking").mkdir(parents=True)
     return WorkflowState(
         run_id=run_id,
         request=RunRequest(
-            ticker="AAPL",
-            company_name="Apple",
-            market="US",
-            profile="US",
-            currency="USD",
+            ticker=ticker,
+            company_name="Apple" if market == "US" else "Bitcoin",
+            market=market,
+            profile=market,
+            currency=currency,
             currency_symbol="$",
             current_date="2026-05-18",
             start_date="2026-04-18",

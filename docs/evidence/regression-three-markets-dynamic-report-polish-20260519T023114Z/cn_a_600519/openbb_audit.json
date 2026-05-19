@@ -1,0 +1,15 @@
+{
+  "attempt_count": 11,
+  "http_evidence_count": 16,
+  "invalid_raw_refs": [],
+  "missing_raw_refs": [],
+  "passed": true,
+  "raw_ref_count": 7,
+  "remote_success_attempts_missing_normalized_ref": [],
+  "remote_success_attempts_missing_raw_ref": [],
+  "run_id": "run-20260519-023119-9aa30f4d",
+  "success_http_missing_headers": [],
+  "success_http_missing_raw_ref": [],
+  "success_http_missing_response_status": [],
+  "success_http_missing_source_url": []
+}

@@ -1,17 +1,19 @@
-# BB 接入方案
+# CryptoLens 接入方案（旧称 BB）
 
 状态：设计方案，未代表代码已完成。
 日期：2026-05-18
 
 ## 1. 结论
 
-BB 在 claw-trade 中的定位不是数据源，也不是 provider 入口。
+CryptoLens 在 claw-trade 中的定位不是数据源，也不是 provider 入口。
 
-BB 的定位是：CRYPTO market 的加密币指标分析引擎。
+CryptoLens 是从 Win11 旧 BB 项目迁入 claw-trade 的 CRYPTO 指标分析引擎。旧称 BB 只作为迁移来源、历史证据和旧路径/旧变量名出现；目标态名称统一为 CryptoLens，未来代码标识可用 `crypto_lens`。
 
-BB 代码的目标状态是：从 Win11 下已跑通的 BB 项目移植进 claw-trade 仓库，成为本项目内部代码的一部分。
+CryptoLens 代码的目标状态是：从 Win11 下已跑通的旧 BB 项目移植进 claw-trade 仓库，成为本项目内部代码的一部分。
 
-目标 report runtime 不依赖 `D:\src\BB`、`/mnt/d/src/BB`、外部 BB MCP 服务或 Win11 BB 项目目录。
+目标 report runtime 不依赖 `D:\src\BB`、`/mnt/d/src/BB`、外部 BB MCP 服务或 Win11 旧 BB 项目目录。
+
+CryptoLens 不是数据源、不是 provider、不是外部 MCP、不是独立 worker、不是 trader/PM 决策器。
 
 OpenBB 的定位是：唯一外部数据入口、唯一 provider 接口层、唯一数据 MCP、唯一 provider evidence 记录者。
 
@@ -22,7 +24,7 @@ market_analyst
   -> claw_get_market_pack
   -> OpenBB/data_gateway 执行外部 provider 取数并写证据
   -> 归一化为 crypto market analysis input
-  -> BB 离线分析引擎计算指标/结构/清算/链上/宏观解释
+  -> CryptoLens 离线分析引擎计算指标/结构/清算/链上/宏观解释
   -> MarketPackBuilder 渲染自然语言 reader_brief
   -> worker 基于自然语言资料包写 L1 报告
 ```
@@ -31,8 +33,8 @@ market_analyst
 
 ```text
 market_analyst
-  -> BB MCP
-  -> BB 自己调用 CoinGlass/Binance/Bybit/FRED/CoinGecko
+  -> 旧 BB MCP
+  -> 旧 BB 自己调用 CoinGlass/Binance/Bybit/FRED/CoinGecko
 ```
 
 也禁止：
@@ -40,31 +42,31 @@ market_analyst
 ```text
 claw_get_market_pack
   -> OpenBB
-  -> BB
-  -> BB 再调用 OpenBB 或其它外部 provider
+  -> CryptoLens
+  -> CryptoLens 再调用 OpenBB 或其它外部 provider
 ```
 
 这样会绕圈，并且会让外部 provider evidence 边界变乱。
 
 ## 2. 背景和问题
 
-历史上 BB 已经接入过 `market_analyst` 的 CRYPTO stage。
+历史上旧 BB 已经接入过 `market_analyst` 的 CRYPTO stage。
 
 已确认历史事实：
 
 - `memory/2026-05-15.md` 记录：BB 被定位为 OpenClaw worker 挂载的 skill 加 `bb_crypto_data` MCP。
 - `memory/2026-05-15.md` 记录：`market_analyst` 的 CRYPTO stage 曾真实调用 BB MCP 并写入 L1 报告。
 - `memory/2026-05-16.md` 记录：后来为避免 BB 大 JSON 截断，改为 `crypto_market_data_pack` 集中读取 BB/CoinGlass 并输出自然语言简报。
-- `memory/2026-05-16.md` 记录：worker 可见工具收敛为单一资料包，BB 原始 payload 只写证据，不直接给模型。
+- `memory/2026-05-16.md` 记录：worker 可见工具收敛为单一资料包，旧 BB 原始 payload 只写证据，不直接给模型。
 
 当前 OpenBB 迁移后的问题：
 
 - `claw_get_market_pack` 已成为 market worker 的统一资料包工具。
 - 当前 CRYPTO market adapter 实际只注册了 `openbb_yfinance/crypto_price_historical`。
-- 当前 BTC final report 因此只拿到 OHLCV 与本地技术指标，资金费率、OI、多空比、清算、链上、宏观、AHR999 等 BB 指标分析没有进入资料包。
-- 如果直接把旧 BB MCP 接回去，BB 当前代码会自己出网调用 CoinGecko、CoinGlass、Binance、Bybit、FRED 等外部源。这违反 OpenBB 唯一数据入口合同。
+- 当前 BTC final report 因此只拿到 OHLCV 与本地技术指标，资金费率、OI、多空比、清算、链上、宏观、AHR999 等 CryptoLens 指标分析没有进入资料包。
+- 如果直接把旧 BB MCP 接回去，旧 BB 当前代码会自己出网调用 CoinGecko、CoinGlass、Binance、Bybit、FRED 等外部源。这违反 OpenBB 唯一数据入口合同。
 
-所以修复目标不是“恢复旧 BB 直连”，也不是“运行时继续调用 Win11 BB 项目”，而是“把 BB 纯分析代码移植到 claw-trade，改成 OpenBB 数据之上的本项目内部分析层”。
+所以修复目标不是“恢复旧 BB 直连”，也不是“运行时继续调用 Win11 旧 BB 项目”，而是“把旧 BB 的纯分析代码迁入 claw-trade 并命名为 CryptoLens，改成 OpenBB normalized crypto bundle 之上的本项目内部分析层”。
 
 ## 3. 术语
 
@@ -90,9 +92,9 @@ worker 可见的市场资料包工具名。
 - RunProviderPlan；
 - pack endpoint。
 
-### BB analysis engine
+### CryptoLens analysis engine
 
-从 BB 项目迁入 claw-trade 的离线分析部分。
+从 Win11 旧 BB 项目迁入 claw-trade 的离线分析部分。
 
 它负责：
 
@@ -118,19 +120,29 @@ worker 可见的市场资料包工具名。
 - 写最终投资结论；
 - 替代 trader 或 portfolio_manager。
 
+它不负责，也不得承担：
+
+- 数据源；
+- provider；
+- 外部 MCP；
+- 独立 worker；
+- trader / portfolio_manager 决策器；
+- BUY/HOLD/SELL、仓位、交易执行建议、PM rating 或最终投资裁决。
+
 它也不依赖：
 
-- Win11 BB 项目目录；
+- `D:\src\BB`；
+- `/mnt/d/src/BB`；
+- Win11 旧 BB 项目目录；
 - 外部 BB MCP server；
 - `BB_MCP_SERVER_PATH`；
-- `BB_MCP_CWD`；
-- `/mnt/d/src/BB`。
+- `BB_MCP_CWD`。
 
 ### CRYPTO market pack
 
 `claw_get_market_pack` 在 CRYPTO market 下返回的自然语言市场资料包。
 
-它由 OpenBB 数据和 BB 分析结果共同生成，但 worker 只看到自然语言 `reader_brief`、资料质量说明、图表引用和必要缺口。
+它由 OpenBB 数据和 CryptoLens 分析结果共同生成，但 worker 只看到自然语言 `reader_brief`、资料质量说明、图表引用和必要缺口。
 
 ## 4. 设计原则
 
@@ -138,29 +150,31 @@ worker 可见的市场资料包工具名。
 
    所有 CoinGlass、Binance、Bybit、CoinGecko、FRED、Glassnode、DefiLlama、Tavily、Snapshot 等外部请求，都必须通过 OpenBB/data_gateway provider adapter 进入项目证据链。
 
-2. BB 在报告 runtime 中不得出网。
+2. CryptoLens 在报告 runtime 中不得出网。
 
-   BB 可以保留分析代码，但不得读取 provider key，不得调用 `fetch`/HTTP client，不得自己请求 CoinGlass/Binance/Bybit/FRED 等外部服务。
+   CryptoLens 可以保留旧 BB 的纯分析代码，但不得读取 provider key，不得调用 `fetch`/HTTP client，不得自己请求 CoinGlass/Binance/Bybit/FRED 等外部服务。
 
 3. worker 只看一个 market pack。
 
-   `market_analyst` 只调用 `claw_get_market_pack`。它不得直接看到 BB 原始 JSON、OpenBB atomic provider tool、Mongo raw/cache/debug envelope。
+   `market_analyst` 只调用 `claw_get_market_pack`。它不得直接看到 CryptoLens raw JSON、旧 BB MCP 原子工具、OpenBB atomic/admin/discovery tool、Mongo raw/cache/debug envelope。
 
 4. Python 控制层只做计划和调度。
 
    Python 可以生成 `RunProviderPlan`、调 pack endpoint、保存证据、渲染资料包。Python 不写 worker 的市场分析结论，不写 PM 最终决策。
 
-5. BB 输出是分析 evidence，不是 provider evidence。
+5. CryptoLens 输出是分析 evidence，不是 provider evidence。
 
    OpenBB 调外部 provider 的请求记录叫 `openbb_provider_http_evidence`。
 
    OpenBB 保存外部 provider raw payload 叫 `openbb_provider_raw_evidence`。
 
-   BB 对 OpenBB normalized bundle 做分析的输入/输出证据应单独命名为 `bb_crypto_analysis_evidence`，不得冒充 provider HTTP/raw evidence。
+   CryptoLens 对 OpenBB normalized bundle 做分析的输入/输出证据应单独命名为 `crypto_lens_analysis_evidence`，不得冒充 provider HTTP/raw evidence。
+
+   CryptoLens 输出边界只包括指标解释、条件场景、失效条件和数据缺口；不得输出 BUY/HOLD/SELL、仓位、交易执行建议、PM rating 或最终投资裁决。
 
 6. 不允许 silent fallback。
 
-   如果 OpenBB 某个 CRYPTO 数据域失败，BB 只能基于已有 normalized 数据输出部分分析和 data gaps，不得自己绕过 OpenBB 去补数，也不得把缺失指标写成已覆盖。
+   如果 OpenBB 某个 CRYPTO 数据域失败，CryptoLens 只能基于已有 normalized 数据输出部分分析和 data gaps，不得自己绕过 OpenBB 去补数，也不得把缺失指标写成已覆盖。
 
 7. 缓存状态必须真实。
 
@@ -193,9 +207,9 @@ NormalizedCryptoMarketBundle
   |
   | local call, no network
   v
-BB crypto analysis engine
+CryptoLens analysis engine
   |
-  | writes bb_crypto_analysis_evidence
+  | writes crypto_lens_analysis_evidence
   v
 MarketPackBuilder
   |
@@ -203,6 +217,40 @@ MarketPackBuilder
   v
 market_analyst LLM prompt
 ```
+
+### 5.1 `/report` 到 final report 端到端时序
+
+目标 CRYPTO `/report` 运行时序必须是：
+
+```text
+Chat /report
+  -> claw-trade Runner 创建 report run
+  -> RunProviderPlan 只生成 provider plan，不做 prefetch、不写 remote success
+  -> OpenClaw wake market_analyst
+  -> provider payload 证明 market_analyst 只看到 claw_get_market_pack
+  -> market_analyst 调用 claw_get_market_pack
+  -> OpenBBRuntimeWrapper.get_pack(domain=market)
+  -> DomainPackService 按 RunProviderPlan 执行 OpenBB/data_gateway provider adapters
+  -> OpenBB 写 openbb_provider_http_evidence
+  -> OpenBB 写 openbb_provider_raw_evidence
+  -> OpenBB 写 normalized crypto bundle / normalized refs
+  -> CryptoLens 只消费 normalized crypto bundle 做离线分析
+  -> CryptoLens 写 crypto_lens_analysis_evidence
+  -> MarketPackBuilder 合成 reader_brief、chart readiness、data gaps、refs
+  -> market_analyst 基于 reader_brief 写 approved market L1
+  -> fundamental/news/social approved L1 进入下游材料边界
+  -> bull/bear/research_manager/trader/risk/PM 只消费 approved L1 正文和允许的 refs
+  -> portfolio_manager 写 approved PM L1 最终裁决
+  -> exporter 只搬运 approved material 和图表引用生成 final report
+  -> final report evidence chain 闭合：
+     final report -> PM L1 -> downstream approved L1
+     -> approved market L1 -> market pack audit
+     -> crypto_lens_analysis_evidence
+     -> OpenBB normalized refs -> OpenBB attempts
+     -> OpenBB HTTP/raw evidence
+```
+
+此时 worker 不看 CryptoLens raw JSON、旧 BB MCP 原子工具、OpenBB atomic/admin/discovery tools、Mongo raw/cache/debug envelope，也不看 OpenViking protocol 正文。
 
 ## 6. 组件设计
 
@@ -237,7 +285,7 @@ market_analyst LLM prompt
 
 ### 6.2 `NormalizedCryptoMarketBundle`
 
-这是 OpenBB 喂给 BB 的唯一输入。
+这是 OpenBB 喂给 CryptoLens 的唯一输入。
 
 建议结构：
 
@@ -265,9 +313,9 @@ class NormalizedCryptoMarketBundle:
 
 `domains` 中只放分析所需的 normalized 数据，不放 provider raw payload、headers、tokens、Mongo raw object、debug envelope。
 
-### 6.3 BB analysis input
+### 6.3 CryptoLens analysis input
 
-BB 不接触 provider 层，只接收 OpenBB 已归一化的 bundle。
+CryptoLens 不接触 provider 层，只接收 OpenBB 已归一化的 bundle。
 
 建议输入：
 
@@ -316,12 +364,12 @@ BB 不接触 provider 层，只接收 OpenBB 已归一化的 bundle。
 - worker prompt；
 - PM 结论。
 
-### 6.4 BB analysis engine adapter
+### 6.4 CryptoLens analysis engine adapter
 
 新增项目内部 analysis module：
 
 ```text
-src/claw_trade/data_gateway/analysis/bb_crypto/
+src/claw_trade/data_gateway/analysis/crypto_lens/
   __init__.py
   input_contract.py
   output_contract.py
@@ -341,30 +389,29 @@ src/claw_trade/data_gateway/analysis/bb_crypto/
 
 职责：
 
-- 将 `NormalizedCryptoMarketBundle` 转成 BB analysis input；
-- 调用本项目内部的 BB 纯分析函数；
-- 禁止 BB analysis runtime 出网；
-- 写 `bb_crypto_analysis_evidence`；
-- 把 BB 输出转成 `BBCryptoAnalysisResult`。
+- 将 `NormalizedCryptoMarketBundle` 转成 CryptoLens analysis input；
+- 调用本项目内部的 CryptoLens 纯分析函数；
+- 禁止 CryptoLens analysis runtime 出网；
+- 写 `crypto_lens_analysis_evidence`；
+- 把 CryptoLens 输出转成 `CryptoLensAnalysisResult`。
 
-BB 代码移植方式：
+CryptoLens 代码迁移方式：
 
-1. 从 Win11 BB 项目中迁入纯分析逻辑到 claw-trade 仓库。
-2. 迁入后代码归 claw-trade 管理，不再以 `/mnt/d/src/BB` 作为运行依赖。
-3. 优先将纯分析逻辑改写为 Python，以便直接被 `DomainPackService` / `MarketPackBuilder` 调用。
-4. 如果短期保留 TypeScript 实现，源码、package、build 脚本也必须进入 claw-trade 仓库内的受控目录；运行时只能调用本仓库内构建产物，不得调用 Win11 BB 项目路径。
-5. 可迁入的内容包括 technical analyzers、tutorial pattern analyzers、readiness/conflict/data gap 计算、trade context envelope 的非取数部分。
-6. 不迁入或不启用 provider fetch 逻辑，包括 CoinGecko、CoinGlass、Binance、Bybit、FRED、Glassnode、DefiLlama、Tavily、Snapshot 等直接 HTTP 调用。
-7. 不把 claw-trade workflow、worker prompt、PM 结论或 exporter 逻辑写进 BB analysis module。
-8. 迁入后的 module 必须在 `/mnt/d/src/BB` 不存在或不可访问时仍可通过测试和运行。
+1. 从 Win11 旧 BB 项目中只读提取纯分析口径、测试样例和历史证据。
+2. 在 claw-trade 仓库内用 Python 重写 CryptoLens 分析模块，以便直接被 `DomainPackService` / `MarketPackBuilder` 调用。
+3. 重写后的代码归 claw-trade 管理，不再以 `/mnt/d/src/BB`、旧 TS runtime 或旧 BB 构建产物作为运行依赖。
+4. 可迁入为分析口径和测试对照的内容包括 technical analyzers、tutorial pattern analyzers、readiness/conflict/data gap 计算、trade context envelope 的非取数部分。
+5. 不迁入或不启用 provider fetch 逻辑，包括 CoinGecko、CoinGlass、Binance、Bybit、FRED、Glassnode、DefiLlama、Tavily、Snapshot 等直接 HTTP 调用。
+6. 不把 claw-trade workflow、worker prompt、PM 结论或 exporter 逻辑写进 CryptoLens analysis module。
+7. 重写后的 module 必须在 `/mnt/d/src/BB` 不存在或不可访问时仍可通过测试和运行。
 
-### 6.5 BB analysis output
+### 6.5 CryptoLens analysis output
 
 建议结构：
 
 ```python
 @dataclass(frozen=True)
-class BBCryptoAnalysisResult:
+class CryptoLensAnalysisResult:
     analysis_id: str
     engine_name: str
     engine_version: str
@@ -386,11 +433,11 @@ class BBCryptoAnalysisResult:
     output_hash: str
 ```
 
-`conditional_trade_framework` 只能是 market_analyst 的技术材料，不是 trader 或 portfolio_manager 的最终投资决策。
+`conditional_trade_framework` 只能是 market_analyst 的技术材料，用于描述条件场景、失效条件和资料缺口；不得写 BUY/HOLD/SELL、仓位、交易执行建议、PM rating 或最终投资裁决。
 
 ### 6.6 MarketPackBuilder
 
-`MarketPackBuilder` 负责把 OpenBB normalized 数据和 BB analysis result 合成 worker 可读材料。
+`MarketPackBuilder` 负责把 OpenBB normalized 数据和 CryptoLens analysis result 合成 worker 可读材料。
 
 CRYPTO market reader brief 必须包含：
 
@@ -398,7 +445,7 @@ CRYPTO market reader brief 必须包含：
 - 来源成功/失败摘要；
 - 指标覆盖；
 - 价格与多周期结构；
-- BB 技术形态解释；
+- CryptoLens 技术形态解释；
 - 衍生品拥挤度；
 - 清算压力；
 - 链上/宏观/AHR999；
@@ -410,7 +457,7 @@ CRYPTO market reader brief 必须包含：
 worker 不看：
 
 - provider raw JSON；
-- BB raw JSON；
+- CryptoLens raw JSON；
 - Mongo refs 全量；
 - debug envelope；
 - cache object；
@@ -438,9 +485,9 @@ OpenBB/data_gateway 调外部 provider 的 HTTP 请求、响应状态、headers 
 
 它证明 raw 数据来源。
 
-### `bb_crypto_analysis_evidence`
+### `crypto_lens_analysis_evidence`
 
-BB 分析引擎对 OpenBB normalized bundle 的离线分析证据。
+CryptoLens 分析引擎对 OpenBB normalized bundle 的离线分析证据。
 
 建议记录：
 
@@ -448,7 +495,7 @@ BB 分析引擎对 OpenBB normalized bundle 的离线分析证据。
 - `call_id`；
 - `worker_id=market_analyst`；
 - `analysis_id`；
-- BB engine name/version/source commit 或 source hash；
+- CryptoLens engine name/version/source commit 或 source hash；
 - analysis input hash；
 - referenced normalized refs；
 - output hash；
@@ -501,27 +548,28 @@ domain=market
 
 ## 9. 代码和配置迁移
 
-Win11 下 `D:\src\BB` 已经跑通，因此它可以作为一次性迁移来源：
+Win11 下 `D:\src\BB` 旧项目已经跑通，因此它可以作为一次性迁移来源：
 
 - 纯分析代码可以移植进 claw-trade；
 - 已验证过的 provider 配置和 API key 可以复用到本项目本地配置或 secret store；
 - 历史报告和 memory 可以作为验收对照。
 
-但目标运行态必须与 Win11 BB 项目无关。
+但目标运行态必须与 Win11 旧 BB 项目无关。
 
-复用的是“代码和配置知识”，不是复用外部 BB 项目的运行目录，也不是复用 BB 的取数职责。
+复用的是“代码和配置知识”，不是复用旧 BB 项目的运行目录，也不是复用旧 BB 的取数职责。
 
 目标归属必须是：
 
 ```text
-BB 项目纯分析代码
+旧 BB 项目纯分析代码
   -> 移植到 claw-trade 仓库
-  -> 作为 src/claw_trade/data_gateway/analysis/bb_crypto/** 内部模块运行
+  -> 命名为 CryptoLens
+  -> 作为 src/claw_trade/data_gateway/analysis/crypto_lens/** 内部模块运行
 
-BB 项目已跑通的 provider key / provider 配置
+旧 BB 项目已跑通的 provider key / provider 配置
   -> 配置到 claw-trade 本地 .env.local / secret store
   -> OpenBB/data_gateway provider adapters 读取并执行取数
-  -> claw-trade 内部 BB analysis engine 只读取 OpenBB normalized bundle，不读取 key
+  -> claw-trade 内部 CryptoLens analysis engine 只读取 OpenBB normalized bundle，不读取 key
 ```
 
 禁止归属：
@@ -535,7 +583,7 @@ claw-trade report runtime
 
 ### 9.1 允许迁移的代码
 
-允许从 Win11 BB 项目迁入：
+允许从 Win11 旧 BB 项目迁入并命名为 CryptoLens：
 
 - 技术指标计算；
 - 多周期样本处理；
@@ -566,7 +614,7 @@ claw-trade report runtime
 
 ### 9.2 允许直接迁移的配置
 
-如果本项目缺少以下 key，而 Win11 BB 项目本地已有真实值，可以把真实值复制到本项目 `.env.local` 或后续 secret store：
+如果本项目缺少以下 key，而 Win11 旧 BB 项目本地已有真实值，可以把真实值复制到本项目 `.env.local` 或后续 secret store：
 
 | 配置名 | 用途 | 目标读取方 |
 |---|---|---|
@@ -610,7 +658,7 @@ claw-trade report runtime
 
 ### 9.3 当前仓库配置状态
 
-截至 2026-05-18，本项目 `.env.local` 和 `.env.example` 已经包含 BB `.env.example` 中列出的主要 CRYPTO provider key 名称：
+截至 2026-05-18，本项目 `.env.local` 和 `.env.example` 已经包含旧 BB `.env.example` 中列出的主要 CRYPTO provider key 名称：
 
 - `COINGECKO_PRO_API_KEY`
 - `COINGECKO_DEMO_API_KEY`
@@ -626,7 +674,7 @@ claw-trade report runtime
 
 因此本次方案更新不需要把任何真实密钥值写入仓库。
 
-实施时如果发现 Win11 BB 本地 `.env` 有新增 provider key，而本项目缺少对应变量，应只补：
+实施时如果发现 Win11 旧 BB 本地 `.env` 有新增 provider key，而本项目缺少对应变量，应只补：
 
 1. `.env.example` 中的空模板；
 2. 本地 `.env.local` 中的真实值；
@@ -635,7 +683,7 @@ claw-trade report runtime
 
 不要把真实值写入 tracked 文件。
 
-### 9.4 BB MCP runtime 配置边界
+### 9.4 旧 BB MCP runtime 配置边界
 
 `BB_MCP_SERVER_PATH`、`BB_MCP_CWD`、`BB_MCP_HTTP_HOST`、`BB_MCP_HTTP_PORT`、`BB_MCP_HTTP_PATH` 等配置，只能用于：
 
@@ -643,7 +691,7 @@ claw-trade report runtime
 - 对比历史证据；
 - 本地开发排障。
 
-目标 report runtime 不得依赖这些配置让 BB MCP 自己出网取数。
+目标 report runtime 不得依赖这些配置让旧 BB MCP 自己出网取数。
 
 目标完成后，这些变量不应是 CRYPTO market live/fresh report 的必需配置。
 
@@ -652,7 +700,7 @@ claw-trade report runtime
 - `/mnt/d/src/BB` 不存在或不可访问时，CRYPTO market pack 仍能运行；
 - `BB_MCP_SERVER_PATH`/`BB_MCP_CWD` 为空或指向无效路径时，CRYPTO market pack 不因此失败；
 - report runtime 没有启动外部 BB MCP；
-- BB analysis engine 调用的是 claw-trade 仓库内部代码。
+- CryptoLens analysis engine 调用的是 claw-trade 仓库内部代码。
 
 ## 10. 错误和降级规则
 
@@ -664,25 +712,25 @@ claw-trade report runtime
 - 写 HTTP/raw evidence，如果请求已发出；
 - 写 data gap；
 - normalized bundle 中该域标为 missing/partial/error；
-- BB 只基于剩余域分析；
+- CryptoLens 只基于剩余域分析；
 - worker 报告必须说明缺口影响。
 
-BB 不得自己出网补数。
+CryptoLens 不得自己出网补数。
 
-### BB analysis 失败
+### CryptoLens analysis 失败
 
-如果 OpenBB 数据已取到，但 BB 分析失败：
+如果 OpenBB 数据已取到，但 CryptoLens 分析失败：
 
 - OpenBB provider evidence 仍保留；
-- `bb_crypto_analysis_evidence` 写失败状态；
+- `crypto_lens_analysis_evidence` 写失败状态；
 - CRYPTO market pack readiness 降为 `partial` 或 `insufficient`；
-- worker 只能使用 OpenBB 原始事实的自然语言摘要，不得伪造 BB 指标分析。
+- worker 只能使用 OpenBB 原始事实的自然语言摘要，不得伪造 CryptoLens 指标分析。
 
 ### OpenBB 数据不足
 
 如果 OHLCV 样本不足或某些域为空：
 
-- BB analysis 可以输出有限指标；
+- CryptoLens analysis 可以输出有限指标；
 - 未满足样本要求的指标必须写入 data gaps；
 - 不得把“指标未计算”写成“指标中性”。
 
@@ -698,7 +746,7 @@ cache hit 必须带 cache receipt。
 
 它的职责是：
 
-- 告诉 `market_analyst` 如何解释 BB 指标分析材料；
+- 告诉 `market_analyst` 如何解释 CryptoLens 指标分析材料；
 - 约束不要把加密币当股票；
 - 要求指标按“数据 -> 推导 -> 交易作用 -> 失效”表达；
 - 要求缺失指标写清楚；
@@ -709,7 +757,7 @@ cache hit 必须带 cache receipt。
 - 取数；
 - 调 provider；
 - 生成 OpenBB evidence；
-- 替 BB 分析引擎计算指标；
+- 替 CryptoLens 分析引擎计算指标；
 - 写最终投资结论。
 
 worker 可见工具仍是：
@@ -729,23 +777,23 @@ Binance tools
 
 ## 12. 迁移步骤
 
-### T-BB-0：冻结口径
+### T-CL-0：冻结口径
 
 完成项：
 
-- 文档确认 BB 是分析引擎，不是数据源。
+- 文档确认 CryptoLens 是分析引擎，不是数据源。
 - 文档确认 OpenBB 是唯一取数入口。
-- 文档确认 BB 代码目标态迁入 claw-trade 仓库，不依赖 Win11 BB 项目。
-- 当前 canonical BTC final report 不能作为 BB 覆盖验收证据。
+- 文档确认 CryptoLens 代码目标态迁入 claw-trade 仓库，不依赖 Win11 旧 BB 项目。
+- 当前 canonical BTC final report 不能作为 CryptoLens 覆盖验收证据。
 
-### T-BB-1：盘点 BB 代码
+### T-CL-1：盘点旧 BB 代码
 
 目标：
 
-- 列出 BB 中所有 provider fetch、URL、API key、fallback 和 cache 逻辑。
+- 列出旧 BB 中所有 provider fetch、URL、API key、fallback 和 cache 逻辑。
 - 标出哪些模块可作为纯分析复用。
 - 标出哪些模块禁止进入 claw-trade report runtime。
-- 形成迁入清单，列出每个 BB 分析模块在 claw-trade 中的目标文件路径。
+- 形成迁入清单，列出每个 CryptoLens 分析模块在 claw-trade 中的目标文件路径。
 - 形成剔除清单，列出所有不得迁入 report runtime 的 provider 取数代码。
 
 当前已知禁止直接复用：
@@ -759,12 +807,12 @@ Binance tools
 - readiness/conflict/data gap 计算；
 - trade context envelope 构造的非取数部分。
 
-### T-BB-2：迁入 BB 纯分析代码
+### T-CL-2：迁入 CryptoLens 纯分析代码
 
 目标：
 
-- 将 BB 纯分析逻辑迁入 claw-trade 仓库。
-- 目标目录优先为 `src/claw_trade/data_gateway/analysis/bb_crypto/**`。
+- 将旧 BB 纯分析逻辑迁入 claw-trade 仓库并命名为 CryptoLens。
+- 目标目录优先为 `src/claw_trade/data_gateway/analysis/crypto_lens/**`。
 - 迁入后的代码归本项目测试、lint、review 和 memory 记录管理。
 - 删除或隔离所有 provider fetch/key/cache/rate-limit 逻辑。
 
@@ -777,7 +825,7 @@ Binance tools
 - 不出网；
 - 可对 fixture normalized bundle 输出分析结果。
 
-### T-BB-3：定义 OpenBB normalized crypto bundle
+### T-CL-3：定义 OpenBB normalized crypto bundle
 
 新增合同测试：
 
@@ -789,7 +837,7 @@ Binance tools
 - provider conflict；
 - raw refs 存在但不进入 worker material。
 
-### T-BB-4：补 OpenBB CRYPTO provider adapters
+### T-CL-4：补 OpenBB CRYPTO provider adapters
 
 把 CRYPTO market 从当前 yfinance-only 扩展为多域 provider plan。
 
@@ -805,12 +853,12 @@ Binance tools
 - events 或明确缺口；
 - AHR999 或明确缺口。
 
-### T-BB-5：实现本项目 BB 离线分析入口
+### T-CL-5：实现本项目 CryptoLens 离线分析入口
 
 目标接口：
 
 ```text
-analyze_openbb_crypto_market_bundle(input) -> BBCryptoAnalysisResult
+analyze_openbb_crypto_lens_bundle(input) -> CryptoLensAnalysisResult
 ```
 
 要求：
@@ -824,20 +872,20 @@ analyze_openbb_crypto_market_bundle(input) -> BBCryptoAnalysisResult
 - 缺口原样传递或进一步细化；
 - 不写投资最终裁决。
 
-### T-BB-6：接入 MarketPackBuilder
+### T-CL-6：接入 MarketPackBuilder
 
 CRYPTO `claw_get_market_pack` 流程改为：
 
 ```text
 OpenBB provider execution
   -> normalized crypto bundle
-  -> BB analysis engine
+  -> CryptoLens analysis engine
   -> reader_brief
   -> chart assets
   -> pack audit
 ```
 
-### T-BB-7：证据链和 OpenViking
+### T-CL-7：证据链和 OpenViking
 
 必须能追溯：
 
@@ -846,14 +894,14 @@ final report claim
   -> PM L1
   -> market_analyst L1
   -> CRYPTO market pack audit
-  -> bb_crypto_analysis_evidence
+  -> crypto_lens_analysis_evidence
   -> OpenBB normalized refs
   -> OpenBB provider attempts
   -> OpenBB HTTP evidence
   -> OpenBB raw evidence
 ```
 
-### T-BB-8：验收
+### T-CL-8：验收
 
 至少跑 BTC fresh/live：
 
@@ -861,22 +909,22 @@ final report claim
 - `openclaw_llm_provider_payload`；
 - visible tool schema 只含 `claw_get_market_pack`；
 - OpenBB provider HTTP/raw evidence；
-- BB analysis evidence；
+- CryptoLens analysis evidence；
 - Mongo attempts/raw/cache/normalized/run-plan/single-flight/validation receipt；
 - OpenViking lineage/ovpack/runtime health；
 - chart readiness；
 - final report evidence chain。
-- Win11 BB 项目路径不可访问仍通过。
+- Win11 旧 BB 项目路径不可访问仍通过。
 
 ## 13. 测试矩阵
 
 ### 单元测试
 
-- BB analysis adapter 不出网：monkeypatch `fetch`/HTTP client 后仍可用。
-- BB analysis adapter 不读取 provider env key。
-- OpenBB/data_gateway adapter 可以读取从 Win11 BB 迁移过来的本地 key，但 evidence 不泄漏 key 值。
-- BB analysis module 不引用 `/mnt/d/src/BB`、`D:\src\BB`、`BB_MCP_SERVER_PATH`、`BB_MCP_CWD`。
-- OpenBB normalized bundle -> BB input 映射正确。
+- CryptoLens analysis adapter 不出网：monkeypatch `fetch`/HTTP client 后仍可用。
+- CryptoLens analysis adapter 不读取 provider env key。
+- OpenBB/data_gateway adapter 可以读取从 Win11 旧 BB 迁移过来的本地 key，但 evidence 不泄漏 key 值。
+- CryptoLens analysis module 不引用 `/mnt/d/src/BB`、`D:\src\BB`、`BB_MCP_SERVER_PATH`、`BB_MCP_CWD`。
+- OpenBB normalized bundle -> CryptoLens input 映射正确。
 - 缺 derivatives 时 funding/OI/多空比/CVD 均进入缺口，不写中性。
 - 缺 liquidation_map 时不生成清算簇结论。
 - OHLCV 样本不足时技术指标状态为 partial/insufficient。
@@ -887,7 +935,7 @@ final report claim
 - `claw_get_market_pack` model-visible schema 不接受模型传 ticker/market/date 覆盖 runtime。
 - CRYPTO market pack output 不包含 raw JSON/debug envelope/Mongo raw/cache object。
 - OpenBB provider HTTP/raw evidence 不被命名为 OpenClaw LLM payload。
-- `bb_crypto_analysis_evidence` 不被命名为 OpenBB provider evidence。
+- `crypto_lens_analysis_evidence` 不被命名为 OpenBB provider evidence。
 - OpenBB 失败时不调用旧 BB live provider fetch。
 
 ### import-block 测试
@@ -896,27 +944,27 @@ final report claim
 
 - 旧 `frontline_data_pack` 不得被 import/call；
 - 旧 `crypto_market_data_pack.py` 不得作为 fallback；
-- BB `domains/live.ts` 的直接 provider fetch 路径不得被 report runtime 调用；
+- 旧 BB `domains/live.ts` 的直接 provider fetch 路径不得被 report runtime 调用；
 - 外部 Win11 BB MCP 不得被 report runtime 调用；
 - 把 `BB_MCP_SERVER_PATH` 和 `BB_MCP_CWD` 设置成无效路径时，目标态 CRYPTO market pack 不得因此失败；
 - US atomics 和 OpenBB atomic provider tools 不得进入 worker tool schema。
 
 ### 集成测试
 
-- 构造 fixture OpenBB normalized bundle，验证 BB output 和 reader brief。
-- 构造真实 OpenBB CRYPTO provider attempts，验证 normalized refs 进入 BB analysis input。
+- 构造 fixture OpenBB normalized bundle，验证 CryptoLens output 和 reader brief。
+- 构造真实 OpenBB CRYPTO provider attempts，验证 normalized refs 进入 CryptoLens analysis input。
 - 验证 chart assets 可被 exporter 复制。
-- 验证 OpenViking relations 包含 BB analysis evidence 节点。
+- 验证 OpenViking relations 包含 CryptoLens analysis evidence 节点。
 
 ### live/fresh 验收
 
 BTC 样本必须证明：
 
 - OpenBB 负责所有外部 provider 请求；
-- BB analysis engine 无外部请求；
-- BB analysis engine 来自 claw-trade 仓库内部代码；
-- 不依赖 Win11 BB 项目路径或外部 BB MCP；
-- 报告包含 BB 指标分析材料；
+- CryptoLens analysis engine 无外部请求；
+- CryptoLens analysis engine 来自 claw-trade 仓库内部代码；
+- 不依赖 Win11 旧 BB 项目路径或外部 BB MCP；
+- 报告包含 CryptoLens 指标分析材料；
 - 缺失域真实写缺口；
 - 终稿没有把缺口写成成功覆盖。
 
@@ -928,13 +976,13 @@ BTC 样本必须证明：
 docs/evidence/openbb-canonical-t16-final-20260518T125112Z/crypto_btc/
 ```
 
-不能作为 BB 接入完成证据。
+不能作为 CryptoLens 接入完成证据。
 
 原因：
 
 - CRYPTO market source 只显示 `openbb_yfinance/crypto_price_historical`；
-- BB 分析材料没有进入当前 `claw_get_market_pack` 后端；
-- final report 中的 BB/CoinGlass 缺失说明是诚实缺口，但不是目标完成态。
+- CryptoLens 分析材料没有进入当前 `claw_get_market_pack` 后端；
+- 该旧 final report 中的旧 BB/CoinGlass 缺失说明是诚实缺口，但不是目标完成态。
 
 ## 15. 不做事项
 
@@ -942,10 +990,10 @@ docs/evidence/openbb-canonical-t16-final-20260518T125112Z/crypto_btc/
 
 - 不恢复旧 `crypto_market_data_pack.py` 作为可运行 fallback；
 - 不让 worker 直接调用 `bb_crypto_data__build_trade_context`；
-- 不让 BB 自己调用 CoinGlass/Binance/Bybit/FRED；
-- 不让 report runtime 调用 Win11 下的 BB 项目目录；
+- 不让 CryptoLens 自己调用 CoinGlass/Binance/Bybit/FRED；
+- 不让 report runtime 调用 Win11 下的旧 BB 项目目录；
 - 不把外部 BB MCP 作为目标运行依赖；
-- 不把 BB 放进 `third_party/openbb` 写 claw-trade 业务逻辑；
+- 不把 CryptoLens 放进 `third_party/openbb` 写 claw-trade 业务逻辑；
 - 不让 Python 改写 PM 结论；
 - 不新增投资判断 gate 或风格 gate；
 - 不把 OpenViking 当 fresh provider 数据源；
@@ -955,32 +1003,38 @@ docs/evidence/openbb-canonical-t16-final-20260518T125112Z/crypto_btc/
 
 已确认的人类口径：
 
-- BB 不是数据源，是加密币指标分析系统。
-- BB 项目的代码要移植进本项目，作为 claw-trade 的一部分；目标态与 Win11 下 BB 项目无关。
-- BB 需要的数据源应通过 OpenBB 获取。
-- Win11 BB 项目已经跑通的 provider 配置和 API key 可以直接迁移到本项目本地配置或 secret store，如果本项目缺失。
-- 加密 market 通过 BB skill/分析能力获取指标分析。
+- CryptoLens 不是数据源，是从旧 BB 项目迁入的加密币指标分析系统。
+- 旧 BB 项目的纯分析代码要移植进本项目并命名为 CryptoLens，作为 claw-trade 的一部分；目标态与 Win11 下旧 BB 项目无关。
+- CryptoLens 需要的数据源应通过 OpenBB 获取。
+- Win11 旧 BB 项目已经跑通的 provider 配置和 API key 可以直接迁移到本项目本地配置或 secret store，如果本项目缺失。
+- provider 接入方向已批准：每个 provider 必须有 license/cost/raw export approval record；不得泄漏 secret；未经许可不得导出 raw 全文。
+- CryptoLens 采用 Python 重写，不保留旧 BB 运行时代码或 TS runtime 依赖。
+- 旧 BB 运行相关内容应删除/禁用以避免污染；迁移审计证据与只读盘点清单必须保留。
+- OpenBB 覆盖口径（人话）：BTC 报告需要价格/K线、资金费率、持仓、清算、链上、宏观、事件、AHR999；拿到就进资料包，拿不到就写真实缺口。
+- 证据链口径（人话）：最终报告中的判断要能一路追到 market L1、market pack、CryptoLens 分析、OpenBB normalized/http/raw evidence。
+- OpenBB 形态口径（人话）：所有外部取数只走 OpenBB 这一个门，不能让 Python 或旧 BB 自己出网。
+- 加密 market 通过 CryptoLens 分析能力生成指标解释，worker 仍通过 `claw_get_market_pack` 获取材料。
 - `claw_get_market_pack` 继续作为 market worker 的统一资料包入口。
 
 仍需在实施时以代码证据关闭的问题：
 
-- BB 纯分析代码迁入 claw-trade 后的具体文件拆分、语言选择和测试边界。
-- OpenBB CRYPTO provider adapters 覆盖哪些 provider 与 key。
-- 每个 provider 的许可、费用和 raw export policy。
-- BB analysis evidence 的 Mongo collection 名称和 OpenViking relation kind。
+- CryptoLens 纯分析口径用 Python 重写后的具体文件拆分和测试边界。
+- OpenBB CRYPTO provider adapters 的最终 provider 列表、key 映射和 run-time 实测覆盖证据。
+- 每个 provider 的许可、费用和 raw export policy 记录落点（含审批时间、审批人、导出策略）及其测试闭环。
+- CryptoLens analysis evidence 的 Mongo collection 名称和 OpenViking relation kind 的最终选型与关系断言测试。
 
 ## 17. 最小完成标准
 
-只有同时满足以下条件，才能说 BB 接入完成：
+只有同时满足以下条件，才能说 CryptoLens 接入完成：
 
 1. `claw_get_market_pack` 在 CRYPTO 下真实走 OpenBB provider plan 取数。
 2. 所有外部 provider 请求都有 OpenBB HTTP/raw evidence。
-3. BB analysis engine 在 report runtime 中不出网、不读 provider key。
-4. BB analysis engine 来自 claw-trade 仓库内部代码，不依赖 Win11 BB 项目、`/mnt/d/src/BB` 或外部 BB MCP。
-5. BB analysis input 只来自 OpenBB normalized bundle。
+3. CryptoLens analysis engine 在 report runtime 中不出网、不读 provider key。
+4. CryptoLens analysis engine 来自 claw-trade 仓库内部代码，不依赖 Win11 旧 BB 项目、`/mnt/d/src/BB` 或外部 BB MCP。
+5. CryptoLens analysis input 只来自 OpenBB normalized bundle。
 6. worker 只看到自然语言 market pack。
-7. BTC fresh/live report 中恢复 BB 指标分析密度。
+7. BTC fresh/live report 中恢复 CryptoLens 指标分析密度。
 8. 缺失字段仍真实进入 data gaps。
-9. final report evidence chain 能追到 PM L1、market L1、BB analysis evidence、OpenBB normalized/raw/http refs。
+9. final report evidence chain 能追到 PM L1、market L1、CryptoLens analysis evidence、OpenBB normalized/raw/http refs。
 10. import-block 证明旧 BB/旧 provider 不能 silent fallback。
 11. focused tests 和 live/fresh 验收全部通过。

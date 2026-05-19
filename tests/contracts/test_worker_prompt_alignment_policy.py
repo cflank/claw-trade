@@ -4,9 +4,7 @@ import re
 from pathlib import Path
 
 import pytest
-
 from claw_trade.workflow.workers import worker_by_id
-
 
 REQUIRED_WORKERS: tuple[str, ...] = (
     "market_analyst",
@@ -187,6 +185,7 @@ SUPPORTED_US_PROMPT_PLACEHOLDERS = {
     "trader_report",
     "supporting_worker_reports",
     "chart_assets_note",
+    "final_report_section_instruction",
 }
 SUPPORTED_HK_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS
 SUPPORTED_CRYPTO_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS | {"trader_plan"}
@@ -425,13 +424,16 @@ def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
     text = (Path("agents") / "market_analyst" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
 
     assert "可用工具：`claw_get_market_pack`" in text
-    assert "worker 不直接读取 BB 原始大 JSON" in text
+    assert "worker 不直接读取 CryptoLens raw JSON" in text
     assert "资料就绪度只能说明资料覆盖和通道质量" in text
     assert "最终市场报告是给中文读者看的，不要把内部字段名写进正文" in text
     assert "上方最近清算簇" in text
     assert "主动买卖量累计差值" in text
     assert "不得推断其正常、过热或极端" in text
     assert "如果资料包只列出价格历史和本地技术指标成功" in text
+    assert "每个小节必须使用 Markdown 表格" in text
+    assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in text
+    assert "每个关键指标单独一行" in text
 
 
 def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> None:
@@ -499,6 +501,8 @@ def test_crypto_downstream_prompts_condition_on_upstream_data_gaps_without_filli
         text = (Path("agents") / worker_id / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
         assert "资料包未可用、未调用成功、覆盖不足或内容为空" in text
         assert "不得补写缺失事实" in text
+        assert "数据缺口本身不是看涨或看跌事实" in text
+        assert "必须逐项写明缺少哪些数据" in text
         assert "搜索发现、公共知识或历史印象不能填补 ETF/机构资金、链上、衍生品、清算或社交共识缺口" in text
 
 
@@ -769,14 +773,65 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "FVG" in crypto_text
     assert "AHR999" in crypto_text
     assert "数据 -> 推导 -> 交易作用 -> 失效" in crypto_text
+    assert "必须用 Markdown 表格排版" in crypto_text
+    assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
+    assert "不要把 Vegas、布林带、RSI、MACD、KD 挤在同一段" in crypto_text
+    assert "不得原样粘贴 `market_analyst_report` 的整段“市场分析师完整指标材料”" in crypto_text
+    assert "不得把缺数据写成市场没有多头/中性氛围" in crypto_text
     assert "资金费率、OI、多空比、清算地图" in crypto_text
     assert "项目与代币基本面分析" in crypto_text
     assert "FDV、市值、TVL、协议收入" in crypto_text
     assert "不得把搜索摘要写成事实" in crypto_text
+    assert "正文不得原样出现 `CryptoLens`" in crypto_text
+    assert "`openbb_yfinance` 写成“行情历史来源”" in crypto_text
+    assert "`tavily/catalyst_events` 写成“事件线索来源”" in crypto_text
+    assert "不要写“某工具标记为就绪”这类内部过程句" in crypto_text
+    assert "终稿必须完整写到 `## 八、最终结论`" in crypto_text
+    assert "不得停在任一中间章节、半句或列表项" in crypto_text
+    assert "如果材料过长，优先压缩各节内部重复内容" in crypto_text
+    assert "最后一段必须是完整自然段" in crypto_text
+    assert "不得以“在……背景下”" in crypto_text
     assert "这里可以简洁，但前面各节不能压缩成摘要" in crypto_text
     assert "第一行必须是正式报告的 Markdown H1 标题" in user_text
     assert "不要以“好的”“收到”“我将”等过程性回应开头" in user_text
     assert "不能把它们压成几个提纲式结论" in user_text
+
+
+def test_report_polisher_prompts_support_sectioned_generation_without_protocol_leakage() -> None:
+    prompt_paths = (
+        Path("agents") / "report_polisher" / "prompts" / "US.md",
+        Path("agents") / "report_polisher" / "prompts" / "CN_A.md",
+        Path("agents") / "report_polisher" / "prompts" / "HK.md",
+        Path("agents") / "report_polisher" / "prompts" / "CRYPTO.md",
+    )
+
+    for prompt_path in prompt_paths:
+        text = prompt_path.read_text(encoding="utf-8")
+        assert "{final_report_section_instruction}" in text
+        assert "不是报告正文内容" in text or "not report body content" in text
+        assert "为空时" in text or "is empty" in text
+        assert "完整终稿" in text or "complete final report" in text
+        assert "本次只写" in text or "write only the section or sections it specifies" in text
+        assert "最终交付会按章节自然拼接" in text or "naturally joined section by section" in text
+        assert "不得输出范围外章节" in text or "Do not output sections outside the requested scope" in text
+        assert "严禁输出任何以 `# ` 开头的 H1 标题" in text or "must not output any line beginning with `# `" in text
+
+    crypto_text = prompt_paths[-1].read_text(encoding="utf-8")
+    assert "完整八节结构和第八节自然结尾要求" in crypto_text
+    assert "不要把每个分段都写成完整八节" in crypto_text
+    assert "所有编号章节必须使用 `##` 二级标题" in crypto_text
+    assert "最后一段仍必须是完整自然段" in crypto_text
+    assert "Polymarket 事件预期" in crypto_text
+    assert "数据缺口本身不是看涨或看跌事实" in crypto_text
+    assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
+    assert "正文不得原样出现 `CryptoLens`" in crypto_text
+    assert "`readiness/ready` 写成“资料可用性/资料就绪”" in crypto_text
+
+    user_text = (Path("agents") / "report_polisher" / "USER.md").read_text(encoding="utf-8")
+    assert "final_report_section_instruction" in user_text
+    assert "只是写作范围，不是报告正文内容" in user_text
+    assert "当它为空时写完整终稿" in user_text
+    assert "当它给定时只写指定章节" in user_text
 
 
 def test_us_downstream_prompts_keep_truthfulness_redlines_from_becoming_memo_style_bans() -> None:

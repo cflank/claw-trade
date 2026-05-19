@@ -244,6 +244,7 @@ def assert_social_pack_contract_for_market(market: Market) -> None:
     assert result.readiness.status == ReadinessStatus.PARTIAL
     assert "Alternative.me 市场级情绪" in result.reader_brief_md
     assert "Polymarket 事件预期" in result.reader_brief_md
+    assert "事件概率 62%" in result.reader_brief_md
     assert "不包含投资判断" in result.reader_brief_md
     assert "source_role=" not in result.reader_brief_md
     assert result.compact_facts["market_level_sentiment"]

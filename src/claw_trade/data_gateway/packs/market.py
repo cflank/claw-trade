@@ -6,15 +6,24 @@ import hashlib
 import json
 from typing import Any, Mapping, Sequence
 
+from claw_trade.data_gateway.analysis.crypto_lens import (
+    CryptoLensAnalysisFailed,
+    CryptoLensAnalysisEvidenceStore,
+    CryptoLensAnalysisResult,
+    analyze_openbb_crypto_lens_bundle,
+)
 from claw_trade.data_gateway.models import (
     ChartAsset,
     Conflict,
+    CryptoDomainBundle,
     DataGap,
     DataGapReason,
+    DomainReadiness,
     DomainPackResult,
     FreshnessStatus,
     GapSeverity,
     Market,
+    NormalizedCryptoMarketBundle,
     PackAuditPayload,
     PackDomain,
     PackRequest,
@@ -22,6 +31,7 @@ from claw_trade.data_gateway.models import (
     ProviderAttempt,
     ProviderCallSpec,
     ProviderResult,
+    ProviderSourceRef,
     ProviderStatus,
     Readiness,
     ReadinessStatus,
@@ -120,6 +130,7 @@ class MarketPackBuilder:
         conflicts: Sequence[Conflict] = (),
         chart_image_refs: Mapping[str, str] | None = None,
         chart_object_store_uri: str | None = None,
+        crypto_lens_evidence_store: CryptoLensAnalysisEvidenceStore | None = None,
     ) -> DomainPackResult:
         call_specs = tuple(
             spec
@@ -173,6 +184,38 @@ class MarketPackBuilder:
             + _build_status_gaps(request=request, results=market_results)
             + _build_chart_gaps(request=request, chart_assets=chart_assets),
         )
+        crypto_lens_result: CryptoLensAnalysisResult | None = None
+        analysis_evidence_refs: tuple[str, ...] = ()
+        if request.market == Market.CRYPTO:
+            bundle, bundle_gaps = _build_crypto_lens_bundle(
+                request=request,
+                results=market_results,
+                ohlcv_rows=ohlcv_rows,
+                indicator_rows=indicator_rows,
+                compact_facts=compact_facts,
+                gaps=combined_gaps,
+                conflicts=conflicts,
+            )
+            combined_gaps = _merge_gaps(tuple(combined_gaps) + bundle_gaps)
+            if bundle is not None:
+                try:
+                    crypto_lens_result = analyze_openbb_crypto_lens_bundle(
+                        bundle,
+                        evidence_store=crypto_lens_evidence_store,
+                    )
+                    if crypto_lens_result.analysis_evidence_ref:
+                        analysis_evidence_refs = (crypto_lens_result.analysis_evidence_ref,)
+                    combined_gaps = _merge_gaps(tuple(combined_gaps) + crypto_lens_result.data_gaps)
+                except Exception as exc:  # noqa: BLE001
+                    evidence_ref = exc.analysis_evidence_ref if isinstance(exc, CryptoLensAnalysisFailed) else None
+                    if evidence_ref:
+                        analysis_evidence_refs = (evidence_ref,)
+                    combined_gaps = _merge_gaps(
+                        tuple(combined_gaps)
+                        + (
+                            _crypto_lens_failure_gap(request=request, reason=str(exc)),
+                        )
+                    )
         readiness = _compute_readiness(
             request=request,
             call_specs=call_specs,
@@ -188,6 +231,7 @@ class MarketPackBuilder:
             results=market_results,
             gaps=combined_gaps,
             chart_assets=chart_assets,
+            crypto_lens_result=crypto_lens_result,
         )
 
         raw_refs = tuple(result.raw_ref for result in market_results if result.raw_ref)
@@ -215,9 +259,11 @@ class MarketPackBuilder:
                 status=readiness.status.value,
                 raw_refs=raw_refs,
                 normalized_refs=normalized_refs,
+                analysis_evidence_refs=analysis_evidence_refs,
                 generated_at=generated_at,
             ),
             generated_at=generated_at,
+            analysis_evidence_refs=analysis_evidence_refs,
         )
         return DomainPackResult(
             request=request,
@@ -539,6 +585,7 @@ def _render_reader_brief(
     results: Sequence[ProviderResult],
     gaps: Sequence[DataGap],
     chart_assets: Sequence[ChartAsset],
+    crypto_lens_result: CryptoLensAnalysisResult | None = None,
 ) -> str:
     lines: list[str] = [
         f"## 数据资料包：{request.ticker} / {request.market.value} / {request.domain.value}",
@@ -554,7 +601,7 @@ def _render_reader_brief(
     if request.market == Market.CRYPTO:
         lines.append(
             "- 加密市场覆盖边界：本次资料就绪度只代表已列明来源的价格历史、"
-            "本地技术指标和图表资产；如果来源列表没有 BB/CoinGlass、资金费率、"
+            "OpenBB 归一化资料、CryptoLens 指标分析和图表资产；如果来源列表没有资金费率、"
             "OI、多空比、清算、链上、宏观或 AHR999 的成功记录，这些指标均视为未覆盖，"
             "不得写成已验证事实。"
         )
@@ -601,6 +648,9 @@ def _render_reader_brief(
             line = f"{line}（{asset.root_cause}）"
         lines.append(line)
 
+    if request.market == Market.CRYPTO:
+        lines.extend(_render_crypto_lens_brief(crypto_lens_result))
+
     lines.extend(["", "### 来源和缺口"])
     for result in results:
         cache_text = ""
@@ -630,6 +680,509 @@ def _render_reader_brief(
     return "\n".join(lines)
 
 
+def _render_crypto_lens_brief(result: CryptoLensAnalysisResult | None) -> list[str]:
+    lines = ["", "### CryptoLens 指标分析"]
+    if result is None:
+        lines.extend(
+            [
+                "- 状态：未生成。",
+                "- 说明：OpenBB 来源尝试和证据引用已保留，但本次没有可用的 CryptoLens 指标分析结果；不得补写资金费率、OI、清算簇、链上、宏观或 AHR999 结论。",
+            ]
+        )
+        return lines
+
+    lines.extend(
+        [
+            f"- 数据状态：{_READINESS_TEXT.get(result.readiness.status, result.readiness.status.value)}；分析状态：{result.status}。",
+            f"- 来源摘要：CryptoLens 仅消费 OpenBB 归一化资料，本次引用 {len(result.input_normalized_refs)} 个 normalized ref。",
+            "- 指标覆盖："
+            + "；".join(
+                f"{_crypto_lens_section_title(key)}={_analysis_status_text(value.get('status'))}"
+                for key, value in result.indicator_coverage.items()
+            ),
+        ]
+    )
+    sections = (
+        ("价格/多周期结构", result.market_structure),
+        ("技术形态", result.technical_patterns),
+        ("衍生品拥挤度", result.derivatives_context),
+        ("清算压力", result.liquidation_context),
+        ("链上指标", result.onchain_context),
+        ("宏观约束", result.macro_context),
+        ("AHR999", result.ahr999_context),
+    )
+    for title, section in sections:
+        line = f"- {title}：{_analysis_status_text(section.status.value)}；{section.summary}"
+        if section.notes:
+            line += " 备注：" + "；".join(section.notes)
+        if section.gap_ids:
+            line += " 缺口：" + "、".join(section.gap_ids)
+        lines.append(line)
+
+    chart_text = _READINESS_TEXT.get(result.readiness.status, result.readiness.status.value)
+    lines.append(f"- 图表 readiness：{chart_text}；图表结论须以资料包图表条目为准。")
+    if result.conflicts:
+        lines.append("- conflicts：" + "；".join(f"{item.field_path}:{item.resolution}" for item in result.conflicts))
+    else:
+        lines.append("- conflicts：暂无。")
+    if result.data_gaps:
+        lines.append("- data gaps：" + "；".join(f"{item.field_path}:{item.root_cause}" for item in result.data_gaps))
+    else:
+        lines.append("- data gaps：暂无。")
+    invalidation = result.conditional_trade_framework.get("invalidation_gap_ids", ())
+    invalidation_text = "、".join(str(item) for item in invalidation) if invalidation else "暂无关键失效缺口"
+    lines.append(
+        "- 条件化观察：上述结构、技术、衍生品与清算状态只用于 market analyst 形成市场解释；"
+        f"若这些缺口未补齐，相关观察失效：{invalidation_text}。"
+    )
+    return lines
+
+
+def _crypto_lens_section_title(key: str) -> str:
+    return {
+        "market_structure": "价格结构",
+        "technical_patterns": "技术形态",
+        "derivatives_context": "衍生品",
+        "liquidation_context": "清算",
+        "onchain_context": "链上",
+        "macro_context": "宏观",
+        "ahr999_context": "AHR999",
+    }.get(key, key)
+
+
+def _analysis_status_text(value: object) -> str:
+    return {
+        "ready": "就绪",
+        "partial": "部分覆盖",
+        "gap": "缺口",
+        "not_applicable": "不适用",
+        "insufficient": "资料不足",
+    }.get(str(value), str(value))
+
+
+def _build_crypto_lens_bundle(
+    *,
+    request: PackRequest,
+    results: Sequence[ProviderResult],
+    ohlcv_rows: Sequence[Mapping[str, Any]],
+    indicator_rows: Sequence[Mapping[str, Any]],
+    compact_facts: Mapping[str, Any],
+    gaps: Sequence[DataGap],
+    conflicts: Sequence[Conflict],
+) -> tuple[NormalizedCryptoMarketBundle | None, tuple[DataGap, ...]]:
+    if request.market != Market.CRYPTO:
+        return None, ()
+
+    latest = ohlcv_rows[-1] if ohlcv_rows else {}
+    ohlcv_payload = _crypto_ohlcv_payload(ohlcv_rows=ohlcv_rows, indicator_rows=indicator_rows, compact_facts=compact_facts)
+    domain_payloads: dict[str, Mapping[str, Any] | None] = {
+        "market": _crypto_market_payload(latest),
+        "ohlcv": ohlcv_payload,
+        "derivatives": _crypto_endpoint_payload(results, "futures_oi_funding", _crypto_derivatives_payload),
+        "liquidation_map": _crypto_endpoint_payload(results, "liquidation_heatmap", _crypto_liquidation_payload),
+        "onchain": _crypto_endpoint_payload(results, "onchain_signals", _crypto_onchain_payload),
+        "macro": _crypto_endpoint_payload(results, "macro_regime", _crypto_macro_payload),
+        "events": _crypto_endpoint_payload(results, "catalyst_events", lambda row: dict(row)),
+        "ahr999": _crypto_endpoint_payload(results, "ahr999_index", _crypto_ahr999_payload),
+    }
+    domain_status = {
+        "market": _crypto_domain_status_from_payload(domain_payloads["market"], endpoint="crypto_price_historical", results=results),
+        "ohlcv": _crypto_ohlcv_status(ohlcv_payload, results),
+        "derivatives": _crypto_domain_status_from_payload(domain_payloads["derivatives"], endpoint="futures_oi_funding", results=results),
+        "liquidation_map": _crypto_domain_status_from_payload(domain_payloads["liquidation_map"], endpoint="liquidation_heatmap", results=results),
+        "onchain": _crypto_domain_status_from_payload(domain_payloads["onchain"], endpoint="onchain_signals", results=results),
+        "macro": _crypto_domain_status_from_payload(domain_payloads["macro"], endpoint="macro_regime", results=results),
+        "events": _crypto_domain_status_from_payload(domain_payloads["events"], endpoint="catalyst_events", results=results),
+        "ahr999": _crypto_ahr999_status(request=request, payload=domain_payloads["ahr999"], results=results),
+    }
+    partial_gaps = _crypto_partial_domain_gaps(request=request, domain_payloads=domain_payloads)
+    if any(gap.field_path.startswith("onchain.") for gap in partial_gaps) and domain_status["onchain"] == DomainReadiness.READY:
+        domain_status["onchain"] = DomainReadiness.PARTIAL
+    bundle_gaps = _merge_gaps(_crypto_domain_gaps(request=request, domain_status=domain_status) + partial_gaps)
+    combined_gaps = _merge_gaps(tuple(gaps) + bundle_gaps)
+    source_refs = tuple(
+        ProviderSourceRef(
+            ref_id=f"{result.spec.provider}:{result.spec.endpoint}:{result.attempt.attempt_id}",
+            provider=result.spec.provider,
+            adapter_id=result.spec.adapter_id,
+            endpoint=result.spec.endpoint,
+            source_role=result.spec.source_role,
+            status=result.status,
+            normalized_ref=result.normalized_ref,
+        )
+        for result in results
+    )
+    attempt_refs = tuple(result.attempt.attempt_id for result in results)
+    raw_refs = tuple(result.raw_ref for result in results if result.raw_ref)
+    normalized_refs = tuple(result.normalized_ref for result in results if result.normalized_ref)
+    bundle = NormalizedCryptoMarketBundle(
+        run_id=request.run_id,
+        call_id=request.call_id,
+        ticker=request.ticker,
+        market=Market.CRYPTO,
+        quote=request.currency or "USD",
+        as_of=request.current_date,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        freshness=_crypto_bundle_freshness(results),
+        domains=CryptoDomainBundle(
+            market=domain_payloads["market"],
+            ohlcv=domain_payloads["ohlcv"],
+            derivatives=domain_payloads["derivatives"],
+            liquidation_map=domain_payloads["liquidation_map"],
+            onchain=domain_payloads["onchain"],
+            macro=domain_payloads["macro"],
+            events=domain_payloads["events"],
+            ahr999=domain_payloads["ahr999"],
+        ),
+        domain_status=domain_status,
+        data_gaps=combined_gaps,
+        conflicts=tuple(conflicts),
+        source_refs=source_refs,
+        attempt_refs=attempt_refs,
+        raw_refs=raw_refs,
+        normalized_refs=normalized_refs,
+    )
+    return bundle, bundle_gaps
+
+
+def _crypto_market_payload(latest: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    price = _to_float(latest.get("close"))
+    if price is None:
+        return None
+    return {
+        "price": price,
+        "volume_24h": _to_float(latest.get("volume")),
+        "currency": latest.get("currency"),
+        "timezone": latest.get("timezone"),
+    }
+
+
+def _crypto_ohlcv_payload(
+    *,
+    ohlcv_rows: Sequence[Mapping[str, Any]],
+    indicator_rows: Sequence[Mapping[str, Any]],
+    compact_facts: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    if not ohlcv_rows:
+        return None
+    latest_indicators = indicator_rows[-1] if indicator_rows else {}
+    return {
+        "timeframe": "1d",
+        "rows": len(ohlcv_rows),
+        "candles": tuple(
+            {
+                "date": row.get("trade_date"),
+                "open": row.get("open"),
+                "high": row.get("high"),
+                "low": row.get("low"),
+                "close": row.get("close"),
+                "volume": row.get("volume"),
+            }
+            for row in ohlcv_rows
+        ),
+        "indicators": {
+            "rsi": compact_facts.get("rsi14"),
+            "macd_hist": latest_indicators.get("macd_hist"),
+        },
+    }
+
+
+def _crypto_endpoint_payload(
+    results: Sequence[ProviderResult],
+    endpoint: str,
+    mapper: Any,
+) -> Mapping[str, Any] | None:
+    row = _first_success_row(results, endpoint=endpoint)
+    if row is None:
+        return None
+    return mapper(row)
+
+
+def _first_success_row(results: Sequence[ProviderResult], endpoint: str | None = None) -> Mapping[str, Any] | None:
+    for result in results:
+        if endpoint is not None and result.spec.endpoint != endpoint:
+            continue
+        if result.status not in {ProviderStatus.REMOTE_SUCCESS, ProviderStatus.CACHE_HIT, ProviderStatus.SHARED_RESULT}:
+            continue
+        if result.rows:
+            return result.rows[-1]
+    return None
+
+
+def _crypto_derivatives_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        "funding": _metric_value(row.get("funding") or row.get("funding_rate") or row.get("funding_rates")),
+        "oi": _metric_value(row.get("oi") or row.get("open_interest")),
+        "long_short_ratio": _metric_value(row.get("long_short_ratio")),
+        "cvd_proxy": _metric_value(row.get("cvd_proxy")),
+    }
+
+
+def _crypto_liquidation_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    largest = row.get("largest_cluster")
+    if not isinstance(largest, Mapping):
+        clusters = row.get("largest_clusters")
+        if isinstance(clusters, Sequence) and not isinstance(clusters, (str, bytes, bytearray)):
+            largest = next((item for item in clusters if isinstance(item, Mapping)), None)
+    if not isinstance(largest, Mapping):
+        return {}
+    return {
+        "largest_cluster": {
+            "price": _metric_value(largest.get("price") or largest.get("price_level")),
+            "size": _metric_value(largest.get("size") or largest.get("liquidation_value")),
+        }
+    }
+
+
+def _crypto_onchain_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    stablecoin_flows = row.get("stablecoin_flows") if isinstance(row.get("stablecoin_flows"), Mapping) else {}
+    btc_indicators = row.get("btc_indicators") if isinstance(row.get("btc_indicators"), Mapping) else {}
+    whale_activity = row.get("whale_activity") if isinstance(row.get("whale_activity"), Mapping) else {}
+    return {
+        "exchange_netflow": _metric_value(
+            row.get("exchange_netflow")
+            or row.get("exchange_net_position_change")
+            or row.get("exchange_flows")
+            or stablecoin_flows
+        ),
+        "active_addresses": _metric_value(row.get("active_addresses") or btc_indicators.get("active_addresses")),
+        "mvrv": _metric_value(row.get("mvrv") or btc_indicators.get("mvrv")),
+        "sth_sopr": _metric_value(row.get("sth_sopr") or btc_indicators.get("sth_sopr")),
+        "lth_sopr": _metric_value(row.get("lth_sopr") or btc_indicators.get("lth_sopr")),
+        "nupl": _metric_value(row.get("nupl") or btc_indicators.get("nupl")),
+        "whale_large_tx_count": _metric_value(whale_activity.get("large_tx_count")),
+        "whale_large_tx_volume": _metric_value(whale_activity.get("large_tx_volume")),
+        "stablecoin_exchange_netflow": _metric_value(stablecoin_flows),
+        "exchange_balance": _metric_value(row.get("exchange_balance_trend")),
+    }
+
+
+def _crypto_macro_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    series = row.get("series") if isinstance(row.get("series"), Mapping) else {}
+    return {
+        "dxy": _metric_value(row.get("dxy")),
+        "us10y": _metric_value(row.get("us10y") or (series or {}).get("DGS10")),
+    }
+
+
+def _crypto_ahr999_payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        "value": _metric_value(row.get("value") or row.get("ahr999")),
+        "fitted_price": _metric_value(row.get("fitted_price")),
+    }
+
+
+def _metric_value(value: object) -> float | None:
+    direct = _to_float(value)
+    if direct is not None:
+        return direct
+    if isinstance(value, Mapping):
+        for key in (
+            "value",
+            "latest",
+            "close",
+            "v",
+            "funding",
+            "funding_rate",
+            "fundingRate",
+            "open_interest",
+            "openInterest",
+            "open_interest_usd",
+            "open_interest_quantity",
+            "open_interest_by_stable_coin_margin",
+            "long_short_ratio",
+            "longShortRatio",
+            "global_account_long_short_ratio",
+            "cumulative_delta",
+            "latest_delta",
+            "aggregate_netflow",
+            "exchange_netflow",
+            "netflow",
+            "net_flow",
+            "stablecoin_margin_list",
+            "token_margin_list",
+            "count",
+            "addresses",
+            "active_address_count",
+            "sopr",
+            "sth_sopr",
+            "lth_sopr",
+            "nupl",
+            "net_unpnl",
+        ):
+            nested = value.get(key)
+            direct = _metric_value(nested)
+            if direct is not None:
+                return direct
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        for item in value:
+            direct = _metric_value(item)
+            if direct is not None:
+                return direct
+    return None
+
+
+def _crypto_domain_status_from_payload(
+    payload: Mapping[str, Any] | None,
+    *,
+    endpoint: str,
+    results: Sequence[ProviderResult],
+) -> DomainReadiness:
+    if payload is None:
+        return _crypto_missing_status_from_endpoint(endpoint=endpoint, results=results)
+    if _payload_has_value(payload):
+        return DomainReadiness.READY
+    return DomainReadiness.INSUFFICIENT
+
+
+def _payload_has_value(payload: Mapping[str, Any]) -> bool:
+    for value in payload.values():
+        if isinstance(value, Mapping):
+            if _payload_has_value(value):
+                return True
+            continue
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            if len(value) > 0:
+                return True
+            continue
+        if value is not None:
+            return True
+    return False
+
+
+def _crypto_ohlcv_status(payload: Mapping[str, Any] | None, results: Sequence[ProviderResult]) -> DomainReadiness:
+    if payload is None:
+        return _crypto_missing_status_from_endpoint(endpoint="crypto_price_historical", results=results)
+    rows = payload.get("rows")
+    if isinstance(rows, int) and rows < 30:
+        return DomainReadiness.INSUFFICIENT
+    return DomainReadiness.READY
+
+
+def _crypto_ahr999_status(
+    *,
+    request: PackRequest,
+    payload: Mapping[str, Any] | None,
+    results: Sequence[ProviderResult],
+) -> DomainReadiness:
+    if not request.ticker.upper().startswith("BTC"):
+        return DomainReadiness.MISSING
+    return _crypto_domain_status_from_payload(payload, endpoint="ahr999_index", results=results)
+
+
+def _crypto_missing_status_from_endpoint(*, endpoint: str, results: Sequence[ProviderResult]) -> DomainReadiness:
+    matching = [result for result in results if result.spec.endpoint == endpoint]
+    if not matching:
+        return DomainReadiness.MISSING
+    if any(result.status == ProviderStatus.LICENSE_BLOCKED for result in matching):
+        return DomainReadiness.LICENSE_BLOCKED
+    if any(result.status in {ProviderStatus.CREDENTIAL_MISSING, ProviderStatus.SKIPPED_NOT_CONFIGURED} for result in matching):
+        return DomainReadiness.MISSING
+    return DomainReadiness.ERROR
+
+
+def _crypto_domain_gaps(
+    *,
+    request: PackRequest,
+    domain_status: Mapping[str, DomainReadiness],
+) -> tuple[DataGap, ...]:
+    gaps: list[DataGap] = []
+    gap_fields = {
+        "derivatives": ("derivatives.funding", "derivatives.oi", "derivatives.long_short_ratio", "derivatives.cvd_proxy"),
+        "liquidation_map": ("liquidation_map.largest_cluster",),
+        "ohlcv": ("ohlcv.rows",),
+        "onchain": ("onchain.exchange_netflow",),
+        "macro": ("macro.us10y",),
+        "ahr999": ("ahr999.value",),
+    }
+    for domain, fields in gap_fields.items():
+        status = domain_status.get(domain)
+        if status in {DomainReadiness.READY, DomainReadiness.STALE}:
+            continue
+        if domain == "ahr999" and not request.ticker.upper().startswith("BTC"):
+            continue
+        for field_path in fields:
+            gaps.append(
+                DataGap(
+                    gap_id=f"{request.run_id}:{request.call_id}:crypto_lens:{field_path}",
+                    domain=PackDomain.MARKET,
+                    severity=GapSeverity.WARN,
+                    reason=DataGapReason.FIELD_MISSING,
+                    field_path=field_path,
+                    provider_candidates=(),
+                    attempt_ids=(),
+                    root_cause=f"CryptoLens 输入缺少 {field_path}，该指标不能写成已覆盖。",
+                    next_action="补齐 OpenBB 归一化数据后重新生成 CryptoLens 分析。",
+                )
+            )
+    return tuple(gaps)
+
+
+def _crypto_partial_domain_gaps(
+    *,
+    request: PackRequest,
+    domain_payloads: Mapping[str, Mapping[str, Any] | None],
+) -> tuple[DataGap, ...]:
+    onchain = domain_payloads.get("onchain")
+    if not isinstance(onchain, Mapping) or not _payload_has_value(onchain):
+        return ()
+    fields = (
+        "onchain.exchange_netflow",
+        "onchain.active_addresses",
+        "onchain.sth_sopr",
+        "onchain.lth_sopr",
+        "onchain.nupl",
+        "onchain.stablecoin_exchange_netflow",
+    )
+    gaps: list[DataGap] = []
+    for field_path in fields:
+        key = field_path.split(".", 1)[1]
+        if onchain.get(key) is not None:
+            continue
+        gaps.append(
+            DataGap(
+                gap_id=f"{request.run_id}:{request.call_id}:crypto_lens:{field_path}",
+                domain=PackDomain.MARKET,
+                severity=GapSeverity.WARN,
+                reason=DataGapReason.FIELD_MISSING,
+                field_path=field_path,
+                provider_candidates=(),
+                attempt_ids=(),
+                root_cause=f"CryptoLens 输入缺少 {field_path}，链上资料只能部分覆盖。",
+                next_action="等待 Coinglass 配额恢复或补充批准的 OpenBB 链上来源后重新生成。",
+            )
+        )
+    return tuple(gaps)
+
+
+def _crypto_lens_failure_gap(*, request: PackRequest, reason: str) -> DataGap:
+    return DataGap(
+        gap_id=f"{request.run_id}:{request.call_id}:crypto_lens:analysis_failed",
+        domain=PackDomain.MARKET,
+        severity=GapSeverity.WARN,
+        reason=DataGapReason.FIELD_MISSING,
+        field_path="crypto_lens.analysis",
+        provider_candidates=(),
+        attempt_ids=(),
+        root_cause=f"CryptoLens 分析失败：{reason}",
+        next_action="修复 CryptoLens 本地分析后重跑；不能用 OpenBB 原始事实伪造指标分析。",
+    )
+
+
+def _crypto_bundle_freshness(results: Sequence[ProviderResult]) -> FreshnessStatus:
+    statuses = {result.freshness for result in results}
+    if FreshnessStatus.FRESH_REMOTE in statuses:
+        return FreshnessStatus.FRESH_REMOTE
+    if FreshnessStatus.FRESH_CACHE in statuses:
+        return FreshnessStatus.FRESH_CACHE
+    if FreshnessStatus.STALE_CACHE in statuses:
+        return FreshnessStatus.STALE_CACHE
+    if FreshnessStatus.CACHE_UNUSABLE in statuses:
+        return FreshnessStatus.CACHE_UNUSABLE
+    return FreshnessStatus.NOT_FETCHED
+
+
 def _pack_hash(
     *,
     run_id: str,
@@ -637,6 +1190,7 @@ def _pack_hash(
     status: str,
     raw_refs: Sequence[str],
     normalized_refs: Sequence[str],
+    analysis_evidence_refs: Sequence[str],
     generated_at: str,
 ) -> str:
     payload = {
@@ -645,6 +1199,7 @@ def _pack_hash(
         "status": status,
         "raw_refs": list(raw_refs),
         "normalized_refs": list(normalized_refs),
+        "analysis_evidence_refs": list(analysis_evidence_refs),
         "generated_at": generated_at,
     }
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")

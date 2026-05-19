@@ -1,11 +1,11 @@
 ---
 name: crypto-trading-analysis
-description: Use only for claw-trade CRYPTO profile market analysis. Crypto trading analysis workflow for BTC, ETH, and major altcoins using BB structured market data, AMD/SMC, 123 reversal rules, chart patterns, Vegas/FVG/OB, RSI/MACD/KD, derivatives, liquidation maps, on-chain and macro risk checks. Do not use for US, CN_A, or HK equity profiles.
+description: Use only for claw-trade CRYPTO profile market analysis. Crypto trading analysis workflow for BTC, ETH, and major altcoins using OpenBB-routed market packs plus CryptoLens analysis material, AMD/SMC, 123 reversal rules, chart patterns, Vegas/FVG/OB, RSI/MACD/KD, derivatives, liquidation maps, on-chain and macro risk checks. Do not use for US, CN_A, or HK equity profiles.
 ---
 
 # Crypto Trading Analysis
 
-Use this skill to produce Chinese, evidence-grounded crypto trade analysis. BB is an analysis system only: no order placement, wallet signing, asset transfer, account management, guaranteed returns, or certainty-language trading calls.
+Use this skill to produce Chinese, evidence-grounded crypto trade analysis. CryptoLens is an offline analysis layer over OpenBB normalized market data, not a data source, provider, external MCP, order system, wallet, account manager, or PM/trader decision owner.
 
 ## Core Standard
 
@@ -39,7 +39,7 @@ Do not use model memory as current market data.
 
 Call OpenClaw visible tool `claw_get_market_pack` first. This pack centrally reads OpenBB-routed market structure, derivatives, liquidation, on-chain, macro, events, and AHR999 when those sources are configured, then adds local OHLCV-derived indicators and PNG chart assets.
 
-The worker should use the pack's natural-language `reader_brief`, compact data summary, `provider_attempts`, `data_gaps`, `conflicts`, and `readiness`. Do not use raw BB JSON as the report body; raw provider payload is evidence storage only.
+The worker should use the pack's natural-language `reader_brief`, compact data summary, `provider_attempts`, `data_gaps`, `conflicts`, and `readiness`. Do not use raw CryptoLens JSON, OpenBB raw payload, legacy external crypto MCP atomic output, or provider raw JSON as the report body; raw payloads are evidence storage only.
 
 The data tool call does not need model-supplied ticker, market, company_name, or date fields; those values are locked by runtime context.
 
@@ -51,17 +51,17 @@ Rules:
 - Add `browser_evidence` only when structured data is missing and the user permits browser assistance, or when the user explicitly supplies a screenshot/page.
 - Fixture profiles such as `no-key`, `partial-key`, and `full-key` are for local verification; never present fixture data as live market evidence.
 
-## BB/CoinGlass Unavailable Path
+## Market Pack Data Gap Path
 
 If `claw_get_market_pack` reports that the CRYPTO market route is unavailable:
 
-1. Check whether the BB MCP is not built, not registered, or Codex has not been restarted.
-2. If `mcp/crypto-data-mcp/dist/server.js` is missing, report `BB_MCP_NOT_BUILT` with the build/register commands from the repo docs.
-3. If the MCP exists but cannot be called by the pack, report `BB_MCP_UNAVAILABLE` and ask for provider health or install verification.
-4. Use direct provider MCPs only when they are explicitly configured and callable; label that route as degraded.
-5. If BB MCP, direct provider MCPs, and browser assistance are all unavailable, ask for user-provided chart/context and output a data gap report.
+1. For market data, call only `claw_get_market_pack`; do not call OpenBB atomic provider tools, CryptoLens raw tools, or any legacy external data tool.
+2. Treat the unavailable route as a data gap from the pack result, preserving its `provider_attempts`, `data_gaps`, `conflicts`, and `readiness`.
+3. State which OpenBB/data_gateway domains failed or were blocked, such as credential missing, rate limited, field missing, stale, or schema invalid.
+4. If the pack returns partial market facts, analyze only those facts and lower confidence where missing domains matter.
+5. If the pack returns no usable market facts, ask for rerun/provider health or user-provided chart/context and output a data gap report.
 
-Never hide this route change. State which source path was used and which `data_gaps[]` remain open.
+Never hide this data gap. State which approved pack material was available and which `data_gaps[]` remain open.
 
 ## No Duplicate Ready-Domain Queries
 

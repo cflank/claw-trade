@@ -1,0 +1,11 @@
+COMMAND: uv run python scripts/run_claw_trade_fresh_report.py --ticker 600519.SH --company-name 贵州茅台 --market CN_A --profile CN_A --currency CNY --currency-symbol ¥ --current-date 2026-05-18 --start-date 2025-05-18 --end-date 2026-05-18 --output-dir docs/evidence/regression-three-markets-dynamic-report-polish-20260519T023114Z/cn_a_600519/exported
+EXIT_CODE: 0
+
+STDOUT:
+COMPLETED run_id=run-20260519-023119-9aa30f4d output_dir=docs/evidence/regression-three-markets-dynamic-report-polish-20260519T023114Z/cn_a_600519/exported workers=20 final_report=final_report.md
+
+
+STDERR:
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
+

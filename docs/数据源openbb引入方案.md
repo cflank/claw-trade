@@ -105,7 +105,7 @@ flowchart TB
   end
 
   subgraph DataGateway["OpenBB 数据入口平面\nthird_party/openbb submodule"]
-    PackAPI["domain pack interface\nget_market_pack/get_news_pack/..."]
+    PackAPI["worker-visible pack wrappers\nclaw_get_market_pack/claw_get_news_pack/..."]
     Registry["provider registry\nkey/rate/cache/attempt/readiness"]
     Adapters["OpenBB native + project provider extensions"]
   end
@@ -126,7 +126,7 @@ flowchart TB
   end
 
   subgraph External["外部数据源"]
-    Market["Tushare/AkShare/EastMoney/Polygon/Binance/BB/CoinGlass"]
+    Market["Tushare/AkShare/EastMoney/Polygon/Binance/Bybit/Deribit/CoinGlass"]
     Fundamental["FMP/SEC/HKEXnews/CoinGecko/DefiLlama"]
     News["Benzinga/Biztoc/official/RSS/search discovery"]
     Social["LunarCrush/X/Reddit/Telegram/Discord/Alternative.me/Polymarket"]
@@ -185,7 +185,7 @@ sequenceDiagram
 
   UI->>Runner: create report run
   Runner->>Claw: wake frontline worker with stage-scoped tools
-  Claw->>OBB: call get_market_pack/get_news_pack/...
+  Claw->>OBB: call claw_get_market_pack/claw_get_news_pack/...
   OBB->>Mongo: check cache/rate-limit/previous attempts
   alt cache fresh and valid
     Mongo-->>OBB: cache_hit + evidence_hash
@@ -297,12 +297,12 @@ worker
 
 ### 4.8 OpenBB 对外稳定接口
 
-只暴露领域接口，不暴露 provider 原子工具：
+worker 可见层只暴露 claw-trade 领域资料包工具，不暴露 provider 原子工具：
 
-- `get_market_pack`
-- `get_fundamental_pack`
-- `get_news_pack`
-- `get_social_pack`
+- `claw_get_market_pack`
+- `claw_get_fundamental_pack`
+- `claw_get_news_pack`
+- `claw_get_social_pack`
 
 统一入参最小集：
 
@@ -564,7 +564,7 @@ worker
 - CN_A：Tushare 主源，AkShare/EastMoney/Sina/Tencent 补充。
 - HK：Tushare HK + AkShare 双主路径，EastMoney/yfinance 补充。
 - US：FMP/Polygon 主路径，SEC/FRED/主流新闻源补充。
-- CRYPTO：BB/CoinGlass（市场结构）+ Binance（OHLCV）+ CoinGecko/DefiLlama（基本面）+ 社交/新闻源。
+- CRYPTO：OpenBB/data_gateway 调 CoinGlass/Bybit/Deribit 等衍生品源 + Binance/OHLCV + CoinGecko/DefiLlama（基本面）+ 社交/新闻源；CryptoLens 只做 normalized bundle 之上的离线指标分析。
 
 ### 6.2 Provider 分层
 
@@ -576,7 +576,7 @@ worker
 | OpenBB native | Deribit | CRYPTO | BTC/ETH 期权、隐含波动率、期限结构 | 归入衍生品市场数据 |
 | 项目自有 OpenBB extension | Tushare / AkShare / EastMoney / Sina / Tencent | CN_A/HK | 行情、财务、公告、热度 | A/HK 主路径，迁移为 OpenBB provider/extension |
 | 项目自有 OpenBB extension | HKEXnews | HK | 官方公告、业绩、停复牌、公司行动 | 港股官方原文主证据 |
-| 项目自有 OpenBB extension | BB / CoinGlass / Binance | CRYPTO | 市场结构、OHLCV、清算、OI、资金费率、AHR999 | CRYPTO market 主路径 |
+| 项目自有 OpenBB extension | CoinGlass / Binance / Bybit / approved AHR999 source | CRYPTO | 市场结构、OHLCV、清算、OI、资金费率、AHR999 | CRYPTO market provider 主路径；CryptoLens 不作为 provider，只消费 normalized bundle 做分析 |
 | 项目自有 OpenBB extension | CoinGecko / DefiLlama | CRYPTO | 币种资料、市值、供应量、TVL、收入、费用、安全/融资背景 | 基本面补充 |
 | 项目自有 OpenBB extension | LunarCrush / X / Reddit / Telegram / Discord | CRYPTO | 聚合社交指标和原始社交样本 | 缺 key 或空返回必须显式缺口 |
 | 限定用途 | Alternative.me | CRYPTO | 市场级恐惧贪婪 | 不能写成单币种社交舆情 |
@@ -781,7 +781,7 @@ worker
 
 - `.gitmodules` 只有 `third_party/openclaw` 与 `third_party/openviking`，尚无 `third_party/openbb`。
 - `pyproject.toml` 尚未声明 OpenBB 运行依赖。
-- OpenClaw frontline 插件当前注册的是既有工具名，例如 `market_market_data_pack`、`fundamental_fundamentals_data_pack`、`news_news_data_pack`、`social_social_sentiment_pack`、`crypto_market_data_pack`、`crypto_fundamental_data_pack`、`crypto_news_data_pack`、`crypto_social_sentiment_pack`，尚未注册目标名 `get_market_pack/get_fundamental_pack/get_news_pack/get_social_pack`。
+- OpenClaw frontline 插件当前注册的是既有工具名，例如 `market_market_data_pack`、`fundamental_fundamentals_data_pack`、`news_news_data_pack`、`social_social_sentiment_pack`、`crypto_market_data_pack`、`crypto_fundamental_data_pack`、`crypto_news_data_pack`、`crypto_social_sentiment_pack`，尚未注册目标 worker-visible 工具名 `claw_get_market_pack/claw_get_fundamental_pack/claw_get_news_pack/claw_get_social_pack`。
 - `src/claw_trade/config/tool_names.py` 仍把 stage intent 映射到既有工具名。
 - 旧 provider 直连逻辑开工时存在于 `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/**`、`agents/*/skills/*data*/scripts/**` 与 `src/claw_trade/providers/tushare_client.py`；T14 后这些运行入口已删除。2026-05-17 人类批准 `src/claw_trade/data_gateway/providers/**` 作为项目 OpenBB extension/shim 放置层，由 pack endpoint wrapper 加载，不要求每次调用再跳独立 OpenBB server。
 - 当前 `src/claw_trade/artifacts/openviking_client.py` 主要封装 namespace/stat/read/receipt/capability/readback 能力；T6 的 `tree/grep/glob/relations/export/import/session/observer/metrics/locks/recovery` 尚未作为 claw-trade runtime API 完整封装。
@@ -851,8 +851,9 @@ src/claw_trade/data_gateway/
       fred.py
     crypto/
       binance.py
-      bb.py
+      bybit.py
       coinglass.py
+      ahr999.py
       coingecko.py
       defillama.py
       lunarcrush.py
@@ -2116,8 +2117,8 @@ def build_default_registry(settings: GatewaySettings) -> ProviderRegistry:
     registry.register(SECEdgarAdapter(adapter_id="project.sec_edgar", settings=settings.provider_settings["sec"]))
     registry.register(FREDAdapter(adapter_id="openbb.fred", settings=settings.provider_settings["fred"]))
     registry.register(BinanceAdapter(adapter_id="project.binance", settings=settings.provider_settings["binance"]))
-    registry.register(BBAdapter(adapter_id="project.bb", settings=settings.provider_settings["bb"]))
     registry.register(CoinGlassAdapter(adapter_id="project.coinglass", settings=settings.provider_settings["coinglass"]))
+    registry.register(AHR999Adapter(adapter_id="project.ahr999", settings=settings.provider_settings["ahr999"]))
     registry.register(CoinGeckoAdapter(adapter_id="openbb.coingecko", settings=settings.provider_settings["coingecko"]))
     registry.register(DefiLlamaAdapter(adapter_id="project.defillama", settings=settings.provider_settings["defillama"]))
     registry.register(LunarCrushAdapter(adapter_id="project.lunarcrush", settings=settings.provider_settings["lunarcrush"]))
@@ -2544,13 +2545,13 @@ def render_reader_brief(request, normalized, readiness, gaps, conflicts, charts)
 
 ### 13.12 MCP 工具层设计
 
-worker 当前 turn 只能看到四类领域工具：
+worker 当前 turn 只能看到四类 claw-trade 领域资料包工具：
 
 ```python
-def get_market_pack(input: PackToolInput) -> str: ...
-def get_fundamental_pack(input: PackToolInput) -> str: ...
-def get_news_pack(input: PackToolInput) -> str: ...
-def get_social_pack(input: PackToolInput) -> str: ...
+def claw_get_market_pack(input: PackToolInput) -> str: ...
+def claw_get_fundamental_pack(input: PackToolInput) -> str: ...
+def claw_get_news_pack(input: PackToolInput) -> str: ...
+def claw_get_social_pack(input: PackToolInput) -> str: ...
 ```
 
 `PackToolInput`：
@@ -2574,7 +2575,7 @@ class PackToolInput:
 MCP handler 伪码：
 
 ```python
-def get_market_pack(input: PackToolInput) -> str:
+def claw_get_market_pack(input: PackToolInput) -> str:
     request = pack_request_from_tool_input(input, PackDomain.MARKET)
     result = gateway.get_pack(request)
     save_tool_audit(result.audit_ref, result.attempts, result.data_gaps, result.readiness)
@@ -2592,30 +2593,30 @@ MCP 禁止暴露：
 
 若确需调试，使用 `openbb_admin_cli` 或 UI 设置页，不进入 worker tool schema。
 
-#### 13.12.1 现有 OpenClaw 工具名到目标 pack 的桥接
+#### 13.12.1 现有 OpenClaw 工具名到 canonical pack 的替换
 
-目标稳定接口是 `get_market_pack/get_fundamental_pack/get_news_pack/get_social_pack`，但当前 OpenClaw plugin 与 stage policy 仍使用历史 provider-visible 工具名。迁移必须分两步，不能一边改工具名一边改 provider 入口导致 prompt/tool 证据不可比。
+目标稳定 worker-visible 接口是 `claw_get_market_pack/claw_get_fundamental_pack/claw_get_news_pack/claw_get_social_pack`。历史 provider-visible 工具名只能作为代码盘点对象和 import-block 对象，不得继续进入目标 stage policy 或 provider payload tool schema。
 
-桥接表：
+替换表：
 
-| 当前 provider-visible 工具名 | 目标 pack domain | 迁移期规则 |
+| 历史 provider-visible 工具名 | canonical worker-visible 工具名 | 目标规则 |
 |---|---|---|
-| `market_market_data_pack` | `get_market_pack` | 在 CN_A/HK market 迁移期保留名字，但内部只调用 OpenBB gateway；不得调用旧 provider 兜底。 |
-| `fundamental_fundamentals_data_pack` | `get_fundamental_pack` | 同上，先转接 OpenBB，再改 stage policy 名称。 |
-| `news_news_data_pack` | `get_news_pack` | 同上，搜索 provider 的 `source_role` 必须保留。 |
-| `social_social_sentiment_pack` | `get_social_pack` | 同上，Alternative.me/Polymarket 边界必须保留。 |
-| `crypto_market_data_pack` | `get_market_pack` | 在 CRYPTO market 迁移期保留名字，内部只调 OpenBB gateway，不能绕回 BB/CoinGlass 旧直连。 |
-| `crypto_fundamental_data_pack` | `get_fundamental_pack` | 同上。 |
-| `crypto_news_data_pack` | `get_news_pack` | 同上。 |
-| `crypto_social_sentiment_pack` | `get_social_pack` | 同上。 |
-| `get_stock_data/get_indicators/get_fundamentals/get_balance_sheet/get_cashflow/get_income_statement/get_news/get_global_news` | 对应 pack | US 迁移前属于 legacy 工具；OpenBB flag 打开后不得继续暴露这些原子/半原子工具，必须先替换成 pack wrapper 或 canonical pack 工具。 |
+| `market_market_data_pack` | `claw_get_market_pack` | 替换为 canonical 工具；不得作为 OpenBB 失败后的 alias/fallback。 |
+| `fundamental_fundamentals_data_pack` | `claw_get_fundamental_pack` | 替换为 canonical 工具；不得调用旧 provider executor。 |
+| `news_news_data_pack` | `claw_get_news_pack` | 替换为 canonical 工具；搜索 provider 的 `source_role` 必须保留。 |
+| `social_social_sentiment_pack` | `claw_get_social_pack` | 替换为 canonical 工具；Alternative.me/Polymarket 边界必须保留。 |
+| `crypto_market_data_pack` | `claw_get_market_pack` | 只作为 CRYPTO market 历史实现讨论；目标态 worker 只见 `claw_get_market_pack`，不能绕回旧 BB MCP、CryptoLens raw tool 或 CoinGlass 旧直连。 |
+| `crypto_fundamental_data_pack` | `claw_get_fundamental_pack` | 只作为历史实现/待替换代码路径讨论；目标 provider payload 不得暴露该名称。 |
+| `crypto_news_data_pack` | `claw_get_news_pack` | 同上。 |
+| `crypto_social_sentiment_pack` | `claw_get_social_pack` | 同上。 |
+| `get_stock_data/get_indicators/get_fundamentals/get_balance_sheet/get_cashflow/get_income_statement/get_news/get_global_news` | 对应 `claw_get_*_pack` | US legacy 原子/半原子工具；OpenBB flag 打开后不得继续暴露，必须替换成 canonical pack 工具。 |
 
-桥接验收：
+替换验收：
 
-- 每个已迁移 pack 的 provider-visible tool call 必须能在 audit 中证明进入 `OpenBBDataGateway.get_pack()`。
+- 每个已迁移 pack 的 canonical tool call 必须能在 audit 中证明进入 `OpenBBDataGateway.get_pack()`。
 - `OPENBB_DATA_PACK_<MARKET>_<DOMAIN>_ENABLED=true` 时，旧 `frontline_data_pack.provider_executor` 和旧 provider modules 不得被该 pack 调用。
-- provider payload 只允许出现迁移期 pack 工具名或 canonical pack 工具名，不得出现 OpenBB atomic provider/admin/discovery tool。
-- 工具名切换要单独提交：先证明“旧名字 -> OpenBB gateway” live 通过，再把 stage policy 改到 canonical 名称。
+- provider payload 只允许出现 canonical `claw_get_*_pack` 工具名，不得出现迁移期 pack 工具名、OpenBB atomic provider/admin/discovery tool。
+- 历史工具名只用于代码盘点、替换清单和 import-block 验收，不得作为目标 stage policy 或 provider payload 的可见工具名。
 
 ### 13.13 OpenViking 材料与上下文平面增强
 
@@ -3279,18 +3280,22 @@ US:
 
 CRYPTO:
   market:
-    - provider: bb
-      endpoints: [market_structure, ahr999]
+    - provider: coinglass
+      endpoints: [market_structure, open_interest, funding_rate, liquidation]
       required: true
       source_role: derivative_market_data
     - provider: binance
       endpoints: [ohlcv]
       required: true
       source_role: market_data
-    - provider: coinglass
-      endpoints: [open_interest, funding_rate, liquidation]
+    - provider: bybit
+      endpoints: [ohlcv, open_interest, funding_rate]
       required: false
       source_role: derivative_market_data
+    - provider: ahr999
+      endpoints: [ahr999]
+      required: false
+      source_role: cycle_indicator
   fundamental:
     - provider: coingecko
       endpoints: [coin_profile, market_cap, supply]
@@ -3328,10 +3333,10 @@ stage 级可见工具合同（最终态）：
 
 | worker | 当前 turn 是否可见 OpenBB pack tool | 允许工具 | 主要输入材料 |
 |---|---:|---|---|
-| `market_analyst` | 是 | `get_market_pack` | OpenBB 市场资料包 |
-| `fundamental_analyst` | 是 | `get_fundamental_pack` | OpenBB 基本面资料包 |
-| `news_analyst` | 是 | `get_news_pack` | OpenBB 新闻/公告资料包 |
-| `social_analyst` | 是 | `get_social_pack` | OpenBB 舆情/情绪资料包 |
+| `market_analyst` | 是 | `claw_get_market_pack` | OpenBB 市场资料包 |
+| `fundamental_analyst` | 是 | `claw_get_fundamental_pack` | OpenBB 基本面资料包 |
+| `news_analyst` | 是 | `claw_get_news_pack` | OpenBB 新闻/公告资料包 |
+| `social_analyst` | 是 | `claw_get_social_pack` | OpenBB 舆情/情绪资料包 |
 | `bull_researcher` | 否 | 无 OpenBB 数据工具 | approved frontline L1 正文和辩论上下文 |
 | `bear_researcher` | 否 | 无 OpenBB 数据工具 | approved frontline L1 正文和辩论上下文 |
 | `research_manager` | 否 | 无 OpenBB 数据工具 | approved frontline/debate L1 正文 |
@@ -3343,29 +3348,14 @@ stage 级可见工具合同（最终态）：
 
 如果后续要让下游 worker 追加查数，必须先形成新的设计批准；不能在 stage policy 里临时放开 OpenBB 原子 provider 工具。
 
-迁移期允许使用 13.12.1 中列出的历史 pack 工具名，但只能作为 OpenBB gateway wrapper。US 的历史原子工具不属于迁移 alias。
+13.12.1 中列出的历史 pack 工具名只用于迁移盘点、替换清单和 import-block 验收；目标 worker-visible tool schema 不允许包含迁移期 alias。US 的历史原子工具同样不得作为 alias。
 
 ```python
 CANONICAL_WORKER_PACK_TOOLS = {
-    "market_analyst": {"get_market_pack"},
-    "fundamental_analyst": {"get_fundamental_pack"},
-    "news_analyst": {"get_news_pack"},
-    "social_analyst": {"get_social_pack"},
-}
-
-MIGRATION_PACK_TOOL_ALIASES = {
-    ("CN_A", "market_analyst"): {"market_market_data_pack"},
-    ("HK", "market_analyst"): {"market_market_data_pack"},
-    ("CRYPTO", "market_analyst"): {"crypto_market_data_pack"},
-    ("CN_A", "fundamental_analyst"): {"fundamental_fundamentals_data_pack"},
-    ("HK", "fundamental_analyst"): {"fundamental_fundamentals_data_pack"},
-    ("CRYPTO", "fundamental_analyst"): {"crypto_fundamental_data_pack"},
-    ("CN_A", "news_analyst"): {"news_news_data_pack"},
-    ("HK", "news_analyst"): {"news_news_data_pack"},
-    ("CRYPTO", "news_analyst"): {"crypto_news_data_pack"},
-    ("CN_A", "social_analyst"): {"social_social_sentiment_pack"},
-    ("HK", "social_analyst"): {"social_social_sentiment_pack"},
-    ("CRYPTO", "social_analyst"): {"crypto_social_sentiment_pack"},
+    "market_analyst": {"claw_get_market_pack"},
+    "fundamental_analyst": {"claw_get_fundamental_pack"},
+    "news_analyst": {"claw_get_news_pack"},
+    "social_analyst": {"claw_get_social_pack"},
 }
 
 FORBIDDEN_OPENBB_TOOL_PATTERNS = (
@@ -3386,11 +3376,8 @@ def validate_worker_tool_schema(
     worker_id: str,
     profile: str,
     visible_tools: tuple[str, ...],
-    migration_aliases_enabled: bool = False,
 ) -> None:
     expected = set(CANONICAL_WORKER_PACK_TOOLS.get(worker_id, set()))
-    if migration_aliases_enabled:
-        expected.update(MIGRATION_PACK_TOOL_ALIASES.get((profile, worker_id), set()))
     if worker_id not in CANONICAL_WORKER_PACK_TOOLS and visible_tools:
         raise ToolBoundaryError(f"downstream worker sees OpenBB tool: {worker_id}/{visible_tools}")
     for tool in visible_tools:
@@ -3419,7 +3406,7 @@ def validate_worker_tool_schema(
 | `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/fundamentals_data_pack.py` | CN_A/HK fundamental pack | 同上。 |
 | `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/news_data_pack.py` | CN_A/HK news pack | 同上，保留 source role 证据。 |
 | `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/social_sentiment_pack.py` | CN_A/HK social pack | 同上。 |
-| `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/crypto_market_data_pack.py` | CRYPTO market pack | 迁移 BB/CoinGlass/Binance adapter 到 OpenBB extension。 |
+| `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/crypto_market_data_pack.py` | CRYPTO market pack | 迁移 CoinGlass/Binance/Bybit 等 provider adapter 到 OpenBB extension；旧 BB 纯分析逻辑单独迁入为 CryptoLens analysis module，不作为 provider。 |
 | `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/crypto_fundamental_data_pack.py` | CRYPTO fundamental pack | 迁移 CoinGecko/DefiLlama adapter。 |
 | `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/crypto_news_data_pack.py` | CRYPTO news pack | 迁移官方源/search discovery provider。 |
 | `openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/crypto_social_sentiment_pack.py` | CRYPTO social pack | 迁移 Alternative.me/Polymarket/LunarCrush 等 adapter。 |
@@ -3497,7 +3484,7 @@ git submodule status third_party/openbb
 验收：
 
 - HK `stock_hk_daily` 缺失时进入 chart/data gap；
-- CRYPTO BB/Binance/CoinGlass 尝试全部可见；
+- CRYPTO Binance/CoinGlass/Bybit 等 OpenBB provider attempts 全部可见；CryptoLens analysis evidence 单独可追溯；
 - A股缺 Tushare key 时 readiness 不为 ready。
 
 #### T4：实现 FundamentalPack
@@ -3630,7 +3617,7 @@ tests/unit/data_gateway/test_openviking_runtime_health.py
 - runtime health 任一核心 observer blocked 时总状态不能是 `ok`；
 - search discovery 不能进入事实主证据；
 - `reader_brief_md` 不是 JSON。
-- 迁移期历史 pack 工具名只允许转接 OpenBB gateway，不能调用旧 provider executor。
+- 迁移期历史 pack 工具名只用于替换盘点和 import-block 验收，目标 provider payload 只能暴露 canonical `claw_get_*_pack`。
 - 用户声明式 provider 未通过 admission 时不能进入 registry enabled candidates；
 - 用户首选 provider 只在同一 source_role/coverage_group 内排序靠前；
 - run-level plan 不调用 provider.fetch，`remote_prefetch_allowed` 固定为 false；
@@ -3729,6 +3716,7 @@ CRYPTO: BTC
 ## 14. 参考
 
 - 项目 CRYPTO 数据源方案：`docs/crypto_data_source_plan.md`
+- CryptoLens 接入方案：`docs/CryptoLens接入方案.md`
 - 项目总体架构：`docs/架构设计.md`
 - 港股详细设计：`docs/港股详细设计.md`
 - 当前 provider 规格：`openclaw_plugins/claw-trade-frontline-tools/python/frontline_data_pack/provider_specs.py`

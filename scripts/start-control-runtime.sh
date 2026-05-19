@@ -425,8 +425,6 @@ const rootDir = process.env.ROOT_DIR_VALUE;
 const outputPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
 const sourcePath = process.env.OPENCLAW_SOURCE_CONFIG_PATH_VALUE;
 const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;
-const bbMcpServerPath = (process.env.BB_MCP_SERVER_PATH || "/mnt/d/src/BB/mcp/crypto-data-mcp/dist/server.js").trim();
-const bbMcpCwd = (process.env.BB_MCP_CWD || "/mnt/d/src/BB/mcp/crypto-data-mcp").trim();
 const workers = [
   "market_analyst",
   "fundamental_analyst",
@@ -514,17 +512,6 @@ function readWorkerMountedSkills(workerId) {
     process.exit(1);
   }
   return skills;
-}
-
-function envRecordFromProcess(keys) {
-  const env = {};
-  for (const key of keys) {
-    const value = typeof process.env[key] === "string" ? process.env[key].trim() : "";
-    if (value) {
-      env[key] = value;
-    }
-  }
-  return env;
 }
 
 const mergedWorkers = workers.map((workerId) => {
@@ -631,40 +618,13 @@ const mergedPlugins = {
 };
 const sourceMcp = isPlainObject(sourceConfig.mcp) ? sourceConfig.mcp : {};
 const sourceMcpServers = isPlainObject(sourceMcp.servers) ? sourceMcp.servers : {};
-const bbMcpEnv = envRecordFromProcess([
-  "COINGECKO_PRO_API_KEY",
-  "COINGECKO_DEMO_API_KEY",
-  "COINGLASS_API_KEY",
-  "COINGLASS_API_BASE",
-  "COINGLASS_API_HEADER_NAME",
-  "GLASSNODE_API_KEY",
-  "FRED_API_KEY",
-  "TAVILY_API_KEY",
-  "EXA_API_KEY",
-  "DEFILLAMA_API_KEY",
-  "CMC_API_KEY",
-  "CRYPTOQUANT_API_KEY",
-  "ETHERSCAN_API_KEY",
-  "THEGRAPH_ACCESS_TOKEN",
-  "BB_PROVIDER_TIMEOUT_MS",
-  "BB_PROVIDER_RETRY_ATTEMPTS",
-  "BB_PROVIDER_RETRY_DELAY_MS",
-  "BB_COINGLASS_CONTEXT_BUDGET",
-  "BB_COINGLASS_RATE_LIMIT_PER_MINUTE",
-  "BB_COINGLASS_RATE_LIMIT_WINDOW_MS",
-]);
+const mergedMcpServers = {
+  ...sourceMcpServers,
+};
+delete mergedMcpServers.bb_crypto_data;
 const mergedMcp = {
   ...sourceMcp,
-  servers: {
-    ...sourceMcpServers,
-    bb_crypto_data: {
-      command: "node",
-      args: [bbMcpServerPath],
-      cwd: bbMcpCwd,
-      connectionTimeoutMs: 30000,
-      env: bbMcpEnv,
-    },
-  },
+  servers: mergedMcpServers,
 };
 
 const mergedConfig = {

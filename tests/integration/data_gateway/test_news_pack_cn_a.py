@@ -251,20 +251,29 @@ def test_news_pack_crypto_search_discovery_does_not_prove_etf_or_institutional_f
         status=ProviderStatus.REMOTE_SUCCESS,
         rows=({"title": "搜索线索：BlackRock ETF buying", "url": "https://example.com/search"},),
     )
+    event = _NewsContractAdapter(
+        adapter_id="project.polymarket",
+        provider_id="polymarket",
+        source_role=SourceRole.EVENT_EXPECTATION,
+        status=ProviderStatus.REMOTE_SUCCESS,
+        rows=({"title": "When will Bitcoin hit $150k?；Yes=42.0%", "url": "https://example.com/polymarket"},),
+    )
     specs = (
         _news_spec(Market.CRYPTO, official, "official"),
         _news_spec(Market.CRYPTO, search, "search_discovery"),
+        _news_spec(Market.CRYPTO, event, "event_markets"),
     )
 
     result = NewsPackBuilder().build(
         request=_news_request(Market.CRYPTO),
         run_plan=_run_plan(Market.CRYPTO, specs),
-        adapters_by_id={official.adapter_id: official, search.adapter_id: search},
+        adapters_by_id={official.adapter_id: official, search.adapter_id: search, event.adapter_id: event},
     )
 
     assert result.readiness.status == ReadinessStatus.READY
     assert "搜索发现" in result.reader_brief_md
     assert "不作为新闻事实、ETF 资金流、机构持仓/买入、监管事实或事件已发生的证明" in result.reader_brief_md
+    assert "When will Bitcoin hit $150k?；Yes=42.0%" in result.reader_brief_md
     assert all(item["source_role"] != SourceRole.SEARCH_DISCOVERY.value for item in result.compact_facts["news_facts"])
 
 

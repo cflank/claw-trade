@@ -526,10 +526,39 @@ print(json.dumps({
     assert details["runtime_call_id"] == "call-1__tool-call"
 
 
-def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(tmp_path: Path) -> None:
+def test_pack_runtime_blocked_exit_zero_is_reported_as_tool_error(tmp_path: Path) -> None:
     fake_python = tmp_path / "fake_python_pack.sh"
     payload = {
         "ok": False,
+        "error": {
+            "code": "pack_runtime_blocked",
+            "message": "DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI is not configured",
+        },
+    }
+    _write_executable(
+        fake_python,
+        f"""#!/usr/bin/env bash
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+exit 0
+""",
+    )
+    result = _run_tool(
+        tool_name="claw_get_news_pack",
+        ctx=_runtime_ctx(worker_id="news_analyst"),
+        params={"ticker": "00700.HK", "market": "HK"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+    )
+    assert result.get("isError") is True
+    assert _error_code(result) == "pack_runtime_blocked"
+    text = result["content"][0]["text"]
+    assert text.startswith("资料包工具失败：pack_runtime_blocked。")
+    assert "DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI is not configured" in text
+
+
+def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(tmp_path: Path) -> None:
+    fake_python = tmp_path / "fake_python_pack.sh"
+    payload = {
+        "ok": True,
         "schema_version": "openbb_social_pack.v1",
         "tool_name": "claw_get_social_pack",
         "reader_brief": (

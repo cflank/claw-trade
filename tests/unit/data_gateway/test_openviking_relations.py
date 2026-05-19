@@ -98,7 +98,7 @@ def _material(*, worker_id: str, call_id: str, stage: Stage) -> ApprovedMaterial
     )
 
 
-def _pack(worker_id: str) -> DomainPackResult:
+def _pack(worker_id: str, *, analysis_evidence_refs: tuple[str, ...] = ()) -> DomainPackResult:
     request = PackRequest(
         run_id="run-1",
         call_id=f"call-{worker_id}",
@@ -210,6 +210,7 @@ def _pack(worker_id: str) -> DomainPackResult:
         normalized_bundle_ref="mongo://openbb_normalized/bundle-1",
         payload_hash="sha256:test",
         generated_at="2026-05-17T00:00:00Z",
+        analysis_evidence_refs=analysis_evidence_refs,
     )
     return DomainPackResult(
         request=request,
@@ -253,6 +254,26 @@ def test_link_provider_evidence_covers_l1_l2_attempt_raw_normalized_cache_gap_an
     relation_notes = [json.loads(str(item["note"])) for item in backend.linked_relations]
     assert any(note["kind"] == "provider_attempt_to_raw_payload" for note in relation_notes)
     assert any(note["semantic_from_uri"].startswith("mongo://openbb_provider_attempts/") for note in relation_notes)
+
+
+def test_link_provider_evidence_links_crypto_lens_analysis_as_l2_evidence_not_provider_attempt() -> None:
+    backend = _Backend(linked_relations=[])
+    plane = OpenVikingMaterialPlane(OpenVikingClient(backend=backend))
+    material = _material(worker_id="market_analyst", call_id="call-market", stage=Stage.FRONTLINE)
+    analysis_ref = "mongo://crypto_lens_analysis_evidence/crypto_lens:run-1:call-market:evidence"
+    pack = _pack(worker_id="market_analyst", analysis_evidence_refs=(analysis_ref,))
+
+    relations = plane.link_provider_evidence(material=material, pack_result=pack)
+
+    analysis_relations = [item for item in relations if item.to_uri == analysis_ref]
+    assert len(analysis_relations) == 1
+    assert analysis_relations[0].kind == "worker_l1_to_l2_evidence"
+    assert not any(item.to_uri == analysis_ref and item.kind == "pack_audit_to_provider_attempt" for item in relations)
+    relation_notes = [json.loads(str(item["note"])) for item in backend.linked_relations]
+    assert any(
+        note["semantic_to_uri"] == analysis_ref and note["kind"] == "worker_l1_to_l2_evidence"
+        for note in relation_notes
+    )
 
 
 def test_link_provider_evidence_blocks_when_relation_write_fails() -> None:

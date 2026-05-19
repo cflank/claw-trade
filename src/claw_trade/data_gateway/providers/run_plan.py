@@ -18,7 +18,11 @@ from claw_trade.data_gateway.models import (
     RunProviderPlan,
     utc_now_iso,
 )
-from claw_trade.data_gateway.providers.market_adapters import normalize_hk_symbol_for_stock_hk_daily
+from claw_trade.data_gateway.providers.market_adapters import (
+    _crypto_technical_start_date,
+    _normalize_crypto_symbol_for_openbb,
+    normalize_hk_symbol_for_stock_hk_daily,
+)
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
 from claw_trade.workflow.models import RunRequest, WorkflowEntryPoint
 
@@ -127,6 +131,7 @@ class RunProviderPlanner:
                         priority=capability.priority,
                         priority_source=capability.priority_source,
                         user_preferred=capability.priority_source == PrioritySource.USER_PREFERRED,
+                        raw_export_policy=capability.raw_export_policy,
                     )
                 )
 
@@ -282,6 +287,15 @@ def _provider_params(
                 "timezone": "Asia/Hong_Kong",
             }
         )
+    if market == Market.CRYPTO and domain == PackDomain.MARKET:
+        params["symbol"] = _normalize_crypto_symbol_for_openbb(ticker)
+        params["timezone"] = "UTC"
+        if endpoint == "crypto_price_historical":
+            technical_start_date = _crypto_technical_start_date(start_date, end_date)
+            if technical_start_date != start_date:
+                params["requested_start_date"] = start_date
+                params["start_date"] = technical_start_date
+                params["technical_lookback_reason"] = "vegas_purple_band_ema676_daily"
     return params
 
 

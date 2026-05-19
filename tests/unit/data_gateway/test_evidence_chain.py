@@ -4,6 +4,7 @@ from typing import Any
 
 from claw_trade.data_gateway.store.evidence_chain import audit_openbb_evidence_chain
 from claw_trade.data_gateway.store.mongo import (
+    CRYPTO_LENS_ANALYSIS_EVIDENCE,
     OPENBB_PROVIDER_ATTEMPTS,
     OPENBB_PROVIDER_HTTP_EVIDENCE,
     OPENBB_RAW_PAYLOADS,
@@ -137,3 +138,32 @@ def test_evidence_chain_reports_missing_raw_doc_and_success_http_gaps() -> None:
     assert audit.success_http_missing_response_status == ("attempt-missing-doc:http",)
     assert audit.success_http_missing_headers == ("attempt-missing-doc:http",)
     assert audit.success_http_missing_raw_ref == ("attempt-missing-doc:http",)
+
+
+def test_evidence_chain_does_not_treat_crypto_lens_analysis_as_openbb_provider_evidence() -> None:
+    run_id = "run-crypto-lens"
+    db = _Database(
+        {
+            OPENBB_PROVIDER_ATTEMPTS: _Collection(),
+            OPENBB_PROVIDER_HTTP_EVIDENCE: _Collection(),
+            OPENBB_RAW_PAYLOADS: _Collection(),
+            CRYPTO_LENS_ANALYSIS_EVIDENCE: _Collection(
+                (
+                    {
+                        "_id": "crypto_lens:run-crypto-lens:call-market:evidence",
+                        "run_id": run_id,
+                        "call_id": "call-market",
+                        "referenced_normalized_refs": ("mongo://openbb_normalized/norm-1",),
+                        "analysis_result_ref": "crypto_lens_analysis_result://abc",
+                    },
+                )
+            ),
+        }
+    )
+
+    audit = audit_openbb_evidence_chain(db, run_id=run_id)
+
+    assert audit.passed is True
+    assert audit.attempt_count == 0
+    assert audit.http_evidence_count == 0
+    assert audit.raw_ref_count == 0

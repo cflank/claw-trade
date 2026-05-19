@@ -41,6 +41,7 @@ def _manifest_to_capability(manifest) -> ProviderCapability:
         coverage_quorum=manifest.coverage_quorum,
         priority=manifest.priority,
         priority_source=manifest.priority_source,
+        raw_export_policy=manifest.raw_export_policy,
     )
 
 

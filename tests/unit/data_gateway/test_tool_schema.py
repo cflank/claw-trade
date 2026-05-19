@@ -26,6 +26,26 @@ _FORBIDDEN_US_ATOMICS = {
     "get_global_news",
 }
 
+_FORBIDDEN_LEGACY_ALIASES = {
+    "market_market_data_pack",
+    "us_market_data_pack",
+    "cn_a_market_data_pack",
+    "crypto_market_data_pack",
+    "fundamental_fundamentals_data_pack",
+    "us_fundamentals_data_pack",
+    "cn_a_fundamentals_data_pack",
+    "crypto_fundamental_data_pack",
+    "news_news_data_pack",
+    "us_news_data_pack",
+    "cn_a_news_data_pack",
+    "crypto_news_data_pack",
+    "social_social_sentiment_pack",
+    "us_social_sentiment_pack",
+    "cn_a_social_sentiment_pack",
+    "crypto_social_sentiment_pack",
+    "bb_crypto_data",
+}
+
 _FORBIDDEN_OPENBB_PATTERNS = (
     "provider.",
     "admin.",
@@ -63,7 +83,10 @@ def test_frontline_tool_schema_is_canonical_pack_only_under_openbb_flag(
             assert tools
             assert set(tools).issubset(_FRONTLINE_ALLOWED_PACK_TOOLS)
             assert set(tools).isdisjoint(_FORBIDDEN_US_ATOMICS)
+            assert set(tools).isdisjoint(_FORBIDDEN_LEGACY_ALIASES)
             for tool_name in tools:
+                assert tool_name.startswith("claw_get_")
+                assert tool_name.endswith("_pack")
                 assert not any(pattern in tool_name for pattern in _FORBIDDEN_OPENBB_PATTERNS)
             assert tools == expected_frontline[worker_id]
 
@@ -82,4 +105,6 @@ def test_downstream_workers_have_empty_visible_tools_under_openbb_flag(monkeypat
             policy = policy_result.policy
             if policy.stage == Stage.FRONTLINE:
                 continue
-            assert resolve_tools(policy, registry) == ()
+            tools = resolve_tools(policy, registry)
+            assert tools == ()
+            assert set(tools).isdisjoint(_FORBIDDEN_LEGACY_ALIASES)

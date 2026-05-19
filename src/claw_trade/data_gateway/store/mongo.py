@@ -18,6 +18,7 @@ OPENBB_NORMALIZED = "openbb_normalized"
 OPENBB_RATE_LIMITS = "openbb_rate_limits"
 OPENBB_RUN_PROVIDER_PLANS = "openbb_run_provider_plans"
 OPENBB_SINGLE_FLIGHT_CALLS = "openbb_single_flight_calls"
+CRYPTO_LENS_ANALYSIS_EVIDENCE = "crypto_lens_analysis_evidence"
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,15 @@ def openbb_collection_indexes() -> tuple[CollectionIndexes, ...]:
                 IndexModel([("run_id", 1), ("call_key", 1)], unique=True),
                 IndexModel([("status", 1), ("lease_expires_at", 1)]),
                 IndexModel([("owner_attempt_id", 1)]),
+            ),
+        ),
+        CollectionIndexes(
+            CRYPTO_LENS_ANALYSIS_EVIDENCE,
+            (
+                IndexModel([("analysis_id", 1)], unique=True),
+                IndexModel([("run_id", 1), ("call_id", 1)]),
+                IndexModel([("worker_id", 1), ("engine_name", 1), ("engine_version", 1)]),
+                IndexModel([("referenced_normalized_refs", 1)]),
             ),
         ),
     )

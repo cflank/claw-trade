@@ -25,6 +25,7 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.providers.base import ProviderAdapter
+from claw_trade.data_gateway.providers.polymarket import fetch_polymarket_events
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
@@ -135,7 +136,7 @@ class DefaultSocialAdapter:
         elif "alternative_me" in self.provider_id:
             rows, source_url = _fetch_alternative_me_sentiment()
         elif "polymarket" in self.provider_id:
-            rows, source_url = _fetch_polymarket_events(query=_social_query(params=params))
+            rows, source_url = fetch_polymarket_events(params=params)
         elif self.source_role == SourceRole.SEARCH_DISCOVERY:
             rows, source_url = _fetch_social_search_discovery(query=_social_query(params=params))
         elif self.provider_id == "reddit":
@@ -476,26 +477,6 @@ def _fetch_alternative_me_sentiment() -> tuple[tuple[Mapping[str, Any], ...], st
                 "url": "https://alternative.me/crypto/fear-and-greed-index/",
                 "published_at": item.get("timestamp"),
                 "summary": "alternative_me_market_sentiment",
-            }
-        )
-    return tuple(rows), url
-
-
-def _fetch_polymarket_events(*, query: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    url = "https://gamma-api.polymarket.com/events"
-    payload = _http_get_json(url, params={"limit": 20, "active": "true", "closed": "false"})
-    rows: list[Mapping[str, Any]] = []
-    for item in _as_sequence(payload):
-        title = str(item.get("title") or "").strip()
-        if query and query.split()[0].upper() not in title.upper():
-            continue
-        slug = str(item.get("slug") or "").strip()
-        rows.append(
-            {
-                "title": title,
-                "url": f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com",
-                "published_at": item.get("endDate") or item.get("startDate"),
-                "summary": "polymarket_event_expectation",
             }
         )
     return tuple(rows), url

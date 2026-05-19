@@ -136,6 +136,24 @@ class OpenVikingMaterialPlane:
                 note="L2 evidence index contains pack audit",
             )
         )
+        for analysis_ref in pack_result.audit_payload.analysis_evidence_refs:
+            relations.append(
+                OpenVikingRelation(
+                    from_uri=l1_uri,
+                    to_uri=_uri_from_ref_or_hash(
+                        analysis_ref,
+                        fallback_prefix=f"{l2_uri.rsplit('/', 1)[0]}/analysis_evidence",
+                    ),
+                    kind="worker_l1_to_l2_evidence",
+                    run_id=run_id,
+                    stage=stage,
+                    worker_id=worker_id,
+                    call_id=call_id,
+                    created_at=created_at,
+                    evidence_hash=None,
+                    note="worker L1 references CryptoLens analysis evidence as L2 evidence",
+                )
+            )
 
         attempt_raw_refs: set[str] = set()
         attempt_normalized_refs: set[str] = set()

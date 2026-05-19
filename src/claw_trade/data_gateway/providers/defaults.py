@@ -75,6 +75,7 @@ def default_provider_config_version(capabilities: Iterable[ProviderCapability]) 
             "coverage_quorum": item.coverage_quorum,
             "priority": item.priority,
             "priority_source": item.priority_source.value,
+            "raw_export_policy": item.raw_export_policy,
         }
         for item in sorted(capabilities, key=lambda cap: (cap.market.value, cap.domain.value, cap.adapter_id, cap.endpoint))
     ]

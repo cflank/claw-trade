@@ -57,6 +57,34 @@ def test_run_provider_plan_preserves_hk_stock_hk_daily_params() -> None:
     assert plan.remote_prefetch_allowed is False
 
 
+def test_run_provider_plan_extends_crypto_ohlcv_for_daily_vegas_purple_band() -> None:
+    capabilities = load_default_system_capabilities()
+    registry = ProviderRegistry(capabilities=capabilities)
+    provider_config_version = default_provider_config_version(capabilities)
+
+    plan = RunProviderPlanner().build_run_plan(
+        run_id="run-crypto-plan",
+        market=Market.CRYPTO,
+        ticker="BTC",
+        company_name="Bitcoin",
+        currency="USD",
+        profile="CRYPTO",
+        current_date="2026-05-17",
+        start_date="2026-05-01",
+        end_date="2026-05-17",
+        domains=(PackDomain.MARKET,),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+
+    crypto_price = next(spec for spec in plan.call_specs if spec.domain == PackDomain.MARKET and spec.endpoint == "crypto_price_historical")
+    assert crypto_price.params["symbol"] == "BTCUSD"
+    assert crypto_price.params["requested_start_date"] == "2026-05-01"
+    assert crypto_price.params["start_date"] == "2024-06-11"
+    assert crypto_price.params["technical_lookback_reason"] == "vegas_purple_band_ema676_daily"
+    assert crypto_price.params["timezone"] == "UTC"
+
+
 def test_cn_a_market_tushare_is_not_required_blocking_source() -> None:
     capabilities = tuple(
         item

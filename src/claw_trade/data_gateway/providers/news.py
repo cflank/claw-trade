@@ -26,6 +26,7 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.providers.base import ProviderAdapter
+from claw_trade.data_gateway.providers.polymarket import fetch_polymarket_events
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
@@ -133,6 +134,8 @@ class DefaultNewsAdapter:
             rows, source_url = _fetch_news_macro(market=request.market, params=params)
         elif self.source_role == SourceRole.SEARCH_DISCOVERY:
             rows, source_url = _fetch_news_search_discovery(params=params)
+        elif self.source_role == SourceRole.EVENT_EXPECTATION and self.provider_id == "polymarket":
+            rows, source_url = fetch_polymarket_events(params=params)
         else:
             raise RuntimeError(f"unsupported news source role: {self.source_role.value}")
         return ProviderFetch(
@@ -274,6 +277,27 @@ def build_default_news_adapters(
                 env=env,
             )
         )
+        if market == Market.CRYPTO:
+            adapters.append(
+                DefaultNewsAdapter(
+                    adapter_id="news.polymarket.crypto",
+                    provider_id="polymarket",
+                    market=market,
+                    source_role=SourceRole.EVENT_EXPECTATION,
+                    endpoint="event_markets",
+                    expected_schema_id="crypto.news.event_expectation.v1",
+                    provider_kind=ProviderKind.PROJECT_EXTENSION,
+                    provider_config_version=provider_config_version,
+                    rate_limit_policy_id="polymarket.event_markets",
+                    cache_ttl_seconds=300,
+                    required=False,
+                    attempt_required=True,
+                    coverage_group=None,
+                    coverage_quorum=None,
+                    priority=30,
+                    env=env,
+                )
+            )
     return tuple(adapters)
 
 

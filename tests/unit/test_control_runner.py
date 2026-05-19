@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
-from pathlib import Path
 import threading
+from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
 
 from claw_trade.artifacts.manifest import ManifestStore
+from claw_trade.artifacts.openviking_client import OpenVikingReadResult
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Index, make_material_target
 from claw_trade.guards.common import ApprovalResult, BootResult, GuardResult
 from claw_trade.runtime.evidence_reader import EvidenceReadResult, OpenClawResult, ProviderEvidence
@@ -14,16 +16,18 @@ from claw_trade.workflow.models import (
     Decision,
     DecisionKind,
     ExportResult,
+    FailureRecord,
+    ReadPolicy,
     RunRequest,
     RunStatus,
     Stage,
     StageBatch,
+    StageBatchResult,
     StopPoint,
     WorkerCall,
     WorkerResult,
     WorkerStatus,
     WorkflowState,
-    ReadPolicy,
 )
 from claw_trade.workflow.runner import ControlRunner
 from claw_trade.workflow.store import WorkflowStore
@@ -69,6 +73,8 @@ class _OpenViking:
         self.probe_read_stat_receipt_calls = 0
         self.probe_namespace_stat_calls = 0
         self.ensure_namespace_calls: list[str] = []
+        self.texts: dict[str, bytes] = {}
+        self.read_material_ids: list[str] = []
 
     def probe_read_stat_receipt(self) -> _Probe:
         self.probe_read_stat_receipt_calls += 1
@@ -80,6 +86,19 @@ class _OpenViking:
 
     def ensure_namespace(self, namespace: str) -> None:
         self.ensure_namespace_calls.append(namespace)
+
+    def read_approved_l1(self, material: ApprovedMaterial) -> OpenVikingReadResult:
+        self.read_material_ids.append(material.material_id)
+        content = self.texts[material.material_id]
+        return OpenVikingReadResult(
+            uri=material.l1_uri,
+            ok=True,
+            content=content,
+            sha256=sha256(content).hexdigest(),
+            size_bytes=len(content),
+            error_category=None,
+            error_message=None,
+        )
 
 
 class _ToolRegistryProbe:
@@ -359,6 +378,234 @@ def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None
     assert result.failures == ()
 
 
+def test_final_report_batch_runs_report_polisher_dynamic_serial_section_turns(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "openclaw.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "deepseek/deepseek-chat"}}},
+                "models": {
+                    "providers": {
+                        "deepseek": {
+                            "models": [
+                                {
+                                    "id": "deepseek-chat",
+                                    "maxTokens": 8192,
+                                    "contextWindow": 131072,
+                                }
+                            ]
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config_path))
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request(profile="CN_A"))
+    source_material_ids = _seed_final_report_upstream_manifest(harness, state)
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FINAL_REPORT,
+        worker_ids=("report_polisher",),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=False,
+        stop_point=StopPoint.NONE,
+    )
+    active = 0
+    max_active = 0
+    calls_seen: list[WorkerCall] = []
+    lock = threading.Lock()
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        nonlocal active, max_active
+        with lock:
+            calls_seen.append(call)
+            active += 1
+            max_active = max(max_active, active)
+        with lock:
+            active -= 1
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-final-report-{call.turn_index}",
+            failure=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
+        )
+
+    def _unexpected_concurrent(_state: WorkflowState, _batch: StageBatch) -> StageBatchResult:
+        raise AssertionError("final_report 不应并发执行")
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+    harness.runner._run_stage_batch_concurrent = _unexpected_concurrent  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert [call.worker_id for call in calls_seen] == ["report_polisher"] * 5
+    assert [call.stage for call in calls_seen] == [Stage.FINAL_REPORT] * 5
+    assert [call.turn_index for call in calls_seen] == [0, 1, 2, 3, 4]
+    section_instructions = [
+        call.prompt_runtime_vars["final_report_section_instruction"]
+        for call in calls_seen
+    ]
+    assert "`## 一、`、`## 二、`" in section_instructions[0]
+    assert "`## 三、`" in section_instructions[1]
+    assert "`## 四、`" in section_instructions[2]
+    assert "`## 五、`" in section_instructions[3]
+    assert "`## 六、`、`## 七、`、`## 八、`" in section_instructions[4]
+    assert "严禁生成 H1 标题" not in section_instructions[0]
+    assert all("严禁生成 H1 标题" in instruction for instruction in section_instructions[1:])
+    assert max_active == 1
+    assert len(harness.openviking.read_material_ids) == len(source_material_ids) * len(calls_seen)
+    for offset in range(0, len(harness.openviking.read_material_ids), len(source_material_ids)):
+        assert harness.openviking.read_material_ids[offset : offset + len(source_material_ids)] == source_material_ids
+
+
+def test_final_report_structure_failure_retries_report_polisher_segment_once(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "openclaw.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "deepseek/deepseek-chat"}}},
+                "models": {
+                    "providers": {
+                        "deepseek": {
+                            "models": [
+                                {
+                                    "id": "deepseek-chat",
+                                    "maxTokens": 8192,
+                                    "contextWindow": 131072,
+                                }
+                            ]
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config_path))
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request(profile="CN_A"))
+    _seed_final_report_upstream_manifest(harness, state)
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FINAL_REPORT,
+        worker_ids=("report_polisher",),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=False,
+        stop_point=StopPoint.NONE,
+    )
+    calls_seen: list[WorkerCall] = []
+    failed_turns: set[int] = set()
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        calls_seen.append(call)
+        if call.turn_index == 1 and call.turn_index not in failed_turns:
+            failed_turns.add(call.turn_index)
+            failure = FailureRecord(
+                run_id=call.run_id,
+                call_id=call.call_id,
+                worker_id=call.worker_id,
+                stage=call.stage,
+                category="final_report_structure",
+                reason="report_polisher 非首段禁止 H1 标题",
+                evidence_paths=(call.evidence_dir / "final-report-segment-structure.json",),
+                early_stop=True,
+                human_action_required=None,
+                turn_index=call.turn_index,
+                round_index=call.round_index,
+                role_turn_index=call.role_turn_index,
+            )
+            return WorkerResult(
+                run_id=call.run_id,
+                call_id=call.call_id,
+                worker_id=call.worker_id,
+                stage=call.stage,
+                status=WorkerStatus.FAILED,
+                openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+                approved_material_id=None,
+                failure=failure,
+                turn_index=call.turn_index,
+                round_index=call.round_index,
+                role_turn_index=call.role_turn_index,
+            )
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-final-report-{call.turn_index}",
+            failure=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert [call.turn_index for call in calls_seen].count(1) == 2
+    retry_call = [call for call in calls_seen if call.turn_index == 1][1]
+    retry_instruction = retry_call.prompt_runtime_vars["final_report_section_instruction"]
+    assert "【格式重试】" in retry_instruction
+    assert "整段不得包含任何以 `# ` 开头的行" in retry_instruction
+    assert retry_call.call_id != calls_seen[1].call_id
+
+
+def test_non_final_report_batch_keeps_single_worker_turn(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request())
+    _seed_material(harness, state, "research_manager", Stage.INVESTMENT_DECISION, "# plan\nbody")
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.TRADE_DECISION,
+        worker_ids=("trader",),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=False,
+        stop_point=StopPoint.NONE,
+    )
+    calls_seen: list[WorkerCall] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        calls_seen.append(call)
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id="mat-trader",
+            failure=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert [(call.worker_id, call.stage, call.turn_index) for call in calls_seen] == [
+        ("trader", Stage.TRADE_DECISION, 0)
+    ]
+    assert "final_report_section_instruction" not in calls_seen[0].prompt_runtime_vars
+
+
 def test_boot_first_response_uses_receipt_free_openviking_probe(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
     harness.openviking.probe_result = _Probe(False, "receipt path missing")
@@ -424,6 +671,151 @@ def test_first_response_success_does_not_write_manifest(tmp_path: Path) -> None:
     manifest_payload = json.loads((harness.root / call.run_id / "openviking" / "approved-manifest.json").read_text("utf-8"))
     assert manifest_payload.get("audit_only") is True
     assert manifest_payload.get("materials") == []
+
+
+def test_report_polisher_segment_structure_failure_blocks_material_approval(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request(profile="CN_A"))
+    call = _worker_call(tmp_path, run_id=state.run_id, call_id="call-report-polisher-t01")
+    target = make_material_target(state.run_id, Stage.FINAL_REPORT, "report_polisher", call.call_id)
+    call = replace(
+        call,
+        worker_id="report_polisher",
+        stage=Stage.FINAL_REPORT,
+        allowed_tools=(),
+        material_target=target,
+        prompt_runtime_vars={
+            "final_report_section_instruction": (
+                "本次只撰写终稿的第三节；第一行必须以 `## 三、` 开头；"
+                "本段必须完整包含以下二级标题：`## 三、`；严禁生成 H1 标题；"
+                "不要生成指定范围以外的其他编号章节正文。"
+            )
+        },
+    )
+    raw_output_path = call.evidence_dir / "raw-output.md"
+    raw_output_path.write_text("# 三、基本面分析\n缺少二级标题", encoding="utf-8")
+    harness.openclaw.next_result = OpenClawResult(
+        status="succeeded",
+        openclaw_run_id="oc-run-1",
+        provider_request_id="req-1",
+        provider_request_id_status="returned",
+        workspace_evidence_path=None,
+        provider_request_path=None,
+        visible_tools_path=None,
+        first_response_path=None,
+        tool_calls_status=None,
+        tool_calls_path=None,
+        raw_output_path=raw_output_path,
+        openviking_receipt_path=None,
+        failure_reason=None,
+    )
+    evidence = ProviderEvidence(
+        run_id=call.run_id,
+        call_id=call.call_id,
+        worker_id=call.worker_id,
+        stage=call.stage,
+        openclaw_run_id="oc-run-1",
+        provider_request_id="req-1",
+        provider_request_id_status="returned",
+        workspace_evidence_path=call.evidence_dir / "workspace-evidence.json",
+        provider_request_path=call.evidence_dir / "provider-request.json",
+        visible_tools_path=call.evidence_dir / "visible-tools.json",
+        first_response_path=call.evidence_dir / "first-response.json",
+        tool_calls_status="recorded",
+        tool_calls_path=call.evidence_dir / "tool-calls.json",
+        raw_output_path=raw_output_path,
+        openviking_receipt_path=call.evidence_dir / "openviking-receipt.json",
+    )
+    harness.runner.read_worker_evidence = lambda c, r: EvidenceReadResult.passed(evidence)  # type: ignore[method-assign]
+    harness.runner.run_runtime_guards = lambda c, e: (  # type: ignore[method-assign]
+        GuardResult.passed("ok"),
+        harness.store.save_guard_result(c, GuardResult.passed("ok")),
+    )
+    harness.runner.run_material_approval = lambda c, e: (_ for _ in ()).throw(AssertionError("approval must not run"))  # type: ignore[method-assign]
+
+    result = harness.runner.run_single_worker(call)
+
+    assert result.status == WorkerStatus.FAILED
+    assert result.failure is not None
+    assert result.failure.category == "final_report_structure"
+    assert "非首段禁止 H1 标题" in result.failure.reason
+    structure_path = call.evidence_dir / "final-report-segment-structure.json"
+    assert structure_path.exists()
+    payload = json.loads(structure_path.read_text(encoding="utf-8"))
+    assert payload["guard_source"].startswith("human approval")
+
+
+def _seed_final_report_upstream_manifest(harness: _RunnerHarness, state: WorkflowState) -> list[str]:
+    sources = (
+        ("market_analyst", Stage.FRONTLINE),
+        ("fundamental_analyst", Stage.FRONTLINE),
+        ("news_analyst", Stage.FRONTLINE),
+        ("social_analyst", Stage.FRONTLINE),
+        ("bull_researcher", Stage.INVESTMENT_DEBATE),
+        ("bear_researcher", Stage.INVESTMENT_DEBATE),
+        ("research_manager", Stage.INVESTMENT_DECISION),
+        ("trader", Stage.TRADE_DECISION),
+        ("risk_challenger", Stage.RISK_DEBATE),
+        ("risk_guardian", Stage.RISK_DEBATE),
+        ("risk_moderator", Stage.RISK_DEBATE),
+        ("portfolio_manager", Stage.PORTFOLIO_DECISION),
+    )
+    return [
+        _seed_material(harness, state, worker_id, stage, f"# {worker_id}\napproved L1")
+        for worker_id, stage in sources
+    ]
+
+
+def _seed_material(
+    harness: _RunnerHarness,
+    state: WorkflowState,
+    worker_id: str,
+    stage: Stage,
+    text: str,
+) -> str:
+    call_id = f"call-{stage.value}-{worker_id}"
+    target = make_material_target(state.run_id, stage, worker_id, call_id)
+    content = text.encode("utf-8")
+    hard_gate_path = state.run_dir / "hard-gates" / f"{stage.value}-{worker_id}.json"
+    hard_gate_path.parent.mkdir(parents=True, exist_ok=True)
+    hard_gate_path.write_text(
+        json.dumps({"ok": True, "status": "passed", "category": "combined_hard_gate"}),
+        encoding="utf-8",
+    )
+    material = ApprovedMaterial(
+        material_id=f"mat-{stage.value}-{worker_id}",
+        run_id=state.run_id,
+        call_id=call_id,
+        worker_id=worker_id,
+        stage=stage,
+        target_name=target.target_name,
+        l1_uri=target.l1_uri,
+        l1_sha256=sha256(content).hexdigest(),
+        l1_size_bytes=len(content),
+        l2_index_uri=f"{target.l2_prefix}index.json",
+        l2_index=L2Index(
+            entries=(),
+            empty_reason="none",
+            index_uri=f"{target.l2_prefix}index.json",
+            index_sha256="b" * 64,
+            index_size_bytes=2,
+        ),
+        l1_claims=(
+            L1Claim(
+                claim_id="claim-1",
+                kind="source_claim",
+                text="ok",
+                value=None,
+                required_evidence_kinds=(),
+                evidence_ids=(),
+            ),
+        ),
+        approved_at="2026-05-04T12:00:00Z",
+        hard_gate_result_path=hard_gate_path,
+    )
+    harness.openviking.texts[material.material_id] = content
+    harness.manifest_store.add(state.run_id, material)
+    return material.material_id
 
 
 def _request(profile: str = "US") -> RunRequest:
