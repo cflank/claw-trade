@@ -261,7 +261,7 @@
 - 进度条。
 - 已完成角色。
 - 等待角色。
-- 操作：取消。
+- 操作：排队中可取消；生成中不显示取消入口。
 
 当前阶段中文示例：
 
@@ -301,7 +301,7 @@
 
 - 报告目录。
 - 数据源状态。
-- 图表状态。
+- 图表状态：只来自已保存的图表资产、数据缺口、导出结果和报告里的图片引用。
 - 导出状态。
 - 操作：导出、重新生成、设为定时报告、添加价格提醒。
 
@@ -445,6 +445,59 @@ ETH 24 小时涨跌超过 5% 提醒我
 - 不要求用户理解 OpenClaw Channel。
 - 不展示 npm 包、插件目录、配置路径。
 
+实现认知：
+
+- 普通微信内部映射到 OpenClaw 外部插件 `openclaw-weixin`。
+- 企业微信 / WeCom 不是普通微信 ClawBot，不能混用。
+- 发送完整报告前必须检查当前 Channel 是否已安装、已登录、支持文件或媒体发送。
+- 微信里回复“报告”时，`claw-trade` 只接 OpenClaw 转来的消息通知/回调，不自己实现微信协议。
+- 首版推荐接入方式是腾讯 `@tencent-weixin/openclaw-weixin` 插件；不走 Wechaty、逆向登录或自建微信协议。
+- 产品文案不得承诺“绝对不封号”；只说明“使用微信 ClawBot 插件接入”。
+- 2026-05-19 本机实现前探测：npm 包 `@tencent-weixin/openclaw-weixin@2.4.3` 存在且可安装，插件声明 Channel ID 为 `openclaw-weixin`，能力包含私聊和媒体。当前本机/项目运行态仍未按官方路径完成 clean 验收，真实扫码登录、在线状态、文件发送和入站消息实测仍未完成。
+- 同一轮探测确认：`scripts/start-control-runtime.sh` 是 dev/fixed 测试 runtime，会重建 `.runtime/dev-services/openclaw-state/openclaw.json`；它当前只保留 claw-trade 前线工具插件，不会自动把外部微信插件带进 Gateway。这个现象只说明“该测试脚本不能证明微信已接通”，不得外推为生产级配置必须每次重建。实现前仍需定义生产/正式 UI runtime 如何保留并加载 `openclaw-weixin`。
+
+接入流程：
+
+1. 用户在微信中启用 ClawBot 插件。
+2. 设备上安装并启用 OpenClaw 微信插件。
+3. 启动或重启 OpenClaw Gateway。
+4. 用户在设备上扫码绑定微信。
+5. UI 设置页显示“已连接 / 未连接 / 连接异常 / 文件发送不可用”。
+
+内部消息路径：
+
+```text
+微信用户
+-> 微信 ClawBot 插件
+-> OpenClaw Gateway
+-> claw-trade UI 后端
+-> claw-trade 报告队列 / 报告仓库 / PDF 服务
+-> OpenClaw Gateway
+-> 微信 ClawBot 插件
+-> 微信用户
+```
+
+微信内首版命令：
+
+| 用户输入 | 产品行为 |
+|---|---|
+| `/report BTC` / `报告 BTC` | 生成报告确认卡，不直接创建 workflow |
+| `确认` | 对当前确认卡创建完整报告任务 |
+| `取消` | 只取消排队中的任务；生成中回复“报告正在生成，不能中途取消” |
+| `进度` | 返回当前报告的中文阶段进度 |
+| `发送完整报告` | 发送已保存 PDF；不可用时给可读失败 |
+
+失败提示：
+
+| 场景 | 用户文案 |
+|---|---|
+| 微信插件未安装 | 请先安装微信 ClawBot 插件。 |
+| 微信插件未启用 | 请先启用微信 ClawBot 插件。 |
+| 未扫码绑定 | 请用微信扫码连接 ClawBot。 |
+| 当前账号或灰度不可用 | 当前微信账号暂不可用 ClawBot，请在设备界面查看报告。 |
+| 已连接但不能发文件 | 微信文字通知可用，完整 PDF 暂不可发送。 |
+| 生成中取消 | 报告正在生成，不能中途取消。 |
+
 首次启动：
 
 - 提示连接微信 ClawBot。
@@ -570,7 +623,7 @@ PDF 生成失败时：
 
 ### 18.1 模型设置
 
-LLM 配置归 OpenClaw 负责，`claw-trade` UI 只是配置入口。
+LLM 配置归 OpenClaw 负责，`claw-trade` UI 只是配置入口。首版通过 OpenClaw config/models 能力读取、保存和测试模型设置；`claw-trade` 不自造 LLM 保存/测试接口，不保存真实密钥。
 
 第一版只保留一个全局模型配置。
 
@@ -731,13 +784,26 @@ UI 文案：
 - 在 `claw-trade` 内实现微信协议。
 - 在 UI 暴露 OpenClaw / OpenViking / MongoDB 内部配置。
 
-## 21. 待实现前确认
+## 21. 已决策点、已查清事实和运行时检查点
 
-进入实现前还需要确认：
+已决策：
 
-- 报告完成摘要的字段提取规则。
-- PDF 模板视觉样式。
-- 微信 ClawBot 文件发送接口能力。
-- OpenClaw 是否已有可调用的 LLM 配置和 Channel 配置 API。
-- 数据源实例配置的持久化位置。
-- “已配置但本次失效”的判定字段来源。
+- 报告完成摘要只从已保存报告、PM 最终结论和报告元数据确定性摘取。
+- PDF 只格式化已保存 Markdown，采用浅色中文横排投研报告风格；不得重写、总结、补写报告。
+- 数据源实例配置首版由 claw-trade 后端受控读写 `.env.local`；前端、普通 UI API 和 workflow controller 不直接读写。
+- 排队任务可取消；运行中 workflow 首版不取消。
+
+已查清：
+
+- 普通微信 ClawBot 后端内部映射到 OpenClaw 外部插件 `openclaw-weixin`；企业微信 / WeCom 不等同普通微信。
+- LLM 设置通过 OpenClaw config/models 能力完成；`claw-trade` 不保存真实密钥，不自造 LLM 保存/测试接口。
+- 图表状态只来自已保存的图表资产、数据缺口、导出结果和报告 Markdown 图片引用。
+- “已配置但本次失效”只提醒 configured + enabled + usedInRun + failed 的数据源。
+
+实现前运行时检查点：
+
+- 发送完整报告前，必须检查当前 OpenClaw 微信 Channel 是否已安装、已登录、支持文件或媒体发送，以及 PDF 大小是否允许。
+- 微信里回复“报告”要能进入 `claw-trade`，必须先确认 OpenClaw 是否提供可接入的入站消息通知/回调。
+- 仅确认官方插件存在与安装路径，不把本机 CLI 静态能力输出当成接通证据；没有真实二维码登录、真实 status、真实发送和真实入站证据前，微信状态只能显示未连接或不可用。
+
+不得用 mock/stub/fake/fallback 证明文件发送成功或微信入站回调成功。

@@ -408,6 +408,10 @@ def _compute_readiness(
 ) -> Readiness:
     status_by_key = {result.spec.call_key: result.status for result in results}
     success_by_key = {result.spec.call_key: _counts_as_coverage_success(result, request) for result in results}
+    attempt_call_key = {result.attempt.attempt_id: result.spec.call_key for result in results}
+    call_keys_by_provider: dict[str, set[str]] = {}
+    for spec in call_specs:
+        call_keys_by_provider.setdefault(spec.provider, set()).add(spec.call_key)
     coverage: dict[str, str] = {}
     missing_items: list[str] = []
     blocking_specs: list[str] = []
@@ -433,8 +437,25 @@ def _compute_readiness(
             missing_items.append(f"group:{group}")
             blocking_specs.extend(spec.call_key for spec in specs)
 
-    fail_gaps = tuple(gap.gap_id for gap in gaps if gap.severity == GapSeverity.FAIL)
-    warn_gaps = tuple(gap.gap_id for gap in gaps if gap.severity != GapSeverity.FAIL)
+    uncovered_call_keys = set(blocking_specs)
+    fail_gap_items = tuple(gap for gap in gaps if gap.severity == GapSeverity.FAIL)
+    non_blocking_reclassified_gap_ids = tuple(
+        gap.gap_id
+        for gap in fail_gap_items
+        if _is_covered_blocking_gap(
+            gap=gap,
+            uncovered_call_keys=uncovered_call_keys,
+            attempt_call_key=attempt_call_key,
+            call_keys_by_provider=call_keys_by_provider,
+        )
+    )
+    fail_gap_items = tuple(gap for gap in fail_gap_items if gap.gap_id not in set(non_blocking_reclassified_gap_ids))
+    fail_gaps = tuple(gap.gap_id for gap in fail_gap_items)
+    warn_gaps = tuple(
+        dict.fromkeys(
+            [gap.gap_id for gap in gaps if gap.severity != GapSeverity.FAIL] + list(non_blocking_reclassified_gap_ids)
+        )
+    )
     chart_ready = all(asset.status == ReadinessStatus.READY for asset in chart_assets)
     blocking_status = any(
         status_by_key.get(call_key) in {ProviderStatus.CREDENTIAL_MISSING, ProviderStatus.LICENSE_BLOCKED, ProviderStatus.RATE_LIMITED}
@@ -442,7 +463,7 @@ def _compute_readiness(
     )
     if blocking_status and missing_items:
         status = ReadinessStatus.BLOCKED
-    elif fail_gaps and any(gap.reason in _BLOCKING_REASONS for gap in gaps if gap.severity == GapSeverity.FAIL):
+    elif fail_gaps and any(gap.reason in _BLOCKING_REASONS for gap in fail_gap_items):
         status = ReadinessStatus.BLOCKED
     elif fail_gaps or missing_items:
         status = ReadinessStatus.INSUFFICIENT
@@ -453,10 +474,10 @@ def _compute_readiness(
 
     root_cause: str | None = None
     if status == ReadinessStatus.BLOCKED:
-        reason = next((gap.root_cause for gap in gaps if gap.reason in _BLOCKING_REASONS), None)
+        reason = next((gap.root_cause for gap in fail_gap_items if gap.reason in _BLOCKING_REASONS), None)
         root_cause = reason or "存在阻断型资料缺口，需补齐凭证或解除限流/许可限制。"
     elif status == ReadinessStatus.INSUFFICIENT:
-        reason = next((gap.root_cause for gap in gaps if gap.severity == GapSeverity.FAIL), None)
+        reason = next((gap.root_cause for gap in fail_gap_items), None)
         root_cause = reason or "核心行情覆盖不足，当前资料包不可直接用于完整技术分析。"
     elif status == ReadinessStatus.PARTIAL:
         reason = next((asset.root_cause for asset in chart_assets if asset.root_cause), None)
@@ -472,6 +493,27 @@ def _compute_readiness(
         non_blocking_gap_ids=warn_gaps,
         root_cause=root_cause,
     )
+
+
+def _is_covered_blocking_gap(
+    *,
+    gap: DataGap,
+    uncovered_call_keys: set[str],
+    attempt_call_key: Mapping[str, str],
+    call_keys_by_provider: Mapping[str, set[str]],
+) -> bool:
+    if gap.reason not in _BLOCKING_REASONS:
+        return False
+    related_call_keys: set[str] = set()
+    for attempt_id in gap.attempt_ids:
+        call_key = attempt_call_key.get(attempt_id)
+        if call_key:
+            related_call_keys.add(call_key)
+    for provider in gap.provider_candidates:
+        related_call_keys.update(call_keys_by_provider.get(provider, set()))
+    if not related_call_keys:
+        return False
+    return related_call_keys.isdisjoint(uncovered_call_keys)
 
 
 def _build_status_gaps(*, request: PackRequest, results: Sequence[ProviderResult]) -> list[DataGap]:

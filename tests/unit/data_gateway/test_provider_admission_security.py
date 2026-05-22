@@ -36,7 +36,12 @@ def _manifest(base_url: str) -> DeclarativeProviderManifest:
         cache_ttl_seconds=300,
         license_policy_id="user.custom",
         raw_export_policy="metadata_only",
-        healthcheck={"method": "GET", "path": "/health"},
+        healthcheck={
+            "method": "GET",
+            "path": "/health",
+            "sample_raw_ref": "mongo://openbb_raw_payloads/security",
+            "sample_normalized_ref": "mongo://openbb_normalized/security",
+        },
         enabled=True,
         admission_status=ProviderAdmissionStatus.DRAFT,
         priority=20,
@@ -67,6 +72,7 @@ def _validator(*, dns_resolver=None, allowed_domains=("feeds.example.com",), all
             allow_http_domains=allow_http,
             dns_resolver=dns_resolver or (lambda host: ("93.184.216.34",)),
         ),
+        sample_ref_exists=lambda ref: ref.startswith("mongo://openbb_"),
     )
 
 

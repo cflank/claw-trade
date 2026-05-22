@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from claw_trade.workflow.models import RunStatus, Stage, StagePlan, WorkerSpec
 
-# 核心 12 个决策 worker 加 1 个读者版终稿 worker 在这里固定声明，LLM 不能临场决定“下一步叫谁”。
-WORKER_SPECS: tuple[WorkerSpec, ...] = (
-    WorkerSpec("market_analyst", Stage.FRONTLINE),
-    WorkerSpec("fundamental_analyst", Stage.FRONTLINE),
-    WorkerSpec("news_analyst", Stage.FRONTLINE),
-    WorkerSpec("social_analyst", Stage.FRONTLINE),
+DEFAULT_FRONTLINE_WORKERS: tuple[str, ...] = (
+    "market_analyst",
+    "fundamental_analyst",
+    "news_analyst",
+    "social_analyst",
+)
+
+CN_A_FRONTLINE_WORKERS: tuple[str, ...] = (
+    "market_analyst",
+    "fundamental_analyst",
+    "news_analyst",
+    "social_analyst",
+    "policy_analyst",
+    "hot_money_tracker",
+    "lockup_watcher",
+)
+
+DOWNSTREAM_WORKER_SPECS: tuple[WorkerSpec, ...] = (
     WorkerSpec("bull_researcher", Stage.INVESTMENT_DEBATE),
     WorkerSpec("bear_researcher", Stage.INVESTMENT_DEBATE),
     WorkerSpec("research_manager", Stage.INVESTMENT_DECISION),
@@ -16,6 +28,12 @@ WORKER_SPECS: tuple[WorkerSpec, ...] = (
     WorkerSpec("risk_guardian", Stage.RISK_DEBATE),
     WorkerSpec("risk_moderator", Stage.RISK_DEBATE),
     WorkerSpec("portfolio_manager", Stage.PORTFOLIO_DECISION),
+)
+
+# 核心决策 worker（含 CN_A 前线扩展）以及终稿 worker 在这里固定声明，LLM 不能临场决定“下一步叫谁”。
+WORKER_SPECS: tuple[WorkerSpec, ...] = (
+    *(WorkerSpec(worker_id, Stage.FRONTLINE) for worker_id in CN_A_FRONTLINE_WORKERS),
+    *DOWNSTREAM_WORKER_SPECS,
     WorkerSpec("report_polisher", Stage.FINAL_REPORT),
 )
 
@@ -23,7 +41,7 @@ WORKER_SPECS: tuple[WorkerSpec, ...] = (
 STAGE_PLANS: tuple[StagePlan, ...] = (
     StagePlan(
         stage=Stage.FRONTLINE,
-        workers=("market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"),
+        workers=DEFAULT_FRONTLINE_WORKERS,
         running_status=RunStatus.FRONTLINE_RUNNING,
         ready_status=RunStatus.FRONTLINE_READY,
         next_stage=Stage.INVESTMENT_DEBATE,
@@ -96,6 +114,35 @@ if len(_WORKERS_BY_ID) != len(WORKER_SPECS):
 
 if len(_STAGE_PLAN_BY_STAGE) != len(STAGE_PLANS):
     raise ValueError("Duplicate stage found in STAGE_PLANS")
+
+
+def frontline_workers_for_market(market: str) -> tuple[str, ...]:
+    if market == "CN_A":
+        return CN_A_FRONTLINE_WORKERS
+    return DEFAULT_FRONTLINE_WORKERS
+
+
+def stage_plans_for_market(market: str) -> tuple[StagePlan, ...]:
+    frontline_workers = frontline_workers_for_market(market)
+    return tuple(
+        StagePlan(
+            stage=plan.stage,
+            workers=frontline_workers if plan.stage == Stage.FRONTLINE else plan.workers,
+            running_status=plan.running_status,
+            ready_status=plan.ready_status,
+            next_stage=plan.next_stage,
+            required_upstream_stage=plan.required_upstream_stage,
+            collect_first=plan.collect_first,
+        )
+        for plan in STAGE_PLANS
+    )
+
+
+def stage_plan_for_market(stage: Stage, market: str) -> StagePlan:
+    for plan in stage_plans_for_market(market):
+        if plan.stage == stage:
+            return plan
+    raise KeyError(f"Unknown stage: {stage}")
 
 
 def all_worker_ids() -> tuple[str, ...]:

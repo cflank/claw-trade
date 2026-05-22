@@ -145,6 +145,12 @@ class DefaultSocialAdapter:
             rows, source_url = _fetch_stocktwits(symbol=_symbol_from_params(params))
         elif self.provider_id == "eastmoney_akshare":
             rows, source_url = _fetch_eastmoney_akshare_metrics(symbol=_eastmoney_symbol_from_params(params))
+        elif self.provider_id in {"ths_concept_hot", "baidu_concept"}:
+            raise RuntimeError(
+                f"provider {self.provider_id} is declared as social_aggregate_metric for concept coverage, "
+                "but no approved OpenBB/data_gateway concept adapter sample is wired yet; "
+                "search_discovery cannot replace aggregate metric facts"
+            )
         else:
             raise RuntimeError(f"social provider is not configured for live fetch: {self.provider_id}/{self.endpoint}")
         return ProviderFetch(
@@ -225,7 +231,49 @@ def build_default_social_adapters(
     env: Mapping[str, str] | None = None,
 ) -> tuple[ProviderAdapter, ...]:
     items: list[ProviderAdapter] = []
-    items.extend(_equity_social_adapters(Market.CN_A, sample_provider="xueqiu", aggregate_provider="eastmoney_akshare", provider_config_version=provider_config_version, env=env))
+    items.extend(
+        (
+            _capability_adapter(
+                market=Market.CN_A,
+                provider="ths_concept_hot",
+                endpoint="hot_topics",
+                source_role=SourceRole.SOCIAL_AGGREGATE_METRIC,
+                schema_suffix="concept",
+                required=True,
+                priority=0,
+                coverage_group="cn_a_social_concept",
+                coverage_quorum=1,
+                provider_config_version=provider_config_version,
+                env=env,
+            ),
+            _capability_adapter(
+                market=Market.CN_A,
+                provider="baidu_concept",
+                endpoint="concept_board",
+                source_role=SourceRole.SOCIAL_AGGREGATE_METRIC,
+                schema_suffix="concept",
+                required=False,
+                priority=10,
+                coverage_group="cn_a_social_concept",
+                coverage_quorum=1,
+                provider_config_version=provider_config_version,
+                env=env,
+            ),
+            _capability_adapter(
+                market=Market.CN_A,
+                provider="google_news",
+                endpoint="search",
+                source_role=SourceRole.SEARCH_DISCOVERY,
+                schema_suffix="discovery",
+                required=False,
+                priority=50,
+                coverage_group="cn_a_social_search_discovery",
+                coverage_quorum=1,
+                provider_config_version=provider_config_version,
+                env=env,
+            ),
+        )
+    )
     items.extend(_equity_social_adapters(Market.HK, sample_provider="xueqiu_hk", aggregate_provider="eastmoney_hk_guba", provider_config_version=provider_config_version, env=env))
     items.extend(_equity_social_adapters(Market.US, sample_provider="stocktwits", aggregate_provider="reddit", provider_config_version=provider_config_version, env=env))
     items.extend(
@@ -349,6 +397,8 @@ def _capability_adapter(
     provider_config_version: str,
     env: Mapping[str, str] | None,
     credential_requirements: tuple[str, ...] = (),
+    coverage_group: str | None = None,
+    coverage_quorum: int | None = None,
 ) -> ProviderAdapter:
     market_key = market.value.lower()
     return DefaultSocialAdapter(
@@ -364,8 +414,12 @@ def _capability_adapter(
         cache_ttl_seconds=300,
         required=required,
         attempt_required=True,
-        coverage_group=f"{market_key}_social_core" if source_role in {SourceRole.SOCIAL_ORIGINAL_SAMPLE, SourceRole.SOCIAL_AGGREGATE_METRIC} else None,
-        coverage_quorum=1 if source_role in {SourceRole.SOCIAL_ORIGINAL_SAMPLE, SourceRole.SOCIAL_AGGREGATE_METRIC} else None,
+        coverage_group=coverage_group
+        if coverage_group is not None
+        else (f"{market_key}_social_core" if source_role in {SourceRole.SOCIAL_ORIGINAL_SAMPLE, SourceRole.SOCIAL_AGGREGATE_METRIC} else None),
+        coverage_quorum=coverage_quorum
+        if coverage_quorum is not None
+        else (1 if source_role in {SourceRole.SOCIAL_ORIGINAL_SAMPLE, SourceRole.SOCIAL_AGGREGATE_METRIC} else None),
         priority=priority,
         credential_requirements=credential_requirements,
         env=env,

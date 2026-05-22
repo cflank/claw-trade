@@ -1,0 +1,9 @@
+skills:
+  - path: claw-trade-stage/SKILL.md
+  - path: cn-a-hot-money-data/SKILL.md
+    skill_id: cn-a-hot-money-data
+    skill_version: 0.1.0
+    workers:
+      - hot_money_tracker
+    tool_exports:
+      - claw_get_hot_money_pack

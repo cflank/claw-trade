@@ -67,7 +67,7 @@ def openbb_collection_indexes() -> tuple[CollectionIndexes, ...]:
             (
                 IndexModel([("adapter_id", 1), ("config_version", 1)], unique=True),
                 IndexModel([("admission_status", 1), ("enabled", 1)]),
-                IndexModel([("markets", 1), ("domains", 1), ("source_role", 1), ("coverage_group", 1)]),
+                IndexModel([("market_domain_pairs", 1), ("source_role", 1), ("coverage_group", 1)]),
             ),
         ),
         CollectionIndexes(

@@ -31,16 +31,18 @@ APPROVED_RUNTIME_GUARD_FILES = frozenset(
 
 APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     "__init__.py": "094768affec41e45129e9e12472334f6dae1c1e2c51529a071f7baaf81a34b58",
-    "artifact_flow.py": "af193f2206ac1f22bdb954372fa44580f170985db620a591744c24aa9cf41528",
+    # Guard source: human-approved 2026-05-22 P1-10 change, scoped to market-aware stage membership wiring only.
+    "artifact_flow.py": "52658f5bd6f8ce082f1294c8d6c911dc61f46cb63d12a30483d3862a3ff69255",
     "common.py": "38491c28306cf1845dc245f7257d2a24d195d6b82a46fa6d2c0595d6bba4f803",
     "export_claims.py": "944ddf521f8f2cd5f8e0755fe6acb57d4a8a8ee73c0a6fd45096859f8e280e6d",
-    "fundamental_claim_dictionaries_v1.json": "e1a9eff6f9c4d6ba97d2cfa2530101b90544f443bf15c652b1a279451e593a7b",
-    "fundamental_claim_gate.py": "592f3c365c55fa5d7fd2767907181d308c182a8274a6f539a0f59de91ca77aa1",
+    "fundamental_claim_dictionaries_v1.json": "027155d4d98f87ca93453bd1c3a0bd7706cd141b5329deb8b40291d52e76b88d",
+    "fundamental_claim_gate.py": "e0fdcb9011985a564ecd5df624c88963371c819f9fa6656cfd1f66728a2c1762",
     "fundamental_claim_rules.py": "ba1d62c0c8808e13921202ab2f11d9052d8546d88f6c005b0b56fdcb4077ca28",
     "fundamental_gate_inputs.py": "a76c2bfffc1c476fa6f8103299df981aac2261ccb4c59fa054f49dbc86b6a0f0",
     "fundamental_gate_outcome.py": "5b72c9d4f3f7464b380fa8256204f355b8c7e1fb8ec0235177e452ddb7dccd83",
     "l1_l2.py": "c409bf6c0f3f66e619d0677328a272d45417abba599e9042c81cd0b69599f551",
-    "openviking_access.py": "70905f71358275d140abf8dcc8d71f63db8c6a2724793d429f716f6309b8d8f7",
+    # Guard source: human-approved 2026-05-22 P1-10 change, scoped to market-aware stage membership wiring only.
+    "openviking_access.py": "4248c2f0be83ffdaccdcb5ee7fe1cc7ab2c5f259331382d15b5ea34996551d3c",
     "openviking_receipt.py": "50cb4f10d40fd9a387073f44bcaf09d915937adb469f4636d00e0bcc3e9ec634",
     "provider_request.py": "cce82afc14107ea55a344c5677a5efb3d15bfd2c20db29a0c0856f5f9a028ab4",
     "tool_calls.py": "c0ecaa1c6d34f2aba1cf489388e2497ab40e006188a7a8473c5ab535bf4f0c8a",

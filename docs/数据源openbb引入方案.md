@@ -561,7 +561,7 @@ worker 可见层只暴露 claw-trade 领域资料包工具，不暴露 provider 
 
 ### 6.1 市场优先级（摘要）
 
-- CN_A：Tushare 主源，AkShare/EastMoney/Sina/Tencent 补充。
+- CN_A：默认走系统源用途矩阵（全部经 OpenBB/data_gateway），按作用域拆分为公告、新闻、行情、财务、资金、筹码与政策等七域；Tushare 只作为用户配置源，需用户完成配置/验证/启用后，才在同一 `market/domain/source_role/coverage_group` 内参与优先级。
 - HK：Tushare HK + AkShare 双主路径，EastMoney/yfinance 补充。
 - US：FMP/Polygon 主路径，SEC/FRED/主流新闻源补充。
 - CRYPTO：OpenBB/data_gateway 调 CoinGlass/Bybit/Deribit 等衍生品源 + Binance/OHLCV + CoinGecko/DefiLlama（基本面）+ 社交/新闻源；CryptoLens 只做 normalized bundle 之上的离线指标分析。
@@ -574,7 +574,7 @@ worker 可见层只暴露 claw-trade 领域资料包工具，不暴露 provider 
 | OpenBB native | SEC / FRED | US/宏观 | 监管文件、利率、宏观环境 | 官方/宏观证据优先保留原文指针 |
 | OpenBB native | Benzinga / Biztoc / Tiingo | US | 新闻、行情、基本面补充 | 新闻聚合不能替代官方原文 |
 | OpenBB native | Deribit | CRYPTO | BTC/ETH 期权、隐含波动率、期限结构 | 归入衍生品市场数据 |
-| 项目自有 OpenBB extension | Tushare / AkShare / EastMoney / Sina / Tencent | CN_A/HK | 行情、财务、公告、热度 | A/HK 主路径，迁移为 OpenBB provider/extension |
+| 项目自有 OpenBB extension | AkShare / EastMoney / Sina / Tencent +（可选）Tushare 用户源 | CN_A/HK | 按 coverage_group 分工提供行情、财务、公告、新闻、资金、筹码、政策线索 | A/HK 路径必须按作用域落地：公告=`official_original`，行情=`market_data`，财务=`fundamental_data`，新闻/资金/筹码/政策分别进入对应 pack 的专属 coverage_group；不得跨作用域替代。Tushare 非默认，需用户配置/验证/启用。 |
 | 项目自有 OpenBB extension | HKEXnews | HK | 官方公告、业绩、停复牌、公司行动 | 港股官方原文主证据 |
 | 项目自有 OpenBB extension | CoinGlass / Binance / Bybit / approved AHR999 source | CRYPTO | 市场结构、OHLCV、清算、OI、资金费率、AHR999 | CRYPTO market provider 主路径；CryptoLens 不作为 provider，只消费 normalized bundle 做分析 |
 | 项目自有 OpenBB extension | CoinGecko / DefiLlama | CRYPTO | 币种资料、市值、供应量、TVL、收入、费用、安全/融资背景 | 基本面补充 |
@@ -732,28 +732,21 @@ worker 可见层只暴露 claw-trade 领域资料包工具，不暴露 provider 
 - 锁定本文档条款。
 - 锁定组件职责与禁区。
 
-### Phase 1：OpenBB submodule 与数据入口骨架
+### Phase 1：OpenBB submodule + 七域全量矩阵接入
 
 - 新增 `third_party/openbb` submodule。
 - 建立项目 OpenBB provider/extension 目录。
-- 建立 OpenBB domain pack interface 和统一模型空壳。
+- 建立 CN_A 七域全量矩阵与 7-pack endpoint：`claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`、`claw_get_policy_pack`、`claw_get_hot_money_pack`、`claw_get_lockup_pack`。
+- 文档中已列 A股源按 OpenBB/data_gateway adapter 先实施；样本/raw/license 是验收证据，不是“是否采用”的人类拍板。
 - 停止把 `claw-data-mcp` 作为未来目标架构。
 
-### Phase 2：CN_A/HK 迁移
+### Phase 2：稳定性与补强
 
-- 先 market/fundamental，再 news/social。
-- HK 加入 `stock_hk_daily` 兼容路径与图表 readiness 约束。
+- 字段漂移、限流策略、失败替换链、跨源冲突与交叉验证补强。
+- HK `stock_hk_daily` 兼容路径与图表 readiness 稳定性强化。
+- Phase 2 不承担 Phase 1 范围补做。
 
-### Phase 3：CRYPTO 迁移
-
-- 市场结构、基本面、新闻、舆情四 pack 全部接 OpenBB 数据 MCP。
-
-### Phase 4：US + OpenBB provider 引入
-
-- FMP/Polygon/FRED/SEC 优先；
-- 再扩新闻、宏观、衍生品补充源。
-
-### Phase 5：旧路径收敛
+### Phase 3：旧路径收敛
 
 - 达成删除条件后逐步下线旧直连路径。
 - 删除旧数据 MCP，保留迁移证据和回滚文档，不保留长期运行入口。
@@ -2595,7 +2588,7 @@ MCP 禁止暴露：
 
 #### 13.12.1 现有 OpenClaw 工具名到 canonical pack 的替换
 
-目标稳定 worker-visible 接口是 `claw_get_market_pack/claw_get_fundamental_pack/claw_get_news_pack/claw_get_social_pack`。历史 provider-visible 工具名只能作为代码盘点对象和 import-block 对象，不得继续进入目标 stage policy 或 provider payload tool schema。
+默认目标稳定 worker-visible 接口是 `claw_get_market_pack/claw_get_fundamental_pack/claw_get_news_pack/claw_get_social_pack`。`CN_A` 的 A股扩展在 Phase 0 冻结门关闭后追加 `claw_get_policy_pack`、`claw_get_hot_money_pack`、`claw_get_lockup_pack`，具体 allowlist 以 13.17 为准。历史 provider-visible 工具名只能作为代码盘点对象和 import-block 对象，不得继续进入目标 stage policy 或 provider payload tool schema。
 
 替换表：
 
@@ -3209,26 +3202,259 @@ HK 特殊要求：
 ```yaml
 CN_A:
   market:
-    - provider: tushare
-      endpoints: [daily, daily_basic]
+    - provider: mootdx_quote
+      endpoints: [stock_quote]
       required: true
+      attempt_required: true
+      coverage_group: cn_a_market_quote
       source_role: market_data
-    - provider: akshare
-      endpoints: [stock_zh_a_hist]
+    - provider: eastmoney_quote
+      endpoints: [quote]
       required: false
+      attempt_required: true
+      coverage_group: cn_a_market_quote
       source_role: market_data
-    - provider: eastmoney
-      endpoints: [quote, hot_rank]
+    - provider: baidu_kline
+      endpoints: [kline]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_market_kline
+      source_role: market_data
+    - provider: eastmoney_kline
+      endpoints: [kline]
       required: false
+      attempt_required: true
+      coverage_group: cn_a_market_kline
+      source_role: market_data
+    - provider: mootdx_orderbook
+      endpoints: [orderbook]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_market_orderbook
+      source_role: market_data
+    - provider: tencent_orderbook
+      endpoints: [orderbook]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_market_orderbook
+      source_role: market_data
+    - provider: tushare_user_market
+      endpoints: [daily, daily_basic]
+      required: false
+      attempt_required: false
+      enabled_by_default: false
+      requires_user_enable: true
+      coverage_group: cn_a_market_kline
       source_role: market_data
   fundamental:
-    - provider: tushare
-      endpoints: [fina_indicator, income, balancesheet, cashflow, fina_mainbz]
+    - provider: sina_financials
+      endpoints: [financial_statements]
       required: true
+      attempt_required: true
+      coverage_group: cn_a_fundamental_financials
       source_role: fundamental_data
-    - provider: akshare
-      endpoints: [stock_financial_analysis_indicator]
+    - provider: eastmoney_financials
+      endpoints: [company_profile, financial_snapshot]
       required: false
+      attempt_required: true
+      coverage_group: cn_a_fundamental_financials
+      source_role: fundamental_data
+    - provider: ths_estimates
+      endpoints: [consensus_eps]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_fundamental_estimates
+      source_role: fundamental_data
+    - provider: eastmoney_research
+      endpoints: [analyst_report, report_pdf]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_fundamental_research
+      source_role: fundamental_data
+    - provider: tushare_user_fundamental
+      endpoints: [fina_indicator, income, balancesheet, cashflow, fina_mainbz]
+      required: false
+      attempt_required: false
+      enabled_by_default: false
+      requires_user_enable: true
+      coverage_group: cn_a_fundamental_financials
+      source_role: fundamental_data
+  news:
+    - provider: eastmoney_company_news
+      endpoints: [stock_news]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_news_company
+      source_role: market_data
+    - provider: cninfo
+      endpoints: [announcements]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_news_announcement
+      source_role: official_original
+    - provider: cls_flash
+      endpoints: [telegraph]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_news_flash
+      source_role: market_data
+    - provider: eastmoney_global
+      endpoints: [global_news]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_news_macro_global
+      source_role: macro_data
+    - provider: bocha_search
+      endpoints: [search]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_news_discovery
+      source_role: search_discovery
+  social:
+    - provider: ths_concept_hot
+      endpoints: [hot_topics]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_social_concept
+      source_role: social_aggregate_metric
+    - provider: baidu_concept
+      endpoints: [concept_board]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_social_concept
+      source_role: social_aggregate_metric
+    - provider: tavily_search
+      endpoints: [search]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_social_search_discovery
+      source_role: search_discovery
+  policy:
+    - provider: cninfo_policy
+      endpoints: [policy_bulletin]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_policy_official
+      source_role: official_original
+    - provider: exchange_policy
+      endpoints: [regulatory_disclosure]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_policy_official
+      source_role: official_original
+    - provider: cls_policy_news
+      endpoints: [policy_news]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_policy_news
+      source_role: market_data
+    - provider: eastmoney_macro_policy
+      endpoints: [macro_policy_news]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_policy_macro
+      source_role: macro_data
+    - provider: bocha_policy_search
+      endpoints: [search]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_policy_discovery
+      source_role: search_discovery
+  hot_money:
+    - provider: eastmoney_dragon_tiger
+      endpoints: [dragon_tiger]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_hot_money_dragon_tiger
+      source_role: market_data
+    - provider: eastmoney_fund_flow
+      endpoints: [fund_flow]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_hot_money_fund_flow
+      source_role: market_data
+    - provider: ths_northbound
+      endpoints: [hsgt_api]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_hot_money_northbound
+      source_role: market_data
+    - provider: eastmoney_sector_flow
+      endpoints: [sector_flow]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_hot_money_sector_flow
+      source_role: market_data
+    - provider: ths_theme_heat
+      endpoints: [theme_heat]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_hot_money_theme_heat
+      source_role: social_aggregate_metric
+    - provider: tushare_user_hot_money
+      endpoints: [moneyflow, hsgt_top10]
+      required: false
+      attempt_required: false
+      enabled_by_default: false
+      requires_user_enable: true
+      coverage_group: cn_a_hot_money_fund_flow
+      source_role: market_data
+  lockup:
+    - provider: eastmoney_unlock
+      endpoints: [lockup_release]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_lockup_unlock
+      source_role: market_data
+    - provider: cninfo_unlock_announcement
+      endpoints: [unlock_announcement]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_lockup_unlock
+      source_role: official_original
+    - provider: eastmoney_shareholder_count
+      endpoints: [shareholder_count]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_lockup_shareholder_count
+      source_role: fundamental_data
+    - provider: eastmoney_block_trade
+      endpoints: [block_trade]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_lockup_block_trade
+      source_role: market_data
+    - provider: eastmoney_margin
+      endpoints: [margin_financing]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_lockup_margin_financing
+      source_role: market_data
+    - provider: eastmoney_dividend
+      endpoints: [dividend]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_lockup_dividend
+      source_role: fundamental_data
+    - provider: cninfo_dividend_announcement
+      endpoints: [dividend_announcement]
+      required: false
+      attempt_required: true
+      coverage_group: cn_a_lockup_dividend
+      source_role: official_original
+    - provider: eastmoney_120d_flow
+      endpoints: [flow_120d]
+      required: true
+      attempt_required: true
+      coverage_group: cn_a_lockup_120d_flow
+      source_role: market_data
+    - provider: tushare_user_lockup
+      endpoints: [share_float, stk_holdernumber, block_trade, margin_detail, dividend]
+      required: false
+      attempt_required: false
+      enabled_by_default: false
+      requires_user_enable: true
+      coverage_group: cn_a_lockup_shareholder_count
       source_role: fundamental_data
 
 HK:
@@ -3331,12 +3557,20 @@ CRYPTO:
 
 stage 级可见工具合同（最终态）：
 
+默认 12-worker profile 只包含原四个 frontline 数据工具；`CN_A` 在
+`docs/A股扩展方案.md` / `docs/A股扩展详细设计.md` 的 Phase 0 人类冻结门关闭后，
+允许扩展为 7 个 frontline worker 和 7 个 canonical pack 工具。该扩展只对 `CN_A`
+生效，不自动改变 `US`、`HK`、`CRYPTO`。
+
 | worker | 当前 turn 是否可见 OpenBB pack tool | 允许工具 | 主要输入材料 |
 |---|---:|---|---|
 | `market_analyst` | 是 | `claw_get_market_pack` | OpenBB 市场资料包 |
 | `fundamental_analyst` | 是 | `claw_get_fundamental_pack` | OpenBB 基本面资料包 |
 | `news_analyst` | 是 | `claw_get_news_pack` | OpenBB 新闻/公告资料包 |
 | `social_analyst` | 是 | `claw_get_social_pack` | OpenBB 舆情/情绪资料包 |
+| `policy_analyst`（仅 `CN_A`） | 是 | `claw_get_policy_pack` | OpenBB 政策资料包 |
+| `hot_money_tracker`（仅 `CN_A`） | 是 | `claw_get_hot_money_pack` | OpenBB 游资/资金资料包 |
+| `lockup_watcher`（仅 `CN_A`） | 是 | `claw_get_lockup_pack` | OpenBB 解禁/筹码资料包 |
 | `bull_researcher` | 否 | 无 OpenBB 数据工具 | approved frontline L1 正文和辩论上下文 |
 | `bear_researcher` | 否 | 无 OpenBB 数据工具 | approved frontline L1 正文和辩论上下文 |
 | `research_manager` | 否 | 无 OpenBB 数据工具 | approved frontline/debate L1 正文 |
@@ -3350,12 +3584,22 @@ stage 级可见工具合同（最终态）：
 
 13.12.1 中列出的历史 pack 工具名只用于迁移盘点、替换清单和 import-block 验收；目标 worker-visible tool schema 不允许包含迁移期 alias。US 的历史原子工具同样不得作为 alias。
 
+OpenViking write/read、Mongo/cache/raw/debug、OpenBB atomic/admin/discovery、迁移期
+`cn_a_*` alias 都不得进入 model-visible provider payload 的 `tools`。frontline L1
+写入 OpenViking 是 artifact approval 后的 materialization，不是报告 worker 可见数据工具。
+
 ```python
 CANONICAL_WORKER_PACK_TOOLS = {
     "market_analyst": {"claw_get_market_pack"},
     "fundamental_analyst": {"claw_get_fundamental_pack"},
     "news_analyst": {"claw_get_news_pack"},
     "social_analyst": {"claw_get_social_pack"},
+}
+
+CN_A_EXTRA_CANONICAL_WORKER_PACK_TOOLS = {
+    "policy_analyst": {"claw_get_policy_pack"},
+    "hot_money_tracker": {"claw_get_hot_money_pack"},
+    "lockup_watcher": {"claw_get_lockup_pack"},
 }
 
 FORBIDDEN_OPENBB_TOOL_PATTERNS = (
@@ -3368,6 +3612,10 @@ FORBIDDEN_OPENBB_TOOL_PATTERNS = (
     "cache_status",
     "rate_limit_status",
     "raw_query",
+    "openviking",
+    "cn_a_policy_data",
+    "cn_a_hot_money_data",
+    "cn_a_lockup_data",
 )
 
 
@@ -3377,8 +3625,11 @@ def validate_worker_tool_schema(
     profile: str,
     visible_tools: tuple[str, ...],
 ) -> None:
-    expected = set(CANONICAL_WORKER_PACK_TOOLS.get(worker_id, set()))
-    if worker_id not in CANONICAL_WORKER_PACK_TOOLS and visible_tools:
+    expected_map = dict(CANONICAL_WORKER_PACK_TOOLS)
+    if profile == "CN_A":
+        expected_map.update(CN_A_EXTRA_CANONICAL_WORKER_PACK_TOOLS)
+    expected = set(expected_map.get(worker_id, set()))
+    if worker_id not in expected_map and visible_tools:
         raise ToolBoundaryError(f"downstream worker sees OpenBB tool: {worker_id}/{visible_tools}")
     for tool in visible_tools:
         if tool not in expected:
@@ -3485,13 +3736,13 @@ git submodule status third_party/openbb
 
 - HK `stock_hk_daily` 缺失时进入 chart/data gap；
 - CRYPTO Binance/CoinGlass/Bybit 等 OpenBB provider attempts 全部可见；CryptoLens analysis evidence 单独可追溯；
-- A股缺 Tushare key 时 readiness 不为 ready。
+- A股用户源 Tushare 缺 key 只记为该用户源失败，不构成系统 readiness 前提；但 `official_original`（公告原文）coverage_group 失败时必须标记失败与 root cause，且该官方 coverage_group 不得 `ready`。该失败不阻断 workflow，worker 继续产出带缺口说明的 L1。
 
 #### T4：实现 FundamentalPack
 
 交付：
 
-- CN_A Tushare/AkShare；
+- CN_A 七域系统默认源矩阵（公告/新闻/行情/财务/资金/筹码/政策）+ 可选 Tushare 用户源（仅同作用域优先，不跨域替代）；
 - HK 官方公告/财务路径；
 - US FMP/SEC；
 - CRYPTO CoinGecko/DefiLlama；
@@ -3689,7 +3940,7 @@ CRYPTO: BTC
 - OpenBB 不能作为唯一数据入口，需要保留长期旧 MCP 并行入口。
 - OpenBB submodule URL、commit/tag、license 审批仍是占位或未确认。
 - OpenBB submodule/license/AGPL/商业使用风险无法接受。
-- OpenBB submodule 当前版本无法承载项目 extension/MCP pack endpoint，实施只能退回本地 Python data_gateway 直连 provider。
+- OpenBB submodule 当前版本无法承载项目 extension/MCP pack endpoint，且只能通过绕过 OpenBB/data_gateway 才能继续时，必须停止并重新设计。
 - 已迁移 pack 在 OpenBB flag 打开时仍需要调用旧 provider executor 或旧 MCP 兜底。
 - run 初始化阶段必须远端预取 provider 数据才能工作。
 - single-flight 只能靠进程内锁实现，不能用持久化 lease 覆盖多 worker/multi-process。

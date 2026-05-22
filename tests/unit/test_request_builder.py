@@ -205,6 +205,7 @@ class _BadManifest:
         worker_id: str,
         run_id: str | None = None,
         turn_index: int = 0,
+        market: str | None = None,
     ) -> tuple[MaterialReadRef, ...]:
         return self.refs
 
@@ -221,5 +222,6 @@ class _BadManifest:
         worker_id: str,
         run_id: str | None = None,
         turn_index: int = 0,
+        market: str | None = None,
     ) -> tuple[OpenVikingReadCapability, ...]:
         return self.capabilities

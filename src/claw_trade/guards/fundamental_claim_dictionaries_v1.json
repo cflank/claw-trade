@@ -28,9 +28,7 @@
     "total_mv": ["市值", "总市值"]
   },
   "conclusion_phrases_v1": {
-    "target_price": ["目标价", "目标价格", "合理价", "目标位"],
-    "rating": ["买入", "持有", "卖出", "观望", "评级"],
-    "valuation_judgment": ["高估", "低估", "估值偏高", "估值偏低", "估值过高", "估值过低"]
+    "target_price": ["目标价", "目标价格", "合理价", "目标位"]
   },
   "narrative_phrases_v1": {
     "industry_leader": ["行业龙头", "龙头地位"],
@@ -39,5 +37,5 @@
     "stable_industry_position": ["行业地位稳固", "行业地位.*稳固"]
   },
   "trend_keywords_v1": ["趋势", "连续", "同比", "环比", "增长", "提升", "上升", "下降", "回落", "改善", "恶化"],
-  "compliant_downgrade_phrases_v1": ["证据不足，无法给出基本面评级", "证据不足，无法给出目标价"]
+  "compliant_downgrade_phrases_v1": ["证据不足，无法给出目标价"]
 }

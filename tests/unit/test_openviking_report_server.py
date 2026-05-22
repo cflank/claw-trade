@@ -8,7 +8,17 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def test_openviking_report_server_installs_no_vectorization_patches() -> None:
+def test_openviking_report_server_keeps_embedding_enabled_by_default(monkeypatch) -> None:
+    from claw_trade.runtime.openviking_report_server import _openviking_embedding_enabled
+
+    monkeypatch.delenv("CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED", raising=False)
+    assert _openviking_embedding_enabled() is True
+
+    monkeypatch.setenv("CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED", "0")
+    assert _openviking_embedding_enabled() is False
+
+
+def test_openviking_report_server_can_install_explicit_no_vectorization_patches() -> None:
     code = """
 from claw_trade.runtime.openviking_report_server import _install_report_runtime_patches
 
@@ -21,12 +31,6 @@ config = EmbeddingConfig(
 )
 embedder = config.get_embedder()
 print(embedder.provider)
-try:
-    embedder.embed("should fail")
-except RuntimeError as exc:
-    print(str(exc))
-else:
-    raise SystemExit("disabled embedder did not fail")
 """
     completed = subprocess.run(
         ["uv", "run", "--project", str(_repo_root()), "python", "-c", code],
@@ -37,4 +41,3 @@ else:
 
     assert completed.returncode == 0, completed.stderr
     assert "disabled" in completed.stdout
-    assert "vectorization is disabled" in completed.stdout

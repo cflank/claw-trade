@@ -426,7 +426,7 @@ def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
     assert "可用工具：`claw_get_market_pack`" in text
     assert "worker 不直接读取 CryptoLens raw JSON" in text
     assert "资料就绪度只能说明资料覆盖和通道质量" in text
-    assert "最终市场报告是给中文读者看的，不要把内部字段名写进正文" in text
+    assert "若上游材料含内部字段名或键值串" in text
     assert "上方最近清算簇" in text
     assert "主动买卖量累计差值" in text
     assert "不得推断其正常、过热或极端" in text
@@ -782,9 +782,9 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "项目与代币基本面分析" in crypto_text
     assert "FDV、市值、TVL、协议收入" in crypto_text
     assert "不得把搜索摘要写成事实" in crypto_text
-    assert "正文不得原样出现 `CryptoLens`" in crypto_text
-    assert "`openbb_yfinance` 写成“行情历史来源”" in crypto_text
-    assert "`tavily/catalyst_events` 写成“事件线索来源”" in crypto_text
+    assert "不要把这些词当作硬性禁词" in crypto_text
+    assert "`openbb_yfinance` 可写成“行情历史来源”" in crypto_text
+    assert "`tavily/catalyst_events` 可写成“事件线索来源”" in crypto_text
     assert "不要写“某工具标记为就绪”这类内部过程句" in crypto_text
     assert "终稿必须完整写到 `## 八、最终结论`" in crypto_text
     assert "不得停在任一中间章节、半句或列表项" in crypto_text
@@ -824,8 +824,8 @@ def test_report_polisher_prompts_support_sectioned_generation_without_protocol_l
     assert "Polymarket 事件预期" in crypto_text
     assert "数据缺口本身不是看涨或看跌事实" in crypto_text
     assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
-    assert "正文不得原样出现 `CryptoLens`" in crypto_text
-    assert "`readiness/ready` 写成“资料可用性/资料就绪”" in crypto_text
+    assert "如果保留来源名有助于读者理解" in crypto_text
+    assert "`readiness/ready` 可写成“资料可用性/资料就绪”" in crypto_text
 
     user_text = (Path("agents") / "report_polisher" / "USER.md").read_text(encoding="utf-8")
     assert "final_report_section_instruction" in user_text

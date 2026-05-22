@@ -65,6 +65,7 @@ from claw_trade.workflow.models import (
     export_result_allows_workflow_completion,
 )
 from claw_trade.workflow.store import WorkflowStore
+from claw_trade.workflow.workers import frontline_workers_for_market
 
 
 class OpenClawClientLike(Protocol):
@@ -1545,14 +1546,7 @@ def build_profile_prompt_vars(
                 "图表资产是导出验收项，真正缺图会由导出失败处理。"
             )
         else:
-            supporting_sources = (
-                ("bull_researcher", Stage.INVESTMENT_DEBATE, "多头研究员"),
-                ("bear_researcher", Stage.INVESTMENT_DEBATE, "空头研究员"),
-                ("research_manager", Stage.INVESTMENT_DECISION, "研究经理"),
-                ("risk_challenger", Stage.RISK_DEBATE, "风险挑战方"),
-                ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
-                ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
-            )
+            supporting_sources = _cn_report_polisher_supporting_sources(call.market)
             chart_assets_note = (
                 "最终导出会把已验证图表放入技术指标分析段；不要编造图片路径或图表结论。"
                 "不要把上游材料中的“图表资产缺失/未生成独立图表文件”当作读者报告的最终风险结论；"
@@ -1582,6 +1576,28 @@ def build_profile_prompt_vars(
             "final_report_section_instruction": "",
         }
     return {}
+
+
+def _cn_report_polisher_supporting_sources(market: str) -> tuple[tuple[str, Stage, str], ...]:
+    cn_a_frontline_labels = {
+        "policy_analyst": "政策分析师",
+        "hot_money_tracker": "游资资金跟踪员",
+        "lockup_watcher": "限售筹码观察员",
+    }
+    extended_frontline = tuple(
+        (worker_id, Stage.FRONTLINE, cn_a_frontline_labels[worker_id])
+        for worker_id in frontline_workers_for_market(market)
+        if worker_id in cn_a_frontline_labels
+    )
+    downstream = (
+        ("bull_researcher", Stage.INVESTMENT_DEBATE, "多头研究员"),
+        ("bear_researcher", Stage.INVESTMENT_DEBATE, "空头研究员"),
+        ("research_manager", Stage.INVESTMENT_DECISION, "研究经理"),
+        ("risk_challenger", Stage.RISK_DEBATE, "风险挑战方"),
+        ("risk_guardian", Stage.RISK_DEBATE, "风险防守方"),
+        ("risk_moderator", Stage.RISK_DEBATE, "风险整合方"),
+    )
+    return extended_frontline + downstream
 
 
 def _batch_call_specs(batch: StageBatch, manifest: ApprovedManifest) -> tuple[_BatchCallSpec, ...]:

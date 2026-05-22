@@ -19,6 +19,7 @@ from claw_trade.artifacts.refs import (
     validate_viking_uri_shape,
 )
 from claw_trade.workflow.models import Stage, WorkerCall
+from claw_trade.workflow.workers import frontline_workers_for_market
 
 _STAGE_WORKERS: dict[Stage, tuple[str, ...]] = {
     Stage.FRONTLINE: (
@@ -34,6 +35,14 @@ _STAGE_WORKERS: dict[Stage, tuple[str, ...]] = {
     Stage.PORTFOLIO_DECISION: ("portfolio_manager",),
     Stage.FINAL_REPORT: ("report_polisher",),
 }
+
+_DEFAULT_MARKET = "US"
+
+
+def _stage_workers(stage: Stage, market: str | None = None) -> tuple[str, ...]:
+    if stage == Stage.FRONTLINE:
+        return frontline_workers_for_market((market or _DEFAULT_MARKET).upper())
+    return _STAGE_WORKERS[stage]
 
 _UPSTREAM_STAGE: dict[Stage, Stage | None] = {
     Stage.FRONTLINE: None,
@@ -152,7 +161,7 @@ def _material_order_key(material: ApprovedMaterial) -> tuple[int, int, int, str]
         Stage.PORTFOLIO_DECISION: 5,
         Stage.FINAL_REPORT: 6,
     }
-    worker_order = {worker_id: index for index, worker_id in enumerate(_STAGE_WORKERS.get(material.stage, ()))}
+    worker_order = {worker_id: index for index, worker_id in enumerate(_stage_workers(material.stage, market="CN_A"))}
     return (
         stage_order.get(material.stage, 99),
         material.turn_index,
@@ -219,30 +228,32 @@ class ApprovedManifest:
     def stage_turn_count(self, stage: Stage, run_id: str | None = None) -> int:
         return len(self.materials_for_stage(stage=stage, run_id=run_id))
 
-    def required_workers_for(self, stage: Stage) -> tuple[str, ...]:
+    def required_workers_for(self, stage: Stage, market: str | None = None) -> tuple[str, ...]:
         if stage not in _UPSTREAM_STAGE:
             raise ArtifactFlowError(f"unknown stage: {stage.value}")
         upstream = _UPSTREAM_STAGE[stage]
         if upstream is None:
             return ()
-        return _STAGE_WORKERS[upstream]
+        return _stage_workers(upstream, market=market)
 
-    def required_sources_for_worker_call(self, stage: Stage, worker_id: str) -> tuple[tuple[str, Stage], ...]:
+    def required_sources_for_worker_call(
+        self, stage: Stage, worker_id: str, market: str | None = None
+    ) -> tuple[tuple[str, Stage], ...]:
         if stage not in _STAGE_WORKERS:
             raise ArtifactFlowError(f"unknown stage: {stage.value}")
-        if worker_id not in _STAGE_WORKERS[stage]:
+        stage_workers = _stage_workers(stage, market=market)
+        if worker_id not in stage_workers:
             raise ArtifactFlowError(f"worker 不属于阶段: stage={stage.value} worker={worker_id}")
         if stage == Stage.FRONTLINE:
             return ()
-        frontline_sources = tuple((item, Stage.FRONTLINE) for item in _STAGE_WORKERS[Stage.FRONTLINE])
+        frontline_workers = _stage_workers(Stage.FRONTLINE, market=market)
+        frontline_sources = tuple((item, Stage.FRONTLINE) for item in frontline_workers)
         if stage == Stage.INVESTMENT_DEBATE:
             if worker_id == "bear_researcher":
                 return frontline_sources + (("bull_researcher", Stage.INVESTMENT_DEBATE),)
             return frontline_sources
         if stage == Stage.INVESTMENT_DECISION:
-            return frontline_sources + tuple(
-                (item, Stage.INVESTMENT_DEBATE) for item in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]
-            )
+            return frontline_sources + tuple((item, Stage.INVESTMENT_DEBATE) for item in _stage_workers(Stage.INVESTMENT_DEBATE))
         if stage == Stage.TRADE_DECISION:
             return (("research_manager", Stage.INVESTMENT_DECISION),)
         if stage == Stage.RISK_DEBATE:
@@ -259,21 +270,21 @@ class ApprovedManifest:
             return (
                 ("research_manager", Stage.INVESTMENT_DECISION),
                 ("trader", Stage.TRADE_DECISION),
-                *tuple((item, Stage.RISK_DEBATE) for item in _STAGE_WORKERS[Stage.RISK_DEBATE]),
+                *tuple((item, Stage.RISK_DEBATE) for item in _stage_workers(Stage.RISK_DEBATE)),
             )
         if stage == Stage.FINAL_REPORT:
             return (
                 *frontline_sources,
-                *tuple((item, Stage.INVESTMENT_DEBATE) for item in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]),
+                *tuple((item, Stage.INVESTMENT_DEBATE) for item in _stage_workers(Stage.INVESTMENT_DEBATE)),
                 ("research_manager", Stage.INVESTMENT_DECISION),
                 ("trader", Stage.TRADE_DECISION),
-                *tuple((item, Stage.RISK_DEBATE) for item in _STAGE_WORKERS[Stage.RISK_DEBATE]),
+                *tuple((item, Stage.RISK_DEBATE) for item in _stage_workers(Stage.RISK_DEBATE)),
                 ("portfolio_manager", Stage.PORTFOLIO_DECISION),
             )
         upstream = _UPSTREAM_STAGE[stage]
         if upstream is None:
             return ()
-        return tuple((item, upstream) for item in _STAGE_WORKERS[upstream])
+        return tuple((item, upstream) for item in _stage_workers(upstream, market=market))
 
     def has_worker(self, worker_id: str, stage: Stage, run_id: str | None = None) -> bool:
         for material in self._materials(run_id):
@@ -287,8 +298,10 @@ class ApprovedManifest:
                 return True
         return False
 
-    def for_downstream_stage(self, stage: Stage, run_id: str | None = None) -> tuple[MaterialReadRef, ...]:
-        required = self.required_workers_for(stage)
+    def for_downstream_stage(
+        self, stage: Stage, run_id: str | None = None, market: str | None = None
+    ) -> tuple[MaterialReadRef, ...]:
+        required = self.required_workers_for(stage, market=market)
         if not required:
             return ()
         upstream_stage = _UPSTREAM_STAGE[stage]
@@ -311,8 +324,15 @@ class ApprovedManifest:
         worker_id: str,
         run_id: str | None = None,
         turn_index: int = 0,
+        market: str | None = None,
     ) -> tuple[MaterialReadRef, ...]:
-        selected, missing = self._materials_for_worker_call(stage=stage, worker_id=worker_id, run_id=run_id, turn_index=turn_index)
+        selected, missing = self._materials_for_worker_call(
+            stage=stage,
+            worker_id=worker_id,
+            run_id=run_id,
+            turn_index=turn_index,
+            market=market,
+        )
         if missing:
             raise ArtifactFlowError(
                 f"worker 输入材料缺失: run_id={run_id or '<auto>'} "
@@ -324,8 +344,9 @@ class ApprovedManifest:
         self,
         stage: Stage,
         run_id: str | None = None,
+        market: str | None = None,
     ) -> tuple[OpenVikingReadCapability, ...]:
-        refs = self.for_downstream_stage(stage=stage, run_id=run_id)
+        refs = self.for_downstream_stage(stage=stage, run_id=run_id, market=market)
         out: list[OpenVikingReadCapability] = []
         for ref in refs:
             material = self._by_id[ref.material_id]
@@ -348,8 +369,15 @@ class ApprovedManifest:
         worker_id: str,
         run_id: str | None = None,
         turn_index: int = 0,
+        market: str | None = None,
     ) -> tuple[OpenVikingReadCapability, ...]:
-        refs = self.for_worker_call(stage=stage, worker_id=worker_id, run_id=run_id, turn_index=turn_index)
+        refs = self.for_worker_call(
+            stage=stage,
+            worker_id=worker_id,
+            run_id=run_id,
+            turn_index=turn_index,
+            market=market,
+        )
         out: list[OpenVikingReadCapability] = []
         for ref in refs:
             material = self._by_id[ref.material_id]
@@ -372,20 +400,23 @@ class ApprovedManifest:
         worker_id: str,
         run_id: str | None,
         turn_index: int,
+        market: str | None,
     ) -> tuple[tuple[ApprovedMaterial, ...], list[str]]:
         if stage not in _STAGE_WORKERS:
             raise ArtifactFlowError(f"unknown stage: {stage.value}")
-        if worker_id not in _STAGE_WORKERS[stage]:
+        stage_workers = _stage_workers(stage, market=market)
+        if worker_id not in stage_workers:
             raise ArtifactFlowError(f"worker 不属于阶段: stage={stage.value} worker={worker_id}")
         if stage == Stage.FRONTLINE:
             return (), []
 
+        frontline_workers = _stage_workers(Stage.FRONTLINE, market=market)
         frontline = self._selected_materials_for_workers(
-            workers=_STAGE_WORKERS[Stage.FRONTLINE],
+            workers=frontline_workers,
             upstream_stage=Stage.FRONTLINE,
             run_id=run_id,
         )
-        missing = _missing_workers(_STAGE_WORKERS[Stage.FRONTLINE], frontline, Stage.FRONTLINE)
+        missing = _missing_workers(frontline_workers, frontline, Stage.FRONTLINE)
 
         if stage == Stage.INVESTMENT_DEBATE:
             debate = tuple(
@@ -400,7 +431,7 @@ class ApprovedManifest:
         if stage == Stage.INVESTMENT_DECISION:
             debate = self.materials_for_stage(Stage.INVESTMENT_DEBATE, run_id=run_id)
             present_debate_workers = {material.worker_id for material in debate}
-            for required_worker in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]:
+            for required_worker in _stage_workers(Stage.INVESTMENT_DEBATE):
                 if required_worker not in present_debate_workers:
                     missing.append(f"{required_worker}@{Stage.INVESTMENT_DEBATE.value}")
             return frontline + debate, missing
@@ -444,7 +475,7 @@ class ApprovedManifest:
             missing = _missing_workers(("research_manager",), manager, Stage.INVESTMENT_DECISION)
             missing.extend(_missing_workers(("trader",), trader, Stage.TRADE_DECISION))
             present_risk_workers = {material.worker_id for material in risk}
-            for required_worker in _STAGE_WORKERS[Stage.RISK_DEBATE]:
+            for required_worker in _stage_workers(Stage.RISK_DEBATE):
                 if required_worker not in present_risk_workers:
                     missing.append(f"{required_worker}@{Stage.RISK_DEBATE.value}")
             return manager + trader + risk, missing
@@ -471,11 +502,11 @@ class ApprovedManifest:
             missing.extend(_missing_workers(("trader",), trader, Stage.TRADE_DECISION))
             missing.extend(_missing_workers(("portfolio_manager",), portfolio, Stage.PORTFOLIO_DECISION))
             present_debate_workers = {material.worker_id for material in debate}
-            for required_worker in _STAGE_WORKERS[Stage.INVESTMENT_DEBATE]:
+            for required_worker in _stage_workers(Stage.INVESTMENT_DEBATE):
                 if required_worker not in present_debate_workers:
                     missing.append(f"{required_worker}@{Stage.INVESTMENT_DEBATE.value}")
             present_risk_workers = {material.worker_id for material in risk}
-            for required_worker in _STAGE_WORKERS[Stage.RISK_DEBATE]:
+            for required_worker in _stage_workers(Stage.RISK_DEBATE):
                 if required_worker not in present_risk_workers:
                     missing.append(f"{required_worker}@{Stage.RISK_DEBATE.value}")
             return frontline + debate + manager + trader + risk + portfolio, missing
@@ -483,7 +514,7 @@ class ApprovedManifest:
         upstream = _UPSTREAM_STAGE[stage]
         if upstream is None:
             return (), []
-        required = _STAGE_WORKERS[upstream]
+        required = _stage_workers(upstream, market=market)
         selected = self._selected_materials_for_workers(workers=required, upstream_stage=upstream, run_id=run_id)
         return selected, _missing_workers(required, selected, upstream)
 

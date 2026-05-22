@@ -37,7 +37,12 @@ def _manifest(*, adapter_id: str = "user.crypto.news", enabled: bool = True) -> 
         cache_ttl_seconds=300,
         license_policy_id="user.custom",
         raw_export_policy="metadata_only",
-        healthcheck={"method": "GET", "path": "/health"},
+        healthcheck={
+            "method": "GET",
+            "path": "/health",
+            "sample_raw_ref": "mongo://openbb_raw_payloads/sample",
+            "sample_normalized_ref": "mongo://openbb_normalized/sample",
+        },
         enabled=enabled,
         admission_status=ProviderAdmissionStatus.DRAFT,
         priority=20,
@@ -69,6 +74,22 @@ def _catalog(*, secrets: dict[str, str] | None = None) -> ProviderCatalog:
             allowed_domains=("example.com", "*.trusted.news"),
             dns_resolver=lambda host: ("93.184.216.34",),
         ),
+        sample_ref_exists=lambda ref: ref.startswith("mongo://openbb_"),
+    )
+    return ProviderCatalog(validator=validator)
+
+
+def _catalog_with_license_result(license_result: LicenseCheckResult, *, secrets: dict[str, str] | None = None) -> ProviderCatalog:
+    secret_store = SecretStore({"RSS_TOKEN": "token-value"} if secrets is None else secrets)
+    license_store = LicensePolicyStore({"user.custom": license_result})
+    validator = ProviderAdmissionValidator(
+        secret_store=secret_store,
+        license_store=license_store,
+        security_policy=DeclarativeProviderSecurityPolicy(
+            allowed_domains=("example.com", "*.trusted.news"),
+            dns_resolver=lambda host: ("93.184.216.34",),
+        ),
+        sample_ref_exists=lambda ref: ref.startswith("mongo://openbb_"),
     )
     return ProviderCatalog(validator=validator)
 
@@ -140,3 +161,156 @@ def test_quarantined_must_revalidate_before_enabled_again() -> None:
     fixed = DeclarativeProviderManifest(**{**fixed.__dict__, "config_version": config_version_for_manifest(fixed)})
     final = catalog.validate_manifest(fixed, actor="user:test", reason="fixed")
     assert final.status == ProviderAdmissionStatus.ENABLED_CANDIDATE
+
+
+def test_user_manifest_cannot_declare_official_original() -> None:
+    catalog = _catalog()
+    manifest = _manifest(adapter_id="user.crypto.news.official")
+    manifest = DeclarativeProviderManifest(
+        **{
+            **manifest.__dict__,
+            "source_role": SourceRole.OFFICIAL_ORIGINAL,
+            "config_version": "",
+        }
+    )
+    manifest = DeclarativeProviderManifest(**{**manifest.__dict__, "config_version": config_version_for_manifest(manifest)})
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="official")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert "source_role_official_original_forbidden_for_user_provider" in receipt.errors
+    assert catalog.enabled_candidates() == ()
+
+
+def test_manifest_without_real_sample_refs_is_rejected() -> None:
+    catalog = _catalog()
+    manifest = _manifest(adapter_id="user.crypto.news.no-sample")
+    manifest = DeclarativeProviderManifest(
+        **{
+            **manifest.__dict__,
+            "healthcheck": {"method": "GET", "path": "/health"},
+            "config_version": "",
+        }
+    )
+    manifest = DeclarativeProviderManifest(**{**manifest.__dict__, "config_version": config_version_for_manifest(manifest)})
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="missing_sample")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert "healthcheck_sample_raw_ref_missing_or_invalid" in receipt.errors
+    assert "healthcheck_sample_normalized_ref_missing_or_invalid" in receipt.errors
+
+
+def test_manifest_with_nonexistent_sample_refs_is_rejected() -> None:
+    secret_store = SecretStore({"RSS_TOKEN": "token-value"})
+    license_store = LicensePolicyStore(
+        {
+            "user.custom": LicenseCheckResult(
+                status=AdmissionCheckStatus.PASS,
+                license_policy_id="user.custom",
+                cost_tier="free",
+                raw_export_policy="metadata_only",
+                commercial_use_allowed=False,
+                note="personal research only",
+            )
+        }
+    )
+    validator = ProviderAdmissionValidator(
+        secret_store=secret_store,
+        license_store=license_store,
+        security_policy=DeclarativeProviderSecurityPolicy(
+            allowed_domains=("example.com", "*.trusted.news"),
+            dns_resolver=lambda host: ("93.184.216.34",),
+        ),
+        sample_ref_exists=lambda ref: False,
+    )
+    catalog = ProviderCatalog(validator=validator)
+    manifest = _manifest(adapter_id="user.crypto.news.sample-not-found")
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="sample_not_found")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert "healthcheck_sample_raw_ref_not_found" in receipt.errors
+    assert "healthcheck_sample_normalized_ref_not_found" in receipt.errors
+
+
+def test_license_policy_missing_is_rejected_and_not_candidate() -> None:
+    catalog = _catalog()
+    manifest = _manifest(adapter_id="user.crypto.news.license-missing")
+    manifest = DeclarativeProviderManifest(
+        **{
+            **manifest.__dict__,
+            "license_policy_id": "missing.policy",
+            "config_version": "",
+        }
+    )
+    manifest = DeclarativeProviderManifest(**{**manifest.__dict__, "config_version": config_version_for_manifest(manifest)})
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="license_missing")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert receipt.license_status == AdmissionCheckStatus.MISSING
+    assert "license_policy_missing:missing.policy" in receipt.errors
+    assert catalog.enabled_candidates() == ()
+
+
+def test_license_policy_blocked_is_rejected_and_not_candidate() -> None:
+    catalog = _catalog_with_license_result(
+        LicenseCheckResult(
+            status=AdmissionCheckStatus.BLOCKED,
+            license_policy_id="user.custom",
+            cost_tier="paid",
+            raw_export_policy="metadata_only",
+            commercial_use_allowed=False,
+            note="blocked",
+        )
+    )
+    manifest = _manifest(adapter_id="user.crypto.news.license-blocked")
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="license_blocked")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert receipt.license_status == AdmissionCheckStatus.BLOCKED
+    assert "license_policy_blocked:user.custom" in receipt.errors
+    assert catalog.enabled_candidates() == ()
+
+
+def test_raw_export_policy_not_allowed_is_rejected_and_not_candidate() -> None:
+    catalog = _catalog()
+    manifest = _manifest(adapter_id="user.crypto.news.raw-invalid")
+    manifest = DeclarativeProviderManifest(
+        **{
+            **manifest.__dict__,
+            "raw_export_policy": "unsafe_full_raw",
+            "config_version": "",
+        }
+    )
+    manifest = DeclarativeProviderManifest(**{**manifest.__dict__, "config_version": config_version_for_manifest(manifest)})
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="raw_policy_invalid")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert receipt.license_status == AdmissionCheckStatus.FAIL
+    assert "raw_export_policy_not_allowed:unsafe_full_raw" in receipt.errors
+    assert catalog.enabled_candidates() == ()
+
+
+def test_raw_export_policy_mismatch_is_rejected_and_not_candidate() -> None:
+    catalog = _catalog_with_license_result(
+        LicenseCheckResult(
+            status=AdmissionCheckStatus.PASS,
+            license_policy_id="user.custom",
+            cost_tier="free",
+            raw_export_policy="redacted",
+            commercial_use_allowed=False,
+            note="policy requires redacted",
+        )
+    )
+    manifest = _manifest(adapter_id="user.crypto.news.raw-mismatch")
+
+    receipt = catalog.validate_manifest(manifest, actor="user:test", reason="raw_policy_mismatch")
+
+    assert receipt.status == ProviderAdmissionStatus.REJECTED
+    assert receipt.license_status == AdmissionCheckStatus.FAIL
+    assert any(item.startswith("raw_export_policy_mismatch:") for item in receipt.errors)
+    assert catalog.enabled_candidates() == ()

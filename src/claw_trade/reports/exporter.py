@@ -21,7 +21,7 @@ from claw_trade.guards.export_claims import (
 )
 from claw_trade.reports.structure import validate_final_report_text
 from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
-from claw_trade.workflow.workers import all_worker_ids
+from claw_trade.workflow.workers import all_worker_ids, stage_plans_for_market
 
 _PM_WORKER_ID = "portfolio_manager"
 _MARKET_WORKER_ID = "market_analyst"
@@ -142,6 +142,13 @@ def required_report_workers() -> set[str]:
     return set(_REPORT_WORKERS_SET)
 
 
+def required_report_workers_for_market(market: str) -> set[str]:
+    workers: set[str] = set()
+    for plan in stage_plans_for_market(market):
+        workers.update(plan.workers)
+    return workers
+
+
 def load_report_materials(
     state: WorkflowState,
     manifest: ApprovedManifest,
@@ -156,7 +163,7 @@ def load_report_materials(
         )
 
     workers_present = {material.worker_id for material in materials}
-    missing_workers = sorted(required_report_workers() - workers_present)
+    missing_workers = sorted(required_report_workers_for_market(state.request.market) - workers_present)
     if missing_workers:
         return ReportMaterialsResult.failed(
             category="export_missing_material",
@@ -384,13 +391,17 @@ def export_final_report(
         report_image_assets=report_image_assets,
     )
     if not image_assets:
-        return ExportResult.failed(
-            state=state,
-            category="export_report_assets",
-            reason="报告导出失败：未找到可复制的图表资产",
-            paths=(state.run_dir / "calls",),
-        )
-    rendered = _attach_report_image_assets(rendered=rendered, image_assets=image_assets)
+        missing_chart_note = _missing_chart_assets_note(rendered=rendered, report_materials=loaded.report_materials)
+        if missing_chart_note is None:
+            return ExportResult.failed(
+                state=state,
+                category="export_report_assets",
+                reason="报告导出失败：未找到可复制的图表资产",
+                paths=(state.run_dir / "calls",),
+            )
+        rendered = _attach_missing_chart_assets_note(rendered=rendered, note=missing_chart_note)
+    else:
+        rendered = _attach_report_image_assets(rendered=rendered, image_assets=image_assets)
     structure = validate_final_report_text(rendered.text)
     structure_path = state.run_dir / "reports" / "final-report-structure.json"
     structure_path.parent.mkdir(parents=True, exist_ok=True)
@@ -685,6 +696,15 @@ def _attach_report_image_assets(rendered: RenderedReport, image_assets: tuple[Re
     return RenderedReport(text=report_text.strip() + "\n", claim_links=rendered.claim_links)
 
 
+def _attach_missing_chart_assets_note(rendered: RenderedReport, note: str) -> RenderedReport:
+    note_block = f"### 技术图表\n本次未附图表：{note}"
+    report_text = rendered.text.rstrip()
+    updated_text = _attach_image_assets_to_technical_indicator_section(report_text, note_block)
+    if updated_text != report_text:
+        return RenderedReport(text=updated_text.strip() + "\n", claim_links=rendered.claim_links)
+    return RenderedReport(text=f"{report_text}\n\n{note_block}\n", claim_links=rendered.claim_links)
+
+
 def _render_report_image_asset_block(image_assets: tuple[ReportImageAsset, ...]) -> str:
     lines = ["### 技术图表"]
     for asset in image_assets:
@@ -776,7 +796,57 @@ def _discover_market_chart_images(*, state: WorkflowState, materials: tuple[Appr
     return sources
 
 
+_MISSING_CHART_ROOT_CAUSE_PATTERNS = (
+    re.compile(r"图表(资产)?(缺失|不可用|未生成|没有生成|无法生成)"),
+    re.compile(r"(价格|行情|OHLCV|K线).{0,24}(缺失|不足|不可用|0\s*行)"),
+    re.compile(r"(zero|0)\s+OHLCV", re.IGNORECASE),
+    re.compile(r"OHLCV\s+rows?\s*[:=]?\s*0", re.IGNORECASE),
+    re.compile(r"insufficient\s+price\s+data", re.IGNORECASE),
+    re.compile(r"no\s+usable\s+price\s+data", re.IGNORECASE),
+    re.compile(r"chart\s+generation", re.IGNORECASE),
+    re.compile(r"charts?\s+(unavailable|missing|not\s+generated)", re.IGNORECASE),
+)
+_CHART_AVAILABLE_CLAIM_PATTERNS = (
+    re.compile(r"图表(资产)?(就绪|已生成|如下)"),
+    re.compile(r"见下图"),
+    re.compile(r"!\[[^\]]*\]\([^)]+\)"),
+    re.compile(r"charts?\s+(ready|generated|available)", re.IGNORECASE),
+    re.compile(r"as\s+shown\s+in\s+the\s+chart", re.IGNORECASE),
+)
 _SAFE_ASSET_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _missing_chart_assets_note(*, rendered: RenderedReport, report_materials: tuple[ReportMaterial, ...]) -> str | None:
+    if _text_has_chart_available_claim(rendered.text):
+        return None
+    for material in report_materials:
+        if material.material.worker_id != _MARKET_WORKER_ID:
+            continue
+        note = _extract_missing_chart_root_cause(material.l1_text)
+        if note:
+            return note
+    return _extract_missing_chart_root_cause(rendered.text)
+
+
+def _text_has_chart_available_claim(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _CHART_AVAILABLE_CLAIM_PATTERNS)
+
+
+def _extract_missing_chart_root_cause(text: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip(" -*|")
+        if not stripped:
+            continue
+        if any(pattern.search(stripped) for pattern in _MISSING_CHART_ROOT_CAUSE_PATTERNS):
+            return _compact_missing_chart_note(stripped)
+    return None
+
+
+def _compact_missing_chart_note(text: str) -> str:
+    compacted = re.sub(r"\s+", " ", text).strip()
+    if len(compacted) <= 180:
+        return compacted
+    return compacted[:177].rstrip() + "..."
 
 
 def _safe_filename_token(value: str) -> str:

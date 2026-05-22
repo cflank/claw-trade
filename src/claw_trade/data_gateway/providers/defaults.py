@@ -9,8 +9,11 @@ from typing import Callable, Iterable, Mapping
 from claw_trade.data_gateway.models import ProviderCapability
 from claw_trade.data_gateway.providers.base import ProviderAdapter
 from claw_trade.data_gateway.providers.fundamental import build_default_fundamental_adapters
+from claw_trade.data_gateway.providers.hot_money import build_default_hot_money_adapters
+from claw_trade.data_gateway.providers.lockup import build_default_lockup_adapters
 from claw_trade.data_gateway.providers.market_adapters import build_default_market_adapters
 from claw_trade.data_gateway.providers.news import build_default_news_adapters
+from claw_trade.data_gateway.providers.policy import build_default_policy_adapters
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
 from claw_trade.data_gateway.providers.social import build_default_social_adapters
 
@@ -21,6 +24,9 @@ DEFAULT_CAPABILITY_LOADERS: tuple[str, ...] = (
     "claw_trade.data_gateway.providers.fundamental:fundamental_capabilities",
     "claw_trade.data_gateway.providers.news:news_capabilities",
     "claw_trade.data_gateway.providers.social:social_capabilities",
+    "claw_trade.data_gateway.providers.policy:policy_capabilities",
+    "claw_trade.data_gateway.providers.hot_money:hot_money_capabilities",
+    "claw_trade.data_gateway.providers.lockup:lockup_capabilities",
 )
 
 
@@ -48,6 +54,9 @@ def build_default_provider_adapters(
     adapters.extend(build_default_fundamental_adapters(provider_config_version=provider_config_version, env=env))
     adapters.extend(build_default_news_adapters(provider_config_version=provider_config_version, env=env))
     adapters.extend(build_default_social_adapters(provider_config_version=provider_config_version, env=env))
+    adapters.extend(build_default_policy_adapters(provider_config_version=provider_config_version))
+    adapters.extend(build_default_hot_money_adapters(provider_config_version=provider_config_version))
+    adapters.extend(build_default_lockup_adapters(provider_config_version=provider_config_version))
     return tuple(adapters)
 
 

@@ -311,38 +311,88 @@ def build_default_market_adapters(
             env=env,
             capability_seeds=(
                 _CapabilitySeed(
-                    provider="tushare",
+                    provider="mootdx_quote",
                     adapter_id="project.cn_a.market",
+                    endpoint="stock_quote",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=True,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_quote",
+                    coverage_quorum=1,
+                    priority=0,
+                ),
+                _CapabilitySeed(
+                    provider="tencent_quote",
+                    adapter_id="project.cn_a.market",
+                    endpoint="quote_tencent",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_quote",
+                    coverage_quorum=1,
+                    priority=1,
+                ),
+                _CapabilitySeed(
+                    provider="baidu_kline",
+                    adapter_id="project.cn_a.market",
+                    endpoint="kline_baidu",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=True,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_kline",
+                    coverage_quorum=1,
+                    priority=10,
+                ),
+                _CapabilitySeed(
+                    provider="mootdx_orderbook",
+                    adapter_id="project.cn_a.market",
+                    endpoint="orderbook",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=True,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_orderbook",
+                    coverage_quorum=1,
+                    priority=20,
+                ),
+                _CapabilitySeed(
+                    provider="tencent_orderbook",
+                    adapter_id="project.cn_a.market",
+                    endpoint="orderbook_tencent",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_orderbook",
+                    coverage_quorum=1,
+                    priority=21,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.market.tushare_fallback",
+            provider_id="cn_a_market_tushare_fallback",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=("TUSHARE_TOKEN",),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="tushare_kline_fallback",
+                    adapter_id="project.cn_a.market.tushare_fallback",
                     endpoint="daily",
                     source_role=SourceRole.MARKET_DATA,
                     expected_schema_id="cn_a.market.ohlcv.v1",
                     required=False,
                     attempt_required=True,
-                    coverage_group="cn_a_ohlcv",
+                    coverage_group="cn_a_market_kline",
                     coverage_quorum=1,
-                    priority=0,
-                ),
-                _CapabilitySeed(
-                    provider="akshare",
-                    adapter_id="project.cn_a.market",
-                    endpoint="stock_zh_a_hist",
-                    source_role=SourceRole.MARKET_DATA,
-                    expected_schema_id="cn_a.market.ohlcv.v1",
-                    required=False,
-                    attempt_required=True,
-                    coverage_group="cn_a_ohlcv",
-                    coverage_quorum=1,
-                    priority=1,
-                ),
-                _CapabilitySeed(
-                    provider="eastmoney",
-                    adapter_id="project.cn_a.market",
-                    endpoint="quote",
-                    source_role=SourceRole.MARKET_DATA,
-                    expected_schema_id="cn_a.market.ohlcv.v1",
-                    required=False,
-                    attempt_required=False,
-                    priority=2,
+                    priority=12,
                 ),
             ),
         ),
@@ -639,7 +689,7 @@ def _fetch_cn_a(
     if spec.endpoint == "daily":
         token = str(env.get("TUSHARE_TOKEN", "")).strip()
         if not token:
-            raise RuntimeError("tushare daily token missing; set TUSHARE_TOKEN or rely on the configured akshare parallel path")
+            raise RuntimeError("missing credential keys: TUSHARE_TOKEN")
         rows = _call_tushare_daily(
             token=token,
             ts_code=_normalize_cn_symbol_for_tushare(request.ticker),
@@ -654,30 +704,44 @@ def _fetch_cn_a(
             params=params,
             rows=rows,
         )
-    if spec.endpoint == "stock_zh_a_hist":
-        rows = _call_akshare_stock_zh_a_hist(
+    if spec.endpoint == "kline_baidu":
+        rows = _call_baidu_kline_with_ma(
             symbol=_normalize_cn_symbol_for_akshare(request.ticker),
             start_date=request.start_date,
-            end_date=request.end_date,
-            adjust="qfq",
         )
         return _build_fetch(
-            provider="akshare",
+            provider="baidu_kline",
             endpoint=spec.endpoint,
-            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+            source_url="https://finance.pae.baidu.com/selfselect/getstockquotation",
             request_id=request_id,
             params=params,
             rows=rows,
         )
-    if spec.endpoint == "quote":
-        rows = _call_akshare_stock_zh_a_spot(symbol=_normalize_cn_symbol_for_akshare(request.ticker))
+    if spec.endpoint in {"quote_tencent", "orderbook_tencent"}:
+        row = _call_tencent_quote_row(
+            symbol=_normalize_cn_symbol_for_tencent(request.ticker),
+            fallback_date=request.current_date,
+        )
         return _build_fetch(
-            provider="eastmoney",
+            provider=spec.provider,
             endpoint=spec.endpoint,
-            source_url="https://quote.eastmoney.com",
+            source_url="https://qt.gtimg.cn",
             request_id=request_id,
             params=params,
-            rows=rows,
+            rows=(row,),
+        )
+    if spec.endpoint in {"stock_quote", "orderbook"}:
+        row = _call_mootdx_quote_row(
+            symbol=_normalize_cn_symbol_for_mootdx(request.ticker),
+            fallback_date=request.current_date,
+        )
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="tcp://mootdx:7709",
+            request_id=request_id,
+            params=params,
+            rows=(row,),
         )
     raise RuntimeError(f"unsupported cn_a endpoint: {spec.endpoint}")
 
@@ -884,11 +948,11 @@ def _extract_rows(payload: bytes | str | Mapping[str, Any]) -> tuple[Mapping[str
 
 def _normalize_ohlcv_row(row: Mapping[str, Any], *, market: Market) -> dict[str, Any] | None:
     date_text = _date_text(_pick(row, "date", "trade_date", "日期"))
-    open_value = _to_float(_pick(row, "open", "开盘"))
+    open_value = _to_float(_pick(row, "open", "开盘", "今开"))
     high_value = _to_float(_pick(row, "high", "最高"))
     low_value = _to_float(_pick(row, "low", "最低"))
-    close_value = _to_float(_pick(row, "close", "收盘"))
-    volume_value = _to_float(_pick(row, "volume", "vol", "成交量"))
+    close_value = _to_float(_pick(row, "close", "收盘", "最新价", "现价"))
+    volume_value = _to_float(_pick(row, "volume", "vol", "成交量", "总手"))
     if not date_text or open_value is None or high_value is None or low_value is None or close_value is None or volume_value is None:
         return None
     mapped: dict[str, Any] = {
@@ -979,29 +1043,296 @@ def _stable_request_id(*, spec: ProviderCallSpec, params: Mapping[str, Any]) -> 
 
 
 def _normalize_cn_symbol_for_akshare(ticker: str) -> str:
-    token = ticker.strip().upper()
-    if token.startswith("SH") or token.startswith("SZ"):
-        token = token[2:]
-    if token.endswith(".SH") or token.endswith(".SZ"):
-        token = token[: -3]
-    if token.isdigit() and len(token) < 6:
-        token = token.zfill(6)
-    return token
+    code, _market = _normalize_cn_symbol_parts(ticker)
+    return code
+
+
+def _normalize_cn_symbol_for_mootdx(ticker: str) -> str:
+    code, _market = _normalize_cn_symbol_parts(ticker)
+    return code
 
 
 def _normalize_cn_symbol_for_tushare(ticker: str) -> str:
+    code, market = _normalize_cn_symbol_parts(ticker)
+    if market in {"SH", "SZ", "BJ"} and code.isdigit():
+        return f"{code}.{market}"
+    if code.isdigit():
+        if code.startswith("92") or code.startswith(("4", "8")):
+            suffix = "BJ"
+        elif code.startswith(("5", "6", "9")):
+            suffix = "SH"
+        else:
+            suffix = "SZ"
+        return f"{code}.{suffix}"
+    if market in {"SH", "SZ", "BJ"}:
+        return f"{code}.{market}"
+    return code
+
+
+def _normalize_cn_symbol_for_tencent(ticker: str) -> str:
+    code, market = _normalize_cn_symbol_parts(ticker)
+    if market == "SH":
+        return f"sh{code}"
+    if market == "SZ":
+        return f"sz{code}"
+    if market == "BJ":
+        return f"bj{code}"
+    if code.startswith("92") or code.startswith(("4", "8")):
+        return f"bj{code}"
+    if code.startswith(("5", "6", "9")):
+        return f"sh{code}"
+    return f"sz{code}"
+
+
+def _normalize_cn_symbol_parts(ticker: str) -> tuple[str, str | None]:
     token = ticker.strip().upper()
-    if token.startswith("SH") and token[2:].isdigit():
-        return f"{token[2:].zfill(6)}.SH"
-    if token.startswith("SZ") and token[2:].isdigit():
-        return f"{token[2:].zfill(6)}.SZ"
-    if token.endswith(".SH") or token.endswith(".SZ"):
-        code, market = token.split(".", maxsplit=1)
-        return f"{code.zfill(6)}.{market}"
-    if token.isdigit():
-        suffix = "SH" if token.startswith(("5", "6", "9")) else "SZ"
-        return f"{token.zfill(6)}.{suffix}"
-    return token
+    if token.startswith(("SH", "SZ", "BJ")) and token[2:].isdigit():
+        return token[2:].zfill(6), token[:2]
+    if token.endswith((".SH", ".SZ", ".BJ")):
+        code, market = token.rsplit(".", maxsplit=1)
+        normalized_code = code.zfill(6) if code.isdigit() else code
+        return normalized_code, market
+    if token.isdigit() and len(token) < 6:
+        token = token.zfill(6)
+    return token, None
+
+
+def _call_tencent_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
+    response = requests.get(
+        "https://qt.gtimg.cn/q=" + symbol,
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=_HTTP_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    text = response.content.decode("gbk", errors="ignore")
+    matched = re.search(r'="([^"]+)"', text)
+    if matched is None:
+        raise RuntimeError(f"tencent quote parse failed for {symbol}")
+    fields = matched.group(1).split("~")
+    if len(fields) < 49:
+        raise RuntimeError(f"tencent quote payload too short for {symbol}")
+
+    row: dict[str, Any] = {
+        "symbol": symbol,
+        "name": fields[1] if len(fields) > 1 else "",
+        "code": fields[2] if len(fields) > 2 else symbol,
+        "date": _tencent_quote_date(fields=fields, fallback_date=fallback_date),
+        "close": _to_float(fields[3]),
+        "last_close": _to_float(fields[4]),
+        "open": _to_float(fields[5]),
+        "high": _to_float(fields[33] if len(fields) > 33 else None),
+        "low": _to_float(fields[34] if len(fields) > 34 else None),
+        "volume": _to_float(fields[36] if len(fields) > 36 else None),
+        "amount": _to_float(fields[37] if len(fields) > 37 else None),
+        "turnover_pct": _to_float(fields[38] if len(fields) > 38 else None),
+        "pe_ttm": _to_float(fields[39] if len(fields) > 39 else None),
+        "amplitude_pct": _to_float(fields[43] if len(fields) > 43 else None),
+        "mcap_yi": _to_float(fields[44] if len(fields) > 44 else None),
+        "float_mcap_yi": _to_float(fields[45] if len(fields) > 45 else None),
+        "pb": _to_float(fields[46] if len(fields) > 46 else None),
+        "limit_up": _to_float(fields[47] if len(fields) > 47 else None),
+        "limit_down": _to_float(fields[48] if len(fields) > 48 else None),
+    }
+    # Tencent returns bid/ask ladders in [9..28] with alternating price/volume pairs.
+    for level in range(1, 6):
+        bid_price_idx = 9 + (level - 1) * 2
+        bid_volume_idx = bid_price_idx + 1
+        ask_price_idx = 19 + (level - 1) * 2
+        ask_volume_idx = ask_price_idx + 1
+        row[f"bid{level}"] = _to_float(fields[bid_price_idx] if len(fields) > bid_price_idx else None)
+        row[f"bid_vol{level}"] = _to_float(fields[bid_volume_idx] if len(fields) > bid_volume_idx else None)
+        row[f"ask{level}"] = _to_float(fields[ask_price_idx] if len(fields) > ask_price_idx else None)
+        row[f"ask_vol{level}"] = _to_float(fields[ask_volume_idx] if len(fields) > ask_volume_idx else None)
+
+    # The market normalizer expects open/high/low/close/volume to be present.
+    if row["open"] is None:
+        row["open"] = row["close"]
+    if row["high"] is None:
+        row["high"] = row["close"]
+    if row["low"] is None:
+        row["low"] = row["close"]
+    if row["volume"] is None:
+        row["volume"] = 0.0
+    return row
+
+
+def _call_mootdx_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
+    rows = _call_mootdx_quotes(symbols=(symbol,))
+    source_row = _select_mootdx_row(rows=rows, symbol=symbol)
+    close_value = _to_float(_pick(source_row, "price", "close", "现价", "最新价", "last_price"))
+    if close_value is None:
+        raise RuntimeError(f"mootdx quotes row missing close/price for symbol={symbol}")
+    open_value = _to_float(_pick(source_row, "open", "今开"))
+    high_value = _to_float(_pick(source_row, "high", "最高"))
+    low_value = _to_float(_pick(source_row, "low", "最低"))
+    volume_value = _to_float(_pick(source_row, "vol", "volume", "成交量", "总手"))
+    missing_fields: list[str] = []
+    if open_value is None:
+        missing_fields.append("open")
+    if high_value is None:
+        missing_fields.append("high")
+    if low_value is None:
+        missing_fields.append("low")
+    if volume_value is None:
+        missing_fields.append("volume")
+    if missing_fields:
+        missing_rendered = ",".join(missing_fields)
+        raise RuntimeError(f"mootdx quotes row missing required fields for symbol={symbol}: {missing_rendered}")
+    amount_value = _to_float(_pick(source_row, "amount", "turnover", "成交额"))
+    date_text = _date_text(_pick(source_row, "date", "trade_date", "datetime", "servertime", "time")) or fallback_date
+    row = dict(source_row)
+    row.update(
+        {
+            "date": date_text,
+            "open": open_value,
+            "high": high_value,
+            "low": low_value,
+            "close": close_value,
+            "volume": volume_value,
+            "currency": "CNY",
+            "timezone": "Asia/Shanghai",
+        }
+    )
+    if amount_value is not None:
+        row["amount"] = amount_value
+    return row
+
+
+def _call_mootdx_quotes(*, symbols: Sequence[str]) -> tuple[Mapping[str, Any], ...]:
+    try:
+        from mootdx.quotes import Quotes  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("mootdx dependency unavailable: install mootdx to enable cn_a market quote/orderbook") from exc
+
+    try:
+        client = Quotes.factory(market="std")
+    except Exception as exc:
+        joined = ",".join(symbols)
+        raise RuntimeError(f"mootdx quotes client factory failed for symbols={joined}: {exc}") from exc
+    try:
+        response = client.quotes(symbol=list(symbols))
+    except Exception as exc:
+        joined = ",".join(symbols)
+        raise RuntimeError(f"mootdx quotes request failed for symbols={joined}: {exc}") from exc
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    if hasattr(response, "to_dict"):
+        rows = tuple(_df_to_rows(response))
+    elif isinstance(response, Mapping):
+        rows = (response,)
+    elif isinstance(response, Sequence) and not isinstance(response, (str, bytes, bytearray)):
+        rows = tuple(item for item in response if isinstance(item, Mapping))
+    else:
+        rows = ()
+    if not rows:
+        joined = ",".join(symbols)
+        raise RuntimeError(f"mootdx quotes returned empty rows for symbols={joined}")
+    return rows
+
+
+def _select_mootdx_row(*, rows: Sequence[Mapping[str, Any]], symbol: str) -> Mapping[str, Any]:
+    for row in rows:
+        code = _normalize_mootdx_row_code(str(_pick(row, "code", "symbol", "证券代码", "股票代码") or ""))
+        if code == symbol:
+            return row
+    if len(rows) == 1:
+        return rows[0]
+    available = [str(_pick(item, "code", "symbol", "证券代码", "股票代码") or "") for item in rows]
+    raise RuntimeError(f"mootdx quotes row not found for symbol={symbol}; available={available}")
+
+
+def _normalize_mootdx_row_code(value: str) -> str:
+    token = value.strip().upper()
+    if not token:
+        return token
+    code, _market = _normalize_cn_symbol_parts(token)
+    return code
+
+
+def _tencent_quote_date(*, fields: Sequence[str], fallback_date: str) -> str:
+    # Tencent field[30] is usually a compact timestamp like YYYYMMDDHHMMSS.
+    if len(fields) <= 30:
+        return fallback_date
+    compact = re.sub(r"\D", "", fields[30])
+    if len(compact) >= 8:
+        return f"{compact[0:4]}-{compact[4:6]}-{compact[6:8]}"
+    return fallback_date
+
+
+def _call_baidu_kline_with_ma(*, symbol: str, start_date: str) -> tuple[Mapping[str, Any], ...]:
+    params = {
+        "all": "1",
+        "isIndex": "false",
+        "isBk": "false",
+        "isBlock": "false",
+        "isFutures": "false",
+        "isStock": "true",
+        "newFormat": "1",
+        "group": "quotation_kline_ab",
+        "finClientType": "pc",
+        "code": symbol,
+        "start_time": _compact_date(start_date),
+        "ktype": "1",
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/vnd.finance-web.v1+json",
+        "Origin": "https://gushitong.baidu.com",
+        "Referer": "https://gushitong.baidu.com/",
+    }
+    payload = _http_get_json(
+        "https://finance.pae.baidu.com/selfselect/getstockquotation",
+        params=params,
+        headers=headers,
+    )
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("baidu kline payload must be mapping")
+    result = payload.get("Result")
+    if not isinstance(result, Mapping):
+        raise RuntimeError("baidu kline payload missing Result")
+    market_data = result.get("newMarketData")
+    if not isinstance(market_data, Mapping):
+        raise RuntimeError("baidu kline payload missing Result.newMarketData")
+    keys = market_data.get("keys")
+    rows_text = market_data.get("marketData")
+    if not isinstance(keys, Sequence) or isinstance(keys, (str, bytes, bytearray)):
+        raise RuntimeError("baidu kline payload missing newMarketData.keys")
+    if not isinstance(rows_text, str):
+        raise RuntimeError("baidu kline payload missing newMarketData.marketData")
+
+    rows: list[Mapping[str, Any]] = []
+    normalized_keys = [str(item) for item in keys]
+    for raw_row in rows_text.split(";"):
+        line = raw_row.strip()
+        if not line:
+            continue
+        values = line.split(",")
+        if len(values) < len(normalized_keys):
+            continue
+        source = {normalized_keys[index]: values[index] for index in range(len(normalized_keys))}
+        date_text = _date_text(source.get("time") or source.get("date")) or _date_text(source.get("trade_date"))
+        if not date_text:
+            continue
+        row = {
+            "date": date_text,
+            "open": _to_float(source.get("open")),
+            "high": _to_float(source.get("high")),
+            "low": _to_float(source.get("low")),
+            "close": _to_float(source.get("close")),
+            "volume": _to_float(source.get("volume")) or 0.0,
+            "amount": _to_float(source.get("amount")),
+            "ma5avgprice": _to_float(source.get("ma5avgprice")),
+            "ma10avgprice": _to_float(source.get("ma10avgprice")),
+            "ma20avgprice": _to_float(source.get("ma20avgprice")),
+        }
+        rows.append(row)
+    return tuple(rows)
 
 
 def _normalize_hk_symbol_for_tushare(ticker: str) -> str:
@@ -1121,6 +1452,7 @@ def _call_openbb_crypto_price_historical(
     provider: str,
 ) -> tuple[Mapping[str, Any], ...]:
     try:
+        _ensure_openbb_provider_interface_obbjects("CryptoSearch", "CryptoHistorical")
         from openbb import obb  # type: ignore
     except Exception as exc:  # pragma: no cover - dependent on optional runtime
         raise RuntimeError(f"openbb import failed for crypto market adapter: {exc}") from exc
@@ -1131,6 +1463,21 @@ def _call_openbb_crypto_price_historical(
         provider=provider,
     )
     return tuple(_openbb_output_rows(output))
+
+
+def _ensure_openbb_provider_interface_obbjects(*model_names: str) -> None:
+    import openbb_core.app.provider_interface as provider_interface  # type: ignore
+
+    missing = [name for name in model_names if not hasattr(provider_interface, f"OBBject_{name}")]
+    if not missing:
+        return
+
+    generated = provider_interface.ProviderInterface().return_annotations
+    for name in missing:
+        model = generated.get(name)
+        if model is None:
+            raise RuntimeError(f"openbb provider interface missing generated OBBject for {name}")
+        setattr(provider_interface, f"OBBject_{name}", model)
 
 
 def _call_crypto_derivatives(*, symbol: str, env: Mapping[str, str] | None = None) -> tuple[Mapping[str, Any], ...]:

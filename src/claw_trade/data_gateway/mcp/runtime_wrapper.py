@@ -28,6 +28,9 @@ PACK_ENDPOINTS: dict[PackDomain, str] = {
     PackDomain.FUNDAMENTAL: "/api/v1/claw/get_fundamental_pack",
     PackDomain.NEWS: "/api/v1/claw/get_news_pack",
     PackDomain.SOCIAL: "/api/v1/claw/get_social_pack",
+    PackDomain.POLICY: "/api/v1/claw/get_policy_pack",
+    PackDomain.HOT_MONEY: "/api/v1/claw/get_hot_money_pack",
+    PackDomain.LOCKUP: "/api/v1/claw/get_lockup_pack",
 }
 
 PACK_TOOL_NAMES: dict[PackDomain, str] = {
@@ -35,6 +38,9 @@ PACK_TOOL_NAMES: dict[PackDomain, str] = {
     PackDomain.FUNDAMENTAL: "claw_get_fundamental_pack",
     PackDomain.NEWS: "claw_get_news_pack",
     PackDomain.SOCIAL: "claw_get_social_pack",
+    PackDomain.POLICY: "claw_get_policy_pack",
+    PackDomain.HOT_MONEY: "claw_get_hot_money_pack",
+    PackDomain.LOCKUP: "claw_get_lockup_pack",
 }
 
 
@@ -194,6 +200,18 @@ class OpenBBRuntimeWrapper:
         @app.post(PACK_ENDPOINTS[PackDomain.SOCIAL], tags=["claw"])
         def get_social_pack(payload: dict[str, Any] = Body(default_factory=dict)) -> Mapping[str, Any]:
             return _invoke(payload, PackDomain.SOCIAL)
+
+        @app.post(PACK_ENDPOINTS[PackDomain.POLICY], tags=["claw"])
+        def get_policy_pack(payload: dict[str, Any] = Body(default_factory=dict)) -> Mapping[str, Any]:
+            return _invoke(payload, PackDomain.POLICY)
+
+        @app.post(PACK_ENDPOINTS[PackDomain.HOT_MONEY], tags=["claw"])
+        def get_hot_money_pack(payload: dict[str, Any] = Body(default_factory=dict)) -> Mapping[str, Any]:
+            return _invoke(payload, PackDomain.HOT_MONEY)
+
+        @app.post(PACK_ENDPOINTS[PackDomain.LOCKUP], tags=["claw"])
+        def get_lockup_pack(payload: dict[str, Any] = Body(default_factory=dict)) -> Mapping[str, Any]:
+            return _invoke(payload, PackDomain.LOCKUP)
 
         return app
 

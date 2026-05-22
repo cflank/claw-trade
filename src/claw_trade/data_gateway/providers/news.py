@@ -130,6 +130,8 @@ class DefaultNewsAdapter:
         source_url: str
         if self.source_role == SourceRole.OFFICIAL_ORIGINAL:
             rows, source_url = _fetch_news_official(market=request.market, ticker=request.ticker, params=params)
+        elif self.source_role == SourceRole.MARKET_DATA:
+            rows, source_url = _fetch_news_market(market=request.market, endpoint=self.endpoint, params=params)
         elif self.source_role == SourceRole.MACRO_DATA:
             rows, source_url = _fetch_news_macro(market=request.market, params=params)
         elif self.source_role == SourceRole.SEARCH_DISCOVERY:
@@ -217,6 +219,102 @@ def build_default_news_adapters(
         (Market.CRYPTO, "project_official", "announcements"),
     ):
         market_key = market.value.lower()
+        if market == Market.CN_A:
+            adapters.extend(
+                (
+                    DefaultNewsAdapter(
+                        adapter_id="news.eastmoney_company.cn_a",
+                        provider_id="eastmoney_company_news",
+                        market=market,
+                        source_role=SourceRole.MARKET_DATA,
+                        endpoint="stock_news",
+                        expected_schema_id="cn_a.news.company.v1",
+                        provider_kind=ProviderKind.PROJECT_EXTENSION,
+                        provider_config_version=provider_config_version,
+                        rate_limit_policy_id="cn_a.news.company",
+                        cache_ttl_seconds=900,
+                        required=True,
+                        attempt_required=True,
+                        coverage_group="cn_a_news_company",
+                        coverage_quorum=1,
+                        priority=10,
+                        env=env,
+                    ),
+                    DefaultNewsAdapter(
+                        adapter_id="news.cninfo.cn_a",
+                        provider_id="cninfo",
+                        market=market,
+                        source_role=SourceRole.OFFICIAL_ORIGINAL,
+                        endpoint="announcements",
+                        expected_schema_id="cn_a.news.official.v1",
+                        provider_kind=ProviderKind.PROJECT_EXTENSION,
+                        provider_config_version=provider_config_version,
+                        rate_limit_policy_id="cninfo.news",
+                        cache_ttl_seconds=900,
+                        required=True,
+                        attempt_required=True,
+                        coverage_group="cn_a_news_announcement",
+                        coverage_quorum=1,
+                        priority=0,
+                        env=env,
+                    ),
+                    DefaultNewsAdapter(
+                        adapter_id="news.cls_flash.cn_a",
+                        provider_id="cls_flash",
+                        market=market,
+                        source_role=SourceRole.MARKET_DATA,
+                        endpoint="telegraph",
+                        expected_schema_id="cn_a.news.flash.v1",
+                        provider_kind=ProviderKind.PROJECT_EXTENSION,
+                        provider_config_version=provider_config_version,
+                        rate_limit_policy_id="cn_a.news.flash",
+                        cache_ttl_seconds=300,
+                        required=True,
+                        attempt_required=True,
+                        coverage_group="cn_a_news_flash",
+                        coverage_quorum=1,
+                        priority=20,
+                        env=env,
+                    ),
+                    DefaultNewsAdapter(
+                        adapter_id="news.eastmoney_macro.cn_a",
+                        provider_id="eastmoney_global",
+                        market=market,
+                        source_role=SourceRole.MACRO_DATA,
+                        endpoint="global_news",
+                        expected_schema_id="cn_a.news.macro.v1",
+                        provider_kind=ProviderKind.PROJECT_EXTENSION,
+                        provider_config_version=provider_config_version,
+                        rate_limit_policy_id="cn_a.news.macro",
+                        cache_ttl_seconds=900,
+                        required=True,
+                        attempt_required=True,
+                        coverage_group="cn_a_news_macro_global",
+                        coverage_quorum=1,
+                        priority=30,
+                        env=env,
+                    ),
+                    DefaultNewsAdapter(
+                        adapter_id="news.google_news.cn_a",
+                        provider_id="google_news",
+                        market=market,
+                        source_role=SourceRole.SEARCH_DISCOVERY,
+                        endpoint="search",
+                        expected_schema_id="cn_a.news.discovery.v1",
+                        provider_kind=ProviderKind.PROJECT_EXTENSION,
+                        provider_config_version=provider_config_version,
+                        rate_limit_policy_id="cn_a.news.discovery",
+                        cache_ttl_seconds=300,
+                        required=False,
+                        attempt_required=True,
+                        coverage_group="cn_a_news_discovery",
+                        coverage_quorum=1,
+                        priority=50,
+                        env=env,
+                    ),
+                )
+            )
+            continue
         adapters.append(
             DefaultNewsAdapter(
                 adapter_id=f"news.{official_provider}.{market_key}",
@@ -322,6 +420,63 @@ def _fetch_news_official(*, market: Market, ticker: str, params: Mapping[str, An
     if market == Market.CRYPTO:
         return _fetch_crypto_project_official(ticker=ticker)
     raise RuntimeError(f"unsupported market for official news: {market.value}")
+
+
+def _fetch_news_market(*, market: Market, endpoint: str, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    if market == Market.CN_A and endpoint == "stock_news":
+        return _fetch_eastmoney_company_news(
+            ticker=str(params.get("ticker", "")).strip(),
+            company_name=str(params.get("company_name", "")).strip(),
+        )
+    if market == Market.CN_A and endpoint == "telegraph":
+        return _fetch_cls_telegraph(limit=20)
+    raise RuntimeError(
+        f"market news source not configured for market={market.value} endpoint={endpoint}; "
+        "search_discovery cannot replace fact-layer market_data"
+    )
+
+
+def _fetch_eastmoney_company_news(*, ticker: str, company_name: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    raise RuntimeError(
+        "cn_a company news declared as eastmoney_company_news but no approved OpenBB/data_gateway "
+        "adapter sample is wired yet; keep attempt as failed and do not fallback to search_discovery"
+    )
+
+
+def _fetch_cls_telegraph(*, limit: int = 20) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    url = "https://www.cls.cn/nodeapi/telegraphList"
+    payload = _http_get_json(
+        url,
+        params={
+            "app": "CailianpressWeb",
+            "os": "web",
+            "refresh_type": "1",
+            "rn": str(max(1, limit)),
+            "sv": "8.4.6",
+        },
+        headers={
+            **_DEFAULT_HEADERS,
+            "Referer": "https://www.cls.cn/",
+        },
+    )
+    data = payload.get("data") if isinstance(payload, Mapping) else None
+    roll_data = data.get("roll_data") if isinstance(data, Mapping) else None
+    rows: list[Mapping[str, Any]] = []
+    for item in _as_sequence(roll_data):
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        rows.append(
+            {
+                "title": title,
+                "url": item.get("shareurl") or "",
+                "published_at": item.get("ctime") or "",
+                "summary": item.get("content") or item.get("brief") or "",
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return tuple(rows), url
 
 
 def _fetch_news_macro(*, market: Market, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
@@ -576,8 +731,16 @@ def _as_sequence(value: Any) -> Sequence[Any]:
     return ()
 
 
-def _http_get_json(url: str, *, params: Mapping[str, Any] | None = None) -> Any:
-    response = requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+def _http_get_json(
+    url: str,
+    *,
+    params: Mapping[str, Any] | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> Any:
+    merged_headers = dict(_DEFAULT_HEADERS)
+    if headers:
+        merged_headers.update(headers)
+    response = requests.get(url, params=params, headers=merged_headers, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 

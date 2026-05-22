@@ -21,6 +21,7 @@ from .models import (
     OpenVikingFindResult,
     OpenVikingGlobResult,
     OpenVikingGrepResult,
+    OpenVikingRelationsDump,
     OpenVikingRelation,
     OpenVikingRuntimeHealth,
     OpenVikingTree,
@@ -521,6 +522,26 @@ class OpenVikingMaterialPlane:
         matches = tuple(str(item) for item in self._extract_list(raw, "matches"))
         return OpenVikingGlobResult(root_uri=root_uri, pattern=pattern, matches=matches)
 
+    def dump_relations(self, uri: str) -> OpenVikingRelationsDump:
+        try:
+            raw = self._client.relations(uri=uri)
+        except OpenVikingAccessError as exc:
+            return OpenVikingRelationsDump(
+                uri=uri,
+                relations=(),
+                status="blocked",
+                root_cause=f"relations blocked: {exc.category}:{exc}",
+            )
+        relations = tuple(self._normalize_node(item) for item in self._extract_list(raw, "relations"))
+        if relations:
+            return OpenVikingRelationsDump(uri=uri, relations=relations, status="ok", root_cause=_extract_root_cause(raw))
+        return OpenVikingRelationsDump(
+            uri=uri,
+            relations=(),
+            status=_normalize_health(self._extract_value(raw, "status"), unavailable_default=True),
+            root_cause=_extract_root_cause(raw),
+        )
+
     def find_approved_materials(self, run_id: str, query: str) -> OpenVikingFindResult:
         try:
             raw = self._client.find_approved_materials(run_id=run_id, query=query)
@@ -564,8 +585,8 @@ class OpenVikingMaterialPlane:
             reason="L1 approved material metadata index available via control-plane wrappers",
         )
 
-        semantic_reason = "OpenViking semantic/vector queue is disabled in report runtime"
-        semantic_status: HealthStatus = "blocked"
+        semantic_reason = "OpenViking semantic/vector queue status unavailable"
+        semantic_status: HealthStatus = "unavailable"
         try:
             raw = self._client.semantic_index_status(run_id=run_id)
             semantic_status = _normalize_health(self._extract_value(raw, "status"), unavailable_default=True)
@@ -573,16 +594,13 @@ class OpenVikingMaterialPlane:
         except OpenVikingAccessError as exc:
             semantic_status = "unavailable"
             semantic_reason = f"{_call_missing_text('semantic_index_status')}: {exc.category}:{exc}"
-        if semantic_status == "ok":
-            semantic_status = "blocked"
-            semantic_reason = "OpenViking semantic/vector queue is disabled in report runtime; upstream ok status is not accepted as runtime vector proof"
 
         semantic = ContextIndexReceipt(
             uri=root_uri,
             index_level="semantic",
             status=semantic_status,
-            vectorized=False,
-            searchable_by_control_plane=False,
+            vectorized=semantic_status == "ok",
+            searchable_by_control_plane=semantic_status == "ok",
             visible_to_worker=False,
             reason=semantic_reason,
         )

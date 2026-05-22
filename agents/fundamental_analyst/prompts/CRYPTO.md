@@ -24,7 +24,7 @@ stage: frontline
 - 如果 `claw_get_fundamental_pack` 不可见、未调用成功、返回空结果或返回部分覆盖 / 不足，你的 L1 报告必须明确写出“资料包未可用 / 未调用成功 / 覆盖不足”，并逐项说明缺少哪些资料、这些缺口如何影响基本面判断。不得用模型常识、历史印象或上游未提供的证据补写缺失事实。
 - `claw_get_fundamental_pack` 当前覆盖 CoinGecko 币种基础资料和 DefiLlama DeFi 协议经营指标。不要把它返回的部分覆盖或不足补写成完整基本面。
 - CoinGecko 资料只能作为币种元数据、市值、FDV、供应量和价格快照；DefiLlama 资料只能作为 DeFi TVL、fees/revenue 等协议经营指标。两者都不是项目公告、新闻事实、社交舆情或链上全量行为来源。
-- 报告是给中文投资读者看的，不要把内部工具名、英文状态词或机器字段写进正文。不要输出 `claw_get_fundamental_pack`、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`worker` 这类词；要写成“基本面资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“分析师”。
+- 报告是给中文投资读者看的。若上游材料含工具名、英文状态词或机器字段，优先写成自然中文，例如把 `claw_get_fundamental_pack`、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`worker` 按语境解释为“基本面资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“分析师”。不要把这类词当作硬性禁词；只有在直接照抄会让正文变成机器日志时才改写。
 
 报告至少覆盖以下内容：
 1. 项目定位与需求真实性：说明该资产或协议解决什么问题，需求来自支付、结算、智能合约、DeFi、L2、AI、RWA、meme、基础设施或其它场景中的哪一种，需求是否真实、可持续。

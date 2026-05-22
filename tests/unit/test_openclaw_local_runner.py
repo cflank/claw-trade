@@ -8,6 +8,7 @@ import threading
 
 import pytest
 
+from claw_trade.runtime import openclaw_local_runner
 from claw_trade.runtime.openclaw_local_runner import OpenClawLocalRunner, create_default_runner
 
 
@@ -110,6 +111,12 @@ def test_run_worker_calls_gateway_run_single_worker(
     assert seen_commands
     rendered = " ".join(seen_commands[0])
     assert "agent.runSingleWorker" in rendered
+    assert seen_commands[0].count("--scope") == 2
+    scope_indexes = [index for index, value in enumerate(seen_commands[0]) if value == "--scope"]
+    assert [seen_commands[0][index + 1] for index in scope_indexes] == [
+        "operator.read",
+        "operator.write",
+    ]
     params_raw = seen_commands[0][seen_commands[0].index("--params") + 1]
     params = json.loads(params_raw)
     assert params["command"]["worker_id"] == "market_analyst"
@@ -185,6 +192,60 @@ def test_run_worker_custom_gateway_with_token_keeps_url_and_token(
     assert seen_commands[0][seen_commands[0].index("--url") + 1] == "ws://127.0.0.1:28888"
     assert "--token" in seen_commands[0]
     assert seen_commands[0][seen_commands[0].index("--token") + 1] == "token-1"
+
+
+def test_run_worker_approves_local_scope_upgrade_and_retries_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    monkeypatch.setattr(
+        openclaw_local_runner,
+        "_openclaw_device_pairing_dist_module_path",
+        lambda: tmp_path / "device-pairing.js",
+    )
+    runner = OpenClawLocalRunner(gateway_ws_url="ws://127.0.0.1:18789")
+    calls: list[list[str]] = []
+    request_id = "5cbaaad0-5154-497a-8429-9fe8a66d20f3"
+
+    def _fake_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        command = list(cmd)
+        calls.append(command)
+        if command[0] == "node":
+            assert request_id in command
+            assert str(state_dir.resolve()) in command
+            assert json.loads(command[-1]) == ["operator.read", "operator.write"]
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout=json.dumps({"status": "approved"}),
+                stderr="",
+            )
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=1,
+                stdout="",
+                stderr=(
+                    "scope upgrade pending approval "
+                    f"(requestId: {request_id})\n"
+                    "gateway closed (1008): pairing required"
+                ),
+            )
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout=json.dumps({"status": "succeeded", "openclaw_run_id": "oc-1"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    result = runner.run_worker({"worker_id": "market_analyst"})
+
+    assert result["status"] == "succeeded"
+    assert [call[0] for call in calls] == ["openclaw", "node", "openclaw"]
 
 
 def test_probe_and_run_worker_fail_when_gateway_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:

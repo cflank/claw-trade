@@ -131,6 +131,12 @@ def test_single_flight_persistent_lease_allows_only_one_owner_attempt() -> None:
     assert consumer_attempts[0]["shared_from_attempt_id"] == owner_attempts[0]["attempt_id"]
     assert consumer_attempts[0]["raw_ref"] == owner_attempts[0]["raw_ref"]
     assert consumer_attempts[0]["normalized_ref"] == owner_attempts[0]["normalized_ref"]
+    flight_doc = verify_db[OPENBB_SINGLE_FLIGHT_CALLS].find_one({"run_id": run_id, "call_key": spec.call_key})
+    assert flight_doc is not None
+    assert flight_doc["status"] == "succeeded"
+    assert flight_doc["owner_attempt_id"] == owner_attempts[0]["attempt_id"]
+    assert flight_doc["raw_ref"] == owner_attempts[0]["raw_ref"]
+    assert flight_doc["normalized_ref"] == owner_attempts[0]["normalized_ref"]
     verify_db.client.drop_database(db_name)
     verify_client.close()
 

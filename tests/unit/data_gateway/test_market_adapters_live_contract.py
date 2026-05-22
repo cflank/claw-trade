@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+import sys
+
 import pytest
 
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, ProviderStatus
@@ -44,27 +47,45 @@ def _request(market: Market, ticker: str, currency: str) -> PackRequest:
     )
 
 
-def test_cn_a_akshare_fetch_and_normalize_ohlcv(monkeypatch) -> None:
+def test_cn_a_baidu_kline_fetch_and_normalize_ohlcv(monkeypatch) -> None:
     request = _request(Market.CN_A, "600519.SH", "CNY")
-    adapter = next(item for item in build_default_market_adapters(provider_config_version="cfg", env={}) if item.market == Market.CN_A)
-    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_zh_a_hist")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "kline_baidu")
 
-    def _fake_call(*, symbol: str, start_date: str, end_date: str, adjust: str):
+    def _fake_call(*, symbol: str, start_date: str):
         assert symbol == "600519"
         assert start_date == "2026-05-01"
-        assert end_date == "2026-05-17"
-        assert adjust == "qfq"
         return (
-            {"日期": "2026-05-03", "开盘": 101.0, "最高": 103.0, "最低": 99.0, "收盘": 102.0, "成交量": 12345, "成交额": 88888},
-            {"日期": "2026-05-01", "开盘": 98.0, "最高": 100.0, "最低": 97.0, "收盘": 99.0, "成交量": 10000, "成交额": 66666},
+            {
+                "date": "2026-05-03",
+                "open": 101.0,
+                "high": 103.0,
+                "low": 99.0,
+                "close": 102.0,
+                "volume": 12345,
+                "amount": 88888,
+            },
+            {
+                "date": "2026-05-01",
+                "open": 98.0,
+                "high": 100.0,
+                "low": 97.0,
+                "close": 99.0,
+                "volume": 10000,
+                "amount": 66666,
+            },
         )
 
-    monkeypatch.setattr(market_adapters, "_call_akshare_stock_zh_a_hist", _fake_call)
+    monkeypatch.setattr(market_adapters, "_call_baidu_kline_with_ma", _fake_call)
 
     fetch = adapter.fetch(spec, request)
     normalized = adapter.normalize(spec, fetch)
 
-    assert fetch.source_url and "akshare" in fetch.source_url
+    assert fetch.source_url and "finance.pae.baidu.com" in fetch.source_url
     assert fetch.provider_request_id and fetch.provider_request_id.startswith("req_")
     assert normalized.status == ProviderStatus.REMOTE_SUCCESS
     assert normalized.schema_id == "cn_a.market.ohlcv.v1"
@@ -77,15 +98,329 @@ def test_cn_a_akshare_fetch_and_normalize_ohlcv(monkeypatch) -> None:
 
 def test_cn_a_tushare_daily_missing_token_is_explicit_error() -> None:
     request = _request(Market.CN_A, "600519", "CNY")
-    adapter = next(item for item in build_default_market_adapters(provider_config_version="cfg", env={}) if item.market == Market.CN_A)
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market.tushare_fallback"
+    )
     spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "daily")
 
     try:
         adapter.fetch(spec, request)
     except RuntimeError as exc:
-        assert "token missing" in str(exc)
+        assert "missing credential keys: TUSHARE_TOKEN" in str(exc)
     else:
         raise AssertionError("expected explicit token error for cn_a daily")
+
+
+def test_cn_a_tencent_quote_dispatch_uses_prefixed_symbol_and_pb_field(monkeypatch) -> None:
+    request = _request(Market.CN_A, "600519.SH", "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "quote_tencent")
+    seen: dict[str, str] = {}
+
+    def _fake_quote_row(*, symbol: str, fallback_date: str):
+        seen["symbol"] = symbol
+        seen["fallback_date"] = fallback_date
+        return {
+            "date": "2026-05-17",
+            "open": 2000.0,
+            "high": 2010.0,
+            "low": 1990.0,
+            "close": 2005.0,
+            "volume": 10000.0,
+            "amplitude_pct": 7.22,  # field 43
+            "pb": 11.51,  # field 46
+        }
+
+    monkeypatch.setattr(market_adapters, "_call_tencent_quote_row", _fake_quote_row)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert seen == {"symbol": "sh600519", "fallback_date": "2026-05-17"}
+    assert fetch.source_url == "https://qt.gtimg.cn"
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.rows[0]["close"] == 2005.0
+
+
+def test_cn_a_orderbook_tencent_dispatch_is_independent_from_quote(monkeypatch) -> None:
+    request = _request(Market.CN_A, "000001.SZ", "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "orderbook_tencent")
+    seen: dict[str, str] = {}
+
+    def _fake_quote_row(*, symbol: str, fallback_date: str):
+        seen["symbol"] = symbol
+        seen["fallback_date"] = fallback_date
+        return {
+            "date": "2026-05-17",
+            "open": 10.0,
+            "high": 10.1,
+            "low": 9.9,
+            "close": 10.0,
+            "volume": 10000.0,
+        }
+
+    monkeypatch.setattr(market_adapters, "_call_tencent_quote_row", _fake_quote_row)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert spec.endpoint == "orderbook_tencent"
+    assert seen == {"symbol": "sz000001", "fallback_date": "2026-05-17"}
+    assert fetch.source_url == "https://qt.gtimg.cn"
+    assert fetch.payload["provider"] == "tencent_orderbook"
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+
+
+def test_cn_a_symbol_normalization_keeps_sh_sz_and_handles_bj() -> None:
+    assert market_adapters._normalize_cn_symbol_for_tushare("600519.SH") == "600519.SH"
+    assert market_adapters._normalize_cn_symbol_for_tushare("000001.SZ") == "000001.SZ"
+    assert market_adapters._normalize_cn_symbol_for_tencent("600519.SH") == "sh600519"
+    assert market_adapters._normalize_cn_symbol_for_tencent("000001.SZ") == "sz000001"
+    assert market_adapters._normalize_cn_symbol_for_akshare("600519.SH") == "600519"
+    assert market_adapters._normalize_cn_symbol_for_akshare("000001.SZ") == "000001"
+    assert market_adapters._normalize_cn_symbol_for_mootdx("600519.SH") == "600519"
+    assert market_adapters._normalize_cn_symbol_for_mootdx("000001.SZ") == "000001"
+
+    assert market_adapters._normalize_cn_symbol_for_tushare("830799.BJ") == "830799.BJ"
+    assert market_adapters._normalize_cn_symbol_for_tushare("430047.BJ") == "430047.BJ"
+    assert market_adapters._normalize_cn_symbol_for_tencent("830799.BJ") == "bj830799"
+    assert market_adapters._normalize_cn_symbol_for_tencent("430047.BJ") == "bj430047"
+    assert market_adapters._normalize_cn_symbol_for_akshare("830799.BJ") == "830799"
+    assert market_adapters._normalize_cn_symbol_for_akshare("430047.BJ") == "430047"
+    assert market_adapters._normalize_cn_symbol_for_mootdx("830799.BJ") == "830799"
+    assert market_adapters._normalize_cn_symbol_for_mootdx("430047.BJ") == "430047"
+
+
+@pytest.mark.parametrize(
+    ("ticker", "expected_symbol"),
+    (
+        ("600519.SH", "600519"),
+        ("000001.SZ", "000001"),
+        ("830799.BJ", "830799"),
+    ),
+)
+def test_cn_a_mootdx_quote_and_orderbook_dispatch_with_6digit_symbol(monkeypatch, ticker: str, expected_symbol: str) -> None:
+    request = _request(Market.CN_A, ticker, "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    quote_spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_quote")
+    orderbook_spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "orderbook")
+    seen: list[tuple[str, str]] = []
+
+    def _fake_mootdx_quote_row(*, symbol: str, fallback_date: str):
+        seen.append((symbol, fallback_date))
+        return {
+            "symbol": symbol,
+            "date": fallback_date,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.5,
+            "close": 100.5,
+            "volume": 1000.0,
+            "amount": 9000.0,
+        }
+
+    monkeypatch.setattr(market_adapters, "_call_mootdx_quote_row", _fake_mootdx_quote_row)
+
+    quote_fetch = adapter.fetch(quote_spec, request)
+    orderbook_fetch = adapter.fetch(orderbook_spec, request)
+    quote_normalized = adapter.normalize(quote_spec, quote_fetch)
+    orderbook_normalized = adapter.normalize(orderbook_spec, orderbook_fetch)
+
+    assert seen == [
+        (expected_symbol, request.current_date),
+        (expected_symbol, request.current_date),
+    ]
+    assert quote_fetch.source_url == "tcp://mootdx:7709"
+    assert orderbook_fetch.source_url == "tcp://mootdx:7709"
+    assert quote_fetch.payload["provider"] == "mootdx_quote"
+    assert orderbook_fetch.payload["provider"] == "mootdx_orderbook"
+    assert quote_normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert orderbook_normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert quote_normalized.rows[0]["close"] == 100.5
+    assert orderbook_normalized.rows[0]["volume"] == 1000.0
+
+
+def _install_fake_mootdx_module(monkeypatch, *, factory) -> None:  # type: ignore[no-untyped-def]
+    quotes_module = SimpleNamespace(Quotes=SimpleNamespace(factory=factory))
+    monkeypatch.setitem(sys.modules, "mootdx", SimpleNamespace(quotes=quotes_module))
+    monkeypatch.setitem(sys.modules, "mootdx.quotes", quotes_module)
+
+
+def test_call_mootdx_quotes_import_failure_has_explicit_error(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "mootdx", None)
+    monkeypatch.delitem(sys.modules, "mootdx.quotes", raising=False)
+
+    with pytest.raises(RuntimeError, match="mootdx dependency unavailable"):
+        market_adapters._call_mootdx_quotes(symbols=("600519",))
+
+
+def test_call_mootdx_quotes_factory_failure_has_explicit_error(monkeypatch) -> None:
+    def _factory(*, market: str):
+        assert market == "std"
+        raise RuntimeError("factory boom")
+
+    _install_fake_mootdx_module(monkeypatch, factory=_factory)
+
+    with pytest.raises(RuntimeError, match=r"mootdx quotes client factory failed.*factory boom"):
+        market_adapters._call_mootdx_quotes(symbols=("600519",))
+
+
+def test_call_mootdx_quotes_accepts_dataframe_like_response(monkeypatch) -> None:
+    class _Frame:
+        index = SimpleNamespace(name=None)
+
+        def to_dict(self, orient: str):  # type: ignore[no-untyped-def]
+            assert orient == "records"
+            return [{"code": "600519", "price": 101.5}]
+
+    class _Client:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def quotes(self, *, symbol: list[str]):  # type: ignore[no-untyped-def]
+            assert symbol == ["600519"]
+            return _Frame()
+
+        def close(self) -> None:
+            self.closed = True
+
+    client = _Client()
+
+    def _factory(*, market: str):
+        assert market == "std"
+        return client
+
+    _install_fake_mootdx_module(monkeypatch, factory=_factory)
+
+    rows = market_adapters._call_mootdx_quotes(symbols=("600519",))
+
+    assert rows == ({"code": "600519", "price": 101.5},)
+    assert client.closed is True
+
+
+def test_call_mootdx_quotes_accepts_mapping_response(monkeypatch) -> None:
+    class _Client:
+        def quotes(self, *, symbol: list[str]):  # type: ignore[no-untyped-def]
+            assert symbol == ["600519"]
+            return {"code": "600519", "price": 101.5}
+
+        def close(self) -> None:
+            return None
+
+    def _factory(*, market: str):
+        assert market == "std"
+        return _Client()
+
+    _install_fake_mootdx_module(monkeypatch, factory=_factory)
+
+    rows = market_adapters._call_mootdx_quotes(symbols=("600519",))
+
+    assert rows == ({"code": "600519", "price": 101.5},)
+
+
+def test_call_mootdx_quotes_empty_rows_raise_runtime_error(monkeypatch) -> None:
+    class _Client:
+        def quotes(self, *, symbol: list[str]):  # type: ignore[no-untyped-def]
+            assert symbol == ["600519"]
+            return ["not-a-mapping"]
+
+        def close(self) -> None:
+            return None
+
+    def _factory(*, market: str):
+        assert market == "std"
+        return _Client()
+
+    _install_fake_mootdx_module(monkeypatch, factory=_factory)
+
+    with pytest.raises(RuntimeError, match="mootdx quotes returned empty rows for symbols=600519"):
+        market_adapters._call_mootdx_quotes(symbols=("600519",))
+
+
+def test_call_mootdx_quote_row_multi_rows_without_symbol_match_fails(monkeypatch) -> None:
+    def _fake_quotes(*, symbols: tuple[str, ...]):
+        assert symbols == ("600519",)
+        return (
+            {"code": "000001", "price": 11.0, "open": 10.0, "high": 12.0, "low": 9.0, "vol": 100.0},
+            {"code": "600000", "price": 12.0, "open": 11.0, "high": 13.0, "low": 10.0, "vol": 200.0},
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_mootdx_quotes", _fake_quotes)
+
+    with pytest.raises(RuntimeError, match="mootdx quotes row not found for symbol=600519"):
+        market_adapters._call_mootdx_quote_row(symbol="600519", fallback_date="2026-05-17")
+
+
+def test_call_mootdx_quote_row_missing_core_fields_fails_instead_of_synthesizing(monkeypatch) -> None:
+    def _fake_quotes(*, symbols: tuple[str, ...]):
+        assert symbols == ("600519",)
+        return (
+            {
+                "code": "600519",
+                "price": 101.5,
+                "date": "2026-05-17",
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_mootdx_quotes", _fake_quotes)
+
+    with pytest.raises(RuntimeError, match="missing required fields for symbol=600519: open,high,low,volume"):
+        market_adapters._call_mootdx_quote_row(symbol="600519", fallback_date="2026-05-17")
+
+
+def test_tencent_quote_row_uses_field_43_as_amplitude_and_46_as_pb(monkeypatch) -> None:
+    fields = [""] * 60
+    fields[1] = "贵州茅台"
+    fields[2] = "600519"
+    fields[3] = "2005.00"
+    fields[4] = "2000.00"
+    fields[5] = "1998.00"
+    fields[9] = "2004.90"
+    fields[10] = "120"
+    fields[19] = "2005.10"
+    fields[20] = "140"
+    fields[30] = "20260517150000"
+    fields[33] = "2010.00"
+    fields[34] = "1990.00"
+    fields[36] = "12345"
+    fields[37] = "45678"
+    fields[43] = "7.22"
+    fields[46] = "11.51"
+    payload = 'v_sh600519="' + "~".join(fields) + '";'
+
+    class _Response:
+        content = payload.encode("gbk")
+
+        def raise_for_status(self) -> None:
+            return None
+
+    def _fake_get(url: str, headers, timeout):  # type: ignore[no-untyped-def]
+        assert url == "https://qt.gtimg.cn/q=sh600519"
+        assert timeout == 15
+        assert "User-Agent" in headers
+        return _Response()
+
+    monkeypatch.setattr(market_adapters.requests, "get", _fake_get)
+
+    row = market_adapters._call_tencent_quote_row(symbol="sh600519", fallback_date="2026-05-17")
+    assert row["amplitude_pct"] == pytest.approx(7.22)
+    assert row["pb"] == pytest.approx(11.51)
+    assert row["date"] == "2026-05-17"
 
 
 def test_cn_a_tushare_daily_uses_proxy_pro_bar_initializer(monkeypatch) -> None:
@@ -229,6 +564,18 @@ def test_crypto_openbb_yfinance_fetch_and_normalize(monkeypatch) -> None:
     assert normalized.rows[0]["date"] == "2026-05-16"
     assert normalized.rows[1]["date"] == "2026-05-17"
     assert normalized.rows[0]["timezone"] == "UTC"
+
+
+def test_openbb_crypto_provider_interface_compat_registers_generated_obbjects(monkeypatch) -> None:
+    import openbb_core.app.provider_interface as provider_interface
+
+    monkeypatch.delattr(provider_interface, "OBBject_CryptoSearch", raising=False)
+    monkeypatch.delattr(provider_interface, "OBBject_CryptoHistorical", raising=False)
+
+    market_adapters._ensure_openbb_provider_interface_obbjects("CryptoSearch", "CryptoHistorical")
+
+    assert hasattr(provider_interface, "OBBject_CryptoSearch")
+    assert hasattr(provider_interface, "OBBject_CryptoHistorical")
 
 
 def test_crypto_capability_plan_is_not_yfinance_only() -> None:

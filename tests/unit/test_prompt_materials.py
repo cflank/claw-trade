@@ -522,6 +522,9 @@ def test_cn_a_report_polisher_prompt_materials_inline_full_final_report_inputs(t
             ("fundamental_analyst", Stage.FRONTLINE): "# 基本面分析\n完整基本面报告正文",
             ("news_analyst", Stage.FRONTLINE): "# 新闻分析\n完整新闻报告正文",
             ("social_analyst", Stage.FRONTLINE): "# 社交舆情\n完整舆情报告正文",
+            ("policy_analyst", Stage.FRONTLINE): "# 政策分析\n完整政策报告正文",
+            ("hot_money_tracker", Stage.FRONTLINE): "# 游资资金\n完整游资资金报告正文",
+            ("lockup_watcher", Stage.FRONTLINE): "# 限售筹码\n完整筹码报告正文",
             ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 多方观点\n完整多方报告正文",
             ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 空方观点\n完整空方报告正文",
             ("research_manager", Stage.INVESTMENT_DECISION): "# 投资计划\n完整研究经理报告正文",
@@ -547,11 +550,13 @@ def test_cn_a_report_polisher_prompt_materials_inline_full_final_report_inputs(t
             stage=Stage.FINAL_REPORT,
             worker_id="report_polisher",
             run_id=run_id,
+            market="CN_A",
         ),
         openviking_read_capabilities=manifest.capabilities_for_worker_call(
             stage=Stage.FINAL_REPORT,
             worker_id="report_polisher",
             run_id=run_id,
+            market="CN_A",
         ),
     )
 
@@ -559,6 +564,7 @@ def test_cn_a_report_polisher_prompt_materials_inline_full_final_report_inputs(t
 
     assert result.ok is True
     assert result.call is not None
+    assert len(result.call.upstream_materials) == 15
     prompt_vars = result.call.prompt_runtime_vars
     assert prompt_vars["portfolio_manager_report"] == "# 组合经理\n完整组合经理最终裁决正文"
     assert prompt_vars["market_analyst_report"] == "# 市场分析\n完整市场报告正文"
@@ -566,8 +572,16 @@ def test_cn_a_report_polisher_prompt_materials_inline_full_final_report_inputs(t
     assert prompt_vars["news_analyst_report"] == "# 新闻分析\n完整新闻报告正文"
     assert prompt_vars["social_analyst_report"] == "# 社交舆情\n完整舆情报告正文"
     assert prompt_vars["trader_report"] == "# 交易决策\n完整交易员报告正文"
+    assert "### 政策分析师\n# 政策分析\n完整政策报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "### 游资资金跟踪员\n# 游资资金\n完整游资资金报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "### 限售筹码观察员\n# 限售筹码\n完整筹码报告正文" in prompt_vars["supporting_worker_reports"]
     assert "### 多头研究员\n# 多方观点\n完整多方报告正文" in prompt_vars["supporting_worker_reports"]
     assert "### 风险整合方\n# 中性风险\n完整中性报告正文" in prompt_vars["supporting_worker_reports"]
+    final_prompt = _render_report_polisher_profile_prompt("CN_A", result.call)
+    assert "# 政策分析\n完整政策报告正文" in final_prompt
+    assert "# 游资资金\n完整游资资金报告正文" in final_prompt
+    assert "# 限售筹码\n完整筹码报告正文" in final_prompt
+    assert final_prompt.index("# 政策分析\n完整政策报告正文") < final_prompt.index("# 多方观点\n完整多方报告正文")
     _assert_no_model_visible_protocol(prompt_vars)
 
 
@@ -612,11 +626,13 @@ def test_crypto_report_polisher_prompt_materials_inline_full_final_report_inputs
             stage=Stage.FINAL_REPORT,
             worker_id="report_polisher",
             run_id=run_id,
+            market="CRYPTO",
         ),
         openviking_read_capabilities=manifest.capabilities_for_worker_call(
             stage=Stage.FINAL_REPORT,
             worker_id="report_polisher",
             run_id=run_id,
+            market="CRYPTO",
         ),
     )
 
@@ -624,6 +640,7 @@ def test_crypto_report_polisher_prompt_materials_inline_full_final_report_inputs
 
     assert result.ok is True
     assert result.call is not None
+    assert len(result.call.upstream_materials) == 12
     prompt_vars = result.call.prompt_runtime_vars
     assert prompt_vars["portfolio_manager_report"] == "# 组合经理\n完整 CRYPTO 组合经理最终裁决正文"
     assert prompt_vars["market_analyst_report"] == "# 市场结构\n完整 CRYPTO 市场报告正文"
@@ -633,6 +650,9 @@ def test_crypto_report_polisher_prompt_materials_inline_full_final_report_inputs
     assert prompt_vars["trader_report"] == "# 交易决策\n完整交易员报告正文"
     assert "### 看涨研究员\n# 看涨观点\n完整看涨报告正文" in prompt_vars["supporting_worker_reports"]
     assert "### 风险整合方\n# 中性风险\n完整中性报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "政策分析师" not in prompt_vars["supporting_worker_reports"]
+    assert "游资资金跟踪员" not in prompt_vars["supporting_worker_reports"]
+    assert "限售筹码观察员" not in prompt_vars["supporting_worker_reports"]
     assert "市场结构与技术指标分析段" in prompt_vars["chart_assets_note"]
     _assert_no_model_visible_protocol(prompt_vars)
 
@@ -673,11 +693,13 @@ def test_us_report_polisher_prompt_materials_inline_full_final_report_inputs(tmp
             stage=Stage.FINAL_REPORT,
             worker_id="report_polisher",
             run_id=run_id,
+            market="US",
         ),
         openviking_read_capabilities=manifest.capabilities_for_worker_call(
             stage=Stage.FINAL_REPORT,
             worker_id="report_polisher",
             run_id=run_id,
+            market="US",
         ),
     )
 
@@ -685,6 +707,7 @@ def test_us_report_polisher_prompt_materials_inline_full_final_report_inputs(tmp
 
     assert result.ok is True
     assert result.call is not None
+    assert len(result.call.upstream_materials) == 12
     prompt_vars = result.call.prompt_runtime_vars
     assert prompt_vars["portfolio_manager_report"] == "# Portfolio Manager\nFull PM final decision body"
     assert prompt_vars["market_analyst_report"] == "# Market\nFull market report body"
@@ -694,7 +717,75 @@ def test_us_report_polisher_prompt_materials_inline_full_final_report_inputs(tmp
     assert prompt_vars["trader_report"] == "# Trading Plan\nFull trader body"
     assert "### Bull Researcher\n# Bull\nFull bull report body" in prompt_vars["supporting_worker_reports"]
     assert "### Neutral Risk Analyst\n# Neutral Risk\nFull neutral risk body" in prompt_vars["supporting_worker_reports"]
+    assert "政策分析师" not in prompt_vars["supporting_worker_reports"]
+    assert "游资资金跟踪员" not in prompt_vars["supporting_worker_reports"]
+    assert "限售筹码观察员" not in prompt_vars["supporting_worker_reports"]
     assert "technical market analysis section" in prompt_vars["chart_assets_note"]
+    _assert_no_model_visible_protocol(prompt_vars)
+
+
+def test_hk_report_polisher_prompt_materials_do_not_require_cn_a_frontline(tmp_path: Path) -> None:
+    run_id = "run-hk-report-polisher-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# 港股市场\n完整 HK 市场报告正文",
+            ("fundamental_analyst", Stage.FRONTLINE): "# 港股基本面\n完整 HK 基本面报告正文",
+            ("news_analyst", Stage.FRONTLINE): "# 港股新闻\n完整 HK 新闻报告正文",
+            ("social_analyst", Stage.FRONTLINE): "# 港股情绪\n完整 HK 情绪报告正文",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 多方\n完整 HK 多方报告正文",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 空方\n完整 HK 空方报告正文",
+            ("research_manager", Stage.INVESTMENT_DECISION): "# 投资计划\n完整 HK 研究经理正文",
+            ("trader", Stage.TRADE_DECISION): "# 交易计划\n完整 HK 交易员正文",
+            ("risk_challenger", Stage.RISK_DEBATE): "# 激进风险\n完整 HK 激进风险正文",
+            ("risk_guardian", Stage.RISK_DEBATE): "# 保守风险\n完整 HK 保守风险正文",
+            ("risk_moderator", Stage.RISK_DEBATE): "# 中性风险\n完整 HK 中性风险正文",
+            ("portfolio_manager", Stage.PORTFOLIO_DECISION): "# 组合经理\n完整 HK PM 最终裁决正文",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="report_polisher",
+        profile="HK",
+        market="HK",
+        ticker="0700.HK",
+        company_name="腾讯控股",
+        currency="HKD",
+        currency_symbol="HK$",
+        stage=Stage.FINAL_REPORT,
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.FINAL_REPORT,
+            worker_id="report_polisher",
+            run_id=run_id,
+            market="HK",
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.FINAL_REPORT,
+            worker_id="report_polisher",
+            run_id=run_id,
+            market="HK",
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    assert len(result.call.upstream_materials) == 12
+    prompt_vars = result.call.prompt_runtime_vars
+    assert prompt_vars["market_analyst_report"] == "# 港股市场\n完整 HK 市场报告正文"
+    assert "### 多头研究员\n# 多方\n完整 HK 多方报告正文" in prompt_vars["supporting_worker_reports"]
+    assert "政策分析师" not in prompt_vars["supporting_worker_reports"]
+    assert "游资资金跟踪员" not in prompt_vars["supporting_worker_reports"]
+    assert "限售筹码观察员" not in prompt_vars["supporting_worker_reports"]
     _assert_no_model_visible_protocol(prompt_vars)
 
 
@@ -769,6 +860,22 @@ def _assert_no_model_visible_protocol(prompt_vars: dict[str, str]) -> None:
     for value in prompt_vars.values():
         for token in _MODEL_VISIBLE_PROTOCOL_TOKENS:
             assert token not in value
+
+
+def _render_report_polisher_profile_prompt(profile: str, call: WorkerCall) -> str:
+    template = (Path("agents") / "report_polisher" / "prompts" / f"{profile}.md").read_text(encoding="utf-8")
+    runtime_vars = {
+        "ticker": call.ticker,
+        "company_name": call.company_name,
+        "market": call.market,
+        "currency": call.currency,
+        "currency_symbol": call.currency_symbol,
+        "current_date": call.current_date,
+        "start_date": call.start_date,
+        "end_date": call.end_date,
+        **call.prompt_runtime_vars,
+    }
+    return template.format(**runtime_vars)
 
 
 def _manifest_with_texts(

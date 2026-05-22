@@ -26,7 +26,15 @@ from claw_trade.data_gateway.models import (
 )
 from claw_trade.data_gateway.packs import service as service_module
 from claw_trade.data_gateway.packs.service import DomainPackService
+from claw_trade.data_gateway.providers import market_adapters as market_adapters_module
+from claw_trade.data_gateway.providers.defaults import (
+    build_default_provider_registry,
+    default_provider_config_version,
+    load_default_system_capabilities,
+)
 from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
+from claw_trade.data_gateway.providers.market_adapters import build_default_market_adapters
+from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner
 from claw_trade.data_gateway.store.attempts import MongoAttemptStore
 from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
 from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
@@ -329,6 +337,129 @@ def test_domain_pack_service_routes_market_success_to_market_builder() -> None:
     assert pack.compact_facts["ohlcv_row_count"] == 24
     assert {attempt.status for attempt in pack.attempts} == {ProviderStatus.REMOTE_SUCCESS}
     assert "远端获取成功" in pack.reader_brief_md
+
+
+def test_domain_pack_service_cn_a_tushare_missing_token_keeps_gap_but_not_blocked_when_kline_group_covered(
+    monkeypatch,
+) -> None:
+    request = PackRequest(
+        run_id="run-cn-a-market",
+        call_id="call-cn-a-market",
+        worker_id="market_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-04-01",
+        end_date="2026-05-17",
+        current_date="2026-05-17",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    capabilities = load_default_system_capabilities()
+    provider_config_version = default_provider_config_version(capabilities)
+    registry = build_default_provider_registry()
+    adapters = tuple(
+        item
+        for item in build_default_market_adapters(provider_config_version=provider_config_version, env={})
+        if getattr(item, "market", None) == Market.CN_A
+    )
+    planner = RunProviderPlanner(adapters_by_id={item.adapter_id: item for item in adapters})
+    run_plan = planner.build_run_plan(
+        run_id=request.run_id,
+        market=request.market,
+        ticker=request.ticker,
+        company_name=request.company_name,
+        currency=request.currency,
+        profile=request.profile,
+        current_date=request.current_date,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        domains=(PackDomain.MARKET,),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+    assert any(gap.reason == DataGapReason.CREDENTIAL_MISSING for gap in run_plan.initial_gaps)
+
+    def _fake_tencent_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
+        return {
+            "symbol": symbol,
+            "date": fallback_date,
+            "open": 2000.0,
+            "high": 2010.0,
+            "low": 1990.0,
+            "close": 2005.0,
+            "volume": 10000.0,
+        }
+
+    def _fake_baidu_rows(*, symbol: str, start_date: str) -> tuple[Mapping[str, Any], ...]:
+        del symbol, start_date
+        return tuple(
+            {
+                "date": f"2026-04-{day:02d}",
+                "open": 1500 + day,
+                "high": 1510 + day,
+                "low": 1490 + day,
+                "close": 1505 + day,
+                "volume": 1000000 + day,
+            "amount": 2000000 + day,
+        }
+        for day in range(1, 26)
+    )
+
+    def _fake_mootdx_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
+        del symbol, fallback_date
+        raise RuntimeError("mootdx tcp 7709 unavailable in test fixture")
+
+    monkeypatch.setattr(market_adapters_module, "_call_mootdx_quote_row", _fake_mootdx_row)
+    monkeypatch.setattr(market_adapters_module, "_call_tencent_quote_row", _fake_tencent_row)
+    monkeypatch.setattr(market_adapters_module, "_call_baidu_kline_with_ma", _fake_baidu_rows)
+
+    pack = DomainPackService(settings=object(), adapters=adapters).get_pack(request, run_plan)
+
+    assert pack.readiness.status.value != "blocked"
+    assert pack.readiness.coverage["group:cn_a_market_kline"] == "1/1"
+    assert pack.readiness.coverage["group:cn_a_market_quote"] == "1/1"
+    assert pack.readiness.coverage["group:cn_a_market_orderbook"] == "1/1"
+    assert any(gap.reason == DataGapReason.CREDENTIAL_MISSING for gap in pack.data_gaps)
+    assert any(
+        "TUSHARE_TOKEN" in gap.root_cause
+        for gap in pack.data_gaps
+        if gap.reason == DataGapReason.CREDENTIAL_MISSING
+    )
+    assert any(
+        gap.reason == DataGapReason.PROVIDER_UNAVAILABLE
+        and "mootdx tcp 7709 unavailable in test fixture" in gap.root_cause
+        and "mootdx_quote" in gap.provider_candidates
+        for gap in pack.data_gaps
+    )
+    assert any(
+        gap.reason == DataGapReason.PROVIDER_UNAVAILABLE
+        and "mootdx tcp 7709 unavailable in test fixture" in gap.root_cause
+        and "mootdx_orderbook" in gap.provider_candidates
+        for gap in pack.data_gaps
+    )
+    assert any(
+        attempt.provider == "tushare_kline_fallback" and attempt.status == ProviderStatus.CREDENTIAL_MISSING
+        for attempt in pack.attempts
+    )
+    assert any(
+        attempt.provider == "mootdx_quote" and attempt.status == ProviderStatus.REMOTE_ERROR
+        for attempt in pack.attempts
+    )
+    assert any(
+        attempt.provider == "mootdx_orderbook" and attempt.status == ProviderStatus.REMOTE_ERROR
+        for attempt in pack.attempts
+    )
+    assert any(
+        attempt.provider == "tencent_quote" and attempt.status == ProviderStatus.REMOTE_SUCCESS
+        for attempt in pack.attempts
+    )
+    assert any(
+        attempt.provider == "tencent_orderbook" and attempt.status == ProviderStatus.REMOTE_SUCCESS
+        for attempt in pack.attempts
+    )
 
 
 def test_domain_pack_service_market_success_generates_chart_images(tmp_path: Path) -> None:

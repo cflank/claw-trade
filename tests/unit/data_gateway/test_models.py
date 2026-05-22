@@ -20,6 +20,7 @@ from claw_trade.data_gateway.models import (
     PackRequest,
     PrioritySource,
     ProviderAttempt,
+    ProviderCapability,
     ProviderCallSpec,
     ProviderKind,
     ProviderResult,
@@ -124,6 +125,64 @@ def test_cache_status_cannot_be_remote_success() -> None:
             _attempt(status=ProviderStatus.REMOTE_SUCCESS, cache_status=cache_status)
 
 
+def test_cn_a_only_domains_reject_non_cn_a_market() -> None:
+    with pytest.raises(ValueError, match="only approved for CN_A"):
+        PackRequest(
+            **{
+                **_request().__dict__,
+                "market": Market.US,
+                "domain": PackDomain.POLICY,
+            }
+        )
+
+    with pytest.raises(ValueError, match="only approved for CN_A"):
+        ProviderCallSpec(
+            **{
+                **_spec().__dict__,
+                "market": Market.HK,
+                "domain": PackDomain.HOT_MONEY,
+            }
+        )
+
+    with pytest.raises(ValueError, match="only approved for CN_A"):
+        ProviderCapability(
+            provider="akshare",
+            adapter_id="project.akshare.policy",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.US,
+            domain=PackDomain.POLICY,
+            endpoint="policy_events",
+            source_role=SourceRole.OFFICIAL_ORIGINAL,
+            expected_schema_id="policy.events.v1",
+            license_policy_id="personal_research",
+            credential_requirements=(),
+            rate_limit_policy_id="default",
+            cache_ttl_seconds=300,
+            required=True,
+            attempt_required=True,
+            coverage_group="cn_a_policy_official",
+            coverage_quorum=1,
+            priority=0,
+            priority_source=PrioritySource.SYSTEM_DEFAULT,
+        )
+
+    with pytest.raises(ValueError, match="only approved for CN_A"):
+        RunProviderPlan(
+            run_id="run-1",
+            provider_config_version="cfg-v1",
+            market=Market.US,
+            ticker="AAPL",
+            domains=(PackDomain.LOCKUP,),
+            call_specs=(),
+            shared_call_keys=(),
+            cache_keys=(),
+            rate_limit_plan=(),
+            initial_gaps=(),
+            generated_at="2026-05-17T10:00:00+00:00",
+            remote_prefetch_allowed=False,
+        )
+
+
 def test_runtime_enum_values_must_use_contract_enums() -> None:
     with pytest.raises(ValueError):
         PackRequest(
@@ -156,6 +215,19 @@ def test_runtime_enum_values_must_use_contract_enums() -> None:
             domain=PackDomain.MARKET,
             severity=GapSeverity.FAIL,
             reason="cache_error",
+            field_path="market.close",
+            provider_candidates=("tushare",),
+            attempt_ids=("attempt-1",),
+            root_cause="cache error",
+            next_action="retry remote provider",
+        )
+
+    with pytest.raises(ValueError):
+        DataGap(
+            gap_id="gap-2",
+            domain=PackDomain.MARKET,
+            severity=GapSeverity.FAIL,
+            reason=ProviderStatus.CACHE_ERROR,
             field_path="market.close",
             provider_candidates=("tushare",),
             attempt_ids=("attempt-1",),
@@ -258,6 +330,17 @@ def test_license_blocked_and_shared_result_field_closure() -> None:
     )
     assert blocked_gap.reason == DataGapReason.LICENSE_BLOCKED
 
+    official_original_attempt = ProviderAttempt(
+        **{
+            **_attempt(status=ProviderStatus.CACHE_MISS, cache_status=ProviderStatus.CACHE_MISS).__dict__,
+            "source_role": SourceRole.OFFICIAL_ORIGINAL,
+            "coverage_group": "cn_a_news_announcement",
+            "required": True,
+            "attempt_required": True,
+        }
+    )
+    assert official_original_attempt.source_role == SourceRole.OFFICIAL_ORIGINAL
+
 
 def test_reader_brief_is_worker_primary_material() -> None:
     req = _request()
@@ -340,3 +423,26 @@ def test_reader_brief_is_worker_primary_material() -> None:
     )
     assert pack.worker_primary_material_md == pack.reader_brief_md
     assert "openbb_runtime_marker" not in pack.worker_primary_material_md
+
+    with pytest.raises(ValueError):
+        ProviderResult(
+            **{
+                **result.__dict__,
+                "status": ProviderStatus.REMOTE_SUCCESS,
+                "cache_receipt": CacheReceipt(
+                    cache_key="cache-1",
+                    provider="tushare",
+                    endpoint="daily",
+                    status=ProviderStatus.CACHE_HIT,
+                    hit=True,
+                    stale=False,
+                    cached_empty=False,
+                    created_at="2026-05-17T10:00:00+00:00",
+                    expires_at="2026-05-17T10:05:00+00:00",
+                    ttl_seconds=300,
+                    evidence_hash="sha256:abc",
+                    raw_ref="raw://attempt-1",
+                    normalized_ref="norm://attempt-1",
+                ),
+            }
+        )

@@ -10,7 +10,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def test_openbb_mcp_exposes_only_four_pack_tools_and_routes() -> None:
+def test_openbb_mcp_exposes_only_seven_pack_tools_and_routes() -> None:
     repo = _repo_root()
     script = textwrap.dedent(
         """
@@ -94,13 +94,19 @@ def test_openbb_mcp_exposes_only_four_pack_tools_and_routes() -> None:
     result = json.loads(lines[-1])
     assert result["routes"] == [
         "/api/v1/claw/get_fundamental_pack",
+        "/api/v1/claw/get_hot_money_pack",
+        "/api/v1/claw/get_lockup_pack",
         "/api/v1/claw/get_market_pack",
         "/api/v1/claw/get_news_pack",
+        "/api/v1/claw/get_policy_pack",
         "/api/v1/claw/get_social_pack",
     ]
     assert result["tools"] == [
         "claw_get_fundamental_pack",
+        "claw_get_hot_money_pack",
+        "claw_get_lockup_pack",
         "claw_get_market_pack",
         "claw_get_news_pack",
+        "claw_get_policy_pack",
         "claw_get_social_pack",
     ]

@@ -22,12 +22,14 @@ def validate_artifact_flow(call: WorkerCall, manifest: ApprovedManifest) -> Guar
             worker_id=call.worker_id,
             run_id=call.run_id,
             turn_index=call.turn_index,
+            market=call.market,
         )
         expected_caps = manifest.capabilities_for_worker_call(
             call.stage,
             worker_id=call.worker_id,
             run_id=call.run_id,
             turn_index=call.turn_index,
+            market=call.market,
         )
     except Exception as exc:
         return guard_failed(

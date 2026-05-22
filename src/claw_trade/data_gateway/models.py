@@ -21,6 +21,9 @@ class PackDomain(StrEnum):
     FUNDAMENTAL = "fundamental"
     NEWS = "news"
     SOCIAL = "social"
+    POLICY = "policy"
+    HOT_MONEY = "hot_money"
+    LOCKUP = "lockup"
 
 
 class SourceRole(StrEnum):
@@ -194,11 +197,25 @@ CACHE_NON_REMOTE_STATUSES = frozenset(
 )
 
 RAW_EXPORT_POLICIES = frozenset({"metadata_only", "redacted", "full"})
+CN_A_ONLY_DOMAINS = frozenset(
+    {
+        PackDomain.POLICY,
+        PackDomain.HOT_MONEY,
+        PackDomain.LOCKUP,
+    }
+)
 
 
 def _require_enum(name: str, value: object, enum_type: type[StrEnum]) -> None:
     if not isinstance(value, enum_type):
         raise ValueError(f"{name} must be {enum_type.__name__}")
+
+
+def validate_market_domain(market: Market, domain: PackDomain) -> None:
+    _require_enum("market", market, Market)
+    _require_enum("domain", domain, PackDomain)
+    if domain in CN_A_ONLY_DOMAINS and market != Market.CN_A:
+        raise ValueError(f"{domain.value} is only approved for CN_A")
 
 
 def source_role_can_be_primary_fact(role: SourceRole) -> bool:
@@ -258,6 +275,7 @@ class PackRequest:
     def __post_init__(self) -> None:
         _require_enum("market", self.market, Market)
         _require_enum("domain", self.domain, PackDomain)
+        validate_market_domain(self.market, self.domain)
 
 
 @dataclass(frozen=True)
@@ -286,6 +304,7 @@ class ProviderCapability:
         _require_enum("provider_kind", self.provider_kind, ProviderKind)
         _require_enum("market", self.market, Market)
         _require_enum("domain", self.domain, PackDomain)
+        validate_market_domain(self.market, self.domain)
         _require_enum("source_role", self.source_role, SourceRole)
         _require_enum("priority_source", self.priority_source, PrioritySource)
         if self.raw_export_policy not in RAW_EXPORT_POLICIES:
@@ -323,6 +342,7 @@ class ProviderCallSpec:
         _require_enum("source_role", self.source_role, SourceRole)
         _require_enum("market", self.market, Market)
         _require_enum("domain", self.domain, PackDomain)
+        validate_market_domain(self.market, self.domain)
         _require_enum("priority_source", self.priority_source, PrioritySource)
         if self.raw_export_policy not in RAW_EXPORT_POLICIES:
             raise ValueError(f"raw_export_policy must be one of {sorted(RAW_EXPORT_POLICIES)}")
@@ -363,6 +383,9 @@ class DeclarativeProviderManifest:
             _require_enum("markets", market, Market)
         for domain in self.domains:
             _require_enum("domains", domain, PackDomain)
+        for market in self.markets:
+            for domain in self.domains:
+                validate_market_domain(market, domain)
         _require_enum("source_role", self.source_role, SourceRole)
         _require_enum("admission_status", self.admission_status, ProviderAdmissionStatus)
         _require_enum("priority_source", self.priority_source, PrioritySource)
@@ -483,6 +506,7 @@ class RunProviderPlan:
         _require_enum("market", self.market, Market)
         for domain in self.domains:
             _require_enum("domains", domain, PackDomain)
+            validate_market_domain(self.market, domain)
         if self.remote_prefetch_allowed:
             raise ValueError("RunProviderPlan.remote_prefetch_allowed must be false")
 

@@ -104,6 +104,72 @@ def test_lineage_writer_links_final_report_to_provider_refs(tmp_path: Path) -> N
     assert (state.run_dir / "openviking" / "lineage-relations.json").exists()
 
 
+def test_lineage_writer_links_cn_a_seven_frontline_provider_refs(tmp_path: Path) -> None:
+    from claw_trade.artifacts.openviking_client import OpenVikingClient
+
+    run_id = "run-lineage"
+    state = _state(tmp_path, run_id=run_id, market="CN_A", ticker="600519", currency="CNY")
+    _write_export_claims(state)
+    frontline = (
+        _material(run_id, "market_analyst", Stage.FRONTLINE, "call-market"),
+        _material(run_id, "fundamental_analyst", Stage.FRONTLINE, "call-fundamental"),
+        _material(run_id, "news_analyst", Stage.FRONTLINE, "call-news"),
+        _material(run_id, "social_analyst", Stage.FRONTLINE, "call-social"),
+        _material(run_id, "policy_analyst", Stage.FRONTLINE, "call-policy"),
+        _material(run_id, "hot_money_tracker", Stage.FRONTLINE, "call-hot-money"),
+        _material(run_id, "lockup_watcher", Stage.FRONTLINE, "call-lockup"),
+    )
+    pm = _material(run_id, "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-pm")
+    final = _material(run_id, "report_polisher", Stage.FINAL_REPORT, "call-final")
+    backend = _Backend(linked=[])
+    writer = OpenBBMongoLineageWriter(
+        openviking=OpenVikingClient(backend=backend),
+        database=_Database(
+            (
+                _attempt_doc(run_id=run_id, call_id="call-market", worker_id="market_analyst", pack="market"),
+                _attempt_doc(
+                    run_id=run_id,
+                    call_id="call-fundamental",
+                    worker_id="fundamental_analyst",
+                    pack="fundamental",
+                ),
+                _attempt_doc(run_id=run_id, call_id="call-news", worker_id="news_analyst", pack="news"),
+                _attempt_doc(run_id=run_id, call_id="call-social", worker_id="social_analyst", pack="social"),
+                _attempt_doc(run_id=run_id, call_id="call-policy", worker_id="policy_analyst", pack="policy"),
+                _attempt_doc(
+                    run_id=run_id,
+                    call_id="call-hot-money",
+                    worker_id="hot_money_tracker",
+                    pack="hot_money",
+                ),
+                _attempt_doc(run_id=run_id, call_id="call-lockup", worker_id="lockup_watcher", pack="lockup"),
+            )
+        ),
+        now_text=lambda: "2026-05-18T00:00:00Z",
+    )
+    export_result = ExportResult.passed(
+        state=state,
+        final_report_path=state.run_dir / "reports" / "final-report.md",
+        guard_path=state.run_dir / "reports" / "export-guard-results.json",
+    )
+
+    result = writer.link_after_export(
+        state=state,
+        manifest=_Manifest((*frontline, pm, final)),  # type: ignore[arg-type]
+        export_result=export_result,
+    )
+
+    assert result.ok is True
+    assert result.relation_count > 0
+    linked_text = "\n".join(str(item) for item in backend.linked)
+    assert "policy_analyst" in linked_text
+    assert "hot_money_tracker" in linked_text
+    assert "lockup_watcher" in linked_text
+    assert "audit://run-lineage/call-policy/policy" in linked_text
+    assert "audit://run-lineage/call-hot-money/hot_money" in linked_text
+    assert "audit://run-lineage/call-lockup/lockup" in linked_text
+
+
 def test_lineage_writer_accepts_tool_call_scoped_provider_attempts(tmp_path: Path) -> None:
     from claw_trade.artifacts.openviking_client import OpenVikingClient
 
@@ -291,14 +357,21 @@ def _write_export_claims(state: WorkflowState) -> None:
     )
 
 
-def _attempt_doc(*, run_id: str, call_id: str) -> dict[str, object]:
+def _attempt_doc(
+    *,
+    run_id: str,
+    call_id: str,
+    worker_id: str = "market_analyst",
+    pack: str = "market",
+) -> dict[str, object]:
+    attempt_id = "attempt-1" if worker_id == "market_analyst" and pack == "market" else f"attempt-{pack}"
     return {
-        "_id": "attempt-1",
-        "attempt_id": "attempt-1",
+        "_id": attempt_id,
+        "attempt_id": attempt_id,
         "run_id": run_id,
         "call_id": call_id,
-        "worker_id": "market_analyst",
-        "pack": "market",
+        "worker_id": worker_id,
+        "pack": pack,
         "provider": "openbb.us",
         "adapter_id": "openbb.us.market",
         "adapter_kind": "openbb_native",

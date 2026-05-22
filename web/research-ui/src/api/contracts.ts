@@ -1,0 +1,510 @@
+export type MarketProfile = 'CN_A' | 'US' | 'HK' | 'CRYPTO';
+export type ChatContextKind =
+  | 'normal_chat'
+  | 'task_following'
+  | 'report_reading'
+  | 'intent_confirming';
+export type IntentKind = 'report' | 'scheduled_report' | 'price_alert';
+export type ReportTaskStatus =
+  | 'draft'
+  | 'confirmed'
+  | 'queued'
+  | 'running'
+  | 'saving_report'
+  | 'pdf_exporting'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+export type UserVisibleSeverity = 'info' | 'success' | 'warning' | 'error';
+
+export type ChatMessageKind =
+  | 'plain'
+  | 'confirmation_card'
+  | 'task_progress'
+  | 'report_completed'
+  | 'report_failed'
+  | 'price_alert'
+  | 'file_send_failed';
+
+export interface UserFacingFailure {
+  code:
+    | 'INVALID_INPUT'
+    | 'CONFIRMATION_REQUIRED'
+    | 'DRAFT_EXPIRED'
+    | 'QUEUE_FULL'
+    | 'DUPLICATE_TASK'
+    | 'TASK_NOT_FOUND'
+    | 'TASK_NOT_CANCELLABLE'
+    | 'REPORT_NOT_FOUND'
+    | 'REPORT_NOT_READY'
+    | 'REPORT_CONTEXT_TOO_LONG'
+    | 'NOTIFICATION_UNAVAILABLE'
+    | 'FILE_SEND_UNSUPPORTED'
+    | 'ASSISTANT_UNAVAILABLE'
+    | 'REPORT_EXPORT_FAILED'
+    | 'DATASOURCE_TEST_FAILED'
+    | 'PDF_EXPORT_FAILED'
+    | 'PROFILE_STRATEGY_UNAPPROVED'
+    | 'SCHEDULE_NOT_FOUND'
+    | 'ALERT_NOT_FOUND'
+    | 'UNAUTHORIZED'
+    | 'CONFLICT';
+  message: string;
+  severity: UserVisibleSeverity;
+}
+
+export interface ChatMessageForUser {
+  messageId: string;
+  contextKind: ChatContextKind;
+  actor: 'user' | 'assistant' | 'system';
+  kind: ChatMessageKind;
+  text: string;
+  cardId?: string | null;
+  reportId?: string | null;
+  taskId?: string | null;
+  createdAt: string;
+}
+
+export interface ConfirmationCard {
+  id: string;
+  draftId: string;
+  title: string;
+  summaryLines: string[];
+  dataSourceSummary: 'ready' | 'partial' | 'unknown';
+  actions: Array<'confirm' | 'cancel'>;
+  status: 'active' | 'confirmed' | 'cancelled' | 'expired';
+  createdAt: string;
+}
+
+export interface ChatContextForUser {
+  contextId: string;
+  kind: ChatContextKind;
+  title: string;
+  activeTaskId?: string | null;
+  activeReportId?: string | null;
+}
+
+export interface ReportProgressUiState {
+  percent: number;
+  stageLabel: string;
+  roleLabel?: string | null;
+  currentAction: string;
+  completedRoleLabels: string[];
+  waitingRoleLabels: string[];
+  workerStatusLabels?: string[];
+}
+
+export interface ReportTaskForUser {
+  taskId: string;
+  source: 'manual' | 'scheduled';
+  status: ReportTaskStatus;
+  statusLabel: string;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  companyName: string;
+  currencySymbol: string;
+  startDate: string;
+  endDate: string;
+  currentDate: string;
+  queuePosition?: number | null;
+  progress?: ReportProgressUiState | null;
+  reportId?: string | null;
+  failure?: UserFacingFailure | null;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}
+
+export interface ReportQueueSnapshotForUser {
+  runningTask?: ReportTaskForUser | null;
+  queuedTasks: ReportTaskForUser[];
+  lastTerminalTask?: ReportTaskForUser | null;
+  queueLimit: number;
+  queuedCount: number;
+  isFull: boolean;
+}
+
+export interface ReportAssetForUser {
+  kind: 'markdown' | 'pdf';
+  available: boolean;
+  status: 'ready' | 'failed' | 'not_requested';
+  userMessage?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface SavedReportForUser {
+  id: string;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  title: string;
+  generatedAt: string;
+  summarySnippet: string;
+}
+
+export interface DataSourceHealthEventForUser {
+  displayName: string;
+  status:
+    | 'auth_missing'
+    | 'auth_invalid'
+    | 'unreachable'
+    | 'rate_limited'
+    | 'schema_invalid'
+    | 'empty';
+  userMessage: string;
+  impact: string;
+  occurredAt: string;
+}
+
+export interface ReportCompletionSummary {
+  id: string;
+  reportId: string;
+  instrumentCode: string;
+  generatedAt: string;
+  finalConclusion: string;
+  coreReasons: string[];
+  mainRisks: string[];
+  failedConfiguredDataSources: DataSourceHealthEventForUser[];
+  fullReportAvailable: boolean;
+  pdfAvailable: boolean;
+  createdAt: string;
+}
+
+export interface ChartEvidenceForUser {
+  id: string;
+  reportId: string;
+  chartType: 'kline' | 'returns_curve' | 'drawdown' | 'volume' | 'macd' | 'rsi' | 'other';
+  title: string;
+  status: 'ready' | 'missing' | 'failed';
+  userMessage: string;
+  capturedAt: string;
+}
+
+export interface ReportDetailForUser {
+  report: SavedReportForUser;
+  markdown: string;
+  completionSummary: ReportCompletionSummary;
+  dataSourceEvents: DataSourceHealthEventForUser[];
+  chartEvidence: { summary: 'ready' | 'partial' | 'missing'; items: ChartEvidenceForUser[] };
+  assets: ReportAssetForUser[];
+}
+
+export interface ScheduledReportForUser {
+  scheduledReportId: string;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  frequency: 'daily' | 'weekly';
+  timeOfDay: string;
+  weekday?: number | null;
+  notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
+  state: 'draft' | 'active' | 'due' | 'enqueued' | 'paused' | 'deleted';
+  nextRunAt?: string | null;
+}
+
+export interface PriceAlertForUser {
+  priceAlertId: string;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  condition: {
+    type: 'price_threshold' | 'percent_change';
+    operator: 'above' | 'below' | 'up_by' | 'down_by';
+    value: number;
+    window?: '24h' | 'intraday' | null;
+  };
+  notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
+  state: 'draft' | 'active' | 'checking' | 'triggered' | 'error' | 'paused' | 'closed' | 'deleted';
+  lastCheckedAt?: string | null;
+  triggeredAt?: string | null;
+  lastErrorMessage?: string | null;
+}
+
+export interface DataSourceInstanceForUser {
+  instanceId: string;
+  supportedType:
+    | 'tushare'
+    | 'bocha_news'
+    | 'tavily_news'
+    | 'jina'
+    | 'jina_news'
+    | 'newsnow'
+    | 'newsnow_news'
+    | 'minimax_news'
+    | 'coingecko'
+    | 'coinglass'
+    | 'fred'
+    | 'defillama'
+    | 'cmc'
+    | 'cryptoquant'
+    | 'etherscan'
+    | 'thegraph'
+    | 'tavily'
+    | 'exa'
+    | 'brave_search'
+    | 'bocha'
+    | 'bocha_search'
+    | 'newsapi'
+    | 'serpapi';
+  group: 'cn_a_data' | 'cn_a_news' | 'crypto_data' | 'crypto_news_search';
+  displayName: string;
+  enabled: boolean;
+  apiKeyMasked?: string | null;
+  endpointUrl?: string | null;
+  proxyUrl?: string | null;
+  headerName?: string | null;
+  priority: number;
+  state: 'draft' | 'testing' | 'validated' | 'enabled' | 'disabled' | 'degraded' | 'rejected';
+  lastSuccessAt?: string | null;
+  lastTestAt?: string | null;
+}
+
+export interface DataSourceInstanceDraftInput {
+  instanceId?: string | null;
+  supportedType: string;
+  group: string;
+  displayName: string;
+  enabled: boolean;
+  apiKeyReplacement?: string | null;
+  endpointUrl?: string | null;
+  proxyUrl?: string | null;
+  headerName?: string | null;
+  priority: number;
+  state?: DataSourceInstanceForUser['state'];
+  requiresKey?: boolean;
+}
+
+export interface ChannelStatusForUser {
+  channelKind: 'wechat_clawbot';
+  onboardingState: 'onboarding' | 'skipped' | 'completed';
+  state: 'unknown' | 'disconnected' | 'connecting' | 'connected' | 'error' | 'reconnecting';
+  displayName: string;
+  accountLabel?: string | null;
+  lastConnectedAt?: string | null;
+  lastErrorMessage?: string | null;
+  canSendText: boolean;
+  canSendFile: boolean;
+  qrCodeImageDataUrl?: string | null;
+  qrCodeExpiresAt?: string | null;
+  qrCodeRefreshRequired?: boolean;
+}
+
+export interface LlmConfigDraft {
+  provider:
+    | 'deepseek'
+    | 'qwen'
+    | 'glm'
+    | 'kimi'
+    | 'minimax'
+    | 'doubao'
+    | 'ernie'
+    | 'hunyuan'
+    | 'openai_compatible';
+  apiKeyReplacement?: string | null;
+  apiKeyMasked?: string | null;
+  endpointUrl?: string | null;
+  defaultModel: string;
+  status: 'idle' | 'saving' | 'testing' | 'saved' | 'error';
+  lastTestMessage?: string | null;
+  updatedAt?: string | null;
+  embedding?: EmbeddingLlmConfigDraft | null;
+}
+
+export interface EmbeddingLlmConfigDraft {
+  provider: string;
+  model: string;
+  apiKeyReplacement?: string | null;
+  apiKeyMasked?: string | null;
+  endpointUrl?: string | null;
+  dimension?: string | null;
+  enabled: boolean;
+}
+
+export interface PdfExportForUser {
+  reportId: string;
+  state: 'not_requested' | 'exporting' | 'ready' | 'failed';
+  available: boolean;
+  userMessage?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface SendChatMessageInput {
+  requestId: string;
+  contextId: string;
+  text: string;
+}
+
+export interface SendChatMessageOutput {
+  context: ChatContextForUser;
+  messages: ChatMessageForUser[];
+  confirmationCard?: ConfirmationCard;
+  queueSnapshot?: ReportQueueSnapshotForUser;
+  assistantReply?: string;
+}
+
+export interface CreateIntentDraftInput {
+  requestId: string;
+  sourceMessageId?: string;
+  text: string;
+}
+
+export interface IntentDraftForUser {
+  draftId: string;
+  kind: IntentKind;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  reportDateRange?: { startDate: string; endDate: string } | null;
+  schedule?: { frequency: 'daily' | 'weekly'; timeOfDay: string; weekday?: number | null } | null;
+  priceCondition?: {
+    type: 'price_threshold' | 'percent_change';
+    operator: 'above' | 'below' | 'up_by' | 'down_by';
+    value: number;
+    window?: '24h' | 'intraday' | null;
+  } | null;
+  notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
+  status: 'draft' | 'confirmed' | 'cancelled' | 'expired';
+}
+
+export interface CreateIntentDraftOutput {
+  draft: IntentDraftForUser;
+  confirmationCard: ConfirmationCard;
+}
+
+export interface ConfirmIntentDraftInput {
+  requestId: string;
+  draftId: string;
+  decision: 'confirm' | 'cancel';
+  overrides?: Record<string, unknown>;
+}
+
+export interface ConfirmIntentDraftOutput {
+  status: 'confirmed' | 'cancelled';
+  task?: ReportTaskForUser;
+  scheduledReport?: ScheduledReportForUser;
+  priceAlert?: PriceAlertForUser;
+  messages?: ChatMessageForUser[];
+  queueSnapshot?: ReportQueueSnapshotForUser;
+}
+
+export interface AskReportQuestionInput {
+  requestId: string;
+  reportId: string;
+  text: string;
+}
+
+export interface AskReportQuestionOutput {
+  text: string;
+}
+
+export interface ListSavedReportsOutput {
+  items: SavedReportForUser[];
+  nextCursor?: string;
+}
+
+export interface DeleteSavedReportOutput {
+  deleted: true;
+  reportId: string;
+}
+
+export interface GetReportChartEvidenceOutput {
+  reportId: string;
+  items: ChartEvidenceForUser[];
+  summary: 'ready' | 'partial' | 'missing';
+}
+
+export interface ListDataSourcesOutput {
+  supportedTypes: DataSourceInstanceForUser['supportedType'][];
+  instances: DataSourceInstanceForUser[];
+}
+
+export interface LoadLlmSettingsOutput {
+  draft: LlmConfigDraft;
+  schemaVersion: string;
+  settingsVersion: string;
+}
+
+export interface SaveChannelConfigViaOpenClawInput {
+  requestId: string;
+  channelKind: 'wechat_clawbot';
+  configPatch: Record<string, unknown>;
+  expectedSettingsVersion?: string;
+}
+
+export interface SaveChannelConfigViaOpenClawOutput {
+  status: ChannelStatusForUser;
+  restartRequired?: boolean;
+}
+
+export interface SaveLlmConfigViaOpenClawInput {
+  requestId: string;
+  draft: Partial<LlmConfigDraft> & { provider: LlmConfigDraft['provider']; defaultModel: string };
+  expectedSettingsVersion: string;
+}
+
+export interface SaveLlmConfigViaOpenClawOutput {
+  status: 'saved';
+  updatedAt: string;
+  settingsVersion?: string;
+}
+
+export interface TestLlmViaOpenClawInput {
+  requestId: string;
+  provider?: LlmConfigDraft['provider'];
+  model?: string;
+  endpointUrl?: string | null;
+}
+
+export interface TestLlmViaOpenClawOutput {
+  ok: boolean;
+  userMessage: string;
+  checkedAt: string;
+}
+
+export interface TestDataSourceInput {
+  requestId: string;
+  instanceDraft: DataSourceInstanceDraftInput;
+}
+
+export interface TestDataSourceOutput {
+  state: DataSourceInstanceForUser['state'];
+  healthEvent: DataSourceHealthEventForUser;
+  canEnable: boolean;
+}
+
+export interface SaveDataSourceInstanceInput {
+  requestId: string;
+  instance: DataSourceInstanceDraftInput;
+}
+
+export interface ScheduledReportInput {
+  requestId: string;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  frequency: 'daily' | 'weekly';
+  timeOfDay: string;
+  weekday?: number | null;
+  notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
+}
+
+export interface PriceAlertInput {
+  requestId: string;
+  instrumentCode: string;
+  instrumentName?: string | null;
+  market: MarketProfile;
+  condition: PriceAlertForUser['condition'];
+  notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
+}
+
+export interface RunScheduledReportNowOutput {
+  task: ReportTaskForUser;
+  queueSnapshot: ReportQueueSnapshotForUser;
+}
+
+export interface RunPriceAlertNowOutput {
+  alert: PriceAlertForUser;
+  triggered: boolean;
+  message?: string;
+}

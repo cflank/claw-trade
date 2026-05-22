@@ -69,6 +69,7 @@ def _catalog_with_user_manifest() -> ProviderCatalog:
             allowed_domains=("feeds.example.com",),
             dns_resolver=lambda host: ("93.184.216.34",),
         ),
+        sample_ref_exists=lambda ref: ref.startswith("mongo://openbb_"),
     )
     catalog = ProviderCatalog(validator=validator)
     draft = DeclarativeProviderManifest(
@@ -90,7 +91,12 @@ def _catalog_with_user_manifest() -> ProviderCatalog:
         cache_ttl_seconds=300,
         license_policy_id="user.custom",
         raw_export_policy="metadata_only",
-        healthcheck={"method": "GET", "path": "/health"},
+        healthcheck={
+            "method": "GET",
+            "path": "/health",
+            "sample_raw_ref": "mongo://openbb_raw_payloads/registry",
+            "sample_normalized_ref": "mongo://openbb_normalized/registry",
+        },
         enabled=True,
         admission_status=ProviderAdmissionStatus.DRAFT,
         priority=10,

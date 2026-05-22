@@ -20,8 +20,8 @@ stage: final_report
 9. 把正文主体写成专业加密资产研究终稿，不是叙事摘要。每个主要章节都必须在正文主体呈现“证据 -> 解读 -> 投资含义 -> 风险、触发或失效条件”的分析链。不要把分析链挪到附录，也不要把正文压成只下结论的段落。
 10. 不要使用股票 PE/PB/ROE、每股收益、股本或财报口径解释加密资产。若上游材料缺少新闻、舆情、链上、清算、资金费率、TVL、FDV、供应、解锁或治理证据，必须把缺口保留为限制，不能补写。
 11. 搜索发现、Polymarket 事件预期、Alternative.me 市场级情绪、LunarCrush 聚合指标、X/Reddit/Telegram/Discord 样本都必须按上游报告的边界使用；不得把搜索摘要写成事实，不得把事件盘口写成新闻事实，不得把市场级情绪写成社交共识。搜索发现、公共知识或历史印象不能填补 ETF/机构资金、链上、衍生品、清算或社交共识缺口；没有上游材料支持时只能写为待验证线索。
-12. 最终报告是给投资读者看的，不要暴露内部工具名、机器字段名或英文状态词。上游材料若出现 OpenBB 资料包工具名、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`feed`、`worker` 等词，终稿必须改写成“新闻资料包/市场资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“监管原始来源”“分析师”等中文读者表达；不要把这些内部词照抄到终稿。
-13. 输出前必须做一次读者版清理，正文不得原样出现 `CryptoLens`、`OpenBB`、`openbb_yfinance`、`tavily`、`catalyst_events`、`readiness`、`provider_attempts`、`data_gaps`、`partial`、`insufficient`、`ready`、`feed`、`worker`。遇到这些词时，按含义改写：`CryptoLens` 写成“技术指标分析模块”或“技术指标资料”；`openbb_yfinance` 写成“行情历史来源”；`tavily/catalyst_events` 写成“事件线索来源”或“事件资料包”；`readiness/ready` 写成“资料可用性/资料就绪”；`partial/insufficient` 写成“部分覆盖/不足”。不要写“某工具标记为就绪”这类内部过程句，改成“该类资料可用，但缺少具体数值/事件正文”。
+12. 最终报告是给投资读者看的。上游材料若出现 OpenBB 资料包工具名、`readiness`、`data_gaps`、`provider_attempts`、`partial`、`insufficient`、`ready`、`feed`、`worker` 等机器化表达，优先改写成“新闻资料包/市场资料包”“资料就绪度”“资料缺口”“来源尝试记录”“部分覆盖”“不足”“就绪”“监管原始来源”“分析师”等中文读者表达；不要把这些词当作硬性禁词，只有在直接照抄会让正文变成机器日志时才改写。
+13. 输出前做一次读者版清理。遇到 `CryptoLens`、`OpenBB`、`openbb_yfinance`、`tavily`、`catalyst_events`、`readiness`、`provider_attempts`、`data_gaps`、`partial`、`insufficient`、`ready`、`feed`、`worker` 等词时，按读者语境处理：`CryptoLens` 可写成“技术指标分析模块”或“技术指标资料”；`openbb_yfinance` 可写成“行情历史来源”；`tavily/catalyst_events` 可写成“事件线索来源”或“事件资料包”；`readiness/ready` 可写成“资料可用性/资料就绪”；`partial/insufficient` 可写成“部分覆盖/不足”。如果保留来源名有助于读者理解，可以保留名称并紧跟中文解释；不要写“某工具标记为就绪”这类内部过程句。
 14. 数据缺口本身不是看涨或看跌事实，只能说明某条论据尚未验证。若终稿引用“信息空白”“数据缺口”“未知”作为结论理由，必须紧跟具体缺口清单和影响范围；不得把缺数据写成市场没有多头/中性氛围，不得写成“所有看涨论据都建立在未知之上”，也不得把缺口放大成组合经理报告没有支持的清仓理由。
 15. 当写作范围指令为空时，终稿必须完整写到 `## 八、最终结论`，不得停在任一中间章节、半句或列表项。如果材料过长，优先压缩各节内部重复内容，但不能省略第六、七、八节；必须保留八节骨架和每节核心证据链，把重复细节压缩，不要牺牲结尾闭环。
 

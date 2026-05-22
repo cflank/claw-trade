@@ -5,6 +5,7 @@ from claw_trade.data_gateway.models import SourceRole
 NEWS_ALLOWED_SOURCE_ROLES = frozenset(
     {
         SourceRole.OFFICIAL_ORIGINAL,
+        SourceRole.MARKET_DATA,
         SourceRole.MACRO_DATA,
         SourceRole.SEARCH_DISCOVERY,
         SourceRole.EVENT_EXPECTATION,
@@ -14,6 +15,7 @@ NEWS_ALLOWED_SOURCE_ROLES = frozenset(
 NEWS_FACT_SOURCE_ROLES = frozenset(
     {
         SourceRole.OFFICIAL_ORIGINAL,
+        SourceRole.MARKET_DATA,
         SourceRole.MACRO_DATA,
     }
 )

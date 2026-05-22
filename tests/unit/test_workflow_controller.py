@@ -21,7 +21,7 @@ from claw_trade.workflow.runner import (
     group_failures_by_category,
     merge_stage_failures,
 )
-from claw_trade.workflow.workers import stage_plan
+from claw_trade.workflow.workers import stage_plan_for_market
 
 
 class ManifestView:
@@ -69,7 +69,18 @@ def test_created_wakes_frontline_full_stage(tmp_path: Path):
     assert decision.kind == DecisionKind.WAKE_STAGE
     assert decision.next_status == RunStatus.FRONTLINE_RUNNING
     assert decision.batch is not None
-    assert decision.batch.worker_ids == stage_plan(Stage.FRONTLINE).workers
+    assert decision.batch.worker_ids == stage_plan_for_market(Stage.FRONTLINE, "US").workers
+
+
+def test_created_wakes_cn_a_frontline_full_stage(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.CREATED, market="CN_A", profile="CN_A")
+    decision = decide_next(make_input(state=state, manifest=ManifestView()))
+
+    assert decision.kind == DecisionKind.WAKE_STAGE
+    assert decision.next_status == RunStatus.FRONTLINE_RUNNING
+    assert decision.batch is not None
+    assert decision.batch.worker_ids == stage_plan_for_market(Stage.FRONTLINE, "CN_A").workers
+    assert decision.batch.collect_first is True
 
 
 def test_created_first_response_missing_target_is_blocked(tmp_path: Path):
@@ -152,6 +163,41 @@ def test_frontline_ready_wakes_bull_first_without_extra_gate(tmp_path: Path):
     assert decision.batch is not None
     assert decision.batch.worker_ids == ("bull_researcher",)
     assert decision.batch.collect_first is False
+
+
+def test_frontline_ready_cn_a_requires_seven_upstream_reports(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.FRONTLINE_READY, market="CN_A", profile="CN_A")
+    approved_only_four = ManifestView(
+        approved={
+            ("market_analyst", Stage.FRONTLINE),
+            ("fundamental_analyst", Stage.FRONTLINE),
+            ("news_analyst", Stage.FRONTLINE),
+            ("social_analyst", Stage.FRONTLINE),
+        }
+    )
+
+    blocked = decide_next(make_input(state=state, manifest=approved_only_four))
+    assert blocked.kind == DecisionKind.BLOCKED
+    assert blocked.failure is not None
+    assert blocked.failure.category == "artifact_flow"
+    assert "policy_analyst" in blocked.failure.reason
+
+    approved_all_seven = ManifestView(
+        approved={
+            ("market_analyst", Stage.FRONTLINE),
+            ("fundamental_analyst", Stage.FRONTLINE),
+            ("news_analyst", Stage.FRONTLINE),
+            ("social_analyst", Stage.FRONTLINE),
+            ("policy_analyst", Stage.FRONTLINE),
+            ("hot_money_tracker", Stage.FRONTLINE),
+            ("lockup_watcher", Stage.FRONTLINE),
+        }
+    )
+
+    decision = decide_next(make_input(state=state, manifest=approved_all_seven))
+    assert decision.kind == DecisionKind.WAKE_STAGE
+    assert decision.batch is not None
+    assert decision.batch.worker_ids == ("bull_researcher",)
 
 
 def test_investment_debate_ready_wakes_research_manager_after_bull_and_bear(tmp_path: Path):
@@ -412,6 +458,35 @@ def test_running_stage_failure_merges_collect_first_failures(tmp_path: Path):
     assert decision.failure.early_stop is True
 
 
+def test_running_stage_ignores_superseded_retry_failure_for_same_turn(tmp_path: Path):
+    state = make_state(tmp_path=tmp_path, status=RunStatus.FINAL_REPORT_RUNNING)
+    failed_first_attempt = failed_result(
+        worker_id="report_polisher",
+        stage=Stage.FINAL_REPORT,
+        category="final_report_structure",
+        reason="report_polisher 非首段禁止 H1 标题",
+        early_stop=True,
+        turn_index=7,
+    )
+    retry_succeeded = succeeded_result(
+        worker_id="report_polisher",
+        stage=Stage.FINAL_REPORT,
+        turn_index=7,
+    )
+    approved = ManifestView(approved_turns={("report_polisher", Stage.FINAL_REPORT, 7)})
+
+    decision = decide_next(
+        make_input(
+            state=state,
+            manifest=approved,
+            worker_results=(failed_first_attempt, retry_succeeded),
+        )
+    )
+
+    assert decision.kind == DecisionKind.ADVANCE
+    assert decision.next_status == RunStatus.FINAL_REPORT_READY
+
+
 def test_first_response_running_only_waits_for_target_worker(tmp_path: Path):
     state = make_state(
         tmp_path=tmp_path,
@@ -626,6 +701,7 @@ def make_state(
     stop_point: StopPoint = StopPoint.NONE,
     target_worker_id: str | None = None,
     target_stage: Stage | None = None,
+    market: str = "US",
     profile: str = "US",
     max_debate_rounds: int = 1,
     max_risk_discuss_rounds: int = 1,
@@ -635,7 +711,7 @@ def make_state(
     request = RunRequest(
         ticker="AAPL",
         company_name="Apple",
-        market="US",
+        market=market,
         profile=profile,
         currency="USD",
         currency_symbol="$",
@@ -681,11 +757,12 @@ def failed_result(
     category: str,
     reason: str,
     early_stop: bool,
+    turn_index: int = 0,
 ) -> WorkerResult:
     status = WorkerStatus.BLOCKED if category == "blocked" else WorkerStatus.FAILED
     return WorkerResult(
         run_id="run-1",
-        call_id=f"call-{worker_id}",
+        call_id=f"call-{worker_id}-t{turn_index}",
         worker_id=worker_id,
         stage=stage,
         status=status,
@@ -693,13 +770,19 @@ def failed_result(
         approved_material_id=None,
         failure=FailureRecord(
             run_id="run-1",
-            call_id=f"call-{worker_id}",
+            call_id=f"call-{worker_id}-t{turn_index}",
             worker_id=worker_id,
             stage=stage,
             category=category,
             reason=reason,
-            evidence_paths=(Path(f"runs/run-1/calls/call-{worker_id}/failure.json"),),
+            evidence_paths=(Path(f"runs/run-1/calls/call-{worker_id}-t{turn_index}/failure.json"),),
             early_stop=early_stop,
             human_action_required=None,
+            turn_index=turn_index,
+            round_index=turn_index + 1,
+            role_turn_index=turn_index + 1,
         ),
+        turn_index=turn_index,
+        round_index=turn_index + 1,
+        role_turn_index=turn_index + 1,
     )

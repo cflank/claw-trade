@@ -38,7 +38,12 @@ def _manifest(*, adapter_id: str, enabled: bool, admission_status: ProviderAdmis
         cache_ttl_seconds=300,
         license_policy_id="user.custom",
         raw_export_policy="metadata_only",
-        healthcheck={"method": "GET", "path": "/health"},
+        healthcheck={
+            "method": "GET",
+            "path": "/health",
+            "sample_raw_ref": "mongo://openbb_raw_payloads/integration",
+            "sample_normalized_ref": "mongo://openbb_normalized/integration",
+        },
         enabled=enabled,
         admission_status=admission_status,
         priority=20,
@@ -68,6 +73,7 @@ def test_declarative_provider_only_enters_registry_after_validation_and_enable()
             allowed_domains=("example.com",),
             dns_resolver=lambda host: ("93.184.216.34",),
         ),
+        sample_ref_exists=lambda ref: ref.startswith("mongo://openbb_"),
     )
     catalog = ProviderCatalog(validator=validator)
     valid_manifest = _manifest(

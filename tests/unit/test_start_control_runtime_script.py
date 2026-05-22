@@ -19,6 +19,14 @@ def test_start_control_runtime_script_is_bash_valid() -> None:
     assert completed.returncode == 0, completed.stderr
 
 
+def test_start_control_runtime_health_polling_suppresses_expected_retry_noise() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'curl -s -o /dev/null -w' in text
+    assert "2>/dev/null || true" in text
+    assert 'curl -sS -o /dev/null -w' not in text
+
+
 def test_start_control_runtime_script_contains_required_guards() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
@@ -40,14 +48,17 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "OPENCLAW_GATEWAY_CALL_BIN" in text
     assert "OPENCLAW_STATE_DIR" in text
     assert "OPENCLAW_CONFIG_PATH" in text
+    assert "preauthorize_openclaw_gateway_cli_scopes" in text
     assert "CLAW_TRADE_ENV_PATH" in text
-    assert "OPENCLAW_SOURCE_CONFIG_PATH" in text
-    assert "OPENCLAW_SOURCE_ENV_PATH" in text
+    assert "CLAW_TRADE_LLM_MODEL" in text
+    assert "DEEPSEEK_API_KEY" in text
     assert "OPENCLAW_GATEWAY_TIMEOUT_MS" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" in text
     assert "LOCAL_MONGODB_START_SCRIPT" in text
     assert "start_local_mongodb_if_needed" in text
     assert "wait_mongodb_ok" in text
+    assert 'CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"' in text
+    assert 'DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"' in text
     assert "CLAW_TRADE_LOCAL_MONGODB_STARTED" in text
     assert "CLAW_TRADE_OPENVIKING_SERVER_BIN" in text
     assert "CLAW_TRADE_OPENVIKING_SERVER_CWD" in text
@@ -82,6 +93,8 @@ def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_
     assert "OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH}" in text
     assert "OPENCLAW_GATEWAY_TIMEOUT_MS=${OPENCLAW_GATEWAY_TIMEOUT_MS}" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS=${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}" in text
+    assert "CN_A_MONGODB_URI=${CN_A_MONGODB_URI}" in text
+    assert "DATA_GATEWAY_MONGODB_URI=${DATA_GATEWAY_MONGODB_URI}" in text
     assert 'if [[ "${openviking_mcp_started}" == "1" ]]; then' in text
     assert "printf 'OPENVIKING_MCP_URL=%s\\n' \"${OPENVIKING_MCP_URL}\"" in text
 
@@ -94,8 +107,11 @@ def test_start_control_runtime_script_exports_runtime_env_before_child_command()
     assert "export CLAW_TRADE_OPENVIKING_BACKEND" in text
     assert 'export CLAW_TRADE_OPENVIKING_MCP_STARTED="${openviking_mcp_started}"' in text
     assert "export OPENCLAW_GATEWAY_URL" in text
+    assert "export OPENCLAW_GATEWAY_TOKEN" in text
     assert "export OPENVIKING_ENDPOINT" in text
     assert "export OPENVIKING_DATA_DIR" in text
+    assert "export CN_A_MONGODB_URI" in text
+    assert "export DATA_GATEWAY_MONGODB_URI" in text
     export_index = text.index("export_runtime_env_for_child_commands")
     command_index = text.index('if [[ ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then')
     supervise_index = text.rindex("\nsupervise_started_services")
@@ -159,54 +175,65 @@ def test_start_control_runtime_script_gateway_run_uses_local_state_and_dev_mode(
     assert "reset" not in text
 
 
+def test_start_control_runtime_script_preauthorizes_gateway_cli_read_write_scopes() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "preauthorize_openclaw_gateway_cli_scopes() {" in text
+    assert "openclaw-gateway-scope-preauth.log" in text
+    assert "agent.runSingleWorker" in text
+    assert "--scope" in text
+    assert "operator.read" in text
+    assert "operator.write" in text
+    assert 'OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}"' in text
+    assert 'OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"' in text
+    assert "scope upgrade pending approval" in text
+    assert "按 Invest 链路" in text
+    health_index = text.index('if ! wait_http_ok_any 90 "${gateway_health_url}"; then')
+    preauth_call_index = text.index("preauthorize_openclaw_gateway_cli_scopes", health_index)
+    runtime_env_index = text.index('cat > "${RUNTIME_ENV_PATH}"')
+    assert health_index < preauth_call_index < runtime_env_index
+
+
 def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_gateway_boot() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
     assert "prepare_openclaw_trade_agent_config() {" in text
-    assert "OPENCLAW_SOURCE_CONFIG_PATH_VALUE" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE" in text
-    assert "const sourcePath = process.env.OPENCLAW_SOURCE_CONFIG_PATH_VALUE;" in text
     assert "const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;" in text
+    assert "const configuredPrimaryModel = String(process.env.CLAW_TRADE_LLM_MODEL_VALUE" in text
+    assert "function resolveProjectLlmConfig()" in text
+    assert "DEEPSEEK_MODEL" in text
+    assert "DEEPSEEK_API_KEY" in text
     assert "BB_MCP_SERVER_PATH" not in text
     assert "BB_MCP_CWD" not in text
     assert "const llmIdleTimeoutSeconds = Number.parseInt(String(rawLlmIdleTimeoutSeconds ?? \"\"), 10);" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS 必须是正整数" in text
     assert "const workers = [" in text
-    assert 'merged.default = workerId === "market_analyst";' in text
-    assert 'merged.workspace = `${rootDir}/agents/${workerId}`;' in text
+    assert 'default: workerId === "market_analyst"' in text
+    assert 'workspace: `${rootDir}/agents/${workerId}`' in text
     assert "function readWorkerMountedSkills(workerId) {" in text
     assert "skills/manifest.yaml" in text
     assert "worker skill manifest 不存在" in text
     assert "worker skill path 非法" in text
     assert "worker skill manifest 没有可挂载 skill" in text
-    assert "merged.skills = readWorkerMountedSkills(workerId);" in text
+    assert "skills: readWorkerMountedSkills(workerId)" in text
     assert "const mergedDefaults = {" in text
-    assert "const sourceModels = isPlainObject(sourceConfig.models) ? sourceConfig.models : {};" in text
-    assert "const sourceProviders = isPlainObject(sourceModels.providers) ? sourceModels.providers : {};" in text
-    assert "const sourceDefaultModel = isPlainObject(sourceDefaults.model) ? sourceDefaults.model : {};" in text
-    assert "const sourcePrimaryModel = typeof sourceDefaultModel.primary === \"string\" ? sourceDefaultModel.primary.trim() : \"\";" in text
-    assert 'const clawTradePrimaryModel = "deepseek/deepseek-chat";' in text
-    assert "const selectedPrimaryModel = clawTradePrimaryModel;" in text
-    assert "const selectedProviderModelId = selectedPrimaryModel.includes(\"/\")" in text
-    assert "primaryProviderId = selectedPrimaryModel.split(\"/\")[0].trim();" in text
-    assert "const selectedProviderModels = Array.isArray(sourcePrimaryProvider.models)" in text
-    assert "OpenClaw source provider ${primaryProviderId} 缺少 primary model" in text
+    assert ".env.local LLM provider 暂未接入 OpenClaw runtime 配置生成" in text
+    assert ".env.local 缺少 DEEPSEEK_API_KEY" in text
     assert "const mergedProviders = {" in text
-    assert "[primaryProviderId]: mergedPrimaryProvider" in text
-    assert "primary: selectedPrimaryModel" in text
-    assert 'alias: "DeepSeek Chat"' in text
+    assert "[llm.providerId]: {" in text
+    assert "apiKey: llm.apiKey" in text
+    assert "primary: llm.model" in text
+    assert "alias: llm.providerName" in text
     assert "timeoutSeconds: llmIdleTimeoutSeconds" in text
     assert "models: mergedModels," in text
-    assert "const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};" in text
     assert "openclaw_plugins/claw-trade-frontline-tools" in text
     assert "paths: [clawTradeFrontlinePluginPath]" in text
     assert '"claw-trade-frontline-tools": {' in text
     assert "plugins: mergedPlugins," in text
-    assert "const mergedMcpServers = {" in text
-    assert "delete mergedMcpServers.bb_crypto_data;" in text
     assert "const mergedMcp = {" in text
     assert "mergedMcpServers.bb_crypto_data =" not in text
-    assert "servers: mergedMcpServers," in text
+    assert "servers: {}" in text
     assert "mcp: mergedMcp," in text
     assert "idleTimeoutSeconds: llmIdleTimeoutSeconds" not in text
     assert "defaults.llm" not in text
@@ -214,13 +241,15 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "gateway: {" in text
     assert 'mode: "local"' in text
     assert 'bind: "loopback"' in text
-    assert "const merged = isPlainObject(sourceEntry) ? { ...sourceEntry } : {};" in text
-    assert "console.error(`[ERROR] OpenClaw source config 不存在" in text
+    assert "OpenClaw source config" not in text
     workers = (
         "market_analyst",
         "fundamental_analyst",
         "news_analyst",
         "social_analyst",
+        "policy_analyst",
+        "hot_money_tracker",
+        "lockup_watcher",
         "bull_researcher",
         "bear_researcher",
         "research_manager",
@@ -239,32 +268,52 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert prepare_index < gateway_index
 
 
-def test_start_control_runtime_script_unifies_openviking_embedding_to_openclaw_primary() -> None:
+def test_start_control_runtime_script_uses_explicit_openviking_embedding_config_only() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
-    assert 'OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}"' in text
-    assert "const openClawConfigPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;" in text
-    assert "const primaryModel = typeof openClawDefaultModel.primary === \"string\"" in text
-    assert "OpenClaw runtime config 缺少 primary model" in text
-    assert "embedding: {" in text
-    assert 'provider: "litellm"' in text
-    assert "model: primaryModel" in text
-    assert "max_concurrent: 1" in text
-    assert "max_retries: 0" in text
+    assert "OPENVIKING_EMBEDDING_PROVIDER" in text
+    assert "OPENVIKING_EMBEDDING_MODEL" in text
+    assert "已配置 OPENVIKING_EMBEDDING_PROVIDER，但缺少 OPENVIKING_EMBEDDING_MODEL" in text
+    assert "已配置 OPENVIKING_EMBEDDING_MODEL，但缺少 OPENVIKING_EMBEDDING_PROVIDER" in text
+    assert "OpenViking embedding LLM 已配置，语义检索已启用。" in text
+    assert "未配置 embedding LLM，OpenViking 只保存和读取材料，不启用语义检索。" in text
+    assert 'provider: "openai"' in text
+    assert 'model: "claw-trade-report-no-vectorization"' in text
+    assert 'model: "text-embedding-v4"' not in text
+    assert "resolveQwenEmbeddingApiBase" not in text
+    assert "DeepSeek；DeepSeek 官方 API 没有同厂商 embedding 模型" not in text
+    assert "当前不能把 chat 模型当 embedding 用" not in text
+    assert 'model: llm.model' not in text
+    assert 'provider: "litellm"' not in text
+    assert "claw-trade-disabled-embedding" not in text
+    assert "configure OpenViking embedding explicitly in .env.local" not in text
+    assert "OpenViking source config" not in text
+    assert "source.embedding" not in text
+    assert "~/.openviking" not in text
 
 
-def test_start_control_runtime_script_loads_claw_trade_env_before_source_env_without_logging_secret_values() -> None:
+def test_start_control_runtime_script_supports_qwen_chat_config_without_embedding_derivation() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "QWEN_API_KEY" in text
+    assert "MODELSTUDIO_API_KEY" in text
+    assert "DASHSCOPE_API_KEY" in text
+    assert 'return "qwen/qwen3.5-plus";' in text
+    assert 'providerId: "qwen"' in text
+    assert 'model: `qwen/${providerModelId}`' in text
+    assert 'model: "text-embedding-v4"' not in text
+
+
+def test_start_control_runtime_script_loads_only_claw_trade_env_without_logging_secret_values() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
     assert "load_runtime_env_files_into_process_env() {" in text
     assert 'CLAW_TRADE_ENV_PATH="${CLAW_TRADE_ENV_PATH:-${ROOT_DIR}/.env.local}"' in text
-    assert 'OPENCLAW_SOURCE_ENV_PATH="${OPENCLAW_SOURCE_ENV_PATH:-${HOME}/.openclaw/.env}"' in text
     assert "const originalKeys = new Set(Object.keys(process.env));" in text
-    assert "parseEnvFile(sourceEnvPath)" in text
     assert "parseEnvFile(clawTradeEnvPath)" in text
     assert "process.stdout.write(\"\\u0000\")" in text
     assert "claw-trade .env.local 不存在，跳过注入" in text
-    assert "OpenClaw source .env 不存在，跳过注入" in text
+    assert "OpenClaw source .env" not in text
     assert 'printf \'[INFO] 环境变量注入条目数：%s\\n\' "${exported_count}"' in text
     load_index = text.index("load_runtime_env_files_into_process_env")
     defaults_index = text.index('OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"')
@@ -282,11 +331,19 @@ def test_start_control_runtime_script_does_not_write_secrets_or_remove_runs_root
     text = _script_path().read_text(encoding="utf-8")
 
     assert "OPENVIKING_API_KEY=" not in text
-    assert "OPENCLAW_GATEWAY_TOKEN=" not in text
+    assert "OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}" not in text
     forbidden_plain = "rm -rf " + "runs"
     forbidden_quote = 'rm -rf "' + "runs"
     assert forbidden_plain not in text
     assert forbidden_quote not in text
+
+
+def test_start_control_runtime_script_preserves_openviking_data_on_restart() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "保留 runs 主目录与 OpenViking data" in text
+    assert '! -path "${OPENVIKING_RUNTIME_DIR}"' in text
+    assert '! -path "${OPENVIKING_DATA_DIR}"' in text
 
 
 def test_start_control_runtime_script_has_no_forbidden_success_patterns() -> None:

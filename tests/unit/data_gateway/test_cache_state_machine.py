@@ -19,6 +19,7 @@ from claw_trade.data_gateway.models import (
 from claw_trade.data_gateway.store.attempts import MongoAttemptStore
 from claw_trade.data_gateway.store.cache import MongoCacheStore, build_cache_key
 from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
+from claw_trade.data_gateway.store.rate_limits import MongoRateLimitStore
 from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
 
 
@@ -32,7 +33,10 @@ class _FakeCollection:
         if self.raise_find is not None:
             raise self.raise_find
         key = query["_id"]
-        return self.docs.get(key)
+        doc = self.docs.get(key)
+        if doc is None:
+            return None
+        return dict(doc) if _matches_query(doc, query) else None
 
     def replace_one(self, query: dict[str, Any], doc: dict[str, Any], upsert: bool = False) -> None:
         del upsert
@@ -41,12 +45,23 @@ class _FakeCollection:
         self.docs[query["_id"]] = dict(doc)
 
     def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
-        del upsert
         if self.raise_write is not None:
             raise self.raise_write
         key = query["_id"]
-        current = self.docs.get(key, {})
-        current.update(update.get("$setOnInsert", {}))
+        current = self.docs.get(key)
+        inserted = False
+        if current is None:
+            if not upsert:
+                return
+            current = {}
+            inserted = True
+        elif not _matches_query(current, query):
+            return
+        if inserted:
+            current.update(update.get("$setOnInsert", {}))
+        if "$inc" in update:
+            for field, delta in update["$inc"].items():
+                current[field] = int(current.get(field, 0)) + int(delta)
         current.update(update.get("$set", {}))
         if "_id" not in current:
             current["_id"] = key
@@ -61,6 +76,54 @@ class _FakeCollection:
 
             raise DuplicateKeyError("duplicate")
         self.docs[key] = dict(doc)
+
+    def find_one_and_update(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+        *,
+        upsert: bool = False,
+        return_document: Any | None = None,
+    ) -> dict[str, Any] | None:
+        del return_document
+        if self.raise_write is not None:
+            raise self.raise_write
+        key = query["_id"]
+        current = self.docs.get(key)
+        if current is not None and _matches_query(current, query):
+            self.update_one(query, update, upsert=False)
+            return dict(self.docs[key])
+        if not upsert:
+            return None
+        if current is not None:
+            return None
+        self.update_one(query, update, upsert=True)
+        created = self.docs.get(key)
+        return dict(created) if created is not None else None
+
+
+def _matches_query(doc: dict[str, Any], query: dict[str, Any]) -> bool:
+    for key, value in query.items():
+        if key == "_id":
+            if doc.get("_id") != value:
+                return False
+            continue
+        if key == "$or":
+            options = value if isinstance(value, list) else []
+            return any(_matches_query(doc, option) for option in options)
+        if isinstance(value, dict) and "$lt" in value:
+            current = doc.get(key)
+            if current is None or not current < value["$lt"]:
+                return False
+            continue
+        if isinstance(value, dict) and "$exists" in value:
+            exists = key in doc
+            if exists is not bool(value["$exists"]):
+                return False
+            continue
+        if doc.get(key) != value:
+            return False
+    return True
 
 
 def _request() -> PackRequest:
@@ -259,3 +322,33 @@ def test_raw_export_policy_redacted_does_not_store_inline_payload() -> None:
     assert doc["object_ref"] is None
     assert "do-not-inline" not in doc["redacted_snapshot"]
     assert doc["last_seen_run_id"] == request.run_id
+
+
+def test_rate_limit_store_reserve_tracks_usage_and_blocks_after_limit() -> None:
+    collection = _FakeCollection()
+    store = MongoRateLimitStore(collection, default_window_seconds=60)
+    spec = _spec()
+    request = _request()
+
+    assert store.reserve(spec, request, limit=1, window_seconds=60) is True
+    assert store.reserve(spec, request, limit=1, window_seconds=60) is False
+
+    docs = list(collection.docs.values())
+    assert len(docs) == 1
+    assert docs[0]["provider"] == spec.provider
+    assert docs[0]["endpoint"] == spec.endpoint
+    assert docs[0]["limit"] == 1
+    assert docs[0]["used"] == 1
+    assert docs[0]["last_error"] == "rate_limit_exhausted"
+
+
+def test_rate_limit_store_write_failure_is_explicit_error() -> None:
+    collection = _FakeCollection()
+    collection.raise_write = RuntimeError("rate-limit write failed")
+    store = MongoRateLimitStore(collection)
+    spec = _spec()
+    request = _request()
+
+    with pytest.raises(DataGatewayError) as excinfo:
+        store.reserve(spec, request, limit=1)
+    assert excinfo.value.code == DataGatewayErrorCode.EVIDENCE_WRITE_FAILED

@@ -108,13 +108,37 @@ def _pack_result(request: PackRequest) -> DomainPackResult:
     )
 
 
-def _plan(*, run_id: str = "run-1", provider_config_version: str = "cfg-v1") -> RunProviderPlan:
+def _plan(
+    *,
+    run_id: str = "run-1",
+    provider_config_version: str = "cfg-v1",
+    market: Market = Market.HK,
+    ticker: str = "00700.HK",
+) -> RunProviderPlan:
+    domains = (
+        (
+            PackDomain.MARKET,
+            PackDomain.FUNDAMENTAL,
+            PackDomain.NEWS,
+            PackDomain.SOCIAL,
+            PackDomain.POLICY,
+            PackDomain.HOT_MONEY,
+            PackDomain.LOCKUP,
+        )
+        if market == Market.CN_A
+        else (
+            PackDomain.MARKET,
+            PackDomain.FUNDAMENTAL,
+            PackDomain.NEWS,
+            PackDomain.SOCIAL,
+        )
+    )
     return RunProviderPlan(
         run_id=run_id,
         provider_config_version=provider_config_version,
-        market=Market.HK,
-        ticker="00700.HK",
-        domains=(PackDomain.MARKET, PackDomain.FUNDAMENTAL, PackDomain.NEWS, PackDomain.SOCIAL),
+        market=market,
+        ticker=ticker,
+        domains=domains,
         call_specs=(),
         shared_call_keys=(),
         cache_keys=(),
@@ -166,11 +190,13 @@ class _PackService:
     adapters: tuple[_Adapter, ...]
     last_request: PackRequest | None = None
     last_plan: RunProviderPlan | None = None
+    last_result: DomainPackResult | None = None
 
     def get_pack(self, request: PackRequest, run_plan: RunProviderPlan) -> DomainPackResult:
         self.last_request = request
         self.last_plan = run_plan
-        return _pack_result(request)
+        self.last_result = _pack_result(request)
+        return self.last_result
 
 
 def test_rejects_non_provider_adapter() -> None:
@@ -209,6 +235,44 @@ def test_success_response_only_contains_brief_and_min_status() -> None:
     assert service.last_plan is not None
     assert service.last_plan.run_id == "run-1"
     assert service.last_plan.remote_prefetch_allowed is False
+    assert service.last_result is not None
+    assert service.last_result.audit_payload.openbb_runtime_marker == "openbb-v4.7.0"
+    assert service.last_result.audit_payload.openbb_extension_version == "claw-pack-wrapper.v0"
+
+
+def test_cn_a_extension_routes_use_canonical_domains() -> None:
+    service = _PackService(settings=_settings(), adapters=(_Adapter(),))
+    plan_store = _PlanStore(plans={"run-cn-a": _plan(run_id="run-cn-a", market=Market.CN_A, ticker="600519")})
+    wrapper = OpenBBRuntimeWrapper(
+        settings=_settings(),
+        adapters=(_Adapter(),),
+        pack_service=service,
+        run_provider_plan_store=plan_store,
+    )
+    client = TestClient(wrapper.create_pack_fastapi_app())
+    payload = _payload()
+    payload.update(
+        {
+            "market": "CN_A",
+            "ticker": "600519",
+            "profile": "CN_A",
+            "company_name": "贵州茅台",
+            "currency": "CNY",
+            "run_id": "run-cn-a",
+            "worker_id": "policy_analyst",
+        }
+    )
+    expected = {
+        "/api/v1/claw/get_policy_pack": PackDomain.POLICY,
+        "/api/v1/claw/get_hot_money_pack": PackDomain.HOT_MONEY,
+        "/api/v1/claw/get_lockup_pack": PackDomain.LOCKUP,
+    }
+    for endpoint, domain in expected.items():
+        response = client.post(endpoint, json=payload)
+        assert response.status_code == 200
+        assert response.json()["reader_brief_md"].startswith("## 资料包")
+        assert service.last_request is not None
+        assert service.last_request.domain == domain
 
 
 def test_pack_endpoint_requires_run_plan_store() -> None:

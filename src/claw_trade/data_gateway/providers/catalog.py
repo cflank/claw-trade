@@ -215,6 +215,10 @@ class ProviderCatalog:
                 {
                     "adapter_id": manifest.adapter_id,
                     "config_version": manifest.config_version,
+                    "markets": tuple(item.value for item in manifest.markets),
+                    "domains": tuple(item.value for item in manifest.domains),
+                    "source_role": manifest.source_role.value,
+                    "coverage_group": manifest.coverage_group,
                     "priority": manifest.priority,
                     "priority_source": manifest.priority_source.value,
                 }

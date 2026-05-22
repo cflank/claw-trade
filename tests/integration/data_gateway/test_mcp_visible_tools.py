@@ -51,6 +51,13 @@ _FORBIDDEN_LEGACY_ALIASES = {
     "bb_crypto_data",
 }
 
+_FORBIDDEN_MODEL_MESSAGE_PHRASES = (
+    "资料包工具已返回",
+    "资料就绪状态为",
+    "这只证明工具调用完成",
+    "不证明资料覆盖完成",
+)
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -126,8 +133,11 @@ def test_openbb_mcp_visible_tools_are_pack_only() -> None:
     tools = tuple(result["tools"])
     assert tools == (
         "claw_get_fundamental_pack",
+        "claw_get_hot_money_pack",
+        "claw_get_lockup_pack",
         "claw_get_market_pack",
         "claw_get_news_pack",
+        "claw_get_policy_pack",
         "claw_get_social_pack",
     )
     assert set(tools).isdisjoint(_FORBIDDEN_US_ATOMICS)
@@ -147,6 +157,9 @@ def test_frontline_plugin_contract_includes_canonical_openbb_pack_tools() -> Non
         "claw_get_fundamental_pack",
         "claw_get_news_pack",
         "claw_get_social_pack",
+        "claw_get_policy_pack",
+        "claw_get_hot_money_pack",
+        "claw_get_lockup_pack",
     }.issubset(tools)
 
 
@@ -231,6 +244,33 @@ def test_openclaw_llm_provider_payload_scan_rejects_legacy_alias_tools(forbidden
         _scan_openclaw_llm_provider_payload(payload)
 
 
+def test_openclaw_llm_provider_payload_scan_rejects_runtime_wrapper_message_text() -> None:
+    payload = {
+        "source": "provider_request_capture",
+        "sequence": 2,
+        "runtime_markers": {
+            "run_id": "run-1",
+            "call_id": "call-1",
+            "worker_id": "social_analyst",
+            "stage": "frontline",
+            "profile": "CN_A",
+            "openclaw_run_id": "oc-1",
+        },
+        "payload": {
+            "messages": [
+                {"role": "user", "content": "分析"},
+                {
+                    "role": "tool",
+                    "content": "资料包工具已返回，但资料就绪状态为 partial；这只证明工具调用完成。",
+                },
+            ],
+            "tools": [{"type": "function", "function": {"name": "claw_get_social_pack"}}],
+        },
+    }
+    with pytest.raises(ValueError, match="forbidden message text"):
+        _scan_openclaw_llm_provider_payload(payload)
+
+
 def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str, ...]:
     source = payload.get("source")
     if source != "provider_request_capture":
@@ -242,6 +282,7 @@ def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages:
         raise ValueError("payload.messages must be non-empty list")
+    _assert_no_forbidden_model_message_text(messages)
     tools = body.get("tools")
     if not isinstance(tools, list):
         raise ValueError("payload.tools must be list")
@@ -274,3 +315,30 @@ def _tool_name(item: object) -> str | None:
             if isinstance(function_name, str) and function_name.strip():
                 return function_name.strip()
     return None
+
+
+def _assert_no_forbidden_model_message_text(messages: object) -> None:
+    if not isinstance(messages, list):
+        return
+    for text in _message_text_fragments(messages):
+        for phrase in _FORBIDDEN_MODEL_MESSAGE_PHRASES:
+            if phrase in text:
+                raise ValueError(f"forbidden message text in openclaw_llm_provider_payload: {phrase}")
+
+
+def _message_text_fragments(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, list):
+        fragments: list[str] = []
+        for item in value:
+            fragments.extend(_message_text_fragments(item))
+        return tuple(fragments)
+    if isinstance(value, dict):
+        content = value.get("content")
+        if isinstance(content, (str, list, dict)):
+            return _message_text_fragments(content)
+        text = value.get("text")
+        if isinstance(text, str):
+            return (text,)
+    return ()

@@ -184,12 +184,14 @@ def build_request_context(
             worker_id=worker_id,
             run_id=state.run_id,
             turn_index=turn_index,
+            market=state.request.market,
         )
         upstream_caps = manifest.capabilities_for_worker_call(
             stage=stage,
             worker_id=worker_id,
             run_id=state.run_id,
             turn_index=turn_index,
+            market=state.request.market,
         )
     except (ArtifactFlowError, ValueError) as exc:
         return RequestBuildResult.failed(

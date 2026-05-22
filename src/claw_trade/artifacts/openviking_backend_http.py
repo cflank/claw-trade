@@ -37,6 +37,20 @@ _DEFAULT_OBSERVER_QUEUE_PATH = "/api/v1/observer/queue"
 _DEFAULT_METRICS_PATH = "/metrics"
 
 
+def _vectorize_enabled() -> bool:
+    raw = os.environ.get("CLAW_TRADE_OPENVIKING_VECTORIZE")
+    if raw is None or raw.strip() == "":
+        return True
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _vectorize_unavailable_reason() -> str:
+    configured = os.environ.get("CLAW_TRADE_OPENVIKING_VECTORIZE_REASON", "").strip()
+    if configured:
+        return configured
+    return "未配置 embedding LLM，OpenViking 只保存和读取材料，不启用语义检索。"
+
+
 def create_default_backend() -> OpenVikingHttpBackend:
     endpoint = os.environ.get("OPENVIKING_ENDPOINT", _DEFAULT_ENDPOINT).strip() or _DEFAULT_ENDPOINT
     api_key = os.environ.get("OPENVIKING_API_KEY", "").strip() or None
@@ -303,6 +317,7 @@ class OpenVikingHttpBackend:
         )
         temp_file_id = _extract_temp_file_id(upload_result)
         parent_uri = _import_parent_uri(parent)
+        vectorize = _vectorize_enabled()
         raw = self._call_json_api(
             "POST",
             _DEFAULT_PACK_IMPORT_PATH,
@@ -310,7 +325,7 @@ class OpenVikingHttpBackend:
                 "temp_file_id": temp_file_id,
                 "parent": parent_uri,
                 "force": True,
-                "vectorize": False,
+                "vectorize": vectorize,
             },
         )
         if verify_hashes and len(bundle_bytes) <= 0:
@@ -329,10 +344,23 @@ class OpenVikingHttpBackend:
         }
 
     def semantic_index_status(self, uri: str) -> dict[str, object]:
-        del uri
+        if not _vectorize_enabled():
+            return {
+                "status": "unavailable",
+                "reason": _vectorize_unavailable_reason(),
+            }
+        stat = self.fetch_stat_by_uri(uri)
+        if not stat.ok or not stat.exists or not stat.is_dir:
+            return {
+                "status": "blocked",
+                "reason": f"OpenViking run root is not available for semantic indexing: {uri}",
+            }
+        queue = self.runtime_semantic_queue()
+        status = str(queue.get("status") or "unavailable")
+        reason = str(queue.get("reason") or "OpenViking semantic queue status unavailable")
         return {
-            "status": "blocked",
-            "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+            "status": status,
+            "reason": reason,
         }
 
     def runtime_metrics(self) -> dict[str, object]:
@@ -355,10 +383,15 @@ class OpenVikingHttpBackend:
         return {"status": _observer_health_status(raw), "reason": _observer_reason(raw)}
 
     def runtime_semantic_queue(self) -> dict[str, object]:
-        self._call_json_api("GET", _DEFAULT_OBSERVER_QUEUE_PATH)
+        if not _vectorize_enabled():
+            return {
+                "status": "unavailable",
+                "reason": _vectorize_unavailable_reason(),
+            }
+        raw = self._call_json_api("GET", _DEFAULT_OBSERVER_QUEUE_PATH)
         return {
-            "status": "blocked",
-            "reason": "OpenViking semantic/vector queue is disabled in claw-trade report runtime",
+            "status": _observer_health_status(raw),
+            "reason": _observer_reason(raw),
         }
 
     def _write_verified_content(
@@ -463,16 +496,17 @@ class OpenVikingHttpBackend:
             body_content_type=multipart_content_type,
         )
         temp_file_id = _extract_temp_file_id(upload_result)
+        vectorize = _vectorize_enabled()
         self._call_json_api_with_audit(
             "POST",
             _DEFAULT_PACK_IMPORT_PATH,
-            operation=f"{operation_prefix}.pack.import.vectorize_false",
+            operation=f"{operation_prefix}.pack.import.vectorize_{str(vectorize).lower()}",
             operations=operations,
             body={
                 "temp_file_id": temp_file_id,
                 "parent": parent_uri,
                 "force": True,
-                "vectorize": False,
+                "vectorize": vectorize,
             },
         )
 

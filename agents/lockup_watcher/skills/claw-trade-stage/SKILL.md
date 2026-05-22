@@ -1,0 +1,15 @@
+---
+name: claw-trade-stage
+description: Stage contract for `lockup_watcher` in the claw-trade OpenClaw report path.
+---
+
+# claw-trade stage contract
+
+Follow `STAGES.yaml` for the current worker/profile/stage.
+
+- Use only approved upstream report material supplied by claw-trade; refs and capabilities are for traceability and deeper evidence reads.
+- Output the final reader-facing report body for `lockup_analysis_report`.
+- The report body must not include tool logs, JSON, URIs, or machine-readable fields.
+- If the tool returns zero data or an error limitation, still write a limitation report with root cause and missing evidence.
+- Do not call tools through Python or assume Python already fetched evidence.
+- Do not emit unsupported investment claims.

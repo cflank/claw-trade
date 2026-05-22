@@ -11,12 +11,18 @@ const TOOL_NAMES = Object.freeze({
   clawGetFundamentalPack: "claw_get_fundamental_pack",
   clawGetNewsPack: "claw_get_news_pack",
   clawGetSocialPack: "claw_get_social_pack",
+  clawGetPolicyPack: "claw_get_policy_pack",
+  clawGetHotMoneyPack: "claw_get_hot_money_pack",
+  clawGetLockupPack: "claw_get_lockup_pack",
 });
 const FRONTLINE_STAGE = "frontline";
 const OPENBB_PACK_DOMAIN_MARKET = "market";
 const OPENBB_PACK_DOMAIN_FUNDAMENTAL = "fundamental";
 const OPENBB_PACK_DOMAIN_NEWS = "news";
 const OPENBB_PACK_DOMAIN_SOCIAL = "social";
+const OPENBB_PACK_DOMAIN_POLICY = "policy";
+const OPENBB_PACK_DOMAIN_HOT_MONEY = "hot_money";
+const OPENBB_PACK_DOMAIN_LOCKUP = "lockup";
 const MARKET_CN_A = "CN_A";
 const MARKET_HK = "HK";
 const MARKET_US = "US";
@@ -453,16 +459,7 @@ function toolResult(payload, isError = false) {
 function modelFacingToolText(payload, isError = false) {
   if (isRecord(payload)) {
     const readerBrief = textValue(payload.reader_brief) ?? textValue(payload.reader_brief_md);
-    if (!isError && readerBrief) {
-      const readiness = isRecord(payload.readiness) ? textValue(payload.readiness.status) : undefined;
-      if (payload.ok === false || (readiness && readiness !== "ready")) {
-        const statusText = readiness ? `资料就绪状态为 ${readiness}` : "资料未标记为可用";
-        return [
-          `资料包工具已返回，但${statusText}；这只证明工具调用完成，不证明资料覆盖完成。`,
-          `请只按下方摘要写已取得事实和缺口，不要补写未提供的数据。`,
-          readerBrief,
-        ].join("\n");
-      }
+    if (readerBrief) {
       return readerBrief;
     }
     const error = isRecord(payload.error) ? payload.error : undefined;
@@ -472,12 +469,12 @@ function modelFacingToolText(payload, isError = false) {
       return `资料包工具失败：${code}。${message}`;
     }
     if (!isError && payload.ok === true) {
-      return "资料包工具已返回，但未提供自然语言摘要。请只基于可见事实写证据缺口，不要补写未提供的数据。";
+      return "未提供自然语言资料包正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
     }
   }
   return isError
     ? "资料包工具失败。请在报告中说明工具失败和证据缺口，不要补写未提供的数据。"
-    : "资料包工具已返回。请只基于自然语言摘要中的事实写报告，不要补写未提供的数据。";
+    : "未提供自然语言资料包正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
 }
 
 class FrontlineToolError extends Error {
@@ -694,11 +691,33 @@ function openbbPackScriptConfig(expectedWorkerId, packDomain) {
   };
 }
 
+function resolvePackTotalTimeoutMs(config, toolInput, toolName) {
+  if (
+    toolName === TOOL_NAMES.clawGetMarketPack
+    && textValue(toolInput.market) === MARKET_CRYPTO
+  ) {
+    return domainToolTimeoutMs(DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS);
+  }
+  return config.totalTimeoutMs;
+}
+
 const TOOL_CONFIG_FACTORIES = Object.freeze({
   [TOOL_NAMES.clawGetMarketPack]: () => openbbPackScriptConfig("market_analyst", OPENBB_PACK_DOMAIN_MARKET),
   [TOOL_NAMES.clawGetFundamentalPack]: () => openbbPackScriptConfig("fundamental_analyst", OPENBB_PACK_DOMAIN_FUNDAMENTAL),
   [TOOL_NAMES.clawGetNewsPack]: () => openbbPackScriptConfig("news_analyst", OPENBB_PACK_DOMAIN_NEWS),
   [TOOL_NAMES.clawGetSocialPack]: () => openbbPackScriptConfig("social_analyst", OPENBB_PACK_DOMAIN_SOCIAL),
+  [TOOL_NAMES.clawGetPolicyPack]: () => ({
+    ...openbbPackScriptConfig("policy_analyst", OPENBB_PACK_DOMAIN_POLICY),
+    expectedMarket: [MARKET_CN_A],
+  }),
+  [TOOL_NAMES.clawGetHotMoneyPack]: () => ({
+    ...openbbPackScriptConfig("hot_money_tracker", OPENBB_PACK_DOMAIN_HOT_MONEY),
+    expectedMarket: [MARKET_CN_A],
+  }),
+  [TOOL_NAMES.clawGetLockupPack]: () => ({
+    ...openbbPackScriptConfig("lockup_watcher", OPENBB_PACK_DOMAIN_LOCKUP),
+    expectedMarket: [MARKET_CN_A],
+  }),
 });
 
 async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
@@ -724,7 +743,7 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
     tool_input: toolInput,
     runtime_context: runtimeContext,
   };
-  const timeoutMs = subprocessTimeoutMs(config.totalTimeoutMs);
+  const timeoutMs = subprocessTimeoutMs(resolvePackTotalTimeoutMs(config, toolInput, toolName));
   const result = await runPythonJson(config.args, payload, {
     pythonPathDirs: config.pythonPathDirs,
     timeoutMs,
@@ -760,6 +779,18 @@ async function runClawGetNewsPack(ctx, params, toolCallId) {
 
 async function runClawGetSocialPack(ctx, params, toolCallId) {
   return runPack(ctx, params, TOOL_NAMES.clawGetSocialPack, "social_analyst", toolCallId);
+}
+
+async function runClawGetPolicyPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetPolicyPack, "policy_analyst", toolCallId);
+}
+
+async function runClawGetHotMoneyPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetHotMoneyPack, "hot_money_tracker", toolCallId);
+}
+
+async function runClawGetLockupPack(ctx, params, toolCallId) {
+  return runPack(ctx, params, TOOL_NAMES.clawGetLockupPack, "lockup_watcher", toolCallId);
 }
 
 function registerFrontlineTool(api, name, description, execute, parameters = PACK_INPUT_SCHEMA) {
@@ -808,6 +839,27 @@ export default definePluginEntry({
       TOOL_NAMES.clawGetSocialPack,
       "Load one social pack from the canonical OpenBB gateway/runtime contract.",
       runClawGetSocialPack,
+      OPENBB_PACK_INPUT_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.clawGetPolicyPack,
+      "Load one policy pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetPolicyPack,
+      OPENBB_PACK_INPUT_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.clawGetHotMoneyPack,
+      "Load one hot-money pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetHotMoneyPack,
+      OPENBB_PACK_INPUT_SCHEMA,
+    );
+    registerFrontlineTool(
+      api,
+      TOOL_NAMES.clawGetLockupPack,
+      "Load one lockup pack from the canonical OpenBB gateway/runtime contract.",
+      runClawGetLockupPack,
       OPENBB_PACK_INPUT_SCHEMA,
     );
   },

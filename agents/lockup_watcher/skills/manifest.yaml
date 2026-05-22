@@ -1,0 +1,9 @@
+skills:
+  - path: claw-trade-stage/SKILL.md
+  - path: cn-a-lockup-data/SKILL.md
+    skill_id: cn-a-lockup-data
+    skill_version: 0.1.0
+    workers:
+      - lockup_watcher
+    tool_exports:
+      - claw_get_lockup_pack

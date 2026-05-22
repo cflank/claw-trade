@@ -32,6 +32,7 @@ _METADATA_IPS = frozenset(
 )
 _ALLOWED_HEALTHCHECK_METHODS = frozenset({"GET", "HEAD", "POST"})
 _ALLOWED_SOURCE_ROLES = frozenset(role for role in SourceRole)
+_INVALID_SAMPLE_REF_PREFIXES = ("mock://", "fake://", "stub://")
 
 
 def _path_has_url_authority(value: object) -> bool:
@@ -61,6 +62,13 @@ def _dns_resolve(hostname: str) -> tuple[str, ...]:
     records = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
     ips = {record[4][0] for record in records}
     return tuple(sorted(ips))
+
+
+def _sample_ref_invalid(value: object) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    return any(text.startswith(prefix) for prefix in _INVALID_SAMPLE_REF_PREFIXES)
 
 
 @dataclass(frozen=True)
@@ -127,6 +135,9 @@ class ProviderAdmissionValidator:
     secret_store: SecretStore
     license_store: LicensePolicyStore
     security_policy: DeclarativeProviderSecurityPolicy
+    # Must be bound to a real evidence-store existence check in production/integration.
+    # A permissive always-true verifier can incorrectly admit non-existent sample refs.
+    sample_ref_exists: Callable[[str], bool]
 
     def _validate_healthcheck(self, manifest: DeclarativeProviderManifest) -> tuple[AdmissionCheckStatus, tuple[str, ...]]:
         errors: list[str] = []
@@ -139,6 +150,16 @@ class ProviderAdmissionValidator:
             errors.append("healthcheck_missing_target")
         if path and _path_has_url_authority(path):
             errors.append("healthcheck_path_must_be_relative")
+        raw_ref = str(manifest.healthcheck.get("sample_raw_ref") or "").strip()
+        normalized_ref = str(manifest.healthcheck.get("sample_normalized_ref") or "").strip()
+        if _sample_ref_invalid(raw_ref):
+            errors.append("healthcheck_sample_raw_ref_missing_or_invalid")
+        elif not self.sample_ref_exists(raw_ref):
+            errors.append("healthcheck_sample_raw_ref_not_found")
+        if _sample_ref_invalid(normalized_ref):
+            errors.append("healthcheck_sample_normalized_ref_missing_or_invalid")
+        elif not self.sample_ref_exists(normalized_ref):
+            errors.append("healthcheck_sample_normalized_ref_not_found")
         if url:
             status, details = self.security_policy.validate_url(str(url), context="healthcheck.url")
             if status != AdmissionCheckStatus.PASS:
@@ -174,6 +195,8 @@ class ProviderAdmissionValidator:
     def _validate_source_role(self, manifest: DeclarativeProviderManifest) -> tuple[AdmissionCheckStatus, tuple[str, ...]]:
         if manifest.source_role not in _ALLOWED_SOURCE_ROLES:
             return (AdmissionCheckStatus.FAIL, ("source_role_invalid",))
+        if manifest.source_role == SourceRole.OFFICIAL_ORIGINAL:
+            return (AdmissionCheckStatus.FAIL, ("source_role_official_original_forbidden_for_user_provider",))
         return (AdmissionCheckStatus.PASS, ())
 
     def _validate_rate_limit(self, manifest: DeclarativeProviderManifest) -> tuple[AdmissionCheckStatus, tuple[str, ...]]:

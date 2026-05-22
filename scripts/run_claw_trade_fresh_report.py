@@ -15,7 +15,8 @@ from typing import Any
 
 from claw_trade.cli.run_control import _build_runner, _data_gateway_mode_from_env
 from claw_trade.config.report_workflow_settings import load_report_workflow_settings
-from claw_trade.workflow.models import RunRequest, RunStatus, StopPoint, WorkflowEntryPoint
+from claw_trade.workflow.models import RunStatus
+from claw_trade.workflow.report_request_factory import build_report_run_request
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "docs" / "evidence"
@@ -378,8 +379,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     settings = load_report_workflow_settings()
-    request = RunRequest(
+    request = build_report_run_request(
         ticker=args.ticker,
+        settings=settings,
         company_name=args.company_name,
         market=args.market,
         profile=args.profile,
@@ -389,11 +391,6 @@ def main() -> int:
         start_date=args.start_date,
         end_date=args.end_date,
         data_gateway=_data_gateway_mode_from_env(),
-        stop_point=StopPoint.NONE,
-        entry_point=WorkflowEntryPoint.REPORT_COMMAND,
-        max_debate_rounds=settings.max_debate_rounds,
-        max_risk_discuss_rounds=settings.max_risk_discuss_rounds,
-        frontline_execution_mode=settings.frontline_execution_mode,
     )
 
     runner = _build_runner(Path(args.run_dir))

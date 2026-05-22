@@ -6,6 +6,9 @@ src-bak/
 runs/
 logs/
 agents/*/.openclaw/
+web/**/node_modules/
+web/**/dist/
+docs/evidence/fullchain-four-markets-*/
 
 # Ad-hoc live capture scratch. Curated proof promoted into docs/evidence can still
 # be force-added intentionally, but generated direct-live run folders stay quiet.

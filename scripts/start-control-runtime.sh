@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLAW_TRADE_ENV_PATH="${CLAW_TRADE_ENV_PATH:-${ROOT_DIR}/.env.local}"
-OPENCLAW_SOURCE_ENV_PATH="${OPENCLAW_SOURCE_ENV_PATH:-${HOME}/.openclaw/.env}"
 RUNTIME_COMMAND=()
 if [[ $# -gt 0 ]]; then
   if [[ "${1}" != "--" ]]; then
@@ -24,7 +23,6 @@ load_runtime_env_files_into_process_env() {
     export "${key}=${value}"
     exported_count=$(( exported_count + 1 ))
   done < <(
-    OPENCLAW_SOURCE_ENV_PATH_VALUE="${OPENCLAW_SOURCE_ENV_PATH}" \
     CLAW_TRADE_ENV_PATH_VALUE="${CLAW_TRADE_ENV_PATH}" \
     node <<'NODE'
 const fs = require("node:fs");
@@ -64,16 +62,10 @@ function parseEnvFile(envPath) {
   return result;
 }
 
-const sourceEnvPath = process.env.OPENCLAW_SOURCE_ENV_PATH_VALUE;
 const clawTradeEnvPath = process.env.CLAW_TRADE_ENV_PATH_VALUE;
 const originalKeys = new Set(Object.keys(process.env));
 const merged = new Map();
 
-for (const [key, value] of parseEnvFile(sourceEnvPath)) {
-  if (!originalKeys.has(key)) {
-    merged.set(key, value);
-  }
-}
 for (const [key, value] of parseEnvFile(clawTradeEnvPath)) {
   if (!originalKeys.has(key)) {
     merged.set(key, value);
@@ -92,11 +84,6 @@ NODE
     printf '[INFO] 已加载 claw-trade .env.local：%s\n' "${CLAW_TRADE_ENV_PATH}"
   else
     printf '[WARN] claw-trade .env.local 不存在，跳过注入：%s\n' "${CLAW_TRADE_ENV_PATH}" >&2
-  fi
-  if [[ -f "${OPENCLAW_SOURCE_ENV_PATH}" ]]; then
-    printf '[INFO] 已加载 OpenClaw source .env：%s\n' "${OPENCLAW_SOURCE_ENV_PATH}"
-  else
-    printf '[WARN] OpenClaw source .env 不存在，跳过注入：%s\n' "${OPENCLAW_SOURCE_ENV_PATH}" >&2
   fi
   printf '[INFO] 环境变量注入条目数：%s\n' "${exported_count}"
 }
@@ -117,11 +104,19 @@ OPENVIKING_RUNTIME_DIR="${RUNTIME_DIR}/openviking"
 OPENBB_RUNTIME_DIR="${RUNTIME_DIR}/openbb"
 OPENBB_ENV_TEMPLATE_PATH="${OPENBB_RUNTIME_DIR}/openbb.env.template"
 OPENBB_ENV_PATH="${OPENBB_RUNTIME_DIR}/openbb.env"
-OPENVIKING_SOURCE_CONFIG_PATH="${OPENVIKING_SOURCE_CONFIG_PATH:-${HOME}/.openviking/ov.conf}"
 OPENVIKING_CONFIG_FILE="${OPENVIKING_CONFIG_FILE:-${OPENVIKING_RUNTIME_DIR}/ov.conf}"
 OPENVIKING_DATA_DIR="${OPENVIKING_DATA_DIR:-${OPENVIKING_RUNTIME_DIR}/data}"
 OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH:-${RUNTIME_DIR}/openviking-write.lock}"
 export OPENVIKING_CONFIG_FILE
+CN_A_MONGODB_BIND_IP="${CN_A_MONGODB_BIND_IP:-127.0.0.1}"
+CN_A_MONGODB_PORT="${CN_A_MONGODB_PORT:-27017}"
+CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"
+CN_A_MONGODB_DATABASE="${CN_A_MONGODB_DATABASE:-claw_trade}"
+CN_A_MONGODB_CACHE_COLLECTION="${CN_A_MONGODB_CACHE_COLLECTION:-cn_a_fundamental_cache}"
+DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"
+DATA_GATEWAY_MONGODB_DATABASE="${DATA_GATEWAY_MONGODB_DATABASE:-${CN_A_MONGODB_DATABASE}}"
+export CN_A_MONGODB_URI CN_A_MONGODB_DATABASE CN_A_MONGODB_CACHE_COLLECTION
+export DATA_GATEWAY_MONGODB_URI DATA_GATEWAY_MONGODB_DATABASE
 
 OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
 OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL:-${OPENVIKING_ENDPOINT}}"
@@ -133,10 +128,26 @@ OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
 OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/third_party/openclaw/openclaw.mjs}"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${RUNTIME_DIR}/openclaw-state}"
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
-OPENCLAW_SOURCE_CONFIG_PATH="${OPENCLAW_SOURCE_CONFIG_PATH:-${HOME}/.openclaw/openclaw.json}"
 OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-}"
+CLAW_TRADE_LLM_PROVIDER="${CLAW_TRADE_LLM_PROVIDER:-}"
+CLAW_TRADE_LLM_MODEL="${CLAW_TRADE_LLM_MODEL:-${DEEPSEEK_MODEL:-}}"
+DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+QWEN_BASE_URL="${QWEN_BASE_URL:-${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}}"
+OPENVIKING_EMBEDDING_PROVIDER="${OPENVIKING_EMBEDDING_PROVIDER:-${CLAW_TRADE_OPENVIKING_EMBEDDING_PROVIDER:-}}"
+OPENVIKING_EMBEDDING_MODEL="${OPENVIKING_EMBEDDING_MODEL:-${CLAW_TRADE_OPENVIKING_EMBEDDING_MODEL:-}}"
+OPENVIKING_EMBEDDING_API_KEY="${OPENVIKING_EMBEDDING_API_KEY:-${CLAW_TRADE_OPENVIKING_EMBEDDING_API_KEY:-}}"
+OPENVIKING_EMBEDDING_API_BASE="${OPENVIKING_EMBEDDING_API_BASE:-${CLAW_TRADE_OPENVIKING_EMBEDDING_API_BASE:-}}"
+OPENVIKING_EMBEDDING_DIMENSION="${OPENVIKING_EMBEDDING_DIMENSION:-${CLAW_TRADE_OPENVIKING_EMBEDDING_DIMENSION:-}}"
+OPENVIKING_EMBEDDING_QUERY_PARAM="${OPENVIKING_EMBEDDING_QUERY_PARAM:-${CLAW_TRADE_OPENVIKING_EMBEDDING_QUERY_PARAM:-}}"
+OPENVIKING_EMBEDDING_DOCUMENT_PARAM="${OPENVIKING_EMBEDDING_DOCUMENT_PARAM:-${CLAW_TRADE_OPENVIKING_EMBEDDING_DOCUMENT_PARAM:-}}"
+CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED="${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED:-0}"
+CLAW_TRADE_OPENVIKING_VECTORIZE="${CLAW_TRADE_OPENVIKING_VECTORIZE:-0}"
+CLAW_TRADE_OPENVIKING_VECTORIZE_REASON="${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON:-}"
+export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED CLAW_TRADE_OPENVIKING_VECTORIZE CLAW_TRADE_OPENVIKING_VECTORIZE_REASON
+CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-}"
+CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-5000}"
 CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-probe-$(date -u +%Y%m%d%H%M%S)-$RANDOM}"
 CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
@@ -160,6 +171,29 @@ log_warn() {
 
 log_error() {
   printf '[ERROR] %s\n' "$*" >&2
+}
+
+configure_openviking_embedding_runtime_flags() {
+  if [[ -n "${OPENVIKING_EMBEDDING_PROVIDER}" && -z "${OPENVIKING_EMBEDDING_MODEL}" ]]; then
+    log_error "已配置 OPENVIKING_EMBEDDING_PROVIDER，但缺少 OPENVIKING_EMBEDDING_MODEL。"
+    exit 1
+  fi
+  if [[ -z "${OPENVIKING_EMBEDDING_PROVIDER}" && -n "${OPENVIKING_EMBEDDING_MODEL}" ]]; then
+    log_error "已配置 OPENVIKING_EMBEDDING_MODEL，但缺少 OPENVIKING_EMBEDDING_PROVIDER。"
+    exit 1
+  fi
+
+  if [[ -n "${OPENVIKING_EMBEDDING_PROVIDER}" && -n "${OPENVIKING_EMBEDDING_MODEL}" ]]; then
+    CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED=1
+    CLAW_TRADE_OPENVIKING_VECTORIZE=1
+    CLAW_TRADE_OPENVIKING_VECTORIZE_REASON="OpenViking embedding LLM 已配置，语义检索已启用。"
+  else
+    CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED=0
+    CLAW_TRADE_OPENVIKING_VECTORIZE=0
+    CLAW_TRADE_OPENVIKING_VECTORIZE_REASON="未配置 embedding LLM，OpenViking 只保存和读取材料，不启用语义检索。"
+  fi
+  export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED CLAW_TRADE_OPENVIKING_VECTORIZE CLAW_TRADE_OPENVIKING_VECTORIZE_REASON
+  log_info "${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON}"
 }
 
 kill_pid_if_alive() {
@@ -332,7 +366,7 @@ wait_http_ok_any() {
   while (( waited < timeout_sec )); do
     for url in "${urls[@]}"; do
       local code
-      code="$(curl -sS -o /dev/null -w '%{http_code}' "${url}" || true)"
+      code="$(curl -s -o /dev/null -w '%{http_code}' "${url}" 2>/dev/null || true)"
       if [[ "${code}" == "200" || "${code}" == "204" ]]; then
         return 0
       fi
@@ -360,17 +394,32 @@ export_runtime_env_for_child_commands() {
   export CLAW_TRADE_OPENVIKING_PROBE_RUN_ID
   export OPENCLAW_GATEWAY_CALL_BIN
   export OPENCLAW_GATEWAY_URL
+  export OPENCLAW_GATEWAY_TOKEN
   export OPENCLAW_STATE_DIR
   export OPENCLAW_CONFIG_PATH
   export OPENCLAW_GATEWAY_TIMEOUT_MS
   export OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS
   export OPENCLAW_MARKET_TOOL_PYTHON
+  export CLAW_TRADE_LLM_PROVIDER
+  export CLAW_TRADE_LLM_MODEL
+  export DEEPSEEK_BASE_URL
+  export QWEN_BASE_URL
+  export CLAW_TRADE_UI_INBOUND_URL
+  export CLAW_TRADE_UI_INBOUND_TIMEOUT_MS
   export OPENVIKING_ENDPOINT
   export OPENVIKING_BASE_URL
   export OPENVIKING_WORKSPACE
   export OPENVIKING_CONFIG_FILE
   export OPENVIKING_DATA_DIR
   export OPENVIKING_WRITE_LOCK_PATH
+  export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED
+  export CLAW_TRADE_OPENVIKING_VECTORIZE
+  export CLAW_TRADE_OPENVIKING_VECTORIZE_REASON
+  export CN_A_MONGODB_URI
+  export CN_A_MONGODB_DATABASE
+  export CN_A_MONGODB_CACHE_COLLECTION
+  export DATA_GATEWAY_MONGODB_URI
+  export DATA_GATEWAY_MONGODB_DATABASE
   if [[ "${openviking_mcp_started}" == "1" ]]; then
     export OPENVIKING_MCP_URL
   else
@@ -410,6 +459,52 @@ supervise_started_services() {
   done
 }
 
+preauthorize_openclaw_gateway_cli_scopes() {
+  local preauth_log="${LOG_DIR}/openclaw-gateway-scope-preauth.log"
+  local -a preauth_cmd=(
+    "${OPENCLAW_GATEWAY_CALL_BIN}"
+    gateway
+    call
+    agent.runSingleWorker
+    --timeout
+    "10000"
+    --params
+    '{"command":{}}'
+    --json
+    --scope
+    operator.read
+    --scope
+    operator.write
+  )
+  if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+    preauth_cmd+=(--url "${OPENCLAW_GATEWAY_URL}" --token "${OPENCLAW_GATEWAY_TOKEN}")
+  elif [[ -n "${OPENCLAW_GATEWAY_PASSWORD:-}" ]]; then
+    preauth_cmd+=(--url "${OPENCLAW_GATEWAY_URL}" --password "${OPENCLAW_GATEWAY_PASSWORD}")
+  fi
+
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${preauth_cmd[@]}" >"${preauth_log}" 2>&1
+  local status=$?
+  set -e
+  if [[ "${status}" == "0" ]]; then
+    log_info "OpenClaw CLI scope 预授权完成。"
+    return 0
+  fi
+  if grep -Eiq 'invalid params|invalid param|-32602|validation|required property|command' "${preauth_log}"; then
+    log_info "OpenClaw CLI scope 预授权完成。"
+    return 0
+  fi
+  if grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_log}"; then
+    log_warn "OpenClaw CLI scope 预授权需要设备 scope 升级；将由 UI workflow runner 按 Invest 链路在真实调用时批准并重试。"
+    return 0
+  fi
+  log_error "OpenClaw CLI scope 预授权失败。日志：${preauth_log}"
+  tail -n 40 "${preauth_log}" >&2 || true
+  exit 1
+}
+
 prepare_openclaw_trade_agent_config() {
   local config_dir
   config_dir="$(dirname "${OPENCLAW_CONFIG_PATH}")"
@@ -417,19 +512,28 @@ prepare_openclaw_trade_agent_config() {
 
   ROOT_DIR_VALUE="${ROOT_DIR}" \
   OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}" \
-  OPENCLAW_SOURCE_CONFIG_PATH_VALUE="${OPENCLAW_SOURCE_CONFIG_PATH}" \
   OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}" \
+  CLAW_TRADE_LLM_PROVIDER_VALUE="${CLAW_TRADE_LLM_PROVIDER}" \
+  CLAW_TRADE_LLM_MODEL_VALUE="${CLAW_TRADE_LLM_MODEL}" \
+  DEEPSEEK_BASE_URL_VALUE="${DEEPSEEK_BASE_URL}" \
+  QWEN_BASE_URL_VALUE="${QWEN_BASE_URL}" \
     node <<'NODE'
 const fs = require("node:fs");
 const rootDir = process.env.ROOT_DIR_VALUE;
 const outputPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
-const sourcePath = process.env.OPENCLAW_SOURCE_CONFIG_PATH_VALUE;
 const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;
+const configuredProvider = String(process.env.CLAW_TRADE_LLM_PROVIDER_VALUE || "").trim().toLowerCase();
+const configuredPrimaryModel = String(process.env.CLAW_TRADE_LLM_MODEL_VALUE || "").trim();
+const deepseekBaseUrl = String(process.env.DEEPSEEK_BASE_URL_VALUE || "https://api.deepseek.com").trim();
+const qwenBaseUrl = String(process.env.QWEN_BASE_URL_VALUE || "https://dashscope.aliyuncs.com/compatible-mode/v1").trim();
 const workers = [
   "market_analyst",
   "fundamental_analyst",
   "news_analyst",
   "social_analyst",
+  "policy_analyst",
+  "hot_money_tracker",
+  "lockup_watcher",
   "bull_researcher",
   "bear_researcher",
   "research_manager",
@@ -445,22 +549,6 @@ function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-if (!sourcePath || !fs.existsSync(sourcePath)) {
-  console.error(`[ERROR] OpenClaw source config 不存在：${sourcePath || "<empty>"}`);
-  process.exit(1);
-}
-let sourceConfig;
-try {
-  sourceConfig = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
-} catch (error) {
-  console.error(`[ERROR] OpenClaw source config 解析失败：${sourcePath}`);
-  console.error(String(error));
-  process.exit(1);
-}
-if (!isPlainObject(sourceConfig)) {
-  console.error(`[ERROR] OpenClaw source config 根节点不是 object：${sourcePath}`);
-  process.exit(1);
-}
 const llmIdleTimeoutSeconds = Number.parseInt(String(rawLlmIdleTimeoutSeconds ?? ""), 10);
 if (!Number.isInteger(llmIdleTimeoutSeconds) || llmIdleTimeoutSeconds <= 0) {
   console.error(
@@ -469,15 +557,144 @@ if (!Number.isInteger(llmIdleTimeoutSeconds) || llmIdleTimeoutSeconds <= 0) {
   process.exit(1);
 }
 
-const sourceAgents = isPlainObject(sourceConfig.agents) ? sourceConfig.agents : {};
-const sourceAgentList = Array.isArray(sourceAgents.list) ? sourceAgents.list : [];
-const sourceAgentById = new Map();
-for (const entry of sourceAgentList) {
-  if (!isPlainObject(entry) || typeof entry.id !== "string" || entry.id.trim() === "") {
-    continue;
+function resolveProjectLlmConfig() {
+  const deepseekApiKey = String(process.env.DEEPSEEK_API_KEY || "").trim();
+  const deepseekModel = String(process.env.DEEPSEEK_MODEL || "").trim();
+  const qwenApiKey = firstNonEmpty(
+    process.env.QWEN_API_KEY,
+    process.env.MODELSTUDIO_API_KEY,
+    process.env.DASHSCOPE_API_KEY,
+  );
+  const qwenModel = firstNonEmpty(process.env.QWEN_MODEL, process.env.MODELSTUDIO_MODEL, process.env.DASHSCOPE_MODEL);
+  const selectedModel = selectProjectModel({
+    configuredPrimaryModel,
+    configuredProvider,
+    deepseekModel,
+    deepseekApiKey,
+    qwenModel,
+    qwenApiKey,
+  });
+  if (!selectedModel) {
+    console.error("[ERROR] .env.local 缺少项目 LLM 配置：当前支持 DEEPSEEK_API_KEY、QWEN_API_KEY 或 CLAW_TRADE_LLM_MODEL。");
+    process.exit(1);
   }
-  sourceAgentById.set(entry.id.trim(), entry);
+  if (selectedModel.startsWith("deepseek/")) {
+    if (!deepseekApiKey) {
+      console.error("[ERROR] .env.local 缺少 DEEPSEEK_API_KEY，无法生成 OpenClaw runtime LLM 配置。");
+      process.exit(1);
+    }
+    if (!deepseekBaseUrl) {
+      console.error("[ERROR] DEEPSEEK_BASE_URL 不能为空。");
+      process.exit(1);
+    }
+    const providerModelId = selectedModel.split("/").slice(1).join("/").trim();
+    if (!providerModelId) {
+      console.error(`[ERROR] DeepSeek model 配置非法：${selectedModel}`);
+      process.exit(1);
+    }
+    return {
+      providerId: "deepseek",
+      model: selectedModel,
+      providerModelId,
+      providerName: providerModelId === "deepseek-chat" ? "DeepSeek Chat" : providerModelId,
+      apiKey: deepseekApiKey,
+      baseUrl: deepseekBaseUrl,
+      contextWindow: 131072,
+      maxTokens: 8192,
+    };
+  }
+  if (selectedModel.startsWith("qwen/") || selectedModel.startsWith("dashscope/") || selectedModel.startsWith("modelstudio/") || selectedModel.startsWith("qwencloud/")) {
+    if (!qwenApiKey) {
+      console.error("[ERROR] .env.local 缺少 QWEN_API_KEY / MODELSTUDIO_API_KEY / DASHSCOPE_API_KEY，无法生成 OpenClaw runtime LLM 配置。");
+      process.exit(1);
+    }
+    if (!qwenBaseUrl) {
+      console.error("[ERROR] QWEN_BASE_URL 不能为空。");
+      process.exit(1);
+    }
+    const providerModelId = selectedModel.split("/").slice(1).join("/").trim();
+    if (!providerModelId) {
+      console.error(`[ERROR] Qwen model 配置非法：${selectedModel}`);
+      process.exit(1);
+    }
+    return {
+      providerId: "qwen",
+      model: `qwen/${providerModelId}`,
+      providerModelId,
+      providerName: providerModelId,
+      apiKey: qwenApiKey,
+      baseUrl: qwenBaseUrl,
+      contextWindow: 1000000,
+      maxTokens: 65536,
+    };
+  }
+  {
+    console.error(`[ERROR] 当前 .env.local LLM provider 暂未接入 OpenClaw runtime 配置生成：${selectedModel}`);
+    process.exit(1);
+  }
 }
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (text) {
+      return text;
+    }
+  }
+  return "";
+}
+
+function selectProjectModel(params) {
+  if (params.configuredPrimaryModel) {
+    return normalizeConfiguredModel(params.configuredPrimaryModel, params);
+  }
+  if (params.deepseekModel) {
+    return normalizeProviderModel("deepseek", params.deepseekModel);
+  }
+  if (params.qwenModel) {
+    return normalizeProviderModel("qwen", params.qwenModel);
+  }
+  if (params.deepseekApiKey) {
+    return "deepseek/deepseek-chat";
+  }
+  if (params.qwenApiKey) {
+    return "qwen/qwen3.5-plus";
+  }
+  return "";
+}
+
+function normalizeConfiguredModel(model, params) {
+  if (model.includes("/")) {
+    return model;
+  }
+  if (params.configuredProvider) {
+    return normalizeProviderModel(params.configuredProvider, model);
+  }
+  if (params.deepseekApiKey && !params.qwenApiKey) {
+    return normalizeProviderModel("deepseek", model);
+  }
+  if (params.qwenApiKey && !params.deepseekApiKey) {
+    return normalizeProviderModel("qwen", model);
+  }
+  console.error("[ERROR] CLAW_TRADE_LLM_MODEL 没有 provider 前缀，且无法从唯一 API key 推断 provider；请写成 deepseek/... 或 qwen/...。");
+  process.exit(1);
+}
+
+function normalizeProviderModel(provider, model) {
+  const trimmedProvider = String(provider || "").trim().toLowerCase();
+  const trimmedModel = String(model || "").trim();
+  if (!trimmedModel) {
+    return "";
+  }
+  if (trimmedModel.includes("/")) {
+    return trimmedModel;
+  }
+  if (trimmedProvider === "dashscope" || trimmedProvider === "modelstudio" || trimmedProvider === "qwencloud") {
+    return `qwen/${trimmedModel}`;
+  }
+  return `${trimmedProvider}/${trimmedModel}`;
+}
+const llm = resolveProjectLlmConfig();
 
 function readWorkerMountedSkills(workerId) {
   const manifestPath = `${rootDir}/agents/${workerId}/skills/manifest.yaml`;
@@ -515,126 +732,72 @@ function readWorkerMountedSkills(workerId) {
 }
 
 const mergedWorkers = workers.map((workerId) => {
-  const sourceEntry = sourceAgentById.get(workerId);
-  const merged = isPlainObject(sourceEntry) ? { ...sourceEntry } : {};
-  merged.id = workerId;
-  merged.default = workerId === "market_analyst";
-  merged.workspace = `${rootDir}/agents/${workerId}`;
-  merged.skills = readWorkerMountedSkills(workerId);
-  return merged;
+  return {
+    id: workerId,
+    default: workerId === "market_analyst",
+    workspace: `${rootDir}/agents/${workerId}`,
+    skills: readWorkerMountedSkills(workerId),
+  };
 });
 
-const sourceDefaults = isPlainObject(sourceAgents.defaults) ? sourceAgents.defaults : {};
-const sourceModels = isPlainObject(sourceConfig.models) ? sourceConfig.models : {};
-const sourceProviders = isPlainObject(sourceModels.providers) ? sourceModels.providers : {};
-const sourceDefaultModel = isPlainObject(sourceDefaults.model) ? sourceDefaults.model : {};
-const sourcePrimaryModel = typeof sourceDefaultModel.primary === "string" ? sourceDefaultModel.primary.trim() : "";
-const clawTradePrimaryModel = "deepseek/deepseek-chat";
-const selectedPrimaryModel = clawTradePrimaryModel;
-const selectedProviderModelId = selectedPrimaryModel.includes("/")
-  ? selectedPrimaryModel.split("/").slice(1).join("/").trim()
-  : "";
-let primaryProviderId = "";
-if (selectedPrimaryModel.includes("/")) {
-  primaryProviderId = selectedPrimaryModel.split("/")[0].trim();
-} else if (selectedPrimaryModel.length > 0 && selectedPrimaryModel in sourceProviders) {
-  primaryProviderId = selectedPrimaryModel;
-}
-if (!primaryProviderId) {
-  const knownProviderIds = Object.keys(sourceProviders);
-  if (knownProviderIds.length > 0) {
-    primaryProviderId = knownProviderIds[0];
-  }
-}
-if (!primaryProviderId) {
-  console.error(
-    `[ERROR] 无法解析 primary model provider：agents.defaults.model.primary=${sourcePrimaryModel || "<empty>"} selected=${selectedPrimaryModel || "<empty>"}`,
-  );
-  process.exit(1);
-}
-if (!isPlainObject(sourceProviders[primaryProviderId])) {
-  console.error(`[ERROR] OpenClaw source config 缺少 DeepSeek provider：${primaryProviderId}`);
-  process.exit(1);
-}
-
-const sourcePrimaryProvider = isPlainObject(sourceProviders[primaryProviderId])
-  ? sourceProviders[primaryProviderId]
-  : {};
-const selectedProviderModels = Array.isArray(sourcePrimaryProvider.models)
-  ? sourcePrimaryProvider.models.filter((entry) => {
-      if (!isPlainObject(entry) || typeof entry.id !== "string") {
-        return false;
-      }
-      return selectedProviderModelId && entry.id.trim() === selectedProviderModelId;
-    })
-  : null;
-if (Array.isArray(sourcePrimaryProvider.models) && selectedProviderModels.length === 0) {
-  console.error(
-    `[ERROR] OpenClaw source provider ${primaryProviderId} 缺少 primary model：${selectedProviderModelId || selectedPrimaryModel}`,
-  );
-  process.exit(1);
-}
-// 当前 OpenClaw 超时入口在 provider 配置的 timeoutSeconds，不再写旧的 agent 默认 llm 字段。
-const mergedPrimaryProvider = {
-  ...sourcePrimaryProvider,
-  timeoutSeconds: llmIdleTimeoutSeconds,
-};
-if (selectedProviderModels) {
-  mergedPrimaryProvider.models = selectedProviderModels;
-}
 const mergedProviders = {
-  [primaryProviderId]: mergedPrimaryProvider,
+  [llm.providerId]: {
+    baseUrl: llm.baseUrl,
+    apiKey: llm.apiKey,
+    api: "openai-completions",
+    timeoutSeconds: llmIdleTimeoutSeconds,
+    models: [
+      {
+        id: llm.providerModelId,
+        name: llm.providerName,
+        reasoning: false,
+        input: ["text"],
+        contextWindow: llm.contextWindow,
+        maxTokens: llm.maxTokens,
+      },
+    ],
+  },
 };
 const mergedModels = {
-  ...sourceModels,
   providers: mergedProviders,
 };
 const mergedDefaults = {
-  ...sourceDefaults,
+  workspace: `${rootDir}/agents`,
   model: {
-    ...sourceDefaultModel,
-    primary: selectedPrimaryModel,
+    primary: llm.model,
   },
   models: {
-    [selectedPrimaryModel]: {
-      alias: "DeepSeek Chat",
+    [llm.model]: {
+      alias: llm.providerName,
     },
   },
   skipBootstrap: true,
 };
-const sourcePlugins = isPlainObject(sourceConfig.plugins) ? sourceConfig.plugins : {};
 const clawTradeFrontlinePluginPath = `${rootDir}/openclaw_plugins/claw-trade-frontline-tools`;
 const mergedPlugins = {
-  ...sourcePlugins,
-  enabled: sourcePlugins.enabled === false ? false : true,
+  enabled: true,
   load: {
     paths: [clawTradeFrontlinePluginPath],
   },
   entries: {
+    [llm.providerId]: {
+      enabled: true,
+    },
     "claw-trade-frontline-tools": {
       enabled: true,
     },
   },
 };
-const sourceMcp = isPlainObject(sourceConfig.mcp) ? sourceConfig.mcp : {};
-const sourceMcpServers = isPlainObject(sourceMcp.servers) ? sourceMcp.servers : {};
-const mergedMcpServers = {
-  ...sourceMcpServers,
-};
-delete mergedMcpServers.bb_crypto_data;
 const mergedMcp = {
-  ...sourceMcp,
-  servers: mergedMcpServers,
+  servers: {},
 };
 
 const mergedConfig = {
-  ...sourceConfig,
   gateway: {
     mode: "local",
     bind: "loopback",
   },
   agents: {
-    ...sourceAgents,
     defaults: mergedDefaults,
     list: mergedWorkers,
   },
@@ -668,90 +831,109 @@ prepare_openviking_runtime_config() {
     log_info "使用显式 OpenViking config：${OPENVIKING_CONFIG_FILE}"
     return 0
   fi
-  if [[ ! -f "${OPENVIKING_SOURCE_CONFIG_PATH}" ]]; then
-    log_error "OpenViking source config 不存在：${OPENVIKING_SOURCE_CONFIG_PATH}"
-    exit 1
-  fi
 
-  OPENVIKING_SOURCE_CONFIG_PATH_VALUE="${OPENVIKING_SOURCE_CONFIG_PATH}" \
-  OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}" \
   OPENVIKING_CONFIG_FILE_VALUE="${OPENVIKING_CONFIG_FILE}" \
   OPENVIKING_DATA_DIR_VALUE="${OPENVIKING_DATA_DIR}" \
   OPENVIKING_SERVER_PORT_VALUE="${OPENVIKING_SERVER_PORT}" \
+  OPENVIKING_EMBEDDING_PROVIDER_VALUE="${OPENVIKING_EMBEDDING_PROVIDER}" \
+  OPENVIKING_EMBEDDING_MODEL_VALUE="${OPENVIKING_EMBEDDING_MODEL}" \
+  OPENVIKING_EMBEDDING_API_KEY_VALUE="${OPENVIKING_EMBEDDING_API_KEY}" \
+  OPENVIKING_EMBEDDING_API_BASE_VALUE="${OPENVIKING_EMBEDDING_API_BASE}" \
+  OPENVIKING_EMBEDDING_DIMENSION_VALUE="${OPENVIKING_EMBEDDING_DIMENSION}" \
+  OPENVIKING_EMBEDDING_QUERY_PARAM_VALUE="${OPENVIKING_EMBEDDING_QUERY_PARAM}" \
+  OPENVIKING_EMBEDDING_DOCUMENT_PARAM_VALUE="${OPENVIKING_EMBEDDING_DOCUMENT_PARAM}" \
+  JINA_API_KEY_VALUE="${JINA_API_KEY:-}" \
     node <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
-const sourcePath = process.env.OPENVIKING_SOURCE_CONFIG_PATH_VALUE;
-const openClawConfigPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
 const outputPath = process.env.OPENVIKING_CONFIG_FILE_VALUE;
 const dataDir = process.env.OPENVIKING_DATA_DIR_VALUE;
 const port = Number.parseInt(process.env.OPENVIKING_SERVER_PORT_VALUE || "1933", 10);
+const embeddingProvider = String(process.env.OPENVIKING_EMBEDDING_PROVIDER_VALUE || "").trim();
+const embeddingModel = String(process.env.OPENVIKING_EMBEDDING_MODEL_VALUE || "").trim();
+const embeddingApiBase = String(process.env.OPENVIKING_EMBEDDING_API_BASE_VALUE || "").trim();
+const embeddingDimensionRaw = String(process.env.OPENVIKING_EMBEDDING_DIMENSION_VALUE || "").trim();
+const embeddingQueryParam = String(process.env.OPENVIKING_EMBEDDING_QUERY_PARAM_VALUE || "").trim();
+const embeddingDocumentParam = String(process.env.OPENVIKING_EMBEDDING_DOCUMENT_PARAM_VALUE || "").trim();
 
-let source;
-try {
-  source = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
-} catch (error) {
-  console.error(`[ERROR] OpenViking source config 解析失败：${sourcePath}`);
-  console.error(String(error));
-  process.exit(1);
-}
-if (!source || typeof source !== "object" || Array.isArray(source)) {
-  console.error(`[ERROR] OpenViking source config 根节点不是 object：${sourcePath}`);
-  process.exit(1);
-}
-
-let openClawConfig;
-try {
-  openClawConfig = JSON.parse(fs.readFileSync(openClawConfigPath, "utf8"));
-} catch (error) {
-  console.error(`[ERROR] OpenClaw runtime config 解析失败：${openClawConfigPath}`);
-  console.error(String(error));
-  process.exit(1);
-}
-if (!openClawConfig || typeof openClawConfig !== "object" || Array.isArray(openClawConfig)) {
-  console.error(`[ERROR] OpenClaw runtime config 根节点不是 object：${openClawConfigPath}`);
-  process.exit(1);
+function resolveEmbeddingDimension(defaultValue) {
+  if (!embeddingDimensionRaw) {
+    return defaultValue;
+  }
+  const dimension = Number.parseInt(embeddingDimensionRaw, 10);
+  if (!Number.isInteger(dimension) || dimension <= 0) {
+    console.error(`[ERROR] OPENVIKING_EMBEDDING_DIMENSION 必须是正整数，当前值：${embeddingDimensionRaw}`);
+    process.exit(1);
+  }
+  return dimension;
 }
 
-const openClawAgents = openClawConfig.agents && typeof openClawConfig.agents === "object" && !Array.isArray(openClawConfig.agents)
-  ? openClawConfig.agents
-  : {};
-const openClawDefaults = openClawAgents.defaults && typeof openClawAgents.defaults === "object" && !Array.isArray(openClawAgents.defaults)
-  ? openClawAgents.defaults
-  : {};
-const openClawDefaultModel = openClawDefaults.model && typeof openClawDefaults.model === "object" && !Array.isArray(openClawDefaults.model)
-  ? openClawDefaults.model
-  : {};
-const primaryModel = typeof openClawDefaultModel.primary === "string" ? openClawDefaultModel.primary.trim() : "";
-if (!primaryModel) {
-  console.error(`[ERROR] OpenClaw runtime config 缺少 primary model：${openClawConfigPath}`);
-  process.exit(1);
+function buildEmbedding() {
+  if (!embeddingProvider && !embeddingModel) {
+    return {
+      dense: {
+        provider: "openai",
+        model: "claw-trade-report-no-vectorization",
+        api_base: "http://127.0.0.1",
+        dimension: resolveEmbeddingDimension(1024),
+      },
+      max_concurrent: 1,
+      max_retries: 0,
+    };
+  }
+  if (!embeddingProvider || !embeddingModel) {
+    console.error("[ERROR] OPENVIKING_EMBEDDING_PROVIDER 和 OPENVIKING_EMBEDDING_MODEL 必须同时配置在 .env.local。");
+    process.exit(1);
+  }
+  const dense = {
+    provider: embeddingProvider,
+    model: embeddingModel,
+  };
+  let apiKey = String(process.env.OPENVIKING_EMBEDDING_API_KEY_VALUE || "").trim();
+  if (!apiKey && embeddingProvider === "jina") {
+    apiKey = String(process.env.JINA_API_KEY_VALUE || "").trim();
+  }
+  if (apiKey) {
+    dense.api_key = apiKey;
+  }
+  if (embeddingApiBase) {
+    dense.api_base = embeddingApiBase;
+  }
+  if (embeddingDimensionRaw) {
+    dense.dimension = resolveEmbeddingDimension(1024);
+  }
+  if (embeddingQueryParam) {
+    dense.query_param = embeddingQueryParam;
+  }
+  if (embeddingDocumentParam) {
+    dense.document_param = embeddingDocumentParam;
+  }
+  return {
+    dense,
+    max_concurrent: 1,
+    max_retries: 0,
+  };
 }
 
 const next = {
-  ...source,
   server: {
-    ...(source.server && typeof source.server === "object" && !Array.isArray(source.server)
-      ? source.server
-      : {}),
     host: "127.0.0.1",
     port,
   },
   storage: {
-    ...(source.storage && typeof source.storage === "object" && !Array.isArray(source.storage)
-      ? source.storage
-      : {}),
     workspace: dataDir,
-  },
-  embedding: {
-    dense: {
-      provider: "litellm",
-      model: primaryModel,
-      dimension: 2048,
+    agfs: {
+      backend: "local",
     },
-    max_concurrent: 1,
-    max_retries: 0,
+    vectordb: {
+      backend: "local",
+    },
+  },
+  embedding: buildEmbedding(),
+  log: {
+    level: "INFO",
+    output: "stdout",
   },
 };
 
@@ -783,12 +965,15 @@ kill_port_listener "${OPENVIKING_MCP_PORT}"
 kill_port_listener "${OPENCLAW_GATEWAY_PORT}"
 stop_openclaw_gateway_service
 
-log_info "清理本地运行时审计目录（保留 runs 主目录）"
-find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+log_info "清理本地运行时审计目录（保留 runs 主目录与 OpenViking data）"
+mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
+find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_RUNTIME_DIR}" -exec rm -rf {} +
+find "${OPENVIKING_RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_DATA_DIR}" -exec rm -rf {} +
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
 mkdir -p "${OPENCLAW_STATE_DIR}"
 mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+configure_openviking_embedding_runtime_flags
 prepare_openbb_runtime_template
 prepare_openclaw_trade_agent_config
 prepare_openviking_runtime_config
@@ -926,6 +1111,8 @@ OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT}" \
 OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL}" \
 OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH}" \
 CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}" \
+CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL}" \
+CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}" \
   "${gateway_cmd[@]}" > "${OPENCLAW_GATEWAY_LOG}" 2>&1 &
 OPENCLAW_GATEWAY_PID=$!
 STARTED_PIDS+=("${OPENCLAW_GATEWAY_PID}")
@@ -937,6 +1124,7 @@ if ! wait_http_ok_any 90 "${gateway_health_url}"; then
   log_error "OpenClaw gateway health 检查失败：${gateway_health_url} 未就绪"
   exit 1
 fi
+preauthorize_openclaw_gateway_cli_scopes
 
 cat > "${RUNTIME_ENV_PATH}" <<EOF
 CLAW_TRADE_OPENCLAW_RUNNER=${CLAW_TRADE_OPENCLAW_RUNNER}
@@ -950,6 +1138,12 @@ OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH}
 OPENCLAW_GATEWAY_TIMEOUT_MS=${OPENCLAW_GATEWAY_TIMEOUT_MS}
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS=${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}
 OPENCLAW_MARKET_TOOL_PYTHON=${OPENCLAW_MARKET_TOOL_PYTHON}
+CLAW_TRADE_LLM_PROVIDER=${CLAW_TRADE_LLM_PROVIDER}
+CLAW_TRADE_LLM_MODEL=${CLAW_TRADE_LLM_MODEL}
+DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL}
+QWEN_BASE_URL=${QWEN_BASE_URL}
+CLAW_TRADE_UI_INBOUND_URL=${CLAW_TRADE_UI_INBOUND_URL}
+CLAW_TRADE_UI_INBOUND_TIMEOUT_MS=${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}
 UV_CACHE_DIR=${UV_CACHE_DIR}
 UV_LINK_MODE=${UV_LINK_MODE}
 OPENVIKING_ENDPOINT=${OPENVIKING_ENDPOINT}
@@ -958,6 +1152,14 @@ OPENVIKING_WORKSPACE=${OPENVIKING_WORKSPACE}
 OPENVIKING_CONFIG_FILE=${OPENVIKING_CONFIG_FILE}
 OPENVIKING_DATA_DIR=${OPENVIKING_DATA_DIR}
 OPENVIKING_WRITE_LOCK_PATH=${OPENVIKING_WRITE_LOCK_PATH}
+CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED=${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED}
+CLAW_TRADE_OPENVIKING_VECTORIZE=${CLAW_TRADE_OPENVIKING_VECTORIZE}
+CLAW_TRADE_OPENVIKING_VECTORIZE_REASON=${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON}
+CN_A_MONGODB_URI=${CN_A_MONGODB_URI}
+CN_A_MONGODB_DATABASE=${CN_A_MONGODB_DATABASE}
+CN_A_MONGODB_CACHE_COLLECTION=${CN_A_MONGODB_CACHE_COLLECTION}
+DATA_GATEWAY_MONGODB_URI=${DATA_GATEWAY_MONGODB_URI}
+DATA_GATEWAY_MONGODB_DATABASE=${DATA_GATEWAY_MONGODB_DATABASE}
 CLAW_TRADE_LOCAL_MONGODB_STARTED=${local_mongodb_started}
 EOF
 if [[ "${openviking_mcp_started}" == "1" ]]; then

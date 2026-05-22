@@ -8,22 +8,26 @@
 - `docs/UI需求分析.md`：本次 UI 产品需求唯一主文档。
 - `docs/report_workflow_env_and_rounds_design.md`：只采用未来 UI 设置模型、`RunRequest`、CLI/UI 参数边界相关结论。
 - `.env.example`、`.env.local`：只提取配置项名称和分组；本文不记录真实值。
-- `/home/frank/src/claw-invest`：只参考 React/Vite 三栏工作台、历史栏、活任务栏和浅色投研终端风格，不复用业务逻辑。
+- `/home/frank/src/claw-invest`：优先参考并可直接复用兼容的 React/Vite 三栏工作台、通用前端组件、浅色投研终端风格，以及通用 web server / route / contract 组织方式；不得复用旧业务逻辑、direct LLM、alphaear reporter、旧 workflow 或旧启动脚本。
 - `/home/frank/src/TradingAgents-CN`：只参考 Markdown 到 PDF 的导出流程、中文字体、横排、表格分页处理，不复用报告重组逻辑。
 
 已确认的技术事实：
 
-- 当前 `claw-trade` 主体是 Python 3.12 控制面，未发现本仓已有正式前端应用目录。
+- 当前 `claw-trade` 主体是 Python 3.12 控制面，未发现本仓已有正式前端应用目录；首版前端已决策参考 `claw-invest/web/research-ui` 的 React/Vite/TypeScript 形态。
 - 当前 workflow 请求模型已包含 `max_debate_rounds`、`max_risk_discuss_rounds`、`frontline_execution_mode`。
 - OpenClaw gateway 已有通用方法：`chat.send`、`sessions.*`、`models.list`、`models.authStatus`、`channels.status/start/stop/logout`、`send`、`config.get/set/apply/patch/schema`、`config.schema.lookup`、`agent.runSingleWorker`。
-- 未在当前仓库确认“微信 ClawBot”专用 Channel ID、文件发送能力、LLM 设置专用业务 API、数据源实例生产持久化位置。
+- OpenClaw 官方微信文档和本仓 `third_party/openclaw/docs/channels/wechat.md` 已确认：微信通过外部插件 `@tencent-weixin/openclaw-weixin` 接入，OpenClaw Channel ID 是 `openclaw-weixin`，核心仓不内置微信协议代码；本仓还包含 WeCom/企业微信相关文档和 catalog 测试，但普通“微信 ClawBot”首版按 `openclaw-weixin` 映射。
+- OpenClaw LLM 配置不需要 claw-trade 自造 `llm.save/test`：官方 config/models 文档和本仓 CLI 文档已确认使用 `config.schema.lookup` / `config.get` / `config.patch` / `models.list` / `models.status` 或等价 gateway 方法。
+- OpenClaw 已有通用媒体发送和本地文件读取边界，官方微信文档声明微信插件支持私聊和媒体；首版发送 PDF 前仍必须按实际 Channel 能力探测，不能跳过探测直接假设发送成功。
+- 2026-05-19 本机实现前探测：npm registry 返回 `@tencent-weixin/openclaw-weixin@2.4.3`，插件可安装并由 `plugins inspect` 识别为 Channel `openclaw-weixin`；插件源码声明 `chatTypes=["direct"]`、`media=true`、`blockStreaming=true`，并提供 `sendText`、`sendMedia`、QR 登录、长轮询入站 monitor。
+- 同一轮探测还确认：`scripts/start-control-runtime.sh` 是 dev/fixed 测试 runtime，会重建测试用 OpenClaw config，当前不会把外部微信插件带入 Gateway。该脚本问题不能外推成生产级配置策略，只能说明这条测试路径不能作为微信已接通证据。当前本机/项目运行态仍未按官方路径完成 clean 验收，真实二维码登录、在线状态、文件发送和入站消息尚未实测。
 
 设计假设：
 
-- 首版 UI 可用 Web 工作台实现，前端合同用 TypeScript 风格表达；后端可用 Python dataclass / Pydantic 映射。
+- 首版 UI 使用 Web 工作台实现，前端参考 `claw-invest` 的 React/Vite/TypeScript 形态；后端参考 `claw-invest` 的通用 web server / route / contract 组织方式，能直接复用的非业务代码可直接复用。
 - UI 后端是 `claw-trade` 的产品后端，不是 OpenClaw gateway 本身。
 - UI 后端可以调用 OpenClaw gateway 的 JSON-RPC/CLI bridge，但不实现 Channel、LLM 保存、单 agent runtime。
-- 数据源实例由 claw-trade 的数据源配置服务管理；生产环境不直接编辑 `.env.local`。
+- 数据源实例和 report workflow 默认值首版由 claw-trade 后端受控读写 `.env.local` 管理；浏览器不得直接读写 `.env.local`，普通 UI 响应不得暴露路径或真实密钥，workflow controller 仍只能读取确认时冻结生成的 `RunRequest`。
 
 成功标准：
 
@@ -70,7 +74,7 @@
 | claw-trade UI | 三栏布局、聊天入口、确认卡、任务进度、报告阅读、设置页、用户文案、用户动作收集 | 不实现 OpenClaw Channel；不保存 LLM 密钥；不执行 worker；不改写报告内容 | 用户消息、点击、设置表单、任务状态快照 | UI 状态、用户确认、用户可读提醒 |
 | claw-trade 后端 | 意图草稿、确认流程、报告队列、workflow 创建、状态映射、报告仓库、定时任务、价格提醒、数据源实例配置、PDF 导出编排 | 不运行单 agent turn；不决定 LLM provider prompt；不替 worker 写报告；不重写 PM 结论 | UI 请求、OpenClaw/数据源/PDF 结果、已保存报告 | API 响应、队列快照、报告记录、通知请求 |
 | OpenClaw | 普通聊天运行时、单 agent turn、LLM 配置保存和测试、Channel 管理、消息发送、工具 schema 暴露、provider payload 捕获 | 不拥有 12-worker DAG；不做 claw-trade 报告队列；不保存 claw-trade 报告历史 | chat/session 请求、config 请求、Channel 请求、单 worker command | 聊天回复、配置状态、Channel 状态、单 worker 证据 |
-| 数据源 | 已支持来源的连接、认证、请求、健康检查、数据证据、失败原因 | 不接受任意 HTTP/JSON 映射；不让未验证实例进入报告证据链；不伪造数据 | 数据源实例配置、报告运行请求 | 运行尝试记录、健康事件、数据缺口、可读失败原因 |
+| 数据源 | 已支持来源的连接、认证、请求、健康检查、数据证据、失败原因 | 不接受任意 HTTP/JSON 映射；不让未验证实例进入报告证据链；不伪造数据 | 数据源实例配置、报告运行请求 | 运行尝试记录、健康记录、数据缺口、可读失败原因 |
 | PDF 导出 | 把已保存 Markdown 格式化为 PDF，处理中文字体、横排、表格分页、图片缩放 | 不总结、不重写、不补充报告；PDF 失败不影响报告保存 | 已保存 Markdown、报告元数据、图片文件 | PDF 文件、导出状态、错误原因 |
 
 ### 2.2 明确禁止事项
@@ -88,29 +92,106 @@
 - 禁止把 Channel 实现迁入 claw-trade。
 - 禁止用隐藏 fallback 替代真实报告、真实数据源、真实 Channel、真实 PDF 状态。
 
-### 2.3 未知接口和待确认点
+### 2.3 未知接口和已决策点
 
-| 待确认点 | 当前证据 | 影响 | 保守设计 |
+| 接口/决策点 | 当前证据 | 影响 | 保守设计 |
 |---|---|---|---|
-| 微信 ClawBot 的 OpenClaw Channel ID | 当前 OpenClaw 扩展列表未确认专用微信插件，只确认通用 Channel 框架和多个 Channel 插件 | 无法写死 `wechat` 或 `clawbot` | UI 文案显示“微信 ClawBot”；后端配置使用 `channelKind`，实际 ID 由 OpenClaw 返回的 Channel catalog 决定 |
-| OpenClaw 是否有专门的 LLM 配置业务 API | 已确认 `config.get/patch/schema`、`models.list/authStatus`，未确认 `llm.save/test` 专用 API | 设置页实现复杂度不同 | 首版通过 OpenClaw schema 定位配置路径，由 `LlmSettingsBridge` 调用 `config.patch`；如 OpenClaw 后续提供专用 API，则替换桥接层 |
-| OpenClaw 文件发送能力 | 已确认 gateway 有 `send` 和 artifacts/download 等能力，未确认指定 Channel 发送本地 PDF 文件的稳定合同 | 微信发送完整报告可能受阻 | 设计 `sendReportFileViaChannel` 为待补能力；失败时 UI 和 Channel 都显示“完整报告文件发送失败，请在设备界面中查看” |
-| 数据源实例生产持久化位置 | 当前有 data_gateway provider catalog / settings / store 相关代码，但 UI 实例存储位置未定 | 影响设置页保存 | 设计 `DataSource Config Service` 抽象，生产可落 DB 或配置服务；不直接改 `.env.local` |
+| 微信 ClawBot 的 OpenClaw Channel ID | 已查：普通微信使用外部插件 `@tencent-weixin/openclaw-weixin`，Channel ID 为 `openclaw-weixin`；npm 包 `2.4.3` 可安装，插件 inspect 能识别 Channel；官方接入流程是安装/启用/扫码/Gateway restart；企业微信是另一类 WeCom 插件，不等同普通微信 | 不能写成 `wechat`、`clawbot` 或 WeCom；不能把静态能力探测当成已扫码、已在线或已发送成功 | UI 文案显示“微信 ClawBot”；后端内部把 `wechat_clawbot` 映射到 `openclaw-weixin`；实现前必须用真实 Gateway/CLI 方法确认登录、状态、媒体发送能力 |
+| OpenClaw LLM 配置入口 | 已查：OpenClaw 用 config/models 体系管理模型和鉴权；未发现必须依赖的 `llm.save/test` 专用 API | 设置页实现需要走 OpenClaw 配置模型 | 首版通过 `LlmSettingsBridge` 调用 `config.schema.lookup`、`config.get`、`config.patch`、`models.list/status/authStatus` 或等价 gateway 方法；UI 不感知 OpenClaw 原始配置路径 |
+| OpenClaw 文件发送能力 | 已查：OpenClaw 有通用 media 发送/本地文件读取边界，微信插件源码声明 `media=true` 且 `sendMedia` 支持本地文件/远程 URL；但当前运行时未完成扫码登录、文件发送和大小限制实测 | 微信发送完整报告可能因 CLI/Gateway 未接通、未登录、文件能力关闭或大小限制失败 | `sendReportFileViaChannel` 每次发送前先看真实 Channel status 和媒体能力；不可用时返回 `FILE_SEND_UNSUPPORTED` 或 `NOTIFICATION_UNAVAILABLE`，不模拟成功 |
+| 数据源实例首版配置存储 | 人类已决策首版后端受控读写 `.env.local`；当前有 data_gateway provider catalog / settings / store 相关代码，可参考其支持类型和校验 | 影响设置页保存、密钥替换和 `RunRequest` 设置快照 | 设计后端 allowlist env 写入层；前端不接触文件；controller 不直接读 env；后续如需 DB/secret store 再替换存储层 |
 | “已配置但本次失效”的运行证据字段 | 当前有 provider status、data gap、run plan、attempt store 模型，但 UI 聚合字段未定 | 影响右侧提醒准确性 | 设计 `DataSourceHealthEvent` 聚合合同，必须包含 configured/enabled/used/status/impact |
-| 报告完成摘要字段提取规则 | UI 需求给出字段，但当前最终报告/PM 结构可能不稳定 | 影响完成卡稳定性 | 首版只做确定性摘取；缺字段则显示“完整理由请查看报告”，不补写 |
-| 微信入站消息转产品语义事件 | 当前只确认 OpenClaw Channel 和 `send` 能力，未确认会向 claw-trade 转发 `request_full_report` / `open_report_summary` | 微信内回复“报告”可能无法直达 claw-trade | 作为待补桥接能力设计；若不可用，普通 UI 仍提供“发送完整报告”按钮，微信侧显示“请在设备界面中查看” |
+| 报告完成摘要字段提取规则 | 人类已决策首版只做确定性摘取；UI 需求给出字段，但当前最终报告/PM 结构可能不稳定 | 影响完成卡稳定性 | 只从已保存报告、PM 结论和元数据摘取；缺字段则显示“完整理由请查看报告”，不补写 |
+| 微信消息通知/回调桥接 | 已查：插件源码有长轮询入站 monitor，并依赖 Gateway 注入 `channelRuntime`；但 claw-trade 尚未验证当前 OpenClaw Gateway 是否能把入站微信消息转成 claw-trade 可消费的产品动作 | 微信内回复“报告”能否直达 claw-trade 取决于 OpenClaw 是否提供可接入的消息回调/路由扩展点 | 工程自己接 OpenClaw 的入站消息回调；若当前 gateway 不提供可接入口，不在 claw-trade 内补微信协议，只保留设备界面按钮和可读提示 |
 
-### 2.4 微信入站桥接目标合同（待确认 OpenClaw 能力）
+### 2.4 微信官方 ClawBot 插件接入方案
 
-本节是 claw-trade 希望 OpenClaw 提供的产品语义事件合同，不表示当前接口已经存在。实现前必须用 OpenClaw gateway / Channel 能力复核；若不存在，不得在 claw-trade 内补做微信协议，只能显示文件发送不可用或引导用户回设备界面。
+首版只支持腾讯 `@tencent-weixin/openclaw-weixin` 这一路普通微信接入。它是 OpenClaw 外部 Channel 插件，不是 claw-trade 自己实现微信协议，也不是 Wechaty、逆向登录或企业微信 / WeCom。
+
+安装和启用命令：
+
+```bash
+openclaw plugins install "@tencent-weixin/openclaw-weixin"
+openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw gateway restart
+openclaw channels login --channel openclaw-weixin
+```
+
+以上是官方文档/插件 README 给出的目标流程，不是本机当前已全部跑通的实现证据。2026-05-19 本机探测中，`plugins install "@tencent-weixin/openclaw-weixin@2.4.3"` 成功，`plugins inspect openclaw-weixin` 成功；但本机/项目运行态仍未按官方路径完成 clean 验收。真实扫码登录、账号在线和消息收发仍必须单独实测。
+
+`npx -y @tencent-weixin/openclaw-weixin-cli install` 可作为用户手工路径，但 claw-trade 文档和实现基线优先使用 OpenClaw plugin install。npm registry 已确认该 CLI 包存在，当前版本为 `2.1.4`。
+
+状态和能力检查命令：
+
+```bash
+openclaw plugins list
+openclaw channels status --probe --json
+openclaw channels capabilities --channel openclaw-weixin --json
+```
+
+2026-05-19 本机探测中，`channels status --probe --json` 在 Gateway 不可达时可返回 config-only 状态。当前不把本机 CLI 静态能力输出当成接通证据；发送前仍要看真实 Gateway status、登录态、媒体/文件限制和实际发送结果。
+
+另一个实现前检查点：当前 `scripts/start-control-runtime.sh` 是 dev/fixed 测试 runtime，会删除并重建 `.runtime/dev-services/openclaw-state`，生成的 OpenClaw config 只包含 claw-trade 前线工具插件配置，不会保留外部微信插件安装/启用记录。生产级 UI runtime 不应照搬这种每次重建策略；若要用该脚本做测试证据，必须先让它能加载 `openclaw-weixin`，并重启 Gateway 后用真实 status 证明。
+
+停问红线：默认接入路径是腾讯官方插件流程（安装、启用、扫码、Gateway restart）；未按官方流程在同一 profile/config/Gateway 下形成最小失败复现前，不得修改 OpenClaw 源码。若官方流程仍失败，必须先提交最小复现证据并由人类拍板后，才能考虑 OpenClaw 源码修复。
+
+产品状态映射：
+
+| OpenClaw 检查结果 | `ChannelStatusForUser.state` | UI 文案 | 可执行动作 |
+|---|---|---|---|
+| 插件未安装 | `disconnected` | 请先安装微信 ClawBot 插件。 | 显示安装指引 |
+| 插件已安装但未启用 | `disconnected` | 请先启用微信 ClawBot 插件。 | 显示启用/重试 |
+| 插件启用但未登录 | `disconnected` | 请用微信扫码连接 ClawBot。 | 触发或提示扫码登录 |
+| probe 失败或灰度不可用 | `error` | 当前微信账号暂不可用 ClawBot，请在设备界面查看报告。 | 站内通知 |
+| 已连接，可发文本，不可发文件 | `connected` | 微信文字通知可用，完整 PDF 暂不可发送。 | 只发完成摘要 |
+| 已连接，可发文本和媒体/文件 | `connected` | 微信通知已连接。 | 发摘要；用户请求时发 PDF |
+
+内部消息路径：
+
+```text
+微信用户
+-> 微信 ClawBot 插件
+-> OpenClaw Gateway
+-> claw-trade UI 后端
+-> claw-trade 报告队列 / 报告仓库 / PDF 服务
+-> OpenClaw Gateway
+-> 微信 ClawBot 插件
+-> 微信用户
+```
+
+微信内首版命令映射：
+
+| 用户输入 | claw-trade 行为 | 禁止事项 |
+|---|---|---|
+| `/report BTC` / `报告 BTC` | 生成报告确认卡 | 不直接创建 workflow |
+| `确认` | 对当前确认卡创建完整报告任务 | 不绕过确认卡 |
+| `取消` | 只取消 queued 任务；running 返回“报告正在生成，不能中途取消” | 不发 running abort |
+| `进度` | 返回中文阶段进度 | 不显示 worker id / run id |
+| `发送完整报告` | 发送已保存 PDF；不可用时返回可读失败 | 不发送未保存 Markdown，不暴露本地路径 |
+
+PDF 文件发送前置条件：
+
+1. 报告已成功保存。
+2. PDF 状态为 `ready`。
+3. `openclaw-weixin` 已安装、启用、登录。
+4. `channels capabilities --channel openclaw-weixin --json` 或等价 gateway 能力显示支持媒体/文件。
+5. PDF 大小在当前 Channel 限制内。
+
+任一条件不满足时，返回 `FILE_SEND_UNSUPPORTED` 或 `NOTIFICATION_UNAVAILABLE`，用户文案为“完整报告文件暂不可发送，请在设备界面查看。”；不得模拟成功 message id。
+
+### 2.5 微信消息通知/回调桥接
+
+这里的“回调”说人话就是：微信里来了一条消息后，OpenClaw 通知 claw-trade 一声。它不是普通用户文案，也不是让 claw-trade 去连微信。
+
+本节是 claw-trade 需要消费的产品动作合同。实现前必须用 OpenClaw gateway / Channel 能力复核当前运行时是否能把入站微信消息交给 claw-trade；若不存在，不得在 claw-trade 内补做微信协议，只能显示文件发送不可用或引导用户回设备界面。
 
 - `claw-trade` 不实现微信协议，不监听微信 socket/webhook，不维护微信登录态。
-- 入站消息先到 OpenClaw Channel，再由 OpenClaw 以统一事件合同转发给 `claw-trade`。
-- `claw-trade` 只消费“产品语义事件”：
+- 入站消息先到 OpenClaw Channel，再由 OpenClaw 以统一回调合同转发给 `claw-trade`。
+- `claw-trade` 只消费“产品动作通知”：
   - `kind="request_full_report"`：微信内回复“报告”或点击“发送完整报告”触发。
   - `kind="open_report_summary"`：请求查看摘要（可选）。
 
-桥接事件合同（普通后端可实现为 HTTP/IPC）：
+桥接回调合同（普通后端可实现为 HTTP/IPC；代码里仍可叫 event）：
 
 ```ts
 interface OpenClawChannelInboundEvent {
@@ -340,11 +421,11 @@ RightRailChatSummary
 
 显示：
 
-- 状态：排队中、生成中、取消中。
+- 状态：排队中、生成中。
 - 标的、市场、队列位置。
 - 当前阶段、当前角色中文名、当前操作。
 - 进度条、已完成角色、等待角色。
-- 操作：取消。
+- 操作：排队中显示取消；生成中不显示取消入口。
 
 内部 worker id 只能作为后端字段，前端必须映射为中文角色名。
 
@@ -527,8 +608,6 @@ stateDiagram-v2
   confirmed --> queued: 入队成功
   queued --> running: 队首且无运行中报告
   queued --> cancelled: 用户取消
-  running --> cancellation_requested: 用户取消
-  cancellation_requested --> cancelled: workflow 安全终止
   running --> saving_report: workflow 完成
   saving_report --> pdf_exporting: Markdown 保存成功
   pdf_exporting --> succeeded: PDF 成功或失败均完成任务沉淀
@@ -544,13 +623,12 @@ stateDiagram-v2
 | `draft` | 意图草稿生成 | 确认或取消 | 编辑标的、市场、日期、通知方式 | 创建 run |
 | `confirmed` | 用户点击确认 | 入队成功或失败 | 幂等确认 | 重复创建多个同请求任务 |
 | `queued` | 队列未满，任务进入队列 | 开始运行、取消、被同标的去重合并 | 取消、查看队列位置 | 并行启动 |
-| `running` | 串行队列启动该任务 | 成功、失败、取消请求 | 查看进度、请求取消、记录完成后重做 | 修改 workflow 输入 |
-| `cancellation_requested` | 用户对运行中任务取消 | 安全终止或仍失败 | 显示取消中 | 立即假装取消成功 |
+| `running` | 串行队列启动该任务 | 成功或失败 | 查看进度、记录完成后重做 | 取消运行中 workflow、修改 workflow 输入 |
 | `saving_report` | workflow 完成 | 保存成功或失败 | 保存 Markdown、元数据、PM 结论引用 | PDF 先于正式报告保存 |
 | `pdf_exporting` | Markdown 已保存 | PDF 成功或失败 | 生成 PDF、记录状态 | 因 PDF 失败删除报告 |
 | `succeeded` | 报告保存成功 | 终态 | 写入左侧历史、生成完成卡、通知 | 再改报告正文 |
 | `failed` | workflow 或保存失败 | 终态 | 中间聊天显示可读失败 | 左侧历史显示、右侧长期保留 |
-| `cancelled` | 排队取消或安全终止 | 终态 | 中间聊天提示取消 | 左侧历史显示 |
+| `cancelled` | 排队任务被用户取消 | 终态 | 中间聊天提示取消 | 左侧历史显示、用于运行中任务 |
 
 ### 6.3 ScheduledReportState
 
@@ -701,7 +779,6 @@ type ReportTaskStatus =
   | "confirmed"
   | "queued"
   | "running"
-  | "cancellation_requested"
   | "saving_report"
   | "pdf_exporting"
   | "succeeded"
@@ -1251,7 +1328,7 @@ interface DataSourceHealthEventForUser {
 
 | 字段 | 用途 | 持久化 | 可空 | 用户可见 |
 |---|---|---|---|---|
-| `id` | 健康事件 ID | 是 | 否 | 否 |
+| `id` | 健康记录 ID | 是 | 否 | 否 |
 | `reportId` | 关联报告 | 是 | 是 | 否 |
 | `taskId` | 关联任务 | 是 | 是 | 否 |
 | `dataSourceInstanceId` | 来源实例 | 是 | 否 | 否 |
@@ -1264,7 +1341,7 @@ interface DataSourceHealthEventForUser {
 | `impact` | 影响范围 | 是 | 否 | 是 |
 | `occurredAt` | 发生时间 | 是 | 否 | 是 |
 
-`DataSourceHealthEvent` 是内部运行证据记录。普通 UI/API 只能返回 `DataSourceHealthEventForUser`，不得返回事件 ID、任务 ID、报告 ID、数据源实例 ID。
+`DataSourceHealthEvent` 是内部运行证据记录。这里的“Event”只是代码名，说人话就是“一次数据源健康记录”。普通 UI/API 只能返回 `DataSourceHealthEventForUser`，不得返回这条记录的内部 ID、任务 ID、报告 ID、数据源实例 ID。
 
 ### 7.12 ScheduledReport
 
@@ -1427,7 +1504,7 @@ interface ChannelStatusForUser {
 | `canSendFile` | 是否可发文件 | 是/缓存 | 否 | 否 |
 | `updatedAt` | 更新时间 | 是/缓存 | 否 | 否 |
 
-`ChannelStatus` 是内部桥接状态。普通 UI/API 只能返回 `ChannelStatusForUser`，不得返回 `providerChannelId` 或 OpenClaw 实际 Channel ID。
+`ChannelStatus` 是内部桥接状态。普通 UI/API 只能返回 `ChannelStatusForUser`，不得返回 `providerChannelId` 或 OpenClaw 实际 Channel ID。普通微信的内部映射目标是 `openclaw-weixin`；企业微信/WeCom 不是普通微信 ClawBot，不能混用。
 
 ```ts
 function toChannelStatusForUser(status: ChannelStatus): ChannelStatusForUser {
@@ -1541,6 +1618,8 @@ interface ChartEvidenceForUser {
 | `userMessage` | 普通用户可读状态 | 是 | 否 | 是 |
 | `capturedAt` | 状态时间 | 是 | 否 | 是 |
 
+图表状态说人话就是：这张图有没有生成、为什么没生成、用户能不能看。实现时只能从后端已经产生的图表资产和导出结果聚合：`ChartAsset` / `chart_assets`、相关 `DataGap`、`reports/export-result.json`、已保存 Markdown 中的图片引用。普通 UI 只接收 `ChartEvidenceForUser`，不得靠占位图或扫文件路径假装有图。
+
 ## 8. API / 服务契约
 
 ### 8.1 API 通用规则
@@ -1644,7 +1723,7 @@ toPdfExportForUser(record)
 | 输出 | `{ task: ReportTaskForUser, queueSnapshot: ReportQueueSnapshotForUser, message }` |
 | 错误码 | `TASK_NOT_FOUND`, `TASK_NOT_CANCELLABLE` |
 | 幂等性 | 已取消任务重复取消返回取消状态 |
-| 权限/安全 | 运行中只发安全取消请求，不伪造取消成功 |
+| 权限/安全 | 首版只允许取消 queued；running 返回 `TASK_NOT_CANCELLABLE`，不发 abort，不伪造取消成功 |
 
 #### getReportQueueSnapshot
 
@@ -1824,7 +1903,7 @@ toPdfExportForUser(record)
 | 输出 | `DataSourceInstanceForUser` |
 | 错误码 | `INVALID_INPUT`, `DATASOURCE_TEST_FAILED`, `CONFLICT` |
 | 幂等性 | 同 `requestId` 不重复创建；更新用版本号防覆盖 |
-| 权限/安全 | 密钥 replace-only；真实密钥写 secret store 或配置服务 |
+| 权限/安全 | 密钥 replace-only；首版真实密钥只由后端 allowlist 写入 `.env.local`；普通 UI 不返回真实值、文件路径或内部引用 |
 
 #### getChannelStatus
 
@@ -1834,7 +1913,7 @@ toPdfExportForUser(record)
 | 输出 | `ChannelStatusForUser` |
 | 错误码 | `NOTIFICATION_UNAVAILABLE` |
 | 幂等性 | 只读 |
-| 权限/安全 | 调 OpenClaw `channels.status`；不显示内部 Channel ID |
+| 权限/安全 | 调 OpenClaw `plugins list`、`channels.status --probe`、`channels capabilities --channel openclaw-weixin` 或等价 gateway；不显示内部 Channel ID、插件包名或配置路径 |
 
 #### saveChannelConfigViaOpenClaw
 
@@ -1844,7 +1923,7 @@ toPdfExportForUser(record)
 | 输出 | `{ status: ChannelStatusForUser, restartRequired?: boolean }` |
 | 错误码 | `NOTIFICATION_UNAVAILABLE`, `CONFLICT`, `INVALID_INPUT` |
 | 幂等性 | 使用 OpenClaw 内部版本校验 + `config.patch`；无变化返回 noop |
-| 权限/安全 | claw-trade 不保存 Channel 密钥；只传给 OpenClaw |
+| 权限/安全 | 安装/启用/登录均交给 OpenClaw CLI/gateway；claw-trade 不保存 Channel 密钥，不实现微信协议 |
 
 #### loadLlmSettings
 
@@ -1854,7 +1933,7 @@ toPdfExportForUser(record)
 | 输出 | `{ draft: LlmConfigDraft, schemaVersion, settingsVersion }` |
 | 错误码 | `ASSISTANT_UNAVAILABLE`, `UNAUTHORIZED` |
 | 幂等性 | 只读 |
-| 权限/安全 | 只返回掩码密钥；真实配置读取和解释归 OpenClaw |
+| 权限/安全 | 只返回掩码密钥和用户可改字段；真实配置读取和解释归 OpenClaw，不返回 OpenClaw 原始配置路径 |
 
 #### saveLlmConfigViaOpenClaw
 
@@ -1864,7 +1943,7 @@ toPdfExportForUser(record)
 | 输出 | `{ status: "saved", updatedAt, settingsVersion }` |
 | 错误码 | `ASSISTANT_UNAVAILABLE`, `CONFLICT`, `INVALID_INPUT` |
 | 幂等性 | 同 `requestId` 不重复保存；设置版本冲突返回 `CONFLICT` |
-| 权限/安全 | `claw-trade` 不保存真实密钥；实际保存动作归 OpenClaw |
+| 权限/安全 | `claw-trade` 不保存真实密钥；只构造 OpenClaw config/models 可接受的补丁，实际保存动作归 OpenClaw |
 
 #### testLlmViaOpenClaw
 
@@ -1874,7 +1953,7 @@ toPdfExportForUser(record)
 | 输出 | `{ ok: boolean, userMessage, checkedAt }` |
 | 错误码 | `ASSISTANT_UNAVAILABLE`, `INVALID_INPUT` |
 | 幂等性 | 同 `requestId` 复用结果 |
-| 权限/安全 | `claw-trade` 只转发测试请求；真实连通性测试归 OpenClaw |
+| 权限/安全 | `claw-trade` 只调用 OpenClaw models 状态/探测能力；不直接调 provider，不返回 provider attempt 细节 |
 
 #### sendReportFileViaChannel
 
@@ -1884,7 +1963,7 @@ toPdfExportForUser(record)
 | 输出 | `{ sent: boolean, messageId?, userMessage }` |
 | 错误码 | `REPORT_NOT_FOUND`, `REPORT_NOT_READY`, `NOTIFICATION_UNAVAILABLE`, `FILE_SEND_UNSUPPORTED` |
 | 幂等性 | 同 `requestId` 不重复发送文件 |
-| 权限/安全 | 只发送已保存 PDF；不临时生成未保存内容 |
+| 权限/安全 | 只发送已保存 PDF；发送前先探测 `openclaw-weixin` 的 Channel 状态和媒体能力；不临时生成未保存内容，不暴露文件路径 |
 
 #### exportReportPdf
 
@@ -1905,16 +1984,16 @@ toPdfExportForUser(record)
 | IntentRecognizer | 从文本识别报告/定时/价格提醒草稿 | 不创建任务、不调用 LLM worker | 规则解析、标的解析器、设置快照 | `classifyUserIntent`, `createIntentDraft` | `parseSchedule`, `parsePriceCondition`, `resolveInstrument` | 低置信度回普通聊天或提示确认 | 四类示例输入；小时级报告拒绝 |
 | ConfirmationCardController | 构建、更新、确认、取消确认卡 | 不绕过确认、不入队运行中修改 | IntentDraft store、ReportQueue、Scheduler、PriceAlert | `buildConfirmationCard`, `confirmIntentDraft` | `applyOverrides`, `expireDraft` | 草稿过期提示重新输入 | 幂等确认、取消、重复点击 |
 | ReportTaskQueue | 完整报告串行队列、上限、优先级、去重、取消 | 不运行 worker 细节、不并行完整报告 | ReportWorkflowBridge、Repository | `enqueueReportTask`, `cancelReportTask`, `getReportQueueSnapshotForUser` | `startNextReportTaskIfIdle`, `dedupeQueuedTask`, `toReportTaskForUser` | 队列满、不可取消可读提示 | 上限 10、手动优先、同标的去重 |
-| ReportWorkflowBridge | 把任务输入转成 `RunRequest` 并驱动 claw-trade workflow | 不让 OpenClaw 拥有 DAG、不改 prompts | workflow runner/store、OpenClawClient | `createWorkflowRun`, `pollWorkflowRun`, `requestCancel` | `buildRunRequest`, `loadWorkflowState` | workflow 失败转内部失败码 | `RunRequest` 字段完整、entry_point=report_command |
+| ReportWorkflowBridge | 把任务输入转成 `RunRequest` 并驱动 claw-trade workflow | 不让 OpenClaw 拥有 DAG、不改 prompts、不取消 running workflow | workflow runner/store、OpenClawClient | `createWorkflowRun`, `pollWorkflowRun` | `buildRunRequest`, `loadWorkflowState` | workflow 失败转内部失败码 | `RunRequest` 字段完整、entry_point=report_command |
 | ReportProgressMapper | 把 workflow 状态映射为 UI 进度 | 不显示内部 ID | workflow status、worker labels | `mapWorkflowProgressToUiState` | `translateStage`, `translateRole`, `estimatePercent` | 未知状态显示“处理中” | worker id 不泄露、阶段中文正确 |
 | ReportRepository | 保存成功报告、读取报告详情、左侧历史 | 不保存失败任务、不重组报告 | run exporter、文件存储、元数据 store | `saveSucceededReport`, `listSavedReports`, `getReportDetail` | `writeMarkdownArtifact`, `indexReport` | 保存失败导致任务失败 | 成功才入历史、Markdown 原文不改 |
 | ReportCompletionSummaryBuilder | 从已保存报告和 PM 结论构建完成摘要 | 不调用 LLM、不新增 worker、不补写缺失理由 | ReportRepository、PM material refs、DataSourceHealthService | `buildCompletionSummaryFromSavedReport` | `extractExistingConclusion`, `extractExistingBullets` | 缺字段降级为查看完整报告 | 摘要不含报告外事实 |
 | ReportNotificationService | 发送完成摘要、失败提示、文件发送请求 | 不实现 Channel | ChannelBridge、ChatController、PdfExportService | `notifyReportCompletion`, `requestFullReportFile` | `buildCompletionMessage`, `showInAppNotice` | Channel 失败进入 UI 提醒 | Channel 不可用时显式站内提示 |
-| OpenClawChannelInboundBridge | 消费 OpenClaw 转发的微信产品语义事件 | 不监听微信协议、不维护微信连接 | OpenClawGatewayClient、ReportNotificationService | `handleOpenClawChannelInboundEvent` | `mapInboundEventToAction` | 事件重复按 eventId 幂等 | “报告”与“发送完整报告”都能触发发送流程 |
+| OpenClawChannelInboundBridge | 消费 OpenClaw 转发的微信消息通知/回调 | 不监听微信协议、不维护微信连接 | OpenClawGatewayClient、ReportNotificationService | `handleOpenClawChannelInboundEvent` | `mapInboundEventToAction` | 回调重复按 eventId 幂等 | “报告”与“发送完整报告”都能触发发送流程 |
 | ChannelBridge | 调 OpenClaw Channel 状态、配置、发送 | 不保存 Channel 密钥、不实现协议 | OpenClawGatewayClient | `getChannelStatus`, `saveChannelConfigViaOpenClaw`, `sendReportFileViaChannel` | `mapOpenClawChannelStatus`, `resolveClawBotChannelId` | OpenClaw 错误翻译 | 状态查询、文件能力未知时返回明确错误 |
 | SchedulerService | 定时报告保存、tick 到点入队 | 不直接执行报告、不支持每小时 | ReportTaskQueue、时钟 | `createScheduledReport`, `tickScheduledReports`, `runScheduledReportNow` | `computeNextRunAt`, `rejectUnsupportedFrequency` | 队列满保留下次重试说明 | 每天/每周、立即执行、队列串行 |
 | PriceAlertService | 价格提醒保存、检查、通知、触发后关闭 | 不生成报告、不做 AI 解释 | 数据源价格查询、ChannelBridge | `createPriceAlert`, `evaluatePriceAlert`, `runPriceAlertNow` | `fetchLatestPrice`, `compareCondition` | 数据源失败可读提醒 | 阈值、涨跌幅、触发关闭 |
-| DataSourceSettingsService | 数据源实例增删改、replace-only 密钥 | 不支持未知 HTTP/JSON、不直接写生产 `.env.local` | DataSourceHealthService、secret store/config service | `listDataSources`, `saveDataSourceInstance`, `testDataSource` | `validateSupportedType`, `maskSecret`, `buildProviderManifest` | 测试失败不可启用 | 支持类型白名单、密钥掩码 |
+| DataSourceSettingsService | 数据源实例增删改、replace-only 密钥、首版后端受控写入 `.env.local` | 不支持未知 HTTP/JSON、不让前端或 controller 直接读写 `.env.local` | DataSourceHealthService、env allowlist writer | `listDataSources`, `saveDataSourceInstance`, `testDataSource` | `validateSupportedType`, `maskSecret`, `buildProviderManifest`, `writeAllowedEnvKeys` | 测试失败不可启用 | 支持类型白名单、密钥掩码、env 写入原子性 |
 | DataSourceHealthService | 聚合本次数据源健康、失效提醒 | 不提醒未配置/未使用/关闭来源 | 运行尝试记录、run plan、instances | `collectConfiguredFailedDataSources` | `isConfiguredFailure`, `translateProviderStatus` | 状态缺失只进日志 | 提醒判定四条件 |
 | LlmSettingsBridge | 模型设置入口、调 OpenClaw 保存和测试 | 不保存真实 LLM 密钥、不直接调 provider | OpenClaw config/models APIs | `loadLlmSettings`, `saveLlmConfigViaOpenClaw`, `testLlmViaOpenClaw` | `buildConfigPatch`, `restoreMaskedSecret` | schema/版本冲突提示重试 | 密钥 replace-only、真实密钥不落 claw-trade |
 | PdfExportService | Markdown 到 PDF 文件 | 不改写 Markdown、不影响报告保存 | ReportRepository、pdfkit/wkhtmltopdf、weasyprint | `exportSavedMarkdownToPdf` | `cleanMarkdownForPdf`, `renderMarkdownHtml`, `writePdfFile` | PDF 失败记录状态 | Markdown 原文 hash 不变、中文横排 |
@@ -1971,7 +2050,7 @@ function handleUserMessage(contextId, text, requestId) {
 
   if (context.kind == "task_following") {
     task = ReportTaskStore.get(context.activeTaskId)
-    if (task && task.status in ["running", "cancellation_requested"]) {
+    if (task && task.status == "running") {
       if (looksLikeTaskMutation(text)) {
         notice = "当前报告正在生成，无法中途修改。是否在完成后重新生成一份包含该要求的报告？"
         draft = IntentRecognizer.createRegenerateDraftAfterCompletion(task, text, userMessage.id)
@@ -2767,7 +2846,7 @@ function requestFullReportFile(reportId, requestId) {
 
 输出：`{ accepted: boolean, action }`
 
-前置条件：事件来自 OpenClaw 转发层。
+前置条件：回调来自 OpenClaw 转发层。
 
 后置条件：只按产品语义处理，不处理微信协议细节。
 
@@ -2775,7 +2854,7 @@ function requestFullReportFile(reportId, requestId) {
 
 错误：无未捕获错误，失败转可读消息并写日志。
 
-该入口只有在 OpenClaw 明确提供入站桥接能力后才启用；如果能力不存在，claw-trade 不注册替代微信 webhook，不模拟入站事件。
+该入口只有在 OpenClaw 明确提供入站桥接能力后才启用；如果能力不存在，claw-trade 不注册替代微信 webhook，不模拟入站回调。
 
 ```ts
 function handleOpenClawChannelInboundEvent(event) {
@@ -3285,7 +3364,7 @@ function toDataSourceInstanceForUser(instance) {
 
 后置条件：通过才可启用。
 
-副作用：可写健康事件和验证 receipt。
+副作用：可写健康记录和验证 receipt。
 
 错误：`DATASOURCE_TEST_FAILED`
 
@@ -3340,17 +3419,16 @@ function testDataSourceInstance(instanceDraft, requestId) {
 
 ```ts
 function loadLlmSettings(provider) {
-  schema = OpenClawGatewayClient.configSchemaLookup({
-    key: "providers",
-    provider,
-  })
-  config = OpenClawGatewayClient.configGet({ section: "providers", provider })
+  modelSchema = OpenClawGatewayClient.configSchemaLookup({ path: "agents.defaults.model" })
+  providerSchema = OpenClawGatewayClient.configSchemaLookup({ path: "models.providers" })
+  config = OpenClawGatewayClient.configGet({ paths: ["agents.defaults.model", "models.providers"] })
   models = OpenClawGatewayClient.modelsList({ provider })
-  draft = mapOpenClawConfigToLlmDraft(config, models, schema)
+  status = OpenClawGatewayClient.modelsStatus({ provider, json: true })
+  draft = mapOpenClawModelConfigToLlmDraft(config, models, status, providerSchema)
   return {
     draft,
-    schemaVersion: schema.version,
-    settingsVersion: makeOpaqueSettingsVersion(config.internalHash),
+    schemaVersion: makeOpaqueSchemaVersion(modelSchema, providerSchema),
+    settingsVersion: makeOpaqueSettingsVersion(config.revision),
   }
 }
 ```
@@ -3372,14 +3450,13 @@ function loadLlmSettings(provider) {
 ```ts
 function saveLlmConfigViaOpenClaw(draft, expectedSettingsVersion, requestId) {
   if (idempotency.exists(requestId)) return idempotency.result(requestId)
-  schema = OpenClawGatewayClient.configSchemaLookup({ key: "providers", provider: draft.provider })
-  validateLlmDraftAgainstSchema(draft, schema)
+  providerSchema = OpenClawGatewayClient.configSchemaLookup({ path: "models.providers" })
+  modelSchema = OpenClawGatewayClient.configSchemaLookup({ path: "agents.defaults.model" })
+  validateLlmDraftAgainstSchema(draft, providerSchema, modelSchema)
 
-  patch = buildConfigPatch(draft)
+  patch = buildOpenClawModelConfigPatch(draft)
   result = OpenClawGatewayClient.configPatch({
-    section: "providers",
-    provider: draft.provider,
-    expectedHash: resolveInternalConfigHash(expectedSettingsVersion),
+    expectedSettingsVersion,
     patch,
   })
   out = {
@@ -3413,7 +3490,7 @@ function testLlmViaOpenClaw(input, requestId) {
   status = OpenClawGatewayClient.modelsAuthStatus({
     provider: input.provider,
     model: input.model ?? null,
-    endpointUrl: input.endpointUrl ?? null,
+    probe: true,
   })
 
   result = {
@@ -3690,14 +3767,16 @@ L1 / L2
 - 保存时 UI 后端把新密钥传给对应 owner：
   - LLM 密钥：OpenClaw。
   - Channel 密钥：OpenClaw。
-  - 数据源密钥：claw-trade 数据源配置服务或 secret store。
+- 数据源密钥：首版由 claw-trade 后端受控写入 `.env.local`，普通 UI 只看到掩码和 replace-only 状态；后续可替换为配置服务或 secret store。
 
 ### 12.3 `.env.local` 边界
 
 - 本文只引用 `.env.example` / `.env.local` 中的配置项名称和分组。
-- 不输出 `.env.local` 真实值。
-- 生产 UI 不直接编辑 `.env.local`。
-- dev/CLI 可继续从 `.env.local` 解析默认设置，UI/product 应使用 DB 或配置服务，再在创建报告时写入 `RunRequest`。
+- 不输出 `.env.local` 真实值、文件路径、本地目录或端口。
+- 首版本机单用户形态允许 claw-trade 后端受控读写 `.env.local` 作为配置存储。
+- “直接读写 `.env.local`”只允许发生在后端配置写入层：必须按 allowlist 写入已批准 key，做输入校验、掩码回显、replace-only 密钥更新、原子写入或备份，且尽量保留未知 key/comment。
+- 浏览器、普通 UI API、OpenClaw bridge、workflow controller 不得直接读写 `.env.local`。
+- dev/CLI 可继续从 `.env.local` 解析默认设置；UI/product 创建报告时必须先把当前设置冻结为 `ReportWorkflowSettingsSnapshot`，再生成 `RunRequest`。workflow controller 只读 `RunRequest`，不得在运行中重新读取 env 或 UI store。
 
 当前读取到的配置项分组只作为工程映射依据，不代表普通用户设置页全部展示：
 
@@ -3711,7 +3790,7 @@ L1 / L2
 | 加密运行调优 | `CRYPTO_PROVIDER_CACHE_ENABLED`, `CRYPTO_PROVIDER_CACHE_REQUIRED`, `CRYPTO_PROVIDER_CACHE_STALE_POLICY`, `CRYPTO_CACHE_TTL_*`, `CRYPTO_RATE_LIMIT_*`, `CRYPTO_MARKET_*`, `BB_*` | 普通设置页不展示；如需只进入诊断/高级配置 |
 | 本地运行内部项 | `CN_A_MONGODB_URI`, `CN_A_MONGODB_DATABASE`, `CN_A_MONGODB_CACHE_COLLECTION`, `OPENVIKING_ENDPOINT`, `CLAW_TRADE_OPENVIKING_BASE_URI`, `CLAW_TRADE_OPENVIKING_AUTH_MODE`, `OPENVIKING_API_KEY`, `OPENVIKING_WORKSPACE` | 普通 UI 禁止展示 |
 | OpenClaw / LLM | `DEEPSEEK_API_KEY` 以及 OpenClaw provider schema 中的其他服务商字段 | LLM 设置页只作为 OpenClaw 配置入口，实际保存和测试归 OpenClaw |
-| report workflow 默认值 | `CLAW_TRADE_REPORT_MAX_DEBATE_ROUNDS`, `CLAW_TRADE_REPORT_MAX_RISK_DISCUSS_ROUNDS`, `CLAW_TRADE_REPORT_MAX_ROUNDS_HARD_LIMIT`, `CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE`, `CLAW_TRADE_REPORT_DEFAULT_PROFILE`, `CLAW_TRADE_REPORT_DEFAULT_MARKET`, `CLAW_TRADE_REPORT_DEFAULT_CURRENCY`, `CLAW_TRADE_REPORT_DEFAULT_CURRENCY_SYMBOL` | UI/product 保存为设置模型；创建报告时写入 `RunRequest` |
+| report workflow 默认值 | `CLAW_TRADE_REPORT_MAX_DEBATE_ROUNDS`, `CLAW_TRADE_REPORT_MAX_RISK_DISCUSS_ROUNDS`, `CLAW_TRADE_REPORT_MAX_ROUNDS_HARD_LIMIT`, `CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE`, `CLAW_TRADE_REPORT_DEFAULT_PROFILE`, `CLAW_TRADE_REPORT_DEFAULT_MARKET`, `CLAW_TRADE_REPORT_DEFAULT_CURRENCY`, `CLAW_TRADE_REPORT_DEFAULT_CURRENCY_SYMBOL` | 首版后端受控写入 `.env.local`，确认创建报告时冻结为设置快照并写入 `RunRequest` |
 
 ### 12.4 Channel、LLM、数据源保存边界
 
@@ -3719,8 +3798,8 @@ L1 / L2
 |---|---|---|
 | Channel | OpenClaw | 调用 OpenClaw 配置/Channel API；只显示状态 |
 | LLM | OpenClaw | 调用 OpenClaw config/models API；只做极简入口 |
-| 数据源 | claw-trade 数据源配置服务 | 只允许已支持类型实例；测试通过才启用 |
-| 报告 workflow 参数 | claw-trade 设置服务，创建任务时写入 `RunRequest` | UI 可显示简单设置，但 controller 只读 `RunRequest`；HK/CRYPTO 未批准时确认阶段直接失败 |
+| 数据源 | claw-trade 后端 `.env.local` allowlist 写入层（首版） | 只允许已支持类型实例；测试通过才启用；普通 UI 不显示真实 key/path |
+| 报告 workflow 参数 | claw-trade 后端 `.env.local` allowlist 写入层（首版），创建任务时冻结并写入 `RunRequest` | UI 可显示简单设置，但 controller 只读 `RunRequest`；HK/CRYPTO 未批准时确认阶段直接失败 |
 
 ### 12.5 PDF 文件访问和发送边界
 
@@ -3758,7 +3837,7 @@ L1 / L2
 | 左侧历史 | 混合成功/失败/运行任务 | 只显示成功报告 | 失败任务不可见 |
 | 确认卡 | report draft | 类型、标的、市场、通知方式 | 有确认/取消按钮 |
 | 任务状态栏 | running progress | 中文阶段、中文角色、进度条 | 不显示 worker id |
-| 数据源提醒 | 已配置且本次失败事件 | 显示来源、原因、影响 | 不显示未配置来源 |
+| 数据源提醒 | 已配置且本次失败记录 | 显示来源、原因、影响 | 不显示未配置来源 |
 | 报告阅读器 | Markdown 含表格/图片 | 正文完整显示 | 不重排、不截断 |
 | 报告详情文件状态 | 后端有 markdown/pdf 内部记录 | 只显示可用性和提示 | 不显示 artifact、path、hash、本地文件名 |
 | 图表状态面板 | ready/partial/missing evidence | 显示图表标题、状态、可读原因 | 不用静态占位，不显示内部证据字段 |
@@ -3791,7 +3870,7 @@ L1 / L2
 | 公共错误码映射 | OpenClaw/Channel 内部错误 | 产品错误码 | 响应 JSON 不含 `OPENCLAW_*`、`CHANNEL_*` |
 | 模型设置版本冲突 | 旧 `settingsVersion` | `CONFLICT` | 用户提示重新加载 |
 | `load/save/testLlm` | 模型设置读取、保存、测试 | 只通过 OpenClaw | claw-trade 不持久化真实密钥 |
-| `handleOpenClawChannelInboundEvent` | OpenClaw 已转发的产品语义事件 | 触发 `requestFullReportFile` | claw-trade 不监听微信协议；桥接不存在时不伪造事件 |
+| `handleOpenClawChannelInboundEvent` | OpenClaw 已转发的微信消息通知/回调 | 触发 `requestFullReportFile` | claw-trade 不监听微信协议；桥接不存在时不伪造回调 |
 | `exportReportPdf` 已有 ready | force=false | 返回 `PdfExportForUser` | 不重复生成；响应 JSON 不含 artifact/path/hash/local path |
 | `sendReportFileViaChannel` 文件不支持 | 通知通道无文件能力 | `FILE_SEND_UNSUPPORTED` | UI 可读失败 |
 
@@ -3804,6 +3883,7 @@ L1 / L2
 | 手动优先 | 定时任务先排队，手动后排队 | 手动排在定时前 | 不打断当前 running |
 | 同标的去重 | 两个同标的同配置 queued | 复用 existing | 不新增任务 |
 | 运行中修改 | 任务 running 时输入新要求 | 生成完成后重做确认卡 | 原 `RunRequest` 不变 |
+| 运行中取消 | 任务 running 时点取消或调用取消 API | `TASK_NOT_CANCELLABLE` 或无取消入口 | 原任务继续运行，状态不变 |
 
 ### 13.6 数据源配置测试
 
@@ -3831,8 +3911,11 @@ L1 / L2
 | 场景 | 输入 | 预期输出 | 验收标准 |
 |---|---|---|---|
 | 未连接 Channel | 报告完成 | UI 显示完成摘要 | 不阻塞报告成功 |
+| 微信插件未安装 | `plugins list` 无 `openclaw-weixin` | 设置页提示安装 | 不说已连接 |
+| 微信插件未启用 | plugin installed but disabled | 设置页提示启用 | 不尝试发送 |
+| 微信未扫码 | status disconnected | 设置页提示扫码 | 不保存登录态到 claw-trade |
 | 文字发送失败 | Channel 报错 | UI 提示通知失败 | 不重发无限循环 |
-| 文件发送不支持 | 请求完整报告 | 可读失败 | 不暴露本地路径 |
+| 文件发送不支持 | capabilities 无 media/file | `FILE_SEND_UNSUPPORTED` | 不暴露本地路径，不模拟 message id |
 | Channel 状态错误 | OpenClaw status 失败 | 设置页显示连接异常 | 不显示 gateway 原文 |
 
 ### 13.9 端到端用户流程测试
@@ -3848,6 +3931,8 @@ L1 / L2
 | 价格提醒暂停后检查 | paused + 立即检查 | skipped | 不发送通知 |
 | 数据源失效提醒 | 已配置 CoinGlass，本次代理不可达 | 右侧报告详情提醒 | 未配置来源不提醒 |
 | 微信内请求完整报告 | 桥接可用时 OpenClaw 转发 request_full_report | 发送已保存 PDF 或可读失败 | 不暴露本地路径，不实现 Channel；桥接不可用时显示不可用提示 |
+| 微信内 `/report BTC` | OpenClaw 转发报告请求 | 生成确认卡 | 不直接创建 workflow |
+| 微信内 `取消` | 任务 running | 返回“报告正在生成，不能中途取消” | 状态不变，不发 abort |
 
 ## 14. 实施切分
 
@@ -4050,19 +4135,20 @@ uv run pytest tests/e2e/ui/test_report_user_flows.py
 - PDF 导出 API 只返回 `PdfExportForUser`，不返回内部 artifact/path/hash/local path。
 - 完成通知不发送全文。
 - 文件发送失败给 UI/Channel 可读提醒。
-- 微信内“报告”入站事件只有在 OpenClaw 提供产品语义事件桥接后才接入；claw-trade 只消费产品语义事件，不实现微信协议。
+- 微信内“报告”消息只有在 OpenClaw 能把消息通知/回调交给 claw-trade 后才接入；claw-trade 只消费产品动作通知，不实现微信协议。
 
-## 15. 未决问题
+## 15. 已决策点、运行时检查点和剩余问题
 
-| 问题 | 影响 | 推荐决策 | 未确认时保守实现 |
+| 项目 | 状态/影响 | 实施规则 | 不可越线 |
 |---|---|---|---|
-| 首版前端目录和框架是否采用 `claw-invest` 的 React/Vite 模式 | 影响工程脚手架和测试命令 | 采用 React + Vite + TypeScript，复用布局思想，不复用业务逻辑 | 先只实现 API contract 和静态组件合同 |
-| UI 后端 API 是 HTTP、IPC 还是 OpenClaw plugin route | 影响部署方式 | claw-trade 提供本地 HTTP/IPC，前端只调 claw-trade；claw-trade 再调 OpenClaw | 把 API 写成传输无关 service contract |
-| 微信 ClawBot 的 OpenClaw Channel ID 和配置 schema | 影响设置页和发送文件 | 由 OpenClaw `channels.status` / schema 返回，不在 UI 写死 | UI 使用 `wechat_clawbot` 产品概念，后端映射失败则显示“微信通知暂不可用” |
-| OpenClaw 是否支持本地 PDF 文件发送 | 影响“发送完整报告” | 要求 OpenClaw 提供文件发送 API，返回 message id 和失败原因 | 首版按钮可显示但遇到不支持时给明确提示，不暴露路径 |
-| OpenClaw 是否支持微信入站消息转产品语义事件 | 影响微信里回复“报告”的体验 | 由 OpenClaw Channel 把入站消息转成 `request_full_report` / `open_report_summary` 事件 | 不可用时不在 claw-trade 内实现微信协议；只保留设备界面发送按钮和可读提示 |
-| LLM 配置是否有专用保存/测试 API | 影响实现复杂度 | 优先使用 OpenClaw 专用 API；若没有，用 `config.get/patch` + `models.authStatus` | `LlmSettingsBridge` 隔离实现，UI 不感知 |
-| 数据源实例存储位置 | 影响生产部署 | 使用 claw-trade 配置服务/DB + secret store，不直接编辑 `.env.local` | 定义 repository 接口，先可用本地文件但不展示路径 |
-| 完成摘要字段提取的稳定来源 | 影响完成卡质量 | 后续 exporter/PM material 增加结构化 metadata，但内容仍来自 PM/报告 | 首版确定性按标题/项目符号摘取，缺字段不补写 |
-| 图表状态来源 | 影响右侧报告详情 | 从后端图表证据索引和导出 evidence 聚合，普通 UI 只接收 `ChartEvidenceForUser` | 未确认时只显示“报告中包含/未包含图表”和用户可读原因；内部 root cause 只进诊断日志 |
-| 报告取消的真实 runtime 能力 | 影响运行中取消按钮 | 若 workflow 支持安全 abort，则接入；否则显示“已请求取消，当前阶段完成后停止” | 排队任务可立即取消，运行中不伪造取消成功 |
+| 首版前端目录和框架是否采用 `claw-invest` 的 React/Vite 模式 | 已决策：参考 `claw-invest/web/research-ui`；能兼容复用的三栏 shell、通用组件、样式和构建配置可直接复用 | 采用 React + Vite + TypeScript；不得复用旧业务逻辑、旧 workflow、direct LLM 或旧启动脚本 | API contract 和静态组件合同先落地；复用代码必须通过当前 DTO/禁词/首版范围测试 |
+| UI 后端 API 是 HTTP、IPC 还是 OpenClaw plugin route | 已决策：参考 `claw-invest` 通用 web server / route / contract 形态，优先由 claw-trade 提供本地产品 API | 前端只调 claw-trade；claw-trade 再桥接 OpenClaw；首版不把普通产品 API 做成 OpenClaw plugin route | service contract 仍保持传输无关，避免业务层绑定具体 server 实现 |
+| 微信 ClawBot 的 OpenClaw Channel ID 和配置 schema | 已查：普通微信 Channel ID 是 `openclaw-weixin`；微信协议在外部插件，不在 OpenClaw 核心仓；npm 包 `2.4.3` 可安装；官方安装/启用/扫码/Gateway restart 路径已确认，dev/fixed 测试 runtime 仍不会自动加载外部插件 | 后端内部把 `wechat_clawbot` 映射到 `openclaw-weixin`；实现前继续确认 OpenClaw CLI 或等价 Gateway 的真实登录、状态和媒体发送方法；生产级 UI runtime 需要稳定保留并加载插件配置，不能照搬每次重建的测试脚本策略 | 未安装、未登录或不可发送时显示“微信通知暂不可用”，不写死 `wechat`、`clawbot`、WeCom；不得把未验证能力写成成功 |
+| 本地 PDF 文件发送 | 已查：OpenClaw 有通用 media 发送/本地文件读取边界，微信插件文档声明支持媒体；当前运行时仍需能力探测 | 只发送已保存 PDF，发送前检查 Channel 文件/媒体能力、大小限制、登录状态 | 不支持时返回 `FILE_SEND_UNSUPPORTED` 或 `NOTIFICATION_UNAVAILABLE`，不暴露路径、不伪造 message id |
+| 微信消息通知/回调如何接入 claw-trade | 影响微信里回复“报告”的体验 | 由 OpenClaw 微信插件接收微信消息；claw-trade 只接 OpenClaw 转来的产品动作通知 | 如果当前 gateway 没有可接入口，不在 claw-trade 内实现微信协议；只保留设备界面发送按钮和可读提示 |
+| LLM 配置是否有专用保存/测试 API | 已查：不用等专用 API；OpenClaw config/models 已覆盖首版需要 | `LlmSettingsBridge` 使用 `config.schema.lookup`、`config.get`、`config.patch`、`models.list/status/authStatus` 或等价 gateway 方法 | UI 不感知 OpenClaw 原始配置路径；claw-trade 不保存真实 LLM 密钥 |
+| 数据源实例存储位置 | 已决策：首版本机单用户形态由 claw-trade 后端受控读写 `.env.local` | 不引入 DB/secret store；必须使用 allowlist、原子写入/备份、密钥掩码、replace-only；普通 UI 不展示路径或真实值 | 后续如需多用户/部署化，再把后端 env writer 替换成配置服务/secret store |
+| PDF 模板视觉样式 | 已决策：沿用浅色中文横排投研报告风格，参考 TradingAgents-CN 导出流程 | 只格式化已保存 Markdown，处理中文字体、横排、表格分页和图片缩放 | 不重写、不总结、不补写报告；PDF 失败不影响报告保存 |
+| 完成摘要字段提取的稳定来源 | 已决策：首版确定性按标题/项目符号从已保存报告和 PM 结论摘取 | 后续 exporter/PM material 可增加结构化 metadata，但内容仍只能来自 PM/报告 | 缺字段显示查看全文提示，不新增简报 worker，不补写不存在事实 |
+| 图表状态来源 | 已查：后端已有 `ChartAsset` / `chart_assets`、`DataGap`、`reports/export-result.json` 和 Markdown 图片引用 | 从这些已保存证据聚合成 `ChartEvidenceForUser` | 不扫本地路径给 UI，不用静态占位，不写“图表正常”伪成功 |
+| 报告取消规则 | 已决策：首版不取消运行中 workflow | 排队任务可立即取消；running 不显示取消入口或返回 `TASK_NOT_CANCELLABLE` | 不发 running abort，不出现“已请求取消”，不伪造 running -> cancelled |

@@ -34,42 +34,80 @@ def fundamental_capabilities() -> tuple[ProviderCapability, ...]:
     return (
         # CN_A
         ProviderCapability(
-            provider="tushare",
-            adapter_id="fundamental.tushare.cn_a",
+            provider="sina_financials",
+            adapter_id="fundamental.cn_a.sina_financials",
             provider_kind=ProviderKind.PROJECT_EXTENSION,
             market=Market.CN_A,
             domain=PackDomain.FUNDAMENTAL,
-            endpoint="fina_indicator+income+balancesheet+cashflow+fina_mainbz",
+            endpoint="financial_statements",
             source_role=SourceRole.FUNDAMENTAL_DATA,
-            expected_schema_id="cn_a.fundamental.core.v1",
+            expected_schema_id="cn_a.fundamental.financials.v1",
             license_policy_id="personal_research",
-            credential_requirements=("TUSHARE_TOKEN",),
-            rate_limit_policy_id="tushare.default",
+            credential_requirements=(),
+            rate_limit_policy_id="cn_a.financials.default",
+            cache_ttl_seconds=900,
+            required=True,
+            attempt_required=True,
+            coverage_group="cn_a_fundamental_financials",
+            coverage_quorum=1,
+            priority=10,
+        ),
+        ProviderCapability(
+            provider="eastmoney_financials",
+            adapter_id="fundamental.cn_a.eastmoney_financials",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            domain=PackDomain.FUNDAMENTAL,
+            endpoint="company_profile",
+            source_role=SourceRole.FUNDAMENTAL_DATA,
+            expected_schema_id="cn_a.fundamental.financials.v1",
+            license_policy_id="personal_research",
+            credential_requirements=(),
+            rate_limit_policy_id="cn_a.financials.default",
             cache_ttl_seconds=900,
             required=False,
             attempt_required=True,
-            coverage_group="cn_a_fundamental_core",
+            coverage_group="cn_a_fundamental_financials",
+            coverage_quorum=1,
+            priority=11,
+        ),
+        ProviderCapability(
+            provider="ths_estimates",
+            adapter_id="fundamental.cn_a.ths_estimates",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            domain=PackDomain.FUNDAMENTAL,
+            endpoint="consensus_eps",
+            source_role=SourceRole.FUNDAMENTAL_DATA,
+            expected_schema_id="cn_a.fundamental.estimates.v1",
+            license_policy_id="personal_research",
+            credential_requirements=(),
+            rate_limit_policy_id="cn_a.estimates.default",
+            cache_ttl_seconds=900,
+            required=True,
+            attempt_required=True,
+            coverage_group="cn_a_fundamental_estimates",
             coverage_quorum=1,
             priority=20,
         ),
         ProviderCapability(
-            provider="akshare",
-            adapter_id="fundamental.akshare.cn_a",
+            provider="eastmoney_research",
+            adapter_id="fundamental.cn_a.eastmoney_research",
             provider_kind=ProviderKind.PROJECT_EXTENSION,
             market=Market.CN_A,
             domain=PackDomain.FUNDAMENTAL,
-            endpoint="stock_financial_analysis_indicator",
+            endpoint="analyst_report",
             source_role=SourceRole.FUNDAMENTAL_DATA,
-            expected_schema_id="cn_a.fundamental.supplement.v1",
+            expected_schema_id="cn_a.fundamental.research.v1",
             license_policy_id="personal_research",
             credential_requirements=(),
-            rate_limit_policy_id="akshare.default",
+            rate_limit_policy_id="cn_a.research.default",
             cache_ttl_seconds=900,
             required=True,
             attempt_required=True,
-            coverage_group="cn_a_fundamental_core",
+            coverage_group="cn_a_fundamental_research",
             coverage_quorum=1,
-            priority=10,
+            priority=30,
         ),
         # HK
         ProviderCapability(
@@ -432,25 +470,23 @@ def _fetch_cn_a(
     request_id: str,
     env: Mapping[str, str],
 ) -> ProviderFetch:
-    if spec.adapter_id == "fundamental.tushare.cn_a":
-        token = str(env.get("TUSHARE_TOKEN", "")).strip()
-        if not token:
-            raise RuntimeError("tushare token missing for cn_a fundamental adapter (TUSHARE_TOKEN)")
-        rows = _call_tushare_cn_a_fundamental(token=token, ts_code=str(params.get("ts_code") or _normalize_cn_symbol_for_tushare(request.ticker)))
-        return _build_fetch(
-            provider=spec.provider,
-            endpoint=spec.endpoint,
-            source_url="https://api.tushare.pro",
-            request_id=request_id,
-            params=params,
-            rows=rows,
-        )
-    if spec.adapter_id == "fundamental.akshare.cn_a":
+    if spec.adapter_id in {
+        "fundamental.cn_a.sina_financials",
+        "fundamental.cn_a.eastmoney_financials",
+        "fundamental.cn_a.ths_estimates",
+        "fundamental.cn_a.eastmoney_research",
+    }:
         rows = _call_akshare_cn_a_fundamental(symbol=str(params.get("symbol") or _normalize_cn_symbol_for_akshare(request.ticker)))
+        source_url = {
+            "fundamental.cn_a.sina_financials": "https://finance.sina.com.cn",
+            "fundamental.cn_a.eastmoney_financials": "https://emweb.securities.eastmoney.com",
+            "fundamental.cn_a.ths_estimates": "https://basic.10jqka.com.cn",
+            "fundamental.cn_a.eastmoney_research": "https://data.eastmoney.com/report",
+        }.get(spec.adapter_id, "https://akshare.akfamily.xyz/data/stock/stock.html")
         return _build_fetch(
             provider=spec.provider,
             endpoint=spec.endpoint,
-            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+            source_url=source_url,
             request_id=request_id,
             params=params,
             rows=rows,
@@ -645,8 +681,10 @@ def _extract_rows(payload: bytes | str | Mapping[str, Any]) -> tuple[Mapping[str
 
 def _normalize_fields(*, spec: ProviderCallSpec, rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     if spec.adapter_id in {
-        "fundamental.tushare.cn_a",
-        "fundamental.akshare.cn_a",
+        "fundamental.cn_a.sina_financials",
+        "fundamental.cn_a.eastmoney_financials",
+        "fundamental.cn_a.ths_estimates",
+        "fundamental.cn_a.eastmoney_research",
         "fundamental.tushare.hk",
         "fundamental.akshare.hk",
         "fundamental.yfinance.hk",
@@ -669,6 +707,7 @@ def _normalize_fields(*, spec: ProviderCallSpec, rows: Sequence[Mapping[str, Any
 def _extract_equity_fields(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     pe = _pick_float(rows, "valuation.pe", "pe_ttm", "pe", "pe_ratio", "forward_pe", "市盈率(TTM)", "市盈率", "trailingPE", "peRatio")
     pb = _pick_float(rows, "valuation.pb", "pb", "price_to_book", "市净率", "priceToBook", "pbRatio")
+    peg = _pick_float(rows, "valuation.peg", "peg", "PEG", "peg_ttm", "pegRatio", "市盈率相对盈利增长比率")
     roe = _pick_float(
         rows,
         "financial_indicators.roe",
@@ -685,6 +724,8 @@ def _extract_equity_fields(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         out["valuation.pe"] = pe
     if pb is not None:
         out["valuation.pb"] = pb
+    if peg is not None:
+        out["valuation.peg"] = peg
     if roe is not None:
         out["financial_indicators.roe"] = roe
     return out
@@ -765,14 +806,18 @@ def _extract_crypto_defillama_fields(rows: Sequence[Mapping[str, Any]]) -> dict[
 
 def _required_fields_for_adapter(adapter_id: str) -> tuple[str, ...]:
     if adapter_id in {
-        "fundamental.tushare.cn_a",
-        "fundamental.akshare.cn_a",
+        "fundamental.cn_a.sina_financials",
+        "fundamental.cn_a.eastmoney_financials",
         "fundamental.tushare.hk",
         "fundamental.akshare.hk",
         "fundamental.yfinance.hk",
         "fundamental.yfinance.us",
     }:
         return ("valuation.pe", "valuation.pb", "financial_indicators.roe")
+    if adapter_id == "fundamental.cn_a.ths_estimates":
+        return ("valuation.peg",)
+    if adapter_id == "fundamental.cn_a.eastmoney_research":
+        return ()
     if adapter_id == "fundamental.coingecko.crypto":
         return ("valuation.market_cap_usd", "supply.circulating", "supply.total")
     if adapter_id == "fundamental.defillama.crypto":
@@ -791,6 +836,7 @@ def _compact_facts(*, spec: ProviderCallSpec, row_count: int, row: Mapping[str, 
         for field in (
             "valuation.pe",
             "valuation.pb",
+            "valuation.peg",
             "financial_indicators.roe",
             "income.revenue",
             "income.net_profit",

@@ -10,6 +10,9 @@ def test_worker_order_is_fixed():
         "fundamental_analyst",
         "news_analyst",
         "social_analyst",
+        "policy_analyst",
+        "hot_money_tracker",
+        "lockup_watcher",
         "bull_researcher",
         "bear_researcher",
         "research_manager",
@@ -24,6 +27,7 @@ def test_worker_order_is_fixed():
 
 def test_worker_stage_mapping_is_fixed():
     assert worker_by_id("market_analyst").stage == Stage.FRONTLINE
+    assert worker_by_id("policy_analyst").stage == Stage.FRONTLINE
     assert worker_by_id("portfolio_manager").stage == Stage.PORTFOLIO_DECISION
     assert worker_by_id("report_polisher").stage == Stage.FINAL_REPORT
 

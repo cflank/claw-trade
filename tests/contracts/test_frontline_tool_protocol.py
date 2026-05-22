@@ -555,17 +555,32 @@ exit 0
     assert "DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI is not configured" in text
 
 
-def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("status", "ok", "brief_field", "expected_is_error"),
+    (
+        ("partial", True, "reader_brief", False),
+        ("insufficient", True, "reader_brief", False),
+        ("blocked", False, "reader_brief_md", True),
+    ),
+)
+def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(
+    tmp_path: Path,
+    status: str,
+    ok: bool,
+    brief_field: str,
+    expected_is_error: bool,
+) -> None:
     fake_python = tmp_path / "fake_python_pack.sh"
+    reader_brief = (
+        f"00700.HK 的 HK 舆情资料包资料就绪度为{status}："
+        "没有原始社交事实源。数据缺口：搜索发现不能替代舆情事实。"
+    )
     payload = {
-        "ok": True,
+        "ok": ok,
         "schema_version": "openbb_social_pack.v1",
         "tool_name": "claw_get_social_pack",
-        "reader_brief": (
-            "00700.HK 的 HK 舆情资料包已返回，readiness=insufficient："
-            "没有原始社交事实源。数据缺口：搜索发现不能替代舆情事实。"
-        ),
-        "readiness": {"status": "insufficient", "reason": "没有原始社交事实源。"},
+        brief_field: reader_brief,
+        "readiness": {"status": status, "reason": "没有原始社交事实源。"},
         "provider_attempts": [
             {
                 "provider": "openbb",
@@ -574,6 +589,11 @@ def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness
             }
         ],
     }
+    if not ok:
+        payload["error"] = {
+            "code": "pack_runtime_blocked",
+            "message": "资料源配置阻断，但 reader brief 已说明可见缺口。",
+        }
     _write_executable(
         fake_python,
         f"""#!/usr/bin/env bash
@@ -588,11 +608,13 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
         env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
     )
 
-    assert result.get("isError") is False
+    assert result.get("isError") is expected_is_error
     text = result["content"][0]["text"]
-    assert text.startswith("资料包工具已返回，但资料就绪状态为 insufficient")
-    assert "不证明资料覆盖完成" in text
-    assert payload["reader_brief"] in text
+    assert text == reader_brief
+    assert "资料包工具已返回" not in text
+    assert "资料就绪状态为" not in text
+    assert "这只证明工具调用完成" not in text
+    assert "不证明资料覆盖完成" not in text
     assert "viking://" not in text
     assert "provider_attempts" not in text
     assert result.get("details", {}).get("provider_attempts") == payload["provider_attempts"]
@@ -603,3 +625,12 @@ def test_provider_total_timeout_contract_keeps_subprocess_plus_five_seconds_buff
     assert "DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS" in source
     assert "SUBPROCESS_TIMEOUT_BUFFER_MS = 5000" in source
     assert "Math.max(totalTimeout + SUBPROCESS_TIMEOUT_BUFFER_MS, DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS)" in source
+
+
+def test_crypto_market_pack_uses_extended_timeout_contract() -> None:
+    source = PLUGIN_PATH.read_text(encoding="utf-8")
+    assert "DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS = 120000" in source
+    assert "function resolvePackTotalTimeoutMs(config, toolInput, toolName)" in source
+    assert "toolName === TOOL_NAMES.clawGetMarketPack" in source
+    assert "textValue(toolInput.market) === MARKET_CRYPTO" in source
+    assert "domainToolTimeoutMs(DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS)" in source

@@ -13,6 +13,9 @@ _FRONTLINE_ALLOWED_PACK_TOOLS = {
     "claw_get_fundamental_pack",
     "claw_get_news_pack",
     "claw_get_social_pack",
+    "claw_get_policy_pack",
+    "claw_get_hot_money_pack",
+    "claw_get_lockup_pack",
 }
 
 _FORBIDDEN_US_ATOMICS = {
@@ -68,15 +71,38 @@ def test_frontline_tool_schema_is_canonical_pack_only_under_openbb_flag(
     registry = registry_result.registry
     agents_root = Path("agents")
 
-    expected_frontline = {
-        "market_analyst": ("claw_get_market_pack",),
-        "fundamental_analyst": ("claw_get_fundamental_pack",),
-        "news_analyst": ("claw_get_news_pack",),
-        "social_analyst": ("claw_get_social_pack",),
+    expected_frontline_by_profile = {
+        "US": {
+            "market_analyst": ("claw_get_market_pack",),
+            "fundamental_analyst": ("claw_get_fundamental_pack",),
+            "news_analyst": ("claw_get_news_pack",),
+            "social_analyst": ("claw_get_social_pack",),
+        },
+        "CN_A": {
+            "market_analyst": ("claw_get_market_pack",),
+            "fundamental_analyst": ("claw_get_fundamental_pack",),
+            "news_analyst": ("claw_get_news_pack",),
+            "social_analyst": ("claw_get_social_pack",),
+            "policy_analyst": ("claw_get_policy_pack",),
+            "hot_money_tracker": ("claw_get_hot_money_pack",),
+            "lockup_watcher": ("claw_get_lockup_pack",),
+        },
+        "HK": {
+            "market_analyst": ("claw_get_market_pack",),
+            "fundamental_analyst": ("claw_get_fundamental_pack",),
+            "news_analyst": ("claw_get_news_pack",),
+            "social_analyst": ("claw_get_social_pack",),
+        },
+        "CRYPTO": {
+            "market_analyst": ("claw_get_market_pack",),
+            "fundamental_analyst": ("claw_get_fundamental_pack",),
+            "news_analyst": ("claw_get_news_pack",),
+            "social_analyst": ("claw_get_social_pack",),
+        },
     }
 
-    for profile in ("US", "CN_A", "HK", "CRYPTO"):
-        for worker_id in ("market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"):
+    for profile, expected_frontline in expected_frontline_by_profile.items():
+        for worker_id in expected_frontline:
             policy_result = load_stage_policy(agents_root, worker_id, profile)
             assert policy_result.ok is True and policy_result.policy is not None
             tools = resolve_tools(policy_result.policy, registry)

@@ -18,6 +18,7 @@ from .mongo import (
     ensure_openbb_store_indexes,
 )
 from .normalized import MongoNormalizedStore
+from .rate_limits import MongoRateLimitStore
 from .raw_payloads import MongoRawPayloadStore
 from .run_plans import MongoRunProviderPlanStore
 from .single_flight import MongoSingleFlightCoordinator
@@ -40,6 +41,7 @@ __all__ = [
     "MongoProviderHttpEvidenceStore",
     "MongoRawPayloadStore",
     "MongoNormalizedStore",
+    "MongoRateLimitStore",
     "MongoRunProviderPlanStore",
     "MongoValidationReceiptStore",
     "MongoProviderManifestStore",

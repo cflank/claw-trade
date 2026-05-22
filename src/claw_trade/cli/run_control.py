@@ -20,10 +20,10 @@ from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner
 from claw_trade.data_gateway.openviking import OpenBBMongoLineageWriter
 from claw_trade.data_gateway.store import MongoRunProviderPlanStore, ensure_openbb_store_indexes
 from claw_trade.data_gateway.store.mongo import OPENBB_RUN_PROVIDER_PLANS
-from claw_trade.instruments.resolver import InstrumentResolveError, resolve_instrument_identity
 from claw_trade.reports.exporter import FinalReportExporter
 from claw_trade.runtime.openclaw_client import OpenClawClient
 from claw_trade.workflow.models import RunRequest, RunStatus, Stage, StopPoint, WorkflowEntryPoint
+from claw_trade.workflow.report_request_factory import build_report_run_request
 from claw_trade.workflow.runner import ControlRunner
 from claw_trade.workflow.store import WorkflowStore
 
@@ -66,15 +66,14 @@ def _build_parser(settings: ReportWorkflowSettings | None = None) -> argparse.Ar
 def _namespace_to_request(namespace: argparse.Namespace, settings: ReportWorkflowSettings | None = None) -> RunRequest:
     resolved_settings = settings or ReportWorkflowSettings()
     target_stage = Stage(namespace.target_stage) if namespace.target_stage else None
-    identity = resolve_instrument_identity(namespace.ticker, market_hint=namespace.market)
-    profile = _profile_from_args(namespace.profile, identity.profile)
-    return RunRequest(
-        ticker=identity.ticker,
+    return build_report_run_request(
+        ticker=namespace.ticker,
+        settings=resolved_settings,
         company_name=namespace.company_name,
-        market=identity.market,
-        profile=profile,
-        currency=_value_or_default(namespace.currency, identity.currency),
-        currency_symbol=_value_or_default(namespace.currency_symbol, identity.currency_symbol),
+        market=namespace.market,
+        profile=namespace.profile,
+        currency=namespace.currency,
+        currency_symbol=namespace.currency_symbol,
         current_date=namespace.current_date,
         start_date=namespace.start_date,
         end_date=namespace.end_date,
@@ -82,26 +81,8 @@ def _namespace_to_request(namespace: argparse.Namespace, settings: ReportWorkflo
         stop_point=StopPoint(namespace.stop_point),
         target_worker_id=namespace.target_worker_id,
         target_stage=target_stage,
-        # run_control 是 UI /report workflow 的运维/集成测试入口，不代表普通聊天。
         entry_point=WorkflowEntryPoint.REPORT_COMMAND,
-        max_debate_rounds=resolved_settings.max_debate_rounds,
-        max_risk_discuss_rounds=resolved_settings.max_risk_discuss_rounds,
-        frontline_execution_mode=resolved_settings.frontline_execution_mode,
     )
-
-
-def _profile_from_args(raw_profile: str | None, resolved_profile: str) -> str:
-    profile = str(raw_profile or "").strip().upper()
-    if not profile:
-        return resolved_profile
-    if profile != resolved_profile:
-        raise InstrumentResolveError(f"profile {profile} does not match resolved market profile {resolved_profile}")
-    return profile
-
-
-def _value_or_default(raw_value: str | None, default: str) -> str:
-    value = str(raw_value or "").strip()
-    return value or default
 
 
 def _data_gateway_mode_from_env() -> str:

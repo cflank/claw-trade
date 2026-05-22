@@ -1,0 +1,9 @@
+skills:
+  - path: claw-trade-stage/SKILL.md
+  - path: cn-a-policy-data/SKILL.md
+    skill_id: cn-a-policy-data
+    skill_version: 0.1.0
+    workers:
+      - policy_analyst
+    tool_exports:
+      - claw_get_policy_pack

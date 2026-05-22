@@ -20,7 +20,7 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.packs.news import NewsPackBuilder
-from claw_trade.data_gateway.providers.news import news_capabilities
+from claw_trade.data_gateway.providers.news import build_default_news_adapters, news_capabilities
 
 
 @dataclass
@@ -297,3 +297,82 @@ def test_news_pack_rejects_search_provider_role_drift() -> None:
     assert {attempt.status for attempt in result.attempts} == {ProviderStatus.SCHEMA_INVALID}
     assert result.readiness.status == ReadinessStatus.INSUFFICIENT
     assert "搜索类来源只能作为发现线索" in result.reader_brief_md
+
+
+def test_cn_a_news_market_fact_providers_do_not_fallback_to_search_discovery(monkeypatch) -> None:
+    def _boom(*args, **kwargs):
+        raise AssertionError("market_data provider must not call search_discovery fetch")
+
+    monkeypatch.setattr("claw_trade.data_gateway.providers.news._fetch_google_news_search", _boom)
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.providers.news._fetch_eastmoney_company_news",
+        lambda *, ticker, company_name: (
+            ({"title": f"{ticker}-{company_name}-公司新闻", "url": "https://example.com/company", "published_at": "2026-05-17", "summary": "company"},),
+            "https://finance.eastmoney.com/",
+        ),
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.providers.news._fetch_cls_telegraph",
+        lambda *, limit=20: (
+            ({"title": "财联社快讯", "url": "https://example.com/flash", "published_at": "2026-05-17", "summary": "flash"},),
+            "https://www.cls.cn/nodeapi/telegraphList",
+        ),
+    )
+    request = _news_request(Market.CN_A)
+    adapters = tuple(adapter for adapter in build_default_news_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
+    company = next(adapter for adapter in adapters if adapter.provider_id == "eastmoney_company_news")
+    flash = next(adapter for adapter in adapters if adapter.provider_id == "cls_flash")
+
+    for adapter in (company, flash):
+        spec = adapter.build_call_specs(request)[0]
+        fetch = adapter.fetch(spec, request)
+        normalized = adapter.normalize(spec, fetch)
+        assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+
+
+def test_cn_a_news_flash_fetch_no_longer_fails_with_http_get_json_headers_typeerror(monkeypatch) -> None:
+    class _Resp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": {
+                    "roll_data": [
+                        {
+                            "title": "财联社快讯样本",
+                            "shareurl": "https://www.cls.cn/detail/1",
+                            "ctime": "2026-05-17 09:30:00",
+                            "content": "sample",
+                        }
+                    ]
+                }
+            }
+
+    monkeypatch.setattr("claw_trade.data_gateway.providers.news.requests.get", lambda *args, **kwargs: _Resp())
+    request = _news_request(Market.CN_A)
+    adapters = tuple(adapter for adapter in build_default_news_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
+    flash = next(adapter for adapter in adapters if adapter.provider_id == "cls_flash")
+    spec = flash.build_call_specs(request)[0]
+
+    fetch = flash.fetch(spec, request)
+    assert fetch.source_url == "https://www.cls.cn/nodeapi/telegraphList"
+    assert fetch.row_count == 1
+
+
+def test_cn_a_news_discovery_provider_id_and_source_url_are_consistent(monkeypatch) -> None:
+    rss = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<rss><channel><item><title>x</title><link>https://example.com/x</link>"
+        "<pubDate>Tue, 21 May 2026 00:00:00 GMT</pubDate><description>y</description></item></channel></rss>"
+    )
+    monkeypatch.setattr("claw_trade.data_gateway.providers.news._http_get_text", lambda url, params=None: rss)
+    request = _news_request(Market.CN_A)
+    adapters = tuple(adapter for adapter in build_default_news_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
+    discovery = next(adapter for adapter in adapters if adapter.source_role == SourceRole.SEARCH_DISCOVERY)
+    spec = discovery.build_call_specs(request)[0]
+    fetch = discovery.fetch(spec, request)
+
+    assert discovery.provider_id == "google_news"
+    assert discovery.source_role == SourceRole.SEARCH_DISCOVERY
+    assert fetch.source_url == "https://news.google.com/rss/search"

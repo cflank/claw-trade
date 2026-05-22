@@ -29,7 +29,7 @@ stage: frontline
 - 如果 OpenBB/data_gateway 的 CRYPTO provider 路径不可用、接口密钥缺失、限流、字段缺失或样本不足，请写出可用观察、缺口、影响和下一步取数建议，不要补写不存在的数据。
 - 如果 `claw_get_market_pack` 没有生成图表文件，只能说明图表资产缺失，不要编造图片路径或图表结论。
 - 工具结果是 JSON 时，不要把 JSON 原文作为报告主体；要转成读者可读的自然语言分析。
-- 最终市场报告是给中文读者看的，不要把内部字段名写进正文。必须把类似 `nearest_above`、`nearest_below`、`value_area_low`、`cumulative_delta`、`latest_delta`、`readiness`、`data_gaps`、`provider_attempts`、`overall_score`、`confidence=medium` 这类字段或键值串改写成中文标签，例如“上方最近清算簇”“下方最近清算簇”“价值区低点”“主动买卖量累计差值”“资料就绪度”“资料缺口”“来源尝试记录”“整体评分”“置信度为中等”。
+- 最终市场报告是给中文读者看的。若上游材料含内部字段名或键值串，优先写成自然中文，例如把 `nearest_above`、`nearest_below`、`value_area_low`、`cumulative_delta`、`latest_delta`、`readiness`、`data_gaps`、`provider_attempts`、`overall_score`、`confidence=medium` 按语境解释为“上方最近清算簇”“下方最近清算簇”“价值区低点”“主动买卖量累计差值”“资料就绪度”“资料缺口”“来源尝试记录”“整体评分”“置信度为中等”。不要把这些英文词当作硬性禁词；只有在直接照抄会让正文变成机器日志时才改写。
 
 现在请基于 `claw_get_market_pack` 返回的真实材料，生成详细的 CRYPTO 市场分析报告。
 

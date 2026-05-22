@@ -50,7 +50,7 @@ def test_trend_claim_requires_financial_trend_capability_available() -> None:
     assert "financial_trend_unavailable" in result.unsupported_claims[0].reason_codes
 
 
-def test_target_price_rating_and_valuation_judgment_are_unsupported_when_blocked() -> None:
+def test_numeric_target_price_is_unsupported_when_blocked_but_rating_language_is_not_gated() -> None:
     pack = _base_pack()
     result = evaluate_fundamental_report_claims_v1(
         "我们给出目标价2200元，维持买入评级，并判断当前估值偏高。",
@@ -58,7 +58,17 @@ def test_target_price_rating_and_valuation_judgment_are_unsupported_when_blocked
     )
     unsupported_keys = {item.claim.claim_key for item in result.unsupported_claims}
     assert result.guard.ok is False
-    assert {"target_price", "rating", "valuation_judgment"}.issubset(unsupported_keys)
+    assert unsupported_keys == {"target_price"}
+
+
+def test_target_price_discussion_without_price_level_is_not_hard_gated() -> None:
+    pack = _base_pack()
+    result = evaluate_fundamental_report_claims_v1(
+        "目标价需要等待更多证据，当前维持买入评级。",
+        pack,
+    )
+    assert result.unsupported_claims == ()
+    assert result.guard.ok is True
 
 
 def test_narrative_claim_is_not_hard_gated_when_business_segments_evidence_insufficient() -> None:

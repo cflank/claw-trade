@@ -56,6 +56,10 @@ class _Backend:
         self.linked_relations.append(relation)
         return {"status": "ok"}
 
+    def relations(self, uri: str) -> dict[str, object]:
+        del uri
+        return {"status": "ok", "relations": list(self.linked_relations)}
+
 
 @dataclass
 class _BackendRelationBlocked(_Backend):
@@ -98,20 +102,26 @@ def _material(*, worker_id: str, call_id: str, stage: Stage) -> ApprovedMaterial
     )
 
 
-def _pack(worker_id: str, *, analysis_evidence_refs: tuple[str, ...] = ()) -> DomainPackResult:
+def _pack(
+    worker_id: str,
+    *,
+    domain: PackDomain = PackDomain.MARKET,
+    analysis_evidence_refs: tuple[str, ...] = (),
+) -> DomainPackResult:
+    market = Market.CN_A if domain in {PackDomain.POLICY, PackDomain.HOT_MONEY, PackDomain.LOCKUP} else Market.HK
     request = PackRequest(
         run_id="run-1",
         call_id=f"call-{worker_id}",
         worker_id=worker_id,
-        market=Market.HK,
-        domain=PackDomain.MARKET,
+        market=market,
+        domain=domain,
         ticker="00700.HK",
         company_name="腾讯控股",
         start_date="2026-05-01",
         end_date="2026-05-17",
         current_date="2026-05-17",
-        currency="HKD",
-        profile="HK",
+        currency="CNY" if market == Market.CN_A else "HKD",
+        profile=market.value,
         freshness_policy=FreshnessPolicy(max_age_seconds=300),
     )
     attempt = ProviderAttempt(
@@ -119,7 +129,7 @@ def _pack(worker_id: str, *, analysis_evidence_refs: tuple[str, ...] = ()) -> Do
         run_id="run-1",
         call_id=f"call-{worker_id}",
         worker_id=worker_id,
-        pack="market",
+        pack=domain.value,
         provider="openbb.hk",
         adapter_id="openbb.hk.market",
         adapter_kind="openbb_native",
@@ -132,7 +142,7 @@ def _pack(worker_id: str, *, analysis_evidence_refs: tuple[str, ...] = ()) -> Do
         status=ProviderStatus.REMOTE_SUCCESS,
         required=True,
         attempt_required=True,
-        coverage_group="market",
+        coverage_group=domain.value,
         coverage_quorum=1,
         priority_source=PrioritySource.SYSTEM_DEFAULT,
         user_preferred=False,
@@ -166,7 +176,7 @@ def _pack(worker_id: str, *, analysis_evidence_refs: tuple[str, ...] = ()) -> Do
     )
     gap = DataGap(
         gap_id="gap-1",
-        domain=PackDomain.MARKET,
+        domain=domain,
         severity=GapSeverity.WARN,
         reason=DataGapReason.FIELD_MISSING,
         field_path="order_flow.cvd",
@@ -177,8 +187,8 @@ def _pack(worker_id: str, *, analysis_evidence_refs: tuple[str, ...] = ()) -> Do
     )
     readiness = Readiness(
         status=ReadinessStatus.PARTIAL,
-        coverage={"market": "partial"},
-        required_domains=("market",),
+        coverage={domain.value: "partial"},
+        required_domains=(domain.value,),
         missing_domains=(),
         blocking_gap_ids=(),
         non_blocking_gap_ids=("gap-1",),
@@ -317,6 +327,95 @@ def test_link_final_report_chain_covers_final_report_pm_worker_and_evidence_chai
     assert "viking://resources/workflow/run-1/final_report/report_polisher/call-final/" in linked_sources
     assert "viking://resources/workflow/run-1/portfolio_decision/portfolio_manager/call-pm/" in linked_sources
     assert "viking://resources/workflow/run-1/frontline/market_analyst/call-market/" in linked_sources
+
+
+def test_link_final_report_chain_covers_cn_a_seven_frontline_pack_domains() -> None:
+    backend = _Backend(linked_relations=[])
+    plane = OpenVikingMaterialPlane(OpenVikingClient(backend=backend))
+    pm = _material(worker_id="portfolio_manager", call_id="call-pm", stage=Stage.PORTFOLIO_DECISION)
+    frontline = (
+        _material(worker_id="market_analyst", call_id="call-market", stage=Stage.FRONTLINE),
+        _material(worker_id="fundamental_analyst", call_id="call-fundamental", stage=Stage.FRONTLINE),
+        _material(worker_id="news_analyst", call_id="call-news", stage=Stage.FRONTLINE),
+        _material(worker_id="social_analyst", call_id="call-social", stage=Stage.FRONTLINE),
+        _material(worker_id="policy_analyst", call_id="call-policy", stage=Stage.FRONTLINE),
+        _material(worker_id="hot_money_tracker", call_id="call-hot-money", stage=Stage.FRONTLINE),
+        _material(worker_id="lockup_watcher", call_id="call-lockup", stage=Stage.FRONTLINE),
+    )
+    pack_results = (
+        _pack("market_analyst", domain=PackDomain.MARKET),
+        _pack("fundamental_analyst", domain=PackDomain.FUNDAMENTAL),
+        _pack("news_analyst", domain=PackDomain.NEWS),
+        _pack("social_analyst", domain=PackDomain.SOCIAL),
+        _pack("policy_analyst", domain=PackDomain.POLICY),
+        _pack("hot_money_tracker", domain=PackDomain.HOT_MONEY),
+        _pack("lockup_watcher", domain=PackDomain.LOCKUP),
+    )
+
+    relations = plane.link_final_report_chain(
+        run_id="run-1",
+        final_report_uri="viking://resources/workflow/run-1/final_report/report_polisher/call-final/report.md",
+        final_claims=(),
+        pm_material=pm,
+        upstream_materials=frontline,
+        pack_results=pack_results,
+    )
+
+    assert sum(item.kind == "pm_l1_to_worker_l1" for item in relations) == 7
+    linked_text = "\n".join(str(item) for item in backend.linked_relations)
+    assert "policy_analyst" in linked_text
+    assert "hot_money_tracker" in linked_text
+    assert "lockup_watcher" in linked_text
+    assert "pack audit references provider attempt attempt-policy_analyst" in linked_text
+    assert "pack audit references provider attempt attempt-hot_money_tracker" in linked_text
+    assert "pack audit references provider attempt attempt-lockup_watcher" in linked_text
+
+
+def test_dump_relations_reads_openviking_relations_output() -> None:
+    backend = _Backend(linked_relations=[])
+    plane = OpenVikingMaterialPlane(OpenVikingClient(backend=backend))
+    material = _material(worker_id="market_analyst", call_id="call-market", stage=Stage.FRONTLINE)
+    pack = _pack(worker_id="market_analyst")
+    plane.link_provider_evidence(material=material, pack_result=pack)
+
+    dump = plane.dump_relations("viking://resources/workflow/run-1/frontline/market_analyst/call-market/report.md")
+
+    assert dump.status == "ok"
+    assert dump.relations
+    assert any(item["kind"] == "pack_audit_to_provider_attempt" for item in dump.relations)
+
+
+def test_dump_relations_returns_blocked_when_wrapper_is_unavailable() -> None:
+    @dataclass
+    class _BackendNoRelations:
+        linked_relations: list[dict[str, object]]
+
+        def ensure_namespace(self, namespace: str) -> None:
+            return None
+
+        def fetch_content_by_uri(self, uri: str) -> bytes:
+            return b"content"
+
+        def fetch_l2_index_by_uri(self, uri: str | None) -> L2Index:
+            return L2Index(entries=(), empty_reason=None, index_uri=uri, index_sha256=None, index_size_bytes=None)
+
+        def fetch_stat_by_uri(self, uri: str) -> OpenVikingStat:
+            return OpenVikingStat(uri=uri, ok=True, sha256="0" * 64, size_bytes=7, exists=True, is_dir=False)
+
+        def fetch_receipt_by_path(self, receipt_path: Path):  # pragma: no cover - not used in this suite
+            raise FileNotFoundError(receipt_path)
+
+        def link_relation(self, relation: dict[str, object]) -> dict[str, object]:
+            self.linked_relations.append(relation)
+            return {"status": "ok"}
+
+    backend = _BackendNoRelations(linked_relations=[])
+    plane = OpenVikingMaterialPlane(OpenVikingClient(backend=backend))
+
+    dump = plane.dump_relations("viking://resources/workflow/run-1/frontline/market_analyst/call-market/report.md")
+
+    assert dump.status == "blocked"
+    assert dump.relations == ()
 
 
 def test_link_final_report_chain_keeps_final_report_to_pm_anchor_without_claims() -> None:

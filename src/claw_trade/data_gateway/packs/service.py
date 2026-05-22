@@ -26,8 +26,11 @@ from claw_trade.data_gateway.models import (
     utc_now_iso,
 )
 from claw_trade.data_gateway.packs.fundamental import FundamentalPackService
+from claw_trade.data_gateway.packs.hot_money import HotMoneyPackBuilder
+from claw_trade.data_gateway.packs.lockup import LockupPackBuilder
 from claw_trade.data_gateway.packs.market import MarketPackBuilder
 from claw_trade.data_gateway.packs.news import NewsPackBuilder
+from claw_trade.data_gateway.packs.policy import PolicyPackBuilder
 from claw_trade.data_gateway.packs.social import SocialPackBuilder
 from claw_trade.data_gateway.providers.base import ProviderAdapter
 from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
@@ -51,6 +54,9 @@ class DomainPackService:
     market_builder: MarketPackBuilder = field(default_factory=MarketPackBuilder)
     news_builder: NewsPackBuilder = field(default_factory=NewsPackBuilder)
     social_builder: SocialPackBuilder = field(default_factory=SocialPackBuilder)
+    policy_builder: PolicyPackBuilder = field(default_factory=PolicyPackBuilder)
+    hot_money_builder: HotMoneyPackBuilder = field(default_factory=HotMoneyPackBuilder)
+    lockup_builder: LockupPackBuilder = field(default_factory=LockupPackBuilder)
     provider_execution_helper: ProviderExecutionEvidenceHelper | None = None
 
     def __post_init__(self) -> None:
@@ -78,6 +84,27 @@ class DomainPackService:
             )
         if request.domain == PackDomain.SOCIAL:
             return self.social_builder.build(
+                request=request,
+                run_plan=run_plan,
+                adapters_by_id=self._adapters_by_id,
+                provider_execution_helper=self.provider_execution_helper,
+            )
+        if request.domain == PackDomain.POLICY:
+            return self.policy_builder.build(
+                request=request,
+                run_plan=run_plan,
+                adapters_by_id=self._adapters_by_id,
+                provider_execution_helper=self.provider_execution_helper,
+            )
+        if request.domain == PackDomain.HOT_MONEY:
+            return self.hot_money_builder.build(
+                request=request,
+                run_plan=run_plan,
+                adapters_by_id=self._adapters_by_id,
+                provider_execution_helper=self.provider_execution_helper,
+            )
+        if request.domain == PackDomain.LOCKUP:
+            return self.lockup_builder.build(
                 request=request,
                 run_plan=run_plan,
                 adapters_by_id=self._adapters_by_id,

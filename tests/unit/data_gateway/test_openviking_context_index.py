@@ -67,12 +67,13 @@ def test_index_run_context_keeps_semantic_blocked_when_queue_disabled() -> None:
     assert "semantic" in (semantic.reason or "")
 
 
-def test_index_run_context_never_marks_semantic_ok_when_runtime_queue_is_disabled() -> None:
+def test_index_run_context_marks_semantic_ok_when_runtime_queue_is_enabled() -> None:
     plane = OpenVikingMaterialPlane(OpenVikingClient(backend=_BackendSemanticOk()))
 
     semantic = plane.index_run_context("run-3")[2]
 
     assert semantic.index_level == "semantic"
-    assert semantic.status == "blocked"
-    assert semantic.vectorized is False
+    assert semantic.status == "ok"
+    assert semantic.vectorized is True
+    assert semantic.searchable_by_control_plane is True
     assert semantic.visible_to_worker is False

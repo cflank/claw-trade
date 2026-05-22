@@ -39,6 +39,9 @@ _FRONTLINE_PACK_BY_WORKER: dict[str, PackDomain] = {
     "fundamental_analyst": PackDomain.FUNDAMENTAL,
     "news_analyst": PackDomain.NEWS,
     "social_analyst": PackDomain.SOCIAL,
+    "policy_analyst": PackDomain.POLICY,
+    "hot_money_tracker": PackDomain.HOT_MONEY,
+    "lockup_watcher": PackDomain.LOCKUP,
 }
 
 

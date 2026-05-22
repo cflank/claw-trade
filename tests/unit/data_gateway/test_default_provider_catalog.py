@@ -12,9 +12,28 @@ def test_default_provider_catalog_covers_all_markets_and_domains() -> None:
     capabilities = load_default_system_capabilities()
     covered = {(item.market, item.domain) for item in capabilities}
 
-    for market in Market:
-        for domain in PackDomain:
-            assert (market, domain) in covered
+    expected = {
+        (Market.CN_A, PackDomain.MARKET),
+        (Market.CN_A, PackDomain.FUNDAMENTAL),
+        (Market.CN_A, PackDomain.NEWS),
+        (Market.CN_A, PackDomain.SOCIAL),
+        (Market.CN_A, PackDomain.POLICY),
+        (Market.CN_A, PackDomain.HOT_MONEY),
+        (Market.CN_A, PackDomain.LOCKUP),
+        (Market.HK, PackDomain.MARKET),
+        (Market.HK, PackDomain.FUNDAMENTAL),
+        (Market.HK, PackDomain.NEWS),
+        (Market.HK, PackDomain.SOCIAL),
+        (Market.US, PackDomain.MARKET),
+        (Market.US, PackDomain.FUNDAMENTAL),
+        (Market.US, PackDomain.NEWS),
+        (Market.US, PackDomain.SOCIAL),
+        (Market.CRYPTO, PackDomain.MARKET),
+        (Market.CRYPTO, PackDomain.FUNDAMENTAL),
+        (Market.CRYPTO, PackDomain.NEWS),
+        (Market.CRYPTO, PackDomain.SOCIAL),
+    }
+    assert expected.issubset(covered)
 
 
 def test_default_search_providers_are_discovery_only() -> None:
@@ -85,7 +104,7 @@ def test_run_provider_plan_extends_crypto_ohlcv_for_daily_vegas_purple_band() ->
     assert crypto_price.params["timezone"] == "UTC"
 
 
-def test_cn_a_market_tushare_is_not_required_blocking_source() -> None:
+def test_cn_a_market_default_catalog_keeps_required_and_fallback_kline_quote_pairs() -> None:
     capabilities = tuple(
         item
         for item in load_default_system_capabilities()
@@ -93,13 +112,40 @@ def test_cn_a_market_tushare_is_not_required_blocking_source() -> None:
     )
     by_endpoint = {item.endpoint: item for item in capabilities}
 
-    assert by_endpoint["daily"].provider == "tushare"
+    assert by_endpoint["stock_quote"].provider == "mootdx_quote"
+    assert by_endpoint["stock_quote"].required is True
+    assert by_endpoint["stock_quote"].coverage_group == "cn_a_market_quote"
+    assert by_endpoint["stock_quote"].coverage_quorum == 1
+
+    assert by_endpoint["quote_tencent"].provider == "tencent_quote"
+    assert by_endpoint["quote_tencent"].required is False
+    assert by_endpoint["quote_tencent"].coverage_group == "cn_a_market_quote"
+    assert by_endpoint["quote_tencent"].coverage_quorum == 1
+
+    assert by_endpoint["kline_baidu"].provider == "baidu_kline"
+    assert by_endpoint["kline_baidu"].required is True
+    assert by_endpoint["kline_baidu"].coverage_group == "cn_a_market_kline"
+    assert by_endpoint["kline_baidu"].coverage_quorum == 1
+
+    assert by_endpoint["daily"].provider == "tushare_kline_fallback"
     assert by_endpoint["daily"].required is False
-    assert by_endpoint["daily"].coverage_group == "cn_a_ohlcv"
+    assert by_endpoint["daily"].coverage_group == "cn_a_market_kline"
     assert by_endpoint["daily"].coverage_quorum == 1
-    assert by_endpoint["stock_zh_a_hist"].provider == "akshare"
-    assert by_endpoint["stock_zh_a_hist"].coverage_group == "cn_a_ohlcv"
-    assert by_endpoint["stock_zh_a_hist"].coverage_quorum == 1
+
+
+def test_cn_a_market_default_catalog_keeps_orderbook_sources_explicit() -> None:
+    capabilities = tuple(
+        item
+        for item in load_default_system_capabilities()
+        if item.domain == PackDomain.MARKET and item.market == Market.CN_A
+    )
+    by_endpoint = {item.endpoint: item for item in capabilities}
+
+    assert by_endpoint["orderbook"].provider == "mootdx_orderbook"
+    assert by_endpoint["orderbook_tencent"].provider == "tencent_orderbook"
+    assert "orderbook_eastmoney" not in by_endpoint
+    assert "quote" not in by_endpoint
+    assert "stock_zh_a_hist" not in by_endpoint
 
 
 def test_default_fundamental_catalog_keeps_paid_openbb_providers_unconfigured() -> None:

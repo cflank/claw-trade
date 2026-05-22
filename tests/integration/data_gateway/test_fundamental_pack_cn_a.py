@@ -51,15 +51,15 @@ def test_cn_a_fundamental_pack_uses_public_source_and_keeps_explicit_field_gaps(
 
     def _fake_akshare(*, symbol: str):
         assert symbol == "600519"
-        return ({"pe_ttm": 31.2, "pb": 8.9},)
+        return ({"pe_ttm": 31.2, "pb": 8.9, "peg": 1.4},)
 
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_akshare_cn_a_fundamental", _fake_akshare)
 
     pack = FundamentalPackService(settings=object(), adapters=adapters).get_pack(request, plan)
 
     assert pack.readiness.status.value == "partial"
-    assert any(gap.reason.value == "credential_missing" and "TUSHARE_TOKEN" in gap.root_cause for gap in pack.data_gaps)
     assert any(gap.reason.value == "field_missing" and gap.field_path == "financial_indicators.roe" for gap in pack.data_gaps)
+    assert pack.compact_facts.get("valuation.peg") == 1.4
     assert "BUY" not in pack.reader_brief_md
     assert "HOLD" not in pack.reader_brief_md
     assert "SELL" not in pack.reader_brief_md

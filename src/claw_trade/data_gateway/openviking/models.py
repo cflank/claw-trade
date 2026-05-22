@@ -69,6 +69,14 @@ class OpenVikingFindResult:
 
 
 @dataclass(frozen=True)
+class OpenVikingRelationsDump:
+    uri: str
+    relations: tuple[Mapping[str, str], ...]
+    status: HealthStatus = "ok"
+    root_cause: str | None = None
+
+
+@dataclass(frozen=True)
 class OpenVikingRelation:
     from_uri: str
     to_uri: str

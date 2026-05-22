@@ -28,6 +28,7 @@ from claw_trade.workflow.workers import (
     stage_for_ready_status,
     stage_for_running_status,
     stage_plan,
+    stage_plan_for_market,
     worker_by_id_or_none,
 )
 
@@ -114,10 +115,14 @@ def decide_next(input: ControllerInput) -> Decision:
     )
 
 
-def require_upstream_ready(plan: StagePlan, manifest: ApprovedManifest) -> GuardResult:
+def _plan_for_state(state: WorkflowState, stage: Stage) -> StagePlan:
+    return stage_plan_for_market(stage=stage, market=state.request.market)
+
+
+def require_upstream_ready(state: WorkflowState, plan: StagePlan, manifest: ApprovedManifest) -> GuardResult:
     if plan.required_upstream_stage is None:
         return guard_passed("ok")
-    required_workers = stage_plan(plan.required_upstream_stage).workers
+    required_workers = _plan_for_state(state=state, stage=plan.required_upstream_stage).workers
     missing = tuple(
         worker_id
         for worker_id in required_workers
@@ -135,8 +140,8 @@ def require_upstream_ready(plan: StagePlan, manifest: ApprovedManifest) -> Guard
 
 
 def decide_wake_stage(state: WorkflowState, stage: Stage, manifest: ApprovedManifest) -> Decision:
-    plan = stage_plan(stage)
-    upstream_check = require_upstream_ready(plan=plan, manifest=manifest)
+    plan = _plan_for_state(state=state, stage=stage)
+    upstream_check = require_upstream_ready(state=state, plan=plan, manifest=manifest)
     if not upstream_check.ok:
         return _blocked_failure(
             state=state,
@@ -217,8 +222,8 @@ def decide_wake_single_worker(state: WorkflowState, manifest: ApprovedManifest) 
         )
     assert target.worker_id is not None
     assert target.stage is not None
-    plan = stage_plan(target.stage)
-    upstream_check = require_upstream_ready(plan=plan, manifest=manifest)
+    plan = _plan_for_state(state=state, stage=target.stage)
+    upstream_check = require_upstream_ready(state=state, plan=plan, manifest=manifest)
     if not upstream_check.ok:
         return _blocked_failure(
             state=state,
@@ -248,7 +253,7 @@ def decide_running_stage(
     results: tuple[WorkerResult, ...],
     manifest: ApprovedManifest,
 ) -> Decision:
-    plan = stage_plan(stage)
+    plan = _plan_for_state(state=state, stage=stage)
     stage_results = tuple(result for result in results if result.stage == stage)
     expected_workers = expected_workers_for_state(state=state, plan=plan)
     if state.request.stop_point in (StopPoint.FIRST_RESPONSE, StopPoint.SINGLE_WORKER_COMPLETE) and not expected_workers:
@@ -308,8 +313,23 @@ def decide_running_stage(
 
 
 def terminal_failures(results: tuple[WorkerResult, ...]) -> tuple[FailureRecord, ...]:
-    failures: list[FailureRecord] = []
+    latest_by_attempt: dict[tuple[str, Stage, int, int, int], WorkerResult] = {}
+    attempt_order: list[tuple[str, Stage, int, int, int]] = []
     for result in results:
+        key = (
+            result.worker_id,
+            result.stage,
+            result.turn_index,
+            result.round_index,
+            result.role_turn_index,
+        )
+        if key not in latest_by_attempt:
+            attempt_order.append(key)
+        latest_by_attempt[key] = result
+
+    failures: list[FailureRecord] = []
+    for key in attempt_order:
+        result = latest_by_attempt[key]
         if result.status not in (WorkerStatus.FAILED, WorkerStatus.BLOCKED):
             continue
         if result.failure is not None:
@@ -497,7 +517,7 @@ def decide_ready_stage(state: WorkflowState, stage: Stage, manifest: ApprovedMan
             )
         return Decision(kind=DecisionKind.EXPORT_REPORT, next_status=RunStatus.REPORT_EXPORTING)
 
-    next_stage = stage_plan(stage).next_stage
+    next_stage = _plan_for_state(state=state, stage=stage).next_stage
     if next_stage is None:
         return Decision(
             kind=DecisionKind.FAIL,

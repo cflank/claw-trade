@@ -23,6 +23,13 @@ from claw_trade.data_gateway.providers.run_plan import (
     RunProviderPlanner,
     build_report_run_plan,
     load_plan_for_pack_runtime,
+    report_run_plan_domains,
+)
+from claw_trade.data_gateway.providers.defaults import (
+    build_default_provider_adapters,
+    build_default_provider_registry,
+    default_provider_config_version,
+    load_default_system_capabilities,
 )
 from claw_trade.workflow.models import (
     Decision,
@@ -108,12 +115,17 @@ class _CredentialMissingAdapter:
         raise AssertionError(f"planner must not call fetch: {spec} {request}")
 
 
-def _request(entry_point: WorkflowEntryPoint = WorkflowEntryPoint.REPORT_COMMAND) -> RunRequest:
+def _request(
+    entry_point: WorkflowEntryPoint = WorkflowEntryPoint.REPORT_COMMAND,
+    *,
+    market: str = "CN_A",
+    profile: str = "CN_A",
+) -> RunRequest:
     return RunRequest(
         ticker="000001.SZ",
         company_name="平安银行",
-        market="CN_A",
-        profile="CN_A",
+        market=market,
+        profile=profile,
         currency="CNY",
         currency_symbol="¥",
         current_date="2026-05-17",
@@ -197,6 +209,97 @@ def test_build_report_run_plan_skips_generic_entry_point() -> None:
     assert plan is None
 
 
+def test_report_run_plan_domains_cn_a_has_seven_domains() -> None:
+    domains = report_run_plan_domains(Market.CN_A)
+    assert domains == (
+        PackDomain.MARKET,
+        PackDomain.FUNDAMENTAL,
+        PackDomain.NEWS,
+        PackDomain.SOCIAL,
+        PackDomain.POLICY,
+        PackDomain.HOT_MONEY,
+        PackDomain.LOCKUP,
+    )
+
+
+def test_report_run_plan_domains_non_cn_a_keeps_approved_domains() -> None:
+    assert report_run_plan_domains(Market.US) == (
+        PackDomain.MARKET,
+        PackDomain.FUNDAMENTAL,
+        PackDomain.NEWS,
+        PackDomain.SOCIAL,
+    )
+
+
+def test_build_report_run_plan_uses_cn_a_seven_domains() -> None:
+    plan = build_report_run_plan(
+        request=_request(),
+        run_id="run-1",
+        provider_config_version="cfg-v1",
+        planner=RunProviderPlanner(),
+        registry=_registry(),
+    )
+    assert plan is not None
+    assert plan.domains == (
+        PackDomain.MARKET,
+        PackDomain.FUNDAMENTAL,
+        PackDomain.NEWS,
+        PackDomain.SOCIAL,
+        PackDomain.POLICY,
+        PackDomain.HOT_MONEY,
+        PackDomain.LOCKUP,
+    )
+
+
+def test_cn_a_market_plan_includes_tushare_kline_fallback_and_missing_token_gap() -> None:
+    env: dict[str, str] = {}
+    registry = build_default_provider_registry()
+    capabilities = load_default_system_capabilities()
+    provider_config_version = default_provider_config_version(capabilities)
+    adapters = build_default_provider_adapters(provider_config_version=provider_config_version, env=env)
+    planner = RunProviderPlanner(adapters_by_id={item.adapter_id: item for item in adapters})
+
+    plan = planner.build_run_plan(
+        run_id="run-cn-a-plan",
+        market=Market.CN_A,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        currency="CNY",
+        profile="CN_A",
+        current_date="2026-05-17",
+        start_date="2026-04-17",
+        end_date="2026-05-17",
+        domains=(PackDomain.MARKET,),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+
+    assert any(spec.provider == "tushare_kline_fallback" and spec.endpoint == "daily" for spec in plan.call_specs)
+    assert any(
+        gap.reason.value == "credential_missing"
+        and "project.cn_a.market.tushare_fallback" in gap.root_cause
+        and "TUSHARE_TOKEN" in gap.root_cause
+        for gap in plan.initial_gaps
+    )
+
+
+def test_build_report_run_plan_non_cn_a_keeps_approved_domains() -> None:
+    plan = build_report_run_plan(
+        request=_request(market="US", profile="US"),
+        run_id="run-1",
+        provider_config_version="cfg-v1",
+        planner=RunProviderPlanner(),
+        registry=_registry(),
+    )
+    assert plan is not None
+    assert plan.domains == (
+        PackDomain.MARKET,
+        PackDomain.FUNDAMENTAL,
+        PackDomain.NEWS,
+        PackDomain.SOCIAL,
+    )
+
+
 def test_load_plan_for_pack_runtime_checks_config_version() -> None:
     plan_store = _PlanStore(written=[])
     plan = build_report_run_plan(
@@ -216,6 +319,16 @@ def test_load_plan_for_pack_runtime_checks_config_version() -> None:
             store=plan_store,
         )
     assert excinfo.value.code == DataGatewayErrorCode.CONFIG_VERSION_MISMATCH
+
+
+def test_load_plan_for_pack_runtime_fails_when_missing() -> None:
+    with pytest.raises(DataGatewayError) as excinfo:
+        load_plan_for_pack_runtime(
+            run_id="missing-run",
+            provider_config_version="cfg-v1",
+            store=_PlanStore(written=[]),
+        )
+    assert excinfo.value.code == DataGatewayErrorCode.RUN_PLAN_MISSING
 
 
 def test_control_runner_writes_report_run_plan_before_first_wake(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -247,6 +360,15 @@ def test_control_runner_writes_report_run_plan_before_first_wake(monkeypatch: py
     assert len(plan_store.written) == 1
     assert plan_store.written[0].run_id == state.run_id
     assert plan_store.written[0].provider_config_version == "cfg-v1"
+    assert plan_store.written[0].domains == (
+        PackDomain.MARKET,
+        PackDomain.FUNDAMENTAL,
+        PackDomain.NEWS,
+        PackDomain.SOCIAL,
+        PackDomain.POLICY,
+        PackDomain.HOT_MONEY,
+        PackDomain.LOCKUP,
+    )
 
 
 def test_control_runner_does_not_create_plan_for_generic_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -275,6 +397,37 @@ def test_control_runner_does_not_create_plan_for_generic_entry(monkeypatch: pyte
 
     assert state.status == RunStatus.CREATED
     assert plan_store.written == []
+
+
+def test_control_runner_snapshots_provider_config_version_per_report_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = WorkflowStore(tmp_path / "runs")
+    manifest_store = ManifestStore(tmp_path / "runs")
+    plan_store = _PlanStore(written=[])
+    planner = RunProviderPlanner(now_text=lambda: "2026-05-17T00:00:00+00:00")
+    versions = iter(("cfg-v1", "cfg-v2"))
+    runner = ControlRunner(
+        store=store,
+        manifest_store=manifest_store,
+        openclaw=_OpenClaw(),
+        openviking=_OpenViking(),
+        tool_registry_probe=_ToolRegistryProbe(),
+        run_provider_planner=planner,
+        run_provider_plan_store=plan_store,
+        run_provider_registry=_registry(),
+        provider_config_version_resolver=lambda: next(versions),
+    )
+
+    def _wait(input) -> Decision:  # type: ignore[no-untyped-def]
+        del input
+        return Decision(kind=DecisionKind.WAIT, reason="stop for contract test")
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _wait)
+    runner.run(_request())
+    runner.run(_request())
+
+    assert [plan.provider_config_version for plan in plan_store.written] == ["cfg-v1", "cfg-v2"]
 
 
 def test_control_runner_blocks_report_when_plan_dependencies_missing(tmp_path: Path) -> None:

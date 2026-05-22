@@ -39,6 +39,11 @@ _METRIC_ASSERTION_CUE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _METRIC_NUMERIC_ASSERTION_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:%|％|倍|元|亿元|万亿|亿|万)")
+_TARGET_PRICE_ASSERTION_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:元|港元|美元|美金|人民币|HKD|USD|CNY|USDT|USDC|U|块)"
+    r"|(?:目标价|目标价格|合理价|目标位)[^。！？!?；;\n]{0,16}\d+(?:\.\d+)?",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,12 @@ def parse_report_claims_by_rules_v1(report_text: str) -> tuple[FundamentalReport
             for match in re.finditer(pattern, report_text, flags=re.IGNORECASE):
                 if _is_compliant_downgrade_context(report_text, match.start(), match.end()):
                     continue
+                if claim_key == "target_price" and not _is_target_price_assertion_context(
+                    report_text,
+                    match.start(),
+                    match.end(),
+                ):
+                    continue
                 claim = FundamentalReportClaim(
                     claim_type="conclusion",
                     claim_key=claim_key,
@@ -138,16 +149,16 @@ def unsupported_reasons_for_claim_v1(
             reasons.append("financial_trend_unavailable")
 
     if claim.claim_type == "conclusion":
+        # Guard source: AGENTS truthfulness redline for unsupported target prices.
+        # 2026-05-20 human approval removed runtime expression gates for ratings,
+        # buy/sell direction, and broad valuation wording; only concrete target
+        # price assertions remain hard-gated here.
         if claim.claim_key == "target_price" and _is_capability_blocked(pack, "target_price"):
             reasons.append("target_price_blocked")
-        if claim.claim_key == "rating" and _is_capability_blocked(pack, "rating"):
-            reasons.append("rating_blocked")
-        if claim.claim_key == "valuation_judgment" and _is_capability_blocked(pack, "valuation_judgment"):
-            reasons.append("valuation_judgment_blocked")
 
     if claim.claim_type == "narrative":
-        # 软叙事词不作为 hard gate。真实性硬门只拦具体数值、估值结论、
-        # 目标价和买卖评级；“护城河/龙头/定价能力”这类表达交给 prompt
+        # 软叙事词不作为 hard gate。真实性硬门只拦具体数值和具体目标价；
+        # “护城河/龙头/定价能力”这类表达交给 prompt
         # 和人工评审收口，避免为了咬文嚼字阻断 frontline 报告生成。
         return tuple(reasons)
 
@@ -242,6 +253,13 @@ def _is_metric_gap_context(text: str, start: int, end: int) -> bool:
     if _METRIC_ASSERTION_CUE_PATTERN.search(sentence):
         return False
     return True
+
+
+def _is_target_price_assertion_context(text: str, start: int, end: int) -> bool:
+    if _is_metric_gap_context(text, start, end):
+        return False
+    sentence = _sentence_window(text, start, end)
+    return _TARGET_PRICE_ASSERTION_PATTERN.search(sentence) is not None
 
 
 def _sentence_window(text: str, start: int, end: int) -> str:

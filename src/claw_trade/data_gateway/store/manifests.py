@@ -24,6 +24,7 @@ class MongoProviderManifestStore:
         doc["_id"] = manifest.adapter_id
         doc["markets"] = [market.value for market in manifest.markets]
         doc["domains"] = [domain.value for domain in manifest.domains]
+        doc["market_domain_pairs"] = _market_domain_pairs(doc["markets"], doc["domains"])
         doc["source_role"] = manifest.source_role.value
         doc["admission_status"] = manifest.admission_status.value
         doc["priority_source"] = manifest.priority_source.value
@@ -37,3 +38,7 @@ class MongoProviderManifestStore:
                 f"provider manifest write failed: {exc}",
             ) from exc
         return manifest.adapter_id
+
+
+def _market_domain_pairs(markets: list[str], domains: list[str]) -> list[str]:
+    return [f"{market}:{domain}" for market in markets for domain in domains]

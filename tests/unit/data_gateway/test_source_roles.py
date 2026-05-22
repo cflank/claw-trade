@@ -40,10 +40,12 @@ def test_source_role_discovery_boundary() -> None:
 
 def test_news_source_role_boundary() -> None:
     assert is_news_role_allowed(SourceRole.OFFICIAL_ORIGINAL) is True
+    assert is_news_role_allowed(SourceRole.MARKET_DATA) is True
     assert is_news_role_allowed(SourceRole.MACRO_DATA) is True
     assert is_news_role_allowed(SourceRole.SEARCH_DISCOVERY) is True
     assert is_news_role_allowed(SourceRole.SOCIAL_ORIGINAL_SAMPLE) is False
     assert is_news_fact_role(SourceRole.OFFICIAL_ORIGINAL) is True
+    assert is_news_fact_role(SourceRole.MARKET_DATA) is True
     assert is_news_fact_role(SourceRole.MACRO_DATA) is True
     assert is_news_fact_role(SourceRole.SEARCH_DISCOVERY) is False
     assert is_news_discovery_role(SourceRole.SEARCH_DISCOVERY) is True

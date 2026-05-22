@@ -391,7 +391,7 @@ def test_control_plane_wrappers_call_real_openviking_http_endpoints(
     assert handler_cls.relation_payloads[0]["from_uri"] == run_uri
     assert observer["status"] == "ok"
     assert locks["status"] == "ok"
-    assert queue["status"] == "blocked"
+    assert queue["status"] == "ok"
     assert metrics["status"] == "ok"
     paths = [path for _, path in handler_cls.requests]
     assert any(path.startswith("/api/v1/fs/tree") for path in paths)
@@ -401,6 +401,18 @@ def test_control_plane_wrappers_call_real_openviking_http_endpoints(
     assert any(path.startswith("/api/v1/relations") for path in paths)
     assert any(path == "/api/v1/observer/queue" for path in paths)
     assert any(path == "/metrics" for path in paths)
+
+
+def test_runtime_semantic_queue_reports_unavailable_when_vectorize_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLAW_TRADE_OPENVIKING_VECTORIZE", "0")
+    monkeypatch.setenv("CLAW_TRADE_OPENVIKING_VECTORIZE_REASON", "provider has no embedding")
+    backend = OpenVikingHttpBackend(endpoint="http://127.0.0.1:1933")
+
+    queue = backend.runtime_semantic_queue()
+
+    assert queue == {"status": "unavailable", "reason": "provider has no embedding"}
 
 
 def test_pack_export_import_uses_openviking_http_pack_endpoints(
@@ -422,7 +434,7 @@ def test_pack_export_import_uses_openviking_http_pack_endpoints(
     assert import_receipt["import_status"] == "ok"
     assert handler_cls.pack_export_payloads == [{"uri": "viking://resources/workflow/run-1/"}]
     assert handler_cls.pack_import_payloads[-1]["parent"] == "viking://resources/workflow/imported/run-1/"
-    assert handler_cls.pack_import_payloads[-1]["vectorize"] is False
+    assert handler_cls.pack_import_payloads[-1]["vectorize"] is True
 
 
 def test_ensure_namespace_uses_mkdir_and_stat_without_latest_list_compact(
@@ -588,7 +600,7 @@ def test_prepare_probe_receipt_creates_missing_uri_via_pack_import_and_verifies_
     assert any(path.startswith("/api/v1/pack/import") for path in paths)
     assert handler_cls.write_payloads == []
     assert all(payload.get("mode") != "create" for payload in handler_cls.write_payloads)
-    assert all(payload.get("vectorize") is False for payload in handler_cls.pack_import_payloads)
+    assert all(payload.get("vectorize") is True for payload in handler_cls.pack_import_payloads)
     assert any(path.startswith("/api/v1/content/download") for path in paths)
     assert all(not path.startswith("/api/v1/content/read") for path in paths)
     assert any(path.startswith("/api/v1/fs/stat") for path in paths)

@@ -59,6 +59,38 @@ class _BackendBundleReady(_BackendBase):
             "import_status": "ok",
         }
 
+    def tree(self, uri: str) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "nodes": [
+                {"uri": uri, "kind": "dir"},
+                {"uri": f"{uri}final_report/report.md", "kind": "file"},
+            ],
+        }
+
+    def grep(self, uri: str, pattern: str) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "matches": [
+                {"uri": f"{uri}final_report/report.md", "line": "主结论", "pattern": pattern},
+            ],
+        }
+
+    def glob(self, uri: str, pattern: str) -> dict[str, object]:
+        return {"status": "ok", "matches": [f"{uri}**/{pattern}"]}
+
+    def relations(self, uri: str) -> dict[str, object]:
+        return {
+            "status": "ok",
+            "relations": [
+                {
+                    "from_uri": uri,
+                    "to_uri": "mongo://openbb_provider_attempts/attempt-1",
+                    "kind": "pack_audit_to_provider_attempt",
+                },
+            ],
+        }
+
 
 def test_openviking_export_import_bundle_works_without_docs_evidence_dependency(tmp_path: Path) -> None:
     backend = _BackendBundleReady()
@@ -76,6 +108,24 @@ def test_openviking_export_import_bundle_works_without_docs_evidence_dependency(
     assert import_receipt.imported_run_id == "imported-run-1"
     assert import_receipt.import_status == "ok"
     assert import_receipt.portability_status == "metadata_verified"
+
+    tree = plane.tree_run("imported-run-1")
+    assert tree.status == "ok"
+    assert tree.node_count >= 1
+
+    grep = plane.grep_run("imported-run-1", "主结论")
+    assert grep.status == "ok"
+    assert grep.matches
+
+    glob = plane.glob_run("imported-run-1", "report.md")
+    assert glob.status == "ok"
+    assert glob.matches
+
+    relation_dump = plane.dump_relations(
+        "viking://resources/workflow/imported/imported-run-1/final_report/report.md"
+    )
+    assert relation_dump.status == "ok"
+    assert relation_dump.relations
 
 
 def test_openviking_export_bundle_marks_blocked_when_upstream_api_unavailable(tmp_path: Path) -> None:

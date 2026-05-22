@@ -10,8 +10,7 @@ from openviking_cli.utils.config import OPENVIKING_CONFIG_ENV
 
 
 _DISABLED_MESSAGE = (
-    "OpenViking vectorization is disabled in claw-trade report runtime; "
-    "report artifact writes must pass vectorize=false."
+    "OpenViking vectorization is unavailable because no embedding LLM is configured."
 )
 
 
@@ -91,9 +90,17 @@ def _install_report_runtime_patches() -> None:
     VikingDBManager.enqueue_embedding_msg = fail_embedding_enqueue
 
 
+def _openviking_embedding_enabled() -> bool:
+    raw = os.environ.get("CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED")
+    if raw is None or raw.strip() == "":
+        return True
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
     _preparse_config(sys.argv)
-    _install_report_runtime_patches()
+    if not _openviking_embedding_enabled():
+        _install_report_runtime_patches()
 
     from openviking_cli.server_bootstrap import main as openviking_server_main
 

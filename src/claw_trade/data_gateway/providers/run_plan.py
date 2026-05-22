@@ -215,9 +215,10 @@ def build_report_run_plan(
 ) -> RunProviderPlan | None:
     if request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
         return None
+    market = Market(request.market)
     return planner.build_run_plan(
         run_id=run_id,
-        market=Market(request.market),
+        market=market,
         ticker=request.ticker,
         company_name=request.company_name,
         currency=request.currency,
@@ -225,9 +226,28 @@ def build_report_run_plan(
         current_date=request.current_date,
         start_date=request.start_date,
         end_date=request.end_date,
-        domains=(PackDomain.MARKET, PackDomain.FUNDAMENTAL, PackDomain.NEWS, PackDomain.SOCIAL),
+        domains=report_run_plan_domains(market),
         registry=registry,
         provider_config_version=provider_config_version,
+    )
+
+
+def report_run_plan_domains(market: Market) -> tuple[PackDomain, ...]:
+    if market == Market.CN_A:
+        return (
+            PackDomain.MARKET,
+            PackDomain.FUNDAMENTAL,
+            PackDomain.NEWS,
+            PackDomain.SOCIAL,
+            PackDomain.POLICY,
+            PackDomain.HOT_MONEY,
+            PackDomain.LOCKUP,
+        )
+    return (
+        PackDomain.MARKET,
+        PackDomain.FUNDAMENTAL,
+        PackDomain.NEWS,
+        PackDomain.SOCIAL,
     )
 
 

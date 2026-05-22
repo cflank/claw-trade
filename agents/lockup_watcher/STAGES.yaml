@@ -1,0 +1,42 @@
+worker: lockup_watcher
+runtime: openclaw
+stage: frontline
+completion: openclaw_agent_turn
+artifact:
+  canonical_output: lockup_analysis_report
+profiles:
+  US:
+    approved: false
+    prompt: prompts/US.md
+    tools: []
+    openviking_access: none
+  CN_A:
+    approved: true
+    prompt: prompts/CN_A.md
+    tools:
+      - claw_get_lockup_pack
+    openviking_access: none
+  HK:
+    approved: false
+    prompt: prompts/HK.md
+    tools: []
+    openviking_access: none
+  CRYPTO:
+    approved: false
+    prompt: prompts/CRYPTO.md
+    tools: []
+    openviking_access: none
+skills:
+  mounted:
+    - claw-trade-stage
+    - cn-a-lockup-data
+tool_policy:
+  owner: stage_profile
+  python_calls_tools: false
+artifact_policy:
+  input: approved_l1_report_text_with_traceable_refs
+  output: canonical_artifact
+  hard_gate_failed_artifacts_enter_downstream: false
+pm_policy:
+  python_rewrites_pm_rating: false
+  python_rewrites_pm_final_decision: false

@@ -20,7 +20,7 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.packs.social import SocialPackBuilder
-from claw_trade.data_gateway.providers.social import social_capabilities
+from claw_trade.data_gateway.providers.social import build_default_social_adapters, social_capabilities
 from claw_trade.data_gateway.providers.social_source_roles import is_social_search_discovery_provider
 
 
@@ -353,3 +353,37 @@ def test_social_pack_rejects_search_provider_role_drift() -> None:
     assert {attempt.status for attempt in result.attempts} == {ProviderStatus.SCHEMA_INVALID}
     assert result.readiness.status == ReadinessStatus.INSUFFICIENT
     assert "搜索类来源只能作为发现线索" in result.reader_brief_md
+
+
+def test_cn_a_social_concept_default_adapter_does_not_fallback_to_search_discovery(monkeypatch) -> None:
+    def _boom(*args, **kwargs):
+        raise AssertionError("social aggregate metric provider must not fallback to search_discovery fetch")
+
+    monkeypatch.setattr("claw_trade.data_gateway.providers.social._fetch_social_search_discovery", _boom)
+    request = _social_request(Market.CN_A)
+    adapters = tuple(adapter for adapter in build_default_social_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
+    concept_adapter = next(adapter for adapter in adapters if adapter.provider_id == "ths_concept_hot")
+    spec = concept_adapter.build_call_specs(request)[0]
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="search_discovery cannot replace aggregate metric facts"):
+        concept_adapter.fetch(spec, request)
+
+
+def test_cn_a_social_discovery_provider_id_and_source_url_are_consistent(monkeypatch) -> None:
+    rss = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<rss><channel><item><title>x</title><link>https://example.com/x</link>"
+        "<pubDate>Tue, 21 May 2026 00:00:00 GMT</pubDate><description>y</description></item></channel></rss>"
+    )
+    monkeypatch.setattr("claw_trade.data_gateway.providers.social._http_get_text", lambda url, params=None: rss)
+    request = _social_request(Market.CN_A)
+    adapters = tuple(adapter for adapter in build_default_social_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
+    discovery = next(adapter for adapter in adapters if adapter.source_role == SourceRole.SEARCH_DISCOVERY)
+    spec = discovery.build_call_specs(request)[0]
+    fetch = discovery.fetch(spec, request)
+
+    assert discovery.provider_id == "google_news"
+    assert discovery.source_role == SourceRole.SEARCH_DISCOVERY
+    assert fetch.source_url == "https://news.google.com/rss/search"

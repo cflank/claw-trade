@@ -90,9 +90,9 @@ def test_bear_researcher_call_receives_bull_argument_ref_after_bull_approved(tmp
     assert refs[-1].stage == Stage.INVESTMENT_DEBATE
 
 
-def test_report_polisher_call_receives_core_12_approved_refs(tmp_path: Path) -> None:
-    state = _state(tmp_path=tmp_path, run_id="run-1", profile="CN_A")
-    manifest = full_core_12_manifest(tmp_path)
+def test_report_polisher_call_receives_cn_a_7_frontline_and_downstream_refs(tmp_path: Path) -> None:
+    state = _state(tmp_path=tmp_path, run_id="run-1", profile="CN_A", market="CN_A", currency="CNY")
+    manifest = full_cn_a_report_polisher_input_manifest(tmp_path)
 
     context_result = build_request_context(
         state=state,
@@ -110,6 +110,9 @@ def test_report_polisher_call_receives_core_12_approved_refs(tmp_path: Path) -> 
         "fundamental_analyst",
         "news_analyst",
         "social_analyst",
+        "policy_analyst",
+        "hot_money_tracker",
+        "lockup_watcher",
         "bull_researcher",
         "bear_researcher",
         "research_manager",
@@ -119,7 +122,7 @@ def test_report_polisher_call_receives_core_12_approved_refs(tmp_path: Path) -> 
         "risk_moderator",
         "portfolio_manager",
     ]
-    assert len(context.openviking_read_capabilities) == 12
+    assert len(context.openviking_read_capabilities) == 15
 
 
 def test_material_target_is_unique_per_call_even_same_worker_stage(tmp_path: Path) -> None:
@@ -163,14 +166,16 @@ def _state(
     run_id: str,
     profile: str,
     stop_point: StopPoint = StopPoint.NONE,
+    market: str = "US",
+    currency: str = "USD",
 ) -> WorkflowState:
     request = RunRequest(
-        ticker="AAPL",
-        company_name="Apple",
-        market="US",
+        ticker="600519" if market == "CN_A" else "AAPL",
+        company_name="贵州茅台" if market == "CN_A" else "Apple",
+        market=market,
         profile=profile,
-        currency="USD",
-        currency_symbol="$",
+        currency=currency,
+        currency_symbol="￥" if currency == "CNY" else "$",
         current_date="2026-05-03",
         start_date="2026-01-01",
         end_date="2026-05-03",
@@ -205,17 +210,34 @@ def frontline_manifest(tmp_path: Path) -> ApprovedManifest:
     )
 
 
-def full_core_12_manifest(tmp_path: Path) -> ApprovedManifest:
-    manifest = frontline_manifest(tmp_path)
+def cn_a_frontline_manifest(tmp_path: Path) -> ApprovedManifest:
+    return (
+        frontline_manifest(tmp_path)
+        .add(fake_approved_material(tmp_path, "mat-frontline-policy", "policy_analyst", Stage.FRONTLINE, "call-5"))
+        .add(
+            fake_approved_material(
+                tmp_path,
+                "mat-frontline-hot-money",
+                "hot_money_tracker",
+                Stage.FRONTLINE,
+                "call-6",
+            )
+        )
+        .add(fake_approved_material(tmp_path, "mat-frontline-lockup", "lockup_watcher", Stage.FRONTLINE, "call-7"))
+    )
+
+
+def full_cn_a_report_polisher_input_manifest(tmp_path: Path) -> ApprovedManifest:
+    manifest = cn_a_frontline_manifest(tmp_path)
     extra_sources = (
-        ("mat-debate-bull", "bull_researcher", Stage.INVESTMENT_DEBATE, "call-5"),
-        ("mat-debate-bear", "bear_researcher", Stage.INVESTMENT_DEBATE, "call-6"),
-        ("mat-manager", "research_manager", Stage.INVESTMENT_DECISION, "call-7"),
-        ("mat-trader", "trader", Stage.TRADE_DECISION, "call-8"),
-        ("mat-risk-challenger", "risk_challenger", Stage.RISK_DEBATE, "call-9"),
-        ("mat-risk-guardian", "risk_guardian", Stage.RISK_DEBATE, "call-10"),
-        ("mat-risk-moderator", "risk_moderator", Stage.RISK_DEBATE, "call-11"),
-        ("mat-portfolio", "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-12"),
+        ("mat-debate-bull", "bull_researcher", Stage.INVESTMENT_DEBATE, "call-8"),
+        ("mat-debate-bear", "bear_researcher", Stage.INVESTMENT_DEBATE, "call-9"),
+        ("mat-manager", "research_manager", Stage.INVESTMENT_DECISION, "call-10"),
+        ("mat-trader", "trader", Stage.TRADE_DECISION, "call-11"),
+        ("mat-risk-challenger", "risk_challenger", Stage.RISK_DEBATE, "call-12"),
+        ("mat-risk-guardian", "risk_guardian", Stage.RISK_DEBATE, "call-13"),
+        ("mat-risk-moderator", "risk_moderator", Stage.RISK_DEBATE, "call-14"),
+        ("mat-portfolio", "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-15"),
     )
     for material_id, worker_id, stage, call_id in extra_sources:
         manifest.add(fake_approved_material(tmp_path, material_id, worker_id, stage, call_id))

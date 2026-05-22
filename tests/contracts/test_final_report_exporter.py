@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import pytest
 from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index
 from claw_trade.guards.export_claims import (
@@ -21,22 +22,7 @@ from claw_trade.reports.exporter import (
     run_export_guards,
 )
 from claw_trade.workflow.models import RunRequest, RunStatus, Stage, WorkflowState
-
-_WORKER_STAGE: tuple[tuple[str, Stage], ...] = (
-    ("market_analyst", Stage.FRONTLINE),
-    ("fundamental_analyst", Stage.FRONTLINE),
-    ("news_analyst", Stage.FRONTLINE),
-    ("social_analyst", Stage.FRONTLINE),
-    ("bull_researcher", Stage.INVESTMENT_DEBATE),
-    ("bear_researcher", Stage.INVESTMENT_DEBATE),
-    ("research_manager", Stage.INVESTMENT_DECISION),
-    ("trader", Stage.TRADE_DECISION),
-    ("risk_challenger", Stage.RISK_DEBATE),
-    ("risk_guardian", Stage.RISK_DEBATE),
-    ("risk_moderator", Stage.RISK_DEBATE),
-    ("portfolio_manager", Stage.PORTFOLIO_DECISION),
-    ("report_polisher", Stage.FINAL_REPORT),
-)
+from claw_trade.workflow.workers import stage_plans_for_market
 
 
 def test_export_final_report_fails_when_required_material_missing(tmp_path: Path) -> None:
@@ -133,6 +119,43 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     assert not source_chart.exists()
     # export-result.json 由 runner/store 写，exporter 不双写。
     assert not (state.run_dir / "reports" / "export-result.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("market", "profile"),
+    (
+        ("US", "US"),
+        ("HK", "HK"),
+        ("CRYPTO", "CRYPTO"),
+    ),
+)
+def test_export_final_report_non_cn_a_does_not_require_cn_a_frontline(
+    tmp_path: Path,
+    market: str,
+    profile: str,
+) -> None:
+    state = _sample_state(tmp_path, run_id=f"run-non-cn-a-{market.lower()}", market=market, profile=profile)
+    manifest, reader = _build_manifest_and_reader(state)
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-non-cn-a")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+
+
+def test_export_final_report_cn_a_missing_new_frontline_fails(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-cn-a-missing-new-frontline", market="CN_A", profile="CN_A")
+    manifest, reader = _build_manifest_and_reader(state, missing_worker="policy_analyst")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "failed"
+    assert result.failure is not None
+    assert result.failure.category == "export_missing_material"
+    assert "policy_analyst" in (result.failure.reason or "")
 
 
 def test_export_final_report_fails_when_report_polisher_missing_required_sections(tmp_path: Path) -> None:
@@ -524,6 +547,28 @@ def test_export_final_report_fails_when_no_copyable_chart_asset(tmp_path: Path) 
     assert "未找到可复制的图表资产" in (result.failure.reason or "")
 
 
+def test_export_final_report_passes_without_chart_asset_when_market_report_has_root_cause(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-no-asset-with-root-cause")
+    manifest, reader = _build_manifest_and_reader(state)
+    market_material = manifest.materials_for_stage(Stage.FRONTLINE, run_id=state.run_id)[0]
+    reader._content_by_material_id[market_material.material_id] = (
+        "# Market Analysis Report - AR\n\n"
+        "The market data pack returned insufficient data.\n"
+        "| OHLCV rows | 0 (needs >=20 for chart generation) |\n"
+        "No supported market claims are made without usable price data."
+    ).encode("utf-8")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "### 技术图表" in report_text
+    assert "本次未附图表" in report_text
+    assert "OHLCV rows" in report_text
+    assert "assets/" not in report_text
+
+
 def test_export_final_report_cleanup_failure_is_exposed(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-cleanup-fail")
     manifest, reader = _build_manifest_and_reader(state)
@@ -646,13 +691,20 @@ def test_export_final_report_fails_when_openviking_reader_hash_mismatch(tmp_path
     assert "hash_mismatch" in (result.failure.reason or "")
 
 
-def _sample_state(tmp_path: Path, *, run_id: str, profile: str = "US") -> WorkflowState:
+def _sample_state(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    profile: str = "US",
+    market: str | None = None,
+) -> WorkflowState:
     run_dir = tmp_path / "runs" / run_id
     (run_dir / "reports").mkdir(parents=True, exist_ok=True)
+    resolved_market = market or ("US" if profile not in {"CN_A", "HK", "CRYPTO"} else profile)
     request = RunRequest(
         ticker="AAPL",
         company_name="Apple",
-        market="US",
+        market=resolved_market,
         profile=profile,
         currency="USD",
         currency_symbol="$",
@@ -832,6 +884,9 @@ def _l1_content_bytes(material: ApprovedMaterial) -> bytes:
         "fundamental_analyst": "基本面结论：盈利韧性尚可，估值处于历史中枢附近。",
         "news_analyst": "新闻结论：近期公司与行业信息偏中性，未见重大突发利空。",
         "social_analyst": "社媒结论：讨论热度抬升，情绪分化，需防短线波动。",
+        "policy_analyst": "政策结论：监管与产业政策节奏温和，当前未见超预期收紧信号。",
+        "hot_money_tracker": "资金结论：短线资金活跃但分化，北向与主力流向尚未形成一致趋势。",
+        "lockup_watcher": "筹码结论：解禁与股东结构压力可控，但需跟踪后续供给释放窗口。",
         "bull_researcher": "多头观点：核心竞争力与现金流能力支持中期配置价值。",
         "bear_researcher": "空头观点：估值安全边际有限，宏观扰动可能放大回撤。",
         "research_manager": "研究经理结论：维持审慎偏多，等待关键财报验证。",
@@ -872,7 +927,8 @@ def _build_manifest_and_reader(
 ) -> tuple[ApprovedManifest, _ControlledReader]:
     manifest = ApprovedManifest.empty()
     content_by_material_id: dict[str, bytes] = {}
-    for index, (worker_id, stage) in enumerate(_WORKER_STAGE, start=1):
+    worker_stage = _worker_stage_for_market(state.request.market)
+    for index, (worker_id, stage) in enumerate(worker_stage, start=1):
         if worker_id == missing_worker:
             continue
         material = _sample_material(state=state, worker_id=worker_id, stage=stage, index=index)
@@ -887,3 +943,11 @@ def _build_manifest_and_reader(
             broken_reason=broken_reason,
         ),
     )
+
+
+def _worker_stage_for_market(market: str) -> tuple[tuple[str, Stage], ...]:
+    pairs: list[tuple[str, Stage]] = []
+    for plan in stage_plans_for_market(market):
+        for worker_id in plan.workers:
+            pairs.append((worker_id, plan.stage))
+    return tuple(pairs)
