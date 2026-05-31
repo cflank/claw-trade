@@ -82,6 +82,8 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     guard_payload = json.loads((state.run_dir / "reports" / "export-guard-results.json").read_text(encoding="utf-8"))
     assert guard_payload["ok"] is True
     report_text = result.final_report_path.read_text(encoding="utf-8") if result.final_report_path is not None else ""
+    assert "报告生成时间（美东）：2026-05-04 08:00:00 EDT" in report_text
+    assert "报告生成时间（北京）：2026-05-04 20:00:00 CST" in report_text
     assert "### 技术图表" in report_text
     assert "assets/market-01-market-structure.png" in report_text
     assert "## 二、技术指标分析" in report_text
@@ -158,7 +160,7 @@ def test_export_final_report_cn_a_missing_new_frontline_fails(tmp_path: Path) ->
     assert "policy_analyst" in (result.failure.reason or "")
 
 
-def test_export_final_report_fails_when_report_polisher_missing_required_sections(tmp_path: Path) -> None:
+def test_export_final_report_records_diagnostic_when_report_polisher_missing_required_sections(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-missing-final-report-sections")
     manifest, reader = _build_manifest_and_reader(state)
     report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
@@ -183,16 +185,16 @@ def test_export_final_report_fails_when_report_polisher_missing_required_section
 
     result = export_final_report(state=state, manifest=manifest, openviking=reader)
 
-    assert result.status == "failed"
-    assert result.failure is not None
-    assert result.failure.category == "final_report_structure"
-    assert "四,五" in (result.failure.reason or "")
-    assert result.final_report_path is None
+    assert result.status == "passed"
+    assert result.failure is None
+    assert result.final_report_path is not None
     structure_path = state.run_dir / "reports" / "final-report-structure.json"
     assert structure_path.exists()
     structure_payload = json.loads(structure_path.read_text(encoding="utf-8"))
     assert structure_payload["ok"] is False
-    assert structure_payload["guard_source"].startswith("human approval")
+    assert "四,五" in structure_payload["reason"]
+    assert structure_payload["hard_fail"] is False
+    assert "guard_source" not in structure_payload
 
 
 def test_render_final_report_keeps_reader_report_clean_when_polisher_exists(tmp_path: Path) -> None:
@@ -535,16 +537,51 @@ def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path
     assert not source_chart.exists()
 
 
-def test_export_final_report_fails_when_no_copyable_chart_asset(tmp_path: Path) -> None:
+def test_export_final_report_records_missing_chart_note_when_no_copyable_chart_asset(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-no-asset")
     manifest, reader = _build_manifest_and_reader(state)
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    assert "### 技术图表" in report_text
+    assert "本次未附图表" in report_text
+    assert "图表缺口已记录" in report_text
+    assert "assets/" not in report_text
+
+
+def test_export_final_report_fails_when_chart_is_claimed_but_asset_is_missing(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-no-asset-chart-claim")
+    manifest, reader = _build_manifest_and_reader(state)
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    reader._content_by_material_id[report_material.material_id] = (
+        "# 贵州茅台（600519）投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终裁决：维持审慎增持。\n\n"
+        "## 二、技术指标分析\n"
+        "技术图表已生成，见下图。\n\n"
+        "## 三、基本面分析\n"
+        "基本面结论：盈利韧性尚可。\n\n"
+        "## 四、消息面与行业环境\n"
+        "新闻结论：近期公司与行业信息偏中性。\n\n"
+        "## 五、市场情绪与交易结构\n"
+        "社媒结论：讨论热度抬升。\n\n"
+        "## 六、交易计划与组合风险\n"
+        "交易计划：分批建仓。\n\n"
+        "## 七、关键分歧与跟踪条件\n"
+        "多空分歧集中在估值安全边际。\n\n"
+        "## 八、最终结论\n"
+        "维持组合经理审慎增持结论。"
+    ).encode("utf-8")
 
     result = export_final_report(state=state, manifest=manifest, openviking=reader)
 
     assert result.status == "failed"
     assert result.failure is not None
     assert result.failure.category == "export_report_assets"
-    assert "未找到可复制的图表资产" in (result.failure.reason or "")
+    assert "声称图表已生成" in (result.failure.reason or "")
 
 
 def test_export_final_report_passes_without_chart_asset_when_market_report_has_root_cause(tmp_path: Path) -> None:
@@ -701,13 +738,15 @@ def _sample_state(
     run_dir = tmp_path / "runs" / run_id
     (run_dir / "reports").mkdir(parents=True, exist_ok=True)
     resolved_market = market or ("US" if profile not in {"CN_A", "HK", "CRYPTO"} else profile)
+    currency = "USDT" if profile == "CRYPTO" else "USD"
+    currency_symbol = "USDT" if profile == "CRYPTO" else "$"
     request = RunRequest(
         ticker="AAPL",
         company_name="Apple",
         market=resolved_market,
         profile=profile,
-        currency="USD",
-        currency_symbol="$",
+        currency=currency,
+        currency_symbol=currency_symbol,
         current_date="2026-05-04",
         start_date="2026-04-04",
         end_date="2026-05-04",

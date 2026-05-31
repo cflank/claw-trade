@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import os
 from collections.abc import Iterable as IterableABC
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 from xml.etree import ElementTree
-
-import requests
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -25,8 +23,12 @@ from claw_trade.data_gateway.models import (
     ProviderStatus,
     SourceRole,
 )
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
 from claw_trade.data_gateway.providers.base import ProviderAdapter
+from claw_trade.data_gateway.providers.cninfo_utils import cninfo_stock_query
 from claw_trade.data_gateway.providers.polymarket import fetch_polymarket_events
+from claw_trade.instruments.resolver import resolve_crypto_provider_symbols
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
@@ -129,13 +131,23 @@ class DefaultNewsAdapter:
         rows: tuple[Mapping[str, Any], ...]
         source_url: str
         if self.source_role == SourceRole.OFFICIAL_ORIGINAL:
-            rows, source_url = _fetch_news_official(market=request.market, ticker=request.ticker, params=params)
+            if request.market == Market.CN_A and self.endpoint == "stock_zh_a_disclosure_report_cninfo":
+                rows, source_url = _fetch_akshare_cninfo_announcements(
+                    ticker=request.ticker,
+                    start_date=str(params.get("start_date", "")),
+                    end_date=str(params.get("end_date", "")),
+                )
+            else:
+                rows, source_url = _fetch_news_official(market=request.market, ticker=request.ticker, params=params)
         elif self.source_role == SourceRole.MARKET_DATA:
             rows, source_url = _fetch_news_market(market=request.market, endpoint=self.endpoint, params=params)
         elif self.source_role == SourceRole.MACRO_DATA:
             rows, source_url = _fetch_news_macro(market=request.market, params=params)
         elif self.source_role == SourceRole.SEARCH_DISCOVERY:
-            rows, source_url = _fetch_news_search_discovery(params=params)
+            if self.provider_id == "yahoo_finance":
+                rows, source_url = _fetch_yahoo_finance_news(query=_yahoo_news_query(params=params))
+            else:
+                rows, source_url = _fetch_news_search_discovery(params=params)
         elif self.source_role == SourceRole.EVENT_EXPECTATION and self.provider_id == "polymarket":
             rows, source_url = fetch_polymarket_events(params=params)
         else:
@@ -241,6 +253,24 @@ def build_default_news_adapters(
                         env=env,
                     ),
                     DefaultNewsAdapter(
+                        adapter_id="news.akshare_company.cn_a",
+                        provider_id="akshare_stock_news",
+                        market=market,
+                        source_role=SourceRole.MARKET_DATA,
+                        endpoint="stock_news_em",
+                        expected_schema_id="cn_a.news.company.v1",
+                        provider_kind=ProviderKind.PROJECT_EXTENSION,
+                        provider_config_version=provider_config_version,
+                        rate_limit_policy_id="akshare.stock_news_em",
+                        cache_ttl_seconds=900,
+                        required=False,
+                        attempt_required=True,
+                        coverage_group="cn_a_news_company",
+                        coverage_quorum=1,
+                        priority=11,
+                        env=env,
+                    ),
+                    DefaultNewsAdapter(
                         adapter_id="news.cninfo.cn_a",
                         provider_id="cninfo",
                         market=market,
@@ -259,21 +289,21 @@ def build_default_news_adapters(
                         env=env,
                     ),
                     DefaultNewsAdapter(
-                        adapter_id="news.cls_flash.cn_a",
-                        provider_id="cls_flash",
+                        adapter_id="news.akshare_cninfo.cn_a",
+                        provider_id="akshare_cninfo",
                         market=market,
-                        source_role=SourceRole.MARKET_DATA,
-                        endpoint="telegraph",
-                        expected_schema_id="cn_a.news.flash.v1",
+                        source_role=SourceRole.OFFICIAL_ORIGINAL,
+                        endpoint="stock_zh_a_disclosure_report_cninfo",
+                        expected_schema_id="cn_a.news.official.v1",
                         provider_kind=ProviderKind.PROJECT_EXTENSION,
                         provider_config_version=provider_config_version,
-                        rate_limit_policy_id="cn_a.news.flash",
-                        cache_ttl_seconds=300,
-                        required=True,
+                        rate_limit_policy_id="akshare.stock_zh_a_disclosure_report_cninfo",
+                        cache_ttl_seconds=900,
+                        required=False,
                         attempt_required=True,
-                        coverage_group="cn_a_news_flash",
+                        coverage_group="cn_a_news_announcement",
                         coverage_quorum=1,
-                        priority=20,
+                        priority=1,
                         env=env,
                     ),
                     DefaultNewsAdapter(
@@ -375,6 +405,27 @@ def build_default_news_adapters(
                 env=env,
             )
         )
+        if market in {Market.HK, Market.US}:
+            adapters.append(
+                DefaultNewsAdapter(
+                    adapter_id=f"news.yahoo_finance.{market_key}",
+                    provider_id="yahoo_finance",
+                    market=market,
+                    source_role=SourceRole.SEARCH_DISCOVERY,
+                    endpoint="search_news",
+                    expected_schema_id=f"{market_key}.news.discovery.v1",
+                    provider_kind=ProviderKind.PROJECT_EXTENSION,
+                    provider_config_version=provider_config_version,
+                    rate_limit_policy_id="yahoo_finance.news",
+                    cache_ttl_seconds=300,
+                    required=False,
+                    attempt_required=True,
+                    coverage_group=None,
+                    coverage_quorum=None,
+                    priority=40,
+                    env=env,
+                )
+            )
         if market == Market.CRYPTO:
             adapters.append(
                 DefaultNewsAdapter(
@@ -428,8 +479,11 @@ def _fetch_news_market(*, market: Market, endpoint: str, params: Mapping[str, An
             ticker=str(params.get("ticker", "")).strip(),
             company_name=str(params.get("company_name", "")).strip(),
         )
-    if market == Market.CN_A and endpoint == "telegraph":
-        return _fetch_cls_telegraph(limit=20)
+    if market == Market.CN_A and endpoint == "stock_news_em":
+        return _fetch_akshare_company_news(
+            ticker=str(params.get("ticker", "")).strip(),
+            company_name=str(params.get("company_name", "")).strip(),
+        )
     raise RuntimeError(
         f"market news source not configured for market={market.value} endpoint={endpoint}; "
         "search_discovery cannot replace fact-layer market_data"
@@ -437,46 +491,53 @@ def _fetch_news_market(*, market: Market, endpoint: str, params: Mapping[str, An
 
 
 def _fetch_eastmoney_company_news(*, ticker: str, company_name: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    raise RuntimeError(
-        "cn_a company news declared as eastmoney_company_news but no approved OpenBB/data_gateway "
-        "adapter sample is wired yet; keep attempt as failed and do not fallback to search_discovery"
-    )
+    rows = _akshare_stock_news_rows(ticker=ticker, company_name=company_name)
+    return rows, "https://quote.eastmoney.com"
 
 
-def _fetch_cls_telegraph(*, limit: int = 20) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    url = "https://www.cls.cn/nodeapi/telegraphList"
-    payload = _http_get_json(
-        url,
-        params={
-            "app": "CailianpressWeb",
-            "os": "web",
-            "refresh_type": "1",
-            "rn": str(max(1, limit)),
-            "sv": "8.4.6",
-        },
-        headers={
-            **_DEFAULT_HEADERS,
-            "Referer": "https://www.cls.cn/",
-        },
-    )
-    data = payload.get("data") if isinstance(payload, Mapping) else None
-    roll_data = data.get("roll_data") if isinstance(data, Mapping) else None
-    rows: list[Mapping[str, Any]] = []
-    for item in _as_sequence(roll_data):
-        title = str(item.get("title") or "").strip()
-        if not title:
-            continue
-        rows.append(
-            {
-                "title": title,
-                "url": item.get("shareurl") or "",
-                "published_at": item.get("ctime") or "",
-                "summary": item.get("content") or item.get("brief") or "",
-            }
-        )
-        if len(rows) >= limit:
-            break
-    return tuple(rows), url
+def _fetch_akshare_company_news(*, ticker: str, company_name: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    rows = _akshare_stock_news_rows(ticker=ticker, company_name=company_name)
+    return rows, "https://akshare.akfamily.xyz/data/stock/stock.html"
+
+
+def _akshare_stock_news_rows(*, ticker: str, company_name: str) -> tuple[Mapping[str, Any], ...]:
+    import akshare as ak
+
+    symbol = _normalize_cn_stock_code(ticker)
+    rows = _df_to_rows(ak.stock_news_em(symbol=symbol))
+    out: list[Mapping[str, Any]] = []
+    for row in rows[:20]:
+        mapped = _eastmoney_company_news_row(row=row, company_name=company_name)
+        if mapped is not None:
+            out.append(mapped)
+    return tuple(out)
+
+
+def _normalize_cn_stock_code(ticker: str) -> str:
+    token = ticker.strip().upper()
+    if token.startswith(("SH", "SZ", "BJ")):
+        token = token[2:]
+    if token.endswith((".SH", ".SZ", ".BJ")):
+        token = token[: -3]
+    if token.isdigit() and len(token) < 6:
+        return token.zfill(6)
+    return token
+
+
+def _eastmoney_company_news_row(*, row: Mapping[str, Any], company_name: str) -> Mapping[str, Any] | None:
+    title = _first_text(row, "新闻标题", "标题", "title", "news_title")
+    url = _first_text(row, "新闻链接", "链接", "url", "link")
+    if not title and not url:
+        return None
+    summary = _first_text(row, "新闻内容", "摘要", "summary", "description", "文章来源", "source")
+    if not summary and company_name:
+        summary = company_name
+    return {
+        "title": title or "未命名新闻条目",
+        "url": url,
+        "published_at": _first_text(row, "发布时间", "时间", "日期", "date", "published_at"),
+        "summary": summary,
+    }
 
 
 def _fetch_news_macro(*, market: Market, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
@@ -503,16 +564,61 @@ def _fetch_news_search_discovery(*, params: Mapping[str, Any]) -> tuple[tuple[Ma
     return _fetch_google_news_search(query=query)
 
 
+def _yahoo_news_query(*, params: Mapping[str, Any]) -> str:
+    ticker = str(params.get("ticker", "")).strip()
+    company_name = str(params.get("company_name", "")).strip()
+    market = str(params.get("market", "")).strip().upper()
+    if market == "HK" and ticker.upper().endswith(".HK"):
+        code = ticker.upper()[: -len(".HK")]
+        yahoo_code = code.lstrip("0")
+        if len(yahoo_code) < 4:
+            yahoo_code = code[-4:]
+        ticker = f"{yahoo_code}.HK"
+    return " ".join(part for part in (ticker, company_name) if part)
+
+
+def _fetch_yahoo_finance_news(*, query: str, limit: int = 10) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    session = managed_requests.Session()
+    session.headers["User-Agent"] = "Mozilla/5.0"
+    session.get("https://fc.yahoo.com", timeout=10)
+    url = "https://query2.finance.yahoo.com/v1/finance/search"
+    response = session.get(
+        url,
+        params={"q": query, "quotesCount": 0, "newsCount": max(1, limit)},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    news_items = payload.get("news", []) if isinstance(payload, Mapping) else []
+    rows: list[Mapping[str, Any]] = []
+    for item in _as_sequence(news_items):
+        title = str(item.get("title") or "").strip()
+        link = str(item.get("link") or "").strip()
+        if not title or not link:
+            continue
+        rows.append(
+            {
+                "title": title,
+                "url": link,
+                "published_at": item.get("providerPublishTime") or "",
+                "summary": item.get("publisher") or "Yahoo Finance",
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return tuple(rows), url
+
+
 def _fetch_cninfo_announcements(*, ticker: str, start_date: str, end_date: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
     url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
-    stock_code = ticker.strip().upper().split(".", 1)[0]
+    stock = cninfo_stock_query(ticker)
     payload = {
         "pageNum": 1,
         "pageSize": 20,
-        "column": "szse",
+        "column": stock.column,
         "tabName": "fulltext",
-        "plate": "",
-        "stock": stock_code,
+        "plate": stock.plate,
+        "stock": stock.stock,
         "searchkey": "",
         "secid": "",
         "category": "",
@@ -522,7 +628,7 @@ def _fetch_cninfo_announcements(*, ticker: str, start_date: str, end_date: str) 
         "sortType": "",
         "isHLtitle": "true",
     }
-    response = requests.post(url, data=payload, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.post(url, data=payload, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     data = response.json()
     rows: list[Mapping[str, Any]] = []
@@ -537,6 +643,40 @@ def _fetch_cninfo_announcements(*, ticker: str, start_date: str, end_date: str) 
             }
         )
     return tuple(rows), url
+
+
+def _fetch_akshare_cninfo_announcements(
+    *,
+    ticker: str,
+    start_date: str,
+    end_date: str,
+) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    import akshare as ak
+
+    symbol = _normalize_cn_stock_code(ticker)
+    rows = _df_to_rows(
+        ak.stock_zh_a_disclosure_report_cninfo(
+            symbol=symbol,
+            market="沪深京",
+            start_date=_compact_date(start_date),
+            end_date=_compact_date(end_date),
+        )
+    )
+    out: list[Mapping[str, Any]] = []
+    for row in rows[:20]:
+        title = _first_text(row, "公告标题", "announcementTitle", "title")
+        url = _first_text(row, "公告链接", "url", "link")
+        if not title and not url:
+            continue
+        out.append(
+            {
+                "title": title or "未命名公告",
+                "url": url,
+                "published_at": _first_text(row, "公告时间", "announcementTime", "published_at", "date"),
+                "summary": _first_text(row, "简称", "公告类型", "summary"),
+            }
+        )
+    return tuple(out), "https://akshare.akfamily.xyz/data/stock/stock.html"
 
 
 def _fetch_hkex_regulatory_announcements(*, ticker: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
@@ -589,12 +729,7 @@ def _fetch_sec_filings(*, ticker: str) -> tuple[tuple[Mapping[str, Any], ...], s
 
 
 def _fetch_crypto_project_official(*, ticker: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    repo = {
-        "BTC": "bitcoin/bitcoin",
-        "ETH": "ethereum/go-ethereum",
-        "SOL": "solana-labs/solana",
-        "DOGE": "dogecoin/dogecoin",
-    }.get(ticker.strip().upper().replace("-USD", "").replace("USDT", ""))
+    repo = resolve_crypto_provider_symbols(ticker).official_repo
     if not repo:
         raise RuntimeError(f"crypto official source not configured for ticker: {ticker}")
     url = f"https://api.github.com/repos/{repo}/releases?per_page=10"
@@ -713,6 +848,43 @@ def _normalize_news_row(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
     }
 
 
+def _first_text(row: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    lowered = {str(key).lower(): value for key, value in row.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _df_to_rows(frame: Any) -> list[Mapping[str, Any]]:
+    if frame is None:
+        return []
+    if not hasattr(frame, "to_dict"):
+        raise RuntimeError("provider response is not tabular")
+    if hasattr(frame, "index") and getattr(frame.index, "name", None):
+        frame = frame.reset_index()
+    rows = frame.to_dict(orient="records")
+    return [row for row in rows if isinstance(row, Mapping)]
+
+
+def _compact_date(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return text
+    return text.replace("-", "")[:8]
+
+
 def _stable_request_id(*, spec: ProviderCallSpec, params: Mapping[str, Any]) -> str:
     payload = f"{spec.adapter_id}|{spec.provider}|{spec.endpoint}|{sorted(params.items())}"
     return "req_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -740,12 +912,12 @@ def _http_get_json(
     merged_headers = dict(_DEFAULT_HEADERS)
     if headers:
         merged_headers.update(headers)
-    response = requests.get(url, params=params, headers=merged_headers, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, params=params, headers=merged_headers, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 
 
 def _http_get_text(url: str, *, params: Mapping[str, Any] | None = None) -> str:
-    response = requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.text

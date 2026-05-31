@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping, Sequence
 
-import requests
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
+from claw_trade.instruments.resolver import crypto_display_name, resolve_crypto_provider_symbols
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
@@ -11,11 +13,13 @@ _DEFAULT_HEADERS = {
 }
 _PUBLIC_SEARCH_URL = "https://gamma-api.polymarket.com/public-search"
 _SYMBOL_ALIASES: dict[str, tuple[str, ...]] = {
+    "AR": ("Arweave", "AR crypto"),
     "BTC": ("Bitcoin", "BTC"),
     "ETH": ("Ethereum", "ETH"),
     "SOL": ("Solana", "SOL"),
     "DOGE": ("Dogecoin", "DOGE"),
 }
+_AMBIGUOUS_SYMBOLS = {"AR"}
 
 
 def fetch_polymarket_events(*, params: Mapping[str, Any], limit: int = 10) -> tuple[tuple[Mapping[str, Any], ...], str]:
@@ -39,13 +43,19 @@ def fetch_polymarket_events(*, params: Mapping[str, Any], limit: int = 10) -> tu
 
 def _polymarket_queries(params: Mapping[str, Any]) -> tuple[str, ...]:
     ticker = str(params.get("ticker") or "").strip().upper()
-    symbol = ticker.split(".", 1)[0].replace("-USD", "").replace("USDT", "")
+    if str(params.get("market", "")).strip().upper() == "CRYPTO":
+        symbol = resolve_crypto_provider_symbols(ticker).crypto_base_symbol or ticker
+    else:
+        symbol = ticker.split(".", 1)[0].replace("-USD", "").replace("USDT", "")
     name = str(params.get("company_name") or "").strip()
     candidates: list[str] = []
     candidates.extend(_SYMBOL_ALIASES.get(symbol, ()))
-    if name:
+    display_name = crypto_display_name(ticker) if str(params.get("market", "")).strip().upper() == "CRYPTO" else None
+    if display_name:
+        candidates.append(display_name)
+    elif name:
         candidates.append(name)
-    if symbol:
+    if symbol and symbol not in _AMBIGUOUS_SYMBOLS:
         candidates.append(symbol)
     deduped: list[str] = []
     seen: set[str] = set()
@@ -149,6 +159,6 @@ def _as_sequence(value: Any) -> Sequence[Any]:
 
 
 def _http_get_json(url: str, *, params: Mapping[str, Any] | None = None) -> Any:
-    response = requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()

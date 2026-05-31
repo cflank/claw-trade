@@ -7,6 +7,7 @@ import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
+from claw_trade.ui_backend.price_alert_service import UiServiceError
 from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.ui_contracts.enums import MarketProfile
@@ -112,6 +113,28 @@ def test_confirm_scheduled_and_price_alert_return_for_user_dto() -> None:
     assert isinstance(alert_result["priceAlert"], PriceAlertForUser)
 
 
+def test_default_price_alert_provider_fails_instead_of_returning_zero_quote() -> None:
+    controller, _queue, _runner, recognizer = _build_controller()
+    draft = recognizer.classify_user_intent(
+        text="BTC 高于 70000 提醒我",
+        source_message_id="m-default-alert-provider",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+    result = controller.confirm_intent_draft(
+        request_id="c-default-alert-provider",
+        draft_id=draft.draft_id,
+        decision="confirm",
+    )
+
+    with pytest.raises(UiServiceError, match="不能用默认价格完成检查"):
+        controller._price_alert_service.evaluate_price_alert(
+            price_alert_id=result["priceAlert"].priceAlertId,
+            request_id="check-default-alert-provider",
+        )
+
+
 def test_confirm_request_id_is_idempotent() -> None:
     controller, _queue, runner, recognizer = _build_controller()
     draft = recognizer.classify_user_intent(
@@ -126,6 +149,56 @@ def test_confirm_request_id_is_idempotent() -> None:
     second = controller.confirm_intent_draft(request_id="same-1", draft_id=draft.draft_id, decision="confirm")
     assert first == second
     assert runner.calls == 1
+
+
+def test_confirmation_override_resolves_code_with_selected_market_first() -> None:
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+    controller = ConfirmationController(queue, approved_profiles={"CN_A", "US", "HK", "CRYPTO"})
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="/report AAPL",
+        source_message_id="m-override-market",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    result = controller.confirm_intent_draft(
+        request_id="override-market",
+        draft_id=draft.draft_id,
+        decision="confirm",
+        overrides={"instrumentCode": "AR", "market": "CRYPTO"},
+    )
+
+    assert result["status"] == "confirmed"
+    queued = queue.get_task_for_testing(result["task"]["taskId"])
+    assert queued is not None
+    assert queued.instrument_code == "AR/USDT"
+    assert queued.market == "CRYPTO"
+
+
+def test_confirmation_override_rejects_numeric_code_for_us_market() -> None:
+    controller, queue, runner, recognizer = _build_controller()
+    draft = recognizer.classify_user_intent(
+        text="/report AAPL",
+        source_message_id="m-override-us",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    with pytest.raises(QueueError) as exc:
+        controller.confirm_intent_draft(
+            request_id="override-us",
+            draft_id=draft.draft_id,
+            decision="confirm",
+            overrides={"instrumentCode": "700", "market": "US"},
+        )
+
+    assert exc.value.code == "INVALID_INPUT"
+    assert runner.calls == 0
+    assert queue.get_report_queue_snapshot_for_user()["queuedCount"] == 0
 
 
 @pytest.mark.parametrize("profile", ["HK", "CRYPTO"])

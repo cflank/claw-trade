@@ -7,6 +7,7 @@ from pymongo.errors import PyMongoError
 
 from claw_trade.data_gateway.errors import DataGatewayError, DataGatewayErrorCode
 from claw_trade.data_gateway.models import OpenBBProviderHttpEvidence, ProviderKind, ProviderStatus, SourceRole
+from claw_trade.data_gateway.providers.managed_http import redact_headers, redact_url
 
 from .mongo import OPENBB_PROVIDER_HTTP_EVIDENCE
 
@@ -52,7 +53,8 @@ def _serialize_http_evidence(evidence: OpenBBProviderHttpEvidence) -> dict[str, 
     data["provider_kind"] = evidence.provider_kind.value
     data["source_role"] = evidence.source_role.value
     data["status"] = evidence.status.value
-    data["response_headers_summary"] = dict(evidence.response_headers_summary)
+    data["source_url"] = redact_url(evidence.source_url)
+    data["response_headers_summary"] = redact_headers(evidence.response_headers_summary)
     return data
 
 
@@ -72,9 +74,9 @@ def _deserialize_http_evidence(doc: dict[str, Any]) -> OpenBBProviderHttpEvidenc
         requested_at=str(doc["requested_at"]),
         finished_at=str(doc["finished_at"]),
         http_method=str(doc["http_method"]),
-        source_url=doc.get("source_url"),
+        source_url=redact_url(doc.get("source_url")),
         response_status_code=doc.get("response_status_code"),
-        response_headers_summary=dict(doc.get("response_headers_summary") or {}),
+        response_headers_summary=redact_headers(doc.get("response_headers_summary") or {}),
         provider_request_id=doc.get("provider_request_id"),
         latency_ms=int(doc["latency_ms"]),
         status=ProviderStatus(str(doc["status"])),

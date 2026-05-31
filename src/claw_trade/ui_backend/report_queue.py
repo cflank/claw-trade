@@ -50,6 +50,7 @@ class ReportTask:
     finished_at: str | None = None
     progress: dict[str, Any] | None = None
     completed_report_saved: bool = False
+    origin_context_id: str | None = None
 
 
 class ReportTaskQueue:
@@ -70,7 +71,14 @@ class ReportTaskQueue:
         self._right_rail_active: set[str] = set()
         self._last_terminal_task_id: str | None = None
 
-    def enqueue_report_task(self, *, request_id: str, task_input: dict[str, Any], source: str) -> dict[str, Any]:
+    def enqueue_report_task(
+        self,
+        *,
+        request_id: str,
+        task_input: dict[str, Any],
+        source: str,
+        origin_context_id: str | None = None,
+    ) -> dict[str, Any]:
         if request_id in self._enqueue_idempotency:
             return self._enqueue_idempotency[request_id]
         dedupe_key = self._build_dedupe_key(task_input)
@@ -103,13 +111,15 @@ class ReportTaskQueue:
             dedupe_key=dedupe_key,
             priority=100 if source == "manual" else 10,
             created_at=now,
+            origin_context_id=origin_context_id,
         )
         self._tasks[task.task_id] = task
         self._right_rail_active.add(task.task_id)
         self._refresh_queue_positions()
         self.start_next_report_task_if_idle()
+        queue_snapshot = self.get_report_queue_snapshot_for_user()
         payload = {"task": self.to_report_task_for_user(task), "deduped": False}
-        payload["queueSnapshot"] = self.get_report_queue_snapshot_for_user()
+        payload["queueSnapshot"] = queue_snapshot
         self._enqueue_idempotency[request_id] = payload
         return payload
 
@@ -293,6 +303,11 @@ class ReportTaskQueue:
 
     def get_task_for_testing(self, task_id: str) -> ReportTask | None:
         return self._tasks.get(task_id)
+
+    def set_task_origin_context(self, task_id: str, context_id: str) -> None:
+        task = self._tasks.get(task_id)
+        if task is not None:
+            task.origin_context_id = context_id
 
     def right_rail_active_task_ids(self) -> set[str]:
         return set(self._right_rail_active)

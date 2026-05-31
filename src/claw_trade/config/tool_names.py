@@ -45,6 +45,7 @@ def load_tool_registry() -> ToolRegistryResult:
             "claw_get_policy_pack": ("claw_get_policy_pack",),
             "claw_get_hot_money_pack": ("claw_get_hot_money_pack",),
             "claw_get_lockup_pack": ("claw_get_lockup_pack",),
+            "selection_candidate_pack": ("claw_get_selection_candidate_pack",),
             # 这里是 intent 到 provider-visible 工具名的边界：stage policy 保留 intent，
             # 但最终发给模型可见的工具名必须对齐 OpenViking 设计合同。
             "openviking_read": ("openviking_read_with_capability",),

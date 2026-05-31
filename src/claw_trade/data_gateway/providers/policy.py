@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import quote
 from xml.etree import ElementTree
-
-import requests
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -24,7 +22,10 @@ from claw_trade.data_gateway.models import (
     ProviderStatus,
     SourceRole,
 )
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
 from claw_trade.data_gateway.providers.base import ProviderAdapter
+from claw_trade.data_gateway.providers.cninfo_utils import cninfo_stock_query
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
@@ -277,17 +278,17 @@ def _build_policy_params(*, request: PackRequest) -> Mapping[str, Any]:
 
 
 def _fetch_cn_a_policy_official(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    ticker = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
+    stock = cninfo_stock_query(str(params.get("ticker", "")))
     start_date = str(params.get("start_date", ""))
     end_date = str(params.get("end_date", ""))
     url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
     payload = {
         "pageNum": 1,
         "pageSize": 20,
-        "column": "szse",
+        "column": stock.column,
         "tabName": "fulltext",
-        "plate": "",
-        "stock": ticker,
+        "plate": stock.plate,
+        "stock": stock.stock,
         "searchkey": "政策 监管",
         "secid": "",
         "category": "",
@@ -297,7 +298,7 @@ def _fetch_cn_a_policy_official(*, params: Mapping[str, Any]) -> tuple[tuple[Map
         "sortType": "",
         "isHLtitle": "true",
     }
-    response = requests.post(
+    response = managed_requests.post(
         url,
         data=payload,
         headers={**_DEFAULT_HEADERS, "X-Requested-With": "XMLHttpRequest"},
@@ -324,9 +325,9 @@ def _fetch_cn_a_policy_news(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping
     ticker = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
     query = quote(f"{ticker} 政策 监管")
     url = f"https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html?keyword={query}"
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
-    body = response.json()
+    body = _parse_eastmoney_newsapi_payload(response.text)
     items = body.get("LivesList") or body.get("items") or ()
     rows = tuple(
         {
@@ -345,9 +346,9 @@ def _fetch_cn_a_policy_news(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping
 def _fetch_cn_a_policy_macro(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
     query = quote("中国 宏观 政策")
     url = f"https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html?keyword={query}"
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
-    body = response.json()
+    body = _parse_eastmoney_newsapi_payload(response.text)
     items = body.get("LivesList") or body.get("items") or ()
     rows = tuple(
         {
@@ -368,7 +369,7 @@ def _fetch_cn_a_policy_discovery(*, params: Mapping[str, Any]) -> tuple[tuple[Ma
     company_name = str(params.get("company_name", "")).strip()
     query = quote(" ".join(part for part in (ticker, company_name, "政策", "监管") if part))
     url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     root = ElementTree.fromstring(response.text)
     rows: list[Mapping[str, Any]] = []
@@ -455,6 +456,24 @@ def _pick_first(row: Mapping[str, Any], *keys: str) -> str | None:
         if text:
             return text
     return None
+
+
+def _parse_eastmoney_newsapi_payload(text: str) -> Mapping[str, Any]:
+    payload = text.strip()
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        if payload.startswith("var "):
+            payload = payload[4:].strip()
+        if payload.startswith("ajaxResult"):
+            _name, _sep, payload = payload.partition("=")
+            payload = payload.strip()
+        if payload.endswith(";"):
+            payload = payload[:-1].strip()
+        parsed = json.loads(payload)
+    if not isinstance(parsed, Mapping):
+        raise RuntimeError("eastmoney newsapi payload is not an object")
+    return parsed
 
 
 def _stable_request_id(*, spec: ProviderCallSpec, params: Mapping[str, Any]) -> str:

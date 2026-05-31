@@ -100,4 +100,4 @@ def test_data_source_env_allowlist_is_declared_for_supported_builtin_types() -> 
     keys = allowed_data_source_env_keys()
     assert "TUSHARE_TOKEN" in keys
     assert "COINGLASS_API_KEY" in keys
-
+    assert "COINGLASS_API_HEADER_NAME" in keys

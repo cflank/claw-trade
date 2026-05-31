@@ -90,6 +90,18 @@ NODE
 
 load_runtime_env_files_into_process_env
 
+load_mongo_ui_settings_into_process_env() {
+  local exported_count=0
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    export "${key}=${value}"
+    exported_count=$(( exported_count + 1 ))
+  done < <(
+    cd "${ROOT_DIR}"
+    uv run python -m claw_trade.runtime.settings_projection
+  )
+  printf '[INFO] 已加载 Mongo UI 设置：%s 项\n' "${exported_count}"
+}
+
 RUNTIME_DIR="${ROOT_DIR}/.runtime/dev-services"
 LOG_DIR="${RUNTIME_DIR}/logs"
 PID_DIR="${RUNTIME_DIR}/pids"
@@ -126,8 +138,13 @@ OPENVIKING_MCP_URL="${OPENVIKING_MCP_URL:-http://${OPENVIKING_MCP_HOST}:${OPENVI
 OPENVIKING_WORKSPACE="${OPENVIKING_WORKSPACE:-workflow}"
 OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
 OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/third_party/openclaw/openclaw.mjs}"
+OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/third_party/openclaw}"
+OPENCLAW_CONTROL_UI_INDEX="${OPENCLAW_CONTROL_UI_INDEX:-${OPENCLAW_PACKAGE_DIR}/dist/control-ui/index.html}"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${RUNTIME_DIR}/openclaw-state}"
+OPENCLAW_DEFAULT_STATE_DIR="${RUNTIME_DIR}/openclaw-state"
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
+OPENCLAW_WEIXIN_PLUGIN_ID="${OPENCLAW_WEIXIN_PLUGIN_ID:-openclaw-weixin}"
+OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"
 OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-}"
@@ -147,7 +164,7 @@ CLAW_TRADE_OPENVIKING_VECTORIZE="${CLAW_TRADE_OPENVIKING_VECTORIZE:-0}"
 CLAW_TRADE_OPENVIKING_VECTORIZE_REASON="${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON:-}"
 export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED CLAW_TRADE_OPENVIKING_VECTORIZE CLAW_TRADE_OPENVIKING_VECTORIZE_REASON
 CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-}"
-CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-5000}"
+CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-60000}"
 CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-probe-$(date -u +%Y%m%d%H%M%S)-$RANDOM}"
 CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
@@ -343,6 +360,146 @@ start_local_mongodb_if_needed() {
   fi
 }
 
+ensure_openclaw_control_ui_assets() {
+  if [[ -f "${OPENCLAW_CONTROL_UI_INDEX}" ]]; then
+    return 0
+  fi
+  if [[ ! -d "${OPENCLAW_PACKAGE_DIR}" ]]; then
+    log_error "OpenClaw 目录不存在，无法构建设备界面：${OPENCLAW_PACKAGE_DIR}"
+    exit 1
+  fi
+  if ! command -v pnpm >/dev/null 2>&1; then
+    log_error "OpenClaw 设备界面资源不存在，且未找到 pnpm，无法执行 pnpm ui:build"
+    exit 1
+  fi
+
+  log_info "OpenClaw 设备界面资源不存在，执行 pnpm ui:build"
+  (
+    cd "${OPENCLAW_PACKAGE_DIR}"
+    pnpm ui:build
+  )
+  if [[ ! -f "${OPENCLAW_CONTROL_UI_INDEX}" ]]; then
+    log_error "OpenClaw 设备界面构建后仍未找到：${OPENCLAW_CONTROL_UI_INDEX}"
+    exit 1
+  fi
+}
+
+read_openclaw_plugin_state() {
+  local plugins_json_path="$1"
+  local plugin_id="$2"
+  OPENCLAW_PLUGINS_JSON_PATH_VALUE="${plugins_json_path}" \
+  OPENCLAW_PLUGIN_ID_VALUE="${plugin_id}" \
+    node <<'NODE'
+const fs = require("node:fs");
+const pluginsJsonPath = process.env.OPENCLAW_PLUGINS_JSON_PATH_VALUE;
+const pluginId = process.env.OPENCLAW_PLUGIN_ID_VALUE;
+
+let raw = "";
+try {
+  raw = fs.readFileSync(pluginsJsonPath, "utf8");
+} catch {
+  process.stdout.write("missing");
+  process.exit(0);
+}
+
+let parsed = null;
+try {
+  parsed = JSON.parse(raw);
+} catch {
+  process.stdout.write("invalid");
+  process.exit(0);
+}
+
+let plugins = [];
+if (Array.isArray(parsed)) {
+  plugins = parsed;
+} else if (parsed && Array.isArray(parsed.plugins)) {
+  plugins = parsed.plugins;
+} else if (parsed && Array.isArray(parsed.items)) {
+  plugins = parsed.items;
+}
+
+const plugin = plugins.find((item) => String(item?.id || "").trim() === pluginId);
+if (!plugin) {
+  process.stdout.write("missing");
+  process.exit(0);
+}
+if (plugin.enabled === false) {
+  process.stdout.write("disabled");
+  process.exit(0);
+}
+process.stdout.write("enabled");
+NODE
+}
+
+ensure_openclaw_weixin_plugin_ready() {
+  if [[ ! -x "${OPENCLAW_GATEWAY_CALL_BIN}" ]]; then
+    log_error "OPENCLAW_GATEWAY_CALL_BIN 不可执行：${OPENCLAW_GATEWAY_CALL_BIN}"
+    exit 1
+  fi
+
+  local plugin_list_json="${LOG_DIR}/openclaw-plugins-list.json"
+  local plugin_list_log="${LOG_DIR}/openclaw-plugins-list.log"
+  local plugin_state="missing"
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${OPENCLAW_GATEWAY_CALL_BIN}" plugins list --json >"${plugin_list_json}" 2>"${plugin_list_log}"
+  local list_status=$?
+  set -e
+  if [[ "${list_status}" == "0" ]]; then
+    plugin_state="$(read_openclaw_plugin_state "${plugin_list_json}" "${OPENCLAW_WEIXIN_PLUGIN_ID}")"
+  else
+    log_warn "无法读取 OpenClaw 插件列表（退出码 ${list_status}），继续尝试安装微信插件。日志：${plugin_list_log}"
+  fi
+
+  if [[ "${plugin_state}" == "enabled" ]]; then
+    log_info "微信插件已安装并启用：${OPENCLAW_WEIXIN_PLUGIN_ID}"
+    return 0
+  fi
+
+  if [[ "${plugin_state}" == "disabled" ]]; then
+    log_info "微信插件已安装但未启用，执行启用：${OPENCLAW_WEIXIN_PLUGIN_ID}"
+    set +e
+    OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+    OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+      "${OPENCLAW_GATEWAY_CALL_BIN}" config set "plugins.entries.${OPENCLAW_WEIXIN_PLUGIN_ID}.enabled" true \
+      >"${LOG_DIR}/openclaw-weixin-plugin-enable.log" 2>&1
+    local enable_status=$?
+    set -e
+    if [[ "${enable_status}" != "0" ]]; then
+      log_warn "微信插件启用命令失败（退出码 ${enable_status}），继续启动。日志：${LOG_DIR}/openclaw-weixin-plugin-enable.log"
+    fi
+    return 0
+  fi
+
+  log_info "安装微信插件：${OPENCLAW_WEIXIN_PLUGIN_SPEC}"
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${OPENCLAW_GATEWAY_CALL_BIN}" plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}" \
+    >"${LOG_DIR}/openclaw-weixin-plugin-install.log" 2>&1
+  local install_status=$?
+  set -e
+  if [[ "${install_status}" != "0" ]]; then
+    log_warn "微信插件安装失败（退出码 ${install_status}），继续启动。日志：${LOG_DIR}/openclaw-weixin-plugin-install.log"
+    return 0
+  fi
+
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${OPENCLAW_GATEWAY_CALL_BIN}" config set "plugins.entries.${OPENCLAW_WEIXIN_PLUGIN_ID}.enabled" true \
+    >"${LOG_DIR}/openclaw-weixin-plugin-enable.log" 2>&1
+  local enable_after_install_status=$?
+  set -e
+  if [[ "${enable_after_install_status}" != "0" ]]; then
+    log_warn "微信插件安装后启用失败（退出码 ${enable_after_install_status}），继续启动。日志：${LOG_DIR}/openclaw-weixin-plugin-enable.log"
+    return 0
+  fi
+  log_info "微信插件安装并启用完成：${OPENCLAW_WEIXIN_PLUGIN_ID}"
+}
+
 normalize_ws_health_url() {
   local ws_url="$1"
   local no_trailing="${ws_url%/}"
@@ -461,20 +618,21 @@ supervise_started_services() {
 
 preauthorize_openclaw_gateway_cli_scopes() {
   local preauth_log="${LOG_DIR}/openclaw-gateway-scope-preauth.log"
+  local preauth_retry_log="${LOG_DIR}/openclaw-gateway-scope-preauth-retry.log"
+  local approve_log="${LOG_DIR}/openclaw-gateway-scope-approve.log"
+  local approve_state_log="${LOG_DIR}/openclaw-gateway-scope-approve-state.log"
   local -a preauth_cmd=(
     "${OPENCLAW_GATEWAY_CALL_BIN}"
     gateway
     call
-    agent.runSingleWorker
+    update.status
     --timeout
     "10000"
     --params
-    '{"command":{}}'
+    '{}'
     --json
     --scope
-    operator.read
-    --scope
-    operator.write
+    operator.admin
   )
   if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
     preauth_cmd+=(--url "${OPENCLAW_GATEWAY_URL}" --token "${OPENCLAW_GATEWAY_TOKEN}")
@@ -492,17 +650,109 @@ preauthorize_openclaw_gateway_cli_scopes() {
     log_info "OpenClaw CLI scope 预授权完成。"
     return 0
   fi
-  if grep -Eiq 'invalid params|invalid param|-32602|validation|required property|command' "${preauth_log}"; then
-    log_info "OpenClaw CLI scope 预授权完成。"
-    return 0
-  fi
   if grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_log}"; then
-    log_warn "OpenClaw CLI scope 预授权需要设备 scope 升级；将由 UI workflow runner 按 Invest 链路在真实调用时批准并重试。"
-    return 0
+    local request_id
+    request_id="$(extract_openclaw_pairing_request_id "${preauth_log}")"
+    if [[ -z "${request_id}" ]]; then
+      log_error "OpenClaw CLI scope 预授权需要设备批准，但日志中没有可批准的 requestId。日志：${preauth_log}"
+      tail -n 40 "${preauth_log}" >&2 || true
+      exit 1
+    fi
+    log_info "OpenClaw CLI scope 预授权需要本机设备批准，正在批准 requestId=${request_id}"
+    set +e
+    OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+    OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+      "${OPENCLAW_GATEWAY_CALL_BIN}" devices approve "${request_id}" >"${approve_log}" 2>&1
+    local approve_status=$?
+    set -e
+    if [[ "${approve_status}" != "0" ]]; then
+      local approval_request_id
+      approval_request_id="$(extract_openclaw_pairing_request_id "${approve_log}")"
+      if [[ -z "${approval_request_id}" ]]; then
+        log_error "OpenClaw 设备批准失败（requestId=${request_id}），且没有新的可批准 requestId。日志：${approve_log}"
+        tail -n 40 "${approve_log}" >&2 || true
+        exit 1
+      fi
+      log_warn "OpenClaw 设备批准命令自身需要本机权限升级，正在直接批准当前 requestId=${approval_request_id}"
+      approve_openclaw_pairing_request_from_state "${approval_request_id}" "${approve_state_log}"
+    fi
+    set +e
+    OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+    OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+      "${preauth_cmd[@]}" >"${preauth_retry_log}" 2>&1
+    local retry_status=$?
+    set -e
+    if [[ "${retry_status}" == "0" ]]; then
+      log_info "OpenClaw CLI scope 预授权完成。"
+      return 0
+    fi
+    log_error "OpenClaw CLI scope 预授权批准后重试仍失败。日志：${preauth_retry_log}"
+    tail -n 40 "${preauth_retry_log}" >&2 || true
+    exit 1
   fi
   log_error "OpenClaw CLI scope 预授权失败。日志：${preauth_log}"
   tail -n 40 "${preauth_log}" >&2 || true
   exit 1
+}
+
+approve_openclaw_pairing_request_from_state() {
+  local request_id="$1"
+  local output_log="$2"
+  local modules=("${OPENCLAW_PACKAGE_DIR}"/dist/device-pairing-*.js)
+  if [[ ! -f "${modules[0]}" ]]; then
+    log_error "OpenClaw device-pairing dist module 不存在，请先构建 OpenClaw。"
+    exit 1
+  fi
+  set +e
+  OPENCLAW_DEVICE_PAIRING_MODULE_VALUE="${modules[0]}" \
+  OPENCLAW_PAIRING_REQUEST_ID_VALUE="${request_id}" \
+  OPENCLAW_PAIRING_STATE_DIR_VALUE="${OPENCLAW_STATE_DIR}" \
+    node --input-type=module - >"${output_log}" 2>&1 <<'NODE'
+const mod = await import(process.env.OPENCLAW_DEVICE_PAIRING_MODULE_VALUE);
+const approveDevicePairing = mod.approveDevicePairing ?? mod.n ?? mod.t;
+if (typeof approveDevicePairing !== "function") {
+  throw new Error("approveDevicePairing export not found");
+}
+const requestId = process.env.OPENCLAW_PAIRING_REQUEST_ID_VALUE;
+const stateDir = process.env.OPENCLAW_PAIRING_STATE_DIR_VALUE;
+const result = await approveDevicePairing(requestId, { callerScopes: ["operator.admin"] }, stateDir);
+if (!result || result.status !== "approved") {
+  throw new Error(`approval failed: ${JSON.stringify(result ?? null)}`);
+}
+process.stdout.write(JSON.stringify({ status: result.status, requestId: result.requestId ?? requestId }));
+NODE
+  local status=$?
+  set -e
+  if [[ "${status}" != "0" ]]; then
+    log_error "OpenClaw 本机设备批准失败（requestId=${request_id}）。日志：${output_log}"
+    tail -n 40 "${output_log}" >&2 || true
+    exit 1
+  fi
+}
+
+extract_openclaw_pairing_request_id() {
+  local input_log="$1"
+  OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" node <<'NODE'
+const fs = require("node:fs");
+const logPath = process.env.OPENCLAW_PAIRING_LOG_PATH_VALUE;
+let text = "";
+try {
+  text = fs.readFileSync(logPath, "utf8");
+} catch {
+  process.exit(0);
+}
+const patterns = [
+  /requestId["']?\s*[:=]\s*["']?([0-9A-Za-z-]{16,})/i,
+  /request id\s*[:=]\s*["']?([0-9A-Za-z-]{16,})/i,
+];
+for (const pattern of patterns) {
+  const match = text.match(pattern);
+  if (match?.[1]) {
+    process.stdout.write(match[1]);
+    process.exit(0);
+  }
+}
+NODE
 }
 
 prepare_openclaw_trade_agent_config() {
@@ -513,6 +763,13 @@ prepare_openclaw_trade_agent_config() {
   ROOT_DIR_VALUE="${ROOT_DIR}" \
   OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}" \
   OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER:-}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_MODEL_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_MODEL:-}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_API_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_API:-}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_API_KEY_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_API_KEY:-}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_BASE_URL_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_BASE_URL:-}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_MODEL_ID_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_MODEL_ID:-}" \
+  CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_NAME_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_NAME:-}" \
   CLAW_TRADE_LLM_PROVIDER_VALUE="${CLAW_TRADE_LLM_PROVIDER}" \
   CLAW_TRADE_LLM_MODEL_VALUE="${CLAW_TRADE_LLM_MODEL}" \
   DEEPSEEK_BASE_URL_VALUE="${DEEPSEEK_BASE_URL}" \
@@ -522,6 +779,13 @@ const fs = require("node:fs");
 const rootDir = process.env.ROOT_DIR_VALUE;
 const outputPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
 const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;
+const mongoReportProvider = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE || "").trim().toLowerCase();
+const mongoReportModel = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_MODEL_VALUE || "").trim();
+const mongoReportApi = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_API_VALUE || "").trim();
+const mongoReportApiKey = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_API_KEY_VALUE || "").trim();
+const mongoReportBaseUrl = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_BASE_URL_VALUE || "").trim();
+const mongoReportProviderModelId = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_MODEL_ID_VALUE || "").trim();
+const mongoReportProviderName = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_NAME_VALUE || "").trim();
 const configuredProvider = String(process.env.CLAW_TRADE_LLM_PROVIDER_VALUE || "").trim().toLowerCase();
 const configuredPrimaryModel = String(process.env.CLAW_TRADE_LLM_MODEL_VALUE || "").trim();
 const deepseekBaseUrl = String(process.env.DEEPSEEK_BASE_URL_VALUE || "https://api.deepseek.com").trim();
@@ -543,12 +807,26 @@ const workers = [
   "risk_moderator",
   "portfolio_manager",
   "report_polisher",
+  "selection_strategist",
+  "selection_skeptic",
+  "selection_manager",
+  "selection_portfolio_manager",
 ];
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function readExistingOpenClawConfig(outputPath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(outputPath, "utf8"));
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const existingConfig = readExistingOpenClawConfig(outputPath);
 const llmIdleTimeoutSeconds = Number.parseInt(String(rawLlmIdleTimeoutSeconds ?? ""), 10);
 if (!Number.isInteger(llmIdleTimeoutSeconds) || llmIdleTimeoutSeconds <= 0) {
   console.error(
@@ -575,8 +853,7 @@ function resolveProjectLlmConfig() {
     qwenApiKey,
   });
   if (!selectedModel) {
-    console.error("[ERROR] .env.local 缺少项目 LLM 配置：当前支持 DEEPSEEK_API_KEY、QWEN_API_KEY 或 CLAW_TRADE_LLM_MODEL。");
-    process.exit(1);
+    return null;
   }
   if (selectedModel.startsWith("deepseek/")) {
     if (!deepseekApiKey) {
@@ -632,6 +909,31 @@ function resolveProjectLlmConfig() {
     console.error(`[ERROR] 当前 .env.local LLM provider 暂未接入 OpenClaw runtime 配置生成：${selectedModel}`);
     process.exit(1);
   }
+}
+
+function resolveMongoReportModelConfig() {
+  if (!mongoReportProvider && !mongoReportModel && !mongoReportApiKey) {
+    return null;
+  }
+  if (!mongoReportProvider || !mongoReportModel || !mongoReportApiKey) {
+    console.error("[ERROR] Mongo 报告模型配置不完整：缺少 provider/model/apiKey。");
+    process.exit(1);
+  }
+  const model = normalizeProviderModel(mongoReportProvider, mongoReportModel);
+  const providerModelId = mongoReportProviderModelId || model.split("/").slice(1).join("/").trim();
+  if (!providerModelId) {
+    console.error(`[ERROR] Mongo 报告模型 model 配置非法：${mongoReportModel}`);
+    process.exit(1);
+  }
+  return {
+    providerId: mongoReportProvider,
+    model,
+    providerModelId,
+    providerName: mongoReportProviderName || providerModelId,
+    apiKey: mongoReportApiKey,
+    baseUrl: mongoReportBaseUrl,
+    api: mongoReportApi || "openai-completions",
+  };
 }
 
 function firstNonEmpty(...values) {
@@ -694,7 +996,21 @@ function normalizeProviderModel(provider, model) {
   }
   return `${trimmedProvider}/${trimmedModel}`;
 }
-const llm = resolveProjectLlmConfig();
+const llm = resolveMongoReportModelConfig() || resolveProjectLlmConfig();
+const existingModelsConfig = isPlainObject(existingConfig.models) ? existingConfig.models : {};
+const existingProviders = isPlainObject(existingModelsConfig.providers) ? existingModelsConfig.providers : {};
+const existingAgentsConfig = isPlainObject(existingConfig.agents) ? existingConfig.agents : {};
+const existingDefaults = isPlainObject(existingAgentsConfig.defaults) ? existingAgentsConfig.defaults : {};
+const existingPluginsConfig = isPlainObject(existingConfig.plugins) ? existingConfig.plugins : {};
+const existingPluginEntries = isPlainObject(existingPluginsConfig.entries) ? existingPluginsConfig.entries : {};
+const hasSavedLlmConfig = Object.keys(existingProviders).length > 0 || Boolean(existingDefaults.model);
+if (!llm && !hasSavedLlmConfig) {
+  console.error("[WARN] OpenClaw LLM 未配置：仅启动设置/诊断 UI；报告执行会继续由报告模型 gate 阻断。");
+} else if (!llm) {
+  console.error("[INFO] OpenClaw LLM 使用已保存配置；.env.local 未覆盖。");
+} else if (mongoReportProvider && mongoReportModel && mongoReportApiKey) {
+  console.error("[INFO] OpenClaw LLM 使用 Mongo UI 设置。");
+}
 
 function readWorkerMountedSkills(workerId) {
   const manifestPath = `${rootDir}/agents/${workerId}/skills/manifest.yaml`;
@@ -741,55 +1057,104 @@ const mergedWorkers = workers.map((workerId) => {
 });
 
 const mergedProviders = {
-  [llm.providerId]: {
-    baseUrl: llm.baseUrl,
-    apiKey: llm.apiKey,
-    api: "openai-completions",
-    timeoutSeconds: llmIdleTimeoutSeconds,
-    models: [
-      {
-        id: llm.providerModelId,
-        name: llm.providerName,
-        reasoning: false,
-        input: ["text"],
-        contextWindow: llm.contextWindow,
-        maxTokens: llm.maxTokens,
+  ...existingProviders,
+  ...(llm
+    ? {
+      [llm.providerId]: {
+        ...(llm.baseUrl ? { baseUrl: llm.baseUrl } : {}),
+        apiKey: llm.apiKey,
+        api: llm.api || "openai-completions",
+        timeoutSeconds: llmIdleTimeoutSeconds,
+        models: [
+          {
+            id: llm.providerModelId,
+            name: llm.providerName,
+            reasoning: false,
+            input: ["text"],
+            ...(llm.contextWindow ? { contextWindow: llm.contextWindow } : {}),
+            ...(llm.maxTokens ? { maxTokens: llm.maxTokens } : {}),
+          },
+        ],
       },
-    ],
-  },
+    }
+    : {}),
 };
 const mergedModels = {
+  ...existingModelsConfig,
   providers: mergedProviders,
 };
 const mergedDefaults = {
+  ...existingDefaults,
   workspace: `${rootDir}/agents`,
-  model: {
+  skipBootstrap: true,
+};
+if (llm) {
+  mergedDefaults.model = {
     primary: llm.model,
-  },
-  models: {
+  };
+  mergedDefaults.models = {
     [llm.model]: {
       alias: llm.providerName,
     },
-  },
-  skipBootstrap: true,
-};
+  };
+}
 const clawTradeFrontlinePluginPath = `${rootDir}/openclaw_plugins/claw-trade-frontline-tools`;
+const clawTradeSelectionPluginPath = `${rootDir}/openclaw_plugins/claw-trade-selection-tools`;
+const existingFrontlinePluginEntry = isPlainObject(existingPluginEntries["claw-trade-frontline-tools"])
+  ? existingPluginEntries["claw-trade-frontline-tools"]
+  : {};
+const existingSelectionPluginEntry = isPlainObject(existingPluginEntries["claw-trade-selection-tools"])
+  ? existingPluginEntries["claw-trade-selection-tools"]
+  : {};
+const existingWeixinPluginEntry = isPlainObject(existingPluginEntries["openclaw-weixin"])
+  ? existingPluginEntries["openclaw-weixin"]
+  : {};
+const mergedPluginEntries = {
+  ...existingPluginEntries,
+  "claw-trade-frontline-tools": {
+    ...existingFrontlinePluginEntry,
+    enabled: true,
+  },
+  "claw-trade-selection-tools": {
+    ...existingSelectionPluginEntry,
+    enabled: true,
+  },
+  "openclaw-weixin": {
+    ...existingWeixinPluginEntry,
+    enabled: true,
+  },
+};
+if (llm) {
+  const existingLlmPluginEntry = isPlainObject(existingPluginEntries[llm.providerId])
+    ? existingPluginEntries[llm.providerId]
+    : {};
+  mergedPluginEntries[llm.providerId] = {
+    ...existingLlmPluginEntry,
+    enabled: true,
+  };
+}
 const mergedPlugins = {
   enabled: true,
   load: {
-    paths: [clawTradeFrontlinePluginPath],
+    paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath],
   },
-  entries: {
-    [llm.providerId]: {
-      enabled: true,
-    },
-    "claw-trade-frontline-tools": {
-      enabled: true,
-    },
-  },
+  entries: mergedPluginEntries,
 };
 const mergedMcp = {
   servers: {},
+};
+const existingChannels = isPlainObject(existingConfig.channels) ? existingConfig.channels : {};
+const existingWeixinChannelConfig = isPlainObject(existingChannels["openclaw-weixin"])
+  ? existingChannels["openclaw-weixin"]
+  : {};
+const weixinChannelEnabled = existingWeixinChannelConfig.enabled === false ? false : true;
+const mergedChannels = {
+  ...existingChannels,
+  "openclaw-weixin": {
+    ...existingWeixinChannelConfig,
+    enabled: weixinChannelEnabled,
+    replyProgressMessages: true,
+  },
 };
 
 const mergedConfig = {
@@ -803,7 +1168,9 @@ const mergedConfig = {
   },
   models: mergedModels,
   plugins: mergedPlugins,
+  channels: mergedChannels,
   mcp: mergedMcp,
+  ...(isPlainObject(existingConfig.meta) ? { meta: existingConfig.meta } : {}),
 };
 
 fs.mkdirSync(require("node:path").dirname(outputPath), { recursive: true });
@@ -819,9 +1186,15 @@ prepare_openbb_runtime_template() {
 OPENBB_HOME=.runtime/dev-services/openbb/home
 OPENBB_USER_SETTINGS_DIRECTORY=.runtime/dev-services/openbb/user_settings
 OPENBB_LOG_DIRECTORY=.runtime/dev-services/openbb/logs
+OPENBB_AUTO_BUILD=0
 EOF
   if [[ ! -f "${OPENBB_ENV_PATH}" ]]; then
     cp "${OPENBB_ENV_TEMPLATE_PATH}" "${OPENBB_ENV_PATH}"
+  fi
+  if grep -q "^OPENBB_AUTO_BUILD=" "${OPENBB_ENV_PATH}"; then
+    sed -i "s|^OPENBB_AUTO_BUILD=.*|OPENBB_AUTO_BUILD=0|" "${OPENBB_ENV_PATH}"
+  else
+    printf 'OPENBB_AUTO_BUILD=0\n' >> "${OPENBB_ENV_PATH}"
   fi
 }
 
@@ -965,19 +1338,22 @@ kill_port_listener "${OPENVIKING_MCP_PORT}"
 kill_port_listener "${OPENCLAW_GATEWAY_PORT}"
 stop_openclaw_gateway_service
 
-log_info "清理本地运行时审计目录（保留 runs 主目录与 OpenViking data）"
+log_info "清理本地运行时审计目录（保留 runs 主目录、OpenViking data 与 OpenClaw state）"
 mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
-find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_RUNTIME_DIR}" -exec rm -rf {} +
+find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_RUNTIME_DIR}" ! -path "${OPENCLAW_STATE_DIR}" ! -path "${OPENCLAW_DEFAULT_STATE_DIR}" -exec rm -rf {} +
 find "${OPENVIKING_RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_DATA_DIR}" -exec rm -rf {} +
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
 mkdir -p "${OPENCLAW_STATE_DIR}"
 mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+start_local_mongodb_if_needed
+load_mongo_ui_settings_into_process_env
 configure_openviking_embedding_runtime_flags
 prepare_openbb_runtime_template
+ensure_openclaw_control_ui_assets
+ensure_openclaw_weixin_plugin_ready
 prepare_openclaw_trade_agent_config
 prepare_openviking_runtime_config
-start_local_mongodb_if_needed
 
 if [[ ! -x "${OPENCLAW_GATEWAY_CALL_BIN}" ]]; then
   log_error "OPENCLAW_GATEWAY_CALL_BIN 不可执行：${OPENCLAW_GATEWAY_CALL_BIN}"
@@ -1126,44 +1502,50 @@ if ! wait_http_ok_any 90 "${gateway_health_url}"; then
 fi
 preauthorize_openclaw_gateway_cli_scopes
 
-cat > "${RUNTIME_ENV_PATH}" <<EOF
-CLAW_TRADE_OPENCLAW_RUNNER=${CLAW_TRADE_OPENCLAW_RUNNER}
-CLAW_TRADE_OPENVIKING_BACKEND=${CLAW_TRADE_OPENVIKING_BACKEND}
-CLAW_TRADE_OPENVIKING_MCP_STARTED=${openviking_mcp_started}
-CLAW_TRADE_OPENVIKING_PROBE_RUN_ID=${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}
-OPENCLAW_GATEWAY_CALL_BIN=${OPENCLAW_GATEWAY_CALL_BIN}
-OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL}
-OPENCLAW_STATE_DIR=${OPENCLAW_STATE_DIR}
-OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH}
-OPENCLAW_GATEWAY_TIMEOUT_MS=${OPENCLAW_GATEWAY_TIMEOUT_MS}
-OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS=${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}
-OPENCLAW_MARKET_TOOL_PYTHON=${OPENCLAW_MARKET_TOOL_PYTHON}
-CLAW_TRADE_LLM_PROVIDER=${CLAW_TRADE_LLM_PROVIDER}
-CLAW_TRADE_LLM_MODEL=${CLAW_TRADE_LLM_MODEL}
-DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL}
-QWEN_BASE_URL=${QWEN_BASE_URL}
-CLAW_TRADE_UI_INBOUND_URL=${CLAW_TRADE_UI_INBOUND_URL}
-CLAW_TRADE_UI_INBOUND_TIMEOUT_MS=${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}
-UV_CACHE_DIR=${UV_CACHE_DIR}
-UV_LINK_MODE=${UV_LINK_MODE}
-OPENVIKING_ENDPOINT=${OPENVIKING_ENDPOINT}
-OPENVIKING_BASE_URL=${OPENVIKING_BASE_URL}
-OPENVIKING_WORKSPACE=${OPENVIKING_WORKSPACE}
-OPENVIKING_CONFIG_FILE=${OPENVIKING_CONFIG_FILE}
-OPENVIKING_DATA_DIR=${OPENVIKING_DATA_DIR}
-OPENVIKING_WRITE_LOCK_PATH=${OPENVIKING_WRITE_LOCK_PATH}
-CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED=${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED}
-CLAW_TRADE_OPENVIKING_VECTORIZE=${CLAW_TRADE_OPENVIKING_VECTORIZE}
-CLAW_TRADE_OPENVIKING_VECTORIZE_REASON=${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON}
-CN_A_MONGODB_URI=${CN_A_MONGODB_URI}
-CN_A_MONGODB_DATABASE=${CN_A_MONGODB_DATABASE}
-CN_A_MONGODB_CACHE_COLLECTION=${CN_A_MONGODB_CACHE_COLLECTION}
-DATA_GATEWAY_MONGODB_URI=${DATA_GATEWAY_MONGODB_URI}
-DATA_GATEWAY_MONGODB_DATABASE=${DATA_GATEWAY_MONGODB_DATABASE}
-CLAW_TRADE_LOCAL_MONGODB_STARTED=${local_mongodb_started}
-EOF
+write_runtime_env_var() {
+  local key="$1"
+  local value="${2-}"
+  printf '%s=' "${key}" >> "${RUNTIME_ENV_PATH}"
+  printf '%q\n' "${value}" >> "${RUNTIME_ENV_PATH}"
+}
+
+rm -f "${RUNTIME_ENV_PATH}"
+write_runtime_env_var "CLAW_TRADE_OPENCLAW_RUNNER" "${CLAW_TRADE_OPENCLAW_RUNNER}"
+write_runtime_env_var "CLAW_TRADE_OPENVIKING_BACKEND" "${CLAW_TRADE_OPENVIKING_BACKEND}"
+write_runtime_env_var "CLAW_TRADE_OPENVIKING_MCP_STARTED" "${openviking_mcp_started}"
+write_runtime_env_var "CLAW_TRADE_OPENVIKING_PROBE_RUN_ID" "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"
+write_runtime_env_var "OPENCLAW_GATEWAY_CALL_BIN" "${OPENCLAW_GATEWAY_CALL_BIN}"
+write_runtime_env_var "OPENCLAW_GATEWAY_URL" "${OPENCLAW_GATEWAY_URL}"
+write_runtime_env_var "OPENCLAW_STATE_DIR" "${OPENCLAW_STATE_DIR}"
+write_runtime_env_var "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"
+write_runtime_env_var "OPENCLAW_GATEWAY_TIMEOUT_MS" "${OPENCLAW_GATEWAY_TIMEOUT_MS}"
+write_runtime_env_var "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"
+write_runtime_env_var "OPENCLAW_MARKET_TOOL_PYTHON" "${OPENCLAW_MARKET_TOOL_PYTHON}"
+write_runtime_env_var "CLAW_TRADE_LLM_PROVIDER" "${CLAW_TRADE_LLM_PROVIDER}"
+write_runtime_env_var "CLAW_TRADE_LLM_MODEL" "${CLAW_TRADE_LLM_MODEL}"
+write_runtime_env_var "DEEPSEEK_BASE_URL" "${DEEPSEEK_BASE_URL}"
+write_runtime_env_var "QWEN_BASE_URL" "${QWEN_BASE_URL}"
+write_runtime_env_var "CLAW_TRADE_UI_INBOUND_URL" "${CLAW_TRADE_UI_INBOUND_URL}"
+write_runtime_env_var "CLAW_TRADE_UI_INBOUND_TIMEOUT_MS" "${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}"
+write_runtime_env_var "UV_CACHE_DIR" "${UV_CACHE_DIR}"
+write_runtime_env_var "UV_LINK_MODE" "${UV_LINK_MODE}"
+write_runtime_env_var "OPENVIKING_ENDPOINT" "${OPENVIKING_ENDPOINT}"
+write_runtime_env_var "OPENVIKING_BASE_URL" "${OPENVIKING_BASE_URL}"
+write_runtime_env_var "OPENVIKING_WORKSPACE" "${OPENVIKING_WORKSPACE}"
+write_runtime_env_var "OPENVIKING_CONFIG_FILE" "${OPENVIKING_CONFIG_FILE}"
+write_runtime_env_var "OPENVIKING_DATA_DIR" "${OPENVIKING_DATA_DIR}"
+write_runtime_env_var "OPENVIKING_WRITE_LOCK_PATH" "${OPENVIKING_WRITE_LOCK_PATH}"
+write_runtime_env_var "CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED" "${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED}"
+write_runtime_env_var "CLAW_TRADE_OPENVIKING_VECTORIZE" "${CLAW_TRADE_OPENVIKING_VECTORIZE}"
+write_runtime_env_var "CLAW_TRADE_OPENVIKING_VECTORIZE_REASON" "${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON}"
+write_runtime_env_var "CN_A_MONGODB_URI" "${CN_A_MONGODB_URI}"
+write_runtime_env_var "CN_A_MONGODB_DATABASE" "${CN_A_MONGODB_DATABASE}"
+write_runtime_env_var "CN_A_MONGODB_CACHE_COLLECTION" "${CN_A_MONGODB_CACHE_COLLECTION}"
+write_runtime_env_var "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"
+write_runtime_env_var "DATA_GATEWAY_MONGODB_DATABASE" "${DATA_GATEWAY_MONGODB_DATABASE}"
+write_runtime_env_var "CLAW_TRADE_LOCAL_MONGODB_STARTED" "${local_mongodb_started}"
 if [[ "${openviking_mcp_started}" == "1" ]]; then
-  printf 'OPENVIKING_MCP_URL=%s\n' "${OPENVIKING_MCP_URL}" >> "${RUNTIME_ENV_PATH}"
+  write_runtime_env_var "OPENVIKING_MCP_URL" "${OPENVIKING_MCP_URL}"
 fi
 
 log_info "服务已就绪"

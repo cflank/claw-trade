@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 from claw_trade.data_gateway.models import (
     FreshnessPolicy,
     FreshnessStatus,
@@ -14,7 +17,7 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.packs.hot_money import normalize_hot_money_results
-from claw_trade.data_gateway.providers.hot_money import DefaultHotMoneyAdapter
+from claw_trade.data_gateway.providers.hot_money import DefaultHotMoneyAdapter, build_default_hot_money_adapters
 
 
 def _request() -> PackRequest:
@@ -165,3 +168,137 @@ def test_hot_money_northbound_source_claim_matches_ths_hsgt_url(monkeypatch) -> 
     assert fetch.row_count == 2
     rows = fetch.payload["rows"]
     assert rows[0]["amount"] == "15.0"
+
+
+def test_hot_money_tushare_moneyflow_fetches_and_normalizes_when_configured(monkeypatch) -> None:
+    class _Frame:
+        def to_dict(self, orient: str):  # noqa: ANN001
+            assert orient == "records"
+            return [
+                {
+                    "trade_date": "20260521",
+                    "buy_elg_amount": "100",
+                    "buy_lg_amount": "10",
+                    "buy_md_amount": "0",
+                    "buy_sm_amount": "0",
+                    "sell_elg_amount": "70",
+                    "sell_lg_amount": "20",
+                    "sell_md_amount": "0",
+                    "sell_sm_amount": "0",
+                }
+            ]
+
+    class _Pro:
+        def moneyflow(self, *, ts_code, start_date, end_date):  # noqa: ANN001
+            assert ts_code == "600519.SH"
+            assert start_date == "20260501"
+            assert end_date == "20260522"
+            return _Frame()
+
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.providers.hot_money.create_tushare_pro",
+        lambda *, token, env: _Pro(),
+    )
+
+    adapter = next(
+        item
+        for item in build_default_hot_money_adapters(provider_config_version="cfg", env={"TUSHARE_TOKEN": "token"})
+        if item.adapter_id == "hot_money.tushare.moneyflow.cn_a"
+    )
+    spec = adapter.build_call_specs(_request())[0]
+    fetch = adapter.fetch(spec, _request())
+    result = adapter.normalize(spec, fetch)
+
+    assert fetch.source_url == "https://api.tushare.pro#moneyflow"
+    assert result.status == ProviderStatus.REMOTE_SUCCESS
+    assert result.rows[0]["as_of"] == "20260521"
+    assert result.rows[0]["amount"] == "200000.0"
+
+
+def test_hot_money_akshare_individual_fund_flow_fetches_and_normalizes(monkeypatch) -> None:
+    class _Frame:
+        def to_dict(self, orient: str):  # noqa: ANN001
+            assert orient == "records"
+            return [
+                {
+                    "日期": "2026-05-21",
+                    "主力净流入-净额": "23000000",
+                    "收盘价": "1660.0",
+                }
+            ]
+
+    captured: dict[str, str] = {}
+
+    def _fake_fund_flow(*, stock: str, market: str) -> _Frame:
+        captured["stock"] = stock
+        captured["market"] = market
+        return _Frame()
+
+    monkeypatch.setitem(sys.modules, "akshare", SimpleNamespace(stock_individual_fund_flow=_fake_fund_flow))
+
+    adapter = next(
+        item
+        for item in build_default_hot_money_adapters(provider_config_version="cfg", env={})
+        if item.adapter_id == "hot_money.akshare.individual_fund_flow.cn_a"
+    )
+    spec = adapter.build_call_specs(_request())[0]
+    fetch = adapter.fetch(spec, _request())
+    result = adapter.normalize(spec, fetch)
+
+    assert captured == {"stock": "600519", "market": "sh"}
+    assert fetch.source_url == "https://akshare.akfamily.xyz/data/stock/stock.html"
+    assert result.status == ProviderStatus.REMOTE_SUCCESS
+    assert result.rows[0]["as_of"] == "2026-05-21"
+    assert result.rows[0]["amount"] == "23000000"
+
+
+def test_hot_money_akshare_rank_and_sector_flow_fetches_and_normalizes(monkeypatch) -> None:
+    class _Frame:
+        def __init__(self, rows):  # noqa: ANN001
+            self._rows = rows
+
+        def to_dict(self, orient: str):  # noqa: ANN001
+            assert orient == "records"
+            return self._rows
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_rank(*, indicator: str) -> _Frame:
+        calls.append(("rank", indicator))
+        return _Frame([{"名称": "贵州茅台", "今日主力净流入-净额": "1000"}])
+
+    def _fake_sector(*, indicator: str, sector_type: str) -> _Frame:
+        calls.append((indicator, sector_type))
+        return _Frame([{"名称": sector_type, "今日主力净流入-净额": "2000"}])
+
+    monkeypatch.setitem(
+        sys.modules,
+        "akshare",
+        SimpleNamespace(
+            stock_individual_fund_flow_rank=_fake_rank,
+            stock_sector_fund_flow_rank=_fake_sector,
+        ),
+    )
+
+    request = _request()
+    adapters = {
+        item.adapter_id: item
+        for item in build_default_hot_money_adapters(provider_config_version="cfg", env={})
+        if item.adapter_id.startswith("hot_money.akshare.")
+    }
+
+    for adapter_id in (
+        "hot_money.akshare.individual_fund_flow_rank.cn_a",
+        "hot_money.akshare.sector_fund_flow_industry.cn_a",
+        "hot_money.akshare.sector_fund_flow_concept.cn_a",
+    ):
+        adapter = adapters[adapter_id]
+        spec = adapter.build_call_specs(request)[0]
+        fetch = adapter.fetch(spec, request)
+        result = adapter.normalize(spec, fetch)
+        assert result.status == ProviderStatus.REMOTE_SUCCESS
+        assert result.rows[0]["as_of"] == "2026-05-22"
+
+    assert ("rank", "今日") in calls
+    assert ("今日", "行业资金流") in calls
+    assert ("今日", "概念资金流") in calls

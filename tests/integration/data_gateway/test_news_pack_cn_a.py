@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -12,6 +13,7 @@ from claw_trade.data_gateway.models import (
     PackRequest,
     PrioritySource,
     ProviderCallSpec,
+    ProviderCapability,
     ProviderFetch,
     ProviderKind,
     ProviderStatus,
@@ -20,7 +22,110 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.packs.news import NewsPackBuilder
+from claw_trade.data_gateway.packs.service import _GateControlledProviderExecutor
+from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
 from claw_trade.data_gateway.providers.news import build_default_news_adapters, news_capabilities
+from claw_trade.data_gateway.store.attempts import MongoAttemptStore
+from claw_trade.data_gateway.store.cache import MongoCacheStore
+from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
+from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
+from claw_trade.data_gateway.store.rate_limits import MongoRateLimitStore
+from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
+from claw_trade.data_gateway.store.single_flight import MongoSingleFlightCoordinator
+from pymongo.errors import DuplicateKeyError
+
+
+class _Collection:
+    name = "test_collection"
+
+    def __init__(self) -> None:
+        self.docs: dict[str, dict[str, Any]] = {}
+
+    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
+        key = query["_id"]
+        current = self.docs.get(key)
+        if current is None:
+            if not upsert:
+                return
+            current = {}
+        current.update(update.get("$setOnInsert", {}))
+        if "$inc" in update:
+            for field, delta in update["$inc"].items():
+                current[field] = int(current.get(field, 0)) + int(delta)
+        current.update(update.get("$set", {}))
+        if "_id" not in current:
+            current["_id"] = key
+        self.docs[key] = current
+
+    def insert_one(self, doc: dict[str, Any]) -> None:
+        if doc["_id"] in self.docs:
+            raise DuplicateKeyError("duplicate")
+        self.docs[doc["_id"]] = dict(doc)
+
+    def replace_one(self, query: dict[str, Any], doc: dict[str, Any], upsert: bool = False) -> None:
+        key = query["_id"]
+        if key not in self.docs and not upsert:
+            return
+        self.docs[key] = dict(doc)
+
+    def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
+        key = query.get("_id")
+        if not isinstance(key, str):
+            return None
+        doc = self.docs.get(key)
+        if doc is None:
+            return None
+        for field, expected in query.items():
+            if field == "_id":
+                continue
+            if isinstance(expected, dict):
+                if "$lt" in expected and not (doc.get(field) is not None and doc[field] < expected["$lt"]):
+                    return None
+                if "$lte" in expected and not (doc.get(field) is not None and doc[field] <= expected["$lte"]):
+                    return None
+                if "$exists" in expected and ((field in doc) != bool(expected["$exists"])):
+                    return None
+                continue
+            if doc.get(field) != expected:
+                return None
+        return dict(doc)
+
+    def find_one_and_update(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+        *,
+        upsert: bool = False,
+        return_document: Any | None = None,
+    ) -> dict[str, Any] | None:
+        del return_document
+        key = query["_id"]
+        current = self.find_one(query)
+        if current is None and not upsert:
+            return None
+        self.update_one(query if current is not None else {"_id": key}, update, upsert=upsert)
+        return self.find_one({"_id": key})
+
+
+def _helper() -> _GateControlledProviderExecutor:
+    attempt_store = MongoAttemptStore(_Collection())
+    return _GateControlledProviderExecutor(
+        helper=ProviderExecutionEvidenceHelper(
+            raw_store=MongoRawPayloadStore(_Collection()),
+            normalized_store=MongoNormalizedStore(_Collection()),
+            attempt_store=attempt_store,
+            http_evidence_store=MongoProviderHttpEvidenceStore(_Collection()),
+        ),
+        cache_store=MongoCacheStore(_Collection()),
+        rate_limit_store=MongoRateLimitStore(_Collection()),
+        single_flight=MongoSingleFlightCoordinator(
+            collection=_Collection(),
+            attempt_store=attempt_store,
+            wait_timeout_seconds=0.1,
+            poll_interval_seconds=0.001,
+        ),
+        attempt_store=attempt_store,
+    )
 
 
 @dataclass
@@ -31,11 +136,36 @@ class _NewsContractAdapter:
     status: ProviderStatus
     rows: tuple[dict[str, str], ...]
     credential_missing: bool = False
+    market: Market = Market.US
     adapter_kind: str = "project_extension"
     provider_kind: ProviderKind = ProviderKind.PROJECT_EXTENSION
+    endpoint: str | None = None
 
-    def capabilities(self) -> tuple[object, ...]:
-        return ()
+    def capabilities(self) -> tuple[ProviderCapability, ...]:
+        if self.endpoint is None:
+            return ()
+        return (
+            ProviderCapability(
+                provider=self.provider_id,
+                adapter_id=self.adapter_id,
+                provider_kind=self.provider_kind,
+                market=self.market,
+                domain=PackDomain.NEWS,
+                endpoint=self.endpoint,
+                source_role=self.source_role,
+                expected_schema_id=f"{self.provider_id}.news.v1",
+                license_policy_id="personal_research",
+                credential_requirements=(),
+                rate_limit_policy_id="test",
+                cache_ttl_seconds=300,
+                required=True,
+                attempt_required=True,
+                coverage_group=None,
+                coverage_quorum=None,
+                priority=0,
+                priority_source=PrioritySource.SYSTEM_DEFAULT,
+            ),
+        )
 
     def validate_credentials(self) -> CredentialStatus:
         if self.credential_missing:
@@ -102,6 +232,8 @@ def _news_request(market: Market) -> PackRequest:
 
 
 def _news_spec(market: Market, adapter: _NewsContractAdapter, endpoint: str) -> ProviderCallSpec:
+    adapter.market = market
+    adapter.endpoint = endpoint
     return ProviderCallSpec(
         call_key=f"news:{adapter.adapter_id}:{endpoint}",
         provider=adapter.provider_id,
@@ -198,7 +330,7 @@ def assert_news_pack_contract_for_market(market: Market) -> None:
         adapter_id="project.news_schema_drift",
         provider_id="news_schema_drift",
         source_role=SourceRole.OFFICIAL_ORIGINAL,
-        status=ProviderStatus.SCHEMA_INVALID,
+        status=ProviderStatus.FIELD_MISSING,
         rows=({"unexpected": "field"},),
     )
     adapters = (official, macro, search, key_missing, rate_limited, empty, schema_drift)
@@ -209,6 +341,7 @@ def assert_news_pack_contract_for_market(market: Market) -> None:
         request=request,
         run_plan=_run_plan(market, specs),
         adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
     )
 
     assert result.readiness.status == ReadinessStatus.PARTIAL
@@ -223,13 +356,13 @@ def assert_news_pack_contract_for_market(market: Market) -> None:
     assert ProviderStatus.CREDENTIAL_MISSING in statuses
     assert ProviderStatus.RATE_LIMITED in statuses
     assert ProviderStatus.EMPTY in statuses
-    assert ProviderStatus.SCHEMA_INVALID in statuses
+    assert ProviderStatus.FIELD_MISSING in statuses
 
     gap_reasons = {gap.reason.value for gap in result.data_gaps}
     assert "credential_missing" in gap_reasons
     assert "rate_limited" in gap_reasons
     assert "empty" in gap_reasons
-    assert "schema_invalid" in gap_reasons
+    assert "field_missing" in gap_reasons
 
 
 def test_news_pack_cn_a_source_role_contract() -> None:
@@ -268,6 +401,7 @@ def test_news_pack_crypto_search_discovery_does_not_prove_etf_or_institutional_f
         request=_news_request(Market.CRYPTO),
         run_plan=_run_plan(Market.CRYPTO, specs),
         adapters_by_id={official.adapter_id: official, search.adapter_id: search, event.adapter_id: event},
+        provider_execution_helper=_helper(),
     )
 
     assert result.readiness.status == ReadinessStatus.READY
@@ -311,53 +445,20 @@ def test_cn_a_news_market_fact_providers_do_not_fallback_to_search_discovery(mon
             "https://finance.eastmoney.com/",
         ),
     )
-    monkeypatch.setattr(
-        "claw_trade.data_gateway.providers.news._fetch_cls_telegraph",
-        lambda *, limit=20: (
-            ({"title": "财联社快讯", "url": "https://example.com/flash", "published_at": "2026-05-17", "summary": "flash"},),
-            "https://www.cls.cn/nodeapi/telegraphList",
-        ),
-    )
     request = _news_request(Market.CN_A)
     adapters = tuple(adapter for adapter in build_default_news_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
     company = next(adapter for adapter in adapters if adapter.provider_id == "eastmoney_company_news")
-    flash = next(adapter for adapter in adapters if adapter.provider_id == "cls_flash")
 
-    for adapter in (company, flash):
-        spec = adapter.build_call_specs(request)[0]
-        fetch = adapter.fetch(spec, request)
-        normalized = adapter.normalize(spec, fetch)
-        assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    spec = company.build_call_specs(request)[0]
+    fetch = company.fetch(spec, request)
+    normalized = company.normalize(spec, fetch)
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
 
 
-def test_cn_a_news_flash_fetch_no_longer_fails_with_http_get_json_headers_typeerror(monkeypatch) -> None:
-    class _Resp:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "data": {
-                    "roll_data": [
-                        {
-                            "title": "财联社快讯样本",
-                            "shareurl": "https://www.cls.cn/detail/1",
-                            "ctime": "2026-05-17 09:30:00",
-                            "content": "sample",
-                        }
-                    ]
-                }
-            }
-
-    monkeypatch.setattr("claw_trade.data_gateway.providers.news.requests.get", lambda *args, **kwargs: _Resp())
-    request = _news_request(Market.CN_A)
+def test_cn_a_news_cls_flash_removed_from_default_catalog() -> None:
     adapters = tuple(adapter for adapter in build_default_news_adapters(provider_config_version="cfg-v1", env={}) if adapter.market == Market.CN_A)
-    flash = next(adapter for adapter in adapters if adapter.provider_id == "cls_flash")
-    spec = flash.build_call_specs(request)[0]
-
-    fetch = flash.fetch(spec, request)
-    assert fetch.source_url == "https://www.cls.cn/nodeapi/telegraphList"
-    assert fetch.row_count == 1
+    assert all(adapter.provider_id != "cls_flash" for adapter in adapters)
+    assert all(adapter.endpoint != "telegraph" for adapter in adapters)
 
 
 def test_cn_a_news_discovery_provider_id_and_source_url_are_consistent(monkeypatch) -> None:

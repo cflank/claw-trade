@@ -1,17 +1,20 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useId, useState } from 'react';
 
 export function Composer({
   onSend,
   disabled,
   placeholder,
   buttonLabel,
+  hint,
 }: {
   onSend: (text: string) => Promise<void>;
   disabled?: boolean;
   placeholder: string;
   buttonLabel: string;
+  hint?: string;
 }) {
   const [text, setText] = useState('');
+  const hintId = useId();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -25,8 +28,14 @@ export function Composer({
 
   return (
     <form className="ct-composer" onSubmit={submit}>
+      {hint ? (
+        <p className="ct-composer-hint" id={hintId}>
+          {hint}
+        </p>
+      ) : null}
       <input
         aria-label="输入消息"
+        aria-describedby={hint ? hintId : undefined}
         placeholder={placeholder}
         disabled={disabled}
         value={text}

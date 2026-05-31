@@ -17,6 +17,10 @@ from claw_trade.data_gateway.ui_runtime_checks import (
     build_data_source_health_tester,
     build_price_alert_quote_provider,
 )
+from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
+from claw_trade.selection.confirmation import SelectionConfirmationController
+from claw_trade.selection.controller import SelectionController
+from claw_trade.selection.store import restore_selection_run_store
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
 from claw_trade.ui_backend.channel_text_inbound import ChannelTextInboundController
 from claw_trade.ui_backend.chart_evidence import get_report_chart_evidence
@@ -24,20 +28,32 @@ from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.data_source_settings import (
     DataSourceSettingsService,
-    allowed_data_source_env_keys,
 )
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
+from claw_trade.ui_backend.mongo_settings_store import (
+    MongoDataSourceStore,
+    MongoEmbeddingConfigStore,
+    MongoReportModelConfigStore,
+    MongoReportModelStatusStore,
+    MongoSecretStore,
+    UI_DATA_SOURCE_SETTINGS_COLLECTION,
+    UI_EMBEDDING_SETTINGS_COLLECTION,
+    UI_REPORT_MODEL_CONFIG_COLLECTION,
+    UI_REPORT_MODEL_STATUS_COLLECTION,
+    UI_SECRET_SETTINGS_COLLECTION,
+    open_ui_settings_database_from_env,
+)
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
-from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
+from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestionService
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.scheduler_service import SchedulerService
-from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, SettingsService
+from claw_trade.ui_backend.settings_service import SettingsService
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
@@ -94,6 +110,9 @@ class _ControlWorkflowRunner:
         except Exception as exc:
             raise RuntimeError("assistant_unavailable") from exc
 
+    def selection_openclaw_client(self) -> OpenClawClient:
+        return OpenClawClient(_SelectionOpenClawRunner(self))
+
     def _require_runner(self):
         if self._runner is not None:
             return self._runner
@@ -104,6 +123,32 @@ class _ControlWorkflowRunner:
                 except Exception as exc:
                     raise RuntimeError("assistant_unavailable") from exc
         return self._runner
+
+    def _require_openclaw_runner(self):  # type: ignore[no-untyped-def]
+        runner = self._require_runner()
+        openclaw = getattr(runner, "openclaw", None)
+        if not isinstance(openclaw, OpenClawClient):
+            raise RuntimeError("assistant_unavailable")
+        openclaw_runner = getattr(openclaw, "_runner", None)
+        if openclaw_runner is None:
+            raise RuntimeError("assistant_unavailable")
+        return openclaw_runner
+
+
+class _SelectionOpenClawRunner:
+    def __init__(self, workflow_runner: _ControlWorkflowRunner) -> None:
+        self._workflow_runner = workflow_runner
+
+    def probe(self) -> ProbeResult:
+        try:
+            openclaw_runner = self._workflow_runner._require_openclaw_runner()  # noqa: SLF001
+        except Exception as exc:
+            return ProbeResult.failed(f"openclaw probe 失败: {exc}")
+        return openclaw_runner.probe()
+
+    def run_worker(self, payload: dict[str, object]) -> dict[str, object]:
+        openclaw_runner = self._workflow_runner._require_openclaw_runner()  # noqa: SLF001
+        return openclaw_runner.run_worker(payload)
 
 
 class _ReportQaGatewayAdapter:
@@ -146,6 +191,7 @@ class UiHttpServices:
     scheduler_service: SchedulerService
     price_alert_service: PriceAlertService
     settings_service: SettingsService
+    selection_confirmation: SelectionConfirmationController
 
 
 def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices:
@@ -157,13 +203,25 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         password=settings.gateway_password,
     )
     report_settings = _load_report_settings()
+    ui_settings_db = open_ui_settings_database_from_env()
+    llm_bridge = LlmSettingsBridge(
+        rpc_client,
+        embedding_config_store=MongoEmbeddingConfigStore(ui_settings_db[UI_EMBEDDING_SETTINGS_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+        report_model_status_store=MongoReportModelStatusStore(ui_settings_db[UI_REPORT_MODEL_STATUS_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+        report_model_config_store=MongoReportModelConfigStore(ui_settings_db[UI_REPORT_MODEL_CONFIG_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+    )
     run_root = Path(report_settings.run_dir).resolve()
     repository = ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json")
     restore_completed_workflow_reports(repository, run_root)
+    workflow_runner = _ControlWorkflowRunner(run_dir=run_root)
     queue = ReportTaskQueue(
-        ReportWorkflowBridge(
-            _ControlWorkflowRunner(run_dir=run_root),
-        ),
+        ReportWorkflowBridge(workflow_runner),
         completed_report_writer=lambda task, workflow_state: _save_completed_workflow_report(
             repository,
             task=task,
@@ -186,11 +244,23 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         queue,
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
+        report_model_ready_checker=llm_bridge.assert_report_model_ready,
     )
+    selection_store = restore_selection_run_store()
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(rpc_client),
         recognizer=IntentRecognizer(),
         confirmation=confirmation,
+        queue=queue,
+        settings=report_settings,
+        report_model_ready_checker=llm_bridge.assert_report_model_ready,
+        selection_controller=SelectionController(
+            store=selection_store,
+            openclaw=workflow_runner.selection_openclaw_client(),
+        ),
+    )
+    selection_confirmation = SelectionConfirmationController(
+        store=selection_store,
         queue=queue,
         settings=report_settings,
     )
@@ -203,15 +273,17 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         context_retriever=ReportContextRetriever(run_root=run_root),
     )
     data_source_settings = DataSourceSettingsService(
-        env_writer=EnvLocalAllowlistWriter(
-            Path(".env.local"),
-            allowed_keys=allowed_data_source_env_keys(),
-        ),
+        data_source_store=MongoDataSourceStore(ui_settings_db[UI_DATA_SOURCE_SETTINGS_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+        secret_store=MongoSecretStore(ui_settings_db[UI_SECRET_SETTINGS_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+        env_writer=None,
         health_tester=build_data_source_health_tester(),
     )
     channel_bridge = ChannelBridge(rpc_client)
     channel_text_inbound = ChannelTextInboundController(chat_controller)
-    llm_bridge = LlmSettingsBridge(rpc_client)
     report_notification_service = ReportNotificationService(
         repository,
         summary_builder,
@@ -235,6 +307,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
         settings_service=settings_service,
+        selection_confirmation=selection_confirmation,
     )
 
 

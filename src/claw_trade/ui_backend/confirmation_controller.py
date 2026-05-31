@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Callable
 from typing import Any
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.config.profiles import is_profile_approved
-from claw_trade.ui_backend.intent_recognizer import IntentDraft
-from claw_trade.ui_backend.price_alert_service import PriceAlertService
+from claw_trade.instruments.resolver import resolve_instrument_identity
+from claw_trade.ui_backend.intent_recognizer import IntentDraft, WorkflowSettingsSnapshot
+from claw_trade.ui_backend.price_alert_service import PriceAlertService, UiServiceError
 from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
 from claw_trade.ui_backend.scheduler_service import SchedulerService
 from claw_trade.ui_contracts.enums import IntentKind, MarketProfile
-from claw_trade.workflow.report_request_factory import build_report_run_request
+from claw_trade.workflow.report_request_factory import build_report_run_request, report_display_name
 
 
 class ConfirmationController:
@@ -21,6 +23,7 @@ class ConfirmationController:
         approved_profiles: set[str] | None = None,
         scheduler_service: SchedulerService | None = None,
         price_alert_service: PriceAlertService | None = None,
+        report_model_ready_checker: Callable[[], None] | None = None,
     ) -> None:
         self._queue = queue
         self._approved_profiles = approved_profiles
@@ -29,8 +32,9 @@ class ConfirmationController:
             queue_snapshot_provider=self._queue.get_report_queue_snapshot_for_user,
         )
         self._price_alert_service = price_alert_service or PriceAlertService(
-            quote_provider=lambda _instrument, _market: {"current_price": 0.0, "percent_change": 0.0},
+            quote_provider=_missing_price_alert_quote_provider,
         )
+        self._report_model_ready_checker = report_model_ready_checker
         self._drafts: dict[str, IntentDraft] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
 
@@ -41,20 +45,16 @@ class ConfirmationController:
         return self._drafts.get(draft_id)
 
     def build_confirmation_card(self, draft: IntentDraft) -> dict[str, Any]:
-        lines = [f"类型：{_label_intent_kind(draft.kind)}", f"标的：{draft.instrument_code}", f"市场：{draft.market.value}"]
-        if draft.schedule:
-            lines.append(f"频率：{draft.schedule['frequency']}")
-        if draft.price_condition:
-            lines.append(
-                "条件："
-                + f"{draft.price_condition['operator']} {draft.price_condition['value']}"
-            )
-        lines.append("通知：应用内")
+        instrument_name = (draft.instrument_name or "").strip() or "未知"
+        lines = [f"标的：{draft.instrument_code}", f"名称：{instrument_name}", f"市场：{draft.market.value}"]
         return {
             "id": f"card-{draft.draft_id}",
             "draftId": draft.draft_id,
             "title": f"请确认是否创建{_label_intent_kind(draft.kind)}",
             "summaryLines": lines,
+            "instrumentCode": draft.instrument_code,
+            "instrumentName": instrument_name,
+            "market": draft.market.value,
             "dataSourceSummary": "unknown",
             "actions": ["confirm", "cancel"],
             "status": "active",
@@ -68,6 +68,7 @@ class ConfirmationController:
         draft_id: str,
         decision: str,
         overrides: dict[str, Any] | None = None,
+        origin_context_id: str | None = None,
     ) -> dict[str, Any]:
         if request_id in self._idempotency:
             return self._idempotency[request_id]
@@ -80,9 +81,16 @@ class ConfirmationController:
             return result
         frozen = self._apply_overrides(draft, overrides or {})
         self._assert_profile_strategy_approved(frozen)
+        self._assert_instrument_market_match(frozen)
         if frozen.kind == IntentKind.REPORT:
+            self._assert_report_model_ready()
             task_input = self._build_report_task_input(frozen)
-            result = self._queue.enqueue_report_task(request_id=request_id, task_input=task_input, source="manual")
+            result = self._queue.enqueue_report_task(
+                request_id=request_id,
+                task_input=task_input,
+                source="manual",
+                origin_context_id=origin_context_id,
+            )
             payload = {"status": "confirmed", **result}
             self._idempotency[request_id] = payload
             return payload
@@ -161,15 +169,30 @@ class ConfirmationController:
             return task
         return result
 
+    def _assert_report_model_ready(self) -> None:
+        if self._report_model_ready_checker is None:
+            return
+        try:
+            self._report_model_ready_checker()
+        except Exception as exc:
+            raise QueueError("REPORT_MODEL_NOT_READY", "report_model_not_ready", str(exc) or "报告模型未就绪。") from exc
+
     @staticmethod
     def _apply_overrides(draft: IntentDraft, overrides: dict[str, Any]) -> IntentDraft:
         if not overrides:
             return draft
         raw = asdict(draft)
+        market_value = draft.market
         if "market" in overrides and str(overrides["market"]).strip():
-            raw["market"] = str(overrides["market"]).strip()
+            market_value = MarketProfile(str(overrides["market"]).strip().upper())
+            raw["market"] = market_value
         if "instrumentCode" in overrides and str(overrides["instrumentCode"]).strip():
-            raw["instrument_code"] = str(overrides["instrumentCode"]).strip().upper()
+            code = str(overrides["instrumentCode"]).strip().upper()
+            identity = resolve_instrument_identity(code, market_hint=market_value.value)
+            market_value = MarketProfile(identity.profile)
+            raw["instrument_code"] = identity.ticker
+            raw["instrument_name"] = report_display_name(identity.ticker, identity.profile)
+            raw["market"] = market_value
         return IntentDraft(
             draft_id=raw["draft_id"],
             kind=raw["kind"],
@@ -179,12 +202,24 @@ class ConfirmationController:
             instrument_name=raw["instrument_name"],
             market=raw["market"] if isinstance(raw["market"], MarketProfile) else MarketProfile(str(raw["market"])),
             notification=raw["notification"],
-            workflow_settings=draft.workflow_settings,
+            workflow_settings=_snapshot_for_market(draft.workflow_settings, market_value),
             dedupe_key=raw["dedupe_key"],
             schedule=raw["schedule"],
             price_condition=raw["price_condition"],
             status=raw["status"],
             expires_at=raw["expires_at"],
+        )
+
+    @staticmethod
+    def _assert_instrument_market_match(draft: IntentDraft) -> None:
+        identity = resolve_instrument_identity(draft.instrument_code)
+        detected_market = MarketProfile(identity.profile)
+        if detected_market == draft.market:
+            return
+        raise QueueError(
+            "INVALID_INPUT",
+            "invalid_input",
+            f"标的 {draft.instrument_code} 与所选市场不匹配，请改用 {detected_market.value} 或更换标的。",
         )
 
 
@@ -220,3 +255,26 @@ def _workflow_settings_from_request(request: Any) -> dict[str, Any]:
         "defaultCurrency": request.currency,
         "defaultCurrencySymbol": request.currency_symbol,
     }
+
+
+def _snapshot_for_market(snapshot: WorkflowSettingsSnapshot, market: MarketProfile) -> WorkflowSettingsSnapshot:
+    currency_by_market = {
+        MarketProfile.CN_A: ("CNY", "\u00a5"),
+        MarketProfile.US: ("USD", "$"),
+        MarketProfile.HK: ("HKD", "HK$"),
+        MarketProfile.CRYPTO: ("USDT", "USDT"),
+    }
+    currency, symbol = currency_by_market[market]
+    return WorkflowSettingsSnapshot(
+        maxDebateRounds=snapshot.maxDebateRounds,
+        maxRiskDiscussRounds=snapshot.maxRiskDiscussRounds,
+        frontlineExecutionMode=snapshot.frontlineExecutionMode,
+        defaultProfile=market.value,
+        defaultMarket=market.value,
+        defaultCurrency=currency,
+        defaultCurrencySymbol=symbol,
+    )
+
+
+def _missing_price_alert_quote_provider(_instrument: str, _market: MarketProfile) -> dict[str, Any]:
+    raise UiServiceError("DATASOURCE_TEST_FAILED", "价格提醒数据源未配置，不能用默认价格完成检查。")

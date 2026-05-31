@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from claw_trade.data_gateway.models import (
@@ -131,71 +131,30 @@ class HotMoneyPackBuilder:
                 continue
 
             started_at = utc_now_iso()
-            helper = provider_execution_helper
-            if helper is not None:
-                result = helper.execute(
+            executor = provider_execution_helper
+            if executor is not None and getattr(executor, "gate_controlled", False):
+                result = executor.execute(
                     request=request,
                     spec=spec,
                     adapter=adapter,
                     started_at=started_at,
                 )
             else:
-                try:
-                    fetch = adapter.fetch(spec, request)
-                    normalized = adapter.normalize(spec, fetch)
-                except Exception as exc:  # noqa: BLE001
-                    finished_at = utc_now_iso()
-                    attempt = self._attempt(
-                        request=request,
-                        spec=spec,
-                        status=ProviderStatus.REMOTE_ERROR,
-                        error_message=str(exc),
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        adapter_kind=adapter.adapter_kind,
-                        provider_id=adapter.provider_id,
-                        provider_kind=adapter.provider_kind,
-                    )
-                    attempts.append(attempt)
-                    data_gaps.append(self._gap_from_attempt(request=request, attempt=attempt))
-                    continue
                 finished_at = utc_now_iso()
-                status = normalized.status
-                if status == ProviderStatus.REMOTE_SUCCESS and normalized.row_count == 0:
-                    status = ProviderStatus.EMPTY
                 attempt = self._attempt(
                     request=request,
                     spec=spec,
-                    status=status,
-                    error_message=normalized.error_message,
+                    status=ProviderStatus.EVIDENCE_WRITE_FAILED,
+                    error_message="provider call gate is not configured; pack runtime remote calls must use run_provider_call_gate",
                     started_at=started_at,
                     finished_at=finished_at,
-                    row_count=normalized.row_count,
-                    raw_ref=normalized.source_raw_ref,
-                    normalized_ref=None,
                     adapter_kind=adapter.adapter_kind,
                     provider_id=adapter.provider_id,
                     provider_kind=adapter.provider_kind,
                 )
-                result = ProviderResult(
-                    spec=spec,
-                    status=status,
-                    request_id=fetch.provider_request_id,
-                    requested_at=started_at,
-                    latency_ms=attempt.latency_ms,
-                    source_role=spec.source_role,
-                    freshness=FreshnessStatus.FRESH_REMOTE,
-                    license_note="ok",
-                    raw_ref=attempt.raw_ref,
-                    normalized_ref=attempt.normalized_ref,
-                    rows=normalized.rows,
-                    row_count=normalized.row_count,
-                    cache_receipt=None,
-                    attempt=attempt,
-                    missing_fields=normalized.missing_fields,
-                    error_code=normalized.error_code,
-                    error_message=attempt.error_message,
-                )
+                attempts.append(attempt)
+                data_gaps.append(self._gap_from_attempt(request=request, attempt=attempt))
+                continue
 
             attempts.append(result.attempt)
             provider_results.append(result)

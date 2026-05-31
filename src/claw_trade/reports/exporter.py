@@ -4,8 +4,10 @@ import json
 import re
 import shutil
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
+from zoneinfo import ZoneInfo
 
 from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.openviking_client import OpenVikingReadResult
@@ -27,6 +29,8 @@ _PM_WORKER_ID = "portfolio_manager"
 _MARKET_WORKER_ID = "market_analyst"
 _REPORT_POLISHER_WORKER_ID = "report_polisher"
 _REPORT_WORKER_ORDER = all_worker_ids()
+_EASTERN_TZ = ZoneInfo("America/New_York")
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 # 导出输入边界：报告必须覆盖完整报告链路的 approved materials，不能按“现有多少算多少”降级。
 _REPORT_WORKERS_SET = set(_REPORT_WORKER_ORDER)
 _WORKER_SECTION_TITLES: dict[str, str] = {
@@ -320,7 +324,7 @@ def persist_export_outputs(
             paths=copy_result.paths or (reports_dir,),
         )
 
-    final_report_path.write_text(rendered.text, encoding="utf-8")
+    final_report_path.write_text(_with_report_generated_time(rendered.text, state=state), encoding="utf-8")
     appendix_result = _write_worker_appendices(reports_dir=reports_dir, appendices=worker_appendices)
     if not appendix_result.ok:
         return ExportResult.failed(
@@ -361,6 +365,35 @@ def persist_export_outputs(
     return ExportResult.passed(state=state, final_report_path=final_report_path, guard_path=guard_path)
 
 
+def _with_report_generated_time(text: str, *, state: WorkflowState) -> str:
+    generated_at = _parse_report_time(state.updated_at)
+    eastern = generated_at.astimezone(_EASTERN_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    beijing = generated_at.astimezone(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    lines = text.rstrip().splitlines()
+    time_block = [
+        "",
+        f"> 报告生成时间（美东）：{eastern}",
+        f"> 报告生成时间（北京）：{beijing}",
+        "",
+    ]
+    if lines and lines[0].startswith("# "):
+        return "\n".join([lines[0], *time_block, *lines[1:]]).rstrip() + "\n"
+    return "\n".join([*time_block[1:], *lines]).rstrip() + "\n"
+
+
+def _parse_report_time(raw: str) -> datetime:
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return datetime.now(UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def export_final_report(
     state: WorkflowState,
     manifest: ApprovedManifest,
@@ -393,12 +426,14 @@ def export_final_report(
     if not image_assets:
         missing_chart_note = _missing_chart_assets_note(rendered=rendered, report_materials=loaded.report_materials)
         if missing_chart_note is None:
-            return ExportResult.failed(
-                state=state,
-                category="export_report_assets",
-                reason="报告导出失败：未找到可复制的图表资产",
-                paths=(state.run_dir / "calls",),
-            )
+            if _text_has_chart_available_claim(rendered.text):
+                return ExportResult.failed(
+                    state=state,
+                    category="export_report_assets",
+                    reason="报告导出失败：最终报告声称图表已生成，但未找到可复制的图表资产",
+                    paths=(state.run_dir / "calls",),
+                )
+            missing_chart_note = "本次运行没有生成或保存可复制的图表资产；报告保留文字技术分析，图表缺口已记录。"
         rendered = _attach_missing_chart_assets_note(rendered=rendered, note=missing_chart_note)
     else:
         rendered = _attach_report_image_assets(rendered=rendered, image_assets=image_assets)
@@ -409,16 +444,10 @@ def export_final_report(
         structure_path,
         {
             **structure.to_payload(),
-            "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+            "diagnostic_source": "human approval: guard narrowing on 2026-05-29; final report structure is diagnostic, not a runtime guard",
+            "hard_fail": False,
         },
     )
-    if not structure.ok:
-        return ExportResult.failed(
-            state=state,
-            category=structure.category,
-            reason=structure.reason or "最终报告章节结构验收失败",
-            paths=(structure_path, state.run_dir / "openviking" / "approved-manifest.json"),
-        )
     mapping = build_export_claim_mapping(
         rendered=rendered,
         materials=loaded.materials,

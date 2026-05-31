@@ -1,7 +1,0 @@
-WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
-WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
-usage: collect_openviking_runtime_evidence.py [-h] --run-id RUN_ID
-                                              --output-dir OUTPUT_DIR
-                                              [--grep-pattern GREP_PATTERN]
-                                              [--glob-pattern GLOB_PATTERN]
-collect_openviking_runtime_evidence.py: error: the following arguments are required: --output-dir

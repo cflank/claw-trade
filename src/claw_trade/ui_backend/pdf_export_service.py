@@ -3,10 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Protocol
+from pathlib import Path
+from typing import Callable, Protocol
 from uuid import uuid4
 
-from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
+from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
+from claw_trade.ui_backend.pdf_runtime_capabilities import PdfRuntimeCapabilities, detect_pdf_runtime_capabilities
+from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
+from claw_trade.ui_backend.report_repository import PdfArtifactRecord, ReportRepository, UiProductError
 
 
 def _now_iso() -> str:
@@ -14,7 +18,7 @@ def _now_iso() -> str:
 
 
 class PdfRenderer(Protocol):
-    def render(self, markdown: str) -> bytes: ...
+    def render(self, markdown: str, *, report_asset_dir: Path | None = None) -> bytes: ...
 
 
 @dataclass(frozen=True)
@@ -29,14 +33,23 @@ class PdfExportRecord:
 
 
 class _DefaultPdfRenderer:
-    def render(self, markdown: str) -> bytes:
-        return ("PDF\n\n" + markdown).encode("utf-8")
+    def __init__(self) -> None:
+        self._renderer = PdfKitWithPandocFallbackRenderer()
+
+    def render(self, markdown: str, *, report_asset_dir: Path | None = None) -> bytes:
+        return self._renderer.render(markdown, report_asset_dir=report_asset_dir)
 
 
 class PdfExportService:
-    def __init__(self, repository: ReportRepository, renderer: PdfRenderer | None = None) -> None:
+    def __init__(
+        self,
+        repository: ReportRepository,
+        renderer: PdfRenderer | None = None,
+        runtime_capabilities_provider: Callable[[], PdfRuntimeCapabilities] | None = None,
+    ) -> None:
         self._repository = repository
         self._renderer = renderer or _DefaultPdfRenderer()
+        self._runtime_capabilities_provider = runtime_capabilities_provider or detect_pdf_runtime_capabilities
         self._records: dict[str, PdfExportRecord] = {}
         self._request_cache: dict[str, PdfExportRecord] = {}
 
@@ -59,11 +72,26 @@ class PdfExportService:
         source_hash_before = sha256(markdown.encode("utf-8")).hexdigest()
         record_id = f"pdf_export_{uuid4().hex}"
         try:
-            pdf_bytes = self._renderer.render(markdown)
+            capabilities = self._runtime_capabilities_provider()
+            if not capabilities.primary_ready:
+                names = ",".join(item.name for item in capabilities.missing_primary())
+                raise RuntimeError(f"pdf primary runtime capability missing: {names}")
+            pdf_bytes = self._renderer.render(markdown, report_asset_dir=report.asset_dir)
+            validation = validate_pdf_bytes(
+                pdf_bytes,
+                required_keywords=(report.title, report.instrument_code, "报告"),
+            )
+            if not validation.valid:
+                raise RuntimeError(f"pdf validation failed: {validation.reason}")
             source_hash_after = sha256(self._repository.read_markdown(report_id).encode("utf-8")).hexdigest()
             if source_hash_after != source_hash_before:
                 raise RuntimeError("markdown content hash changed during export")
             artifact = self._repository.write_pdf_artifact(report_id, pdf_bytes)
+            try:
+                self._ensure_persisted_artifact_matches(artifact, pdf_bytes)
+            except Exception:
+                self._repository.remove_pdf_artifact(report_id, artifact.id)
+                raise
             record = PdfExportRecord(
                 id=record_id,
                 report_id=report_id,
@@ -93,6 +121,21 @@ class PdfExportService:
 
     def get_latest_record(self, report_id: str) -> PdfExportRecord | None:
         return self._records.get(report_id)
+
+    def _ensure_persisted_artifact_matches(self, artifact: PdfArtifactRecord, pdf_bytes: bytes) -> None:
+        stored_bytes = self._repository.read_pdf_bytes(artifact.report_id, artifact.id)
+        if stored_bytes != pdf_bytes:
+            raise RuntimeError("persisted pdf content mismatch")
+        if artifact.path is None:
+            return
+        if not artifact.path.exists() or not artifact.path.is_file():
+            raise RuntimeError(f"persisted pdf path missing: {artifact.path}")
+        if artifact.path.stat().st_size != len(pdf_bytes):
+            raise RuntimeError(
+                f"persisted pdf size mismatch: path={artifact.path.stat().st_size} bytes={len(pdf_bytes)}"
+            )
+        if not stored_bytes.startswith(b"%PDF-"):
+            raise RuntimeError("persisted pdf header invalid")
 
 
 def to_pdf_export_for_user(record: PdfExportRecord) -> dict[str, object]:

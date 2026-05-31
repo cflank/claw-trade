@@ -1,0 +1,26 @@
+worker: selection_skeptic
+runtime: openclaw
+stage: selection_review
+completion: openclaw_agent_turn
+artifact:
+  canonical_output: selection_skeptic_review
+profiles:
+  CN_A:
+    approved: true
+    prompt: prompts/CN_A.md
+    tools:
+      - selection_candidate_pack
+    openviking_access: none
+skills:
+  mounted:
+    - claw-trade-stage
+tool_policy:
+  owner: stage_profile
+  python_calls_tools: false
+artifact_policy:
+  input: approved_l1_report_text_with_traceable_refs
+  output: canonical_artifact
+  hard_gate_failed_artifacts_enter_downstream: false
+pm_policy:
+  python_rewrites_pm_rating: false
+  python_rewrites_pm_final_decision: false

@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 import pytest
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
     CacheReceipt,
+    ConsumerType,
+    DataRequirement,
     DataGap,
     DataGapReason,
+    DomainPack,
+    DomainPackApprovalStatus,
     DomainPackResult,
     FreshnessPolicy,
     FreshnessStatus,
     GapSeverity,
+    HttpEvidence,
+    HttpVisibility,
     Market,
     NormalizedBundle,
     NormalizedResult,
@@ -19,12 +27,16 @@ from claw_trade.data_gateway.models import (
     PackDomain,
     PackRequest,
     PrioritySource,
+    ProviderCallResult,
     ProviderAttempt,
     ProviderCapability,
     ProviderCallSpec,
+    ProviderDisplayDecision,
+    ProviderDisplayStatus,
     ProviderKind,
     ProviderResult,
     ProviderStatus,
+    RequiredLevel,
     Readiness,
     ReadinessStatus,
     RunProviderPlan,
@@ -72,6 +84,48 @@ def _spec() -> ProviderCallSpec:
         priority=0,
         priority_source=PrioritySource.SYSTEM_DEFAULT,
         user_preferred=False,
+    )
+
+
+def _requirement() -> DataRequirement:
+    return DataRequirement(
+        requirement_id="req-market-1",
+        market=Market.CN_A,
+        data_type="qfq_daily_bar",
+        granularity="daily",
+        ticker="000001.SZ",
+        universe_ref=None,
+        date_range=(date(2026, 5, 1), date(2026, 5, 17)),
+        lookback_window_days=17,
+        current_date=date(2026, 5, 17),
+        freshness_policy="trading_day",
+        required_level=RequiredLevel.REQUIRED,
+        consumer_type=ConsumerType.REPORT_WORKER,
+        consumer_id="market_analyst",
+        domain=PackDomain.MARKET,
+        source_role_required=SourceRole.MARKET_DATA,
+        field_set=("close", "volume"),
+        allow_search_discovery=False,
+    )
+
+
+def _gap(reason: DataGapReason = DataGapReason.RATE_LIMITED) -> DataGap:
+    return DataGap(
+        gap_id=f"gap-{reason.value}",
+        domain=PackDomain.MARKET,
+        severity=GapSeverity.BLOCKER,
+        reason=reason,
+        field_path="market.close",
+        provider_candidates=("tushare",),
+        attempt_ids=("attempt-1",),
+        root_cause=f"{reason.value} blocked required market data",
+        next_action="try next approved provider",
+        requirement_id="req-market-1",
+        market=Market.CN_A,
+        data_type="qfq_daily_bar",
+        ticker="000001.SZ",
+        evidence_refs=("attempt://attempt-1",),
+        human_readable=f"{reason.value}：未取得必需行情数据。",
     )
 
 
@@ -123,6 +177,270 @@ def test_cache_status_cannot_be_remote_success() -> None:
     for cache_status in forbidden:
         with pytest.raises(ValueError):
             _attempt(status=ProviderStatus.REMOTE_SUCCESS, cache_status=cache_status)
+
+
+def test_provider_call_result_failure_statuses_do_not_become_remote_success() -> None:
+    gap_by_status = {
+        ProviderStatus.RATE_LIMITED: DataGapReason.RATE_LIMITED,
+        ProviderStatus.CACHED_EMPTY: DataGapReason.CACHED_EMPTY,
+        ProviderStatus.COOLDOWN_SKIPPED: DataGapReason.COOLDOWN_SKIPPED,
+        ProviderStatus.SDK_HTTP_UNKNOWN: DataGapReason.SDK_HTTP_UNKNOWN,
+        ProviderStatus.EVIDENCE_WRITE_FAILED: DataGapReason.EVIDENCE_WRITE_FAILED,
+    }
+    valid_extra = {
+        ProviderStatus.CACHE_HIT: {"cache_entry_ref": "cache://hit-1"},
+        ProviderStatus.SHARED_RESULT: {"shared_owner_attempt_ref": "attempt://owner-1"},
+    }
+
+    statuses = (
+        ProviderStatus.CACHE_HIT,
+        ProviderStatus.SHARED_RESULT,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.CACHED_EMPTY,
+        ProviderStatus.COOLDOWN_SKIPPED,
+        ProviderStatus.SDK_HTTP_UNKNOWN,
+        ProviderStatus.EVIDENCE_WRITE_FAILED,
+    )
+    for status in statuses:
+        data_gaps = ()
+        if status in gap_by_status:
+            data_gaps = (_gap(gap_by_status[status]),)
+        kwargs = {
+            "result_id": f"result-{status.value}",
+            "spec": _spec(),
+            "status": status,
+            "rows": ({"close": 10.2},) if status in {ProviderStatus.CACHE_HIT, ProviderStatus.SHARED_RESULT} else (),
+            "raw_payload_ref": "raw://cached" if status == ProviderStatus.CACHE_HIT else None,
+            "normalized_ref": "norm://cached" if status in {ProviderStatus.CACHE_HIT, ProviderStatus.SHARED_RESULT} else None,
+            "attempt_ref": f"attempt://{status.value}",
+            "http_evidence_refs": (),
+            "cache_entry_ref": None,
+            "shared_owner_attempt_ref": None,
+            "data_gaps": data_gaps,
+            "remote_success": False,
+            "created_at": datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+        }
+        kwargs.update(valid_extra.get(status, {}))
+        ok = ProviderCallResult(**kwargs)
+        assert ok.remote_success is False
+
+        with pytest.raises(ValueError, match="remote_success"):
+            ProviderCallResult(
+                **{
+                    **ok.__dict__,
+                    "remote_success": True,
+                }
+            )
+
+
+def test_provider_call_result_remote_success_requires_raw_and_normalized_refs() -> None:
+    base = {
+        "result_id": "result-success",
+        "spec": _spec(),
+        "status": ProviderStatus.REMOTE_SUCCESS,
+        "rows": ({"close": 10.2},),
+        "attempt_ref": "attempt://success-1",
+        "http_evidence_refs": ("http://1",),
+        "cache_entry_ref": None,
+        "shared_owner_attempt_ref": None,
+        "data_gaps": (),
+        "remote_success": True,
+        "created_at": datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+    }
+    with pytest.raises(ValueError, match="raw_payload_ref and normalized_ref"):
+        ProviderCallResult(**{**base, "raw_payload_ref": None, "normalized_ref": "norm://1"})
+    with pytest.raises(ValueError, match="raw_payload_ref and normalized_ref"):
+        ProviderCallResult(**{**base, "raw_payload_ref": "raw://1", "normalized_ref": None})
+
+    ok = ProviderCallResult(**{**base, "raw_payload_ref": "raw://1", "normalized_ref": "norm://1"})
+    assert ok.remote_success is True
+
+
+def test_empty_field_missing_and_credential_missing_require_data_gap() -> None:
+    for status, reason in (
+        (ProviderStatus.REMOTE_ERROR, DataGapReason.REMOTE_ERROR),
+        (ProviderStatus.EMPTY, DataGapReason.EMPTY),
+        (ProviderStatus.FIELD_MISSING, DataGapReason.FIELD_MISSING),
+        (ProviderStatus.CREDENTIAL_MISSING, DataGapReason.CREDENTIAL_MISSING),
+    ):
+        with pytest.raises(ValueError, match="requires data_gaps"):
+            ProviderCallResult(
+                result_id=f"result-{status.value}",
+                spec=_spec(),
+                status=status,
+                rows=(),
+                raw_payload_ref=None,
+                normalized_ref=None,
+                attempt_ref=f"attempt://{status.value}",
+                http_evidence_refs=(),
+                cache_entry_ref=None,
+                shared_owner_attempt_ref=None,
+                data_gaps=(),
+                remote_success=False,
+                created_at=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+            )
+
+        result = ProviderCallResult(
+            result_id=f"result-{status.value}",
+            spec=_spec(),
+            status=status,
+            rows=(),
+            raw_payload_ref=None,
+            normalized_ref=None,
+            attempt_ref=f"attempt://{status.value}",
+            http_evidence_refs=(),
+            cache_entry_ref=None,
+            shared_owner_attempt_ref=None,
+            data_gaps=(_gap(reason),),
+            remote_success=False,
+            created_at=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+        )
+        assert result.data_gaps[0].human_readable
+
+
+def test_provider_capability_t1_fields_and_discovery_boundaries() -> None:
+    capability = ProviderCapability(
+        provider="tushare",
+        adapter_id="project.tushare",
+        provider_kind=ProviderKind.PROJECT_EXTENSION,
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        endpoint="daily",
+        source_role=SourceRole.MARKET_DATA,
+        expected_schema_id="market.daily.v1",
+        license_policy_id="personal_research",
+        credential_requirements=("TUSHARE_TOKEN",),
+        rate_limit_policy_id="default",
+        cache_ttl_seconds=300,
+        required=True,
+        attempt_required=True,
+        coverage_group=None,
+        coverage_quorum=None,
+        priority=0,
+        priority_source=PrioritySource.SYSTEM_DEFAULT,
+        data_type="qfq_daily_bar",
+        coverage_fields=("close", "volume"),
+        coverage_symbols="configured_universe",
+        freshness_supported=("trading_day",),
+        user_config_key="TUSHARE_TOKEN",
+        can_be_formal_fact_source=True,
+        can_enter_worker_pack=True,
+        http_visibility=HttpVisibility.MANAGED_HTTP,
+        live_fresh_required_for_ui=True,
+    )
+    assert capability.data_type == "qfq_daily_bar"
+    assert capability.coverage_fields == ("close", "volume")
+    assert capability.coverage_symbols == "configured_universe"
+    assert capability.freshness_supported == ("trading_day",)
+    assert capability.user_config_key == "TUSHARE_TOKEN"
+    assert capability.can_be_formal_fact_source is True
+    assert capability.can_enter_worker_pack is True
+    assert capability.http_visibility == HttpVisibility.MANAGED_HTTP
+    assert capability.live_fresh_required_for_ui is True
+
+    with pytest.raises(ValueError, match="discovery-only provider"):
+        ProviderCapability(
+            **{
+                **capability.__dict__,
+                "provider": "google_news",
+                "source_role": SourceRole.DISCOVERY,
+                "can_be_formal_fact_source": True,
+            }
+        )
+
+    with pytest.raises(ValueError, match="HttpVisibility"):
+        ProviderCapability(
+            **{
+                **capability.__dict__,
+                "http_visibility": "managed_http",
+            }
+        )
+
+
+def test_sdk_http_unknown_rejects_fake_http_evidence() -> None:
+    with pytest.raises(ValueError, match="SDK internal unknown"):
+        HttpEvidence(
+            http_evidence_id="http-unknown",
+            provider_id="sdk-provider",
+            endpoint_id="sdk-call",
+            method="GET",
+            host="provider.example",
+            path="/sdk/internal",
+            query_hash="sha256:query",
+            body_hash=None,
+            request_headers_redacted={},
+            response_status=None,
+            response_headers_redacted={},
+            response_body_hash=None,
+            elapsed_ms=None,
+            quota_signal=None,
+            cache_key="http:sdk-provider",
+            rate_limit_or_cooldown_recorded=False,
+            sdk_internal_unknown=True,
+        )
+
+
+def test_domain_pack_worker_material_excludes_internal_refs() -> None:
+    pack = DomainPack(
+        pack_id="pack-1",
+        run_id="run-1",
+        domain=PackDomain.MARKET,
+        market=Market.CN_A,
+        ticker="000001.SZ",
+        normalized_refs=("norm://1",),
+        raw_payload_refs=("raw://1",),
+        attempt_refs=("attempt://1",),
+        http_evidence_refs=("http://1",),
+        data_gaps=(_gap(DataGapReason.CACHED_EMPTY),),
+        readable_markdown="行情资料：收盘价和成交量已取得，部分缓存空结果已列为缺口。",
+        source_summary="来源摘要：Tushare 远端证据和本地标准化记录已可追踪。",
+        approval_status=DomainPackApprovalStatus.APPROVED,
+        material_ref="ov://material/pack-1",
+    )
+    worker_material = "\n".join(pack.worker_visible_material())
+    assert "norm://1" not in worker_material
+    assert "attempt://1" not in worker_material
+    assert "cached_empty" in worker_material
+
+    with pytest.raises(ValueError, match="internal refs"):
+        DomainPack(
+            **{
+                **pack.__dict__,
+                "readable_markdown": "raw_payload_ref=raw://1",
+            }
+        )
+
+
+def test_provider_display_show_requires_real_chain_evidence() -> None:
+    with pytest.raises(ValueError, match="real report/select chain evidence"):
+        ProviderDisplayDecision(
+            provider_id="unused-paid-source",
+            market=Market.CN_A,
+            display_status=ProviderDisplayStatus.SHOW,
+            reason="probe succeeded only",
+            requires_user_credential=True,
+            changes_report_or_select_result=False,
+            writes_mongo_and_evidence=False,
+            enters_domain_pack=False,
+            consumed_by_worker_or_strategy=False,
+            live_fresh_evidence_ref=None,
+            probe_only=True,
+        )
+
+    decision = ProviderDisplayDecision(
+        provider_id="tushare",
+        market=Market.CN_A,
+        display_status=ProviderDisplayStatus.SHOW,
+        reason="configured source changes report data and has live evidence",
+        requires_user_credential=True,
+        changes_report_or_select_result=True,
+        writes_mongo_and_evidence=True,
+        enters_domain_pack=True,
+        consumed_by_worker_or_strategy=True,
+        live_fresh_evidence_ref="evidence://live/tushare-1",
+        probe_only=False,
+    )
+    assert decision.display_status == ProviderDisplayStatus.SHOW
 
 
 def test_cn_a_only_domains_reject_non_cn_a_market() -> None:

@@ -358,21 +358,27 @@ class MongoSingleFlightCoordinator:
         cache_receipt_ref: str | None,
     ) -> None:
         result_hash = sha256_text(f"{owner_attempt_id}|{raw_ref or ''}|{normalized_ref or ''}|{cache_receipt_ref or ''}")
-        self.collection.update_one(
-            {"_id": key},
-            {
-                "$set": {
-                    "status": "succeeded",
-                    "owner_call_id": owner_call_id,
-                    "owner_attempt_id": owner_attempt_id,
-                    "raw_ref": raw_ref,
-                    "normalized_ref": normalized_ref,
-                    "cache_receipt_ref": cache_receipt_ref,
-                    "result_hash": result_hash,
-                    "updated_at": utc_now_iso(),
-                }
-            },
-        )
+        try:
+            self.collection.update_one(
+                {"_id": key},
+                {
+                    "$set": {
+                        "status": "succeeded",
+                        "owner_call_id": owner_call_id,
+                        "owner_attempt_id": owner_attempt_id,
+                        "raw_ref": raw_ref,
+                        "normalized_ref": normalized_ref,
+                        "cache_receipt_ref": cache_receipt_ref,
+                        "result_hash": result_hash,
+                        "updated_at": utc_now_iso(),
+                    }
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise DataGatewayError(
+                DataGatewayErrorCode.EVIDENCE_WRITE_FAILED,
+                f"single-flight success write failed: {exc}",
+            ) from exc
 
     def _mark_failed(
         self,
@@ -382,18 +388,24 @@ class MongoSingleFlightCoordinator:
         error_message: str | None,
         owner_attempt_id: str | None = None,
     ) -> None:
-        self.collection.update_one(
-            {"_id": key},
-            {
-                "$set": {
-                    "status": "failed",
-                    "owner_attempt_id": owner_attempt_id,
-                    "error_code": error_code,
-                    "error_message": error_message,
-                    "updated_at": utc_now_iso(),
-                }
-            },
-        )
+        try:
+            self.collection.update_one(
+                {"_id": key},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "owner_attempt_id": owner_attempt_id,
+                        "error_code": error_code,
+                        "error_message": error_message,
+                        "updated_at": utc_now_iso(),
+                    }
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise DataGatewayError(
+                DataGatewayErrorCode.EVIDENCE_WRITE_FAILED,
+                f"single-flight failure write failed: {exc}",
+            ) from exc
 
     @staticmethod
     def _document_id(run_id: str, call_key: str) -> str:

@@ -109,6 +109,87 @@ def _error_code(result: dict[str, object]) -> str:
     return code
 
 
+def _run_reply_dispatch_hook(
+    *,
+    event: dict[str, object],
+    ui_response: dict[str, object],
+    http_status: int = 200,
+    inbound_url: str = "http://127.0.0.1:8789/api/ui/channel-inbound-message",
+    timeout_ms: str = "3000",
+    fetch_delay_ms: int = 0,
+) -> dict[str, object]:
+    script = f"""
+import plugin from {json.dumps(str(PLUGIN_PATH))};
+const event = JSON.parse(process.argv[1]);
+const uiResponse = JSON.parse(process.argv[2]);
+const httpStatus = Number(process.argv[3]);
+const inboundUrl = process.argv[4];
+const timeoutMs = process.argv[5];
+const fetchDelayMs = Number(process.argv[6]);
+const captured = {{ requests: [], finalReplies: [], timeline: [] }};
+const hooks = [];
+process.env.CLAW_TRADE_UI_INBOUND_URL = inboundUrl;
+process.env.CLAW_TRADE_UI_INBOUND_TIMEOUT_MS = timeoutMs;
+globalThis.fetch = async (url, init = {{}}) => {{
+  captured.timeline.push("fetch-start");
+  captured.requests.push({{
+    url: String(url),
+    body: init.body ? JSON.parse(String(init.body)) : null,
+  }});
+  if (fetchDelayMs > 0) {{
+    await new Promise((resolve) => setTimeout(resolve, fetchDelayMs));
+  }}
+  captured.timeline.push("fetch-response");
+  return new Response(JSON.stringify(uiResponse), {{
+    status: httpStatus,
+    headers: {{ "Content-Type": "application/json" }},
+  }});
+}};
+const api = {{
+  registerTool() {{}},
+  on(hookName, handler) {{
+    hooks.push({{ hookName, handler }});
+  }},
+}};
+plugin.register(api);
+const hook = hooks.find((item) => item.hookName === "reply_dispatch");
+if (!hook) {{
+  throw new Error("reply_dispatch hook not registered");
+}}
+const dispatcher = {{
+  sendFinalReply(payload) {{
+    captured.finalReplies.push(payload);
+    captured.timeline.push(`reply:${{payload.text ?? ""}}`);
+    return true;
+  }},
+  getQueuedCounts() {{
+    return {{ tool: 0, block: 0, final: captured.finalReplies.length }};
+  }},
+}};
+const result = await hook.handler(event, {{ dispatcher }});
+process.stdout.write(JSON.stringify({{ result, captured, hookCount: hooks.length }}));
+"""
+    completed = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            script,
+            json.dumps(event),
+            json.dumps(ui_response),
+            str(http_status),
+            inbound_url,
+            timeout_ms,
+            str(fetch_delay_ms),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
 def test_plugin_registers_only_canonical_openbb_pack_tools() -> None:
     script = f"""
 import plugin from {json.dumps(str(PLUGIN_PATH))};
@@ -140,11 +221,107 @@ process.stdout.write(JSON.stringify(tools));
         "claw_get_fundamental_pack",
         "claw_get_news_pack",
         "claw_get_social_pack",
+        "claw_get_policy_pack",
+        "claw_get_hot_money_pack",
+        "claw_get_lockup_pack",
     ]
     for item in tools:
         assert item["schemaType"] == "object"
         assert item["additionalProperties"] is False
         assert set(item["fields"]) == set()
+
+
+def test_reply_dispatch_hook_forwards_wechat_inbound_and_uses_ui_reply_text() -> None:
+    result = _run_reply_dispatch_hook(
+        event={
+            "runId": "run-bridge-1",
+            "ctx": {
+                "OriginatingChannel": "openclaw-weixin",
+                "AccountId": "account-1",
+                "SenderId": "sender-1",
+                "BodyForCommands": "/report TSLA",
+                "MessageSid": "msg-1",
+                "Timestamp": 1716552000000,
+            },
+        },
+        ui_response={"handled": True, "replyText": "收到，已创建确认卡。"},
+    )
+
+    assert result["result"] == {
+        "handled": True,
+        "queuedFinal": True,
+        "counts": {"tool": 0, "block": 0, "final": 1},
+    }
+    request = result["captured"]["requests"][0]
+    assert request["url"].endswith("/api/ui/channel-inbound-message")
+    assert request["body"]["channelKind"] == "wechat_clawbot"
+    assert request["body"]["accountId"] == "account-1"
+    assert request["body"]["senderId"] == "sender-1"
+    assert request["body"]["text"] == "/report TSLA"
+    assert request["body"]["messageId"] == "msg-1"
+    assert request["body"]["receivedAt"] == "2024-05-24T12:00:00.000Z"
+    assert result["captured"]["finalReplies"] == [{"text": "收到，已创建确认卡。"}]
+
+
+def test_reply_dispatch_hook_default_timeout_covers_real_llm_reply_latency() -> None:
+    source = PLUGIN_PATH.read_text(encoding="utf-8")
+
+    assert "const DEFAULT_UI_INBOUND_TIMEOUT_MS = 60000;" in source
+
+
+def test_reply_dispatch_hook_sends_immediate_ack_for_ordinary_wechat_text() -> None:
+    result = _run_reply_dispatch_hook(
+        event={
+            "runId": "run-bridge-ordinary",
+            "ctx": {
+                "OriginatingChannel": "openclaw-weixin",
+                "AccountId": "account-1",
+                "From": "sender-ordinary",
+                "Body": "hi",
+            },
+        },
+        ui_response={"handled": True, "replyText": "你好，有什么需要帮忙？"},
+        fetch_delay_ms=20,
+    )
+
+    assert result["result"] == {
+        "handled": True,
+        "queuedFinal": True,
+        "counts": {"tool": 0, "block": 0, "final": 2},
+    }
+    assert result["captured"]["finalReplies"] == [
+        {"text": "收到，正在处理。"},
+        {"text": "你好，有什么需要帮忙？"},
+    ]
+    assert result["captured"]["timeline"] == [
+        "reply:收到，正在处理。",
+        "fetch-start",
+        "fetch-response",
+        "reply:你好，有什么需要帮忙？",
+    ]
+
+
+def test_reply_dispatch_hook_does_not_send_when_ui_returns_unhandled() -> None:
+    result = _run_reply_dispatch_hook(
+        event={
+            "runId": "run-bridge-2",
+            "ctx": {
+                "OriginatingChannel": "openclaw-weixin",
+                "AccountId": "account-1",
+                "From": "sender-2",
+                "Body": "/report TSLA",
+            },
+        },
+        ui_response={"handled": False},
+    )
+
+    assert result["result"] == {
+        "handled": False,
+        "queuedFinal": False,
+        "counts": {"tool": 0, "block": 0, "final": 0},
+    }
+    assert len(result["captured"]["requests"]) == 1
+    assert result["captured"]["finalReplies"] == []
 
 
 def test_plugin_source_uses_openbb_runtime_and_not_legacy_provider_executor() -> None:

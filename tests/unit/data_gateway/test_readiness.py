@@ -154,10 +154,10 @@ def test_fundamental_readiness_ready_with_complete_equity_fields() -> None:
 
 
 def test_fundamental_readiness_blocked_when_required_provider_credentials_missing() -> None:
-    request = _request(Market.CN_A, "600519.SH")
+    request = _request(Market.HK, "00700.HK")
     adapter = _Adapter(
-        adapter_id="fundamental.tushare.cn_a",
-        provider_id="tushare",
+        adapter_id="fundamental.tushare.hk",
+        provider_id="tushare_hk",
         source_role=SourceRole.FUNDAMENTAL_DATA,
         status=ProviderStatus.REMOTE_SUCCESS,
         row={"valuation.pe": 30.0, "valuation.pb": 8.1, "financial_indicators.roe": 0.35},

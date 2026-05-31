@@ -5,21 +5,48 @@ description = "claw-trade control migration workspace"
 requires-python = ">=3.12"
 dependencies = [
     "akshare>=1.17.50",
-    "fastapi>=0.115.0",
+    "baostock>=0.9.1,<1",
+    "fastapi>=0.128.0,<0.129.0",
     "loguru>=0.7.2",
     "matplotlib>=3.10.8",
     "mootdx>=0.11.7,<1",
     "mplfinance>=0.12.10b0",
+    "openbb-core",
+    "openbb-crypto",
+    "openbb-deribit",
+    "openbb-economy",
+    "openbb-equity",
+    "openbb-fmp",
+    "openbb-fred",
+    "openbb-news",
+    "openbb-sec",
+    "openbb-yfinance",
     "openviking==0.3.5",
     "pandas>=2.2.3",
     "pandas-ta>=0.4.71b0",
+    "pdfkit>=1.0.0",
+    "pypandoc>=1.15",
     "pymongo>=4.10,<5",
     "pytest>=8.0",
+    "markdown>=3.8",
+    "python-multipart>=0.0.22,<0.0.23",
     "requests>=2.32.3",
     "tushare>=1.4.24,<2",
-    "uvicorn>=0.30.0",
+    "uvicorn>=0.40.0,<0.41.0",
     "yfinance>=0.2.54",
 ]
+
+[tool.uv.sources]
+openbb-core = { path = "third_party/openbb/openbb_platform/core", editable = true }
+openbb-crypto = { path = "third_party/openbb/openbb_platform/extensions/crypto", editable = true }
+openbb-deribit = { path = "third_party/openbb/openbb_platform/providers/deribit", editable = true }
+openbb-economy = { path = "third_party/openbb/openbb_platform/extensions/economy", editable = true }
+openbb-equity = { path = "third_party/openbb/openbb_platform/extensions/equity", editable = true }
+openbb-fmp = { path = "third_party/openbb/openbb_platform/providers/fmp", editable = true }
+openbb-fred = { path = "third_party/openbb/openbb_platform/providers/fred", editable = true }
+openbb-news = { path = "third_party/openbb/openbb_platform/extensions/news", editable = true }
+openbb-sec = { path = "third_party/openbb/openbb_platform/providers/sec", editable = true }
+openbb-yfinance = { path = "third_party/openbb/openbb_platform/providers/yfinance", editable = true }
 
 [build-system]
 requires = ["hatchling"]

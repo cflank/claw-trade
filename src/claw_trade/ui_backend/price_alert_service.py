@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable
 
+from claw_trade.instruments.resolver import resolve_instrument_identity
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.user_dto import PriceAlertForUser, to_price_alert_for_user
+from claw_trade.workflow.report_request_factory import report_display_name
 
 
 class UiServiceError(RuntimeError):
@@ -60,12 +62,14 @@ class PriceAlertService:
         if cached is not None:
             return cached
         market_value = self._as_market_profile(market)
+        identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
+        market_value = MarketProfile(identity.profile)
         normalized_condition = self._normalize_condition(condition)
         now_iso = self._now_iso()
         item = PriceAlert(
             id=self._next_alert_id(),
-            instrument_code=instrument_code.strip().upper(),
-            instrument_name=instrument_name,
+            instrument_code=identity.ticker,
+            instrument_name=instrument_name or report_display_name(identity.ticker, identity.profile),
             market=market_value,
             condition=normalized_condition,
             notification=self._normalize_notification(notification),

@@ -1,7 +1,14 @@
 import type {
+  AdvancedDiagnosticsEvidenceFailureReasonSummaryOutput,
   AskReportQuestionInput,
   AskReportQuestionOutput,
+  AdvancedDiagnosticsLiveRunGapSummaryOutput,
+  AdvancedDiagnosticsProviderHealthOutput,
+  AdvancedDiagnosticsRuntimeServiceStatusOutput,
+  ChannelChatSnapshotForUser,
   ChannelStatusForUser,
+  ConfirmSelectionReportInput,
+  ConfirmSelectionReportOutput,
   ConfirmIntentDraftInput,
   ConfirmIntentDraftOutput,
   CreateIntentDraftInput,
@@ -15,10 +22,14 @@ import type {
   PriceAlertInput,
   ReportDetailForUser,
   ReportQueueSnapshotForUser,
+  ResetSettingsToDefaultsInput,
+  ResetSettingsToDefaultsOutput,
   RunPriceAlertNowOutput,
   RunScheduledReportNowOutput,
   SaveChannelConfigViaOpenClawInput,
   SaveChannelConfigViaOpenClawOutput,
+  SaveEmbeddingConfigViaOpenVikingInput,
+  SaveEmbeddingConfigViaOpenVikingOutput,
   SaveDataSourceInstanceInput,
   SaveLlmConfigViaOpenClawInput,
   SaveLlmConfigViaOpenClawOutput,
@@ -28,6 +39,8 @@ import type {
   SendChatMessageOutput,
   TestDataSourceInput,
   TestDataSourceOutput,
+  TestEmbeddingViaOpenVikingInput,
+  TestEmbeddingViaOpenVikingOutput,
   TestLlmViaOpenClawInput,
   TestLlmViaOpenClawOutput,
 } from './contracts';
@@ -140,6 +153,13 @@ export function confirmIntentDraft(input: ConfirmIntentDraftInput) {
   });
 }
 
+export function confirmSelectionReport(input: ConfirmSelectionReportInput) {
+  return requestJson<ConfirmSelectionReportOutput>('/api/ui/confirm-selection-report', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export function listSavedReports(query?: string) {
   const suffix = query ? `?query=${encodeURIComponent(query)}` : '';
   return requestJson<ListSavedReportsOutput>(`/api/ui/list-saved-reports${suffix}`);
@@ -171,8 +191,16 @@ export function getReportChartEvidence(reportId: string) {
   );
 }
 
-export function getChannelStatus(options?: { includeQr?: boolean; refreshQr?: boolean; pollLogin?: boolean }) {
-  const query = new URLSearchParams({ probe: 'true' });
+export function getChannelStatus(options?: {
+  includeQr?: boolean;
+  refreshQr?: boolean;
+  pollLogin?: boolean;
+  probe?: boolean;
+}) {
+  const query = new URLSearchParams();
+  if (options?.probe !== false) {
+    query.set('probe', 'true');
+  }
   if (options?.includeQr) {
     query.set('includeQr', 'true');
   }
@@ -182,11 +210,40 @@ export function getChannelStatus(options?: { includeQr?: boolean; refreshQr?: bo
   if (options?.pollLogin) {
     query.set('pollLogin', 'true');
   }
-  return requestJson<ChannelStatusForUser>(`/api/ui/get-channel-status?${query.toString()}`);
+  const suffix = query.toString();
+  return requestJson<ChannelStatusForUser>(`/api/ui/get-channel-status${suffix ? `?${suffix}` : ''}`);
+}
+
+export function getChannelChatSnapshot() {
+  return requestJson<ChannelChatSnapshotForUser>('/api/ui/get-channel-chat-snapshot');
 }
 
 export function loadLlmSettings() {
   return requestJson<LoadLlmSettingsOutput>('/api/ui/load-llm-settings');
+}
+
+export function getAdvancedDiagnosticsProviderHealth() {
+  return requestJson<AdvancedDiagnosticsProviderHealthOutput>(
+    '/api/ui/get-advanced-diagnostics-provider-health',
+  );
+}
+
+export function getAdvancedDiagnosticsRuntimeServiceStatus() {
+  return requestJson<AdvancedDiagnosticsRuntimeServiceStatusOutput>(
+    '/api/ui/get-advanced-diagnostics-runtime-service-status',
+  );
+}
+
+export function getAdvancedDiagnosticsLiveRunGapSummary() {
+  return requestJson<AdvancedDiagnosticsLiveRunGapSummaryOutput>(
+    '/api/ui/get-advanced-diagnostics-live-run-gap-summary',
+  );
+}
+
+export function getAdvancedDiagnosticsEvidenceFailureReasonSummary() {
+  return requestJson<AdvancedDiagnosticsEvidenceFailureReasonSummaryOutput>(
+    '/api/ui/get-advanced-diagnostics-evidence-failure-reason-summary',
+  );
 }
 
 export function listDataSources() {
@@ -207,12 +264,39 @@ export function saveLlmConfigViaOpenClaw(input: SaveLlmConfigViaOpenClawInput) {
   });
 }
 
+export function saveEmbeddingConfigViaOpenViking(input: SaveEmbeddingConfigViaOpenVikingInput) {
+  return requestJson<SaveEmbeddingConfigViaOpenVikingOutput>('/api/ui/save-embedding-config-via-openviking', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export function testLlmViaOpenClaw(input: TestLlmViaOpenClawInput) {
   return requestJson<TestLlmViaOpenClawOutput>('/api/ui/test-llm-via-openclaw', {
     method: 'POST',
     body: JSON.stringify(input),
   });
 }
+
+export function testEmbeddingViaOpenViking(input: TestEmbeddingViaOpenVikingInput) {
+  return requestJson<TestEmbeddingViaOpenVikingOutput>('/api/ui/test-embedding-via-openviking', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function resetSettingsToDefaults(input: ResetSettingsToDefaultsInput) {
+  return requestJson<ResetSettingsToDefaultsOutput>('/api/ui/reset-settings-to-defaults', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export const saveChannelConfig = saveChannelConfigViaOpenClaw;
+export const saveReportModelConfig = saveLlmConfigViaOpenClaw;
+export const saveEmbeddingConfig = saveEmbeddingConfigViaOpenViking;
+export const testReportModelConnection = testLlmViaOpenClaw;
+export const testEmbeddingConnection = testEmbeddingViaOpenViking;
 
 export function testDataSource(input: TestDataSourceInput) {
   return requestJson<TestDataSourceOutput>('/api/ui/test-data-source', {

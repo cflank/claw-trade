@@ -16,6 +16,7 @@ from claw_trade.data_gateway.models import (
     PackRequest,
     PrioritySource,
     ProviderCallSpec,
+    ProviderCapability,
     ProviderFetch,
     ProviderKind,
     ProviderStatus,
@@ -63,8 +64,29 @@ class _ContractAdapter:
         {"date": "2026-05-17", "close": 101.2, "volume": 1000},
     )
 
-    def capabilities(self) -> tuple[object, ...]:
-        return ()
+    def capabilities(self) -> tuple[ProviderCapability, ...]:
+        return (
+            ProviderCapability(
+                provider=self.provider_id,
+                adapter_id=self.adapter_id,
+                provider_kind=self.provider_kind,
+                market=Market.US,
+                domain=PackDomain.MARKET,
+                endpoint="equity_price_historical",
+                source_role=SourceRole.MARKET_DATA,
+                expected_schema_id="us.market.ohlcv.v1",
+                license_policy_id="personal_research",
+                credential_requirements=(),
+                rate_limit_policy_id="default",
+                cache_ttl_seconds=300,
+                required=True,
+                attempt_required=True,
+                coverage_group="us_market",
+                coverage_quorum=1,
+                priority=0,
+                priority_source=PrioritySource.SYSTEM_DEFAULT,
+            ),
+        )
 
     def validate_credentials(self) -> CredentialStatus:
         return CredentialStatus(
@@ -156,6 +178,105 @@ class _RequestsFailureAdapter(_ContractAdapter):
         raise AssertionError("expected _http_get_json to raise before this line")
 
 
+@dataclass
+class _SdkInvisibleManagedHttpAdapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        return ProviderFetch(
+            payload={"rows": list(self.rows)},
+            content_type="application/json",
+            source_url=None,
+            is_empty=False,
+            row_count=len(self.rows),
+            provider_request_id="req-sdk-invisible",
+            response_status_code=None,
+            response_headers_summary=None,
+        )
+
+
+@dataclass
+class _ManagedHttp429Adapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        return ProviderFetch(
+            payload={"error": "rate limited"},
+            content_type="application/json",
+            source_url="https://api.example.com/market?symbol=AAPL",
+            is_empty=True,
+            row_count=0,
+            provider_request_id="req-managed-http-429",
+            response_status_code=429,
+            response_headers_summary={"retry-after": "60", "content-type": "application/json"},
+        )
+
+
+@dataclass
+class _ManagedHttp429NoHeadersAdapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        return ProviderFetch(
+            payload={"error": "rate limited"},
+            content_type="application/json",
+            source_url="https://api.example.com/market?symbol=AAPL",
+            is_empty=True,
+            row_count=0,
+            provider_request_id="req-managed-http-429-no-headers",
+            response_status_code=429,
+            response_headers_summary={},
+        )
+
+
+@dataclass
+class _ManagedHttp5xxNoHeadersAdapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        return ProviderFetch(
+            payload={"error": "server error"},
+            content_type="application/json",
+            source_url="https://api.example.com/market?symbol=AAPL",
+            is_empty=True,
+            row_count=0,
+            provider_request_id="req-managed-http-5xx-no-headers",
+            response_status_code=503,
+            response_headers_summary={},
+        )
+
+
+@dataclass
+class _ManagedHttpUrlOnlyAdapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        return ProviderFetch(
+            payload={"rows": list(self.rows)},
+            content_type="application/json",
+            source_url="https://api.example.com/market?symbol=AAPL",
+            is_empty=False,
+            row_count=len(self.rows),
+            provider_request_id="req-managed-http-url-only",
+            response_status_code=None,
+            response_headers_summary={},
+        )
+
+
+@dataclass
+class _CredentialMissingValidateAdapter(_ContractAdapter):
+    def validate_credentials(self) -> CredentialStatus:
+        return CredentialStatus(
+            status=AdmissionCheckStatus.MISSING,
+            provider=self.provider_id,
+            adapter_id=self.adapter_id,
+            missing_keys=("API_KEY",),
+            root_cause="missing credential keys: API_KEY",
+        )
+
+
+@dataclass
+class _CredentialMissingFetchAdapter(_ContractAdapter):
+    def fetch(self, spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        raise RuntimeError("missing credential keys: API_KEY")
+
+
 def _request() -> PackRequest:
     return PackRequest(
         run_id="run-provider-exec",
@@ -196,6 +317,7 @@ def _spec() -> ProviderCallSpec:
         priority=0,
         priority_source=PrioritySource.SYSTEM_DEFAULT,
         user_preferred=False,
+        managed_http_required=False,
     )
 
 
@@ -249,6 +371,49 @@ def test_success_writes_raw_normalized_attempt_refs() -> None:
     assert http_docs[0]["response_headers_summary"] == {"content-type": "application/json"}
     assert http_docs[0]["provider_request_id"] == "req-contract-1"
     assert http_docs[0]["raw_ref"] == result.raw_ref
+
+
+def test_validate_credentials_missing_maps_to_credential_missing_without_fetch() -> None:
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=_spec(),
+        adapter=_CredentialMissingValidateAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.CREDENTIAL_MISSING
+    assert result.attempt.status == ProviderStatus.CREDENTIAL_MISSING
+    assert result.raw_ref is None
+    assert result.normalized_ref is None
+    assert result.error_code == ProviderStatus.CREDENTIAL_MISSING.value
+    assert not http_collection.docs
+
+
+def test_fetch_credential_missing_exception_maps_to_credential_missing() -> None:
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=_spec(),
+        adapter=_CredentialMissingFetchAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.CREDENTIAL_MISSING
+    assert result.attempt.status == ProviderStatus.CREDENTIAL_MISSING
+    assert result.raw_ref is None
+    assert result.normalized_ref is None
+    assert result.error_code == ProviderStatus.CREDENTIAL_MISSING.value
 
 
 def test_success_captures_real_requests_http_metadata_when_fetch_omits_it(monkeypatch: Any) -> None:
@@ -450,3 +615,149 @@ def test_remote_error_message_and_http_source_url_redact_secrets(monkeypatch: An
     assert "x-secret" not in http_docs[0]["source_url"]
     assert "dash-secret" not in http_docs[0]["source_url"]
     assert "user:very-secret@" not in http_docs[0]["source_url"]
+
+
+def test_managed_http_required_without_visible_http_evidence_maps_to_sdk_unknown() -> None:
+    spec = _spec()
+    spec = ProviderCallSpec(**{**spec.__dict__, "managed_http_required": True})
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=spec,
+        adapter=_SdkInvisibleManagedHttpAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.SDK_HTTP_UNKNOWN
+    assert result.attempt.status == ProviderStatus.SDK_HTTP_UNKNOWN
+    assert result.raw_ref is None
+    assert result.normalized_ref is None
+    assert result.error_code == ProviderStatus.SDK_HTTP_UNKNOWN.value
+    assert not http_collection.docs
+
+
+def test_http_429_never_maps_to_remote_success() -> None:
+    spec = _spec()
+    spec = ProviderCallSpec(**{**spec.__dict__, "managed_http_required": True})
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=spec,
+        adapter=_ManagedHttp429Adapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.RATE_LIMITED
+    assert result.attempt.status == ProviderStatus.RATE_LIMITED
+    assert result.raw_ref is None
+    assert result.normalized_ref is None
+    assert result.error_code == "http_429"
+    http_docs = tuple(http_collection.docs.values())
+    assert len(http_docs) == 1
+    assert http_docs[0]["status"] == ProviderStatus.RATE_LIMITED.value
+    assert http_docs[0]["response_status_code"] == 429
+
+
+def test_managed_http_required_with_url_only_does_not_remote_success() -> None:
+    spec = _spec()
+    spec = ProviderCallSpec(**{**spec.__dict__, "managed_http_required": True})
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=spec,
+        adapter=_ManagedHttpUrlOnlyAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.SDK_HTTP_UNKNOWN
+    assert result.attempt.status == ProviderStatus.SDK_HTTP_UNKNOWN
+    assert result.raw_ref is None
+    assert result.normalized_ref is None
+    assert not http_collection.docs
+
+
+def test_managed_http_required_429_without_headers_is_still_rate_limited() -> None:
+    spec = _spec()
+    spec = ProviderCallSpec(**{**spec.__dict__, "managed_http_required": True})
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=spec,
+        adapter=_ManagedHttp429NoHeadersAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.RATE_LIMITED
+    assert result.attempt.status == ProviderStatus.RATE_LIMITED
+    assert result.error_code == "http_429"
+    http_docs = tuple(http_collection.docs.values())
+    assert len(http_docs) == 1
+    assert http_docs[0]["status"] == ProviderStatus.RATE_LIMITED.value
+    assert http_docs[0]["response_status_code"] == 429
+
+
+def test_managed_http_required_5xx_without_headers_is_remote_error() -> None:
+    spec = _spec()
+    spec = ProviderCallSpec(**{**spec.__dict__, "managed_http_required": True})
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=spec,
+        adapter=_ManagedHttp5xxNoHeadersAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.REMOTE_ERROR
+    assert result.attempt.status == ProviderStatus.REMOTE_ERROR
+    http_docs = tuple(http_collection.docs.values())
+    assert len(http_docs) == 1
+    assert http_docs[0]["status"] == ProviderStatus.REMOTE_ERROR.value
+    assert http_docs[0]["response_status_code"] == 503
+
+
+def test_mismatched_call_spec_is_explicit_remote_error_not_empty_success() -> None:
+    bad_spec = _spec()
+    bad_spec = ProviderCallSpec(**{**bad_spec.__dict__, "adapter_id": "market.some-other-adapter"})
+    http_collection = _Collection()
+    result = _helper(
+        raw_collection=_Collection(),
+        normalized_collection=_Collection(),
+        attempt_collection=_Collection(),
+        http_collection=http_collection,
+    ).execute(
+        request=_request(),
+        spec=bad_spec,
+        adapter=_ContractAdapter(),
+        started_at=utc_now_iso(),
+    )
+
+    assert result.status == ProviderStatus.REMOTE_ERROR
+    assert result.attempt.status == ProviderStatus.REMOTE_ERROR
+    assert result.error_code == "provider_call_spec_mismatch"
+    assert result.raw_ref is None
+    assert result.normalized_ref is None

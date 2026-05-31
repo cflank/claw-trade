@@ -13,6 +13,7 @@ from claw_trade.artifacts.openviking_client import OpenVikingClient
 from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.data_gateway.models import (
     ChartAsset,
+    DataGapReason,
     DomainPackResult,
     FreshnessPolicy,
     Market,
@@ -27,6 +28,7 @@ from claw_trade.data_gateway.models import (
     ReadinessStatus,
     SourceRole,
 )
+from claw_trade.data_gateway.packs.materializer import materialize_domain_pack_result
 from claw_trade.data_gateway.openviking.models import FinalReportClaim, OpenVikingRelation
 from claw_trade.data_gateway.store.mongo import CRYPTO_LENS_ANALYSIS_EVIDENCE, OPENBB_PROVIDER_ATTEMPTS
 from claw_trade.guards.export_claims import parse_export_claim_mapping
@@ -154,6 +156,7 @@ class OpenBBMongoLineageWriter:
                 run_id=state.run_id,
                 relations=relations,
                 attempt_ids=tuple(attempt.attempt_id for attempt in attempts),
+                pack_results=pack_result.pack_results,
             )
         except OSError as exc:
             return LineageWriteResult.failed(
@@ -192,6 +195,7 @@ class OpenBBMongoLineageWriter:
             attempts_by_call_pack.setdefault((attempt.call_id, attempt.pack), []).append(attempt)
 
         pack_results: list[DomainPackResult] = []
+        evidence_failed: list[str] = []
         missing: list[str] = []
         for material in upstream_materials:
             domain = _FRONTLINE_PACK_BY_WORKER.get(material.worker_id)
@@ -209,20 +213,28 @@ class OpenBBMongoLineageWriter:
                 analysis_refs_by_call=analysis_refs_by_call,
                 material_call_id=material.call_id,
             )
-            pack_results.append(
-                _pack_result_from_attempts(
-                    state=state,
-                    material=material,
-                    domain=domain,
-                    attempts=material_attempts,
-                    analysis_evidence_refs=analysis_refs,
-                    now_text=self._now_text(),
-                )
+            pack_result = _pack_result_from_attempts(
+                state=state,
+                material=material,
+                domain=domain,
+                attempts=material_attempts,
+                analysis_evidence_refs=analysis_refs,
+                now_text=self._now_text(),
             )
+            materialized_pack = materialize_domain_pack_result(pack_result)
+            if _has_evidence_write_failure(materialized_pack.data_gaps, material_attempts):
+                evidence_failed.append(
+                    f"{material.worker_id}:{material.call_id}:{domain.value}:{materialized_pack.source_summary}"
+                )
+            pack_results.append(pack_result)
 
         if missing:
             return _PackResultsResult.failed(
                 "缺少 OpenBB provider attempts，无法从 worker L1 追到 provider refs: " + ", ".join(missing)
+            )
+        if evidence_failed:
+            return _PackResultsResult.failed(
+                "provider evidence 写入失败，OpenViking 不能写 available lineage: " + " | ".join(evidence_failed)
             )
         if not pack_results:
             return _PackResultsResult.failed("没有可建立 lineage 的 OpenBB pack result")
@@ -256,6 +268,12 @@ def _analysis_refs_for_material_call(
         if call_id.startswith(tool_call_prefix):
             refs.extend(rows)
     return tuple(dict.fromkeys(refs))
+
+
+def _has_evidence_write_failure(data_gaps: tuple[Any, ...], attempts: tuple[ProviderAttempt, ...]) -> bool:
+    if any(attempt.status == ProviderStatus.EVIDENCE_WRITE_FAILED for attempt in attempts):
+        return True
+    return any(getattr(gap, "reason", None) == DataGapReason.EVIDENCE_WRITE_FAILED for gap in data_gaps)
 
 
 @dataclass(frozen=True)
@@ -470,17 +488,48 @@ def _write_lineage_audit(
     run_id: str,
     relations: tuple[OpenVikingRelation, ...],
     attempt_ids: tuple[str, ...],
+    pack_results: tuple[DomainPackResult, ...],
 ) -> None:
     payload = {
         "source": "openviking_lineage_writer",
         "run_id": run_id,
         "relation_count": len(relations),
         "attempt_ids": list(attempt_ids),
+        "pack_statuses": _pack_status_payloads(pack_results),
         "relations": [_jsonable(asdict(item)) for item in relations],
         "written_at": _utc_now_iso_text(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def _pack_status_payloads(pack_results: tuple[DomainPackResult, ...]) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for pack_result in pack_results:
+        materialized = materialize_domain_pack_result(pack_result)
+        payloads.append(
+            {
+                "worker_id": pack_result.request.worker_id,
+                "call_id": pack_result.request.call_id,
+                "domain": pack_result.request.domain.value,
+                "approval_status": materialized.approval_status.value,
+                "source_summary": materialized.source_summary,
+                "attempt_statuses": [
+                    {
+                        "attempt_id": attempt.attempt_id,
+                        "provider": attempt.provider,
+                        "status": attempt.status.value,
+                        "raw_ref": attempt.raw_ref,
+                        "normalized_ref": attempt.normalized_ref,
+                        "error_code": attempt.error_code,
+                        "error_message": attempt.error_message,
+                    }
+                    for attempt in pack_result.attempts
+                ],
+                "data_gaps": [_jsonable(asdict(gap)) for gap in materialized.data_gaps],
+            }
+        )
+    return payloads
 
 
 def _hash_json(payload: Mapping[str, object]) -> str:

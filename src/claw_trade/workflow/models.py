@@ -21,6 +21,7 @@ class StopPoint(str, Enum):
 class WorkflowEntryPoint(str, Enum):
     GENERIC = "generic"
     REPORT_COMMAND = "report_command"
+    SELECT_COMMAND = "select_command"
 
 
 class RunStatus(str, Enum):

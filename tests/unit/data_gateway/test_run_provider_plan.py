@@ -4,12 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from bson import BSON
 
 from claw_trade.artifacts.manifest import ManifestStore
 from claw_trade.data_gateway.errors import DataGatewayError, DataGatewayErrorCode
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
     CredentialStatus,
+    GapSeverity,
     Market,
     PackDomain,
     PrioritySource,
@@ -25,6 +27,7 @@ from claw_trade.data_gateway.providers.run_plan import (
     load_plan_for_pack_runtime,
     report_run_plan_domains,
 )
+from claw_trade.data_gateway.store.run_plans import MongoRunProviderPlanStore
 from claw_trade.data_gateway.providers.defaults import (
     build_default_provider_adapters,
     build_default_provider_registry,
@@ -93,6 +96,30 @@ class _PlanStore:
         raise DataGatewayError(DataGatewayErrorCode.RUN_PLAN_MISSING, f"missing run plan: {run_id}")
 
 
+class _DictPlanCollection:
+    def __init__(self) -> None:
+        self.docs: dict[str, dict[str, object]] = {}
+
+    def find_one(self, query: dict[str, object]) -> dict[str, object] | None:
+        key = str(query["_id"])
+        doc = self.docs.get(key)
+        return dict(doc) if doc is not None else None
+
+    def replace_one(self, query: dict[str, object], doc: dict[str, object], upsert: bool = False) -> None:
+        del upsert
+        self.docs[str(query["_id"])] = dict(doc)
+
+
+class _BsonPlanCollection(_DictPlanCollection):
+    def find_one(self, query: dict[str, object]) -> dict[str, object] | None:
+        doc = super().find_one(query)
+        return BSON(BSON.encode(doc)).decode() if doc is not None else None
+
+    def replace_one(self, query: dict[str, object], doc: dict[str, object], upsert: bool = False) -> None:
+        del upsert
+        self.docs[str(query["_id"])] = BSON(BSON.encode(doc)).decode()
+
+
 class _CredentialMissingAdapter:
     adapter_id = "project.tushare"
     provider_id = "tushare"
@@ -158,6 +185,33 @@ def _registry() -> ProviderRegistry:
         priority_source=PrioritySource.SYSTEM_DEFAULT,
     )
     return ProviderRegistry(capabilities=(capability,))
+
+
+def _cn_a_kline_registry() -> ProviderRegistry:
+    return ProviderRegistry(
+        capabilities=(
+            ProviderCapability(
+                provider="baidu_kline",
+                adapter_id="project.cn_a.market",
+                provider_kind=ProviderKind.PROJECT_EXTENSION,
+                market=Market.CN_A,
+                domain=PackDomain.MARKET,
+                endpoint="kline_baidu",
+                source_role=SourceRole.MARKET_DATA,
+                expected_schema_id="cn_a.market.ohlcv.v1",
+                license_policy_id="personal_research",
+                credential_requirements=(),
+                rate_limit_policy_id="cn_a.market.default",
+                cache_ttl_seconds=300,
+                required=True,
+                attempt_required=True,
+                coverage_group="cn_a_market_kline",
+                coverage_quorum=1,
+                priority=0,
+                priority_source=PrioritySource.SYSTEM_DEFAULT,
+            ),
+        )
+    )
 
 
 def test_planner_builds_plan_without_provider_fetch() -> None:
@@ -283,6 +337,134 @@ def test_cn_a_market_plan_includes_tushare_kline_fallback_and_missing_token_gap(
     )
 
 
+def test_cn_a_market_plan_prefers_configured_tushare_before_baidu(monkeypatch) -> None:
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    capabilities = load_default_system_capabilities()
+    registry = build_default_provider_registry()
+    provider_config_version = default_provider_config_version(capabilities)
+    adapters = build_default_provider_adapters(provider_config_version=provider_config_version, env={"TUSHARE_TOKEN": "token"})
+    planner = RunProviderPlanner(adapters_by_id={item.adapter_id: item for item in adapters})
+
+    plan = planner.build_run_plan(
+        run_id="run-cn-a-tushare-preferred",
+        market=Market.CN_A,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        currency="CNY",
+        profile="CN_A",
+        current_date="2026-05-17",
+        start_date="2026-04-17",
+        end_date="2026-05-17",
+        domains=(PackDomain.MARKET,),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+
+    kline_specs = tuple(spec for spec in plan.call_specs if spec.coverage_group == "cn_a_market_kline")
+    assert kline_specs[0].provider == "tushare_kline_fallback"
+    assert kline_specs[0].priority_source == PrioritySource.USER_PREFERRED
+    assert kline_specs[1].provider == "baidu_kline"
+    assert not any("TUSHARE_TOKEN" in gap.root_cause for gap in plan.initial_gaps)
+
+
+def test_cn_a_fundamental_plan_prefers_configured_tushare(monkeypatch) -> None:
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    capabilities = load_default_system_capabilities()
+    registry = build_default_provider_registry()
+    provider_config_version = default_provider_config_version(capabilities)
+    adapters = build_default_provider_adapters(provider_config_version=provider_config_version, env={"TUSHARE_TOKEN": "token"})
+    planner = RunProviderPlanner(adapters_by_id={item.adapter_id: item for item in adapters})
+
+    plan = planner.build_run_plan(
+        run_id="run-cn-a-tushare-fundamental-preferred",
+        market=Market.CN_A,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        currency="CNY",
+        profile="CN_A",
+        current_date="2026-05-17",
+        start_date="2026-04-17",
+        end_date="2026-05-17",
+        domains=(PackDomain.FUNDAMENTAL,),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+
+    financial_specs = tuple(spec for spec in plan.call_specs if spec.coverage_group == "cn_a_fundamental_financials")
+    assert financial_specs[0].provider == "tushare"
+    assert financial_specs[0].adapter_id == "fundamental.tushare.cn_a"
+    assert financial_specs[0].priority_source == PrioritySource.USER_PREFERRED
+    assert financial_specs[0].user_preferred is True
+    assert not any("fundamental.tushare.cn_a" in gap.root_cause for gap in plan.initial_gaps)
+
+
+def test_cn_a_flow_plans_prefer_configured_tushare_before_free_sources(monkeypatch) -> None:
+    monkeypatch.setenv("TUSHARE_TOKEN", "token")
+    env = {"TUSHARE_TOKEN": "token"}
+    capabilities = load_default_system_capabilities(env=env)
+    registry = ProviderRegistry(capabilities=capabilities)
+    provider_config_version = default_provider_config_version(capabilities)
+    adapters = build_default_provider_adapters(provider_config_version=provider_config_version, env=env)
+    planner = RunProviderPlanner(adapters_by_id={item.adapter_id: item for item in adapters})
+
+    plan = planner.build_run_plan(
+        run_id="run-cn-a-tushare-flow-preferred",
+        market=Market.CN_A,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        currency="CNY",
+        profile="CN_A",
+        current_date="2026-05-17",
+        start_date="2026-04-17",
+        end_date="2026-05-17",
+        domains=(PackDomain.HOT_MONEY, PackDomain.LOCKUP),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+
+    hot_fund_specs = tuple(spec for spec in plan.call_specs if spec.coverage_group == "cn_a_hot_money_fund_flow")
+    hot_northbound_specs = tuple(spec for spec in plan.call_specs if spec.coverage_group == "cn_a_hot_money_northbound")
+    hot_sector_specs = tuple(spec for spec in plan.call_specs if spec.coverage_group == "cn_a_hot_money_sector_flow")
+    flow120_specs = tuple(spec for spec in plan.call_specs if spec.coverage_group == "cn_a_lockup_120d_flow")
+
+    assert hot_fund_specs[0].provider.startswith("tushare")
+    assert hot_northbound_specs[0].provider.startswith("tushare")
+    assert hot_sector_specs[0].provider.startswith("tushare")
+    assert flow120_specs[0].provider == "tushare"
+    assert all(spec.priority_source == PrioritySource.USER_PREFERRED for spec in (hot_fund_specs[0], hot_northbound_specs[0], hot_sector_specs[0], flow120_specs[0]))
+    assert all(spec.user_preferred is True for spec in (hot_fund_specs[0], hot_northbound_specs[0], hot_sector_specs[0], flow120_specs[0]))
+    assert not any("TUSHARE_TOKEN" in gap.root_cause for gap in plan.initial_gaps)
+
+
+def test_optional_paid_sources_missing_token_are_warn_not_fail() -> None:
+    env: dict[str, str] = {}
+    capabilities = load_default_system_capabilities(env=env)
+    registry = ProviderRegistry(capabilities=capabilities)
+    provider_config_version = default_provider_config_version(capabilities)
+    adapters = build_default_provider_adapters(provider_config_version=provider_config_version, env=env)
+    planner = RunProviderPlanner(adapters_by_id={item.adapter_id: item for item in adapters})
+
+    plan = planner.build_run_plan(
+        run_id="run-cn-a-optional-paid-missing",
+        market=Market.CN_A,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        currency="CNY",
+        profile="CN_A",
+        current_date="2026-05-17",
+        start_date="2026-04-17",
+        end_date="2026-05-17",
+        domains=(PackDomain.HOT_MONEY, PackDomain.LOCKUP),
+        registry=registry,
+        provider_config_version=provider_config_version,
+    )
+
+    tushare_gaps = tuple(gap for gap in plan.initial_gaps if "tushare" in gap.root_cause)
+
+    assert tushare_gaps
+    assert all(gap.severity == GapSeverity.WARN for gap in tushare_gaps)
+
+
 def test_build_report_run_plan_non_cn_a_keeps_approved_domains() -> None:
     plan = build_report_run_plan(
         request=_request(market="US", profile="US"),
@@ -369,6 +551,37 @@ def test_control_runner_writes_report_run_plan_before_first_wake(monkeypatch: py
         PackDomain.HOT_MONEY,
         PackDomain.LOCKUP,
     )
+
+
+def test_mongo_run_plan_roundtrip_keeps_requirement_binding(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store = WorkflowStore(tmp_path / "runs")
+    manifest_store = ManifestStore(tmp_path / "runs")
+    plan_store = MongoRunProviderPlanStore(_BsonPlanCollection())
+    runner = ControlRunner(
+        store=store,
+        manifest_store=manifest_store,
+        openclaw=_OpenClaw(),
+        openviking=_OpenViking(),
+        tool_registry_probe=_ToolRegistryProbe(),
+        run_provider_planner=RunProviderPlanner(now_text=lambda: "2026-05-17T00:00:00+00:00"),
+        run_provider_plan_store=plan_store,
+        run_provider_registry=_cn_a_kline_registry(),
+        provider_config_version_resolver=lambda: "cfg-v1",
+    )
+
+    def _wait(input) -> Decision:  # type: ignore[no-untyped-def]
+        del input
+        return Decision(kind=DecisionKind.WAIT, reason="stop for contract test")
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _wait)
+    state = runner.run(_request())
+    loaded = plan_store.load(state.run_id)
+
+    [spec] = loaded.call_specs
+    assert spec.data_type == "cn_a_market_kline"
+    assert spec.requirement_id
+    assert spec.params["requirement_id"] == spec.requirement_id
+    assert spec.params["required_fields"] == ["trade_date", "open", "high", "low", "close", "volume"]
 
 
 def test_control_runner_does_not_create_plan_for_generic_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { SettingsSections } from '../components/SettingsSections';
+import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   getChannelStatus,
   listDataSources,
   loadLlmSettings,
-  saveChannelConfigViaOpenClaw,
+  resetSettingsToDefaults,
+  saveChannelConfig,
   saveDataSourceInstance,
-  saveLlmConfigViaOpenClaw,
+  saveEmbeddingConfig,
+  saveReportModelConfig,
   testDataSource,
-  testLlmViaOpenClaw,
+  testEmbeddingConnection,
+  testReportModelConnection,
   type ChannelStatusForUser,
   type DataSourceInstanceDraftInput,
   type DataSourceInstanceForUser,
@@ -19,17 +24,31 @@ import {
 type SectionErrors = {
   channel?: string;
   llm?: string;
+  embedding?: string;
   dataSources?: string;
+  reset?: string;
 };
 
-const DEVICE_UI_HREF = '/api/ui/open-device-interface';
+function shouldEnableWechatPlugin(channel: ChannelStatusForUser | null) {
+  const message = channel?.lastErrorMessage ?? '';
+  return channel?.state !== 'connected' && (message.includes('启用微信 ClawBot 插件') || message.includes('微信已解除连接'));
+}
+
 const SETTINGS_LOAD_TIMEOUT_MS = 8000;
+const MODEL_TEST_TIMEOUT_MS = 90000;
 const CHANNEL_STATUS_TIMEOUT_MS = 50000;
 const CHANNEL_LOGIN_POLL_MS = 2000;
-const DEFAULT_LLM_DRAFT: LlmConfigDraft = {
+const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
   provider: 'deepseek',
   defaultModel: '',
   status: 'idle',
+  reportModelStatus: {
+    state: 'unconfigured',
+    blocked: true,
+    ready: false,
+    userMessage: '请先在设置中填写报告模型并完成测试。',
+    checkedAt: null,
+  },
   embedding: {
     provider: '',
     model: '',
@@ -38,20 +57,31 @@ const DEFAULT_LLM_DRAFT: LlmConfigDraft = {
     apiKeyReplacement: '',
     enabled: false,
   },
-};
+});
 
-function createDataSourceDraft(supportedType = 'tushare'): DataSourceInstanceDraftInput {
+function currentEmbeddingDraft(draft: LlmConfigDraft): NonNullable<LlmConfigDraft['embedding']> {
+  return (
+    draft.embedding ?? {
+      provider: '',
+      model: '',
+      endpointUrl: '',
+      dimension: '',
+      apiKeyReplacement: '',
+      enabled: false,
+    }
+  );
+}
+
+function createDataSourceDraft(source?: DataSourceInstanceForUser): DataSourceInstanceDraftInput {
   return {
-    supportedType,
-    group: 'custom',
-    displayName: supportedType,
-    enabled: false,
+    instanceId: source?.instanceId ?? null,
+    supportedType: source?.supportedType ?? '',
+    group: source?.group ?? '',
+    displayName: source?.displayName ?? '',
+    enabled: source?.enabled ?? false,
     apiKeyReplacement: '',
-    endpointUrl: '',
-    proxyUrl: '',
-    headerName: '',
-    priority: 100,
-    state: 'draft',
+    endpointUrl: source?.endpointUrl ?? '',
+    state: source?.state ?? 'draft',
     requiresKey: true,
   };
 }
@@ -65,11 +95,22 @@ function draftFromDataSource(item: DataSourceInstanceForUser): DataSourceInstanc
     enabled: item.enabled,
     apiKeyReplacement: '',
     endpointUrl: item.endpointUrl ?? '',
-    proxyUrl: item.proxyUrl ?? '',
-    headerName: item.headerName ?? '',
-    priority: item.priority,
     state: item.state,
-    requiresKey: !item.apiKeyMasked,
+    requiresKey: true,
+  };
+}
+
+function toDataSourceDraftPayload(draft: DataSourceInstanceDraftInput): DataSourceInstanceDraftInput {
+  return {
+    instanceId: draft.instanceId ?? null,
+    supportedType: draft.supportedType,
+    group: draft.group,
+    displayName: draft.displayName,
+    enabled: draft.enabled,
+    apiKeyReplacement: draft.apiKeyReplacement ?? '',
+    endpointUrl: draft.endpointUrl ?? '',
+    state: draft.state ?? 'draft',
+    requiresKey: draft.requiresKey,
   };
 }
 
@@ -85,12 +126,37 @@ function withSettingsTimeout<T>(promise: Promise<T>, message: string, timeoutMs 
   });
 }
 
+function sanitizeModelFailureMessage(raw: string) {
+  const message = raw.trim();
+  if (!message) {
+    return '报告模型连接测试失败，请检查模型配置后重试。';
+  }
+  const lowered = message.toLowerCase();
+  if (lowered.includes('provider attempt') || lowered.includes('runtime') || lowered.includes('gateway')) {
+    return '报告模型连接测试失败，请检查服务商、模型、API Key 和接口地址后重试。';
+  }
+  return message;
+}
+
+function withSavedUnverifiedStatus(draft: LlmConfigDraft, checkedAt?: string | null): LlmConfigDraft {
+  return {
+    ...draft,
+    reportModelStatus: {
+      state: 'saved_unverified',
+      blocked: true,
+      ready: false,
+      userMessage: '报告模型已保存但尚未测试通过，请先执行模型测试。',
+      checkedAt: checkedAt ?? null,
+    },
+  };
+}
+
 export function SettingsPage() {
+  const navigate = useNavigate();
   const [channel, setChannel] = useState<ChannelStatusForUser | null>(null);
   const [llm, setLlm] = useState<LlmConfigDraft | null>(null);
   const [llmSettingsVersion, setLlmSettingsVersion] = useState('');
   const [dataSources, setDataSources] = useState<DataSourceInstanceForUser[]>([]);
-  const [supportedTypes, setSupportedTypes] = useState<string[]>([]);
   const [dataSourceDraft, setDataSourceDraft] = useState<DataSourceInstanceDraftInput>(() =>
     createDataSourceDraft(),
   );
@@ -100,8 +166,13 @@ export function SettingsPage() {
   const [channelActionMessage, setChannelActionMessage] = useState('');
   const [llmActionBusy, setLlmActionBusy] = useState(false);
   const [llmActionMessage, setLlmActionMessage] = useState('');
+  const [embeddingActionBusy, setEmbeddingActionBusy] = useState(false);
+  const [embeddingActionMessage, setEmbeddingActionMessage] = useState('');
+  const [embeddingActionOk, setEmbeddingActionOk] = useState(false);
   const [dataSourceActionBusy, setDataSourceActionBusy] = useState(false);
   const [dataSourceActionMessage, setDataSourceActionMessage] = useState('');
+  const [resetActionBusy, setResetActionBusy] = useState(false);
+  const [resetActionMessage, setResetActionMessage] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -111,6 +182,7 @@ export function SettingsPage() {
       setChannelActionMessage('');
       setLlmActionMessage('');
       setDataSourceActionMessage('');
+      setResetActionMessage('');
       let pending = 3;
       const finishOne = () => {
         pending -= 1;
@@ -119,7 +191,7 @@ export function SettingsPage() {
         }
       };
       void withSettingsTimeout(
-        getChannelStatus({ includeQr: true }),
+        getChannelStatus({ probe: false }),
         '微信通道暂不可用，请稍后重试。',
         CHANNEL_STATUS_TIMEOUT_MS,
       )
@@ -137,7 +209,7 @@ export function SettingsPage() {
       void withSettingsTimeout(loadLlmSettings(), '助手服务暂不可用，请稍后重试。')
         .then((result) => {
           if (active) {
-            setLlm(result.draft);
+            setLlm(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...result.draft }));
             setLlmSettingsVersion(result.settingsVersion);
           }
         })
@@ -151,9 +223,10 @@ export function SettingsPage() {
         .then((result) => {
           if (active) {
             setDataSources(result.instances);
-            setSupportedTypes(result.supportedTypes);
             setDataSourceDraft((current) =>
-              current.supportedType ? current : createDataSourceDraft(result.supportedTypes[0]),
+              result.instances.some((item) => item.supportedType === current.supportedType)
+                ? current
+                : createDataSourceDraft(result.instances[0]),
             );
           }
         })
@@ -208,6 +281,10 @@ export function SettingsPage() {
   }, [channel?.qrCodeImageDataUrl, channel?.state]);
 
   async function refreshChannel() {
+    if (shouldEnableWechatPlugin(channel)) {
+      await setChannelEnabled(true);
+      return;
+    }
     setChannelActionBusy(true);
     setChannelActionMessage('');
     setSectionErrors((current) => ({ ...current, channel: undefined }));
@@ -228,22 +305,22 @@ export function SettingsPage() {
     }
   }
 
-  async function enableChannel() {
+  async function setChannelEnabled(enabled: boolean) {
     setChannelActionBusy(true);
     setChannelActionMessage('');
     setSectionErrors((current) => ({ ...current, channel: undefined }));
     try {
-      const result = await saveChannelConfigViaOpenClaw({
+      const result = await saveChannelConfig({
         requestId: `channel-${Date.now()}`,
         channelKind: 'wechat_clawbot',
-        configPatch: { enabled: true },
+        configPatch: { enabled },
       });
       setChannel(result.status);
-      setChannelActionMessage(
-        result.restartRequired
-          ? '已提交启用，请重启后在 OpenClaw 主界面扫码。'
-          : '已提交启用，请在 OpenClaw 主界面扫码。',
-      );
+      if (enabled) {
+        setChannelActionMessage(result.restartRequired ? '已提交重新连接，请重启后重新扫码。' : '已提交重新连接，请重新扫码。');
+      } else {
+        setChannelActionMessage('已解除连接。');
+      }
     } catch (saveError) {
       setSectionErrors((current) => ({
         ...current,
@@ -254,21 +331,39 @@ export function SettingsPage() {
     }
   }
 
+  async function reconnectChannel() {
+    await setChannelEnabled(true);
+  }
+
+  async function disconnectChannel() {
+    await setChannelEnabled(false);
+  }
+
+  function skipWechatSetup() {
+    navigate('/');
+  }
+
   async function saveLlm() {
     const draft = llm ?? DEFAULT_LLM_DRAFT;
+    const reportModelDraft = {
+      provider: draft.provider,
+      defaultModel: draft.defaultModel,
+      endpointUrl: draft.endpointUrl,
+      apiKeyReplacement: draft.apiKeyReplacement,
+    };
     setLlmActionBusy(true);
     setLlmActionMessage('');
     setSectionErrors((current) => ({ ...current, llm: undefined }));
     try {
       const result = await withSettingsTimeout(
-        saveLlmConfigViaOpenClaw({
+        saveReportModelConfig({
           requestId: `llm-save-${Date.now()}`,
-          draft,
+          draft: reportModelDraft,
           expectedSettingsVersion: llmSettingsVersion,
         }),
         '模型配置暂不可保存，请稍后重试。',
       );
-      setLlm({ ...draft, status: 'saved', updatedAt: result.updatedAt });
+      setLlm(withSavedUnverifiedStatus({ ...draft, status: 'saved', updatedAt: result.updatedAt }, result.updatedAt));
       if (result.settingsVersion) {
         setLlmSettingsVersion(result.settingsVersion);
       }
@@ -287,20 +382,99 @@ export function SettingsPage() {
     setSectionErrors((current) => ({ ...current, llm: undefined }));
     try {
       const result = await withSettingsTimeout(
-        testLlmViaOpenClaw({
+        testReportModelConnection({
           requestId: `llm-test-${Date.now()}`,
           provider: draft.provider,
           model: draft.defaultModel,
           endpointUrl: draft.endpointUrl,
+          apiKeyReplacement: draft.apiKeyReplacement,
         }),
         '模型连接测试暂不可用，请稍后重试。',
+        MODEL_TEST_TIMEOUT_MS,
       );
-      setLlm({ ...draft, status: result.ok ? 'saved' : 'error', lastTestMessage: result.userMessage });
-      setLlmActionMessage(result.userMessage);
+      const userMessage = result.ok
+        ? result.userMessage
+        : sanitizeModelFailureMessage(result.userMessage);
+      setLlm({
+        ...draft,
+        status: result.ok ? 'saved' : 'error',
+        lastTestMessage: userMessage,
+        reportModelStatus: result.ok
+          ? {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: result.checkedAt,
+            }
+          : {
+              state: 'failed',
+              blocked: true,
+              ready: false,
+              userMessage,
+              checkedAt: result.checkedAt,
+            },
+      });
+      setLlmActionMessage(userMessage);
     } catch (testError) {
       setSectionErrors((current) => ({ ...current, llm: (testError as Error).message }));
     } finally {
       setLlmActionBusy(false);
+    }
+  }
+
+  async function testEmbedding() {
+    const draft = llm ?? DEFAULT_LLM_DRAFT;
+    setEmbeddingActionBusy(true);
+    setEmbeddingActionMessage('');
+    setEmbeddingActionOk(false);
+    setSectionErrors((current) => ({ ...current, embedding: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        testEmbeddingConnection({
+          requestId: `embedding-test-${Date.now()}`,
+          embedding: currentEmbeddingDraft(draft),
+        }),
+        'Embedding 测试暂不可用，请稍后重试。',
+        MODEL_TEST_TIMEOUT_MS,
+      );
+      setEmbeddingActionOk(result.ok);
+      setEmbeddingActionMessage(result.userMessage);
+    } catch (testError) {
+      setSectionErrors((current) => ({ ...current, embedding: (testError as Error).message }));
+    } finally {
+      setEmbeddingActionBusy(false);
+    }
+  }
+
+  async function saveEmbedding() {
+    const draft = llm ?? DEFAULT_LLM_DRAFT;
+    const embedding = currentEmbeddingDraft(draft);
+    setEmbeddingActionBusy(true);
+    setEmbeddingActionMessage('');
+    setEmbeddingActionOk(false);
+    setSectionErrors((current) => ({ ...current, embedding: undefined }));
+    try {
+      await withSettingsTimeout(
+        saveEmbeddingConfig({
+          requestId: `embedding-save-${Date.now()}`,
+          embedding,
+        }),
+        'Embedding 配置暂不可保存，请稍后重试。',
+      );
+      setLlm({
+        ...draft,
+        embedding: {
+          ...embedding,
+          enabled: Boolean(embedding.provider?.trim() && embedding.model?.trim()),
+        },
+      });
+      setEmbeddingActionOk(true);
+      setEmbeddingActionMessage('Embedding 配置已保存。');
+    } catch (saveError) {
+      setSectionErrors((current) => ({ ...current, embedding: (saveError as Error).message }));
+    } finally {
+      setEmbeddingActionBusy(false);
     }
   }
 
@@ -312,16 +486,15 @@ export function SettingsPage() {
       const saved = await withSettingsTimeout(
         saveDataSourceInstance({
           requestId: `data-source-save-${Date.now()}`,
-          instance: dataSourceDraft,
+          instance: toDataSourceDraftPayload(dataSourceDraft),
         }),
         '数据源暂不可保存，请稍后重试。',
       );
       setDataSources((current) => {
-        const existing = current.findIndex((item) => item.instanceId === saved.instanceId);
-        if (existing < 0) {
-          return [...current, saved];
+        if (current.some((item) => item.supportedType === saved.supportedType)) {
+          return current.map((item) => (item.supportedType === saved.supportedType ? saved : item));
         }
-        return current.map((item, index) => (index === existing ? saved : item));
+        return [...current, saved];
       });
       setDataSourceDraft(draftFromDataSource(saved));
       setDataSourceActionMessage('数据源配置已保存。');
@@ -340,7 +513,7 @@ export function SettingsPage() {
       const result = await withSettingsTimeout(
         testDataSource({
           requestId: `data-source-test-${Date.now()}`,
-          instanceDraft: dataSourceDraft,
+          instanceDraft: toDataSourceDraftPayload(dataSourceDraft),
         }),
         '数据源测试暂不可用，请稍后重试。',
       );
@@ -353,25 +526,69 @@ export function SettingsPage() {
     }
   }
 
+  async function resetSettings() {
+    const confirmed = window.confirm(
+      '恢复默认设置会清空本页保存的报告模型、Embedding、增强数据源和微信通知连接设置，但不会删除历史报告。确定继续吗？',
+    );
+    if (!confirmed) {
+      return;
+    }
+    setResetActionBusy(true);
+    setResetActionMessage('');
+    setSectionErrors((current) => ({ ...current, reset: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        resetSettingsToDefaults({ requestId: `settings-reset-${Date.now()}` }),
+        '设置暂不可恢复默认，请稍后重试。',
+      );
+      setLlm(DEFAULT_LLM_DRAFT);
+      setLlmSettingsVersion(result.llm.settingsVersion ?? '');
+      setChannel(result.channel);
+      setDataSources(result.dataSources.instances);
+      setDataSourceDraft(createDataSourceDraft(result.dataSources.instances[0]));
+      setEmbeddingActionMessage('');
+      setEmbeddingActionOk(false);
+      setLlmActionMessage('');
+      setDataSourceActionMessage('');
+      setChannelActionMessage('');
+      setResetActionMessage(result.userMessage);
+    } catch (resetError) {
+      setSectionErrors((current) => ({ ...current, reset: (resetError as Error).message }));
+    } finally {
+      setResetActionBusy(false);
+    }
+  }
+
   return (
     <AppShell>
       <div className="ct-settings-wrap">
+        <header className="ct-page-head">
+          <div>
+            <h1 className="ct-page-title">设置</h1>
+            <p className="ct-page-subtitle">管理报告模型、增强数据源和微信通知。</p>
+          </div>
+        </header>
         {loading ? <div className="ct-notice">加载中...</div> : null}
         <SettingsSections
           channel={channel}
           llm={llm ?? DEFAULT_LLM_DRAFT}
           dataSources={dataSources}
-          supportedTypes={supportedTypes}
           dataSourceDraft={dataSourceDraft}
           sectionErrors={sectionErrors}
           channelActionBusy={channelActionBusy}
           channelActionMessage={channelActionMessage}
           llmActionBusy={llmActionBusy}
           llmActionMessage={llmActionMessage}
+          embeddingActionBusy={embeddingActionBusy}
+          embeddingActionMessage={embeddingActionMessage}
+          embeddingActionOk={embeddingActionOk}
           dataSourceActionBusy={dataSourceActionBusy}
           dataSourceActionMessage={dataSourceActionMessage}
-          deviceUiHref={DEVICE_UI_HREF}
-          onEnableChannel={enableChannel}
+          resetActionBusy={resetActionBusy}
+          resetActionMessage={resetActionMessage}
+          onReconnectChannel={reconnectChannel}
+          onDisconnectChannel={disconnectChannel}
+          onSkipWechatSetup={skipWechatSetup}
           onRefreshChannel={refreshChannel}
           onLlmChange={(patch) =>
             setLlm((current) => ({
@@ -382,11 +599,13 @@ export function SettingsPage() {
           }
           onSaveLlm={saveLlm}
           onTestLlm={testLlm}
+          onSaveEmbedding={saveEmbedding}
+          onTestEmbedding={testEmbedding}
           onDataSourceDraftChange={(patch) => setDataSourceDraft((current) => ({ ...current, ...patch }))}
           onEditDataSource={(item) => setDataSourceDraft(draftFromDataSource(item))}
-          onNewDataSource={() => setDataSourceDraft(createDataSourceDraft(supportedTypes[0]))}
           onSaveDataSource={saveDataSource}
           onTestDataSource={testDataSourceDraft}
+          onResetSettings={resetSettings}
         />
       </div>
     </AppShell>

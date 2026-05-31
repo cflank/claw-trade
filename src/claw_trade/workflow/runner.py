@@ -16,6 +16,11 @@ from claw_trade.config.profiles import require_profile
 from claw_trade.config.tool_names import load_tool_registry
 from claw_trade.data_gateway.models import RunProviderPlan
 from claw_trade.data_gateway.openviking import LineageWriteResult
+from claw_trade.data_gateway.report_plan import (
+    build_report_data_plan,
+    report_data_plan_snapshot,
+    write_report_data_plan_snapshot,
+)
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
 from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner, build_report_run_plan
 from claw_trade.guards.artifact_flow import validate_artifact_flow
@@ -326,6 +331,18 @@ class ControlRunner:
     def _initialize_report_run_plan(self, state: WorkflowState) -> FailureRecord | None:
         if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
             return None
+        if state.request.data_gateway.strip().lower() != "openbb":
+            return FailureRecord(
+                run_id=state.run_id,
+                call_id=None,
+                worker_id=None,
+                stage=None,
+                category="run_provider_plan",
+                reason="report_command 仅允许 data_gateway=openbb",
+                evidence_paths=(state.run_dir / "request.json",),
+                early_stop=True,
+                human_action_required=None,
+            )
         if self.run_provider_planner is None or self.run_provider_plan_store is None or self.run_provider_registry is None:
             return FailureRecord(
                 run_id=state.run_id,
@@ -370,9 +387,23 @@ class ControlRunner:
                     reason="report_command run plan 生成失败",
                     evidence_paths=(state.run_dir / "request.json",),
                     early_stop=True,
-                    human_action_required=None,
-                )
+                        human_action_required=None,
+                    )
+            report_data_plan = build_report_data_plan(
+                request=state.request,
+                run_id=state.run_id,
+                run_plan=plan,
+                workers=frontline_workers_for_market(state.request.market),
+            )
+            plan = replace(plan, call_specs=report_data_plan.provider_call_specs)
             self.run_provider_plan_store.write(plan)
+            snapshot = report_data_plan_snapshot(
+                report_data_plan=report_data_plan,
+                run_plan=plan,
+                entry_point=state.request.entry_point.value,
+                data_gateway=state.request.data_gateway,
+            )
+            write_report_data_plan_snapshot(state.run_dir / "data_gateway" / "report-data-plan.json", snapshot)
         except Exception as exc:
             return FailureRecord(
                 run_id=state.run_id,
@@ -637,57 +668,6 @@ class ControlRunner:
             worker_results.append(result)
             if result.failure is None:
                 continue
-
-            if _should_retry_report_polisher_structure_failure(batch=batch, spec=spec, failure=result.failure):
-                retry_prepared = self._build_worker_call_with_materials(
-                    state=state,
-                    batch=batch,
-                    worker_id=worker_id,
-                    turn_index=turn_index,
-                    round_index=round_index,
-                    role_turn_index=role_turn_index,
-                )
-                if not retry_prepared.ok or retry_prepared.call is None:
-                    failure = retry_prepared.failure or self._unknown_prepare_failure(
-                        state=state,
-                        batch=batch,
-                        worker_id=worker_id,
-                        turn_index=turn_index,
-                        round_index=round_index,
-                        role_turn_index=role_turn_index,
-                    )
-                    retry_result = _blocked_worker_result_from_failure(
-                        batch=batch,
-                        worker_id=worker_id,
-                        failure=failure,
-                        turn_index=turn_index,
-                        round_index=round_index,
-                        role_turn_index=role_turn_index,
-                    )
-                    self.store.save_worker_result(retry_result)
-                    worker_results.append(retry_result)
-                    failures.append(failure)
-                    if should_early_stop(failure):
-                        early_stop_used = True
-                        early_stop_failures.append(failure)
-                        break
-                    if not batch.collect_first:
-                        early_stop_used = True
-                        break
-                    continue
-
-                retry_call = retry_prepared.call
-                retry_call = _with_prompt_runtime_var(
-                    retry_call,
-                    "final_report_section_instruction",
-                    _report_polisher_structure_retry_instruction(spec.section_plan, result.failure),
-                )
-                retry_result = self.run_single_worker(retry_call)
-                self.store.save_worker_result(retry_result)
-                worker_results.append(retry_result)
-                if retry_result.failure is None:
-                    continue
-                result = retry_result
 
             failures.append(result.failure)
             if should_early_stop(result.failure):
@@ -1030,17 +1010,7 @@ class ControlRunner:
                 early_stop=guard_result.early_stop,
             )
 
-        segment_result, segment_path = self.validate_final_report_segment(call, evidence)
-        if segment_result is not None and not segment_result.ok:
-            segment_paths = (segment_path, evidence.raw_output_path) if evidence.raw_output_path is not None else (segment_path,)
-            return _failed_worker_result(
-                call=call,
-                category=segment_result.category,
-                reason=segment_result.reason or "report_polisher segment 章节结构验收失败",
-                paths=segment_paths,
-                openclaw_result_path=openclaw_result_path,
-                early_stop=True,
-            )
+        self.validate_final_report_segment(call, evidence)
 
         if call.stop_after_first_response:
             return WorkerResult(
@@ -1143,7 +1113,11 @@ class ControlRunner:
             result = replace(result, reason="report_polisher raw_output_path 缺失")
             payload = {
                 **result.to_payload(),
-                "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+                "diagnostic_source": (
+                    "human approval: guard narrowing on 2026-05-29; report_polisher segment structure "
+                    "is diagnostic, not a runtime guard"
+                ),
+                "hard_fail": False,
                 "raw_output_path": None,
             }
             evidence_path.write_text(
@@ -1162,7 +1136,11 @@ class ControlRunner:
             payload = {
                 **result.to_payload(),
                 "reason": f"report_polisher raw_output 读取失败: {exc}",
-                "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+                "diagnostic_source": (
+                    "human approval: guard narrowing on 2026-05-29; report_polisher segment structure "
+                    "is diagnostic, not a runtime guard"
+                ),
+                "hard_fail": False,
                 "raw_output_path": str(evidence.raw_output_path),
             }
             evidence_path.write_text(
@@ -1178,7 +1156,11 @@ class ControlRunner:
         )
         payload = {
             **result.to_payload(),
-            "guard_source": "human approval: final report section hard fail approved in chat on 2026-05-18",
+            "diagnostic_source": (
+                "human approval: guard narrowing on 2026-05-29; report_polisher segment structure "
+                "is diagnostic, not a runtime guard"
+            ),
+            "hard_fail": False,
             "raw_output_path": str(evidence.raw_output_path),
         }
         evidence_path.write_text(
@@ -1661,35 +1643,6 @@ def _blocked_worker_result_from_failure(
         turn_index=turn_index,
         round_index=round_index,
         role_turn_index=role_turn_index,
-    )
-
-
-def _should_retry_report_polisher_structure_failure(
-    *,
-    batch: StageBatch,
-    spec: _BatchCallSpec,
-    failure: FailureRecord,
-) -> bool:
-    return (
-        batch.stage == Stage.FINAL_REPORT
-        and spec.worker_id == "report_polisher"
-        and spec.section_plan is not None
-        and failure.category == "final_report_structure"
-    )
-
-
-def _report_polisher_structure_retry_instruction(
-    section_plan: FinalReportSectionPlan | None,
-    failure: FailureRecord,
-) -> str:
-    original_instruction = section_plan.instruction if section_plan is not None else ""
-    return (
-        f"{original_instruction}\n\n"
-        "【格式重试】上一次输出没有通过终稿分段结构验收："
-        f"{failure.reason}。本次仍然只重写本段，不要补写前后章节。"
-        "如果原指令要求严禁 H1，第一行必须直接是指定的 `##` 二级标题；"
-        "整段不得包含任何以 `# ` 开头的行，不得输出完整报告标题或报告封面。"
-        "不要解释错误原因，不要道歉，直接输出 Markdown 正文。"
     )
 
 

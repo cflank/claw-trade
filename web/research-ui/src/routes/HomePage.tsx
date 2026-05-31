@@ -8,21 +8,28 @@ import { InlineErrorState } from '../components/ErrorStates';
 import { HistoryRail } from '../components/HistoryRail';
 import { MessageStream } from '../components/MessageStream';
 import { RightRail } from '../components/RightRail';
+import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   askReportQuestion,
   confirmIntentDraft,
+  confirmSelectionReport,
+  createIntentDraft,
   deleteSavedReport,
+  getChannelChatSnapshot,
   getChannelStatus,
   getReportChartEvidence,
   getReportDetail,
   getReportQueueSnapshot,
   listSavedReports,
+  loadLlmSettings,
   sendChatMessage,
+  type ChannelChatSnapshotForUser,
   type ChannelStatusForUser,
   type ChatContextForUser,
   type ConfirmationCard,
   type ChatMessageForUser,
   type ConfirmIntentDraftOutput,
+  type LlmConfigDraft,
   type ReportDetailForUser,
   type ReportQueueSnapshotForUser,
   type SavedReportForUser,
@@ -35,6 +42,8 @@ const DEFAULT_CONTEXT: ChatContextForUser = {
   activeTaskId: null,
   activeReportId: null,
 };
+const REPORT_INPUT_FORMAT_HINT = '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL；加密 AR/USDT。裸 AR 按美股，写加密请用 AR/USDT。';
+const DEVICE_UI_HREF = '/api/ui/open-device-interface';
 
 const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
   runningTask: null,
@@ -43,6 +52,27 @@ const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
   queueLimit: 10,
   queuedCount: 0,
   isFull: false,
+};
+
+const DEFAULT_LLM_DRAFT: LlmConfigDraft = {
+  provider: 'deepseek',
+  defaultModel: '',
+  status: 'idle',
+  reportModelStatus: {
+    state: 'unconfigured',
+    blocked: true,
+    ready: false,
+    userMessage: '请先在设置中填写报告模型并完成测试。',
+    checkedAt: null,
+  },
+  embedding: {
+    provider: '',
+    model: '',
+    endpointUrl: '',
+    dimension: '',
+    apiKeyReplacement: '',
+    enabled: false,
+  },
 };
 
 type ReportQaEntry = {
@@ -95,6 +125,82 @@ function cancelledDraftMessage(card: ConfirmationCard): ChatMessageForUser {
   };
 }
 
+function selectionReportStartedMessage(ticker: string, reportTaskId?: string | null): ChatMessageForUser {
+  return {
+    messageId: `local-selection-report-started-${reportTaskId ?? ticker}-${Date.now()}`,
+    contextKind: 'task_following',
+    actor: 'system',
+    kind: 'task_progress',
+    text: `${ticker} 已确认进入 /report。`,
+    taskId: reportTaskId ?? undefined,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function attachSelectionMetadata(
+  messages: ChatMessageForUser[],
+  selection: ChatMessageForUser['selection'] | undefined,
+) {
+  if (!selection) {
+    return messages;
+  }
+  let attached = false;
+  return [...messages].reverse().map((message) => {
+    if (!attached && (message.kind === 'selection_result' || message.kind === 'selection_unavailable')) {
+      attached = true;
+      return { ...message, selection };
+    }
+    return message;
+  }).reverse();
+}
+
+function modelStatusState(draft: LlmConfigDraft) {
+  return draft.reportModelStatus?.state ?? 'unconfigured';
+}
+
+function sanitizeModelFailureMessage(raw: string) {
+  const message = raw.trim();
+  if (!message) {
+    return '报告模型连接测试失败，请检查模型配置后重试。';
+  }
+  const lowered = message.toLowerCase();
+  if ((lowered.includes('provider') && lowered.includes('attempt')) || lowered.includes('runtime') || lowered.includes('gateway')) {
+    return '报告模型连接测试失败，请检查服务商、模型、API Key 和接口地址后重试。';
+  }
+  return message;
+}
+
+function modelWarningMessage(draft: LlmConfigDraft) {
+  return sanitizeModelFailureMessage(
+    draft.reportModelStatus?.userMessage?.trim() || draft.lastTestMessage?.trim() || '请先在设置里配置报告模型并完成测试。',
+  );
+}
+
+function readSummaryField(card: ConfirmationCard, label: string) {
+  const prefix = `${label}：`;
+  const line = card.summaryLines.find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : '';
+}
+
+function asMarketProfile(value: string | undefined): 'CN_A' | 'US' | 'HK' | 'CRYPTO' | undefined {
+  if (value === 'CN_A' || value === 'US' || value === 'HK' || value === 'CRYPTO') {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeConfirmationCard(card: ConfirmationCard): ConfirmationCard {
+  const instrumentCode = (card.instrumentCode ?? readSummaryField(card, '标的')).trim().toUpperCase();
+  const instrumentName = (card.instrumentName ?? readSummaryField(card, '名称')).trim();
+  const market = asMarketProfile(card.market ?? readSummaryField(card, '市场'));
+  return {
+    ...card,
+    instrumentCode,
+    instrumentName,
+    market,
+  };
+}
+
 export function HomePage() {
   const [searchParams] = useSearchParams();
   const [context, setContext] = useState<ChatContextForUser>(DEFAULT_CONTEXT);
@@ -108,15 +214,24 @@ export function HomePage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [cardSubmittingId, setCardSubmittingId] = useState<string | null>(null);
+  const [selectionSubmittingKey, setSelectionSubmittingKey] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [modelDraft, setModelDraft] = useState<LlmConfigDraft>(DEFAULT_LLM_DRAFT);
   const consumedReportIdRef = useRef<string | null>(null);
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
+  const channelRefreshInFlightRef = useRef(false);
+  const activeDetailRef = useRef<ReportDetailForUser | null>(null);
+
+  useEffect(() => {
+    activeDetailRef.current = activeDetail;
+  }, [activeDetail]);
 
   const mergeConfirmationCard = useCallback((card: ConfirmationCard | undefined) => {
     if (!card) {
       return;
     }
-    setConfirmationCards((current) => ({ ...current, [card.id]: card }));
+    const normalized = normalizeConfirmationCard(card);
+    setConfirmationCards((current) => ({ ...current, [normalized.id]: normalized }));
   }, []);
 
   const showFailedTask = useCallback((task: ReportQueueSnapshotForUser['lastTerminalTask']) => {
@@ -137,26 +252,53 @@ export function HomePage() {
     [showFailedTask],
   );
 
+  const applyChannelChatSnapshot = useCallback((snapshot: ChannelChatSnapshotForUser | null | undefined) => {
+    if (!snapshot?.context || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
+      return;
+    }
+    if (activeDetailRef.current) {
+      return;
+    }
+    setContext(snapshot.context);
+    setMessages(snapshot.messages);
+    if (snapshot.confirmationCards) {
+      setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
+    }
+    setActiveDetail(null);
+  }, []);
+
   const loadWorkspace = useCallback(async () => {
     setError('');
     try {
-      const [historyResult, queueResult] = await Promise.all([
+      const [historyResult, queueResult, llmResult, channelChatResult] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
+        loadLlmSettings().catch(() => null),
+        getChannelChatSnapshot().catch(() => null),
       ]);
       setSavedReports(historyResult.items);
       applyQueueSnapshot(queueResult);
+      applyChannelChatSnapshot(channelChatResult);
+      if (llmResult) {
+        setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
+      }
     } catch (loadError) {
       setError((loadError as Error).message);
     } finally {
       setLoading(false);
     }
-    getChannelStatus()
-      .then((channelResult) => setChannelStatus(channelResult))
-      .catch(() => {
-        // 微信状态不应阻塞主聊天窗口。
-      });
-  }, [applyQueueSnapshot]);
+    if (!channelRefreshInFlightRef.current) {
+      channelRefreshInFlightRef.current = true;
+      getChannelStatus({ probe: false })
+        .then((channelResult) => setChannelStatus(channelResult))
+        .catch(() => {
+          // 微信状态不应阻塞主聊天窗口。
+        })
+        .finally(() => {
+          channelRefreshInFlightRef.current = false;
+        });
+    }
+  }, [applyChannelChatSnapshot, applyQueueSnapshot]);
 
   useEffect(() => {
     void loadWorkspace();
@@ -164,21 +306,30 @@ export function HomePage() {
 
   const refreshWorkspace = useCallback(async () => {
     try {
-      const [historyResult, queueResult] = await Promise.all([
+      const [historyResult, queueResult, channelChatResult] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
+        getChannelChatSnapshot().catch(() => null),
       ]);
       setSavedReports(historyResult.items);
       applyQueueSnapshot(queueResult);
+      applyChannelChatSnapshot(channelChatResult);
     } catch {
       // 保留当前 UI 状态，轮询失败不打断用户操作。
     }
-    getChannelStatus()
+    if (channelStatus?.qrCodeImageDataUrl || channelRefreshInFlightRef.current) {
+      return;
+    }
+    channelRefreshInFlightRef.current = true;
+    getChannelStatus({ probe: false })
       .then((channelResult) => setChannelStatus(channelResult))
       .catch(() => {
         // 保留当前微信状态，轮询失败不打断用户操作。
+      })
+      .finally(() => {
+        channelRefreshInFlightRef.current = false;
       });
-  }, [applyQueueSnapshot]);
+  }, [applyChannelChatSnapshot, applyQueueSnapshot, channelStatus?.qrCodeImageDataUrl]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -260,8 +411,11 @@ export function HomePage() {
           text,
         });
         setContext(result.context);
-        setMessages(result.messages);
+        setMessages(attachSelectionMetadata(result.messages, result.selection));
         mergeConfirmationCard(result.confirmationCard);
+        if (result.confirmationCards) {
+          setConfirmationCards((current) => ({ ...current, ...result.confirmationCards }));
+        }
         if (result.queueSnapshot) {
           applyQueueSnapshot(result.queueSnapshot);
         }
@@ -374,6 +528,13 @@ export function HomePage() {
           requestId: nextRequestId(),
           draftId: card.draftId,
           decision,
+          overrides:
+            decision === 'confirm'
+              ? {
+                  instrumentCode: card.instrumentCode,
+                  market: card.market,
+                }
+              : undefined,
         });
         setConfirmationCards((current) => ({
           ...current,
@@ -412,11 +573,162 @@ export function HomePage() {
     [applyQueueSnapshot, refreshWorkspace, showFailedTask],
   );
 
+  const confirmSelectionCandidate = useCallback(
+    async (item: ChatMessageForUser, ticker: string) => {
+      const workflowRunId = item.selection?.workflowRunId?.trim();
+      if (!workflowRunId) {
+        setError('当前选股结果缺少确认信息，请重新执行 /select。');
+        return;
+      }
+      const key = `${workflowRunId}:${ticker}`;
+      setSelectionSubmittingKey(key);
+      setError('');
+      try {
+        const result = await confirmSelectionReport({
+          requestId: nextRequestId(),
+          selectWorkflowRunId: workflowRunId,
+          ticker,
+          originContextId: context.contextId,
+        });
+        setMessages((current) => [...current, selectionReportStartedMessage(ticker, result.reportTaskId)]);
+        if (result.task && result.task.status !== 'failed') {
+          setMessages((current) => [...current, taskAcceptedMessage(result.task!)]);
+        }
+        if (result.task?.status === 'failed') {
+          showFailedTask(result.task);
+        }
+        if (result.queueSnapshot) {
+          applyQueueSnapshot(result.queueSnapshot);
+        }
+        if (result.task) {
+          setContext({
+            contextId: `task-${result.task.taskId}`,
+            kind: 'task_following',
+            title: `任务跟进：${result.task.instrumentCode}`,
+            activeTaskId: result.task.taskId,
+            activeReportId: result.task.reportId ?? null,
+          });
+        }
+        setActiveDetail(null);
+        await refreshWorkspace();
+      } catch (selectionError) {
+        setError((selectionError as Error).message);
+      } finally {
+        setSelectionSubmittingKey(null);
+      }
+    },
+    [applyQueueSnapshot, context.contextId, refreshWorkspace, showFailedTask],
+  );
+
+  const onCardSymbolChange = useCallback((card: ConfirmationCard, value: string) => {
+    const normalized = value.trim().toUpperCase();
+    setConfirmationCards((current) => ({
+      ...current,
+      [card.id]: {
+        ...current[card.id],
+        instrumentCode: normalized,
+        instrumentName: '',
+        market: undefined,
+        validationState: 'mismatch',
+        validationMessage: normalized ? '请先点击“更新标的”完成重新识别。' : '请先输入标的代码。',
+        suggestedMarket: null,
+      },
+    }));
+  }, []);
+
+  const onCardSymbolRefresh = useCallback(
+    async (card: ConfirmationCard) => {
+      const code = String(card.instrumentCode ?? '').trim().toUpperCase();
+      if (!code) {
+        return;
+      }
+      setCardSubmittingId(card.id);
+      setError('');
+      try {
+        const result = await createIntentDraft({
+          requestId: nextRequestId(),
+          sourceMessageId: `card-${card.id}`,
+          text: `/report ${code}`,
+        });
+        const refreshed = normalizeConfirmationCard(result.confirmationCard);
+        setConfirmationCards((current) => ({
+          ...current,
+          [card.id]: {
+            ...refreshed,
+            id: card.id,
+            status: 'active',
+            validationState: 'matched',
+            validationMessage: null,
+            suggestedMarket: null,
+          },
+        }));
+      } catch (refreshError) {
+        setError((refreshError as Error).message);
+      } finally {
+        setCardSubmittingId(null);
+      }
+    },
+    [],
+  );
+
+  const onCardMarketChange = useCallback(
+    async (card: ConfirmationCard, market: 'CN_A' | 'US' | 'HK' | 'CRYPTO') => {
+      const code = String(card.instrumentCode ?? '').trim().toUpperCase();
+      setConfirmationCards((current) => ({
+        ...current,
+        [card.id]: {
+          ...current[card.id],
+          market,
+          validationState: 'mismatch',
+          validationMessage: '市场切换后正在重新校验，请稍候。',
+          suggestedMarket: null,
+        },
+      }));
+      if (!code) {
+        return;
+      }
+      setCardSubmittingId(card.id);
+      setError('');
+      try {
+        const result = await createIntentDraft({
+          requestId: nextRequestId(),
+          sourceMessageId: `card-${card.id}`,
+          text: `/report ${code}`,
+        });
+        const refreshed = normalizeConfirmationCard(result.confirmationCard);
+        const detectedMarket = refreshed.market;
+        const mismatch = detectedMarket !== market;
+        setConfirmationCards((current) => ({
+          ...current,
+          [card.id]: {
+            ...current[card.id],
+            instrumentName: refreshed.instrumentName,
+            market,
+            validationState: mismatch ? 'mismatch' : 'matched',
+            validationMessage: mismatch
+              ? `当前标的识别为 ${detectedMarket} 市场，请修改标的或选择匹配市场。`
+              : null,
+            suggestedMarket: mismatch ? detectedMarket ?? null : null,
+          },
+        }));
+      } catch (validateError) {
+        setError((validateError as Error).message);
+      } finally {
+        setCardSubmittingId(null);
+      }
+    },
+    [],
+  );
+
   const queueHeadline = useMemo(() => {
     const running = queueSnapshot.runningTask ? 1 : 0;
     const queued = queueSnapshot.queuedTasks.length;
     return `${running} 运行中 · ${queued} 排队中`;
   }, [queueSnapshot.queuedTasks.length, queueSnapshot.runningTask]);
+
+  const modelState = modelStatusState(modelDraft);
+  const showModelWarning = !loading && !activeDetail && modelState !== 'ready';
+  const modelWarningIsError = modelState === 'failed';
 
   return (
     <AppShell>
@@ -433,6 +745,11 @@ export function HomePage() {
             <h1>{activeDetail ? activeDetail.report.title : '投研工作台'}</h1>
             <div className="ct-center-head-actions">
               <span className="ct-context-label">{context.kind === 'report_reading' ? '报告阅读' : '聊天会话'}</span>
+              {!activeDetail ? (
+                <a className="ct-text-button" href={DEVICE_UI_HREF} target="_blank" rel="noreferrer">
+                  打开设备界面
+                </a>
+              ) : null}
               {activeDetail ? (
                 <button type="button" className="ct-text-button ct-report-back-button" onClick={returnToChat}>
                   返回聊天
@@ -456,6 +773,22 @@ export function HomePage() {
           </section>
           {loading ? <div className="ct-notice">加载中...</div> : null}
           {error ? <InlineErrorState message={error} /> : null}
+          {showModelWarning ? (
+            <section
+              className={`ct-model-warning${modelWarningIsError ? ' is-error' : ''}`}
+              data-testid="llm-config-warning"
+              role="status"
+              aria-live="polite"
+            >
+              <div>
+                <strong>报告模型还没配置成功</strong>
+                <p>{modelWarningMessage(modelDraft)}</p>
+              </div>
+              <a className="ct-button-link" href="/settings">
+                去设置模型
+              </a>
+            </section>
+          ) : null}
 
           {activeDetail ? (
             <>
@@ -497,13 +830,19 @@ export function HomePage() {
                 cardSubmittingId={cardSubmittingId}
                 onConfirmCard={(card) => applyCardDecision(card, 'confirm')}
                 onCancelCard={(card) => applyCardDecision(card, 'cancel')}
+                onCardSymbolChange={onCardSymbolChange}
+                onCardSymbolRefresh={onCardSymbolRefresh}
+                onCardMarketChange={onCardMarketChange}
                 onOpenReport={(reportId) => void openReportById(reportId)}
+                selectionSubmittingKey={selectionSubmittingKey}
+                onConfirmSelectionCandidate={(item, ticker) => void confirmSelectionCandidate(item, ticker)}
               />
               <Composer
                 onSend={onSendChat}
                 disabled={sending}
                 placeholder="输入问题，或提交报告任务需求"
                 buttonLabel={sending ? '发送中' : '发送'}
+                hint={REPORT_INPUT_FORMAT_HINT}
               />
             </>
           )}

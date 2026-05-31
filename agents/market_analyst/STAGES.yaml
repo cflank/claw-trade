@@ -33,8 +33,6 @@ skills:
   mounted:
     - claw-trade-stage
     - us-market-data
-    - alphaear-stock
-    - alphaear-techlab
     - crypto-trading-analysis
 tool_policy:
   owner: stage_profile

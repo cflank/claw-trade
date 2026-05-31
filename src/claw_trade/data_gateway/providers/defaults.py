@@ -4,9 +4,10 @@ import hashlib
 import importlib
 import json
 import os
+from dataclasses import replace
 from typing import Callable, Iterable, Mapping
 
-from claw_trade.data_gateway.models import ProviderCapability
+from claw_trade.data_gateway.models import PrioritySource, ProviderCapability
 from claw_trade.data_gateway.providers.base import ProviderAdapter
 from claw_trade.data_gateway.providers.fundamental import build_default_fundamental_adapters
 from claw_trade.data_gateway.providers.hot_money import build_default_hot_money_adapters
@@ -14,8 +15,9 @@ from claw_trade.data_gateway.providers.lockup import build_default_lockup_adapte
 from claw_trade.data_gateway.providers.market_adapters import build_default_market_adapters
 from claw_trade.data_gateway.providers.news import build_default_news_adapters
 from claw_trade.data_gateway.providers.policy import build_default_policy_adapters
-from claw_trade.data_gateway.providers.registry import ProviderRegistry
+from claw_trade.data_gateway.providers.registry import ProviderRegistry, normalize_provider_capability_policy
 from claw_trade.data_gateway.providers.social import build_default_social_adapters
+from claw_trade.data_gateway.provider_user_settings import build_runtime_data_source_env
 
 CapabilityLoader = Callable[[], Iterable[ProviderCapability]]
 
@@ -30,14 +32,19 @@ DEFAULT_CAPABILITY_LOADERS: tuple[str, ...] = (
 )
 
 
-def load_default_system_capabilities(loaders: tuple[str, ...] = DEFAULT_CAPABILITY_LOADERS) -> tuple[ProviderCapability, ...]:
+def load_default_system_capabilities(
+    loaders: tuple[str, ...] = DEFAULT_CAPABILITY_LOADERS,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> tuple[ProviderCapability, ...]:
     capabilities: list[ProviderCapability] = []
     for spec in loaders:
         loader = _load_capability_loader(spec)
         if loader is None:
             continue
-        capabilities.extend(tuple(loader()))
-    return tuple(capabilities)
+        capabilities.extend(normalize_provider_capability_policy(item) for item in tuple(loader()))
+    runtime_env = build_runtime_data_source_env(env)
+    return tuple(_apply_runtime_user_preference(item, env=runtime_env) for item in capabilities)
 
 
 def build_default_provider_registry() -> ProviderRegistry:
@@ -49,14 +56,15 @@ def build_default_provider_adapters(
     provider_config_version: str,
     env: Mapping[str, str] | None = None,
 ) -> tuple[ProviderAdapter, ...]:
+    runtime_env = build_runtime_data_source_env(env)
     adapters: list[ProviderAdapter] = []
-    adapters.extend(build_default_market_adapters(provider_config_version=provider_config_version, env=env))
-    adapters.extend(build_default_fundamental_adapters(provider_config_version=provider_config_version, env=env))
-    adapters.extend(build_default_news_adapters(provider_config_version=provider_config_version, env=env))
-    adapters.extend(build_default_social_adapters(provider_config_version=provider_config_version, env=env))
+    adapters.extend(build_default_market_adapters(provider_config_version=provider_config_version, env=runtime_env))
+    adapters.extend(build_default_fundamental_adapters(provider_config_version=provider_config_version, env=runtime_env))
+    adapters.extend(build_default_news_adapters(provider_config_version=provider_config_version, env=runtime_env))
+    adapters.extend(build_default_social_adapters(provider_config_version=provider_config_version, env=runtime_env))
     adapters.extend(build_default_policy_adapters(provider_config_version=provider_config_version))
-    adapters.extend(build_default_hot_money_adapters(provider_config_version=provider_config_version))
-    adapters.extend(build_default_lockup_adapters(provider_config_version=provider_config_version))
+    adapters.extend(build_default_hot_money_adapters(provider_config_version=provider_config_version, env=runtime_env))
+    adapters.extend(build_default_lockup_adapters(provider_config_version=provider_config_version, env=runtime_env))
     return tuple(adapters)
 
 
@@ -85,6 +93,15 @@ def default_provider_config_version(capabilities: Iterable[ProviderCapability]) 
             "priority": item.priority,
             "priority_source": item.priority_source.value,
             "raw_export_policy": item.raw_export_policy,
+            "data_type": item.data_type,
+            "coverage_fields": list(item.coverage_fields),
+            "coverage_symbols": item.coverage_symbols,
+            "freshness_supported": list(item.freshness_supported),
+            "user_config_key": item.user_config_key,
+            "can_be_formal_fact_source": item.can_be_formal_fact_source,
+            "can_enter_worker_pack": item.can_enter_worker_pack,
+            "http_visibility": item.http_visibility.value if item.http_visibility is not None else None,
+            "live_fresh_required_for_ui": item.live_fresh_required_for_ui,
         }
         for item in sorted(capabilities, key=lambda cap: (cap.market.value, cap.domain.value, cap.adapter_id, cap.endpoint))
     ]
@@ -108,3 +125,11 @@ def _load_capability_loader(spec: str) -> CapabilityLoader | None:
     if not callable(loader):
         raise TypeError(f"capability loader is not callable: {spec}")
     return loader
+
+
+def _apply_runtime_user_preference(capability: ProviderCapability, *, env: Mapping[str, str]) -> ProviderCapability:
+    if not str(env.get("TUSHARE_TOKEN", "")).strip():
+        return capability
+    if not capability.provider.startswith("tushare"):
+        return capability
+    return replace(capability, priority=0, priority_source=PrioritySource.USER_PREFERRED)

@@ -16,7 +16,6 @@ from claw_trade.workflow.models import (
     Decision,
     DecisionKind,
     ExportResult,
-    FailureRecord,
     ReadPolicy,
     RunRequest,
     RunStatus,
@@ -469,102 +468,6 @@ def test_final_report_batch_runs_report_polisher_dynamic_serial_section_turns(mo
         assert harness.openviking.read_material_ids[offset : offset + len(source_material_ids)] == source_material_ids
 
 
-def test_final_report_structure_failure_retries_report_polisher_segment_once(monkeypatch, tmp_path: Path) -> None:
-    config_path = tmp_path / "openclaw.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "agents": {"defaults": {"model": {"primary": "deepseek/deepseek-chat"}}},
-                "models": {
-                    "providers": {
-                        "deepseek": {
-                            "models": [
-                                {
-                                    "id": "deepseek-chat",
-                                    "maxTokens": 8192,
-                                    "contextWindow": 131072,
-                                }
-                            ]
-                        }
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config_path))
-    harness = _RunnerHarness(tmp_path)
-    state = harness.store.create_run(_request(profile="CN_A"))
-    _seed_final_report_upstream_manifest(harness, state)
-    batch = StageBatch(
-        run_id=state.run_id,
-        stage=Stage.FINAL_REPORT,
-        worker_ids=("report_polisher",),
-        scope=BatchScope.FULL_STAGE,
-        collect_first=False,
-        stop_point=StopPoint.NONE,
-    )
-    calls_seen: list[WorkerCall] = []
-    failed_turns: set[int] = set()
-
-    def _run(call: WorkerCall) -> WorkerResult:
-        calls_seen.append(call)
-        if call.turn_index == 1 and call.turn_index not in failed_turns:
-            failed_turns.add(call.turn_index)
-            failure = FailureRecord(
-                run_id=call.run_id,
-                call_id=call.call_id,
-                worker_id=call.worker_id,
-                stage=call.stage,
-                category="final_report_structure",
-                reason="report_polisher 非首段禁止 H1 标题",
-                evidence_paths=(call.evidence_dir / "final-report-segment-structure.json",),
-                early_stop=True,
-                human_action_required=None,
-                turn_index=call.turn_index,
-                round_index=call.round_index,
-                role_turn_index=call.role_turn_index,
-            )
-            return WorkerResult(
-                run_id=call.run_id,
-                call_id=call.call_id,
-                worker_id=call.worker_id,
-                stage=call.stage,
-                status=WorkerStatus.FAILED,
-                openclaw_result_path=call.evidence_dir / "openclaw-result.json",
-                approved_material_id=None,
-                failure=failure,
-                turn_index=call.turn_index,
-                round_index=call.round_index,
-                role_turn_index=call.role_turn_index,
-            )
-        return WorkerResult(
-            run_id=call.run_id,
-            call_id=call.call_id,
-            worker_id=call.worker_id,
-            stage=call.stage,
-            status=WorkerStatus.SUCCEEDED,
-            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
-            approved_material_id=f"mat-final-report-{call.turn_index}",
-            failure=None,
-            turn_index=call.turn_index,
-            round_index=call.round_index,
-            role_turn_index=call.role_turn_index,
-        )
-
-    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
-
-    result = harness.runner.run_stage_batch(state, batch)
-
-    assert result.failures == ()
-    assert [call.turn_index for call in calls_seen].count(1) == 2
-    retry_call = [call for call in calls_seen if call.turn_index == 1][1]
-    retry_instruction = retry_call.prompt_runtime_vars["final_report_section_instruction"]
-    assert "【格式重试】" in retry_instruction
-    assert "整段不得包含任何以 `# ` 开头的行" in retry_instruction
-    assert retry_call.call_id != calls_seen[1].call_id
-
-
 def test_non_final_report_batch_keeps_single_worker_turn(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
     state = harness.store.create_run(_request())
@@ -673,7 +576,7 @@ def test_first_response_success_does_not_write_manifest(tmp_path: Path) -> None:
     assert manifest_payload.get("materials") == []
 
 
-def test_report_polisher_segment_structure_failure_blocks_material_approval(tmp_path: Path) -> None:
+def test_report_polisher_segment_structure_diagnostic_allows_material_approval(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
     state = harness.store.create_run(_request(profile="CN_A"))
     call = _worker_call(tmp_path, run_id=state.run_id, call_id="call-report-polisher-t01")
@@ -731,18 +634,20 @@ def test_report_polisher_segment_structure_failure_blocks_material_approval(tmp_
         GuardResult.passed("ok"),
         harness.store.save_guard_result(c, GuardResult.passed("ok")),
     )
-    harness.runner.run_material_approval = lambda c, e: (_ for _ in ()).throw(AssertionError("approval must not run"))  # type: ignore[method-assign]
+    harness.runner.run_material_approval = lambda c, e: _approval_ok(c)  # type: ignore[method-assign]
 
     result = harness.runner.run_single_worker(call)
 
-    assert result.status == WorkerStatus.FAILED
-    assert result.failure is not None
-    assert result.failure.category == "final_report_structure"
-    assert "非首段禁止 H1 标题" in result.failure.reason
+    assert result.status == WorkerStatus.SUCCEEDED
+    assert result.failure is None
+    assert result.approved_material_id == f"mat-{call.call_id}"
     structure_path = call.evidence_dir / "final-report-segment-structure.json"
     assert structure_path.exists()
     payload = json.loads(structure_path.read_text(encoding="utf-8"))
-    assert payload["guard_source"].startswith("human approval")
+    assert payload["ok"] is False
+    assert "非首段禁止 H1 标题" in payload["reason"]
+    assert payload["hard_fail"] is False
+    assert "guard_source" not in payload
 
 
 def _seed_final_report_upstream_manifest(harness: _RunnerHarness, state: WorkflowState) -> list[str]:

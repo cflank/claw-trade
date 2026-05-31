@@ -27,6 +27,7 @@ def test_spa_fallback_is_last_and_api_prefix_keeps_json(tmp_path: Path) -> None:
     spa = client.get("/some/page")
     assert spa.status_code == 200
     assert spa.headers["content-type"].startswith("text/html")
+    assert spa.headers["cache-control"] == "no-store, max-age=0"
 
     api = client.get("/api/ui/list-saved-reports")
     assert api.status_code == 200

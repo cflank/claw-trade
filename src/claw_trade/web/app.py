@@ -43,6 +43,8 @@ def build_research_ui_app(
     frontend_dist = settings.frontend_dist
     app.include_router(ui_router, prefix="/api/ui")
 
+    no_cache_headers = {"Cache-Control": "no-store, max-age=0"}
+
     @app.api_route(
         "/api/ui/{missing_path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -68,7 +70,7 @@ def build_research_ui_app(
         index_path = frontend_dist / "index.html"
         if not index_path.exists():
             raise HTTPException(status_code=404, detail="missing_research_ui_index")
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers=no_cache_headers)
 
     return app
 

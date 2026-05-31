@@ -27,6 +27,7 @@ def test_start_research_ui_script_contains_fixed_runtime_entry() -> None:
     assert 'RESEARCH_UI_INTERNAL_BACKEND_MARKER="${RESEARCH_UI_INTERNAL_BACKEND_MARKER:-CLAW_TRADE_UI_ALLOW_DIRECT_BACKEND_ENTRY}"' in text
     assert '"${RESEARCH_UI_INTERNAL_BACKEND_MARKER}=${RESEARCH_UI_INTERNAL_BACKEND_MARKER_VALUE}"' in text
     assert "OpenViking/OpenClaw/Mongo + UI 后端" in text
+    assert 'CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-60000}"' in text
 
 
 def test_start_research_ui_script_requires_real_backend_entry_and_api_health_check() -> None:

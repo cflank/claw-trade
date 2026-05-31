@@ -6,13 +6,16 @@ import pytest
 
 from claw_trade.data_gateway.errors import DataGatewayError, DataGatewayErrorCode
 from claw_trade.data_gateway.models import (
+    FreshnessStatus,
     FreshnessPolicy,
     Market,
     PackDomain,
     PackRequest,
     PrioritySource,
+    ProviderAttempt,
     ProviderCallSpec,
     ProviderKind,
+    ProviderResult,
     ProviderStatus,
     SourceRole,
 )
@@ -21,6 +24,7 @@ from claw_trade.data_gateway.store.cache import MongoCacheStore, build_cache_key
 from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
 from claw_trade.data_gateway.store.rate_limits import MongoRateLimitStore
 from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
+from claw_trade.data_gateway.store.single_flight import MongoSingleFlightCoordinator
 
 
 class _FakeCollection:
@@ -28,6 +32,7 @@ class _FakeCollection:
         self.docs: dict[str, dict[str, Any]] = {}
         self.raise_find: Exception | None = None
         self.raise_write: Exception | None = None
+        self.raise_update: Exception | None = None
 
     def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
         if self.raise_find is not None:
@@ -47,6 +52,8 @@ class _FakeCollection:
     def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
         if self.raise_write is not None:
             raise self.raise_write
+        if self.raise_update is not None:
+            raise self.raise_update
         key = query["_id"]
         current = self.docs.get(key)
         inserted = False
@@ -216,6 +223,25 @@ def test_cache_store_state_machine_keeps_miss_stale_error_and_cached_empty() -> 
     assert error.receipt.status == ProviderStatus.CACHE_ERROR
 
 
+def test_cache_store_rejects_success_entries_without_evidence_refs() -> None:
+    store = MongoCacheStore(_FakeCollection())
+    spec = _spec()
+    request = _request()
+
+    with pytest.raises(DataGatewayError) as excinfo:
+        store.put_success(
+            spec=spec,
+            request=request,
+            raw_ref="",
+            normalized_ref="mongo://openbb_normalized/norm-1",
+            evidence_hash="sha256:ok",
+            ttl_seconds=300,
+        )
+
+    assert excinfo.value.code == DataGatewayErrorCode.EVIDENCE_WRITE_FAILED
+    assert "raw_ref and normalized_ref" in excinfo.value.root_cause
+
+
 def test_evidence_write_failure_maps_to_evidence_write_failed_and_blocks_success_refs() -> None:
     spec = _spec()
     request = _request()
@@ -299,6 +325,80 @@ def test_evidence_write_failure_maps_to_evidence_write_failed_and_blocks_success
             )
         )
     assert attempt_exc.value.code == DataGatewayErrorCode.EVIDENCE_WRITE_FAILED
+
+
+def test_single_flight_success_state_write_failure_is_evidence_write_failed() -> None:
+    spec = _spec()
+    request = _request()
+    flight_collection = _FakeCollection()
+    flight_collection.raise_update = RuntimeError("single-flight update failed")
+    attempt_store = MongoAttemptStore(_FakeCollection())
+    coordinator = MongoSingleFlightCoordinator(
+        collection=flight_collection,
+        attempt_store=attempt_store,
+        lease_seconds=15,
+        wait_timeout_seconds=0.1,
+    )
+
+    def owner_fn() -> ProviderResult:
+        attempt = ProviderAttempt(
+            attempt_id="attempt-owner",
+            run_id=request.run_id,
+            call_id=request.call_id,
+            worker_id=request.worker_id,
+            pack=request.domain.value,
+            provider=spec.provider,
+            adapter_id=spec.adapter_id,
+            adapter_kind=spec.provider_kind.value,
+            provider_kind=spec.provider_kind,
+            provider_config_version=spec.provider_config_version,
+            endpoint=spec.endpoint,
+            source_role=spec.source_role,
+            started_at="2026-05-17T10:00:00+00:00",
+            finished_at="2026-05-17T10:00:00+00:00",
+            status=ProviderStatus.REMOTE_SUCCESS,
+            required=spec.required,
+            attempt_required=spec.attempt_required,
+            coverage_group=spec.coverage_group,
+            coverage_quorum=spec.coverage_quorum,
+            priority_source=spec.priority_source,
+            user_preferred=spec.user_preferred,
+            from_cache=False,
+            cache_status=None,
+            single_flight_role="owner",
+            shared_from_attempt_id=None,
+            latency_ms=1,
+            row_count=1,
+            raw_ref="mongo://openbb_raw_payloads/raw-owner",
+            normalized_ref="mongo://openbb_normalized/norm-owner",
+            error_code=None,
+            error_message=None,
+            schema_id=spec.expected_schema_id,
+            license_note="ok",
+        )
+        attempt_store.write(attempt)
+        return ProviderResult(
+            spec=spec,
+            status=ProviderStatus.REMOTE_SUCCESS,
+            request_id=None,
+            requested_at=attempt.started_at,
+            latency_ms=1,
+            source_role=spec.source_role,
+            freshness=FreshnessStatus.FRESH_REMOTE,
+            license_note="ok",
+            raw_ref=attempt.raw_ref,
+            normalized_ref=attempt.normalized_ref,
+            rows=({"close": 10.2},),
+            row_count=1,
+            cache_receipt=None,
+            attempt=attempt,
+        )
+
+    with pytest.raises(DataGatewayError) as excinfo:
+        coordinator.run(request=request, spec=spec, fn=owner_fn)
+
+    assert excinfo.value.code == DataGatewayErrorCode.EVIDENCE_WRITE_FAILED
+    assert "single-flight success write failed" in excinfo.value.root_cause
 
 
 def test_raw_export_policy_redacted_does_not_store_inline_payload() -> None:

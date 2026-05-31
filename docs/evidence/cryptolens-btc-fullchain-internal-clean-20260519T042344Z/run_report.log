@@ -1,3 +1,0 @@
-WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
-WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
-COMPLETED run_id=run-20260519-042451-bb511eac output_dir=docs/evidence/cryptolens-btc-fullchain-internal-clean-20260519T042344Z/exported workers=20 final_report=final_report.md

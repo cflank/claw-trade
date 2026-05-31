@@ -208,15 +208,11 @@ def test_policy_provider_source_claim_matches_fetch_url_domain_and_discovery_sta
         called_get.append(url)
         if "newsapi.eastmoney.com" in url:
             return _Response(
-                json_body={
-                    "LivesList": [
-                        {
-                            "title": "政策新闻",
-                            "url": "https://finance.eastmoney.com/a/20260520.html",
-                            "showtime": "2026-05-20",
-                        }
-                    ]
-                }
+                text=(
+                    'var ajaxResult={"LivesList":[{"title":"政策新闻",'
+                    '"url":"https://finance.eastmoney.com/a/20260520.html",'
+                    '"showtime":"2026-05-20"}]};'
+                )
             )
         if "news.google.com" in url:
             return _Response(

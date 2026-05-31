@@ -1,34 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, RunProviderPlan, SourceRole
-from claw_trade.data_gateway.packs.service import DomainPackService
-from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
+from claw_trade.data_gateway.packs.lockup import LockupPackBuilder
 from claw_trade.data_gateway.providers.lockup import build_default_lockup_adapters
-from claw_trade.data_gateway.store.attempts import MongoAttemptStore
-from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
-from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
-from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
-
-
-class _Collection:
-    def __init__(self, name: str = "test_collection") -> None:
-        self.name = name
-        self.docs: dict[str, dict[str, Any]] = {}
-
-    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
-        del upsert
-        key = query["_id"]
-        current = self.docs.get(key, {})
-        current.update(update.get("$setOnInsert", {}))
-        current.update(update.get("$set", {}))
-        if "_id" not in current:
-            current["_id"] = key
-        self.docs[key] = current
-
-    def insert_one(self, doc: dict[str, Any]) -> None:
-        self.docs[doc["_id"]] = dict(doc)
+from tests.fakes.data_gateway_in_memory import build_gate_controlled_executor
 
 
 def _request() -> PackRequest:
@@ -70,18 +45,13 @@ def _plan(request: PackRequest, adapters) -> RunProviderPlan:
     )
 
 
-def _helper() -> ProviderExecutionEvidenceHelper:
-    return ProviderExecutionEvidenceHelper(
-        raw_store=MongoRawPayloadStore(_Collection()),
-        normalized_store=MongoNormalizedStore(_Collection()),
-        attempt_store=MongoAttemptStore(_Collection()),
-        http_evidence_store=MongoProviderHttpEvidenceStore(_Collection()),
-    )
+def _helper():
+    return build_gate_controlled_executor()
 
 
 def test_lockup_pack_cn_a_covers_all_groups_and_keeps_chart_root_cause(monkeypatch) -> None:
     request = _request()
-    adapters = build_default_lockup_adapters(provider_config_version="cfg-lockup-cn-a")
+    adapters = build_default_lockup_adapters(provider_config_version="cfg-lockup-cn-a", env={})
     plan = _plan(request, adapters)
     groups = {spec.coverage_group for spec in plan.call_specs}
     assert groups == {
@@ -162,7 +132,12 @@ def test_lockup_pack_cn_a_covers_all_groups_and_keeps_chart_root_cause(monkeypat
         lambda params: (({"as_of": "2026-05-21", "amount": "12000000", "source": "eastmoney_flow120d"},), "https://eastmoney.example/flow120d"),
     )
 
-    pack = DomainPackService(settings=object(), adapters=adapters, provider_execution_helper=_helper()).get_pack(request, plan)
+    pack = LockupPackBuilder().build(
+        request=request,
+        run_plan=plan,
+        adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
+    )
 
     assert pack.readiness.status.value in {"partial", "ready"}
     assert len(pack.attempts) == len(plan.call_specs)
@@ -179,7 +154,7 @@ def test_lockup_pack_cn_a_covers_all_groups_and_keeps_chart_root_cause(monkeypat
 
 def test_lockup_pack_cn_a_official_failure_for_official_groups_forces_partial(monkeypatch) -> None:
     request = _request()
-    adapters = build_default_lockup_adapters(provider_config_version="cfg-lockup-cn-a")
+    adapters = build_default_lockup_adapters(provider_config_version="cfg-lockup-cn-a", env={})
     plan = _plan(request, adapters)
 
     monkeypatch.setattr(
@@ -235,7 +210,12 @@ def test_lockup_pack_cn_a_official_failure_for_official_groups_forces_partial(mo
         lambda params: (({"as_of": "2026-05-21", "amount": "12000000", "source": "eastmoney_flow120d"},), "https://eastmoney.example/flow120d"),
     )
 
-    pack = DomainPackService(settings=object(), adapters=adapters, provider_execution_helper=_helper()).get_pack(request, plan)
+    pack = LockupPackBuilder().build(
+        request=request,
+        run_plan=plan,
+        adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
+    )
 
     assert pack.readiness.status.value == "partial"
     assert "official_original failed for lockup groups" in (pack.readiness.root_cause or "")

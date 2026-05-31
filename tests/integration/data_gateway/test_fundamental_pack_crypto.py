@@ -1,8 +1,44 @@
 from __future__ import annotations
 
+from typing import Any
+
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, RunProviderPlan
 from claw_trade.data_gateway.packs.fundamental import FundamentalPackService
+from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
 from claw_trade.data_gateway.providers.fundamental import build_default_fundamental_adapters
+from claw_trade.data_gateway.store.attempts import MongoAttemptStore
+from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
+from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
+from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
+
+
+class _Collection:
+    name = "test_collection"
+
+    def __init__(self) -> None:
+        self.docs: dict[str, dict[str, Any]] = {}
+
+    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
+        del upsert
+        key = query["_id"]
+        current = self.docs.get(key, {})
+        current.update(update.get("$setOnInsert", {}))
+        current.update(update.get("$set", {}))
+        if "_id" not in current:
+            current["_id"] = key
+        self.docs[key] = current
+
+    def insert_one(self, doc: dict[str, Any]) -> None:
+        self.docs[doc["_id"]] = dict(doc)
+
+
+def _helper() -> ProviderExecutionEvidenceHelper:
+    return ProviderExecutionEvidenceHelper(
+        raw_store=MongoRawPayloadStore(_Collection()),
+        normalized_store=MongoNormalizedStore(_Collection()),
+        attempt_store=MongoAttemptStore(_Collection()),
+        http_evidence_store=MongoProviderHttpEvidenceStore(_Collection()),
+    )
 
 
 def _request() -> PackRequest:
@@ -17,7 +53,7 @@ def _request() -> PackRequest:
         start_date="2026-05-01",
         end_date="2026-05-17",
         current_date="2026-05-17",
-        currency="USD",
+        currency="USDT",
         profile="CRYPTO",
         freshness_policy=FreshnessPolicy(max_age_seconds=300),
     )
@@ -71,7 +107,11 @@ def test_crypto_fundamental_pack_covers_tvl_revenue_fees_supply_and_market_cap(m
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_coingecko_coin_fundamental", _fake_cg)
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_defillama_fundamental", _fake_llama)
 
-    pack = FundamentalPackService(settings=object(), adapters=adapters).get_pack(request, plan)
+    pack = FundamentalPackService(
+        settings=object(),
+        adapters=adapters,
+        provider_execution_helper=_helper(),
+    ).get_pack(request, plan)
 
     assert pack.readiness.status.value == "ready"
     assert not any(gap.reason.value == "field_missing" for gap in pack.data_gaps)

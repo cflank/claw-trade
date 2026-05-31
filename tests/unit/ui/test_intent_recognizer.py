@@ -19,6 +19,38 @@ def test_report_intent_creates_confirmation_draft() -> None:
     assert draft.instrument_code == "BTC"
 
 
+def test_report_intent_accepts_slash_crypto_pair() -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(text="/report AR/USDT", source_message_id="m-ar", settings=_settings())
+
+    assert draft is not None
+    assert draft.kind.value == "report"
+    assert draft.instrument_code == "AR/USDT"
+    assert draft.instrument_name == "Arweave"
+    assert draft.market.value == "CRYPTO"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_code", "expected_market"),
+    (
+        ("/report SH600519", "600519.SH", "CN_A"),
+        ("/report HK00700", "00700.HK", "HK"),
+        ("/report AAPL.US", "AAPL", "US"),
+    ),
+)
+def test_report_intent_normalizes_all_market_code_forms(
+    text: str,
+    expected_code: str,
+    expected_market: str,
+) -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(text=text, source_message_id="m-market", settings=_settings())
+
+    assert draft is not None
+    assert draft.instrument_code == expected_code
+    assert draft.market.value == expected_market
+
+
 def test_daily_schedule_intent_supported() -> None:
     recognizer = IntentRecognizer()
     draft = recognizer.classify_user_intent(

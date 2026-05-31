@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 import sys
 
@@ -7,7 +8,11 @@ import pytest
 
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, ProviderStatus
 from claw_trade.data_gateway.providers import market_adapters
-from claw_trade.data_gateway.providers.market_adapters import build_default_market_adapters
+from claw_trade.data_gateway.providers.market_adapters import (
+    build_cn_a_selection_batch_adapters,
+    build_default_market_adapters,
+)
+from claw_trade.data_gateway.providers.openbb_runtime import import_openbb_obb
 
 
 def test_df_to_rows_preserves_named_index_date() -> None:
@@ -94,6 +99,151 @@ def test_cn_a_baidu_kline_fetch_and_normalize_ohlcv(monkeypatch) -> None:
     assert normalized.rows[1]["date"] == "2026-05-03"
     assert normalized.rows[0]["currency"] == "CNY"
     assert normalized.rows[0]["timezone"] == "Asia/Shanghai"
+
+
+def test_cn_a_akshare_hist_fetch_and_normalize_ohlcv(monkeypatch) -> None:
+    request = _request(Market.CN_A, "600519.SH", "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_zh_a_hist")
+
+    def _fake_call(*, symbol: str, start_date: str, end_date: str, adjust: str):
+        assert symbol == "600519"
+        assert start_date == "2026-05-01"
+        assert end_date == "2026-05-17"
+        assert adjust == "qfq"
+        return (
+            {
+                "日期": "2026-05-02",
+                "开盘": 100.0,
+                "最高": 103.0,
+                "最低": 99.0,
+                "收盘": 102.0,
+                "成交量": 12000,
+                "成交额": 88888,
+            },
+            {
+                "日期": "2026-05-01",
+                "开盘": 98.0,
+                "最高": 100.0,
+                "最低": 97.0,
+                "收盘": 99.0,
+                "成交量": 10000,
+                "成交额": 66666,
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_akshare_stock_zh_a_hist", _fake_call)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert fetch.payload["provider"] == "akshare_kline"
+    assert fetch.source_url == "https://akshare.akfamily.xyz/data/stock/stock.html"
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "cn_a.market.ohlcv.v1"
+    assert normalized.row_count == 2
+    assert normalized.rows[0]["date"] == "2026-05-01"
+    assert normalized.rows[0]["amount"] == 66666
+    assert normalized.rows[0]["currency"] == "CNY"
+    assert normalized.rows[0]["timezone"] == "Asia/Shanghai"
+
+
+def test_cn_a_akshare_spot_fetch_adds_trade_date_and_normalizes(monkeypatch) -> None:
+    request = _request(Market.CN_A, "600519.SH", "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_zh_a_spot_em")
+
+    def _fake_call(*, symbol: str):
+        assert symbol == "600519"
+        return (
+            {
+                "代码": "600519",
+                "今开": 100.0,
+                "最高": 103.0,
+                "最低": 99.0,
+                "最新价": 102.0,
+                "成交量": 12000,
+                "成交额": 88888,
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_akshare_stock_zh_a_spot", _fake_call)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.rows[0]["date"] == "2026-05-17"
+    assert normalized.rows[0]["close"] == 102.0
+
+
+def test_cn_a_akshare_minute_fetch_and_normalize(monkeypatch) -> None:
+    request = _request(Market.CN_A, "600519.SH", "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_zh_a_hist_min_em")
+
+    def _fake_call(*, symbol: str, start_date: str, end_date: str, period: str, adjust: str):
+        assert symbol == "600519"
+        assert start_date == "2026-05-01"
+        assert end_date == "2026-05-17"
+        assert period == "5"
+        assert adjust == "qfq"
+        return (
+            {
+                "时间": "2026-05-17 09:35:00",
+                "开盘": 100.0,
+                "最高": 103.0,
+                "最低": 99.0,
+                "收盘": 102.0,
+                "成交量": 12000,
+                "成交额": 88888,
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_akshare_stock_zh_a_hist_min_em", _fake_call)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "cn_a.market.minute_ohlcv.v1"
+    assert normalized.rows[0]["date"] == "2026-05-17"
+    assert normalized.rows[0]["amount"] == 88888
+
+
+def test_cn_a_akshare_board_fetch_keeps_board_rows(monkeypatch) -> None:
+    request = _request(Market.CN_A, "600519.SH", "CNY")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CN_A and item.adapter_id == "project.cn_a.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_board_industry_name_em")
+
+    monkeypatch.setattr(
+        market_adapters,
+        "_call_akshare_stock_board_industry_name_em",
+        lambda: ({"板块名称": "白酒", "板块代码": "BK0896", "涨跌幅": 1.2},),
+    )
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "cn_a.market.board.v1"
+    assert normalized.rows[0]["板块名称"] == "白酒"
 
 
 def test_cn_a_tushare_daily_missing_token_is_explicit_error() -> None:
@@ -383,6 +533,26 @@ def test_call_mootdx_quote_row_missing_core_fields_fails_instead_of_synthesizing
         market_adapters._call_mootdx_quote_row(symbol="600519", fallback_date="2026-05-17")
 
 
+def test_call_mootdx_quote_row_missing_date_fails_instead_of_using_fallback(monkeypatch) -> None:
+    def _fake_quotes(*, symbols: tuple[str, ...]):
+        assert symbols == ("600519",)
+        return (
+            {
+                "code": "600519",
+                "price": 101.5,
+                "open": 101.0,
+                "high": 102.0,
+                "low": 100.0,
+                "vol": 1000.0,
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_mootdx_quotes", _fake_quotes)
+
+    with pytest.raises(RuntimeError, match="missing required fields for symbol=600519: date"):
+        market_adapters._call_mootdx_quote_row(symbol="600519", fallback_date="2026-05-17")
+
+
 def test_tencent_quote_row_uses_field_43_as_amplitude_and_46_as_pb(monkeypatch) -> None:
     fields = [""] * 60
     fields[1] = "贵州茅台"
@@ -423,6 +593,205 @@ def test_tencent_quote_row_uses_field_43_as_amplitude_and_46_as_pb(monkeypatch) 
     assert row["date"] == "2026-05-17"
 
 
+def test_tencent_quote_row_does_not_fill_missing_ohlcv_fields() -> None:
+    fields = [""] * 60
+    fields[1] = "贵州茅台"
+    fields[2] = "600519"
+    fields[3] = "2005.00"
+    fields[30] = "20260517150000"
+
+    row = market_adapters._map_tencent_fields_to_row(fields=fields, symbol="sh600519", fallback_date="2026-05-17")
+
+    assert row["date"] == "2026-05-17"
+    assert row["open"] is None
+    assert row["high"] is None
+    assert row["low"] is None
+    assert row["volume"] is None
+
+
+def test_tencent_quote_row_does_not_use_fallback_date() -> None:
+    fields = [""] * 60
+    fields[1] = "贵州茅台"
+    fields[2] = "600519"
+    fields[3] = "2005.00"
+    fields[5] = "1998.00"
+    fields[33] = "2010.00"
+    fields[34] = "1990.00"
+    fields[36] = "12345"
+
+    row = market_adapters._map_tencent_fields_to_row(fields=fields, symbol="sh600519", fallback_date="2026-05-17")
+
+    assert row["date"] is None
+
+
+def test_cn_a_equity_code_filter_excludes_non_equity_codes() -> None:
+    assert market_adapters._is_cn_a_equity_code("600519") is True
+    assert market_adapters._is_cn_a_equity_code("300750") is True
+    assert market_adapters._is_cn_a_equity_code("830799") is True
+    assert market_adapters._is_cn_a_equity_code("019525") is False
+    assert market_adapters._is_cn_a_equity_code("880209") is False
+    assert market_adapters._is_cn_a_equity_code("999999") is False
+
+
+def test_tencent_selection_batch_skips_failed_chunks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        market_adapters,
+        "_mootdx_cn_a_universe",
+        lambda: (
+            ("600519", "贵州茅台"),
+            ("000858", "五粮液"),
+            ("019525", "15国债25"),
+            ("019528", "15国债28"),
+        ),
+    )
+    monkeypatch.setattr(market_adapters, "_CN_A_BATCH_QUOTE_CHUNK_SIZE", 2)
+
+    def _fake_tencent_rows(*, symbols: tuple[str, ...], fallback_date: str):
+        assert fallback_date == "2026-05-27"
+        if any(item.startswith("sz019") for item in symbols):
+            raise RuntimeError("tencent quote parse failed for symbols=" + ",".join(symbols))
+        return (
+            {
+                "code": "600519",
+                "name": "贵州茅台",
+                "open": 1600.0,
+                "close": 1612.0,
+                "high": 1620.0,
+                "low": 1598.0,
+                "amount": 3000000000.0,
+                "date": "2026-05-27",
+            },
+            {
+                "code": "000858",
+                "name": "五粮液",
+                "open": 130.0,
+                "close": 132.0,
+                "high": 133.0,
+                "low": 129.0,
+                "amount": 900000000.0,
+                "date": "2026-05-27",
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_tencent_quote_rows", _fake_tencent_rows)
+
+    rows = market_adapters._call_tencent_stock_zh_a_spot_batch(trade_date="2026-05-27")
+
+    assert {str(item["代码"]) for item in rows} == {"600519", "000858"}
+
+
+def test_mootdx_selection_batch_skips_failed_chunks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        market_adapters,
+        "_mootdx_cn_a_universe",
+        lambda: (
+            ("600519", "贵州茅台"),
+            ("000858", "五粮液"),
+            ("688665", "四方光电"),
+            ("688667", "菱电电控"),
+        ),
+    )
+    monkeypatch.setattr(market_adapters, "_CN_A_BATCH_QUOTE_CHUNK_SIZE", 2)
+
+    def _fake_mootdx_rows(*, symbols: tuple[str, ...]):
+        if symbols[0].startswith("688"):
+            raise RuntimeError("mootdx quotes returned empty rows for symbols=" + ",".join(symbols))
+        return (
+            {
+                "code": "600519",
+                "open": 1600.0,
+                "price": 1612.0,
+                "high": 1620.0,
+                "low": 1598.0,
+                "amount": 3000000000.0,
+                "vol": 10000.0,
+                "date": "2026-05-27",
+            },
+            {
+                "code": "000858",
+                "open": 130.0,
+                "price": 132.0,
+                "high": 133.0,
+                "low": 129.0,
+                "amount": 900000000.0,
+                "vol": 8000.0,
+                "date": "2026-05-27",
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_mootdx_quotes", _fake_mootdx_rows)
+
+    rows = market_adapters._call_mootdx_stock_zh_a_spot_batch(trade_date="2026-05-27")
+
+    assert {str(item["代码"]) for item in rows} == {"600519", "000858"}
+
+
+def test_sina_selection_batch_partial_chunk_error_metadata_flows_to_compact_facts(monkeypatch) -> None:
+    request = _request(Market.CN_A, "CN_A_SELECTION_BATCH", "CNY")
+    adapter = next(
+        item
+        for item in build_cn_a_selection_batch_adapters(provider_config_version="cfg", env={})
+        if item.adapter_id == "project.cn_a.sina_selection_batch"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "stock_zh_a_spot_sina_batch")
+
+    monkeypatch.setattr(
+        market_adapters,
+        "_mootdx_cn_a_universe",
+        lambda: (
+            ("600519", "贵州茅台"),
+            ("000858", "五粮液"),
+            ("019525", "15国债25"),
+            ("019528", "15国债28"),
+        ),
+    )
+    monkeypatch.setattr(market_adapters, "_CN_A_BATCH_QUOTE_CHUNK_SIZE", 2)
+
+    def _fake_sina_rows(*, symbols: tuple[str, ...], fallback_date: str):
+        assert fallback_date == "2026-05-17"
+        if any(item.startswith("sz019") for item in symbols):
+            raise RuntimeError("sina quote parse failed for symbols=" + ",".join(symbols))
+        return (
+            {
+                "code": "600519",
+                "name": "贵州茅台",
+                "open": 1600.0,
+                "close": 1612.0,
+                "high": 1620.0,
+                "low": 1598.0,
+                "amount": 3000000000.0,
+                "date": "2026-05-17",
+            },
+            {
+                "code": "000858",
+                "name": "五粮液",
+                "open": 130.0,
+                "close": 132.0,
+                "high": 133.0,
+                "low": 129.0,
+                "amount": 900000000.0,
+                "date": "2026-05-17",
+            },
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_sina_quote_rows", _fake_sina_rows)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+    payload = fetch.payload
+    assert isinstance(payload, dict)
+    assert payload["row_count"] == 2
+    assert payload["params"]["partial_chunk_error_count"] == 1
+    assert payload["params"]["partial_chunk_errors"]
+    assert payload["params"]["failed_chunk_symbols_sample"]
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.row_count == 2
+    assert "vol_ratio" not in normalized.rows[0]
+    assert normalized.compact_facts["partial_chunk_error_count"] == 1
+    assert normalized.compact_facts["partial_chunk_errors"]
+    assert normalized.compact_facts["failed_chunk_symbols_sample"]
+
+
 def test_cn_a_tushare_daily_uses_proxy_pro_bar_initializer(monkeypatch) -> None:
     seen: dict[str, object] = {}
     pro = object()
@@ -442,12 +811,13 @@ def test_cn_a_tushare_daily_uses_proxy_pro_bar_initializer(monkeypatch) -> None:
                 }
             ]
 
-    def _fake_create(*, token: str):
+    def _fake_create(*, token: str, env=None):
         seen["token"] = token
+        seen["create_env"] = dict(env or {})
         return pro
 
-    def _fake_pro_bar(*, api, ts_code: str, start_date: str, end_date: str, adj: str):
-        seen.update({"api": api, "ts_code": ts_code, "start_date": start_date, "end_date": end_date, "adj": adj})
+    def _fake_pro_bar(*, api, ts_code: str, start_date: str, end_date: str, adj: str, env=None):
+        seen.update({"api": api, "ts_code": ts_code, "start_date": start_date, "end_date": end_date, "adj": adj, "bar_env": dict(env or {})})
         return _Frame()
 
     monkeypatch.setattr(market_adapters, "create_tushare_pro", _fake_create)
@@ -458,15 +828,18 @@ def test_cn_a_tushare_daily_uses_proxy_pro_bar_initializer(monkeypatch) -> None:
         ts_code="000001.SZ",
         start_date="2026-05-01",
         end_date="2026-05-17",
+        env={"TUSHARE_HTTP_URL": "http://127.0.0.1:8010/"},
     )
 
     assert seen == {
         "token": "secret-token",
+        "create_env": {"TUSHARE_HTTP_URL": "http://127.0.0.1:8010/"},
         "api": pro,
         "ts_code": "000001.SZ",
         "start_date": "20260501",
         "end_date": "20260517",
         "adj": "qfq",
+        "bar_env": {"TUSHARE_HTTP_URL": "http://127.0.0.1:8010/"},
     }
     assert rows[0]["trade_date"] == "20260515"
 
@@ -502,9 +875,120 @@ def test_hk_stock_hk_daily_keeps_00700_with_qfq_and_normalizes(monkeypatch) -> N
     assert normalized.rows[0]["timezone"] == "Asia/Hong_Kong"
 
 
+def test_hk_global_yahoo_chart_fetch_and_normalize(monkeypatch) -> None:
+    request = _request(Market.HK, "00700.HK", "HKD")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.HK and item.adapter_id == "global_stock_data.hk.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "chart_yahoo")
+    seen: dict[str, str] = {}
+
+    def _fake_call(*, symbol: str, start_date: str, end_date: str, currency: str, timezone: str):
+        seen.update(
+            {
+                "symbol": symbol,
+                "start_date": start_date,
+                "end_date": end_date,
+                "currency": currency,
+                "timezone": timezone,
+            }
+        )
+        return (
+            {"date": "2026-05-16", "open": 500.0, "high": 511.0, "low": 499.0, "close": 510.0, "volume": 1200},
+            {"date": "2026-05-17", "open": 510.0, "high": 515.0, "low": 505.0, "close": 512.0, "volume": 1000},
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_yahoo_chart_daily", _fake_call)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert seen == {
+        "symbol": "0700.HK",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-17",
+        "currency": "HKD",
+        "timezone": "Asia/Hong_Kong",
+    }
+    assert fetch.source_url and "query2.finance.yahoo.com" in fetch.source_url
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "hk.market.ohlcv.v1"
+    assert normalized.rows[-1]["currency"] == "HKD"
+    assert normalized.rows[-1]["timezone"] == "Asia/Hong_Kong"
+
+
+def test_hk_global_tencent_quote_fetch_is_project_adapter(monkeypatch) -> None:
+    request = _request(Market.HK, "00700.HK", "HKD")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.HK and item.adapter_id == "global_stock_data.hk.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "quote_tencent")
+    seen: dict[str, str] = {}
+
+    def _fake_call(*, symbol: str, fallback_date: str):
+        seen.update({"symbol": symbol, "fallback_date": fallback_date})
+        return {
+            "date": fallback_date,
+            "open": 510.0,
+            "high": 515.0,
+            "low": 505.0,
+            "close": 512.0,
+            "volume": 1000.0,
+            "currency": "HKD",
+            "timezone": "Asia/Hong_Kong",
+        }
+
+    monkeypatch.setattr(market_adapters, "_call_hk_tencent_quote_row", _fake_call)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert seen == {"symbol": "00700", "fallback_date": "2026-05-17"}
+    assert fetch.payload["provider"] == "tencent_hk_quote"
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.rows[0]["close"] == 512.0
+
+
+def test_us_global_sina_daily_fetch_and_normalize(monkeypatch) -> None:
+    request = _request(Market.US, "AAPL", "USD")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.US and item.adapter_id == "global_stock_data.us.market"
+    )
+    spec = next(item for item in adapter.build_call_specs(request) if item.endpoint == "daily_sina")
+    seen: dict[str, str] = {}
+
+    def _fake_call(*, symbol: str, start_date: str, end_date: str):
+        seen.update({"symbol": symbol, "start_date": start_date, "end_date": end_date})
+        return (
+            {"date": "2026-05-15", "open": 200.0, "high": 203.0, "low": 199.0, "close": 202.0, "volume": 1000000},
+            {"date": "2026-05-16", "open": 202.0, "high": 205.0, "low": 201.0, "close": 204.0, "volume": 1200000},
+        )
+
+    monkeypatch.setattr(market_adapters, "_call_sina_us_daily", _fake_call)
+
+    fetch = adapter.fetch(spec, request)
+    normalized = adapter.normalize(spec, fetch)
+
+    assert seen == {"symbol": "AAPL", "start_date": "2026-05-01", "end_date": "2026-05-17"}
+    assert fetch.source_url and "sina.com.cn" in fetch.source_url
+    assert normalized.status == ProviderStatus.REMOTE_SUCCESS
+    assert normalized.schema_id == "us.market.ohlcv.v1"
+    assert normalized.rows[-1]["timezone"] == "America/New_York"
+
+
 def test_us_openbb_yfinance_fetch_and_normalize(monkeypatch) -> None:
     request = _request(Market.US, "AAPL", "USD")
-    adapter = next(item for item in build_default_market_adapters(provider_config_version="cfg", env={}) if item.market == Market.US)
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.US and item.adapter_id == "project.us.market"
+    )
     spec = adapter.build_call_specs(request)[0]
     captured: dict[str, str] = {}
 
@@ -532,7 +1016,7 @@ def test_us_openbb_yfinance_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_openbb_yfinance_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={})
@@ -558,7 +1042,7 @@ def test_crypto_openbb_yfinance_fetch_and_normalize(monkeypatch) -> None:
 
     assert spec.params["requested_start_date"] == "2026-05-01"
     assert spec.params["technical_lookback_reason"] == "vegas_purple_band_ema676_daily"
-    assert captured == {"symbol": "BTCUSD", "start_date": "2024-06-11", "end_date": "2026-05-17", "provider": "yfinance"}
+    assert captured == {"symbol": "BTCUSDT", "start_date": "2024-06-11", "end_date": "2026-05-17", "provider": "yfinance"}
     assert normalized.status == ProviderStatus.REMOTE_SUCCESS
     assert normalized.schema_id == "crypto.market.ohlcv.v1"
     assert normalized.rows[0]["date"] == "2026-05-16"
@@ -566,20 +1050,39 @@ def test_crypto_openbb_yfinance_fetch_and_normalize(monkeypatch) -> None:
     assert normalized.rows[0]["timezone"] == "UTC"
 
 
-def test_openbb_crypto_provider_interface_compat_registers_generated_obbjects(monkeypatch) -> None:
-    import openbb_core.app.provider_interface as provider_interface
+def test_crypto_pair_openbb_symbol_preserves_quote_without_concatenating_twice(monkeypatch) -> None:
+    request = _request(Market.CRYPTO, "AR/USDT", "USDT")
+    adapter = next(
+        item
+        for item in build_default_market_adapters(provider_config_version="cfg", env={})
+        if item.market == Market.CRYPTO and item.adapter_id == "project.crypto.market"
+    )
+    spec = adapter.build_call_specs(request)[0]
+    captured: dict[str, str] = {}
 
-    monkeypatch.delattr(provider_interface, "OBBject_CryptoSearch", raising=False)
-    monkeypatch.delattr(provider_interface, "OBBject_CryptoHistorical", raising=False)
+    def _fake_call(*, symbol: str, start_date: str, end_date: str, provider: str):
+        captured["symbol"] = symbol
+        return ({"date": "20260517", "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0},)
 
-    market_adapters._ensure_openbb_provider_interface_obbjects("CryptoSearch", "CryptoHistorical")
+    monkeypatch.setattr(market_adapters, "_call_openbb_crypto_price_historical", _fake_call)
 
-    assert hasattr(provider_interface, "OBBject_CryptoSearch")
-    assert hasattr(provider_interface, "OBBject_CryptoHistorical")
+    adapter.fetch(spec, request)
+
+    assert spec.params["symbol"] == "ARUSDT"
+    assert captured["symbol"] == "ARUSDT"
+
+
+def test_openbb_generated_equity_and_crypto_modules_load_without_provider_interface_shim(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENBB_AUTO_BUILD", raising=False)
+    obb = import_openbb_obb(context="openbb generated package contract", required_attrs=("equity", "crypto"))
+
+    assert os.environ["OPENBB_AUTO_BUILD"] == "0"
+    assert "historical" in repr(obb.equity.price)
+    assert "historical" in repr(obb.crypto.price)
 
 
 def test_crypto_capability_plan_is_not_yfinance_only() -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapters = tuple(item for item in build_default_market_adapters(provider_config_version="cfg", env={}) if item.market == Market.CRYPTO)
     all_specs = tuple(spec for adapter in adapters for spec in adapter.build_call_specs(request))
     endpoints = {spec.endpoint for spec in all_specs}
@@ -613,7 +1116,7 @@ def test_crypto_capability_plan_is_not_yfinance_only() -> None:
 
 
 def test_crypto_derivatives_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"COINGLASS_API_KEY": "k"})
@@ -663,7 +1166,7 @@ def test_crypto_derivatives_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_liquidation_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"COINGLASS_API_KEY": "k"})
@@ -695,7 +1198,7 @@ def test_crypto_liquidation_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_onchain_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"COINGLASS_API_KEY": "k"})
@@ -762,7 +1265,7 @@ def test_crypto_onchain_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_onchain_collects_partial_coinglass_signals(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"COINGLASS_API_KEY": "k"})
@@ -808,7 +1311,7 @@ def test_crypto_onchain_collects_partial_coinglass_signals(monkeypatch) -> None:
 
 
 def test_crypto_macro_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"FRED_API_KEY": "k"})
@@ -833,7 +1336,7 @@ def test_crypto_macro_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_events_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "SOL", "USD")
+    request = _request(Market.CRYPTO, "SOL", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"TAVILY_API_KEY": "k"})
@@ -859,7 +1362,7 @@ def test_crypto_events_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_ahr999_fetch_and_normalize(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"COINGLASS_API_KEY": "k"})
@@ -882,7 +1385,7 @@ def test_crypto_ahr999_fetch_and_normalize(monkeypatch) -> None:
 
 
 def test_crypto_ahr999_non_btc_is_skipped_at_call_spec_build() -> None:
-    request = _request(Market.CRYPTO, "ETH", "USD")
+    request = _request(Market.CRYPTO, "ETH", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(provider_config_version="cfg", env={"COINGLASS_API_KEY": "k"})
@@ -930,7 +1433,7 @@ def test_http_get_json_request_exception_redacts_secrets() -> None:
 
 
 def test_crypto_coinglass_fetch_reads_injected_env_not_global_os(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(
@@ -967,7 +1470,7 @@ def test_crypto_coinglass_fetch_reads_injected_env_not_global_os(monkeypatch) ->
 
 
 def test_crypto_coinglass_missing_key_is_explicit_and_skips_http_request(monkeypatch) -> None:
-    request = _request(Market.CRYPTO, "BTC", "USD")
+    request = _request(Market.CRYPTO, "BTC", "USDT")
     adapter = next(
         item
         for item in build_default_market_adapters(

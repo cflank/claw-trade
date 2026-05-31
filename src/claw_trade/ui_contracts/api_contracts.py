@@ -38,10 +38,12 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
     UiApiContract("testDataSource", "{ state, healthEvent: DataSourceHealthEventForUser, canEnable }", ("receipt", "manifest", "rawPayload")),
     UiApiContract("saveDataSourceInstance", "DataSourceInstanceForUser", ("credentialRef", "realKey")),
     UiApiContract("getChannelStatus", "ChannelStatusForUser", ("providerChannelId", "path", "hash")),
+    UiApiContract("getChannelChatSnapshot", "{ channelKind, context?, messages, confirmationCards }", ("providerChannelId", "path", "hash")),
     UiApiContract("saveChannelConfigViaOpenClaw", "{ status: ChannelStatusForUser, restartRequired?: boolean }", ("path", "hash")),
     UiApiContract("loadLlmSettings", "LlmConfigDraft(masked)", ("realKey", "path", "hash", "OpenClaw")),
     UiApiContract("saveLlmConfigViaOpenClaw", "{ ok: boolean, userMessage: string }", ("realKey", "rawPatchResult")),
     UiApiContract("testLlmViaOpenClaw", "{ ok, userMessage, checkedAt }", ("providerAttempt", "runtimeMarker")),
+    UiApiContract("resetSettingsToDefaults", "{ status: reset, userMessage, llm, dataSources, channel }", ("realKey", "rawPatchResult", "providerChannelId")),
     UiApiContract("sendReportFileViaChannel", "{ sent: boolean, messageId?, userMessage }", ("localPath", "providerChannelId")),
     UiApiContract("exportReportPdf", "PdfExportForUser", ("artifact", "path", "hash")),
 )

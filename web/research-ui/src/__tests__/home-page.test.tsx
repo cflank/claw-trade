@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { HomePage } from '../routes/HomePage';
 
@@ -10,7 +10,13 @@ function json(payload: unknown) {
   });
 }
 
-function mockWorkspaceFetch(options: { confirmImmediateFailure?: boolean; confirmWithoutMessages?: boolean } = {}) {
+function mockWorkspaceFetch(
+  options: {
+    confirmImmediateFailure?: boolean;
+    confirmWithoutMessages?: boolean;
+    channelChatSnapshot?: unknown | (() => unknown);
+  } = {},
+) {
   const originalFetch = globalThis.fetch;
   let queueCount = 0;
   const confirmBodies: Array<Record<string, unknown>> = [];
@@ -35,6 +41,14 @@ function mockWorkspaceFetch(options: { confirmImmediateFailure?: boolean; confir
       });
     }
 
+    if (url.includes('/api/ui/get-channel-chat-snapshot')) {
+      const snapshot =
+        typeof options.channelChatSnapshot === 'function'
+          ? options.channelChatSnapshot()
+          : options.channelChatSnapshot;
+      return json(snapshot ?? { channelKind: 'wechat_clawbot', messages: [], confirmationCards: {} });
+    }
+
     if (url.includes('/api/ui/get-channel-status')) {
       return json({
         channelKind: 'wechat_clawbot',
@@ -44,6 +58,27 @@ function mockWorkspaceFetch(options: { confirmImmediateFailure?: boolean; confir
         accountLabel: null,
         canSendText: false,
         canSendFile: false,
+      });
+    }
+
+    if (url.includes('/api/ui/load-llm-settings')) {
+      return json({
+        draft: {
+          provider: 'deepseek',
+          apiKeyMasked: 'sk-****',
+          endpointUrl: 'https://api.example.com',
+          defaultModel: 'deepseek-chat',
+          status: 'saved',
+          reportModelStatus: {
+            state: 'ready',
+            blocked: false,
+            ready: true,
+            userMessage: '报告模型可用。',
+            checkedAt: '2026-05-20T10:00:00Z',
+          },
+        },
+        schemaVersion: 'v1',
+        settingsVersion: 's1',
       });
     }
 
@@ -146,7 +181,7 @@ function mockWorkspaceFetch(options: { confirmImmediateFailure?: boolean; confir
 
     if (url.includes('/api/ui/send-chat-message') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as { contextId: string; text: string };
-      if (body.text.includes('做一份 BTC 报告')) {
+      if (body.text.includes('/report BTC')) {
         return json({
           context: {
             contextId: body.contextId,
@@ -169,7 +204,7 @@ function mockWorkspaceFetch(options: { confirmImmediateFailure?: boolean; confir
               contextKind: 'intent_confirming',
               actor: 'system',
               kind: 'confirmation_card',
-              text: '请确认是否创建投研报告',
+              text: '请确认是否创建完整报告',
               cardId: 'card-1',
               createdAt: '2026-05-19T10:09:01.000Z',
             },
@@ -177,8 +212,11 @@ function mockWorkspaceFetch(options: { confirmImmediateFailure?: boolean; confir
           confirmationCard: {
             id: 'card-1',
             draftId: 'draft-1',
-            title: '请确认是否创建投研报告',
-            summaryLines: ['类型：投研报告', '标的：BTC', '市场：CRYPTO', '通知方式：站内提醒'],
+            title: '请确认是否创建完整报告',
+            summaryLines: ['标的：BTC', '名称：Bitcoin', '市场：CRYPTO'],
+            instrumentCode: 'BTC',
+            instrumentName: 'Bitcoin',
+            market: 'CRYPTO',
             dataSourceSummary: 'partial',
             actions: ['confirm', 'cancel'],
             status: 'active',
@@ -371,6 +409,7 @@ describe('home page', () => {
       restore?.();
     }
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('renders three-column workspace with history, message stream and right rail', async () => {
@@ -390,6 +429,598 @@ describe('home page', () => {
     expect(screen.getByText(/投资辩论中/)).toBeInTheDocument();
     expect(screen.getByText('多头研究员')).toBeInTheDocument();
     expect(screen.getByText('多头研究员：执行中')).toBeInTheDocument();
+  });
+
+  it('shows the report instrument format hint near the chat input only', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const hint = await screen.findByText(
+      '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL；加密 AR/USDT。裸 AR 按美股，写加密请用 AR/USDT。',
+    );
+    expect(hint).toBeInTheDocument();
+    expect(screen.getByLabelText('输入消息')).toHaveAccessibleDescription(hint.textContent ?? '');
+
+    const entry = await screen.findByRole('button', { name: /600519\.SH/ });
+    fireEvent.click(entry);
+
+    expect(await screen.findByTestId('reading-report-body')).toBeInTheDocument();
+    expect(screen.queryByText(hint.textContent ?? '')).not.toBeInTheDocument();
+  });
+
+  it('keeps workspace visible and shows a model warning without onboarding dialogs', async () => {
+    const originalFetch = globalThis.fetch;
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: null,
+            endpointUrl: '',
+            defaultModel: '',
+            status: 'idle',
+            reportModelStatus: {
+              state: 'unconfigured',
+              blocked: true,
+              ready: false,
+              userMessage: '请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。',
+              checkedAt: null,
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开设备界面' })).toHaveAttribute('href', '/api/ui/open-device-interface');
+    expect(screen.queryByTestId('report-model-onboarding-wrap')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('report-model-onboarding-dialog')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('report-model-onboarding')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('wechat-onboarding-dialog')).not.toBeInTheDocument();
+    const warning = await screen.findByTestId('llm-config-warning');
+    expect(within(warning).getByText('报告模型还没配置成功')).toBeInTheDocument();
+    expect(within(warning).getByText('请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。')).toBeInTheDocument();
+    expect(within(warning).getByRole('link', { name: '去设置模型' })).toHaveAttribute('href', '/settings');
+    const pageText = (document.body.textContent ?? '').toLowerCase();
+    expect(pageText).not.toContain('provider 健康摘要');
+    expect(pageText).not.toContain('运行服务状态摘要');
+    expect(pageText).not.toContain('最近 live run 缺口摘要');
+    expect(pageText).not.toContain('证据链失败原因摘要');
+    expect(pageText).not.toContain('provider attempt');
+    expect(pageText).not.toContain('raw payload');
+    expect(pageText).not.toContain('uri');
+    expect(pageText).not.toContain('hash');
+    expect(pageText).not.toContain('l1');
+    expect(pageText).not.toContain('l2');
+    expect(pageText).not.toContain('receipt');
+    expect(pageText).not.toContain('/runs/');
+  });
+
+  it('refreshes wechat status from the workspace timer without requesting qr login', async () => {
+    const originalFetch = globalThis.fetch;
+    const channelUrls: string[] = [];
+    const intervalCallbacks: Array<() => void> = [];
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelUrls.push(url);
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: null,
+            endpointUrl: '',
+            defaultModel: '',
+            status: 'idle',
+            reportModelStatus: {
+              state: 'unconfigured',
+              blocked: true,
+              ready: false,
+              userMessage: '请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。',
+              checkedAt: null,
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    const channelRequestCount = channelUrls.length;
+    expect(intervalCallbacks.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    expect(channelUrls.length).toBeGreaterThan(channelRequestCount);
+    const periodicChannelUrls = channelUrls.slice(channelRequestCount);
+    expect(periodicChannelUrls.some((url) => url.includes('/api/ui/get-channel-status'))).toBe(true);
+    expect(periodicChannelUrls.every((url) => !url.includes('probe=true'))).toBe(true);
+    expect(periodicChannelUrls.every((url) => !url.includes('includeQr=true'))).toBe(true);
+    expect(periodicChannelUrls.every((url) => !url.includes('pollLogin=true'))).toBe(true);
+    expect(periodicChannelUrls.every((url) => !url.includes('refreshQr=true'))).toBe(true);
+  });
+
+  it('does not pile up workspace channel status requests when one is still running', async () => {
+    const originalFetch = globalThis.fetch;
+    const channelUrls: string[] = [];
+    const intervalCallbacks: Array<() => void> = [];
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelUrls.push(url);
+        return new Promise<Response>(() => undefined);
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-23T12:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    await waitFor(() => expect(channelUrls).toHaveLength(1));
+
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+      intervalCallbacks.at(0)?.();
+    });
+
+    expect(channelUrls).toHaveLength(1);
+    expect(channelUrls[0]).toBe('/api/ui/get-channel-status');
+  });
+
+  it('does not open the wechat dialog when report model config already exists', async () => {
+    const originalFetch = globalThis.fetch;
+    const channelUrls: string[] = [];
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelUrls.push(url);
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+          qrCodeImageDataUrl: null,
+          qrCodeExpiresAt: null,
+          qrCodeRefreshRequired: false,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-23T12:00:00Z',
+            },
+            embedding: {
+              provider: 'openai',
+              model: '',
+              endpointUrl: '',
+              dimension: '',
+              enabled: false,
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    expect(screen.queryByTestId('report-model-onboarding')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('wechat-onboarding-dialog')).not.toBeInTheDocument();
+    expect(screen.queryByAltText('微信登录二维码')).not.toBeInTheDocument();
+    expect(channelUrls.some((url) => url.includes('includeQr=true'))).toBe(false);
+    expect(channelUrls.some((url) => url.includes('refreshQr=true'))).toBe(false);
+    const bodyText = document.body.textContent ?? '';
+    expect(bodyText).not.toContain('OpenViking');
+    expect(bodyText).not.toContain('gateway');
+    expect(bodyText).not.toContain('运行服务状态摘要');
+    expect(bodyText).not.toContain('证据链失败原因摘要');
+    expect(bodyText).not.toContain('18789');
+    expect(bodyText).not.toContain('1933');
+    expect(channelUrls[0]).toBe('/api/ui/get-channel-status');
+  });
+
+  it('does not re-enable wechat automatically after the user disconnected it', async () => {
+    const originalFetch = globalThis.fetch;
+    const channelUrls: string[] = [];
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelUrls.push(url);
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+          qrCodeImageDataUrl: null,
+          qrCodeExpiresAt: null,
+          qrCodeRefreshRequired: true,
+          lastErrorMessage: '微信已解除连接，请点击刷新二维码重新扫码。',
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-23T12:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    expect(screen.queryByTestId('wechat-onboarding-dialog')).not.toBeInTheDocument();
+    expect(screen.queryByAltText('微信登录二维码')).not.toBeInTheDocument();
+    expect(channelUrls.some((url) => url.includes('includeQr=true'))).toBe(false);
+    expect(channelUrls.some((url) => url.includes('refreshQr=true'))).toBe(false);
+  });
+
+  it('does not enable or refresh wechat from the home page when gateway is unavailable', async () => {
+    const originalFetch = globalThis.fetch;
+    const channelUrls: string[] = [];
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelUrls.push(url);
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+          qrCodeImageDataUrl: null,
+          qrCodeRefreshRequired: true,
+          lastErrorMessage: '请先启用微信 ClawBot 插件。',
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-23T12:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    expect(screen.queryByTestId('wechat-onboarding-dialog')).not.toBeInTheDocument();
+    expect(screen.queryByAltText('微信登录二维码')).not.toBeInTheDocument();
+    expect(channelUrls.some((url) => url.includes('includeQr=true'))).toBe(false);
+    expect(channelUrls.some((url) => url.includes('refreshQr=true'))).toBe(false);
+    expect(screen.queryByText('服务暂时不可用，请稍后重试。')).not.toBeInTheDocument();
+  });
+
+  it('does not poll wechat login from the home page', async () => {
+    const originalFetch = globalThis.fetch;
+    const channelUrls: string[] = [];
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelUrls.push(url);
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+          qrCodeImageDataUrl: null,
+          qrCodeExpiresAt: null,
+          qrCodeRefreshRequired: false,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-23T12:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    expect(screen.queryByTestId('wechat-onboarding-dialog')).not.toBeInTheDocument();
+    expect(screen.queryByAltText('微信登录二维码')).not.toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+    });
+
+    expect(channelUrls.some((url) => url.includes('pollLogin=true'))).toBe(false);
+    expect(channelUrls.some((url) => url.includes('includeQr=true'))).toBe(false);
+  }, 8000);
+
+  it('does not open onboarding dialogs when report model and wechat are both configured', async () => {
+    const originalFetch = globalThis.fetch;
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'connected',
+          displayName: '微信 ClawBot',
+          accountLabel: '已绑定账号',
+          canSendText: true,
+          canSendFile: true,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-23T12:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('workspace-layout')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByTestId('report-model-onboarding-dialog')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('wechat-onboarding-dialog')).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('link', { name: '打开设备界面' })).toBeInTheDocument();
   });
 
   it('keeps the chat window visible when channel status is slow', async () => {
@@ -412,6 +1043,26 @@ describe('home page', () => {
           queueLimit: 10,
           queuedCount: 0,
           isFull: false,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-20T10:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
         });
       }
       return json({});
@@ -457,11 +1108,16 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '帮我做一份 BTC 报告' } });
+    fireEvent.change(input, { target: { value: '/report BTC' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('请确认是否创建投研报告')).toBeInTheDocument();
-    expect(screen.getByText('标的：BTC')).toBeInTheDocument();
+    const cardTitle = await screen.findByText('请确认是否创建完整报告');
+    const card = cardTitle.closest('section');
+    expect(card).not.toBeNull();
+    const scoped = within(card as HTMLElement);
+    expect(scoped.getByText('标的')).toBeInTheDocument();
+    expect(scoped.getByText('BTC')).toBeInTheDocument();
+    expect(scoped.getByRole('combobox', { name: '市场' })).toHaveValue('CRYPTO');
 
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
     expect(await screen.findByText('报告已进入队列。')).toBeInTheDocument();
@@ -469,9 +1125,9 @@ describe('home page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     const secondInput = screen.getByLabelText('输入消息');
-    fireEvent.change(secondInput, { target: { value: '帮我做一份 BTC 报告' } });
+    fireEvent.change(secondInput, { target: { value: '/report BTC' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(await screen.findByText('请确认是否创建投研报告')).toBeInTheDocument();
+    expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(await screen.findByText('已取消本次创建。')).toBeInTheDocument();
     expect(mocked.getConfirmBodies().at(1)?.decision).toBe('cancel');
@@ -488,10 +1144,10 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '帮我做一份 BTC 报告' } });
+    fireEvent.change(input, { target: { value: '/report BTC' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('请确认是否创建投研报告')).toBeInTheDocument();
+    expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
 
     expect(await screen.findByText('报告已进入队列。')).toBeInTheDocument();
@@ -509,10 +1165,10 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '帮我做一份 BTC 报告' } });
+    fireEvent.change(input, { target: { value: '/report BTC' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('请确认是否创建投研报告')).toBeInTheDocument();
+    expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
 
     expect(await screen.findAllByText('助手服务暂不可用，请稍后重试。')).toHaveLength(2);
@@ -579,6 +1235,70 @@ describe('home page', () => {
     expect(screen.getByPlaceholderText('输入问题，或提交报告任务需求')).toBeInTheDocument();
   });
 
+  it('keeps report reading visible while channel chat polling receives messages', async () => {
+    let channelHasMessages = false;
+    const intervalCallbacks: Array<() => void> = [];
+    const mocked = mockWorkspaceFetch({
+      channelChatSnapshot: () =>
+        channelHasMessages
+          ? {
+              channelKind: 'wechat_clawbot',
+              context: {
+                contextId: 'wechat_clawbot:account-1:sender-1',
+                kind: 'normal_chat',
+                title: '微信聊天',
+                activeTaskId: null,
+                activeReportId: null,
+              },
+              messages: [
+                {
+                  messageId: 'wx-u1',
+                  contextKind: 'normal_chat',
+                  actor: 'user',
+                  kind: 'plain',
+                  text: '微信里发来的问题',
+                  createdAt: '2026-05-19T10:10:00.000Z',
+                },
+              ],
+              confirmationCards: {},
+            }
+          : { channelKind: 'wechat_clawbot', messages: [], confirmationCards: {} },
+    });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const entry = await screen.findByRole('button', { name: /600519\.SH/ });
+    fireEvent.click(entry);
+    expect(await screen.findByTestId('reading-report-body')).toBeInTheDocument();
+
+    channelHasMessages = true;
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    expect(screen.getByTestId('reading-report-body')).toBeInTheDocument();
+    expect(screen.queryByText('微信里发来的问题')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '返回聊天' }));
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    expect(await screen.findByText('微信里发来的问题')).toBeInTheDocument();
+  });
+
   it('prints the active report so the browser can save it as PDF', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
@@ -633,7 +1353,15 @@ describe('home page', () => {
 
   it('polls queue and history instead of loading only once', async () => {
     const mocked = mockWorkspaceFetch();
+    const intervalCallbacks: Array<() => void> = [];
     restoreList.push(mocked.restore);
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
 
     render(
       <MemoryRouter>
@@ -644,10 +1372,58 @@ describe('home page', () => {
     await screen.findByTestId('workspace-layout');
     expect(screen.getByText(/投资辩论中/)).toBeInTheDocument();
     const initialCount = mocked.getQueueCount();
+    expect(intervalCallbacks.length).toBeGreaterThan(0);
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 4300));
+      intervalCallbacks.at(0)?.();
     });
-    expect(mocked.getQueueCount()).toBeGreaterThan(initialCount);
-  }, 12000);
+    await waitFor(() => {
+      expect(mocked.getQueueCount()).toBeGreaterThan(initialCount);
+    });
+  });
+
+  it('shows latest wechat channel conversation in the message stream', async () => {
+    const mocked = mockWorkspaceFetch({
+      channelChatSnapshot: {
+        channelKind: 'wechat_clawbot',
+        context: {
+          contextId: 'wechat_clawbot:account-1:sender-1',
+          kind: 'normal_chat',
+          title: '微信聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'wx-u1',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '微信里发来的问题',
+            createdAt: '2026-05-19T10:10:00.000Z',
+          },
+          {
+            messageId: 'wx-a1',
+            contextKind: 'normal_chat',
+            actor: 'assistant',
+            kind: 'plain',
+            text: '微信通道回复',
+            createdAt: '2026-05-19T10:10:02.000Z',
+          },
+        ],
+        confirmationCards: {},
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('微信里发来的问题')).toBeInTheDocument();
+    expect(screen.getByText('微信通道回复')).toBeInTheDocument();
+    expect(screen.getByText('微信聊天')).toBeInTheDocument();
+  });
 });

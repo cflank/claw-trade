@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import os
 from pathlib import Path
@@ -12,6 +11,7 @@ _DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
 _PARAMS_ARG_BYTE_LIMIT = 60_000
 _SUBPROCESS_TIMEOUT_GRACE_SECONDS = 5.0
 _CLI_JSON_TIMEOUT_SECONDS = 15.0
+_CLI_PROBE_TIMEOUT_SECONDS = 35.0
 
 
 class OpenClawGatewayRpcClient:
@@ -153,6 +153,19 @@ class OpenClawGatewayRpcClient:
             params["endpointUrl"] = endpoint_url
         return self._call("models.authStatus", params, timeout_ms=20_000)
 
+    def models_probe_status(
+        self,
+        *,
+        provider: str,
+        model: str | None = None,
+        endpoint_url: str | None = None,
+    ) -> Any:
+        _ = (model, endpoint_url)
+        return self._run_cli_json(
+            ["models", "status", "--json", "--probe", "--probe-provider", provider],
+            timeout_seconds=_CLI_PROBE_TIMEOUT_SECONDS,
+        )
+
     def config_patch(
         self,
         *,
@@ -217,26 +230,61 @@ class OpenClawGatewayRpcClient:
             params["sessionKey"] = session_key
         return self._call("web.login.wait", params, timeout_ms=max(timeout_ms + 3000, 45_000))
 
-    def channels_send_text(self, *, channel: str, text: str, dedupe_key: str) -> Any:
-        return self._call(
-            "send",
-            {
-                "channel": channel,
-                "text": text,
-                "idempotencyKey": dedupe_key,
-            },
-        )
+    def channels_send_text(
+        self,
+        *,
+        channel: str,
+        text: str,
+        dedupe_key: str,
+        to: str,
+        account_id: str | None = None,
+    ) -> Any:
+        params: dict[str, Any] = {
+            "channel": channel,
+            "to": to,
+            "message": text,
+            "idempotencyKey": dedupe_key,
+        }
+        if account_id:
+            params["accountId"] = account_id
+        return self._call("send", params)
 
-    def channels_send_file(self, *, channel: str, file_name: str, payload: bytes, dedupe_key: str) -> Any:
-        return self._call(
-            "send",
-            {
-                "channel": channel,
-                "fileName": file_name,
-                "fileDataBase64": base64.b64encode(payload).decode("ascii"),
-                "idempotencyKey": dedupe_key,
-            },
-        )
+    def channels_send_file(
+        self,
+        *,
+        channel: str,
+        file_name: str,
+        dedupe_key: str,
+        to: str,
+        payload: bytes | None = None,
+        file_path: Path | str | None = None,
+        account_id: str | None = None,
+    ) -> Any:
+        temp_media_path: Path | None = None
+        if file_path is not None:
+            media_path = Path(file_path)
+        elif payload is not None:
+            suffix = Path(file_name).suffix or ".bin"
+            with tempfile.NamedTemporaryFile("wb", delete=False, prefix="openclaw-ui-file-", suffix=suffix) as handle:
+                handle.write(payload)
+                media_path = Path(handle.name)
+                temp_media_path = media_path
+        else:
+            raise RuntimeError("file payload unavailable")
+        params: dict[str, Any] = {
+            "channel": channel,
+            "to": to,
+            "message": file_name,
+            "mediaUrl": str(media_path),
+            "idempotencyKey": dedupe_key,
+        }
+        if account_id:
+            params["accountId"] = account_id
+        try:
+            return self._call("send", params)
+        finally:
+            if temp_media_path is not None:
+                temp_media_path.unlink(missing_ok=True)
 
     def _current_config_hash(self) -> str | None:
         payload = self._call("config.get", {}, timeout_ms=8000)
@@ -325,7 +373,7 @@ class OpenClawGatewayRpcClient:
             if params_file:
                 Path(params_file).unlink(missing_ok=True)
 
-    def _run_cli_json(self, args: list[str]) -> Any:
+    def _run_cli_json(self, args: list[str], *, timeout_seconds: float = _CLI_JSON_TIMEOUT_SECONDS) -> Any:
         command: list[str] = [self._gateway_call_bin, *args]
         child_env: dict[str, str] | None = None
         if self._gateway_ws_url == _DEFAULT_GATEWAY_WS_URL and not self._token and not self._password:
@@ -338,7 +386,7 @@ class OpenClawGatewayRpcClient:
                 text=True,
                 check=False,
                 env=child_env,
-                timeout=_CLI_JSON_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("gateway cli timeout while reading OpenClaw JSON") from exc

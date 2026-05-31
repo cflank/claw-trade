@@ -2,7 +2,7 @@ export function EmptyMessageState() {
   return (
     <section className="ct-empty-state">
       <h3>还没有聊天内容</h3>
-      <p>你可以直接提问，或用 /report 发起一份正式投研任务。</p>
+      <p>你可以直接提问，或从工具栏发起一份正式投研任务。</p>
     </section>
   );
 }

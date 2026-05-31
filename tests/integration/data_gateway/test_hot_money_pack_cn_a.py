@@ -1,34 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, RunProviderPlan
-from claw_trade.data_gateway.packs.service import DomainPackService
-from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
+from claw_trade.data_gateway.packs.hot_money import HotMoneyPackBuilder
 from claw_trade.data_gateway.providers.hot_money import build_default_hot_money_adapters
-from claw_trade.data_gateway.store.attempts import MongoAttemptStore
-from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
-from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
-from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
-
-
-class _Collection:
-    def __init__(self, name: str = "test_collection") -> None:
-        self.name = name
-        self.docs: dict[str, dict[str, Any]] = {}
-
-    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
-        del upsert
-        key = query["_id"]
-        current = self.docs.get(key, {})
-        current.update(update.get("$setOnInsert", {}))
-        current.update(update.get("$set", {}))
-        if "_id" not in current:
-            current["_id"] = key
-        self.docs[key] = current
-
-    def insert_one(self, doc: dict[str, Any]) -> None:
-        self.docs[doc["_id"]] = dict(doc)
+from tests.fakes.data_gateway_in_memory import build_gate_controlled_executor
 
 
 def _request() -> PackRequest:
@@ -70,18 +45,13 @@ def _plan(request: PackRequest, adapters) -> RunProviderPlan:
     )
 
 
-def _helper() -> ProviderExecutionEvidenceHelper:
-    return ProviderExecutionEvidenceHelper(
-        raw_store=MongoRawPayloadStore(_Collection()),
-        normalized_store=MongoNormalizedStore(_Collection()),
-        attempt_store=MongoAttemptStore(_Collection()),
-        http_evidence_store=MongoProviderHttpEvidenceStore(_Collection()),
-    )
+def _helper():
+    return build_gate_controlled_executor()
 
 
 def test_hot_money_pack_cn_a_covers_all_groups_and_uses_openbb_evidence_chain(monkeypatch) -> None:
     request = _request()
-    adapters = build_default_hot_money_adapters(provider_config_version="cfg-hot-money-cn-a")
+    adapters = build_default_hot_money_adapters(provider_config_version="cfg-hot-money-cn-a", env={})
     plan = _plan(request, adapters)
     groups = {spec.coverage_group for spec in plan.call_specs}
     assert groups == {
@@ -89,7 +59,6 @@ def test_hot_money_pack_cn_a_covers_all_groups_and_uses_openbb_evidence_chain(mo
         "cn_a_hot_money_fund_flow",
         "cn_a_hot_money_northbound",
         "cn_a_hot_money_sector_flow",
-        "cn_a_hot_money_theme_heat",
     }
 
     monkeypatch.setattr(
@@ -129,26 +98,23 @@ def test_hot_money_pack_cn_a_covers_all_groups_and_uses_openbb_evidence_chain(mo
             "https://eastmoney.example/sector_flow",
         ),
     )
-    monkeypatch.setattr(
-        "claw_trade.data_gateway.providers.hot_money._fetch_cn_a_theme_heat",
-        lambda params: (
-            (
-                {"as_of": None, "name": "题材热度", "amount": "98", "unit": "index"},
-            ),
-            "https://ths.example/theme_heat",
-        ),
+    pack = HotMoneyPackBuilder().build(
+        request=request,
+        run_plan=plan,
+        adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
     )
 
-    pack = DomainPackService(settings=object(), adapters=adapters, provider_execution_helper=_helper()).get_pack(request, plan)
-
     assert pack.readiness.status.value in {"partial", "ready"}
-    assert len(pack.attempts) == 5
+    assert len(pack.attempts) == len(plan.call_specs)
     assert set(attempt.coverage_group for attempt in pack.attempts) == groups
-    assert len(pack.raw_refs) == 5
-    assert len(pack.normalized_refs) == 5
+    assert len(pack.raw_refs) == 4
+    assert len(pack.normalized_refs) == 4
+    tushare_attempts = [attempt for attempt in pack.attempts if attempt.provider.startswith("tushare")]
+    assert len(tushare_attempts) == 5
+    assert all(attempt.status.value == "credential_missing" for attempt in tushare_attempts)
     assert all(ref.startswith("mongo://openbb_raw_payloads/") for ref in pack.raw_refs)
     assert all(ref.startswith("mongo://openbb_normalized/") for ref in pack.normalized_refs)
     assert "不等于确定买卖意图" in pack.reader_brief_md
     assert pack.chart_assets[0].status.value == "insufficient"
     assert "缺少图表资产引用" in (pack.chart_assets[0].root_cause or "")
-

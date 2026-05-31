@@ -217,11 +217,11 @@ def _parse_price_condition(lowered: str) -> dict[str, object] | None:
 
 
 def _resolve_instrument(text: str) -> dict[str, object] | None:
-    matched_report = re.search(r"/report\s+([A-Za-z0-9._-]+)", text, re.IGNORECASE)
+    matched_report = re.search(r"/report\s+([A-Za-z0-9._/-]+)", text, re.IGNORECASE)
     if matched_report:
         code = matched_report.group(1).upper()
         return _instrument_from_code(code)
-    matched_cn = re.search(r"报告\s*([A-Za-z0-9._-]+)", text, re.IGNORECASE)
+    matched_cn = re.search(r"报告\s*([A-Za-z0-9._/-]+)", text, re.IGNORECASE)
     if matched_cn:
         code = matched_cn.group(1).upper()
         return _instrument_from_code(code)

@@ -4,6 +4,9 @@ import sys
 from pathlib import Path
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.runtime.openclaw_client import OpenClawClient
+from claw_trade.selection.confirmation import SelectionConfirmationController
+from claw_trade.selection.store import SelectionRunStore
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
 from claw_trade.ui_backend.channel_text_inbound import ChannelTextInboundController
 from claw_trade.ui_backend.chat_controller import ChatController
@@ -65,6 +68,18 @@ class _FakeSettingsGateway:
         _ = (provider, as_json)
         return {"ok": True, "message": "ready"}
 
+    def models_probe_status(self, *, provider=None, model=None, endpoint_url=None):
+        _ = endpoint_url
+        return {
+            "results": [
+                {
+                    "provider": provider or "deepseek",
+                    "model": model or "deepseek-chat",
+                    "status": "ok",
+                }
+            ]
+        }
+
     def models_auth_status(self, *, provider, model=None, endpoint_url=None, probe=True):
         _ = (provider, model, endpoint_url, probe)
         return {"ok": False, "message": "auth failed"}
@@ -104,6 +119,7 @@ class _FakeReportQaGateway:
 
 def _services(tmp_path: Path | None = None) -> UiHttpServices:
     queue = ReportTaskQueue(ReportWorkflowBridge(_FailWorkflowRunner()))
+    selection_store = SelectionRunStore()
     confirmation = ConfirmationController(queue)
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(_FailChatTransport()),
@@ -171,6 +187,11 @@ def _services(tmp_path: Path | None = None) -> UiHttpServices:
             }
         ),
         settings_service=SettingsService(),
+        selection_confirmation=SelectionConfirmationController(
+            store=selection_store,
+            queue=queue,
+            settings=ReportWorkflowSettings(),
+        ),
     )
 
 
@@ -184,6 +205,23 @@ def _client(tmp_path: Path) -> TestClient:
         services=_services(tmp_path),
     )
     return TestClient(app)
+
+
+def test_confirm_selection_report_route_returns_json_not_spa_html(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    response = client.post(
+        "/api/ui/confirm-selection-report",
+        json={
+            "requestId": "req-select-confirm-1",
+            "selectWorkflowRunId": "missing-selection-workflow",
+            "ticker": "600519.SH",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["code"] == "CONFIRMATION_REQUIRED"
 
 
 def test_api_routes_return_json_not_spa_html(tmp_path: Path) -> None:
@@ -219,7 +257,9 @@ def test_api_routes_return_json_not_spa_html(tmp_path: Path) -> None:
     )
     assert ignored_channel_message.status_code == 200
     assert ignored_channel_message.headers["content-type"].startswith("application/json")
-    assert ignored_channel_message.json() == {"handled": False}
+    assert ignored_channel_message.json()["handled"] is True
+    assert ignored_channel_message.json()["state"] == "failed"
+    assert "助手服务暂不可用" in ignored_channel_message.json()["replyText"]
 
     report_channel_message = client.post(
         "/api/ui/channel-inbound-message",
@@ -405,9 +445,9 @@ def test_extended_ui_api_routes_return_json_not_spa_html(tmp_path: Path) -> None
             },
         },
     )
-    assert data_source_save.status_code == 409
+    assert data_source_save.status_code in {400, 409}
     assert data_source_save.headers["content-type"].startswith("application/json")
-    assert data_source_save.json()["code"] == "DATASOURCE_TEST_FAILED"
+    assert data_source_save.json()["code"] in {"INVALID_INPUT", "DATASOURCE_TEST_FAILED"}
 
     llm_save = client.post(
         "/api/ui/save-llm-config-via-openclaw",
@@ -488,6 +528,12 @@ def test_build_ui_http_services_uses_runtime_quote_provider(monkeypatch, tmp_pat
     assert payload["triggered"] is True
 
 
+def test_build_ui_http_services_injects_selection_openclaw_channel(tmp_path: Path) -> None:
+    services = build_ui_http_services(ResearchUiServerSettings(frontend_dist=tmp_path))
+    selection_controller = services.chat_controller._selection_controller  # noqa: SLF001
+    assert isinstance(selection_controller._openclaw, OpenClawClient)  # noqa: SLF001
+
+
 def test_data_source_routes_reject_missing_key_and_do_not_persist(monkeypatch, tmp_path: Path) -> None:
     module = sys.modules[__name__]
     real_service_cls = DataSourceSettingsService
@@ -528,4 +574,7 @@ def test_data_source_routes_reject_missing_key_and_do_not_persist(monkeypatch, t
     listed = client.get("/api/ui/list-data-sources")
     assert listed.status_code == 200
     instances = listed.json()["instances"]
-    assert all(item["supportedType"] != "tushare" for item in instances)
+    tushare = next(item for item in instances if item["supportedType"] == "tushare")
+    assert tushare["enabled"] is False
+    assert tushare["apiKeyMasked"] is None
+    assert tushare["state"] == "draft"

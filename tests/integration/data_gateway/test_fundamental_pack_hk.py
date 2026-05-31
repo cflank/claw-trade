@@ -60,7 +60,7 @@ def test_hk_fundamental_pack_prioritizes_official_original_and_keeps_raw_ref(mon
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_akshare_hk_fundamental", _fake_hk_financial)
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_akshare_hk_income", lambda *, symbol: ())
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_hk_official_filings", _fake_hk_official)
-    monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_openbb_hk_fundamental_yfinance", lambda *, symbol: ())
+    monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_yahoo_quote_summary_fundamental", lambda *, symbol: ())
 
     pack = FundamentalPackService(settings=object(), adapters=adapters).get_pack(request, plan)
 
@@ -72,7 +72,7 @@ def test_hk_fundamental_pack_prioritizes_official_original_and_keeps_raw_ref(mon
     assert any(ref.startswith("raw://hk_official_filing/") for ref in pack.raw_refs)
 
 
-def test_hk_fundamental_pack_uses_yfinance_supplement_for_missing_pe_pb_roe(monkeypatch) -> None:
+def test_hk_fundamental_pack_uses_yahoo_quote_summary_supplement_for_missing_pe_pb_roe(monkeypatch) -> None:
     request = _request()
     adapters = tuple(item for item in build_default_fundamental_adapters(provider_config_version="cfg-hk", env={}) if item.market == Market.HK)
     plan = _plan(request, adapters)
@@ -81,11 +81,11 @@ def test_hk_fundamental_pack_uses_yfinance_supplement_for_missing_pe_pb_roe(monk
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_akshare_hk_income", lambda *, symbol: ())
     monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_hk_official_filings", lambda *, symbol: ())
 
-    def _fake_yfinance(*, symbol: str):
+    def _fake_yahoo(*, symbol: str):
         assert symbol == "0700.HK"
         return ({"trailingPE": 18.7, "priceToBook": 3.9, "returnOnEquity": 0.214},)
 
-    monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_openbb_hk_fundamental_yfinance", _fake_yfinance)
+    monkeypatch.setattr("claw_trade.data_gateway.providers.fundamental._call_yahoo_quote_summary_fundamental", _fake_yahoo)
 
     pack = FundamentalPackService(settings=object(), adapters=adapters).get_pack(request, plan)
 
@@ -96,4 +96,4 @@ def test_hk_fundamental_pack_uses_yfinance_supplement_for_missing_pe_pb_roe(monk
     assert "valuation.pe" not in missing_field_paths
     assert "valuation.pb" not in missing_field_paths
     assert "financial_indicators.roe" not in missing_field_paths
-    assert "openbb_yfinance_hk.equity_fundamentals_yfinance：远端获取成功。" in pack.reader_brief_md
+    assert "yahoo_quote_summary.quote_summary：远端获取成功。" in pack.reader_brief_md

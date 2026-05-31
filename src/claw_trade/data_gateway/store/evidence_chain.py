@@ -6,6 +6,7 @@ from typing import Any
 from claw_trade.data_gateway.models import ProviderStatus
 
 from .mongo import (
+    OPENBB_NORMALIZED,
     OPENBB_PROVIDER_ATTEMPTS,
     OPENBB_PROVIDER_HTTP_EVIDENCE,
     OPENBB_RAW_PAYLOADS,
@@ -21,8 +22,11 @@ class OpenBBEvidenceChainAudit:
     raw_ref_count: int
     missing_raw_refs: tuple[str, ...]
     invalid_raw_refs: tuple[str, ...]
+    missing_normalized_refs: tuple[str, ...]
+    invalid_normalized_refs: tuple[str, ...]
     remote_success_attempts_missing_raw_ref: tuple[str, ...]
     remote_success_attempts_missing_normalized_ref: tuple[str, ...]
+    remote_success_attempts_missing_http_evidence: tuple[str, ...]
     success_http_missing_source_url: tuple[str, ...]
     success_http_missing_response_status: tuple[str, ...]
     success_http_missing_headers: tuple[str, ...]
@@ -33,8 +37,11 @@ class OpenBBEvidenceChainAudit:
         return not (
             self.missing_raw_refs
             or self.invalid_raw_refs
+            or self.missing_normalized_refs
+            or self.invalid_normalized_refs
             or self.remote_success_attempts_missing_raw_ref
             or self.remote_success_attempts_missing_normalized_ref
+            or self.remote_success_attempts_missing_http_evidence
             or self.success_http_missing_source_url
             or self.success_http_missing_response_status
             or self.success_http_missing_headers
@@ -50,9 +57,14 @@ class OpenBBEvidenceChainAudit:
             "raw_ref_count": self.raw_ref_count,
             "missing_raw_refs": list(self.missing_raw_refs),
             "invalid_raw_refs": list(self.invalid_raw_refs),
+            "missing_normalized_refs": list(self.missing_normalized_refs),
+            "invalid_normalized_refs": list(self.invalid_normalized_refs),
             "remote_success_attempts_missing_raw_ref": list(self.remote_success_attempts_missing_raw_ref),
             "remote_success_attempts_missing_normalized_ref": list(
                 self.remote_success_attempts_missing_normalized_ref
+            ),
+            "remote_success_attempts_missing_http_evidence": list(
+                self.remote_success_attempts_missing_http_evidence
             ),
             "success_http_missing_source_url": list(self.success_http_missing_source_url),
             "success_http_missing_response_status": list(self.success_http_missing_response_status),
@@ -67,11 +79,14 @@ def audit_openbb_evidence_chain(database: Any, *, run_id: str) -> OpenBBEvidence
 
     remote_success_attempts_missing_raw_ref: list[str] = []
     remote_success_attempts_missing_normalized_ref: list[str] = []
+    remote_success_attempts_missing_http_evidence: list[str] = []
     success_http_missing_source_url: list[str] = []
     success_http_missing_response_status: list[str] = []
     success_http_missing_headers: list[str] = []
     success_http_missing_raw_ref: list[str] = []
+    attempt_ids_with_http_evidence: set[str] = set()
     raw_refs: set[str] = set()
+    normalized_refs: set[str] = set()
 
     for attempt in attempts:
         status = str(attempt.get("status") or "")
@@ -80,6 +95,8 @@ def audit_openbb_evidence_chain(database: Any, *, run_id: str) -> OpenBBEvidence
         normalized_ref = _str_or_none(attempt.get("normalized_ref"))
         if raw_ref:
             raw_refs.add(raw_ref)
+        if normalized_ref:
+            normalized_refs.add(normalized_ref)
         if status == ProviderStatus.REMOTE_SUCCESS.value:
             if not raw_ref:
                 remote_success_attempts_missing_raw_ref.append(attempt_id)
@@ -89,6 +106,9 @@ def audit_openbb_evidence_chain(database: Any, *, run_id: str) -> OpenBBEvidence
     for row in http_rows:
         status = str(row.get("status") or "")
         evidence_id = str(row.get("_id") or row.get("evidence_id") or "")
+        attempt_id = _attempt_id_from_http_evidence_id(evidence_id)
+        if attempt_id is not None:
+            attempt_ids_with_http_evidence.add(attempt_id)
         raw_ref = _str_or_none(row.get("raw_ref"))
         if raw_ref:
             raw_refs.add(raw_ref)
@@ -103,6 +123,18 @@ def audit_openbb_evidence_chain(database: Any, *, run_id: str) -> OpenBBEvidence
         if not raw_ref:
             success_http_missing_raw_ref.append(evidence_id)
 
+    for attempt in attempts:
+        status = str(attempt.get("status") or "")
+        if status != ProviderStatus.REMOTE_SUCCESS.value:
+            continue
+        if not _http_evidence_expected_from_attempt(attempt):
+            continue
+        attempt_id = _str_or_none(attempt.get("_id") or attempt.get("attempt_id") or "")
+        if not attempt_id:
+            continue
+        if attempt_id not in attempt_ids_with_http_evidence:
+            remote_success_attempts_missing_http_evidence.append(attempt_id)
+
     missing_raw_refs: list[str] = []
     invalid_raw_refs: list[str] = []
     for raw_ref in sorted(raw_refs):
@@ -113,6 +145,16 @@ def audit_openbb_evidence_chain(database: Any, *, run_id: str) -> OpenBBEvidence
         if database[OPENBB_RAW_PAYLOADS].find_one({"_id": document_id}) is None:
             missing_raw_refs.append(raw_ref)
 
+    missing_normalized_refs: list[str] = []
+    invalid_normalized_refs: list[str] = []
+    for normalized_ref in sorted(normalized_refs):
+        document_id = _openbb_normalized_document_id(normalized_ref)
+        if document_id is None:
+            invalid_normalized_refs.append(normalized_ref)
+            continue
+        if database[OPENBB_NORMALIZED].find_one({"_id": document_id}) is None:
+            missing_normalized_refs.append(normalized_ref)
+
     return OpenBBEvidenceChainAudit(
         run_id=run_id,
         attempt_count=len(attempts),
@@ -120,8 +162,11 @@ def audit_openbb_evidence_chain(database: Any, *, run_id: str) -> OpenBBEvidence
         raw_ref_count=len(raw_refs),
         missing_raw_refs=tuple(missing_raw_refs),
         invalid_raw_refs=tuple(invalid_raw_refs),
+        missing_normalized_refs=tuple(missing_normalized_refs),
+        invalid_normalized_refs=tuple(invalid_normalized_refs),
         remote_success_attempts_missing_raw_ref=tuple(remote_success_attempts_missing_raw_ref),
         remote_success_attempts_missing_normalized_ref=tuple(remote_success_attempts_missing_normalized_ref),
+        remote_success_attempts_missing_http_evidence=tuple(remote_success_attempts_missing_http_evidence),
         success_http_missing_source_url=tuple(success_http_missing_source_url),
         success_http_missing_response_status=tuple(success_http_missing_response_status),
         success_http_missing_headers=tuple(success_http_missing_headers),
@@ -139,8 +184,50 @@ def _openbb_raw_payload_document_id(raw_ref: str) -> str | None:
     return document_id
 
 
+def _openbb_normalized_document_id(normalized_ref: str) -> str | None:
+    try:
+        collection, document_id = parse_mongo_ref(normalized_ref)
+    except ValueError:
+        return None
+    if collection != OPENBB_NORMALIZED:
+        return None
+    return document_id
+
+
 def _str_or_none(value: object) -> str | None:
     if value is None:
         return None
     rendered = str(value).strip()
     return rendered or None
+
+
+def _attempt_id_from_http_evidence_id(evidence_id: str) -> str | None:
+    text = evidence_id.strip()
+    if not text:
+        return None
+    marker = ":http"
+    idx = text.find(marker)
+    if idx <= 0:
+        return None
+    return text[:idx]
+
+
+def _http_evidence_expected_from_attempt(attempt: dict[str, Any]) -> bool:
+    metadata = attempt.get("source_metadata")
+    if isinstance(metadata, dict):
+        if _to_bool(metadata.get("http_evidence_expected")):
+            return True
+        if _to_bool(metadata.get("managed_http_required")):
+            return True
+    return False
+
+
+def _to_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        return normalized in {"1", "true", "yes", "y", "on"}
+    if isinstance(value, int):
+        return value != 0
+    return False

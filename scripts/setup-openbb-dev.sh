@@ -7,6 +7,17 @@ OPENBB_TEMPLATE_PATH="${OPENBB_RUNTIME_DIR}/openbb.env.template"
 OPENBB_ENV_PATH="${OPENBB_RUNTIME_DIR}/openbb.env"
 INSTALL_DEPS=0
 
+ensure_env_line() {
+  local file_path="$1"
+  local key="$2"
+  local value="$3"
+  if grep -q "^${key}=" "${file_path}"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "${file_path}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >> "${file_path}"
+  fi
+}
+
 for arg in "$@"; do
   case "${arg}" in
     --install)
@@ -29,26 +40,35 @@ if [[ ! -f "${OPENBB_TEMPLATE_PATH}" ]]; then
 OPENBB_HOME=.runtime/dev-services/openbb/home
 OPENBB_USER_SETTINGS_DIRECTORY=.runtime/dev-services/openbb/user_settings
 OPENBB_LOG_DIRECTORY=.runtime/dev-services/openbb/logs
+OPENBB_AUTO_BUILD=0
 EOF
 fi
 
 if [[ ! -f "${OPENBB_ENV_PATH}" ]]; then
   cp "${OPENBB_TEMPLATE_PATH}" "${OPENBB_ENV_PATH}"
 fi
+ensure_env_line "${OPENBB_TEMPLATE_PATH}" "OPENBB_AUTO_BUILD" "0"
+ensure_env_line "${OPENBB_ENV_PATH}" "OPENBB_AUTO_BUILD" "0"
 
 if [[ "${INSTALL_DEPS}" == "1" ]]; then
-  uv pip install \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/core" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/extensions/mcp_server" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/extensions/equity" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/extensions/crypto" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/extensions/news" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/extensions/economy" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/providers/yfinance" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/providers/fmp" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/providers/sec" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/providers/fred" \
-    -e "${ROOT_DIR}/third_party/openbb/openbb_platform/providers/deribit"
+  OPENBB_GENERATED_SNAPSHOT_DIR="$(mktemp -d)"
+  trap 'rm -rf "${OPENBB_GENERATED_SNAPSHOT_DIR}"' EXIT
+  OPENBB_TRACKED_GENERATED_FILES=(
+    "openbb_platform/core/openbb/assets/reference.json"
+    "openbb_platform/core/openbb/package/__init__.py"
+  )
+  for relative_path in "${OPENBB_TRACKED_GENERATED_FILES[@]}"; do
+    mkdir -p "${OPENBB_GENERATED_SNAPSHOT_DIR}/$(dirname "${relative_path}")"
+    cp "${ROOT_DIR}/third_party/openbb/${relative_path}" "${OPENBB_GENERATED_SNAPSHOT_DIR}/${relative_path}"
+  done
+
+  uv sync --locked
+  OPENBB_AUTO_BUILD=0 uv run python -c "import openbb; openbb.build(lint=True, verbose=False)"
+
+  for relative_path in "${OPENBB_TRACKED_GENERATED_FILES[@]}"; do
+    cp "${OPENBB_GENERATED_SNAPSHOT_DIR}/${relative_path}" "${ROOT_DIR}/third_party/openbb/${relative_path}"
+  done
+  rm -f "${ROOT_DIR}/third_party/openbb/openbb_platform/core/openbb/.build.lock"
 fi
 
 cat <<EOF

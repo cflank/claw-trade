@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Mapping
 
 from claw_trade.data_gateway.models import (
@@ -15,6 +15,7 @@ from claw_trade.data_gateway.models import (
     PackAuditPayload,
     PackDomain,
     PackRequest,
+    PrioritySource,
     ProviderAttempt,
     ProviderCallSpec,
     ProviderResult,
@@ -52,6 +53,7 @@ _GAP_REASON_BY_STATUS: dict[ProviderStatus, DataGapReason] = {
 
 _STATUS_TEXT: dict[ProviderStatus, str] = {
     ProviderStatus.REMOTE_SUCCESS: "远端获取成功",
+    ProviderStatus.WAREHOUSE_HIT: "使用主仓库数据",
     ProviderStatus.CREDENTIAL_MISSING: "缺少接口凭证",
     ProviderStatus.RATE_LIMITED: "接口限流",
     ProviderStatus.EMPTY: "来源返回为空",
@@ -68,6 +70,23 @@ _READINESS_TEXT: dict[ReadinessStatus, str] = {
 }
 
 
+def _result_is_usable(result: ProviderResult) -> bool:
+    return result.status in {
+        ProviderStatus.REMOTE_SUCCESS,
+        ProviderStatus.CACHE_HIT,
+        ProviderStatus.WAREHOUSE_HIT,
+        ProviderStatus.SHARED_RESULT,
+    } and result.row_count > 0 and bool(result.normalized_ref)
+
+
+def _coverage_group_satisfied(*, spec: ProviderCallSpec, previous_results: list[ProviderResult]) -> bool:
+    if not spec.coverage_group:
+        return False
+    if spec.user_preferred or spec.priority_source == PrioritySource.USER_PREFERRED:
+        return False
+    return any(result.spec.coverage_group == spec.coverage_group and _result_is_usable(result) for result in previous_results)
+
+
 @dataclass
 class SocialPackBuilder:
     openbb_runtime_marker: str = "openbb-runtime"
@@ -80,14 +99,17 @@ class SocialPackBuilder:
         run_plan: RunProviderPlan,
         adapters_by_id: Mapping[str, ProviderAdapter],
         provider_execution_helper: ProviderExecutionEvidenceHelper | None = None,
+        warehouse_results: tuple[ProviderResult, ...] = (),
+        extra_gaps: tuple[DataGap, ...] = (),
     ) -> DomainPackResult:
         if request.domain != PackDomain.SOCIAL:
             raise ValueError("SocialPackBuilder only supports PackDomain.SOCIAL")
 
         specs = tuple(spec for spec in run_plan.call_specs if spec.domain == PackDomain.SOCIAL)
-        attempts: list[ProviderAttempt] = []
-        provider_results: list[ProviderResult] = []
+        attempts: list[ProviderAttempt] = [result.attempt for result in warehouse_results]
+        provider_results: list[ProviderResult] = list(warehouse_results)
         data_gaps: list[DataGap] = [gap for gap in run_plan.initial_gaps if gap.domain == PackDomain.SOCIAL]
+        data_gaps.extend(extra_gaps)
         if not specs:
             data_gaps.append(
                 DataGap(
@@ -104,6 +126,8 @@ class SocialPackBuilder:
             )
 
         for spec in specs:
+            if _coverage_group_satisfied(spec=spec, previous_results=provider_results):
+                continue
             role_error = self._validate_social_source_role(spec=spec)
             if role_error is not None:
                 attempt = self._attempt(
@@ -150,76 +174,34 @@ class SocialPackBuilder:
                 continue
 
             started_at = utc_now_iso()
-            helper = provider_execution_helper
-            if helper is not None:
-                result = helper.execute(
+            executor = provider_execution_helper
+            if executor is not None and getattr(executor, "gate_controlled", False):
+                result = executor.execute(
                     request=request,
                     spec=spec,
                     adapter=adapter,
                     started_at=started_at,
                 )
             else:
-                try:
-                    fetch = adapter.fetch(spec, request)
-                    normalized = adapter.normalize(spec, fetch)
-                except Exception as exc:
-                    finished_at = utc_now_iso()
-                    attempt = self._attempt(
-                        request=request,
-                        spec=spec,
-                        status=ProviderStatus.REMOTE_ERROR,
-                        error_message=str(exc),
-                        started_at=started_at,
-                        finished_at=finished_at,
-                        adapter_kind=adapter.adapter_kind,
-                        provider_id=adapter.provider_id,
-                        provider_kind=adapter.provider_kind,
-                    )
-                    attempts.append(attempt)
-                    data_gaps.append(self._gap_from_attempt(request=request, attempt=attempt))
-                    continue
-
                 finished_at = utc_now_iso()
-                status = normalized.status
-                if status == ProviderStatus.REMOTE_SUCCESS and normalized.row_count == 0:
-                    status = ProviderStatus.EMPTY
                 attempt = self._attempt(
                     request=request,
                     spec=spec,
-                    status=status,
-                    error_message=normalized.error_message,
+                    status=ProviderStatus.EVIDENCE_WRITE_FAILED,
+                    error_message="provider call gate is not configured; pack runtime remote calls must use run_provider_call_gate",
                     started_at=started_at,
                     finished_at=finished_at,
-                    row_count=normalized.row_count,
-                    raw_ref=normalized.source_raw_ref,
-                    normalized_ref=None,
                     adapter_kind=adapter.adapter_kind,
                     provider_id=adapter.provider_id,
                     provider_kind=adapter.provider_kind,
                 )
-                result = ProviderResult(
-                    spec=spec,
-                    status=status,
-                    request_id=fetch.provider_request_id,
-                    requested_at=started_at,
-                    latency_ms=attempt.latency_ms,
-                    source_role=spec.source_role,
-                    freshness=FreshnessStatus.FRESH_REMOTE,
-                    license_note="ok",
-                    raw_ref=attempt.raw_ref,
-                    normalized_ref=attempt.normalized_ref,
-                    rows=normalized.rows,
-                    row_count=normalized.row_count,
-                    cache_receipt=None,
-                    attempt=attempt,
-                    missing_fields=normalized.missing_fields,
-                    error_code=normalized.error_code,
-                    error_message=attempt.error_message,
-                )
+                attempts.append(attempt)
+                data_gaps.append(self._gap_from_attempt(request=request, attempt=attempt))
+                continue
 
             attempts.append(result.attempt)
             provider_results.append(result)
-            if result.status != ProviderStatus.REMOTE_SUCCESS:
+            if not _result_is_usable(result):
                 data_gaps.append(self._gap_from_attempt(request=request, attempt=result.attempt))
 
         compact_facts = self._build_compact_facts(provider_results)
@@ -356,7 +338,7 @@ class SocialPackBuilder:
         event_expectation: list[dict[str, str]] = []
         search_discovery: list[dict[str, str]] = []
         for result in provider_results:
-            if result.status != ProviderStatus.REMOTE_SUCCESS:
+            if not _result_is_usable(result):
                 continue
             provider_hint = f"{result.spec.provider}:{result.spec.adapter_id}:{result.spec.endpoint}"
             for row in result.rows:
@@ -387,7 +369,7 @@ class SocialPackBuilder:
         core_success_count = sum(
             1
             for result in provider_results
-            if result.status == ProviderStatus.REMOTE_SUCCESS and is_social_core_role(result.source_role)
+            if _result_is_usable(result) and is_social_core_role(result.source_role)
         )
         coverage = {
             "social_core_count": str(core_success_count),

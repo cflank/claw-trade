@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Mapping
-
-import requests
+from urllib.parse import urlencode
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -22,12 +23,18 @@ from claw_trade.data_gateway.models import (
     ProviderStatus,
     SourceRole,
 )
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
 from claw_trade.data_gateway.providers.base import ProviderAdapter
+from claw_trade.data_gateway.providers.cninfo_utils import cninfo_stock_query
+from claw_trade.data_gateway.providers.tushare_client import create_tushare_pro
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
     "User-Agent": "claw-trade-openbb-lockup-adapter/1.0 (research@localhost)",
 }
+_EASTMONEY_DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+_EASTMONEY_PUSH2_UT = "b2884a393a59ad64002292a3e90d46a5"
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,8 @@ class DefaultLockupAdapter:
     priority: int
     provider_kind: ProviderKind = ProviderKind.PROJECT_EXTENSION
     adapter_kind: str = "project_extension"
+    credential_requirements: tuple[str, ...] = ()
+    env: Mapping[str, str] | None = None
 
     @property
     def market(self) -> Market:
@@ -68,7 +77,7 @@ class DefaultLockupAdapter:
                 source_role=self.source_role,
                 expected_schema_id=self.expected_schema_id,
                 license_policy_id="personal_research",
-                credential_requirements=(),
+                credential_requirements=self.credential_requirements,
                 rate_limit_policy_id=self.rate_limit_policy_id,
                 cache_ttl_seconds=self.cache_ttl_seconds,
                 required=self.required,
@@ -81,6 +90,16 @@ class DefaultLockupAdapter:
         )
 
     def validate_credentials(self) -> CredentialStatus:
+        env = os.environ if self.env is None else self.env
+        missing = tuple(key for key in self.credential_requirements if not str(env.get(key, "")).strip())
+        if missing:
+            return CredentialStatus(
+                status=AdmissionCheckStatus.MISSING,
+                provider=self.provider_id,
+                adapter_id=self.adapter_id,
+                missing_keys=missing,
+                root_cause=f"missing credential keys: {', '.join(missing)}",
+            )
         return CredentialStatus(
             status=AdmissionCheckStatus.PASS,
             provider=self.provider_id,
@@ -119,7 +138,9 @@ class DefaultLockupAdapter:
         request_id = _stable_request_id(spec=spec, params=params)
         rows: tuple[Mapping[str, Any], ...]
         source_url: str
-        if self.coverage_group == "cn_a_lockup_unlock":
+        if self.provider_id == "tushare":
+            rows, source_url = _fetch_tushare_lockup(endpoint=self.endpoint, params=params, env=self.env)
+        elif self.coverage_group == "cn_a_lockup_unlock":
             rows, source_url = _fetch_cn_a_unlock(params=params, source_role=self.source_role)
         elif self.coverage_group == "cn_a_lockup_shareholder_count":
             rows, source_url = _fetch_cn_a_shareholder_count(params=params, source_role=self.source_role)
@@ -203,8 +224,26 @@ def lockup_capabilities() -> tuple[ProviderCapability, ...]:
 def build_default_lockup_adapters(
     *,
     provider_config_version: str,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[ProviderAdapter, ...]:
     return (
+        DefaultLockupAdapter(
+            adapter_id="lockup.tushare.flow120d.cn_a",
+            provider_id="tushare",
+            source_role=SourceRole.MARKET_DATA,
+            endpoint="moneyflow",
+            expected_schema_id="cn_a.lockup.tushare.flow120d.v1",
+            provider_config_version=provider_config_version,
+            rate_limit_policy_id="tushare.default",
+            cache_ttl_seconds=900,
+            required=False,
+            attempt_required=True,
+            coverage_group="cn_a_lockup_120d_flow",
+            coverage_quorum=1,
+            priority=5,
+            credential_requirements=("TUSHARE_TOKEN",),
+            env=env,
+        ),
         DefaultLockupAdapter(
             adapter_id="lockup.cninfo.unlock.official.cn_a",
             provider_id="cninfo",
@@ -361,12 +400,11 @@ def _fetch_cn_a_unlock(
     if source_role == SourceRole.OFFICIAL_ORIGINAL:
         return _fetch_cninfo_unlock_official(params=params)
     code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
-    url = (
-        "https://datacenter-web.eastmoney.com/api/data/v1/get"
-        "?reportName=RPT_LIFT_STAGE&pageNumber=1&pageSize=20"
-        f"&filter=(SECURITY_CODE%3D%22{code}%22)"
+    url = _eastmoney_datacenter_url(
+        report_name="RPT_LIFT_STAGE",
+        filter_expr=f'(SECURITY_CODE="{code}")',
     )
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     body = response.json()
     items = ((body.get("result") or {}).get("data")) or ()
@@ -391,12 +429,11 @@ def _fetch_cn_a_shareholder_count(
     if source_role == SourceRole.OFFICIAL_ORIGINAL:
         return _fetch_cninfo_shareholder_official(params=params)
     code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
-    url = (
-        "https://datacenter-web.eastmoney.com/api/data/v1/get"
-        "?reportName=RPT_HOLDERNUM_DET&pageNumber=1&pageSize=20"
-        f"&filter=(SECURITY_CODE%3D%22{code}%22)"
+    url = _eastmoney_datacenter_url(
+        report_name="RPT_HOLDERNUM_DET",
+        filter_expr=f'(SECURITY_CODE="{code}")',
     )
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     body = response.json()
     items = ((body.get("result") or {}).get("data")) or ()
@@ -414,12 +451,11 @@ def _fetch_cn_a_shareholder_count(
 
 def _fetch_cn_a_block_trade(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
     code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
-    url = (
-        "https://datacenter-web.eastmoney.com/api/data/v1/get"
-        "?reportName=RPT_DATA_BLOCKTRADE&pageNumber=1&pageSize=20"
-        f"&filter=(SECURITY_CODE%3D%22{code}%22)"
+    url = _eastmoney_datacenter_url(
+        report_name="RPT_DATA_BLOCKTRADE",
+        filter_expr=f'(SECURITY_CODE="{code}")',
     )
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     body = response.json()
     items = ((body.get("result") or {}).get("data")) or ()
@@ -436,24 +472,27 @@ def _fetch_cn_a_block_trade(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping
 
 
 def _fetch_cn_a_margin_financing(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    secid = _eastmoney_secid(str(params.get("ticker", "")))
-    url = (
-        "https://push2his.eastmoney.com/api/qt/stock/margin/get"
-        f"?secid={secid}&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55&klt=101&lmt=60"
+    code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
+    url = _eastmoney_datacenter_url(
+        report_name="RPTA_WEB_RZRQ_GGMX",
+        filter_expr=f"(scode={code})",
+        sort_columns="DATE",
+        sort_types="-1",
     )
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     body = response.json()
-    klines = ((body.get("data") or {}).get("klines")) or ()
-    rows: list[Mapping[str, Any]] = []
-    for line in klines:
-        if not isinstance(line, str):
-            continue
-        parts = line.split(",")
-        if len(parts) < 2:
-            continue
-        rows.append({"as_of": parts[0], "amount": parts[1], "source": "eastmoney_margin"})
-    return tuple(rows), url
+    items = ((body.get("result") or {}).get("data")) or ()
+    rows = tuple(
+        {
+            "as_of": item.get("DATE"),
+            "amount": item.get("RZRQYE") or item.get("RZYE") or item.get("RQYE"),
+            "source": "eastmoney_margin",
+        }
+        for item in items
+        if isinstance(item, Mapping)
+    )
+    return rows, url
 
 
 def _fetch_cn_a_dividend(
@@ -464,12 +503,11 @@ def _fetch_cn_a_dividend(
     if source_role == SourceRole.OFFICIAL_ORIGINAL:
         return _fetch_cninfo_dividend_official(params=params)
     code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
-    url = (
-        "https://datacenter-web.eastmoney.com/api/data/v1/get"
-        "?reportName=RPT_SHAREBONUS_DET&pageNumber=1&pageSize=20"
-        f"&filter=(SECURITY_CODE%3D%22{code}%22)"
+    url = _eastmoney_datacenter_url(
+        report_name="RPT_SHAREBONUS_DET",
+        filter_expr=f'(SECURITY_CODE="{code}")',
     )
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     body = response.json()
     items = ((body.get("result") or {}).get("data")) or ()
@@ -489,9 +527,9 @@ def _fetch_cn_a_120d_flow(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[s
     secid = _eastmoney_secid(str(params.get("ticker", "")))
     url = (
         "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
-        f"?secid={secid}&klt=101&lmt=120"
+        f"?{urlencode(_eastmoney_fflow_params(secid=secid, limit=120))}"
     )
-    response = requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     body = response.json()
     klines = ((body.get("data") or {}).get("klines")) or ()
@@ -506,18 +544,38 @@ def _fetch_cn_a_120d_flow(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[s
     return tuple(rows), url
 
 
+def _fetch_tushare_lockup(
+    *,
+    endpoint: str,
+    params: Mapping[str, Any],
+    env: Mapping[str, str] | None,
+) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    env_values = os.environ if env is None else env
+    token = str(env_values.get("TUSHARE_TOKEN", "")).strip()
+    if not token:
+        raise RuntimeError("tushare token missing for lockup adapter (TUSHARE_TOKEN)")
+    pro = create_tushare_pro(token=token, env=env_values)
+    ts_code = _normalize_cn_symbol_for_tushare(str(params.get("ticker", "")))
+    end = _compact_date(str(params.get("end_date", "")))
+    start = _lookback_start_date(end=end, days=180) or _compact_date(str(params.get("start_date", "")))
+    if endpoint == "moneyflow":
+        rows = _df_to_rows(pro.moneyflow(ts_code=ts_code, start_date=start, end_date=end))
+        return tuple(_tushare_flow120d_row(row=row) for row in rows), "https://api.tushare.pro#moneyflow"
+    raise RuntimeError(f"unsupported tushare lockup endpoint: {endpoint}")
+
+
 def _fetch_cninfo_unlock_official(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
+    stock = cninfo_stock_query(str(params.get("ticker", "")))
     start_date = str(params.get("start_date", ""))
     end_date = str(params.get("end_date", ""))
     url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
     payload = {
         "pageNum": 1,
         "pageSize": 20,
-        "column": "szse",
+        "column": stock.column,
         "tabName": "fulltext",
-        "plate": "",
-        "stock": code,
+        "plate": stock.plate,
+        "stock": stock.stock,
         "searchkey": "限售 解禁",
         "secid": "",
         "category": "",
@@ -527,7 +585,7 @@ def _fetch_cninfo_unlock_official(*, params: Mapping[str, Any]) -> tuple[tuple[M
         "sortType": "",
         "isHLtitle": "true",
     }
-    response = requests.post(
+    response = managed_requests.post(
         url,
         data=payload,
         headers={**_DEFAULT_HEADERS, "X-Requested-With": "XMLHttpRequest"},
@@ -550,17 +608,17 @@ def _fetch_cninfo_unlock_official(*, params: Mapping[str, Any]) -> tuple[tuple[M
 
 
 def _fetch_cninfo_shareholder_official(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
+    stock = cninfo_stock_query(str(params.get("ticker", "")))
     start_date = str(params.get("start_date", ""))
     end_date = str(params.get("end_date", ""))
     url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
     payload = {
         "pageNum": 1,
         "pageSize": 20,
-        "column": "szse",
+        "column": stock.column,
         "tabName": "fulltext",
-        "plate": "",
-        "stock": code,
+        "plate": stock.plate,
+        "stock": stock.stock,
         "searchkey": "股东户数",
         "secid": "",
         "category": "",
@@ -570,7 +628,7 @@ def _fetch_cninfo_shareholder_official(*, params: Mapping[str, Any]) -> tuple[tu
         "sortType": "",
         "isHLtitle": "true",
     }
-    response = requests.post(
+    response = managed_requests.post(
         url,
         data=payload,
         headers={**_DEFAULT_HEADERS, "X-Requested-With": "XMLHttpRequest"},
@@ -592,17 +650,17 @@ def _fetch_cninfo_shareholder_official(*, params: Mapping[str, Any]) -> tuple[tu
 
 
 def _fetch_cninfo_dividend_official(*, params: Mapping[str, Any]) -> tuple[tuple[Mapping[str, Any], ...], str]:
-    code = str(params.get("ticker", "")).strip().upper().split(".", 1)[0]
+    stock = cninfo_stock_query(str(params.get("ticker", "")))
     start_date = str(params.get("start_date", ""))
     end_date = str(params.get("end_date", ""))
     url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
     payload = {
         "pageNum": 1,
         "pageSize": 20,
-        "column": "szse",
+        "column": stock.column,
         "tabName": "fulltext",
-        "plate": "",
-        "stock": code,
+        "plate": stock.plate,
+        "stock": stock.stock,
         "searchkey": "分红 送转",
         "secid": "",
         "category": "",
@@ -612,7 +670,7 @@ def _fetch_cninfo_dividend_official(*, params: Mapping[str, Any]) -> tuple[tuple
         "sortType": "",
         "isHLtitle": "true",
     }
-    response = requests.post(
+    response = managed_requests.post(
         url,
         data=payload,
         headers={**_DEFAULT_HEADERS, "X-Requested-With": "XMLHttpRequest"},
@@ -727,6 +785,79 @@ def _pick_first(row: Mapping[str, Any], *keys: str) -> str | None:
     return None
 
 
+def _df_to_rows(frame: Any) -> list[Mapping[str, Any]]:
+    if frame is None:
+        return []
+    if not hasattr(frame, "to_dict"):
+        raise RuntimeError("tushare response is not tabular")
+    return [row for row in frame.to_dict(orient="records") if isinstance(row, Mapping)]
+
+
+def _tushare_flow120d_row(*, row: Mapping[str, Any]) -> Mapping[str, Any]:
+    amount = _pick_first(row, "net_mf_amount", "net_amount")
+    if amount is None:
+        amount = _computed_stock_net_amount(row)
+    return {
+        "as_of": row.get("trade_date"),
+        "amount": _scaled_text(amount, 10_000.0),
+        "source": "tushare_moneyflow",
+    }
+
+
+def _computed_stock_net_amount(row: Mapping[str, Any]) -> str | None:
+    buy = sum(_to_float(row.get(key)) or 0.0 for key in ("buy_elg_amount", "buy_lg_amount", "buy_md_amount", "buy_sm_amount"))
+    sell = sum(_to_float(row.get(key)) or 0.0 for key in ("sell_elg_amount", "sell_lg_amount", "sell_md_amount", "sell_sm_amount"))
+    if buy == 0.0 and sell == 0.0:
+        return None
+    return str(buy - sell)
+
+
+def _scaled_text(value: Any, scale: float) -> str | None:
+    number = _to_float(value)
+    if number is None:
+        return None
+    return str(number * scale)
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _compact_date(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return text
+    return text.replace("-", "")[:8]
+
+
+def _lookback_start_date(*, end: str, days: int) -> str | None:
+    try:
+        end_date = datetime.strptime(end, "%Y%m%d").date()
+    except ValueError:
+        return None
+    return (end_date - timedelta(days=days)).strftime("%Y%m%d")
+
+
+def _normalize_cn_symbol_for_tushare(ticker: str) -> str:
+    token = ticker.strip().upper()
+    if "." in token:
+        symbol, market = token.split(".", 1)
+        return f"{symbol}.{market}"
+    if token.startswith(("6", "9")):
+        return f"{token}.SH"
+    if token.startswith(("4", "8")):
+        return f"{token}.BJ"
+    return f"{token}.SZ"
+
+
 def _eastmoney_secid(ticker: str) -> str:
     code = ticker.strip().upper()
     if "." in code:
@@ -736,6 +867,40 @@ def _eastmoney_secid(ticker: str) -> str:
     if code.startswith(("6", "9")):
         return f"1.{code}"
     return f"0.{code}"
+
+
+def _eastmoney_datacenter_url(
+    *,
+    report_name: str,
+    filter_expr: str,
+    sort_columns: str | None = None,
+    sort_types: str | None = None,
+) -> str:
+    params: dict[str, Any] = {
+        "reportName": report_name,
+        "columns": "ALL",
+        "source": "WEB",
+        "client": "WEB",
+        "pageNumber": 1,
+        "pageSize": 20,
+        "filter": filter_expr,
+    }
+    if sort_columns:
+        params["sortColumns"] = sort_columns
+    if sort_types:
+        params["sortTypes"] = sort_types
+    return _EASTMONEY_DATACENTER_URL + "?" + urlencode(params)
+
+
+def _eastmoney_fflow_params(*, secid: str, limit: int) -> Mapping[str, Any]:
+    return {
+        "secid": secid,
+        "klt": 101,
+        "lmt": limit,
+        "ut": _EASTMONEY_PUSH2_UT,
+        "fields1": "f1,f2,f3,f7",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
+    }
 
 
 def _stable_request_id(*, spec: ProviderCallSpec, params: Mapping[str, Any]) -> str:

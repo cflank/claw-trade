@@ -575,6 +575,131 @@ CONFLICT
 - 验证命令：`uv run pytest tests/unit/ui/test_report_workflow_settings_ui_boundary.py`
 - 禁止事项：不得在普通 UI 暴露 `.env.local` 路径或真实值；不得让 controller 用运行时 env 覆盖已冻结 `RunRequest`。
 
+### 7.1 设置模块独立评审任务清单（Blocking 回补）
+
+用途：上一轮评审 Blocking 指出“缺少可独立评审的设置模块任务清单”。本节在原有 P5 之上补齐 settings 专项评审入口；评审 settings 时以本节 `SM-*` 为主，要求逐条过证据。
+
+#### Source Design Points（仅限批准来源）
+
+| ID | 设计点 | 证据 |
+|---|---|---|
+| SDP-01 | 报告模型是硬前置；微信是强引导但可跳过 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:18-21` |
+| SDP-02 | 缺报告模型时直接进入模型表单，不保留“配置模型”二次入口 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:18-19`; `docs/superpowers/specs/2026-05-22-settings-visual-css-design.md:157` |
+| SDP-03 | OpenClaw 主界面入口在聊天工具区，不在设置页 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:32` |
+| SDP-04 | 微信区直接显示二维码，提供刷新/稍后设置；微信未登录不阻断工作台 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:61,74-85` |
+| SDP-05 | 微信文案仅允许“我 → 设置 → 插件 → 微信 ClawBot”；不写微信端报告指令 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:65-70,84`; `docs/superpowers/specs/2026-05-22-settings-visual-css-design.md:354-361` |
+| SDP-06 | 设置页四项：报告模型、Embedding、增强数据源、微信通知 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:57,86-97`; `docs/superpowers/specs/2026-05-22-settings-visual-css-design.md:404-409,412` |
+| SDP-07 | 报告模型测试通过前必须阻断报告；Embedding 可选且不阻断 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:50-58,158-168` |
+| SDP-08 | 增强源仅内置增强/付费源；默认免费源隐藏；启用前必须测试通过；失败 attempt 要记录；失败不阻断报告 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:88-112,168-169` |
+| SDP-09 | 任务卡片只显示标的/名称/市场；市场可切换且切换后重校验；禁止显示 profile/默认币种/报告方案/计价单位/worker 轮数细节 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:115-139`; `docs/superpowers/specs/2026-05-22-settings-visual-css-design.md:544-559` |
+| SDP-10 | 高级诊断（provider 健康/runtime 状态/live run 缺口/证据链失败原因）只进 follow-up，不进首版首次配置主路径 | `docs/superpowers/specs/2026-05-22-settings-module-design.md:170-177`; `todolist.md:35-42` |
+| SDP-11 | CSS 范围必须覆盖：tokens/布局/表单/按钮/状态标签/二维码区/设置页三块/增强源列表/任务卡片/错误态/响应式/motion，且复用 `ct-*`，避免无关全站重构 | `docs/superpowers/specs/2026-05-22-settings-visual-css-design.md:12,30-81,83-118,120-155,159-266,268-304,306-352,363-433,435-543,561-693` |
+| SDP-12 | 视觉风格禁止营销化（大渐变/hero/装饰图形/复杂后台）与内部术语泄露 | `docs/superpowers/specs/2026-05-22-settings-visual-css-design.md:16-29`; `docs/superpowers/specs/2026-05-22-settings-module-design.md:30,143-153` |
+| SDP-13 | `/report` 是报告流程入口；普通聊天不得静默进入报告流程 | `AGENTS.md:312` |
+| SDP-14 | 禁止用 mock/stub/fake/fallback 伪造通过；失败要真实暴露并做根因 | `AGENTS.md:450,470,498,583,595` |
+| SDP-15 | subagent 完成后必须追加当日 memory 记录 | `AGENTS.md:579-585,602-619` |
+| SDP-16 | 设置模块演进历史共识：高级诊断不进首配主路径；微信强引导可跳过；模型硬阻断；微信文案只写插件启用路径；任务卡片最终保留市场字段并可切换 | `memory/2026-05-22.md:236-239,257-259,272-279,287-294` |
+
+#### Task List（最小可独立验证单元）
+
+##### SM-01 启动硬前置与阻断判定
+
+- 目标：实现“报告模型硬前置 + 微信可跳过”的启动决策，不引入其它阻断源。
+- 设计依据：`SDP-01`, `SDP-07`, `SDP-16`。
+- 允许修改范围：`web/research-ui/src/**settings*`, `src/claw_trade/ui_backend/**settings*`, `tests/unit/ui/**settings*`（仅启动/阻断相关）。
+- 验收/验证命令：`uv run pytest tests/unit/ui/test_llm_settings_bridge.py tests/unit/ui/test_report_queue.py`; `uv run pytest tests/e2e/ui/test_report_user_flows.py -k "settings or onboarding or report_gate"`
+- 反向验证/禁止项检查：`rg -n "微信未登录.*阻断|Embedding.*阻断|增强.*阻断" src web tests`（应无阻断实现）；`rg -n "测试失败.*默认模型|silent.*default model" src web tests`（应无静默切换）。
+- mock/fake/stub/fallback 检查：`rg -n "mock|stub|fake|fallback" src/claw_trade/ui_backend web/research-ui/src tests -g"*settings*"`
+
+##### SM-02 微信强引导但可跳过（含固定文案）
+
+- 目标：微信区直接显示二维码/刷新/稍后设置；文案固定为“我 → 设置 → 插件 → 微信 ClawBot”；不写微信端报告指令。
+- 设计依据：`SDP-04`, `SDP-05`, `SDP-12`, `SDP-16`。
+- 允许修改范围：`web/research-ui/src/**settings*`, `web/research-ui/src/styles.css`, `tests/**/settings*`, `tests/**/channel*`。
+- 验收/验证命令：`pnpm test && pnpm build`; `uv run pytest tests/unit/ui/test_channel_bridge.py`
+- 反向验证/禁止项检查：`rg -n "报告 <标的>|/report|确认|取消|进度|发送完整报告" web/research-ui/src`（微信引导文案中不应出现）；`rg -n "扫码登录|稍后设置|刷新二维码|微信 ClawBot" web/research-ui/src`（应命中）。
+- mock/fake/stub/fallback 检查：`rg -n "fake.*qr|mock.*channel|stub.*wechat|fallback.*wechat" src web tests`
+
+##### SM-03 设置页信息架构与入口边界
+
+- 目标：设置页只承载模型/Embedding/增强源/微信通知；OpenClaw 主界面入口放聊天工具区，不回到设置页。
+- 设计依据：`SDP-03`, `SDP-06`, `SDP-12`, `SDP-13`。
+- 允许修改范围：`web/research-ui/src/**settings*`, `web/research-ui/src/**chat*`, `tests/**/settings*`, `tests/**/chat*`。
+- 验收/验证命令：`pnpm test && pnpm build`; `uv run pytest tests/contracts/test_ui_api_contracts.py`
+- 反向验证/禁止项检查：`rg -n "OpenClaw 主界面|Gateway|runtime|provider attempt|evidence 链" web/research-ui/src`（设置页不应显示）；`rg -n "openclaw.*entry|clawbot.*entry" web/research-ui/src`（入口应在聊天工具区实现而非 settings）。
+- mock/fake/stub/fallback 检查：`rg -n "mock|stub|fake|fallback" web/research-ui/src tests -g"*settings*"`
+
+##### SM-04 报告模型与 Embedding 语义分离
+
+- 目标：报告模型状态遵循“未配置/已保存未验证/测试失败/可用”；报告模型未通过即阻断报告；Embedding 可选且失败不阻断。
+- 设计依据：`SDP-07`, `SDP-14`, `SDP-16`。
+- 允许修改范围：`src/claw_trade/ui_backend/llm_settings_bridge.py`, `src/claw_trade/ui_backend/settings_service.py`, `tests/unit/ui/test_llm_settings_bridge.py`, `tests/unit/ui/test_report_workflow_settings_ui_boundary.py`。
+- 验收/验证命令：`uv run pytest tests/unit/ui/test_llm_settings_bridge.py tests/unit/ui/test_report_workflow_settings_ui_boundary.py`
+- 反向验证/禁止项检查：`rg -n "保存配置.*等同测试通过|save.*==.*ready|fallback.*default model" src tests`（不得存在）；`rg -n "embedding.*阻断|embedding.*hard gate" src tests`（不得存在）。
+- mock/fake/stub/fallback 检查：`rg -n "mock|stub|fake|fallback" src/claw_trade/ui_backend tests/unit/ui -g"*llm*"`
+
+##### SM-05 增强数据源可见性与启用规则
+
+- 目标：只显示内置增强/付费源，隐藏默认免费源；增强源启用前必须测试通过；失败 attempt 必须记录；失败不阻断报告。
+- 设计依据：`SDP-08`, `SDP-14`。
+- 允许修改范围：`src/claw_trade/ui_backend/data_source_settings.py`, `src/claw_trade/ui_backend/data_source_health.py`, `web/research-ui/src/**data-source*`, `tests/unit/ui/test_data_source_settings.py`, `tests/unit/ui/test_configured_failed_data_sources.py`。
+- 验收/验证命令：`uv run pytest tests/unit/ui/test_data_source_settings.py tests/unit/ui/test_configured_failed_data_sources.py`
+- 反向验证/禁止项检查：`rg -n "custom_http|customJsonMapping|任意 HTTP|JSON 映射|provider 优先级|适用范围" src web tests`（应仅出现在拒绝逻辑/负向测试，不得成为正向能力）；`rg -n "enable.*without.*test|测试失败.*已启用" src tests`（不得存在）。
+- mock/fake/stub/fallback 检查：`rg -n "fake success|mock success|stub success|fallback source" src/claw_trade/ui_backend web tests`
+
+##### SM-06 任务确认卡片字段与市场重校验
+
+- 目标：任务卡片仅显示标的/名称/市场；市场默认识别可切换，切换后强制重校验标的匹配。
+- 设计依据：`SDP-09`, `SDP-16`。
+- 允许修改范围：`web/research-ui/src/**task*`, `src/claw_trade/ui_backend/**intent*`, `tests/unit/ui/test_intent_recognizer.py`, `tests/e2e/ui/test_report_user_flows.py`。
+- 验收/验证命令：`uv run pytest tests/unit/ui/test_intent_recognizer.py tests/e2e/ui/test_report_user_flows.py -k "confirm or market"`; `pnpm test`
+- 反向验证/禁止项检查：`rg -n "报告方案|计价单位|profile|默认币种|worker|debate|risk" web/research-ui/src`（任务卡片不可展示）；`rg -n "切换市场.*重校验|revalidate.*market" src web tests`（应有实现与测试）。
+- mock/fake/stub/fallback 检查：`rg -n "mock|stub|fake|fallback" src/claw_trade/ui_backend web/research-ui/src tests -g"*task*"`
+
+##### SM-07 高级诊断仅进 follow-up
+
+- 目标：provider 健康、runtime 状态、recent live run gap、证据链失败原因仅进入高级诊断 follow-up，不进入首次配置主路径。
+- 设计依据：`SDP-10`, `SDP-16`。
+- 允许修改范围：任务文档、诊断页面实现与测试（若存在）`web/research-ui/src/**diagnostic*`, `src/claw_trade/ui_backend/**diagnostic*`, `tests/**/diagnostic*`。
+- 验收/验证命令：`rg -n "provider health|runtime service status|live run gap|evidence-chain" todolist.md docs/UI实施任务清单.md`; `uv run pytest tests/unit/ui -k "diagnostic or settings"`（若该测试集存在）
+- 反向验证/禁止项检查：`rg -n "首次配置.*provider|首次配置.*runtime|首次配置.*evidence" web/research-ui/src src/claw_trade/ui_backend`（不应将诊断并入首配主流程）。
+- mock/fake/stub/fallback 检查：`rg -n "mock|stub|fake|fallback" src web tests -g"*diagnostic*"`
+
+##### SM-08 CSS 专项收口（只服务设置模块）
+
+- 目标：按 CSS 设计覆盖 tokens/布局/表单/按钮/状态标签/二维码区/设置页三块/增强源列表/任务卡片/错误态/响应式/motion，并复用 `ct-*`；不做全站视觉重构。
+- 设计依据：`SDP-11`, `SDP-12`。
+- 允许修改范围：`web/research-ui/src/styles.css`, `web/research-ui/src/**settings*`, `web/research-ui/src/**task*`, 对应组件测试快照。
+- 验收/验证命令：`pnpm test && pnpm build`; `rg -n "ct-settings|ct-onboarding|ct-wechat|ct-source|ct-task|ct-inline-alert" web/research-ui/src/styles.css`
+- 反向验证/禁止项检查：`rg -n "hero|gradient|orb|bokeh|dashboard|admin" web/research-ui/src/styles.css`（不应引入营销化/复杂后台视觉）；`rg -n "OpenClaw|OpenViking|provider attempt|runtime" web/research-ui/src`（普通视觉文案不暴露内部词）。
+- mock/fake/stub/fallback 检查：`rg -n "mock|stub|fake|fallback" web/research-ui/src -g"*.css" -g"*.tsx"`
+
+##### SM-09 禁止项反向验证打包任务
+
+- 目标：把 settings 模块禁止项形成可执行负向检查，防止回归。
+- 设计依据：`SDP-01`~`SDP-16`。
+- 允许修改范围：`tests/contracts/**`, `tests/unit/ui/**`, `tests/e2e/ui/**`, `docs/UI实施任务清单.md`（仅测试清单维护）。
+- 验收/验证命令：`uv run pytest tests/contracts/test_ui_user_dto_redaction.py tests/contracts/test_ui_api_contracts.py`; `uv run pytest tests/unit/ui tests/e2e/ui -k "settings or onboarding or channel or datasource or intent"`
+- 反向验证/禁止项检查：必须覆盖下方 `Forbidden Surface Checklist` 每一项且有对应断言。
+- mock/fake/stub/fallback 检查：`rg -n "mock.*success|stub.*success|fake.*success|fallback.*success" tests/unit/ui tests/e2e/ui tests/contracts`
+
+#### Forbidden Surface Checklist（评审必须逐项勾结论）
+
+| 禁止项 | 必须的反向验证 |
+|---|---|
+| 允许用户选择 profile | `rg -n "profile" web/research-ui/src` + 组件断言：普通设置/任务卡片无 profile 选择 |
+| 暴露默认市场/默认币种为设置必填 | 断言首次配置无这两项必填；市场仅在任务卡片纠错 |
+| 暴露 worker/debate/risk 轮数给普通用户 | DTO/页面快照断言无该类字段 |
+| 暴露 OpenClaw gateway/Channel ID/插件包名/scope/runtime/provider attempt/证据链细节 | DTO 红线测试 + 页面字符串扫描 |
+| 把 OpenClaw 主界面入口放回设置页 | 导航/页面快照断言入口在聊天工具区 |
+| 微信未登录硬阻断浏览器工作台 | E2E：微信未登录可进入工作台但通知状态为未连接 |
+| 接入任意 HTTP/JSON 数据源 | 负向测试：`custom_http/customJsonMapping -> INVALID_INPUT` |
+| 允许用户配置 provider 优先级或数据源适用范围 | 页面断言无此配置；后端入参校验拒绝 |
+| 隐藏增强源失败或伪装成功 | 断言失败 attempt 被记录并可见；不得显示“已可用” |
+| 把“保存配置”当作“测试通过” | 单测断言 save/test 状态分离 |
+| 模型测试失败后静默切默认模型 | 单测断言失败状态保留，报告仍被阻断 |
+| 普通 UI 文案出现未确认说明/猜测性承诺 | 文案扫描 + 评审 checklist 必填“证据/未知” |
+
 ## 8. Phase 6：PDF、文件发送、端到端验收
 
 ### P6-01 PDF 导出服务

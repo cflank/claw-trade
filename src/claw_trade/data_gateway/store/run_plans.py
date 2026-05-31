@@ -118,6 +118,8 @@ def _serialize_call_spec(spec: ProviderCallSpec) -> dict[str, Any]:
         "priority_source": spec.priority_source.value,
         "user_preferred": spec.user_preferred,
         "raw_export_policy": spec.raw_export_policy,
+        "requirement_id": spec.requirement_id,
+        "data_type": spec.data_type,
     }
 
 
@@ -144,6 +146,8 @@ def _deserialize_call_spec(doc: dict[str, Any]) -> ProviderCallSpec:
         priority_source=PrioritySource(str(doc["priority_source"])),
         user_preferred=bool(doc["user_preferred"]),
         raw_export_policy=str(doc.get("raw_export_policy", "metadata_only")),
+        requirement_id=doc.get("requirement_id") or (doc.get("params") or {}).get("requirement_id"),
+        data_type=doc.get("data_type"),
     )
 
 

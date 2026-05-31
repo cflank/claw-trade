@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -46,6 +47,13 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "OPV_API_KEY" in text
     assert "OPENCLAW_GATEWAY_URL" in text
     assert "OPENCLAW_GATEWAY_CALL_BIN" in text
+    assert "OPENCLAW_CONTROL_UI_INDEX" in text
+    assert "ensure_openclaw_control_ui_assets" in text
+    assert "OPENCLAW_WEIXIN_PLUGIN_ID" in text
+    assert "OPENCLAW_WEIXIN_PLUGIN_SPEC" in text
+    assert "ensure_openclaw_weixin_plugin_ready" in text
+    assert "@tencent-weixin/openclaw-weixin@2.4.4" in text
+    assert 'plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}"' in text
     assert "OPENCLAW_STATE_DIR" in text
     assert "OPENCLAW_CONFIG_PATH" in text
     assert "preauthorize_openclaw_gateway_cli_scopes" in text
@@ -54,6 +62,7 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "DEEPSEEK_API_KEY" in text
     assert "OPENCLAW_GATEWAY_TIMEOUT_MS" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" in text
+    assert 'CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-60000}"' in text
     assert "LOCAL_MONGODB_START_SCRIPT" in text
     assert "start_local_mongodb_if_needed" in text
     assert "wait_mongodb_ok" in text
@@ -66,6 +75,42 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "supervise_started_services" in text
     assert "脚本将持续运行并监控服务状态" in text
     assert "运行测试命令" in text
+    assert "OPENBB_AUTO_BUILD=0" in text
+    assert 'sed -i "s|^OPENBB_AUTO_BUILD=.*|OPENBB_AUTO_BUILD=0|" "${OPENBB_ENV_PATH}"' in text
+
+
+def test_start_control_runtime_openbb_template_forces_auto_build_off(tmp_path: Path) -> None:
+    text = _script_path().read_text(encoding="utf-8")
+    start = text.index("prepare_openbb_runtime_template() {")
+    end = text.index("\n}\n\nprepare_openviking_runtime_config()", start) + 3
+    function_text = text[start:end]
+    runtime_dir = tmp_path / "openbb"
+    runtime_dir_arg = shlex.quote(str(runtime_dir))
+    shell_script = f"""
+set -euo pipefail
+OPENBB_RUNTIME_DIR={runtime_dir_arg}
+OPENBB_ENV_TEMPLATE_PATH="${{OPENBB_RUNTIME_DIR}}/openbb.env.template"
+OPENBB_ENV_PATH="${{OPENBB_RUNTIME_DIR}}/openbb.env"
+mkdir -p "${{OPENBB_RUNTIME_DIR}}"
+printf 'OPENBB_AUTO_BUILD=1\\n' > "${{OPENBB_ENV_PATH}}"
+{function_text}
+prepare_openbb_runtime_template
+printf '%s\\n' '---TEMPLATE---'
+cat "${{OPENBB_ENV_TEMPLATE_PATH}}"
+printf '%s\\n' '---ENV---'
+cat "${{OPENBB_ENV_PATH}}"
+"""
+    completed = subprocess.run(
+        ["bash", "-c", shell_script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    template_text = completed.stdout.split("---TEMPLATE---", 1)[1].split("---ENV---", 1)[0]
+    env_text = completed.stdout.split("---ENV---", 1)[1]
+    assert "OPENBB_AUTO_BUILD=0" in template_text
+    assert env_text.strip().splitlines() == ["OPENBB_AUTO_BUILD=0"]
 
 
 def test_start_control_runtime_script_has_explicit_mcp_sidecar_args() -> None:
@@ -88,15 +133,18 @@ def test_start_control_runtime_script_supports_default_skip_mcp_sidecar() -> Non
 def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_url() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
-    assert "CLAW_TRADE_OPENVIKING_MCP_STARTED=${openviking_mcp_started}" in text
-    assert "OPENCLAW_STATE_DIR=${OPENCLAW_STATE_DIR}" in text
-    assert "OPENCLAW_CONFIG_PATH=${OPENCLAW_CONFIG_PATH}" in text
-    assert "OPENCLAW_GATEWAY_TIMEOUT_MS=${OPENCLAW_GATEWAY_TIMEOUT_MS}" in text
-    assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS=${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}" in text
-    assert "CN_A_MONGODB_URI=${CN_A_MONGODB_URI}" in text
-    assert "DATA_GATEWAY_MONGODB_URI=${DATA_GATEWAY_MONGODB_URI}" in text
+    assert "write_runtime_env_var() {" in text
+    assert "printf '%s=' \"${key}\" >> \"${RUNTIME_ENV_PATH}\"" in text
+    assert "printf '%q\\n' \"${value}\" >> \"${RUNTIME_ENV_PATH}\"" in text
+    assert 'write_runtime_env_var "CLAW_TRADE_OPENVIKING_MCP_STARTED" "${openviking_mcp_started}"' in text
+    assert 'write_runtime_env_var "OPENCLAW_STATE_DIR" "${OPENCLAW_STATE_DIR}"' in text
+    assert 'write_runtime_env_var "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"' in text
+    assert 'write_runtime_env_var "OPENCLAW_GATEWAY_TIMEOUT_MS" "${OPENCLAW_GATEWAY_TIMEOUT_MS}"' in text
+    assert 'write_runtime_env_var "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"' in text
+    assert 'write_runtime_env_var "CN_A_MONGODB_URI" "${CN_A_MONGODB_URI}"' in text
+    assert 'write_runtime_env_var "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"' in text
     assert 'if [[ "${openviking_mcp_started}" == "1" ]]; then' in text
-    assert "printf 'OPENVIKING_MCP_URL=%s\\n' \"${OPENVIKING_MCP_URL}\"" in text
+    assert 'write_runtime_env_var "OPENVIKING_MCP_URL" "${OPENVIKING_MCP_URL}"' in text
 
 
 def test_start_control_runtime_script_exports_runtime_env_before_child_command() -> None:
@@ -175,22 +223,44 @@ def test_start_control_runtime_script_gateway_run_uses_local_state_and_dev_mode(
     assert "reset" not in text
 
 
-def test_start_control_runtime_script_preauthorizes_gateway_cli_read_write_scopes() -> None:
+def test_start_control_runtime_script_ensures_openclaw_control_ui_assets_before_gateway_boot() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "ensure_openclaw_control_ui_assets() {" in text
+    assert 'OPENCLAW_CONTROL_UI_INDEX="${OPENCLAW_CONTROL_UI_INDEX:-${OPENCLAW_PACKAGE_DIR}/dist/control-ui/index.html}"' in text
+    assert "pnpm ui:build" in text
+    call_index = text.index("\nensure_openclaw_control_ui_assets\n")
+    weixin_call_index = text.index("\nensure_openclaw_weixin_plugin_ready\n")
+    prepare_index = text.index("\nprepare_openclaw_trade_agent_config\n")
+    gateway_index = text.index("\ngateway_cmd=(")
+    assert call_index < weixin_call_index < prepare_index < gateway_index
+
+
+def test_start_control_runtime_script_preauthorizes_gateway_cli_admin_scope_with_approve_retry() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
     assert "preauthorize_openclaw_gateway_cli_scopes() {" in text
     assert "openclaw-gateway-scope-preauth.log" in text
-    assert "agent.runSingleWorker" in text
+    assert "openclaw-gateway-scope-preauth-retry.log" in text
+    assert "openclaw-gateway-scope-approve.log" in text
+    assert "openclaw-gateway-scope-approve-state.log" in text
+    assert "update.status" in text
     assert "--scope" in text
-    assert "operator.read" in text
-    assert "operator.write" in text
+    assert "operator.admin" in text
     assert 'OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}"' in text
     assert 'OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"' in text
     assert "scope upgrade pending approval" in text
-    assert "按 Invest 链路" in text
+    assert "extract_openclaw_pairing_request_id" in text
+    assert "approve_openclaw_pairing_request_from_state" in text
+    assert '"${OPENCLAW_GATEWAY_CALL_BIN}" devices approve "${request_id}"' in text
+    assert 'approveDevicePairing(requestId, { callerScopes: ["operator.admin"] }, stateDir)' in text
+    assert '"${preauth_cmd[@]}" >"${preauth_retry_log}"' in text
+    assert "agent.runSingleWorker" not in text
+    assert "invalid params|invalid param|-32602|validation|required property|command" not in text
+    assert "devices approve --latest" not in text
     health_index = text.index('if ! wait_http_ok_any 90 "${gateway_health_url}"; then')
     preauth_call_index = text.index("preauthorize_openclaw_gateway_cli_scopes", health_index)
-    runtime_env_index = text.index('cat > "${RUNTIME_ENV_PATH}"')
+    runtime_env_index = text.index("write_runtime_env_var() {")
     assert health_index < preauth_call_index < runtime_env_index
 
 
@@ -202,6 +272,8 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;" in text
     assert "const configuredPrimaryModel = String(process.env.CLAW_TRADE_LLM_MODEL_VALUE" in text
     assert "function resolveProjectLlmConfig()" in text
+    assert "function readExistingOpenClawConfig(outputPath)" in text
+    assert "const existingConfig = readExistingOpenClawConfig(outputPath);" in text
     assert "DEEPSEEK_MODEL" in text
     assert "DEEPSEEK_API_KEY" in text
     assert "BB_MCP_SERVER_PATH" not in text
@@ -218,23 +290,48 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "worker skill manifest 没有可挂载 skill" in text
     assert "skills: readWorkerMountedSkills(workerId)" in text
     assert "const mergedDefaults = {" in text
+    assert "OpenClaw LLM 未配置：仅启动设置/诊断 UI" in text
+    assert "OpenClaw LLM 使用已保存配置；.env.local 未覆盖。" in text
     assert ".env.local LLM provider 暂未接入 OpenClaw runtime 配置生成" in text
     assert ".env.local 缺少 DEEPSEEK_API_KEY" in text
+    assert "const existingModelsConfig = isPlainObject(existingConfig.models) ? existingConfig.models : {};" in text
+    assert "const existingProviders = isPlainObject(existingModelsConfig.providers) ? existingModelsConfig.providers : {};" in text
+    assert "const existingDefaults = isPlainObject(existingAgentsConfig.defaults) ? existingAgentsConfig.defaults : {};" in text
+    assert "const hasSavedLlmConfig = Object.keys(existingProviders).length > 0 || Boolean(existingDefaults.model);" in text
     assert "const mergedProviders = {" in text
+    assert "...existingProviders," in text
     assert "[llm.providerId]: {" in text
     assert "apiKey: llm.apiKey" in text
+    assert "if (llm) {" in text
     assert "primary: llm.model" in text
     assert "alias: llm.providerName" in text
     assert "timeoutSeconds: llmIdleTimeoutSeconds" in text
     assert "models: mergedModels," in text
     assert "openclaw_plugins/claw-trade-frontline-tools" in text
-    assert "paths: [clawTradeFrontlinePluginPath]" in text
+    assert "openclaw_plugins/claw-trade-selection-tools" in text
+    assert "paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath]" in text
     assert '"claw-trade-frontline-tools": {' in text
+    assert '"claw-trade-selection-tools": {' in text
+    assert '"openclaw-weixin": {' in text
+    assert "const existingPluginEntries = isPlainObject(existingPluginsConfig.entries) ? existingPluginsConfig.entries : {};" in text
+    assert "const mergedPluginEntries = {" in text
+    assert "...existingPluginEntries," in text
     assert "plugins: mergedPlugins," in text
+    assert "const mergedChannels = {" in text
+    assert "replyProgressMessages: true" in text
+    assert "channels: mergedChannels," in text
+    assert "...(isPlainObject(existingConfig.meta) ? { meta: existingConfig.meta } : {})," in text
+    assert '"openclaw-weixin": {\n    enabled: true,\n  }' not in text
     assert "const mergedMcp = {" in text
     assert "mergedMcpServers.bb_crypto_data =" not in text
     assert "servers: {}" in text
     assert "mcp: mergedMcp," in text
+    assert "const existingChannels = isPlainObject(existingConfig.channels) ? existingConfig.channels : {};" in text
+    assert 'const existingWeixinChannelConfig = isPlainObject(existingChannels["openclaw-weixin"])' in text
+    assert "const weixinChannelEnabled = existingWeixinChannelConfig.enabled === false ? false : true;" in text
+    assert "  ...existingChannels," in text
+    assert "    ...existingWeixinChannelConfig," in text
+    assert "    enabled: weixinChannelEnabled," in text
     assert "idleTimeoutSeconds: llmIdleTimeoutSeconds" not in text
     assert "defaults.llm" not in text
     assert "skipBootstrap: true" in text
@@ -259,13 +356,38 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
         "risk_moderator",
         "portfolio_manager",
         "report_polisher",
+        "selection_strategist",
+        "selection_skeptic",
+        "selection_manager",
+        "selection_portfolio_manager",
     )
     for worker in workers:
         assert f'"{worker}"' in text
 
-    prepare_index = text.index("prepare_openclaw_trade_agent_config")
+    prepare_index = text.index("\nprepare_openclaw_trade_agent_config\n")
+    weixin_call_index = text.index("\nensure_openclaw_weixin_plugin_ready\n")
     gateway_index = text.index("gateway_cmd=(")
-    assert prepare_index < gateway_index
+    assert weixin_call_index < prepare_index < gateway_index
+
+
+def test_start_control_runtime_script_allows_missing_llm_for_settings_ui_startup() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    missing_config_index = text.index("if (!selectedModel) {")
+    no_llm_warning_index = text.index("OpenClaw LLM 未配置：仅启动设置/诊断 UI")
+    saved_config_info_index = text.index("OpenClaw LLM 使用已保存配置；.env.local 未覆盖。")
+    providers_index = text.index("const mergedProviders = {")
+    defaults_index = text.index("const mergedDefaults = {")
+    missing_config_block = text[missing_config_index : text.index("  }", missing_config_index)]
+    assert "return null;" in missing_config_block
+    assert "process.exit(1)" not in missing_config_block
+    assert no_llm_warning_index < saved_config_info_index < providers_index < defaults_index
+    assert "...existingProviders," in text
+    assert "...existingDefaults," in text
+    assert "openclaw_report_llm_configured() {" not in text
+    assert "跳过 CLI scope 预授权" not in text
+    assert "if ! openclaw_report_llm_configured; then" not in text
+    assert "OpenClaw CLI scope 预授权完成。" in text
 
 
 def test_start_control_runtime_script_uses_explicit_openviking_embedding_config_only() -> None:
@@ -322,6 +444,20 @@ def test_start_control_runtime_script_loads_only_claw_trade_env_without_logging_
     assert load_index < gateway_index
 
 
+def test_start_control_runtime_script_loads_mongo_ui_settings_before_runtime_config() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "load_mongo_ui_settings_into_process_env() {" in text
+    assert "uv run python -m claw_trade.runtime.settings_projection" in text
+    assert "CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE" in text
+    assert "resolveMongoReportModelConfig() || resolveProjectLlmConfig()" in text
+    mongo_index = text.index("load_mongo_ui_settings_into_process_env")
+    embedding_flags_index = text.index("configure_openviking_embedding_runtime_flags")
+    openclaw_config_index = text.index("prepare_openclaw_trade_agent_config")
+    assert mongo_index < embedding_flags_index
+    assert mongo_index < openclaw_config_index
+
+
 def test_start_control_runtime_script_no_dynamic_expression_execution_usage() -> None:
     text = _script_path().read_text(encoding="utf-8")
     assert ("ev" + "al") not in text
@@ -341,9 +477,67 @@ def test_start_control_runtime_script_does_not_write_secrets_or_remove_runs_root
 def test_start_control_runtime_script_preserves_openviking_data_on_restart() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
-    assert "保留 runs 主目录与 OpenViking data" in text
+    assert "保留 runs 主目录、OpenViking data 与 OpenClaw state" in text
     assert '! -path "${OPENVIKING_RUNTIME_DIR}"' in text
     assert '! -path "${OPENVIKING_DATA_DIR}"' in text
+
+
+def test_start_control_runtime_script_preserves_openclaw_state_on_restart() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'OPENCLAW_DEFAULT_STATE_DIR="${RUNTIME_DIR}/openclaw-state"' in text
+    runtime_cleanup_line = (
+        'find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 '
+        '! -path "${OPENVIKING_RUNTIME_DIR}" ! -path "${OPENCLAW_STATE_DIR}" '
+        '! -path "${OPENCLAW_DEFAULT_STATE_DIR}" -exec rm -rf {} +'
+    )
+    assert runtime_cleanup_line in text
+    assert 'rm -rf "${OPENCLAW_STATE_DIR}"' not in text
+    assert 'rm -rf ${OPENCLAW_STATE_DIR}' not in text
+
+
+def test_start_control_runtime_cleanup_preserves_default_state_when_override_state_dir_is_external(
+    tmp_path: Path,
+) -> None:
+    text = _script_path().read_text(encoding="utf-8")
+    runtime_cleanup_line = next(
+        line
+        for line in text.splitlines()
+        if line.startswith('find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ')
+    )
+
+    runtime_dir = tmp_path / "runtime"
+    openviking_runtime_dir = runtime_dir / "openviking"
+    openviking_data_dir = openviking_runtime_dir / "data"
+    default_state_dir = runtime_dir / "openclaw-state"
+    external_override_state_dir = tmp_path / "external-openclaw-state"
+
+    (default_state_dir / "keep.txt").parent.mkdir(parents=True, exist_ok=True)
+    (default_state_dir / "keep.txt").write_text("keep", encoding="utf-8")
+    (openviking_data_dir / "keep.txt").parent.mkdir(parents=True, exist_ok=True)
+    (openviking_data_dir / "keep.txt").write_text("keep", encoding="utf-8")
+    (runtime_dir / "should-delete.txt").parent.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "should-delete.txt").write_text("delete", encoding="utf-8")
+    external_override_state_dir.mkdir(parents=True, exist_ok=True)
+
+    shell_script = f"""
+set -euo pipefail
+RUNTIME_DIR={shlex.quote(str(runtime_dir))}
+OPENVIKING_RUNTIME_DIR={shlex.quote(str(openviking_runtime_dir))}
+OPENCLAW_STATE_DIR={shlex.quote(str(external_override_state_dir))}
+OPENCLAW_DEFAULT_STATE_DIR={shlex.quote(str(default_state_dir))}
+{runtime_cleanup_line}
+"""
+    completed = subprocess.run(
+        ["bash", "-c", shell_script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert (default_state_dir / "keep.txt").exists()
+    assert (openviking_data_dir / "keep.txt").exists()
+    assert not (runtime_dir / "should-delete.txt").exists()
 
 
 def test_start_control_runtime_script_has_no_forbidden_success_patterns() -> None:
@@ -358,3 +552,96 @@ def test_start_control_runtime_script_has_no_forbidden_success_patterns() -> Non
     )
     for pattern in forbidden_patterns:
         assert pattern not in text
+
+
+def test_prepare_openclaw_trade_agent_config_preserves_existing_weixin_channel_fields(tmp_path: Path) -> None:
+    text = _script_path().read_text(encoding="utf-8")
+    start = text.index("prepare_openclaw_trade_agent_config() {")
+    end = text.index("\n}\n\nprepare_openbb_runtime_template()", start) + 3
+    function_text = text[start:end]
+
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    config_path = runtime_dir / "openclaw.json"
+    config_path.write_text(
+        """
+{
+  "channels": {
+    "openclaw-weixin": {
+      "enabled": false,
+      "channelConfigUpdatedAt": "2026-05-24T10:54:00Z",
+      "accounts": [{"id": "acc-1"}],
+      "botAgent": "wechat-bot-a",
+      "replyProgressMessages": false
+    },
+    "other-channel": {
+      "foo": "bar"
+    }
+  },
+  "meta": {
+    "source": "existing"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    shell_script = f"""
+set -euo pipefail
+ROOT_DIR={shlex.quote(str(Path(__file__).resolve().parents[2]))}
+OPENCLAW_CONFIG_PATH={shlex.quote(str(config_path))}
+OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS=600
+CLAW_TRADE_LLM_PROVIDER=
+CLAW_TRADE_LLM_MODEL=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+{function_text}
+prepare_openclaw_trade_agent_config
+"""
+    completed = subprocess.run(
+        ["bash", "-c", shell_script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    rendered = config_path.read_text(encoding="utf-8")
+    assert '"channelConfigUpdatedAt": "2026-05-24T10:54:00Z"' in rendered
+    assert '"botAgent": "wechat-bot-a"' in rendered
+    assert '"accounts": [' in rendered
+    assert '"other-channel": {' in rendered
+    assert '"enabled": false' in rendered
+    assert '"replyProgressMessages": true' in rendered
+
+
+def test_runtime_env_writer_is_shell_safe_for_chinese_spaces_and_empty_values(tmp_path: Path) -> None:
+    text = _script_path().read_text(encoding="utf-8")
+    start = text.index("write_runtime_env_var() {")
+    end = text.index('\nrm -f "${RUNTIME_ENV_PATH}"', start)
+    function_text = text[start:end]
+
+    runtime_env_path = tmp_path / "runtime.env"
+    shell_script = f"""
+set -euo pipefail
+RUNTIME_ENV_PATH={shlex.quote(str(runtime_env_path))}
+{function_text}
+write_runtime_env_var "CHINESE_WITH_SPACES" "中文 值 with space"
+write_runtime_env_var "PATH_WITH_SPACE" "/tmp/路径 with space/file.txt"
+write_runtime_env_var "APOSTROPHE_VALUE" "O'Reilly 中文"
+write_runtime_env_var "EMPTY_VALUE" ""
+set -euo pipefail
+source "$RUNTIME_ENV_PATH"
+[[ "$CHINESE_WITH_SPACES" == "中文 值 with space" ]]
+[[ "$PATH_WITH_SPACE" == "/tmp/路径 with space/file.txt" ]]
+[[ "$APOSTROPHE_VALUE" == "O'Reilly 中文" ]]
+[[ -z "$EMPTY_VALUE" ]]
+"""
+    completed = subprocess.run(
+        ["bash", "-c", shell_script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr

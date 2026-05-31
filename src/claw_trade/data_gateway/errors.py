@@ -13,6 +13,7 @@ class DataGatewayErrorCode(StrEnum):
     CACHE_ERROR = "cache_error"
     SCHEMA_INVALID = "schema_invalid"
     FIELD_MISSING = "field_missing"
+    EVIDENCE_READ_FAILED = "evidence_read_failed"
     EVIDENCE_WRITE_FAILED = "evidence_write_failed"
     SINGLE_FLIGHT_TIMEOUT = "single_flight_timeout"
     SINGLE_FLIGHT_OWNER_FAILED = "single_flight_owner_failed"

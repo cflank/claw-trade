@@ -18,6 +18,13 @@ from claw_trade.data_gateway.models import (
 )
 from claw_trade.data_gateway.providers.base import ProviderAdapter
 from claw_trade.data_gateway.providers.http_capture import CapturedHttpExchange, capture_provider_http
+from claw_trade.data_gateway.providers.managed_http import (
+    detect_quota_signal,
+    has_visible_http_exchange,
+    normalize_headers,
+)
+from claw_trade.data_gateway.providers.execution_wrapper import ProviderExecutionWrapper
+from claw_trade.data_gateway.providers.fetcher import ProviderCallSpecBindingError
 
 _ALLOWED_RAW_EXPORT_POLICIES = frozenset({"metadata_only", "redacted", "full"})
 _DEFAULT_RAW_EXPORT_POLICY = "metadata_only"
@@ -93,14 +100,35 @@ class ProviderExecutionEvidenceHelper:
         started_at: str,
     ) -> ProviderResult:
         t0 = time.perf_counter()
+        wrapper = ProviderExecutionWrapper(adapter=adapter)
+        credential_status = wrapper.credential_status()
+        if credential_status.missing:
+            return self._result(
+                request=request,
+                spec=spec,
+                adapter=adapter,
+                started_at=started_at,
+                status=ProviderStatus.CREDENTIAL_MISSING,
+                freshness=FreshnessStatus.NOT_FETCHED,
+                rows=(),
+                row_count=0,
+                raw_ref=None,
+                normalized_ref=None,
+                request_id=None,
+                error_code=ProviderStatus.CREDENTIAL_MISSING.value,
+                error_message=credential_status.root_cause or "credential missing",
+                latency_ms=_elapsed_ms(t0),
+            )
+
         captured_http: tuple[CapturedHttpExchange, ...] = ()
         try:
             with capture_provider_http() as http_capture:
-                fetch = adapter.fetch(spec, request)
+                fetch = wrapper.fetch(spec=spec, request=request)
             captured_http = tuple(http_capture.exchanges)
             fetch = _merge_captured_http(fetch=fetch, exchanges=captured_http)
         except Exception as exc:  # noqa: BLE001
             captured_http = tuple(http_capture.exchanges) if "http_capture" in locals() else ()
+            status, error_code = _status_from_fetch_exception(exc)
             latency_ms = _elapsed_ms(t0)
             http_error = self._write_http_evidence(
                 request=request,
@@ -108,12 +136,12 @@ class ProviderExecutionEvidenceHelper:
                 started_at=started_at,
                 finished_at=utc_now_iso(),
                 latency_ms=latency_ms,
-                status=ProviderStatus.REMOTE_ERROR,
+                status=status,
                 request_id=None,
                 fetch=None,
                 captured_http=captured_http,
                 raw_ref=None,
-                error_code=type(exc).__name__,
+                error_code=error_code,
                 error_message=str(exc),
             )
             if http_error is not None:
@@ -133,15 +161,81 @@ class ProviderExecutionEvidenceHelper:
                 spec=spec,
                 adapter=adapter,
                 started_at=started_at,
-                status=ProviderStatus.REMOTE_ERROR,
+                status=status,
                 freshness=FreshnessStatus.NOT_FETCHED,
                 rows=(),
                 row_count=0,
                 raw_ref=None,
                 normalized_ref=None,
                 request_id=None,
-                error_code=type(exc).__name__,
+                error_code=error_code,
                 error_message=str(exc),
+                latency_ms=latency_ms,
+            )
+
+        http_status, quota_signal = _status_from_http(fetch=fetch, captured_http=captured_http)
+        if http_status in {ProviderStatus.RATE_LIMITED, ProviderStatus.REMOTE_ERROR}:
+            latency_ms = _elapsed_ms(t0)
+            error_code = quota_signal if http_status == ProviderStatus.RATE_LIMITED else None
+            http_error = self._write_http_evidence(
+                request=request,
+                spec=spec,
+                started_at=started_at,
+                finished_at=utc_now_iso(),
+                latency_ms=latency_ms,
+                status=http_status,
+                request_id=fetch.provider_request_id,
+                fetch=fetch,
+                captured_http=captured_http,
+                raw_ref=None,
+                error_code=error_code,
+                error_message=None,
+            )
+            if http_error is not None:
+                return self._evidence_failed_result(
+                    request=request,
+                    spec=spec,
+                    adapter=adapter,
+                    started_at=started_at,
+                    request_id=fetch.provider_request_id,
+                    raw_ref=None,
+                    normalized_ref=None,
+                    latency_ms=latency_ms,
+                    error=http_error,
+                )
+            return self._result(
+                request=request,
+                spec=spec,
+                adapter=adapter,
+                started_at=started_at,
+                status=http_status,
+                freshness=FreshnessStatus.NOT_FETCHED,
+                rows=(),
+                row_count=0,
+                raw_ref=None,
+                normalized_ref=None,
+                request_id=fetch.provider_request_id,
+                error_code=error_code,
+                error_message=None,
+                latency_ms=latency_ms,
+            )
+
+        if spec.managed_http_required and not _has_visible_http_metadata(fetch=fetch, captured_http=captured_http):
+            latency_ms = _elapsed_ms(t0)
+            return self._result(
+                request=request,
+                spec=spec,
+                adapter=adapter,
+                started_at=started_at,
+                status=ProviderStatus.SDK_HTTP_UNKNOWN,
+                freshness=FreshnessStatus.NOT_FETCHED,
+                rows=(),
+                row_count=0,
+                raw_ref=None,
+                normalized_ref=None,
+                request_id=fetch.provider_request_id,
+                error_code=ProviderStatus.SDK_HTTP_UNKNOWN.value,
+                error_message="managed_http_required but HTTP evidence is not visible",
                 latency_ms=latency_ms,
             )
 
@@ -183,8 +277,9 @@ class ProviderExecutionEvidenceHelper:
             )
 
         try:
-            normalized = adapter.normalize(spec, fetch)
+            normalized = wrapper.normalize(spec=spec, fetch=fetch)
         except Exception as exc:  # noqa: BLE001
+            status, error_code = _status_from_fetch_exception(exc)
             latency_ms = _elapsed_ms(t0)
             http_error = self._write_http_evidence(
                 request=request,
@@ -192,12 +287,12 @@ class ProviderExecutionEvidenceHelper:
                 started_at=started_at,
                 finished_at=utc_now_iso(),
                 latency_ms=latency_ms,
-                status=ProviderStatus.REMOTE_ERROR,
+                status=status,
                 request_id=fetch.provider_request_id,
                 fetch=fetch,
                 captured_http=captured_http,
                 raw_ref=raw_ref,
-                error_code=type(exc).__name__,
+                error_code=error_code,
                 error_message=str(exc),
             )
             if http_error is not None:
@@ -217,14 +312,14 @@ class ProviderExecutionEvidenceHelper:
                 spec=spec,
                 adapter=adapter,
                 started_at=started_at,
-                status=ProviderStatus.REMOTE_ERROR,
+                status=status,
                 freshness=FreshnessStatus.NOT_FETCHED,
                 rows=(),
                 row_count=0,
                 raw_ref=raw_ref,
                 normalized_ref=None,
                 request_id=fetch.provider_request_id,
-                error_code=type(exc).__name__,
+                error_code=error_code,
                 error_message=str(exc),
                 latency_ms=latency_ms,
             )
@@ -266,6 +361,8 @@ class ProviderExecutionEvidenceHelper:
             )
 
         status = normalized_for_write.status
+        if fetch.is_empty and status == ProviderStatus.REMOTE_SUCCESS:
+            status = ProviderStatus.EMPTY
         if status == ProviderStatus.REMOTE_SUCCESS and normalized_for_write.row_count <= 0:
             status = ProviderStatus.EMPTY
         success = status == ProviderStatus.REMOTE_SUCCESS
@@ -329,6 +426,13 @@ class ProviderExecutionEvidenceHelper:
             error_code=normalized_for_write.error_code,
             error_message=normalized_for_write.error_message,
             latency_ms=latency_ms,
+            source_metadata=_source_metadata_for_attempt(
+                spec=spec,
+                normalized=normalized_for_write,
+                fetch=fetch,
+                captured_http=captured_http,
+                status=status,
+            ),
         )
 
     def _resolve_raw_export_policy(self, spec: ProviderCallSpec) -> str:
@@ -364,6 +468,7 @@ class ProviderExecutionEvidenceHelper:
         error_code: str | None,
         error_message: str | None,
         latency_ms: int,
+        source_metadata: Mapping[str, Any] | None = None,
     ) -> ProviderResult:
         attempt = ProviderAttempt(
             attempt_id=self._attempt_id(request, spec),
@@ -399,6 +504,7 @@ class ProviderExecutionEvidenceHelper:
             error_message=error_message,
             schema_id=spec.expected_schema_id,
             license_note="approved",
+            source_metadata=dict(source_metadata) if source_metadata else _source_metadata_from_spec(spec=spec),
         )
         try:
             self.attempt_store.write(attempt)
@@ -503,6 +609,8 @@ class ProviderExecutionEvidenceHelper:
             return None
         try:
             records = _http_evidence_records(fetch=fetch, captured_http=captured_http)
+            if not records:
+                return None
             for index, record in enumerate(records):
                 self.http_evidence_store.write(
                     OpenBBProviderHttpEvidence(
@@ -591,12 +699,20 @@ def _http_evidence_records(
             )
             for exchange in captured_http
         )
+    if fetch is None:
+        return ()
+    if not has_visible_http_exchange(
+        source_url=fetch.source_url,
+        response_status_code=fetch.response_status_code,
+        response_headers=fetch.response_headers_summary,
+    ) and not _is_explicit_http_failure_without_headers(fetch=fetch):
+        return ()
     return (
         _HttpEvidenceRecord(
-            http_method=fetch.http_method if fetch is not None else "GET",
-            source_url=fetch.source_url if fetch is not None else None,
-            response_status_code=fetch.response_status_code if fetch is not None else None,
-            response_headers_summary=dict(fetch.response_headers_summary or {}) if fetch is not None else {},
+            http_method=fetch.http_method,
+            source_url=fetch.source_url,
+            response_status_code=fetch.response_status_code,
+            response_headers_summary=dict(fetch.response_headers_summary or {}),
         ),
     )
 
@@ -605,3 +721,140 @@ def _http_evidence_id(*, attempt_id: str, index: int, record_count: int) -> str:
     if record_count == 1:
         return f"{attempt_id}:http"
     return f"{attempt_id}:http:{index + 1:02d}"
+
+
+def _source_metadata_from_spec(*, spec: ProviderCallSpec) -> Mapping[str, Any] | None:
+    metadata_keys = (
+        "selection_candidate_type",
+        "universe_source",
+        "quote_source",
+        "mixed_source_chain",
+        "partial_chunk_error_count",
+        "partial_chunk_errors",
+        "failed_chunk_symbols_sample",
+    )
+    metadata = {key: spec.params.get(key) for key in metadata_keys if key in spec.params}
+    return metadata or None
+
+
+def _source_metadata_for_attempt(
+    *,
+    spec: ProviderCallSpec,
+    normalized: Any,
+    fetch: ProviderFetch,
+    captured_http: tuple[CapturedHttpExchange, ...],
+    status: ProviderStatus,
+) -> Mapping[str, Any] | None:
+    metadata = dict(_source_metadata_from_spec(spec=spec) or {})
+    compact_facts = getattr(normalized, "compact_facts", None)
+    if isinstance(compact_facts, Mapping):
+        for key in ("partial_chunk_error_count", "partial_chunk_errors", "failed_chunk_symbols_sample"):
+            if key in compact_facts:
+                metadata[key] = compact_facts.get(key)
+    if _http_evidence_expected_for_attempt(
+        spec=spec,
+        fetch=fetch,
+        captured_http=captured_http,
+        status=status,
+    ):
+        metadata["http_evidence_expected"] = True
+    return metadata or None
+
+
+def _has_visible_http_metadata(
+    *,
+    fetch: ProviderFetch | None,
+    captured_http: tuple[CapturedHttpExchange, ...],
+) -> bool:
+    if captured_http:
+        return True
+    if fetch is None:
+        return False
+    return has_visible_http_exchange(
+        source_url=fetch.source_url,
+        response_status_code=fetch.response_status_code,
+        response_headers=fetch.response_headers_summary,
+    )
+
+
+def _http_evidence_expected_for_attempt(
+    *,
+    spec: ProviderCallSpec,
+    fetch: ProviderFetch,
+    captured_http: tuple[CapturedHttpExchange, ...],
+    status: ProviderStatus,
+) -> bool:
+    if status != ProviderStatus.REMOTE_SUCCESS:
+        return False
+    if spec.managed_http_required:
+        return True
+    return _has_visible_http_metadata(fetch=fetch, captured_http=captured_http)
+
+
+def _status_from_http(
+    *,
+    fetch: ProviderFetch | None,
+    captured_http: tuple[CapturedHttpExchange, ...],
+) -> tuple[ProviderStatus, str | None]:
+    if fetch is None and not captured_http:
+        return ProviderStatus.REMOTE_SUCCESS, None
+    status_code: int | None = None
+    headers: Mapping[str, str] | None = None
+    if fetch is not None:
+        status_code = fetch.response_status_code
+        headers = fetch.response_headers_summary
+    if captured_http:
+        last = captured_http[-1]
+        if status_code is None:
+            status_code = last.response_status_code
+        merged = dict(normalize_headers(headers or {}))
+        merged.update(normalize_headers(last.response_headers_summary))
+        headers = merged
+    if status_code is not None and status_code >= 500:
+        return ProviderStatus.REMOTE_ERROR, None
+    quota_signal = detect_quota_signal(response_status_code=status_code, response_headers=headers)
+    if quota_signal is not None:
+        return ProviderStatus.RATE_LIMITED, quota_signal
+    return ProviderStatus.REMOTE_SUCCESS, None
+
+
+_CREDENTIAL_HINTS = (
+    "missing credential",
+    "credential missing",
+    "missing credential keys",
+    "token missing",
+    "api key missing",
+)
+
+_RATE_LIMIT_HINTS = (
+    "rate limit",
+    "rate-limit",
+    "quota",
+    "too many requests",
+    "http 429",
+    "status code 429",
+)
+
+
+def _status_from_fetch_exception(exc: Exception) -> tuple[ProviderStatus, str]:
+    if isinstance(exc, ProviderCallSpecBindingError):
+        return ProviderStatus.REMOTE_ERROR, "provider_call_spec_mismatch"
+    if isinstance(exc, TimeoutError):
+        return ProviderStatus.REMOTE_ERROR, "timeout"
+    text = str(exc).lower()
+    if any(hint in text for hint in _CREDENTIAL_HINTS):
+        return ProviderStatus.CREDENTIAL_MISSING, ProviderStatus.CREDENTIAL_MISSING.value
+    if any(hint in text for hint in _RATE_LIMIT_HINTS) or "429" in text:
+        return ProviderStatus.RATE_LIMITED, "http_429" if "429" in text else "rate_limited"
+    return ProviderStatus.REMOTE_ERROR, type(exc).__name__
+
+
+def _is_explicit_http_failure_without_headers(*, fetch: ProviderFetch) -> bool:
+    status_code = fetch.response_status_code
+    if status_code is None:
+        return False
+    if status_code == 429:
+        return True
+    if status_code >= 500:
+        return True
+    return False

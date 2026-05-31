@@ -70,6 +70,19 @@ class EnvLocalAllowlistWriter:
         merged_lines = self._merge_lines(existing_lines, safe_updates)
         self._atomic_write(merged_lines)
 
+    def clear_allowed_env_keys(self, keys: tuple[str, ...]) -> None:
+        safe_keys: set[str] = set()
+        for key in keys:
+            if key not in self._allowed_keys:
+                raise UiBoundaryError("INVALID_INPUT", f"不允许清除配置项: {key}")
+            safe_keys.add(key)
+        if not safe_keys:
+            return
+        existing_lines = self._read_lines()
+        filtered_lines = self._filter_cleared_lines(existing_lines, safe_keys)
+        if filtered_lines != existing_lines:
+            self._atomic_write(filtered_lines)
+
     def _read_lines(self) -> list[str]:
         if not self._env_path.exists():
             return []
@@ -90,6 +103,19 @@ class EnvLocalAllowlistWriter:
         for key, done in replaced.items():
             if not done:
                 output.append(f"{key}={updates[key]}")
+        return output
+
+    def _filter_cleared_lines(self, lines: list[str], keys: set[str]) -> list[str]:
+        output: list[str] = []
+        for raw in lines:
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                output.append(raw)
+                continue
+            key, _, _ = stripped.partition("=")
+            if key.strip() in keys:
+                continue
+            output.append(raw)
         return output
 
     def _atomic_write(self, lines: list[str]) -> None:
@@ -228,4 +254,3 @@ class SettingsService:
 
 def _now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-

@@ -67,6 +67,7 @@ _BLOCKING_REASONS = frozenset(
 _STATUS_TEXT: dict[ProviderStatus, str] = {
     ProviderStatus.REMOTE_SUCCESS: "远端获取成功",
     ProviderStatus.CACHE_HIT: "使用有效缓存",
+    ProviderStatus.WAREHOUSE_HIT: "使用主仓库数据",
     ProviderStatus.SHARED_RESULT: "复用同次运行结果",
     ProviderStatus.CREDENTIAL_MISSING: "缺少接口凭证",
     ProviderStatus.LICENSE_BLOCKED: "许可边界阻断",
@@ -81,11 +82,13 @@ _STATUS_TEXT: dict[ProviderStatus, str] = {
     ProviderStatus.SKIPPED_NOT_CONFIGURED: "来源未配置",
     ProviderStatus.REMOTE_ERROR: "远端请求失败",
     ProviderStatus.CACHE_MISS: "缓存未命中",
+    ProviderStatus.NOT_APPLICABLE: "本次不适用",
 }
 
 _FRESHNESS_TEXT: dict[FreshnessStatus, str] = {
     FreshnessStatus.FRESH_REMOTE: "远端实时获取",
     FreshnessStatus.FRESH_CACHE: "有效缓存",
+    FreshnessStatus.FRESH_WAREHOUSE: "主仓库有效数据",
     FreshnessStatus.STALE_CACHE: "过期缓存",
     FreshnessStatus.CACHE_UNUSABLE: "缓存不可用",
     FreshnessStatus.NOT_FETCHED: "未获取",
@@ -111,6 +114,7 @@ _GAP_REASON_TEXT: dict[DataGapReason, str] = {
     DataGapReason.STALE_CACHE_UNUSABLE: "缓存已过期且不可用",
     DataGapReason.EVIDENCE_WRITE_FAILED: "证据写入失败",
     DataGapReason.LICENSE_BLOCKED: "许可边界阻断",
+    DataGapReason.NOT_APPLICABLE: "本次不适用",
 }
 
 
@@ -287,7 +291,12 @@ class MarketPackBuilder:
 def _collect_ohlcv_rows(results: Sequence[ProviderResult]) -> list[dict[str, Any]]:
     normalized_rows: list[dict[str, Any]] = []
     for result in results:
-        if result.status not in {ProviderStatus.REMOTE_SUCCESS, ProviderStatus.CACHE_HIT, ProviderStatus.SHARED_RESULT}:
+        if result.status not in {
+            ProviderStatus.REMOTE_SUCCESS,
+            ProviderStatus.CACHE_HIT,
+            ProviderStatus.WAREHOUSE_HIT,
+            ProviderStatus.SHARED_RESULT,
+        }:
             continue
         for row in result.rows:
             normalized = _normalize_ohlcv_row(row=row, result=result)
@@ -408,6 +417,11 @@ def _compute_readiness(
 ) -> Readiness:
     status_by_key = {result.spec.call_key: result.status for result in results}
     success_by_key = {result.spec.call_key: _counts_as_coverage_success(result, request) for result in results}
+    success_count_by_group: dict[str, int] = {}
+    for result in results:
+        group = result.spec.coverage_group
+        if group and _counts_as_coverage_success(result, request):
+            success_count_by_group[group] = success_count_by_group.get(group, 0) + 1
     attempt_call_key = {result.attempt.attempt_id: result.spec.call_key for result in results}
     call_keys_by_provider: dict[str, set[str]] = {}
     for spec in call_specs:
@@ -431,7 +445,7 @@ def _compute_readiness(
 
     for group, specs in grouped_specs.items():
         quorum = max((spec.coverage_quorum or 1) for spec in specs)
-        ok_count = sum(1 for spec in specs if success_by_key.get(spec.call_key, False))
+        ok_count = success_count_by_group.get(group, 0)
         coverage[f"group:{group}"] = f"{ok_count}/{quorum}"
         if ok_count < quorum:
             missing_items.append(f"group:{group}")
@@ -531,6 +545,7 @@ def _build_status_gaps(*, request: PackRequest, results: Sequence[ProviderResult
         ProviderStatus.LICENSE_BLOCKED: DataGapReason.LICENSE_BLOCKED,
         ProviderStatus.SKIPPED_NOT_CONFIGURED: DataGapReason.SOURCE_NOT_CONFIGURED,
         ProviderStatus.REMOTE_ERROR: DataGapReason.PROVIDER_UNAVAILABLE,
+        ProviderStatus.NOT_APPLICABLE: DataGapReason.NOT_APPLICABLE,
     }
     for result in results:
         reason = reason_map.get(result.status)
@@ -539,6 +554,8 @@ def _build_status_gaps(*, request: PackRequest, results: Sequence[ProviderResult
         severity = GapSeverity.WARN
         if reason in {DataGapReason.CREDENTIAL_MISSING, DataGapReason.LICENSE_BLOCKED, DataGapReason.EVIDENCE_WRITE_FAILED}:
             severity = GapSeverity.FAIL
+        if reason == DataGapReason.NOT_APPLICABLE:
+            severity = GapSeverity.INFO
         if reason == DataGapReason.RATE_LIMITED:
             severity = GapSeverity.WARN
         message = result.error_message or result.attempt.error_message or result.status.value
@@ -608,6 +625,8 @@ def _annotate_hk_chart_root_cause(*, chart_assets: Sequence[ChartAsset], results
 def _counts_as_coverage_success(result: ProviderResult, request: PackRequest) -> bool:
     if result.status == ProviderStatus.REMOTE_SUCCESS:
         return result.row_count > 0
+    if result.status == ProviderStatus.WAREHOUSE_HIT:
+        return bool(result.normalized_ref and result.row_count > 0)
     if result.status == ProviderStatus.SHARED_RESULT:
         return bool(result.normalized_ref)
     if result.status != ProviderStatus.CACHE_HIT:
@@ -615,7 +634,9 @@ def _counts_as_coverage_success(result: ProviderResult, request: PackRequest) ->
     if request.domain.value in request.freshness_policy.require_remote_for_domains:
         return False
     receipt = result.cache_receipt
-    return bool(receipt and receipt.normalized_ref and receipt.hit and not receipt.stale and not receipt.cached_empty)
+    if receipt is not None:
+        return bool(receipt.normalized_ref and receipt.hit and not receipt.stale and not receipt.cached_empty)
+    return bool(result.normalized_ref and result.row_count > 0)
 
 
 def _render_reader_brief(
@@ -862,7 +883,7 @@ def _build_crypto_lens_bundle(
         call_id=request.call_id,
         ticker=request.ticker,
         market=Market.CRYPTO,
-        quote=request.currency or "USD",
+        quote=request.currency or "USDT",
         as_of=request.current_date,
         start_date=request.start_date,
         end_date=request.end_date,
@@ -1278,6 +1299,8 @@ def _next_action_for_reason(reason: DataGapReason) -> str:
         return "补齐 provider 配置后重试。"
     if reason == DataGapReason.PROVIDER_UNAVAILABLE:
         return "检查 provider 可达性和上游稳定性。"
+    if reason == DataGapReason.NOT_APPLICABLE:
+        return "覆盖组已满足，本次无需请求该可选来源。"
     return "补齐资料后重试。"
 
 
@@ -1448,7 +1471,7 @@ def _default_currency(market: Market, requested_currency: str) -> str:
     if market == Market.US:
         return "USD"
     if market == Market.CRYPTO:
-        return "USD"
+        return requested_currency or "USDT"
     return requested_currency or "CNY"
 
 

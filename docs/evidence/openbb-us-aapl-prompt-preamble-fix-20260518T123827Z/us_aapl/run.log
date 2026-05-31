@@ -1,3 +1,0 @@
-WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
-WARN `pyproject.toml` does not contain a `project` table: `/home/frank/pyproject.toml`
-COMPLETED run_id=run-20260518-123852-c5f17be1 output_dir=docs/evidence/openbb-us-aapl-prompt-preamble-fix-20260518T123827Z/us_aapl/exported workers=13 final_report=final_report.md

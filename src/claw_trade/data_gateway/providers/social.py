@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 from xml.etree import ElementTree
-
-import requests
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -24,8 +22,11 @@ from claw_trade.data_gateway.models import (
     ProviderStatus,
     SourceRole,
 )
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
 from claw_trade.data_gateway.providers.base import ProviderAdapter
 from claw_trade.data_gateway.providers.polymarket import fetch_polymarket_events
+from claw_trade.instruments.resolver import resolve_crypto_provider_symbols
 
 _HTTP_TIMEOUT_SECONDS = 15
 _DEFAULT_HEADERS = {
@@ -145,12 +146,10 @@ class DefaultSocialAdapter:
             rows, source_url = _fetch_stocktwits(symbol=_symbol_from_params(params))
         elif self.provider_id == "eastmoney_akshare":
             rows, source_url = _fetch_eastmoney_akshare_metrics(symbol=_eastmoney_symbol_from_params(params))
-        elif self.provider_id in {"ths_concept_hot", "baidu_concept"}:
-            raise RuntimeError(
-                f"provider {self.provider_id} is declared as social_aggregate_metric for concept coverage, "
-                "but no approved OpenBB/data_gateway concept adapter sample is wired yet; "
-                "search_discovery cannot replace aggregate metric facts"
-            )
+        elif self.provider_id == "ths_concept_hot":
+            rows, source_url = _fetch_ths_concept_hot()
+        elif self.provider_id == "baidu_concept":
+            rows, source_url = _fetch_baidu_concept_blocks(symbol=_symbol_from_params(params))
         else:
             raise RuntimeError(f"social provider is not configured for live fetch: {self.provider_id}/{self.endpoint}")
         return ProviderFetch(
@@ -451,6 +450,8 @@ def _social_query(*, params: Mapping[str, Any]) -> str:
 
 def _symbol_from_params(params: Mapping[str, Any]) -> str:
     ticker = str(params.get("ticker", "")).strip().upper()
+    if ticker and str(params.get("market", "")).strip().upper() == "CRYPTO":
+        return resolve_crypto_provider_symbols(ticker).crypto_base_symbol or ticker
     if "." in ticker:
         ticker = ticker.split(".", 1)[0]
     ticker = ticker.replace("-USD", "").replace("USDT", "")
@@ -473,7 +474,7 @@ def _eastmoney_symbol_from_params(params: Mapping[str, Any]) -> str:
 
 def _fetch_x_posts(*, query: str, bearer_token: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
     url = "https://api.x.com/2/tweets/search/recent"
-    response = requests.get(
+    response = managed_requests.get(
         url,
         params={"query": query, "max_results": 20, "tweet.fields": "created_at"},
         headers={**_DEFAULT_HEADERS, "Authorization": f"Bearer {bearer_token}"},
@@ -497,7 +498,7 @@ def _fetch_x_posts(*, query: str, bearer_token: str) -> tuple[tuple[Mapping[str,
 
 def _fetch_lunarcrush_metrics(*, symbol: str, api_key: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
     url = "https://lunarcrush.com/api4/public/coins/list/v2"
-    response = requests.get(
+    response = managed_requests.get(
         url,
         params={"symbol": symbol, "limit": 5},
         headers={**_DEFAULT_HEADERS, "Authorization": f"Bearer {api_key}"},
@@ -609,6 +610,57 @@ def _fetch_eastmoney_akshare_metrics(*, symbol: str) -> tuple[tuple[Mapping[str,
     return tuple(rows), "https://quote.eastmoney.com"
 
 
+def _fetch_ths_concept_hot(*, limit: int = 20) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    import akshare as ak
+
+    frame_rows = _df_to_rows(ak.stock_board_concept_name_ths())
+    rows: list[Mapping[str, Any]] = []
+    for index, row in enumerate(frame_rows[: max(1, limit)], start=1):
+        mapped = _concept_metric_row(row=row, summary="ths_concept_board", rank=index, url="https://q.10jqka.com.cn/gn/")
+        if mapped is not None:
+            rows.append(mapped)
+    return tuple(rows), "https://q.10jqka.com.cn/gn/"
+
+
+def _fetch_baidu_concept_blocks(*, symbol: str) -> tuple[tuple[Mapping[str, Any], ...], str]:
+    url = "https://finance.pae.baidu.com/api/getrelatedblock"
+    response = managed_requests.get(
+        url,
+        params={"code": symbol, "market": "ab", "typeCode": "all", "finClientType": "pc"},
+        headers={
+            **_DEFAULT_HEADERS,
+            "Accept": "application/vnd.finance-web.v1+json",
+            "Origin": "https://gushitong.baidu.com",
+            "Referer": "https://gushitong.baidu.com/",
+        },
+        timeout=_HTTP_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("baidu concept payload must be mapping")
+    result_code = payload.get("ResultCode", 0)
+    if str(result_code) not in {"0", "None"}:
+        raise RuntimeError(f"baidu concept payload returned ResultCode={result_code}")
+    rows: list[Mapping[str, Any]] = []
+    for block in _as_sequence(payload.get("Result")):
+        if not isinstance(block, Mapping):
+            continue
+        block_type = str(block.get("type") or "").strip()
+        for item in _as_sequence(block.get("list")):
+            if not isinstance(item, Mapping):
+                continue
+            mapped = _concept_metric_row(
+                row=item,
+                summary=f"baidu_related_block:{block_type}" if block_type else "baidu_related_block",
+                rank=len(rows) + 1,
+                url="https://gushitong.baidu.com/",
+            )
+            if mapped is not None:
+                rows.append(mapped)
+    return tuple(rows), url
+
+
 def _df_to_rows(frame: Any) -> list[Mapping[str, Any]]:
     if frame is None:
         return []
@@ -618,6 +670,25 @@ def _df_to_rows(frame: Any) -> list[Mapping[str, Any]]:
         frame = frame.reset_index()
     rows = frame.to_dict(orient="records")
     return [row for row in rows if isinstance(row, Mapping)]
+
+
+def _concept_metric_row(*, row: Mapping[str, Any], summary: str, rank: int, url: str) -> Mapping[str, Any] | None:
+    name = _first_text(row, "概念名称", "板块名称", "name", "blockName", "名称")
+    if not name:
+        return None
+    title_parts = [name, f"rank={rank}"]
+    change_pct = _first_text(row, "涨跌幅", "涨幅", "increase", "change_pct", "change")
+    if change_pct:
+        title_parts.append(f"change={change_pct}")
+    heat = _first_text(row, "热度", "热度值", "heat", "hot", "关注度")
+    if heat:
+        title_parts.append(f"heat={heat}")
+    return {
+        "title": " / ".join(title_parts),
+        "url": _first_text(row, "网址", "url", "link") or url,
+        "published_at": _first_text(row, "更新时间", "日期", "date", "time"),
+        "summary": summary,
+    }
 
 
 def _eastmoney_metric_row(*, row: Mapping[str, Any], summary: str) -> Mapping[str, Any]:
@@ -643,6 +714,25 @@ def _eastmoney_metric_row(*, row: Mapping[str, Any], summary: str) -> Mapping[st
         "published_at": str(row.get("更新时间") or row.get("日期") or row.get("update_time") or ""),
         "summary": summary,
     }
+
+
+def _first_text(row: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    lowered = {str(key).lower(): value for key, value in row.items()}
+    for key in keys:
+        value = lowered.get(key.lower())
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
 
 
 def _parse_rss_items(xml_text: str) -> tuple[Mapping[str, Any], ...]:
@@ -722,12 +812,12 @@ def _as_sequence(value: Any) -> Sequence[Any]:
 
 
 def _http_get_json(url: str, *, params: Mapping[str, Any] | None = None) -> Any:
-    response = requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.json()
 
 
 def _http_get_text(url: str, *, params: Mapping[str, Any] | None = None) -> str:
-    response = requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
+    response = managed_requests.get(url, params=params, headers=_DEFAULT_HEADERS, timeout=_HTTP_TIMEOUT_SECONDS)
     response.raise_for_status()
     return response.text

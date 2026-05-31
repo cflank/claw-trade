@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import inspect
+import threading
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import unquote, urlparse
@@ -37,6 +38,7 @@ from claw_trade.data_gateway.providers.market_adapters import build_default_mark
 from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner
 from claw_trade.data_gateway.store.attempts import MongoAttemptStore
 from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
+from claw_trade.data_gateway.store.mongo import OPENBB_NORMALIZED
 from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
 from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
 
@@ -48,13 +50,38 @@ class _Adapter:
     domain: PackDomain
     source_role: SourceRole
     rows: tuple[Mapping[str, Any], ...]
+    market: Market = Market.US
+    endpoint: str | None = None
     status: ProviderStatus = ProviderStatus.REMOTE_SUCCESS
     credential_missing: bool = False
     adapter_kind: str = "project_extension"
     provider_kind: ProviderKind = ProviderKind.PROJECT_EXTENSION
 
     def capabilities(self) -> tuple[ProviderCapability, ...]:
-        return ()
+        if self.endpoint is None:
+            return ()
+        return (
+            ProviderCapability(
+                provider=self.provider_id,
+                adapter_id=self.adapter_id,
+                provider_kind=self.provider_kind,
+                market=self.market,
+                domain=self.domain,
+                endpoint=self.endpoint,
+                source_role=self.source_role,
+                expected_schema_id=f"{self.market.value.lower()}.{self.domain.value}.v1",
+                license_policy_id="personal_research",
+                credential_requirements=(),
+                rate_limit_policy_id="test",
+                cache_ttl_seconds=300,
+                required=True,
+                attempt_required=True,
+                coverage_group=f"{self.market.value.lower()}_{self.domain.value}",
+                coverage_quorum=1,
+                priority=0,
+                priority_source=PrioritySource.SYSTEM_DEFAULT,
+            ),
+        )
 
     def validate_credentials(self) -> CredentialStatus:
         if self.credential_missing:
@@ -107,23 +134,141 @@ class _Collection:
         self.name = name
         self.docs: dict[str, dict[str, Any]] = {}
         self.raise_write: Exception | None = None
+        self._lock = threading.RLock()
+
+    def find_one(self, query: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            key = query["_id"]
+            doc = self.docs.get(key)
+            if doc is None:
+                return None
+            return dict(doc) if _matches_query(doc, query) else None
+
+    def find(self, query: dict[str, Any]) -> "_Cursor":
+        with self._lock:
+            return _Cursor([dict(doc) for doc in self.docs.values() if _matches_query(doc, query)])
 
     def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
+        with self._lock:
+            if self.raise_write is not None:
+                raise self.raise_write
+            key = query["_id"]
+            current = self.docs.get(key)
+            inserted = False
+            if current is None:
+                if not upsert:
+                    return
+                current = {}
+                inserted = True
+            elif not _matches_query(current, query):
+                return
+            if inserted:
+                current.update(update.get("$setOnInsert", {}))
+            if "$inc" in update:
+                for field, delta in update["$inc"].items():
+                    current[field] = int(current.get(field, 0)) + int(delta)
+            current.update(update.get("$set", {}))
+            if "_id" not in current:
+                current["_id"] = key
+            self.docs[key] = current
+
+    def replace_one(self, query: dict[str, Any], doc: dict[str, Any], upsert: bool = False) -> None:
         del upsert
-        if self.raise_write is not None:
-            raise self.raise_write
-        key = query["_id"]
-        current = self.docs.get(key, {})
-        current.update(update.get("$setOnInsert", {}))
-        current.update(update.get("$set", {}))
-        if "_id" not in current:
-            current["_id"] = key
-        self.docs[key] = current
+        with self._lock:
+            if self.raise_write is not None:
+                raise self.raise_write
+            self.docs[query["_id"]] = dict(doc)
 
     def insert_one(self, doc: dict[str, Any]) -> None:
-        if self.raise_write is not None:
-            raise self.raise_write
-        self.docs[doc["_id"]] = dict(doc)
+        with self._lock:
+            if self.raise_write is not None:
+                raise self.raise_write
+            if doc["_id"] in self.docs:
+                from pymongo.errors import DuplicateKeyError
+
+                raise DuplicateKeyError("duplicate")
+            self.docs[doc["_id"]] = dict(doc)
+
+    def find_one_and_update(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+        *,
+        upsert: bool = False,
+        return_document: Any | None = None,
+    ) -> dict[str, Any] | None:
+        del return_document
+        with self._lock:
+            key = query["_id"]
+            current = self.docs.get(key)
+            if current is not None and _matches_query(current, query):
+                self.update_one(query, update, upsert=False)
+                return dict(self.docs[key])
+            if not upsert or current is not None:
+                return None
+            self.update_one(query, update, upsert=True)
+            created = self.docs.get(key)
+            return dict(created) if created is not None else None
+
+
+def _matches_query(doc: dict[str, Any], query: dict[str, Any]) -> bool:
+    for key, value in query.items():
+        if key == "_id":
+            if doc.get("_id") != value:
+                return False
+            continue
+        if key == "$or":
+            options = value if isinstance(value, list) else []
+            return any(_matches_query(doc, option) for option in options)
+        if isinstance(value, dict) and "$lt" in value:
+            current = doc.get(key)
+            if current is None or not current < value["$lt"]:
+                return False
+            continue
+        if isinstance(value, dict) and "$lte" in value:
+            current = doc.get(key)
+            if current is None or not current <= value["$lte"]:
+                return False
+            continue
+        if isinstance(value, dict) and "$exists" in value:
+            exists = key in doc
+            if exists is not bool(value["$exists"]):
+                return False
+            continue
+        current = _lookup_path(doc, key)
+        if isinstance(current, list):
+            if value not in current:
+                return False
+            continue
+        if current != value:
+            return False
+    return True
+
+
+def _lookup_path(doc: Mapping[str, Any], key: str) -> Any:
+    if "." not in key:
+        return doc.get(key)
+    current: Any = doc
+    for part in key.split("."):
+        if isinstance(current, list):
+            current = [item.get(part) for item in current if isinstance(item, Mapping)]
+            continue
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+    return current
+
+
+class _Cursor:
+    def __init__(self, docs: list[dict[str, Any]]) -> None:
+        self.docs = docs
+
+    def limit(self, count: int) -> "_Cursor":
+        self.docs = self.docs[:count]
+        return self
+
+    def __iter__(self):
+        return iter(self.docs)
 
 
 class _Database:
@@ -145,6 +290,29 @@ class _MongoClient:
     def get_default_database(self, name: str) -> _Database:
         del name
         return self.database
+
+
+def _helper(
+    *,
+    raw_collection: _Collection | None = None,
+    normalized_collection: _Collection | None = None,
+    attempt_collection: _Collection | None = None,
+    http_collection: _Collection | None = None,
+) -> ProviderExecutionEvidenceHelper:
+    return ProviderExecutionEvidenceHelper(
+        raw_store=MongoRawPayloadStore(raw_collection or _Collection()),
+        normalized_store=MongoNormalizedStore(normalized_collection or _Collection()),
+        attempt_store=MongoAttemptStore(attempt_collection or _Collection()),
+        http_evidence_store=MongoProviderHttpEvidenceStore(http_collection or _Collection()),
+    )
+
+
+def _mongo_settings(monkeypatch, **extra: object) -> object:
+    _MongoClient.database = _Database()
+    monkeypatch.setattr(service_module, "MongoClient", _MongoClient)
+    attrs: dict[str, object] = {"mongo_uri": "mongodb://localhost/claw_trade_openbb"}
+    attrs.update(extra)
+    return type("_Settings", (), attrs)()
 
 
 def _request(domain: PackDomain, market: Market = Market.US) -> PackRequest:
@@ -172,6 +340,8 @@ def _spec(
     endpoint: str,
     required: bool = True,
 ) -> ProviderCallSpec:
+    adapter.market = request.market
+    adapter.endpoint = endpoint
     return ProviderCallSpec(
         call_key=f"{request.domain.value}:{adapter.adapter_id}:{endpoint}",
         provider=adapter.provider_id,
@@ -308,7 +478,61 @@ def test_domain_pack_service_persists_credential_missing_attempt_without_raw_or_
     assert http_collection.docs == {}
 
 
-def test_domain_pack_service_routes_market_success_to_market_builder() -> None:
+def test_domain_pack_service_fail_closed_without_provider_call_gate() -> None:
+    request = _request(PackDomain.MARKET)
+    adapter = _Adapter(
+        adapter_id="market.openbb.us",
+        provider_id="market_openbb",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=({"date": "2026-05-17", "close": 101, "volume": 1_000_000},),
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
+    raw_collection = _Collection()
+    normalized_collection = _Collection()
+    helper = ProviderExecutionEvidenceHelper(
+        raw_store=MongoRawPayloadStore(raw_collection),
+        normalized_store=MongoNormalizedStore(normalized_collection),
+        attempt_store=MongoAttemptStore(_Collection()),
+    )
+
+    pack = DomainPackService(
+        settings=object(),
+        adapters=(adapter,),
+        provider_execution_helper=helper,
+    ).get_pack(request, _plan(request, (spec,)))
+
+    assert len(pack.attempts) == 1
+    assert pack.attempts[0].status == ProviderStatus.EVIDENCE_WRITE_FAILED
+    assert pack.attempts[0].error_code == "provider_call_gate_missing"
+    assert raw_collection.docs == {}
+    assert normalized_collection.docs == {}
+
+
+def test_domain_pack_service_market_success_runs_through_provider_call_gate(monkeypatch) -> None:
+    request = _request(PackDomain.MARKET)
+    adapter = _Adapter(
+        adapter_id="market.openbb.us",
+        provider_id="market_openbb",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=({"date": "2026-05-17", "close": 101, "volume": 1_000_000},),
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
+    settings = _mongo_settings(monkeypatch)
+
+    pack = DomainPackService(settings=settings, adapters=(adapter,)).get_pack(request, _plan(request, (spec,)))
+
+    assert len(pack.attempts) == 1
+    assert pack.attempts[0].status == ProviderStatus.REMOTE_SUCCESS
+    collections = _MongoClient.database.collections
+    assert collections["openbb_cache_entries"].docs
+    assert collections["openbb_rate_limits"].docs
+    assert collections["openbb_single_flight_calls"].docs
+    assert collections["openbb_provider_attempts"].docs
+
+
+def test_domain_pack_service_routes_market_success_to_market_builder(monkeypatch) -> None:
     request = _request(PackDomain.MARKET)
     rows = tuple(
         {
@@ -332,7 +556,10 @@ def test_domain_pack_service_routes_market_success_to_market_builder() -> None:
     )
     spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
 
-    pack = DomainPackService(settings=object(), adapters=(adapter,)).get_pack(request, _plan(request, (spec,)))
+    pack = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(adapter,)).get_pack(
+        request,
+        _plan(request, (spec,)),
+    )
 
     assert pack.compact_facts["ohlcv_row_count"] == 24
     assert {attempt.status for attempt in pack.attempts} == {ProviderStatus.REMOTE_SUCCESS}
@@ -416,7 +643,7 @@ def test_domain_pack_service_cn_a_tushare_missing_token_keeps_gap_but_not_blocke
     monkeypatch.setattr(market_adapters_module, "_call_tencent_quote_row", _fake_tencent_row)
     monkeypatch.setattr(market_adapters_module, "_call_baidu_kline_with_ma", _fake_baidu_rows)
 
-    pack = DomainPackService(settings=object(), adapters=adapters).get_pack(request, run_plan)
+    pack = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=adapters).get_pack(request, run_plan)
 
     assert pack.readiness.status.value != "blocked"
     assert pack.readiness.coverage["group:cn_a_market_kline"] == "1/1"
@@ -462,7 +689,701 @@ def test_domain_pack_service_cn_a_tushare_missing_token_keeps_gap_but_not_blocke
     )
 
 
-def test_domain_pack_service_market_success_generates_chart_images(tmp_path: Path) -> None:
+def test_domain_pack_service_skips_configured_optional_market_candidate_after_quorum(monkeypatch) -> None:
+    request = _request(PackDomain.MARKET)
+    rows = tuple(
+        {
+            "date": f"2026-05-{day:02d}",
+            "open": 100 + day,
+            "high": 101 + day,
+            "low": 99 + day,
+            "close": 100.5 + day,
+            "volume": 1_000_000 + day,
+        }
+        for day in range(1, 25)
+    )
+    primary = _Adapter(
+        adapter_id="market.primary",
+        provider_id="primary_market",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=rows,
+    )
+    optional = _Adapter(
+        adapter_id="market.optional",
+        provider_id="optional_market",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=rows,
+    )
+    primary_spec = _spec(request=request, adapter=primary, endpoint="daily")
+    optional_spec = _spec(request=request, adapter=optional, endpoint="daily_optional", required=False)
+
+    pack = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(primary, optional)).get_pack(
+        request,
+        _plan(request, (primary_spec, optional_spec)),
+    )
+
+    assert pack.compact_facts["ohlcv_row_count"] == 24
+    assert any(attempt.provider == "primary_market" and attempt.status == ProviderStatus.REMOTE_SUCCESS for attempt in pack.attempts)
+    assert any(
+        attempt.provider == "optional_market"
+        and attempt.status == ProviderStatus.NOT_APPLICABLE
+        and attempt.raw_ref is None
+        and attempt.normalized_ref is None
+        for attempt in pack.attempts
+    )
+    assert "coverage quorum already satisfied" in pack.reader_brief_md
+
+
+def test_domain_pack_service_does_not_skip_user_preferred_optional_market_candidate(monkeypatch) -> None:
+    request = _request(PackDomain.MARKET)
+    rows = tuple(
+        {
+            "date": f"2026-05-{day:02d}",
+            "open": 100 + day,
+            "high": 101 + day,
+            "low": 99 + day,
+            "close": 100.5 + day,
+            "volume": 1_000_000 + day,
+        }
+        for day in range(1, 25)
+    )
+    primary = _Adapter(
+        adapter_id="market.primary",
+        provider_id="primary_market",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=rows,
+    )
+    preferred = _Adapter(
+        adapter_id="market.preferred",
+        provider_id="preferred_market",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=rows,
+    )
+    primary_spec = _spec(request=request, adapter=primary, endpoint="daily")
+    preferred_spec = replace(
+        _spec(request=request, adapter=preferred, endpoint="daily_preferred", required=False),
+        priority_source=PrioritySource.USER_PREFERRED,
+        user_preferred=True,
+    )
+
+    pack = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(primary, preferred)).get_pack(
+        request,
+        _plan(request, (primary_spec, preferred_spec)),
+    )
+
+    assert any(
+        attempt.provider == "preferred_market" and attempt.status == ProviderStatus.REMOTE_SUCCESS
+        for attempt in pack.attempts
+    )
+    assert "optional provider preferred_market/daily_preferred was not requested" not in pack.reader_brief_md
+
+
+def test_domain_pack_service_market_cache_hit_hydrates_normalized_rows(monkeypatch) -> None:
+    request = _request(PackDomain.MARKET)
+    rows = tuple(
+        {
+            "date": f"2026-05-{day:02d}",
+            "open": 100 + day,
+            "high": 101 + day,
+            "low": 99 + day,
+            "close": 100.5 + day,
+            "volume": 1_000_000 + day,
+        }
+        for day in range(1, 25)
+    )
+    adapter = _Adapter(
+        adapter_id="market.openbb.us",
+        provider_id="market_openbb",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=rows,
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
+    service = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(adapter,))
+
+    first = service.get_pack(request, _plan(request, (spec,)))
+    second = service.get_pack(request, _plan(request, (spec,)))
+
+    assert any(attempt.status == ProviderStatus.REMOTE_SUCCESS for attempt in first.attempts)
+    assert any(attempt.status == ProviderStatus.CACHE_HIT for attempt in second.attempts)
+    assert second.compact_facts["ohlcv_row_count"] == 24
+
+
+def test_domain_pack_service_cn_a_market_uses_mongo_warehouse_before_provider(monkeypatch) -> None:
+    request = PackRequest(
+        run_id="run-cn-a-warehouse",
+        call_id="call-cn-a-warehouse",
+        worker_id="market_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+        current_date="2026-05-24",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    settings = _mongo_settings(monkeypatch)
+    warehouse_rows = tuple(
+        {
+            "ticker": "600519.SH",
+            "trade_date": f"2026-05-{day:02d}",
+            "open": 100 + day,
+            "high": 101 + day,
+            "low": 99 + day,
+            "close": 100.5 + day,
+            "volume": 1_000_000 + day,
+            "currency": "CNY",
+            "timezone": "Asia/Shanghai",
+        }
+        for day in range(1, 25)
+    )
+    _MongoClient.database[OPENBB_NORMALIZED].docs["norm-cn-a-qfq"] = {
+        "_id": "norm-cn-a-qfq",
+        "schema_id": "cn_a.baostock.qfq_daily.v1",
+        "market": Market.CN_A.value,
+        "domain": PackDomain.SELECT_FEATURE.value,
+        "provider": "local-baostock",
+        "endpoint": "seed_import:qfq_daily",
+        "rows": list(warehouse_rows),
+        "row_count": len(warehouse_rows),
+        "source_raw_ref": "mongo://openbb_raw_payloads/raw-cn-a-qfq",
+        "status": ProviderStatus.NOT_APPLICABLE.value,
+        "created_at": "2026-05-24T00:00:00+00:00",
+    }
+
+    adapter = _Adapter(
+        adapter_id="project.cn_a.market",
+        provider_id="baidu_kline",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=(),
+        market=Market.CN_A,
+    )
+
+    def _blocked_fetch(spec: ProviderCallSpec, request: PackRequest) -> ProviderFetch:
+        del spec, request
+        raise AssertionError("provider should not be called when CN_A warehouse is fresh")
+
+    adapter.fetch = _blocked_fetch  # type: ignore[method-assign]
+    spec = ProviderCallSpec(
+        call_key="market:project.cn_a.market:kline_baidu",
+        provider="baidu_kline",
+        adapter_id="project.cn_a.market",
+        provider_kind=ProviderKind.PROJECT_EXTENSION,
+        provider_config_version="cfg-v1",
+        endpoint="kline_baidu",
+        source_role=SourceRole.MARKET_DATA,
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        required=True,
+        attempt_required=True,
+        coverage_group="cn_a_market_kline",
+        coverage_quorum=1,
+        params={"ticker": request.ticker},
+        cache_ttl_seconds=300,
+        license_policy_id="personal_research",
+        expected_schema_id="cn_a.market.ohlcv.v1",
+        priority=10,
+        priority_source=PrioritySource.SYSTEM_DEFAULT,
+        user_preferred=False,
+    )
+
+    pack = DomainPackService(settings=settings, adapters=(adapter,)).get_pack(request, _plan(request, (spec,)))
+
+    assert pack.compact_facts["ohlcv_row_count"] == 24
+    assert pack.normalized_refs == ("mongo://openbb_normalized/norm-cn-a-qfq",)
+    assert [attempt.status for attempt in pack.attempts] == [ProviderStatus.WAREHOUSE_HIT]
+    assert pack.attempts[0].raw_ref == "mongo://openbb_raw_payloads/raw-cn-a-qfq"
+    assert "使用主仓库数据" in pack.reader_brief_md
+
+
+def test_domain_pack_service_cn_a_warehouse_only_covers_daily_kline_group(monkeypatch) -> None:
+    request = PackRequest(
+        run_id="run-cn-a-warehouse-scope",
+        call_id="call-cn-a-warehouse-scope",
+        worker_id="market_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+        current_date="2026-05-24",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    settings = _mongo_settings(monkeypatch)
+    _MongoClient.database[OPENBB_NORMALIZED].docs["norm-cn-a-qfq-scope"] = {
+        "_id": "norm-cn-a-qfq-scope",
+        "schema_id": "cn_a.baostock.qfq_daily.v1",
+        "market": Market.CN_A.value,
+        "domain": PackDomain.SELECT_FEATURE.value,
+        "rows": [
+            {
+                "ticker": "600519.SH",
+                "trade_date": f"2026-05-{day:02d}",
+                "open": 100 + day,
+                "high": 101 + day,
+                "low": 99 + day,
+                "close": 100.5 + day,
+                "volume": 1_000_000 + day,
+            }
+            for day in range(1, 25)
+        ],
+        "source_raw_ref": "mongo://openbb_raw_payloads/raw-cn-a-qfq-scope",
+        "created_at": "2026-05-24T00:00:00+00:00",
+    }
+    kline_spec = ProviderCallSpec(
+        call_key="market:project.cn_a.market:kline_baidu",
+        provider="baidu_kline",
+        adapter_id="project.cn_a.market",
+        provider_kind=ProviderKind.PROJECT_EXTENSION,
+        provider_config_version="cfg-v1",
+        endpoint="kline_baidu",
+        source_role=SourceRole.MARKET_DATA,
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        required=True,
+        attempt_required=True,
+        coverage_group="cn_a_market_kline",
+        coverage_quorum=1,
+        params={"ticker": request.ticker},
+        cache_ttl_seconds=300,
+        license_policy_id="personal_research",
+        expected_schema_id="cn_a.market.ohlcv.v1",
+        priority=10,
+        priority_source=PrioritySource.SYSTEM_DEFAULT,
+        user_preferred=False,
+    )
+    quote_spec = replace(
+        kline_spec,
+        call_key="market:project.cn_a.market:stock_quote",
+        provider="mootdx_quote",
+        adapter_id="project.cn_a.market.quote",
+        endpoint="stock_quote",
+        coverage_group="cn_a_market_quote",
+        priority=0,
+    )
+
+    pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (quote_spec, kline_spec)))
+
+    assert pack.readiness.coverage["group:cn_a_market_kline"] == "1/1"
+    assert pack.readiness.coverage["group:cn_a_market_quote"] == "0/1"
+    assert any(attempt.status == ProviderStatus.WAREHOUSE_HIT for attempt in pack.attempts)
+    assert any(
+        attempt.provider == "mootdx_quote" and attempt.status == ProviderStatus.SKIPPED_NOT_CONFIGURED
+        for attempt in pack.attempts
+    )
+
+
+def test_domain_pack_service_cn_a_market_warehouse_rejects_wrong_domain(monkeypatch) -> None:
+    request = PackRequest(
+        run_id="run-cn-a-warehouse-wrong-domain",
+        call_id="call-cn-a-warehouse-wrong-domain",
+        worker_id="market_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+        current_date="2026-05-24",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    settings = _mongo_settings(monkeypatch)
+    _MongoClient.database[OPENBB_NORMALIZED].docs["norm-cn-a-qfq-wrong-domain"] = {
+        "_id": "norm-cn-a-qfq-wrong-domain",
+        "schema_id": "cn_a.baostock.qfq_daily.v1",
+        "market": Market.CN_A.value,
+        "domain": PackDomain.NEWS.value,
+        "rows": [
+            {
+                "ticker": "600519.SH",
+                "trade_date": f"2026-05-{day:02d}",
+                "open": 100 + day,
+                "high": 101 + day,
+                "low": 99 + day,
+                "close": 100.5 + day,
+                "volume": 1_000_000 + day,
+            }
+            for day in range(1, 25)
+        ],
+        "source_raw_ref": "mongo://openbb_raw_payloads/raw-cn-a-qfq-wrong-domain",
+        "created_at": "2026-05-24T00:00:00+00:00",
+    }
+    spec = ProviderCallSpec(
+        call_key="market:project.cn_a.market:kline_baidu",
+        provider="baidu_kline",
+        adapter_id="project.cn_a.market",
+        provider_kind=ProviderKind.PROJECT_EXTENSION,
+        provider_config_version="cfg-v1",
+        endpoint="kline_baidu",
+        source_role=SourceRole.MARKET_DATA,
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        required=True,
+        attempt_required=True,
+        coverage_group="cn_a_market_kline",
+        coverage_quorum=1,
+        params={"ticker": request.ticker},
+        cache_ttl_seconds=300,
+        license_policy_id="personal_research",
+        expected_schema_id="cn_a.market.ohlcv.v1",
+        priority=10,
+        priority_source=PrioritySource.SYSTEM_DEFAULT,
+        user_preferred=False,
+    )
+
+    pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (spec,)))
+
+    assert all(attempt.status != ProviderStatus.WAREHOUSE_HIT for attempt in pack.attempts)
+    assert pack.normalized_refs == ()
+
+
+def test_domain_pack_service_records_mongo_missing_when_warehouse_is_unconfigured() -> None:
+    request = PackRequest(
+        run_id="run-cn-a-mongo-missing",
+        call_id="call-cn-a-mongo-missing",
+        worker_id="market_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+        current_date="2026-05-24",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    adapter = _Adapter(
+        adapter_id="project.cn_a.market",
+        provider_id="baidu_kline",
+        domain=PackDomain.MARKET,
+        source_role=SourceRole.MARKET_DATA,
+        rows=(),
+        market=Market.CN_A,
+    )
+    spec = ProviderCallSpec(
+        call_key="market:project.cn_a.market:kline_baidu",
+        provider="baidu_kline",
+        adapter_id="project.cn_a.market",
+        provider_kind=ProviderKind.PROJECT_EXTENSION,
+        provider_config_version="cfg-v1",
+        endpoint="kline_baidu",
+        source_role=SourceRole.MARKET_DATA,
+        market=Market.CN_A,
+        domain=PackDomain.MARKET,
+        required=True,
+        attempt_required=True,
+        coverage_group="cn_a_market_kline",
+        coverage_quorum=1,
+        params={"ticker": request.ticker},
+        cache_ttl_seconds=300,
+        license_policy_id="personal_research",
+        expected_schema_id="cn_a.market.ohlcv.v1",
+        priority=10,
+        priority_source=PrioritySource.SYSTEM_DEFAULT,
+        user_preferred=False,
+    )
+
+    pack = DomainPackService(settings=object(), adapters=(adapter,)).get_pack(request, _plan(request, (spec,)))
+
+    assert any(gap.reason == DataGapReason.MONGO_MISSING for gap in pack.data_gaps)
+    assert pack.readiness.status.value in {"blocked", "insufficient"}
+
+
+def test_domain_pack_service_non_market_domains_use_mongo_warehouse_before_provider(monkeypatch) -> None:
+    cases = (
+        (
+            PackDomain.FUNDAMENTAL,
+            SourceRole.FUNDAMENTAL_DATA,
+            "profile+ratios",
+            {
+                "ticker": "600519.SH",
+                "valuation": {"pe": 30.1, "pb": 12.4},
+                "financial_indicators": {"roe": 0.31},
+            },
+            lambda pack: pack.compact_facts["valuation.pe"] == 30.1,
+        ),
+        (
+            PackDomain.NEWS,
+            SourceRole.OFFICIAL_ORIGINAL,
+            "company_filings",
+            {"ticker": "600519.SH", "title": "贵州茅台发布年度报告", "url": "https://example.com/filing"},
+            lambda pack: len(pack.compact_facts["news_facts"]) == 1,
+        ),
+        (
+            PackDomain.SOCIAL,
+            SourceRole.SOCIAL_ORIGINAL_SAMPLE,
+            "social_posts",
+            {"ticker": "600519.SH", "title": "投资者讨论样本", "url": "https://example.com/social"},
+            lambda pack: len(pack.compact_facts["social_original_samples"]) == 1,
+        ),
+    )
+
+    for domain, source_role, endpoint, row, assertion in cases:
+        request = PackRequest(
+            run_id=f"run-cn-a-{domain.value}-warehouse",
+            call_id=f"call-cn-a-{domain.value}-warehouse",
+            worker_id=f"{domain.value}_analyst",
+            market=Market.CN_A,
+            domain=domain,
+            ticker="600519.SH",
+            company_name="贵州茅台",
+            start_date="2026-05-01",
+            end_date="2026-05-24",
+            current_date="2026-05-24",
+            currency="CNY",
+            profile="CN_A",
+            freshness_policy=FreshnessPolicy(max_age_seconds=300),
+        )
+        settings = _mongo_settings(monkeypatch)
+        adapter = _Adapter(
+            adapter_id=f"{domain.value}.provider",
+            provider_id=f"{domain.value}_provider",
+            domain=domain,
+            source_role=source_role,
+            rows=(),
+            market=Market.CN_A,
+        )
+        spec = _spec(request=request, adapter=adapter, endpoint=endpoint)
+        _MongoClient.database[OPENBB_NORMALIZED].docs[f"norm-cn-a-{domain.value}"] = {
+            "_id": f"norm-cn-a-{domain.value}",
+            "schema_id": spec.expected_schema_id,
+            "market": Market.CN_A.value,
+            "domain": domain.value,
+            "ticker": "600519.SH",
+            "rows": [row],
+            "row_count": 1,
+            "source_raw_ref": f"mongo://openbb_raw_payloads/raw-cn-a-{domain.value}",
+            "period_end": "2026-05-24",
+            "created_at": "2026-05-24T00:00:00+00:00",
+        }
+
+        pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (spec,)))
+
+        assert [attempt.status for attempt in pack.attempts] == [ProviderStatus.WAREHOUSE_HIT]
+        assert pack.attempts[0].provider == "mongo_warehouse"
+        assert pack.raw_refs == (f"mongo://openbb_raw_payloads/raw-cn-a-{domain.value}",)
+        assert pack.normalized_refs == (f"mongo://openbb_normalized/norm-cn-a-{domain.value}",)
+        assert pack.readiness.status.value == "ready"
+        assert assertion(pack)
+
+
+def test_domain_pack_service_rejects_warehouse_doc_when_required_fields_are_missing(monkeypatch) -> None:
+    request = PackRequest(
+        run_id="run-cn-a-fundamental-field-check",
+        call_id="call-cn-a-fundamental-field-check",
+        worker_id="fundamental_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.FUNDAMENTAL,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+        current_date="2026-05-24",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    settings = _mongo_settings(monkeypatch)
+    adapter = _Adapter(
+        adapter_id="fundamental.provider",
+        provider_id="fundamental_provider",
+        domain=PackDomain.FUNDAMENTAL,
+        source_role=SourceRole.FUNDAMENTAL_DATA,
+        rows=(),
+        market=Market.CN_A,
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="profile+ratios")
+    _MongoClient.database[OPENBB_NORMALIZED].docs["norm-cn-a-fundamental-partial"] = {
+        "_id": "norm-cn-a-fundamental-partial",
+        "schema_id": spec.expected_schema_id,
+        "market": Market.CN_A.value,
+        "domain": PackDomain.FUNDAMENTAL.value,
+        "ticker": "600519.SH",
+        "rows": [{"ticker": "600519.SH", "valuation": {"pe": 30.1}}],
+        "row_count": 1,
+        "source_raw_ref": "mongo://openbb_raw_payloads/raw-cn-a-fundamental-partial",
+        "period_end": "2026-05-24",
+        "created_at": "2026-05-24T00:00:00+00:00",
+    }
+
+    pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (spec,)))
+
+    assert all(attempt.status != ProviderStatus.WAREHOUSE_HIT for attempt in pack.attempts)
+    missing_fields = {gap.field_path for gap in pack.data_gaps if gap.reason == DataGapReason.FIELD_MISSING}
+    assert {"valuation.pb", "financial_indicators.roe"} <= missing_fields
+
+
+def test_domain_pack_service_reports_spec_required_field_gaps(monkeypatch) -> None:
+    request = PackRequest(
+        run_id="run-cn-a-fundamental-spec-field-check",
+        call_id="call-cn-a-fundamental-spec-field-check",
+        worker_id="fundamental_analyst",
+        market=Market.CN_A,
+        domain=PackDomain.FUNDAMENTAL,
+        ticker="600519.SH",
+        company_name="贵州茅台",
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+        current_date="2026-05-24",
+        currency="CNY",
+        profile="CN_A",
+        freshness_policy=FreshnessPolicy(max_age_seconds=300),
+    )
+    settings = _mongo_settings(monkeypatch)
+    adapter = _Adapter(
+        adapter_id="fundamental.provider",
+        provider_id="fundamental_provider",
+        domain=PackDomain.FUNDAMENTAL,
+        source_role=SourceRole.FUNDAMENTAL_DATA,
+        rows=(),
+        market=Market.CN_A,
+    )
+    spec = _spec(request=request, adapter=adapter, endpoint="profile+cashflow")
+    spec = replace(spec, params={**dict(spec.params), "required_fields": ("valuation.pe", "cashflow.free_cash_flow")})
+    _MongoClient.database[OPENBB_NORMALIZED].docs["norm-cn-a-fundamental-spec-partial"] = {
+        "_id": "norm-cn-a-fundamental-spec-partial",
+        "schema_id": spec.expected_schema_id,
+        "market": Market.CN_A.value,
+        "domain": PackDomain.FUNDAMENTAL.value,
+        "ticker": "600519.SH",
+        "rows": [{"ticker": "600519.SH", "valuation": {"pe": 30.1}}],
+        "row_count": 1,
+        "source_raw_ref": "mongo://openbb_raw_payloads/raw-cn-a-fundamental-spec-partial",
+        "period_end": "2026-05-24",
+        "created_at": "2026-05-24T00:00:00+00:00",
+    }
+
+    pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (spec,)))
+
+    assert all(attempt.status != ProviderStatus.WAREHOUSE_HIT for attempt in pack.attempts)
+    missing_fields = {gap.field_path for gap in pack.data_gaps if gap.reason == DataGapReason.FIELD_MISSING}
+    assert "cashflow.free_cash_flow" in missing_fields
+
+
+def test_domain_pack_service_rejects_warehouse_doc_when_stale_ticker_or_schema_mismatch(monkeypatch) -> None:
+    cases = (
+        ("stale", "600519.SH", "cn_a.fundamental.v1", "2026-05-01"),
+        ("ticker-mismatch", "000001.SZ", "cn_a.fundamental.v1", "2026-05-24"),
+        ("schema-mismatch", "600519.SH", "wrong.schema.v1", "2026-05-24"),
+    )
+
+    for case_id, doc_ticker, schema_id, period_end in cases:
+        request = PackRequest(
+            run_id=f"run-cn-a-fundamental-{case_id}",
+            call_id=f"call-cn-a-fundamental-{case_id}",
+            worker_id="fundamental_analyst",
+            market=Market.CN_A,
+            domain=PackDomain.FUNDAMENTAL,
+            ticker="600519.SH",
+            company_name="贵州茅台",
+            start_date="2026-05-01",
+            end_date="2026-05-24",
+            current_date="2026-05-24",
+            currency="CNY",
+            profile="CN_A",
+            freshness_policy=FreshnessPolicy(max_age_seconds=300),
+        )
+        settings = _mongo_settings(monkeypatch)
+        adapter = _Adapter(
+            adapter_id="fundamental.provider",
+            provider_id="fundamental_provider",
+            domain=PackDomain.FUNDAMENTAL,
+            source_role=SourceRole.FUNDAMENTAL_DATA,
+            rows=(),
+            market=Market.CN_A,
+        )
+        spec = _spec(request=request, adapter=adapter, endpoint="profile+ratios")
+        _MongoClient.database[OPENBB_NORMALIZED].docs[f"norm-cn-a-fundamental-{case_id}"] = {
+            "_id": f"norm-cn-a-fundamental-{case_id}",
+            "schema_id": schema_id,
+            "market": Market.CN_A.value,
+            "domain": PackDomain.FUNDAMENTAL.value,
+            "ticker": doc_ticker,
+            "rows": [
+                {
+                    "ticker": doc_ticker,
+                    "valuation": {"pe": 30.1, "pb": 12.4},
+                    "financial_indicators": {"roe": 0.31},
+                }
+            ],
+            "row_count": 1,
+            "source_raw_ref": f"mongo://openbb_raw_payloads/raw-cn-a-fundamental-{case_id}",
+            "period_end": period_end,
+            "created_at": f"{period_end}T00:00:00+00:00",
+        }
+
+        pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (spec,)))
+
+        assert all(attempt.status != ProviderStatus.WAREHOUSE_HIT for attempt in pack.attempts)
+        assert pack.normalized_refs == ()
+
+
+def test_domain_pack_service_warehouse_field_aliases_count_for_news_and_social(monkeypatch) -> None:
+    cases = (
+        (PackDomain.NEWS, SourceRole.OFFICIAL_ORIGINAL, "company_filings", {"ticker": "600519.SH", "headline": "公告标题"}),
+        (PackDomain.SOCIAL, SourceRole.SOCIAL_ORIGINAL_SAMPLE, "social_posts", {"ticker": "600519.SH", "summary": "讨论摘要"}),
+    )
+
+    for domain, source_role, endpoint, row in cases:
+        request = PackRequest(
+            run_id=f"run-cn-a-{domain.value}-alias",
+            call_id=f"call-cn-a-{domain.value}-alias",
+            worker_id=f"{domain.value}_analyst",
+            market=Market.CN_A,
+            domain=domain,
+            ticker="600519.SH",
+            company_name="贵州茅台",
+            start_date="2026-05-01",
+            end_date="2026-05-24",
+            current_date="2026-05-24",
+            currency="CNY",
+            profile="CN_A",
+            freshness_policy=FreshnessPolicy(max_age_seconds=300),
+        )
+        settings = _mongo_settings(monkeypatch)
+        adapter = _Adapter(
+            adapter_id=f"{domain.value}.provider",
+            provider_id=f"{domain.value}_provider",
+            domain=domain,
+            source_role=source_role,
+            rows=(),
+            market=Market.CN_A,
+        )
+        spec = _spec(request=request, adapter=adapter, endpoint=endpoint)
+        _MongoClient.database[OPENBB_NORMALIZED].docs[f"norm-cn-a-{domain.value}-alias"] = {
+            "_id": f"norm-cn-a-{domain.value}-alias",
+            "schema_id": spec.expected_schema_id,
+            "market": Market.CN_A.value,
+            "domain": domain.value,
+            "ticker": "600519.SH",
+            "rows": [row],
+            "row_count": 1,
+            "source_raw_ref": f"mongo://openbb_raw_payloads/raw-cn-a-{domain.value}-alias",
+            "period_end": "2026-05-24",
+            "created_at": "2026-05-24T00:00:00+00:00",
+        }
+
+        pack = DomainPackService(settings=settings, adapters=()).get_pack(request, _plan(request, (spec,)))
+
+        assert [attempt.status for attempt in pack.attempts] == [ProviderStatus.WAREHOUSE_HIT]
+        assert pack.readiness.status.value == "ready"
+
+
+def test_domain_pack_service_market_success_generates_chart_images(monkeypatch, tmp_path: Path) -> None:
     request = _request(PackDomain.MARKET)
     rows = tuple(
         {
@@ -485,9 +1406,12 @@ def test_domain_pack_service_market_success_generates_chart_images(tmp_path: Pat
         rows=rows,
     )
     spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
-    settings = type("_Settings", (), {"object_store_uri": tmp_path.as_uri()})()
+    settings = _mongo_settings(monkeypatch, object_store_uri=tmp_path.as_uri())
 
-    pack = DomainPackService(settings=settings, adapters=(adapter,)).get_pack(request, _plan(request, (spec,)))
+    pack = DomainPackService(
+        settings=settings,
+        adapters=(adapter,),
+    ).get_pack(request, _plan(request, (spec,)))
 
     assert {asset.status.value for asset in pack.chart_assets} == {"ready"}
     for asset in pack.chart_assets:
@@ -497,7 +1421,7 @@ def test_domain_pack_service_market_success_generates_chart_images(tmp_path: Pat
         assert image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_domain_pack_service_market_pack_attempts_include_mongo_refs() -> None:
+def test_domain_pack_service_market_pack_attempts_include_mongo_refs(monkeypatch) -> None:
     request = _request(PackDomain.MARKET)
     adapter = _Adapter(
         adapter_id="market.openbb.us",
@@ -517,16 +1441,7 @@ def test_domain_pack_service_market_pack_attempts_include_mongo_refs() -> None:
     )
     spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
 
-    helper = ProviderExecutionEvidenceHelper(
-        raw_store=MongoRawPayloadStore(_Collection()),
-        normalized_store=MongoNormalizedStore(_Collection()),
-        attempt_store=MongoAttemptStore(_Collection()),
-    )
-    service = DomainPackService(
-        settings=object(),
-        adapters=(adapter,),
-        provider_execution_helper=helper,
-    )
+    service = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(adapter,))
     pack = service.get_pack(request, _plan(request, (spec,)))
 
     assert len(pack.attempts) == 1
@@ -539,8 +1454,6 @@ def test_domain_pack_service_market_pack_attempts_include_mongo_refs() -> None:
 
 
 def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when_mongo_configured(monkeypatch) -> None:
-    _MongoClient.database = _Database()
-    monkeypatch.setattr(service_module, "MongoClient", _MongoClient)
     request = PackRequest(
         run_id="run-crypto-market",
         call_id="call-crypto-market",
@@ -552,7 +1465,7 @@ def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when
         start_date="2026-04-01",
         end_date="2026-05-17",
         current_date="2026-05-17",
-        currency="USD",
+        currency="USDT",
         profile="CRYPTO",
         freshness_policy=FreshnessPolicy(max_age_seconds=300),
     )
@@ -564,7 +1477,7 @@ def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when
             "low": 79000 + day,
             "close": 80500 + day,
             "volume": 1000 + day,
-            "currency": "USD",
+            "currency": "USDT",
             "timezone": "UTC",
         }
         for day in range(1, 29)
@@ -576,7 +1489,7 @@ def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when
             "low": 80000 + day,
             "close": 81500 + day,
             "volume": 1100 + day,
-            "currency": "USD",
+            "currency": "USDT",
             "timezone": "UTC",
         }
         for day in range(1, 12)
@@ -589,7 +1502,7 @@ def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when
         rows=rows,
     )
     spec = _spec(request=request, adapter=adapter, endpoint="crypto_price_historical")
-    settings = type("_Settings", (), {"mongo_uri": "mongodb://localhost/claw_trade_openbb"})()
+    settings = _mongo_settings(monkeypatch)
 
     service = DomainPackService(settings=settings, adapters=(adapter,))
     pack = service.get_pack(request, _plan(request, (spec,)))
@@ -604,28 +1517,28 @@ def test_domain_pack_service_crypto_market_pack_writes_crypto_lens_evidence_when
     assert "raw_ref" not in document
 
 
-def test_domain_pack_service_market_evidence_write_failure_maps_to_evidence_write_failed() -> None:
+def test_domain_pack_service_market_evidence_write_failure_maps_to_evidence_write_failed(monkeypatch) -> None:
     request = _request(PackDomain.MARKET)
     adapter = _Adapter(
         adapter_id="market.openbb.us",
         provider_id="market_openbb",
         domain=PackDomain.MARKET,
         source_role=SourceRole.MARKET_DATA,
-        rows=({"date": "2026-05-17", "close": 101},),
+            rows=(
+                {
+                    "date": "2026-05-17",
+                    "open": 100,
+                    "high": 102,
+                    "low": 99,
+                    "close": 101,
+                    "volume": 1_000_000,
+                },
+            ),
     )
     spec = _spec(request=request, adapter=adapter, endpoint="equity_price_historical")
-    raw_collection = _Collection()
-    raw_collection.raise_write = RuntimeError("raw write failed")
-    helper = ProviderExecutionEvidenceHelper(
-        raw_store=MongoRawPayloadStore(raw_collection),
-        normalized_store=MongoNormalizedStore(_Collection()),
-        attempt_store=MongoAttemptStore(_Collection()),
-    )
-    service = DomainPackService(
-        settings=object(),
-        adapters=(adapter,),
-        provider_execution_helper=helper,
-    )
+    settings = _mongo_settings(monkeypatch)
+    _MongoClient.database["openbb_raw_payloads"].raise_write = RuntimeError("raw write failed")
+    service = DomainPackService(settings=settings, adapters=(adapter,))
 
     pack = service.get_pack(request, _plan(request, (spec,)))
 
@@ -634,7 +1547,7 @@ def test_domain_pack_service_market_evidence_write_failure_maps_to_evidence_writ
     assert pack.attempts[0].error_code == "evidence_write_failed"
 
 
-def test_domain_pack_service_routes_fundamental_news_and_social() -> None:
+def test_domain_pack_service_routes_fundamental_news_and_social(monkeypatch) -> None:
     fundamental_request = _request(PackDomain.FUNDAMENTAL)
     fundamental = _Adapter(
         adapter_id="fundamental.yfinance.us",
@@ -673,7 +1586,7 @@ def test_domain_pack_service_routes_fundamental_news_and_social() -> None:
     )
     social_spec = _spec(request=social_request, adapter=social, endpoint="posts")
 
-    service = DomainPackService(settings=object(), adapters=(fundamental, news, social))
+    service = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(fundamental, news, social))
 
     fundamental_pack = service.get_pack(fundamental_request, _plan(fundamental_request, (fundamental_spec,)))
     news_pack = service.get_pack(news_request, _plan(news_request, (news_spec,)))
@@ -684,7 +1597,7 @@ def test_domain_pack_service_routes_fundamental_news_and_social() -> None:
     assert "原始社交样本" in social_pack.reader_brief_md
 
 
-def test_domain_pack_service_fundamental_news_social_success_include_evidence_refs() -> None:
+def test_domain_pack_service_fundamental_news_social_success_include_evidence_refs(monkeypatch) -> None:
     fundamental_request = _request(PackDomain.FUNDAMENTAL)
     fundamental = _Adapter(
         adapter_id="fundamental.yfinance.us",
@@ -721,16 +1634,7 @@ def test_domain_pack_service_fundamental_news_social_success_include_evidence_re
     )
     social_spec = _spec(request=social_request, adapter=social, endpoint="posts")
 
-    helper = ProviderExecutionEvidenceHelper(
-        raw_store=MongoRawPayloadStore(_Collection()),
-        normalized_store=MongoNormalizedStore(_Collection()),
-        attempt_store=MongoAttemptStore(_Collection()),
-    )
-    service = DomainPackService(
-        settings=object(),
-        adapters=(fundamental, news, social),
-        provider_execution_helper=helper,
-    )
+    service = DomainPackService(settings=_mongo_settings(monkeypatch), adapters=(fundamental, news, social))
 
     fundamental_pack = service.get_pack(fundamental_request, _plan(fundamental_request, (fundamental_spec,)))
     news_pack = service.get_pack(news_request, _plan(news_request, (news_spec,)))
@@ -746,7 +1650,7 @@ def test_domain_pack_service_fundamental_news_social_success_include_evidence_re
         assert pack.normalized_refs == (attempt.normalized_ref,)
 
 
-def test_domain_pack_service_fundamental_news_social_evidence_write_failure_maps_to_failed() -> None:
+def test_domain_pack_service_fundamental_news_social_evidence_write_failure_maps_to_failed(monkeypatch) -> None:
     for domain, source_role in (
         (PackDomain.FUNDAMENTAL, SourceRole.FUNDAMENTAL_DATA),
         (PackDomain.NEWS, SourceRole.OFFICIAL_ORIGINAL),
@@ -761,14 +1665,9 @@ def test_domain_pack_service_fundamental_news_social_evidence_write_failure_maps
             rows=({"k": "v"},),
         )
         spec = _spec(request=request, adapter=adapter, endpoint="endpoint")
-        raw_collection = _Collection()
-        raw_collection.raise_write = RuntimeError("raw write failed")
-        helper = ProviderExecutionEvidenceHelper(
-            raw_store=MongoRawPayloadStore(raw_collection),
-            normalized_store=MongoNormalizedStore(_Collection()),
-            attempt_store=MongoAttemptStore(_Collection()),
-        )
-        service = DomainPackService(settings=object(), adapters=(adapter,), provider_execution_helper=helper)
+        settings = _mongo_settings(monkeypatch)
+        _MongoClient.database["openbb_raw_payloads"].raise_write = RuntimeError("raw write failed")
+        service = DomainPackService(settings=settings, adapters=(adapter,))
 
         pack = service.get_pack(request, _plan(request, (spec,)))
 
@@ -796,3 +1695,4 @@ def test_domain_pack_service_does_not_import_legacy_provider_paths() -> None:
 
     assert "frontline_data_pack" not in source
     assert "provider_executor" not in source
+    assert "run_provider_call_gate" in source

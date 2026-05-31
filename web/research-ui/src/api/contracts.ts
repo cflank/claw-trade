@@ -23,6 +23,8 @@ export type ChatMessageKind =
   | 'task_progress'
   | 'report_completed'
   | 'report_failed'
+  | 'selection_result'
+  | 'selection_unavailable'
   | 'price_alert'
   | 'file_send_failed';
 
@@ -62,7 +64,16 @@ export interface ChatMessageForUser {
   cardId?: string | null;
   reportId?: string | null;
   taskId?: string | null;
+  selection?: SelectionMessageMetadata | null;
   createdAt: string;
+}
+
+export interface SelectionMessageMetadata {
+  code: 'completed' | 'unavailable' | 'failed' | string;
+  workflowRunId?: string | null;
+  evidencePath?: string | null;
+  unavailableCode?: string | null;
+  failureReason?: string | null;
 }
 
 export interface ConfirmationCard {
@@ -70,6 +81,12 @@ export interface ConfirmationCard {
   draftId: string;
   title: string;
   summaryLines: string[];
+  instrumentCode?: string;
+  instrumentName?: string;
+  market?: MarketProfile;
+  validationState?: 'matched' | 'mismatch';
+  validationMessage?: string | null;
+  suggestedMarket?: MarketProfile | null;
   dataSourceSummary: 'ready' | 'partial' | 'unknown';
   actions: Array<'confirm' | 'cancel'>;
   status: 'active' | 'confirmed' | 'cancelled' | 'expired';
@@ -223,38 +240,12 @@ export interface PriceAlertForUser {
 
 export interface DataSourceInstanceForUser {
   instanceId: string;
-  supportedType:
-    | 'tushare'
-    | 'bocha_news'
-    | 'tavily_news'
-    | 'jina'
-    | 'jina_news'
-    | 'newsnow'
-    | 'newsnow_news'
-    | 'minimax_news'
-    | 'coingecko'
-    | 'coinglass'
-    | 'fred'
-    | 'defillama'
-    | 'cmc'
-    | 'cryptoquant'
-    | 'etherscan'
-    | 'thegraph'
-    | 'tavily'
-    | 'exa'
-    | 'brave_search'
-    | 'bocha'
-    | 'bocha_search'
-    | 'newsapi'
-    | 'serpapi';
-  group: 'cn_a_data' | 'cn_a_news' | 'crypto_data' | 'crypto_news_search';
+  supportedType: string;
+  group: string;
   displayName: string;
   enabled: boolean;
   apiKeyMasked?: string | null;
   endpointUrl?: string | null;
-  proxyUrl?: string | null;
-  headerName?: string | null;
-  priority: number;
   state: 'draft' | 'testing' | 'validated' | 'enabled' | 'disabled' | 'degraded' | 'rejected';
   lastSuccessAt?: string | null;
   lastTestAt?: string | null;
@@ -268,9 +259,6 @@ export interface DataSourceInstanceDraftInput {
   enabled: boolean;
   apiKeyReplacement?: string | null;
   endpointUrl?: string | null;
-  proxyUrl?: string | null;
-  headerName?: string | null;
-  priority: number;
   state?: DataSourceInstanceForUser['state'];
   requiresKey?: boolean;
 }
@@ -292,6 +280,12 @@ export interface ChannelStatusForUser {
 
 export interface LlmConfigDraft {
   provider:
+    | 'openai'
+    | 'anthropic'
+    | 'google'
+    | 'mistral'
+    | 'openrouter'
+    | 'xai'
     | 'deepseek'
     | 'qwen'
     | 'glm'
@@ -308,7 +302,16 @@ export interface LlmConfigDraft {
   status: 'idle' | 'saving' | 'testing' | 'saved' | 'error';
   lastTestMessage?: string | null;
   updatedAt?: string | null;
+  reportModelStatus?: ReportModelStatusForUser | null;
   embedding?: EmbeddingLlmConfigDraft | null;
+}
+
+export interface ReportModelStatusForUser {
+  state: 'unconfigured' | 'saved_unverified' | 'failed' | 'ready';
+  blocked: boolean;
+  ready: boolean;
+  userMessage: string;
+  checkedAt?: string | null;
 }
 
 export interface EmbeddingLlmConfigDraft {
@@ -339,8 +342,35 @@ export interface SendChatMessageOutput {
   context: ChatContextForUser;
   messages: ChatMessageForUser[];
   confirmationCard?: ConfirmationCard;
+  confirmationCards?: Record<string, ConfirmationCard>;
   queueSnapshot?: ReportQueueSnapshotForUser;
   assistantReply?: string;
+  selection?: SelectionMessageMetadata;
+}
+
+export interface ConfirmSelectionReportInput {
+  requestId: string;
+  selectWorkflowRunId: string;
+  ticker: string;
+  originContextId?: string | null;
+}
+
+export interface ConfirmSelectionReportOutput {
+  code: string;
+  reportTaskId?: string | null;
+  reportRunId?: string | null;
+  reportHandoffDedupeKey: string;
+  queuePayload: Record<string, unknown>;
+  deduped: boolean;
+  task?: ReportTaskForUser | null;
+  queueSnapshot?: ReportQueueSnapshotForUser;
+}
+
+export interface ChannelChatSnapshotForUser {
+  channelKind: 'wechat_clawbot';
+  context?: ChatContextForUser | null;
+  messages?: ChatMessageForUser[];
+  confirmationCards?: Record<string, ConfirmationCard>;
 }
 
 export interface CreateIntentDraftInput {
@@ -449,17 +479,124 @@ export interface SaveLlmConfigViaOpenClawOutput {
   settingsVersion?: string;
 }
 
+export interface SaveEmbeddingConfigViaOpenVikingInput {
+  requestId: string;
+  embedding: EmbeddingLlmConfigDraft;
+}
+
+export interface SaveEmbeddingConfigViaOpenVikingOutput {
+  status: 'saved';
+  updatedAt: string;
+}
+
 export interface TestLlmViaOpenClawInput {
   requestId: string;
   provider?: LlmConfigDraft['provider'];
   model?: string;
   endpointUrl?: string | null;
+  apiKeyReplacement?: string | null;
 }
 
 export interface TestLlmViaOpenClawOutput {
   ok: boolean;
   userMessage: string;
   checkedAt: string;
+}
+
+export interface TestEmbeddingViaOpenVikingInput {
+  requestId: string;
+  embedding: EmbeddingLlmConfigDraft;
+}
+
+export interface TestEmbeddingViaOpenVikingOutput {
+  ok: boolean;
+  userMessage: string;
+  checkedAt: string;
+  error?: {
+    code: string;
+    action: string;
+    retryable: boolean;
+  } | null;
+}
+
+export interface ResetSettingsToDefaultsInput {
+  requestId: string;
+}
+
+export interface ResetSettingsToDefaultsOutput {
+  status: 'reset';
+  userMessage: string;
+  llm: {
+    status: 'reset';
+    updatedAt: string;
+    settingsVersion?: string;
+  };
+  dataSources: ListDataSourcesOutput & {
+    status: 'reset';
+    updatedAt: string;
+  };
+  channel: ChannelStatusForUser;
+}
+
+export interface AdvancedDiagnosticsProviderHealthOutput {
+  state: 'not_configured' | 'healthy' | 'degraded';
+  severity: 'info' | 'success' | 'warning' | 'error';
+  userMessage: string;
+  checkedAt: string;
+  provider?: string | null;
+  model?: string | null;
+  source: string;
+}
+
+export interface AdvancedDiagnosticsRuntimeServiceStatusOutput {
+  state: 'healthy' | 'degraded';
+  severity: 'success' | 'warning' | 'error';
+  userMessage: string;
+  checkedAt: string;
+  source: string;
+}
+
+export interface AdvancedDiagnosticsLiveRunGapSummaryOutput {
+  state: 'no_records' | 'no_gaps' | 'gaps_detected';
+  severity: 'info' | 'success' | 'warning' | 'error';
+  userMessage: string;
+  checkedAt: string;
+  source: string;
+  latestRun?: {
+    runId: string;
+    finishedAt?: string | null;
+    market?: string | null;
+    entryPoint?: string | null;
+    collectFirstReportCount: number;
+    gapCount: number;
+    collectFirstCompliance: {
+      batchScope: {
+        stageCount: number;
+        stages: string[];
+      };
+      completedItems: number;
+      failuresCollected: number;
+      earlyStopExceptionUsed: boolean;
+      exceptionEvidence: number;
+      batchFixGrouping: number;
+    };
+  } | null;
+  recommendedAction: string;
+}
+
+export interface AdvancedDiagnosticsEvidenceFailureReasonSummaryOutput {
+  state: 'no_records' | 'no_failures' | 'failure_detected';
+  severity: 'info' | 'success' | 'warning' | 'error';
+  userMessage: string;
+  checkedAt: string;
+  source: string;
+  latestRun?: {
+    runId: string;
+    finishedAt?: string | null;
+    market?: string | null;
+    entryPoint?: string | null;
+  } | null;
+  recommendedAction: string;
 }
 
 export interface TestDataSourceInput {

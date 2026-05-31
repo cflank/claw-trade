@@ -40,9 +40,58 @@ class _FakeOpenClawLlmClient:
         _ = (provider, model, endpoint_url, probe)
         return {"ok": False, "message": "auth failed"}
 
+    def models_probe_status(self, *, provider, model=None, endpoint_url=None):
+        _ = endpoint_url
+        return {
+            "auth": {
+                "probes": {
+                    "results": [
+                        {
+                            "provider": provider,
+                            "model": model or "deepseek/deepseek-chat",
+                            "status": "auth",
+                        }
+                    ]
+                }
+            }
+        }
+
+
+class _FakeReportModelConfigStore:
+    def __init__(self) -> None:
+        self.payload: dict[str, object] = {}
+        self.cleared = False
+
+    def read(self) -> dict[str, object]:
+        return dict(self.payload)
+
+    def write(self, payload):  # type: ignore[no-untyped-def]
+        self.payload = dict(payload)
+
+    def clear(self) -> None:
+        self.cleared = True
+        self.payload = {}
+
+
+def _bridge(
+    client: _FakeOpenClawLlmClient,
+    tmp_path: Path,
+    *,
+    env_path: Path | None = None,
+    embedding_probe=None,
+    report_model_config_store=None,
+) -> LlmSettingsBridge:
+    return LlmSettingsBridge(
+        client,
+        embedding_env_path=env_path or tmp_path / ".env.local",
+        report_model_status_path=tmp_path / "report-model-status.json",
+        embedding_probe=embedding_probe,
+        report_model_config_store=report_model_config_store,
+    )
+
 
 def test_load_llm_settings_masks_key_and_hides_internal_fields(tmp_path: Path) -> None:
-    bridge = LlmSettingsBridge(_FakeOpenClawLlmClient(), embedding_env_path=tmp_path / ".env.local")
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path)
     payload = bridge.load_llm_settings("deepseek")
     assert payload["draft"]["apiKeyMasked"] == "***1234"
     assert "apiKeyReplacement" not in payload["draft"]
@@ -73,7 +122,7 @@ def test_load_llm_settings_keeps_form_available_when_model_list_probe_fails(tmp_
             _ = provider
             raise TimeoutError("gateway timeout")
 
-    bridge = LlmSettingsBridge(_SlowModelListClient(), embedding_env_path=tmp_path / ".env.local")
+    bridge = _bridge(_SlowModelListClient(), tmp_path)
 
     payload = bridge.load_llm_settings("deepseek")
 
@@ -82,9 +131,9 @@ def test_load_llm_settings_keeps_form_available_when_model_list_probe_fails(tmp_
     assert payload["draft"]["status"] == "saved"
 
 
-def test_save_llm_config_uses_openclaw_config_patch_only(tmp_path: Path) -> None:
+def test_save_llm_config_uses_openclaw_config_patch(tmp_path: Path) -> None:
     client = _FakeOpenClawLlmClient()
-    bridge = LlmSettingsBridge(client, embedding_env_path=tmp_path / ".env.local")
+    bridge = _bridge(client, tmp_path)
     out = bridge.save_llm_config_via_openclaw(
         draft={
             "provider": "deepseek",
@@ -98,7 +147,119 @@ def test_save_llm_config_uses_openclaw_config_patch_only(tmp_path: Path) -> None
     assert out["status"] == "saved"
     assert client.config_patch_calls
     patch = client.config_patch_calls[0][1]
-    assert patch["models"]["providers"]["deepseek"]["api_key"] == "sk-new-5678"
+    assert patch["agents"]["defaults"]["model"] == {"primary": "deepseek/deepseek-chat"}
+    assert patch["agents"]["defaults"]["models"] == {"deepseek/deepseek-chat": {}}
+    provider_patch = patch["models"]["providers"]["deepseek"]
+    assert provider_patch["baseUrl"] == "https://new-endpoint"
+    assert provider_patch["api"] == "openai-completions"
+    assert provider_patch["apiKey"] == "sk-new-5678"
+    assert provider_patch["models"] == [
+        {
+            "id": "deepseek-chat",
+            "name": "deepseek-chat",
+            "reasoning": False,
+            "input": ["text"],
+        }
+    ]
+
+
+def test_save_llm_config_writes_runtime_mongo_config(tmp_path: Path) -> None:
+    client = _FakeOpenClawLlmClient()
+    store = _FakeReportModelConfigStore()
+    bridge = _bridge(client, tmp_path, report_model_config_store=store)
+
+    bridge.save_llm_config_via_openclaw(
+        draft={
+            "provider": "anthropic",
+            "defaultModel": "anthropic/claude-sonnet-4-20250514",
+            "endpointUrl": "https://api.anthropic.com",
+            "apiKeyReplacement": "sk-ant-1234",
+        },
+        expected_settings_version="v_1",
+        request_id="req-save-runtime-config",
+    )
+
+    assert store.payload["provider"] == "anthropic"
+    assert store.payload["model"] == "anthropic/claude-sonnet-4-20250514"
+    assert store.payload["api"] == "anthropic-messages"
+    assert store.payload["apiKey"] == "sk-ant-1234"
+
+
+def test_save_international_llm_config_uses_openclaw_provider_schema(tmp_path: Path) -> None:
+    client = _FakeOpenClawLlmClient()
+    bridge = _bridge(client, tmp_path)
+
+    bridge.save_llm_config_via_openclaw(
+        draft={
+            "provider": "anthropic",
+            "defaultModel": "anthropic/claude-sonnet-4-20250514",
+            "endpointUrl": "https://api.anthropic.com",
+            "apiKeyReplacement": "sk-ant-1234",
+        },
+        expected_settings_version="v_1",
+        request_id="req-save-anthropic",
+    )
+
+    patch = client.config_patch_calls[0][1]
+    assert patch["agents"]["defaults"]["model"] == {"primary": "anthropic/claude-sonnet-4-20250514"}
+    provider_patch = patch["models"]["providers"]["anthropic"]
+    assert provider_patch["baseUrl"] == "https://api.anthropic.com"
+    assert provider_patch["api"] == "anthropic-messages"
+    assert provider_patch["apiKey"] == "sk-ant-1234"
+    assert provider_patch["models"][0]["id"] == "claude-sonnet-4-20250514"
+
+
+def test_reset_llm_settings_clears_report_model_status_and_embedding_env(tmp_path: Path) -> None:
+    client = _FakeOpenClawLlmClient()
+    env_path = tmp_path / ".env.local"
+    env_path.write_text(
+        "\n".join(
+            [
+                "OPENVIKING_EMBEDDING_PROVIDER=openai",
+                "OPENVIKING_EMBEDDING_MODEL=text-embedding-3-small",
+                "OPENVIKING_EMBEDDING_API_KEY=emb-secret",
+                "OTHER_SETTING=keep",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bridge = _bridge(client, tmp_path, env_path=env_path)
+    bridge.save_llm_config_via_openclaw(
+        draft={"provider": "deepseek", "defaultModel": "deepseek-chat", "apiKeyReplacement": "sk-test-1234"},
+        expected_settings_version="v_1",
+        request_id="req-save-before-reset",
+    )
+
+    out = bridge.reset_llm_settings_to_defaults("req-reset")
+
+    assert out["status"] == "reset"
+    reset_patch = client.config_patch_calls[-1][1]
+    assert reset_patch["agents"]["defaults"]["model"] is None
+    assert reset_patch["models"]["providers"]["deepseek"] is None
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "OPENVIKING_EMBEDDING_PROVIDER" not in env_text
+    assert "OPENVIKING_EMBEDDING_API_KEY" not in env_text
+    assert "OTHER_SETTING=keep" in env_text
+    status_payload = (tmp_path / "report-model-status.json").read_text(encoding="utf-8")
+    assert '"state": "unconfigured"' in status_payload
+
+
+def test_load_llm_settings_returns_unconfigured_draft_when_config_gateway_fails(tmp_path: Path) -> None:
+    class _BrokenConfigClient(_FakeOpenClawLlmClient):
+        def config_get(self, *, paths):  # type: ignore[no-untyped-def]
+            _ = paths
+            raise RuntimeError("gateway unavailable")
+
+    bridge = _bridge(_BrokenConfigClient(), tmp_path)
+
+    payload = bridge.load_llm_settings()
+
+    assert payload["draft"]["provider"] == "deepseek"
+    assert payload["draft"]["endpointUrl"] == "https://api.deepseek.com"
+    assert payload["draft"]["defaultModel"] == "deepseek/deepseek-chat"
+    assert payload["draft"]["reportModelStatus"]["state"] == "unconfigured"
+    assert payload["draft"]["reportModelStatus"]["ready"] is False
 
 
 def test_load_llm_settings_reads_embedding_config_from_env_file(tmp_path: Path) -> None:
@@ -115,7 +276,7 @@ def test_load_llm_settings_reads_embedding_config_from_env_file(tmp_path: Path) 
         ),
         encoding="utf-8",
     )
-    bridge = LlmSettingsBridge(_FakeOpenClawLlmClient(), embedding_env_path=env_path)
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path, env_path=env_path)
 
     payload = bridge.load_llm_settings("deepseek")
 
@@ -128,27 +289,23 @@ def test_load_llm_settings_reads_embedding_config_from_env_file(tmp_path: Path) 
     assert embedding["dimension"] == "1536"
 
 
-def test_save_llm_config_writes_embedding_config_to_env_file(tmp_path: Path) -> None:
+def test_save_embedding_config_writes_embedding_config_to_env_file(tmp_path: Path) -> None:
     client = _FakeOpenClawLlmClient()
     env_path = tmp_path / ".env.local"
-    bridge = LlmSettingsBridge(client, embedding_env_path=env_path)
+    bridge = _bridge(client, tmp_path, env_path=env_path)
 
-    bridge.save_llm_config_via_openclaw(
-        draft={
-            "provider": "deepseek",
-            "defaultModel": "deepseek-chat",
-            "embedding": {
-                "provider": "openai",
-                "model": "text-embedding-3-small",
-                "endpointUrl": "https://embedding.example/v1",
-                "dimension": "1536",
-                "apiKeyReplacement": "sk-embed",
-            },
+    out = bridge.save_embedding_config_via_openviking(
+        {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "endpointUrl": "https://embedding.example/v1",
+            "dimension": "1536",
+            "apiKeyReplacement": "sk-embed",
         },
-        expected_settings_version="v_1",
         request_id="req-embed-save",
     )
 
+    assert out["status"] == "saved"
     text = env_path.read_text(encoding="utf-8")
     assert "OPENVIKING_EMBEDDING_PROVIDER=openai" in text
     assert "OPENVIKING_EMBEDDING_MODEL=text-embedding-3-small" in text
@@ -157,32 +314,116 @@ def test_save_llm_config_writes_embedding_config_to_env_file(tmp_path: Path) -> 
     assert "OPENVIKING_EMBEDDING_DIMENSION=1536" in text
 
 
-def test_save_llm_config_rejects_partial_embedding_config(tmp_path: Path) -> None:
-    bridge = LlmSettingsBridge(_FakeOpenClawLlmClient(), embedding_env_path=tmp_path / ".env.local")
+def test_save_embedding_config_rejects_partial_embedding_config(tmp_path: Path) -> None:
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path)
 
     with pytest.raises(UiBoundaryError) as exc:
-        bridge.save_llm_config_via_openclaw(
-            draft={
-                "provider": "deepseek",
-                "defaultModel": "deepseek-chat",
-                "embedding": {"provider": "openai", "model": ""},
-            },
-            expected_settings_version="v_1",
+        bridge.save_embedding_config_via_openviking(
+            {"provider": "openai", "model": ""},
             request_id="req-embed-partial",
         )
 
     assert exc.value.code == "INVALID_INPUT"
 
 
-def test_test_llm_requires_provider() -> None:
-    bridge = LlmSettingsBridge(_FakeOpenClawLlmClient())
+def test_save_llm_config_does_not_write_embedding_config(tmp_path: Path) -> None:
+    client = _FakeOpenClawLlmClient()
+    env_path = tmp_path / ".env.local"
+    bridge = _bridge(client, tmp_path, env_path=env_path)
+
+    bridge.save_llm_config_via_openclaw(
+        draft={
+            "provider": "deepseek",
+            "defaultModel": "deepseek-chat",
+            "embedding": {
+                "provider": "openai",
+                "model": "text-embedding-3-small",
+                "apiKeyReplacement": "sk-embed",
+            },
+        },
+        expected_settings_version="v_1",
+        request_id="req-report-model-save-with-embedding",
+    )
+
+    assert not env_path.exists()
+
+
+def test_test_embedding_uses_openviking_embedding_probe_with_saved_key(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env.local"
+    env_path.write_text("OPENVIKING_EMBEDDING_API_KEY=sk-existing-embed\n", encoding="utf-8")
+    captured = {}
+
+    def _probe(payload):  # type: ignore[no-untyped-def]
+        captured.update(payload)
+        return {"ok": True, "denseDimension": 1536}
+
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path, env_path=env_path, embedding_probe=_probe)
+
+    out = bridge.test_embedding_via_openviking(
+        {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "endpointUrl": "https://embedding.example/v1",
+            "dimension": "1536",
+        },
+        request_id="req-embed-test",
+    )
+
+    assert out["ok"] is True
+    assert out["userMessage"] == "Embedding 连接测试通过，已经能按意思生成检索向量。"
+    assert captured["provider"] == "openai"
+    assert captured["model"] == "text-embedding-3-small"
+    assert captured["apiKey"] == "sk-existing-embed"
+    assert captured["endpointUrl"] == "https://embedding.example/v1"
+    assert captured["dimension"] == "1536"
+    assert not (tmp_path / "report-model-status.json").exists()
+
+
+def test_test_embedding_returns_plain_failure_without_touching_report_model_status(tmp_path: Path) -> None:
+    status_path = tmp_path / "report-model-status.json"
+    status_path.write_text('{"state":"ready","model":"deepseek-chat"}', encoding="utf-8")
+
+    def _probe(_payload):  # type: ignore[no-untyped-def]
+        raise RuntimeError("OpenViking gateway internal traceback")
+
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path, embedding_probe=_probe)
+
+    out = bridge.test_embedding_via_openviking(
+        {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "apiKeyReplacement": "sk-embed",
+        },
+        request_id="req-embed-fail",
+    )
+
+    assert out["ok"] is False
+    assert out["userMessage"] == "Embedding 连接测试失败，请检查服务商、模型、API Key 和接口地址后重试。"
+    assert "OpenViking" not in out["userMessage"]
+    assert status_path.read_text(encoding="utf-8") == '{"state":"ready","model":"deepseek-chat"}'
+
+
+def test_test_embedding_rejects_partial_embedding_config(tmp_path: Path) -> None:
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path)
+
+    with pytest.raises(UiBoundaryError) as exc:
+        bridge.test_embedding_via_openviking(
+            {"provider": "openai", "model": ""},
+            request_id="req-embed-partial",
+        )
+
+    assert exc.value.code == "INVALID_INPUT"
+
+
+def test_test_llm_requires_provider(tmp_path: Path) -> None:
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path)
     with pytest.raises(UiBoundaryError) as exc:
         bridge.test_llm_via_openclaw({}, request_id="req-test")
     assert exc.value.code == "INVALID_INPUT"
 
 
-def test_test_llm_returns_user_message_without_internal_terms() -> None:
-    bridge = LlmSettingsBridge(_FakeOpenClawLlmClient())
+def test_test_llm_returns_user_message_without_internal_terms(tmp_path: Path) -> None:
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path)
     out = bridge.test_llm_via_openclaw({"provider": "deepseek"}, request_id="req-test-2")
     assert out["ok"] is False
     assert out["userMessage"]

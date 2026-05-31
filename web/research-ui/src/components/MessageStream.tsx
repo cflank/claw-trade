@@ -1,4 +1,6 @@
 import type { ChatMessageForUser, ConfirmationCard } from '../api/contracts';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { EmptyMessageState } from './EmptyStates';
 import { ReportSummaryCard } from './ReportSummaryCard';
 
@@ -14,22 +16,115 @@ const KIND_LABEL: Record<ChatMessageForUser['kind'], string> = {
   task_progress: '任务进展',
   report_completed: '报告完成',
   report_failed: '报告失败',
+  selection_result: '选股结果',
+  selection_unavailable: '选股不可用',
   price_alert: '价格提醒',
   file_send_failed: '发送失败',
 };
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+const SELECTION_PROTOCOL_LINE_PATTERNS = [
+  /\bopenviking\b/i,
+  /\bopenclaw\b/i,
+  /\bmongo\b/i,
+  /\bprovider\b/i,
+  /\braw payload\b/i,
+  /\brun[_-]?id\b/i,
+  /\bworkflowrunid\b/i,
+  /\bevidencepath\b/i,
+  /\bmaterial[_-]?id\b/i,
+  /\bl1[_-]?(uri|prefix)?\b/i,
+  /\bl2[_-]?(uri|prefix)?\b/i,
+  /\buri\b/i,
+  /\brefs?\b/i,
+  /\bhash\b/i,
+  /\bmanifest\b/i,
+  /\blineage\b/i,
+  /\breceipt\b/i,
+  /local:\/\/|\/runs\//i,
+];
+
+function selectionDisplayText(text: string) {
+  const safeLines = text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => !SELECTION_PROTOCOL_LINE_PATTERNS.some((pattern) => pattern.test(line)));
+  const safeText = safeLines.join('\n').trim();
+  return safeText || '`/select` 结果暂不可展示，请稍后重试。';
 }
 
-function summaryLabel(value: ConfirmationCard['dataSourceSummary']) {
-  if (value === 'ready') {
-    return '数据源就绪';
+function parseConfirmableSelectionTickers(text: string) {
+  const tickers: Array<{ ticker: string; label: string }> = [];
+  let inEnterReport = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const heading = line.replace(/^[#>*\-\s]+/, '').replace(/[：:]/g, '').replace(/\s+/g, '').toLowerCase();
+    if (heading === '进入`/report`' || heading === '进入/report' || heading === '进入报告') {
+      inEnterReport = true;
+      continue;
+    }
+    if (heading === '观察' || heading === '放弃') {
+      inEnterReport = false;
+      continue;
+    }
+    if (!inEnterReport) {
+      continue;
+    }
+    const cleaned = line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
+    const match = cleaned.match(/^([A-Za-z0-9./_-]+)\s+([^：:|｜]+)?/);
+    if (!match || match[1] === '无') {
+      continue;
+    }
+    const ticker = match[1].toUpperCase();
+    tickers.push({ ticker, label: match[2]?.trim() ? `${ticker} ${match[2].trim()}` : ticker });
   }
-  if (value === 'partial') {
-    return '数据源部分可用';
-  }
-  return '数据源待确认';
+  return tickers;
+}
+
+function SelectionResultCard({
+  item,
+  selectionSubmittingKey,
+  onConfirmSelectionCandidate,
+}: {
+  item: ChatMessageForUser;
+  selectionSubmittingKey?: string | null;
+  onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
+}) {
+  const safeText = selectionDisplayText(item.text);
+  const workflowRunId = item.selection?.workflowRunId?.trim();
+  const confirmable = item.kind === 'selection_result' && workflowRunId ? parseConfirmableSelectionTickers(safeText) : [];
+  return (
+    <section className={`ct-selection-card ${item.kind === 'selection_unavailable' ? 'is-unavailable' : ''}`}>
+      <div className="ct-selection-markdown">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{safeText}</ReactMarkdown>
+      </div>
+      {item.kind === 'selection_result' ? (
+        <p className="ct-selection-note">不会自动启动 /report。需要你确认候选标的后才会进入正式报告。</p>
+      ) : null}
+      {confirmable.length ? (
+        <div className="ct-selection-actions ct-button-row">
+          {confirmable.map((candidate) => {
+            const key = `${workflowRunId}:${candidate.ticker}`;
+            const busy = selectionSubmittingKey === key;
+            return (
+              <button
+                type="button"
+                className="ct-button"
+                key={key}
+                disabled={busy}
+                onClick={() => onConfirmSelectionCandidate?.(item, candidate.ticker)}
+              >
+                {busy ? '确认中' : `确认进入 /report：${candidate.label}`}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleString('zh-CN', { hour12: false });
 }
 
 function MessageBody({
@@ -38,37 +133,93 @@ function MessageBody({
   cardSubmittingId,
   onConfirmCard,
   onCancelCard,
+  onCardSymbolChange,
+  onCardSymbolRefresh,
+  onCardMarketChange,
   onOpenReport,
+  selectionSubmittingKey,
+  onConfirmSelectionCandidate,
 }: {
   item: ChatMessageForUser;
   card?: ConfirmationCard;
   cardSubmittingId?: string | null;
+  selectionSubmittingKey?: string | null;
   onConfirmCard?: (card: ConfirmationCard) => Promise<void> | void;
   onCancelCard?: (card: ConfirmationCard) => Promise<void> | void;
+  onCardSymbolChange?: (card: ConfirmationCard, value: string) => void;
+  onCardSymbolRefresh?: (card: ConfirmationCard) => Promise<void> | void;
+  onCardMarketChange?: (card: ConfirmationCard, market: 'CN_A' | 'US' | 'HK' | 'CRYPTO') => Promise<void> | void;
   onOpenReport?: (reportId: string) => void;
+  onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
 }) {
   if (item.kind === 'confirmation_card' && card) {
     const isBusy = cardSubmittingId === card.id;
+    const canConfirm = card.status === 'active' && card.validationState !== 'mismatch';
     return (
-      <section className="ct-confirmation-card" data-testid={`confirmation-card-${card.id}`}>
-        <h3>{card.title}</h3>
-        <ul>
-          {card.summaryLines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-        <p className="ct-small">{summaryLabel(card.dataSourceSummary)}</p>
-        <div className="ct-card-actions">
+      <section className="ct-task-confirm ct-confirmation-card" data-testid={`confirmation-card-${card.id}`}>
+        <h3 className="ct-task-confirm-title">{card.title}</h3>
+        <div className="ct-task-fields">
+          <div className="ct-task-field">
+            <span className="ct-task-field-label">标的</span>
+            <span className="ct-task-field-value">{card.instrumentCode ?? '-'}</span>
+          </div>
+          <div className="ct-task-field">
+            <span className="ct-task-field-label">名称</span>
+            <span className="ct-task-field-value">{card.instrumentName ?? '-'}</span>
+          </div>
+          <div className="ct-task-field">
+            <span className="ct-task-field-label">市场</span>
+            <span className="ct-task-field-value">
+              <select
+                className="ct-task-market-select"
+                aria-label="市场"
+                value={card.market ?? 'CN_A'}
+                onChange={(event) =>
+                  onCardMarketChange?.(card, event.target.value as 'CN_A' | 'US' | 'HK' | 'CRYPTO')
+                }
+                disabled={isBusy}
+              >
+                <option value="CN_A">CN_A</option>
+                <option value="US">US</option>
+                <option value="HK">HK</option>
+                <option value="CRYPTO">CRYPTO</option>
+              </select>
+            </span>
+          </div>
+        </div>
+        <div className="ct-task-edit-row ct-card-edit-row">
+          <label className="ct-field">
+            <span>修改标的</span>
+            <input
+              value={card.instrumentCode ?? ''}
+              onChange={(event) => {
+                const next = event.target.value.toUpperCase();
+                onCardSymbolChange?.(card, next);
+              }}
+            />
+          </label>
           <button
             type="button"
-            disabled={isBusy || card.status !== 'active'}
+            className="ct-button ct-button-secondary"
+            disabled={isBusy || !String(card.instrumentCode ?? '').trim()}
+            onClick={() => onCardSymbolRefresh?.(card)}
+          >
+            更新标的
+          </button>
+        </div>
+        {card.validationMessage ? <p className="ct-inline-alert is-error">{card.validationMessage}</p> : null}
+        <div className="ct-task-confirm-actions ct-card-actions ct-button-row">
+          <button
+            type="button"
+            className="ct-button"
+            disabled={isBusy || !canConfirm}
             onClick={() => onConfirmCard?.(card)}
           >
             {isBusy ? '处理中' : '确认'}
           </button>
           <button
             type="button"
-            className="is-ghost"
+            className="ct-button ct-button-secondary"
             disabled={isBusy || card.status !== 'active'}
             onClick={() => onCancelCard?.(card)}
           >
@@ -82,6 +233,15 @@ function MessageBody({
   if (item.kind === 'report_completed' && item.reportId) {
     return <ReportSummaryCard summary={item.text} reportId={item.reportId} onOpenReport={onOpenReport} />;
   }
+  if (item.kind === 'selection_result' || item.kind === 'selection_unavailable') {
+    return (
+      <SelectionResultCard
+        item={item}
+        selectionSubmittingKey={selectionSubmittingKey}
+        onConfirmSelectionCandidate={onConfirmSelectionCandidate}
+      />
+    );
+  }
   return <p>{item.text}</p>;
 }
 
@@ -91,14 +251,24 @@ export function MessageStream({
   cardSubmittingId,
   onConfirmCard,
   onCancelCard,
+  onCardSymbolChange,
+  onCardSymbolRefresh,
+  onCardMarketChange,
   onOpenReport,
+  selectionSubmittingKey,
+  onConfirmSelectionCandidate,
 }: {
   items: ChatMessageForUser[];
   confirmationCards?: Record<string, ConfirmationCard>;
   cardSubmittingId?: string | null;
+  selectionSubmittingKey?: string | null;
   onConfirmCard?: (card: ConfirmationCard) => Promise<void> | void;
   onCancelCard?: (card: ConfirmationCard) => Promise<void> | void;
+  onCardSymbolChange?: (card: ConfirmationCard, value: string) => void;
+  onCardSymbolRefresh?: (card: ConfirmationCard) => Promise<void> | void;
+  onCardMarketChange?: (card: ConfirmationCard, market: 'CN_A' | 'US' | 'HK' | 'CRYPTO') => Promise<void> | void;
   onOpenReport?: (reportId: string) => void;
+  onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
 }) {
   if (!items.length) {
     return (
@@ -111,7 +281,10 @@ export function MessageStream({
   return (
     <section className="ct-message-stream" data-testid="message-stream">
       {items.map((item) => (
-        <article key={item.messageId} className={`ct-message ct-message-${item.actor}`}>
+        <article
+          key={item.messageId}
+          className={`ct-message ct-message-${item.actor}${item.kind === 'confirmation_card' ? ' ct-message-confirmation' : ''}`}
+        >
           <header className="ct-message-head">
             <span>
               {ACTOR_LABEL[item.actor]} · {KIND_LABEL[item.kind]}
@@ -124,7 +297,12 @@ export function MessageStream({
             cardSubmittingId={cardSubmittingId}
             onConfirmCard={onConfirmCard}
             onCancelCard={onCancelCard}
+            onCardSymbolChange={onCardSymbolChange}
+            onCardSymbolRefresh={onCardSymbolRefresh}
+            onCardMarketChange={onCardMarketChange}
             onOpenReport={onOpenReport}
+            selectionSubmittingKey={selectionSubmittingKey}
+            onConfirmSelectionCandidate={onConfirmSelectionCandidate}
           />
         </article>
       ))}

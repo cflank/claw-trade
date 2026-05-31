@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { sendChatMessage } from '../api/client';
+import { getChannelStatus, sendChatMessage } from '../api/client';
 
 describe('api client error translation', () => {
   const originalFetch = globalThis.fetch;
@@ -57,5 +57,30 @@ describe('api client error translation', () => {
         text: '测试',
       }),
     ).rejects.toThrow('服务暂时不可用，请稍后重试。');
+  });
+
+  it('can request lightweight channel status without qr probe on startup', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          canSendText: false,
+          canSendFile: false,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    await getChannelStatus({ probe: false });
+
+    expect(urls).toEqual(['/api/ui/get-channel-status']);
   });
 });

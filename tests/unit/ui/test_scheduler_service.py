@@ -69,6 +69,34 @@ def test_create_scheduled_report_rejects_hourly() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("raw_code", "market", "expected_code"),
+    (
+        ("SH600519", MarketProfile.CN_A, "600519.SH"),
+        ("HK00700", MarketProfile.HK, "00700.HK"),
+        ("AAPL.US", MarketProfile.US, "AAPL"),
+        ("AR", MarketProfile.CRYPTO, "AR/USDT"),
+    ),
+)
+def test_create_scheduled_report_normalizes_market_specific_codes(
+    raw_code: str,
+    market: MarketProfile,
+    expected_code: str,
+) -> None:
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, now_provider=_fixed_now)
+
+    created = service.create_scheduled_report(
+        request_id=f"req-{expected_code}",
+        instrument_code=raw_code,
+        market=market,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    assert created.instrumentCode == expected_code
+    assert created.market == market.value
+
+
 def test_pause_resume_delete_state_transitions() -> None:
     service = SchedulerService(enqueue_report_task=lambda _task, _request: {})
     created = service.create_scheduled_report(

@@ -1,35 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 from claw_trade.data_gateway.models import FreshnessPolicy, Market, PackDomain, PackRequest, RunProviderPlan
-from claw_trade.data_gateway.packs.service import DomainPackService
+from claw_trade.data_gateway.packs.policy import PolicyPackBuilder
 from claw_trade.data_gateway.providers.policy import build_default_policy_adapters
-from claw_trade.data_gateway.store.attempts import MongoAttemptStore
-from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
-from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
-from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
-from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
-
-
-class _Collection:
-    def __init__(self, name: str = "test_collection") -> None:
-        self.name = name
-        self.docs: dict[str, dict[str, Any]] = {}
-
-    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
-        del upsert
-        key = query["_id"]
-        current = self.docs.get(key, {})
-        current.update(update.get("$setOnInsert", {}))
-        current.update(update.get("$set", {}))
-        if "_id" not in current:
-            current["_id"] = key
-        self.docs[key] = current
-
-    def insert_one(self, doc: dict[str, Any]) -> None:
-        self.docs[doc["_id"]] = dict(doc)
+from tests.fakes.data_gateway_in_memory import build_gate_controlled_executor
 
 
 def _request() -> PackRequest:
@@ -71,13 +45,8 @@ def _plan(request: PackRequest, adapters) -> RunProviderPlan:
     )
 
 
-def _helper() -> ProviderExecutionEvidenceHelper:
-    return ProviderExecutionEvidenceHelper(
-        raw_store=MongoRawPayloadStore(_Collection()),
-        normalized_store=MongoNormalizedStore(_Collection()),
-        attempt_store=MongoAttemptStore(_Collection()),
-        http_evidence_store=MongoProviderHttpEvidenceStore(_Collection()),
-    )
+def _helper():
+    return build_gate_controlled_executor()
 
 
 def test_policy_pack_cn_a_covers_all_groups_and_writes_evidence_refs(monkeypatch) -> None:
@@ -153,7 +122,12 @@ def test_policy_pack_cn_a_covers_all_groups_and_writes_evidence_refs(monkeypatch
         ),
     )
 
-    pack = DomainPackService(settings=object(), adapters=adapters, provider_execution_helper=_helper()).get_pack(request, plan)
+    pack = PolicyPackBuilder().build(
+        request=request,
+        run_plan=plan,
+        adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
+    )
 
     assert pack.readiness.status.value in {"partial", "ready"}
     assert len(pack.attempts) == 4
@@ -207,11 +181,15 @@ def test_policy_pack_cn_a_keeps_official_failure_root_cause_and_non_ready_chart(
         lambda params: ((), "https://google.example/discovery"),
     )
 
-    pack = DomainPackService(settings=object(), adapters=adapters, provider_execution_helper=_helper()).get_pack(request, plan)
+    pack = PolicyPackBuilder().build(
+        request=request,
+        run_plan=plan,
+        adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
+    )
 
     assert pack.readiness.status.value != "ready"
     assert any(gap.field_path == "cn_a_policy_official" for gap in pack.data_gaps)
     assert any("cninfo official timeout" in gap.root_cause for gap in pack.data_gaps)
     assert pack.chart_assets[0].status.value == "insufficient"
     assert "未就绪" in pack.reader_brief_md
-

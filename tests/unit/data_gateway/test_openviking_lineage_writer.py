@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from claw_trade.artifacts.refs import ApprovedMaterial, L2Entry, L2Index
+from claw_trade.data_gateway.models import (
+    FreshnessPolicy,
+    Market,
+    PackAuditPayload,
+    PackDomain,
+    PackRequest,
+    PrioritySource,
+    ProviderAttempt,
+    ProviderKind,
+    ProviderStatus,
+    Readiness,
+    ReadinessStatus,
+    SourceRole,
+)
 from claw_trade.data_gateway.openviking.lineage import OpenBBMongoLineageWriter
+from claw_trade.data_gateway.packs.materializer import materialize_domain_pack_result
 from claw_trade.workflow.models import ExportResult, RunRequest, RunStatus, Stage, WorkflowState
 
 
@@ -206,7 +222,7 @@ def test_lineage_writer_rebuilds_crypto_lens_analysis_refs_from_mongo(tmp_path: 
     from claw_trade.artifacts.openviking_client import OpenVikingClient
 
     run_id = "run-lineage"
-    state = _state(tmp_path, run_id=run_id, market="CRYPTO", ticker="BTC", currency="USD")
+    state = _state(tmp_path, run_id=run_id, market="CRYPTO", ticker="BTC", currency="USDT")
     _write_export_claims(state)
     market = _material(run_id, "market_analyst", Stage.FRONTLINE, "call-market")
     pm = _material(run_id, "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-pm")
@@ -275,6 +291,100 @@ def test_lineage_writer_fails_when_frontline_provider_attempts_are_missing(tmp_p
     assert result.ok is False
     assert result.category == "openviking_lineage"
     assert "缺少 OpenBB provider attempts" in (result.reason or "")
+
+
+def test_materializer_does_not_synthesize_http_evidence_refs() -> None:
+    pack_result = _minimal_pack_result_for_materializer()
+    materialized = materialize_domain_pack_result(pack_result)
+
+    assert materialized.http_evidence_refs == ()
+
+
+def test_lineage_writer_records_blocked_remote_failures_without_blocking_report(tmp_path: Path) -> None:
+    from claw_trade.artifacts.openviking_client import OpenVikingClient
+
+    run_id = "run-lineage"
+    state = _state(tmp_path, run_id=run_id)
+    _write_export_claims(state)
+    market = _material(run_id, "market_analyst", Stage.FRONTLINE, "call-market")
+    pm = _material(run_id, "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-pm")
+    final = _material(run_id, "report_polisher", Stage.FINAL_REPORT, "call-final")
+    backend = _Backend(linked=[])
+    writer = OpenBBMongoLineageWriter(
+        openviking=OpenVikingClient(backend=backend),
+        database=_Database(
+            (
+                _attempt_doc(
+                    run_id=run_id,
+                    call_id="call-market",
+                    status="remote_error",
+                    raw_ref=None,
+                    normalized_ref=None,
+                ),
+            )
+        ),
+        now_text=lambda: "2026-05-18T00:00:00Z",
+    )
+    export_result = ExportResult.passed(
+        state=state,
+        final_report_path=state.run_dir / "reports" / "final-report.md",
+        guard_path=state.run_dir / "reports" / "export-guard-results.json",
+    )
+
+    result = writer.link_after_export(
+        state=state,
+        manifest=_Manifest((market, pm, final)),  # type: ignore[arg-type]
+        export_result=export_result,
+    )
+
+    assert result.ok is True
+    linked_text = "\n".join(str(item) for item in backend.linked)
+    assert "mongo://openbb_provider_attempts/attempt-1" in linked_text
+    audit_path = state.run_dir / "openviking" / "lineage-relations.json"
+    audit_payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit_payload["pack_statuses"][0]["approval_status"] == "blocked"
+    assert audit_payload["pack_statuses"][0]["attempt_statuses"][0]["status"] == "remote_error"
+
+
+def test_lineage_writer_blocks_when_provider_evidence_write_failed(tmp_path: Path) -> None:
+    from claw_trade.artifacts.openviking_client import OpenVikingClient
+
+    run_id = "run-lineage"
+    state = _state(tmp_path, run_id=run_id)
+    _write_export_claims(state)
+    market = _material(run_id, "market_analyst", Stage.FRONTLINE, "call-market")
+    pm = _material(run_id, "portfolio_manager", Stage.PORTFOLIO_DECISION, "call-pm")
+    final = _material(run_id, "report_polisher", Stage.FINAL_REPORT, "call-final")
+    writer = OpenBBMongoLineageWriter(
+        openviking=OpenVikingClient(backend=_Backend(linked=[])),
+        database=_Database(
+            (
+                _attempt_doc(
+                    run_id=run_id,
+                    call_id="call-market",
+                    status="evidence_write_failed",
+                    raw_ref=None,
+                    normalized_ref=None,
+                ),
+            )
+        ),
+        now_text=lambda: "2026-05-18T00:00:00Z",
+    )
+    export_result = ExportResult.passed(
+        state=state,
+        final_report_path=state.run_dir / "reports" / "final-report.md",
+        guard_path=state.run_dir / "reports" / "export-guard-results.json",
+    )
+
+    result = writer.link_after_export(
+        state=state,
+        manifest=_Manifest((market, pm, final)),  # type: ignore[arg-type]
+        export_result=export_result,
+    )
+
+    assert result.ok is False
+    assert result.category == "openviking_lineage"
+    assert "provider evidence 写入失败" in (result.reason or "")
 
 
 def _state(
@@ -363,6 +473,9 @@ def _attempt_doc(
     call_id: str,
     worker_id: str = "market_analyst",
     pack: str = "market",
+    status: str = "remote_success",
+    raw_ref: str | None = "mongo://openbb_raw_payloads/raw-1",
+    normalized_ref: str | None = "mongo://openbb_normalized/norm-1",
 ) -> dict[str, object]:
     attempt_id = "attempt-1" if worker_id == "market_analyst" and pack == "market" else f"attempt-{pack}"
     return {
@@ -381,7 +494,7 @@ def _attempt_doc(
         "source_role": "market_data",
         "started_at": "2026-05-18T00:00:00Z",
         "finished_at": "2026-05-18T00:00:01Z",
-        "status": "remote_success",
+        "status": status,
         "required": True,
         "attempt_required": True,
         "coverage_group": "market",
@@ -394,10 +507,110 @@ def _attempt_doc(
         "shared_from_attempt_id": None,
         "latency_ms": 20,
         "row_count": 3,
-        "raw_ref": "mongo://openbb_raw_payloads/raw-1",
-        "normalized_ref": "mongo://openbb_normalized/norm-1",
+        "raw_ref": raw_ref,
+        "normalized_ref": normalized_ref,
         "error_code": None,
         "error_message": None,
         "schema_id": "market.v1",
         "license_note": "approved",
     }
+
+
+def _minimal_pack_result_for_materializer():
+    request = PackRequest(
+        run_id="run-materializer",
+        call_id="call-market",
+        worker_id="market_analyst",
+        market=Market.US,
+        domain=PackDomain.MARKET,
+        ticker="AAPL",
+        company_name="Apple",
+        start_date="2026-05-01",
+        end_date="2026-05-18",
+        current_date="2026-05-18",
+        currency="USD",
+        profile="US",
+        freshness_policy=FreshnessPolicy(max_age_seconds=120),
+    )
+    attempt = ProviderAttempt(
+        attempt_id="attempt-materializer",
+        run_id=request.run_id,
+        call_id=request.call_id,
+        worker_id=request.worker_id,
+        pack=request.domain.value,
+        provider="openbb.us",
+        adapter_id="openbb.us.market",
+        adapter_kind="openbb_native",
+        provider_kind=ProviderKind.OPENBB_NATIVE,
+        provider_config_version="cfg-v1",
+        endpoint="equity.price.historical",
+        source_role=SourceRole.MARKET_DATA,
+        started_at="2026-05-18T00:00:00Z",
+        finished_at="2026-05-18T00:00:01Z",
+        status=ProviderStatus.REMOTE_SUCCESS,
+        required=True,
+        attempt_required=True,
+        coverage_group="market",
+        coverage_quorum=1,
+        priority_source=PrioritySource.SYSTEM_DEFAULT,
+        user_preferred=False,
+        from_cache=False,
+        cache_status=None,
+        single_flight_role="owner",
+        shared_from_attempt_id=None,
+        latency_ms=20,
+        row_count=5,
+        raw_ref="mongo://openbb_raw_payloads/raw-materializer",
+        normalized_ref="mongo://openbb_normalized/norm-materializer",
+        error_code=None,
+        error_message=None,
+        schema_id="market.v1",
+        license_note="approved",
+        source_metadata={"transport": "tcp"},
+    )
+    readiness = Readiness(
+        status=ReadinessStatus.READY,
+        coverage={"market": "ready"},
+        required_domains=("market",),
+        missing_domains=(),
+        blocking_gap_ids=(),
+        non_blocking_gap_ids=(),
+        root_cause=None,
+    )
+    audit = PackAuditPayload(
+        request=request,
+        openbb_runtime_marker="openbb-v4.7.0",
+        openbb_extension_version="claw.v1",
+        run_provider_plan_id=request.run_id,
+        call_specs=(),
+        attempts=(attempt,),
+        cache_receipts=(),
+        data_gaps=(),
+        conflicts=(),
+        readiness=readiness,
+        chart_assets=(),
+        raw_refs=(attempt.raw_ref or "",),
+        normalized_refs=(attempt.normalized_ref or "",),
+        normalized_bundle_ref=None,
+        payload_hash="sha256:test",
+        generated_at="2026-05-18T00:00:00Z",
+    )
+    from claw_trade.data_gateway.models import DomainPackResult
+
+    return DomainPackResult(
+        request=request,
+        reader_brief_md="market summary",
+        compact_facts={},
+        attempts=(attempt,),
+        cache_receipts=(),
+        data_gaps=(),
+        conflicts=(),
+        readiness=readiness,
+        chart_assets=(),
+        raw_refs=(attempt.raw_ref or "",),
+        normalized_refs=(attempt.normalized_ref or "",),
+        normalized_bundle_ref=None,
+        audit_ref="viking://resources/workflow/run-materializer/frontline/market_analyst/call-market/evidence/pack_audit.json",
+        audit_payload_hash="sha256:audit",
+        audit_payload=audit,
+    )

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from claw_trade.data_gateway.models import (
@@ -32,7 +32,6 @@ from claw_trade.data_gateway.models import (
 from claw_trade.data_gateway.providers.base import ProviderAdapter
 from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
 
-
 _EQUITY_REQUIRED_FIELDS: tuple[str, ...] = (
     "valuation.pe",
     "valuation.pb",
@@ -57,6 +56,16 @@ def _required_fields(market: Market) -> tuple[str, ...]:
     return _EQUITY_REQUIRED_FIELDS
 
 
+def _required_fields_from_specs(call_specs: tuple[ProviderCallSpec, ...]) -> tuple[str, ...]:
+    fields: list[str] = []
+    for spec in call_specs:
+        params_fields = spec.params.get("required_fields")
+        if not isinstance(params_fields, (list, tuple)):
+            continue
+        fields.extend(str(field) for field in params_fields if str(field).strip())
+    return tuple(dict.fromkeys(fields))
+
+
 def _normalize_conflict_value(value: Any) -> str:
     if value is None:
         return "null"
@@ -65,6 +74,17 @@ def _normalize_conflict_value(value: Any) -> str:
     if isinstance(value, (list, tuple, dict)):
         return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return str(value)
+
+
+def _flatten_fields(row: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in row.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, Mapping):
+            out.update(_flatten_fields(value, path))
+        else:
+            out[path] = value
+    return out
 
 
 def _status_to_gap_reason(status: ProviderStatus) -> DataGapReason | None:
@@ -101,9 +121,29 @@ def _result_gap_is_blocking(result: ProviderResult) -> bool:
     return result.spec.required and _is_blocking_status(result.status)
 
 
+def _coverage_group_satisfied(*, spec: ProviderCallSpec, previous_results: list[ProviderResult]) -> bool:
+    if not spec.coverage_group:
+        return False
+    if spec.user_preferred or spec.priority_source == PrioritySource.USER_PREFERRED:
+        return False
+    return any(
+        result.spec.coverage_group == spec.coverage_group
+        and result.status in {
+            ProviderStatus.REMOTE_SUCCESS,
+            ProviderStatus.CACHE_HIT,
+            ProviderStatus.WAREHOUSE_HIT,
+            ProviderStatus.SHARED_RESULT,
+        }
+        and result.row_count > 0
+        and bool(result.normalized_ref)
+        for result in previous_results
+    )
+
+
 _STATUS_TEXT: dict[ProviderStatus, str] = {
     ProviderStatus.REMOTE_SUCCESS: "远端获取成功",
     ProviderStatus.CACHE_HIT: "使用有效缓存",
+    ProviderStatus.WAREHOUSE_HIT: "使用主仓库数据",
     ProviderStatus.SHARED_RESULT: "复用同次运行结果",
     ProviderStatus.CREDENTIAL_MISSING: "缺少接口凭证",
     ProviderStatus.LICENSE_BLOCKED: "许可边界阻断",
@@ -219,9 +259,14 @@ class FundamentalPackBuilder:
                 raw_refs.append(result.raw_ref)
             if result.normalized_ref:
                 normalized_refs.append(result.normalized_ref)
-            if result.status not in {ProviderStatus.REMOTE_SUCCESS, ProviderStatus.CACHE_HIT, ProviderStatus.SHARED_RESULT}:
+            if result.status not in {
+                ProviderStatus.REMOTE_SUCCESS,
+                ProviderStatus.CACHE_HIT,
+                ProviderStatus.WAREHOUSE_HIT,
+                ProviderStatus.SHARED_RESULT,
+            }:
                 continue
-            for key, value in result.rows[0].items() if result.rows else ():
+            for key, value in _flatten_fields(result.rows[0]).items() if result.rows else ():
                 existing = field_meta.get(key)
                 if existing is None:
                     field_meta[key] = (value, result.source_role, result.attempt.attempt_id)
@@ -285,7 +330,7 @@ class FundamentalPackBuilder:
         flat_fields: Mapping[str, Any],
         results: tuple[ProviderResult, ...],
     ) -> tuple[DataGap, ...]:
-        expected = _required_fields(request.market)
+        expected = _required_fields_from_specs(call_specs) or _required_fields(request.market)
         providers = tuple(sorted({spec.provider for spec in call_specs}))
         attempt_ids = tuple(result.attempt.attempt_id for result in results)
         gaps: list[DataGap] = []
@@ -311,6 +356,7 @@ class FundamentalPackBuilder:
         has_blocking = any(gap.severity == GapSeverity.FAIL for gap in gaps)
         any_success = any(
             result.status in {ProviderStatus.REMOTE_SUCCESS, ProviderStatus.CACHE_HIT, ProviderStatus.SHARED_RESULT}
+            or result.status == ProviderStatus.WAREHOUSE_HIT
             for result in results
         )
         has_blocked_result = any(
@@ -414,7 +460,14 @@ class FundamentalPackService:
     def __post_init__(self) -> None:
         self._adapters = {adapter.adapter_id: adapter for adapter in self.adapters}
 
-    def get_pack(self, request: PackRequest, run_plan: RunProviderPlan) -> DomainPackResult:
+    def get_pack(
+        self,
+        request: PackRequest,
+        run_plan: RunProviderPlan,
+        *,
+        warehouse_results: tuple[ProviderResult, ...] = (),
+        warehouse_gaps: tuple[DataGap, ...] = (),
+    ) -> DomainPackResult:
         specs = tuple(
             spec
             for spec in run_plan.call_specs
@@ -440,8 +493,10 @@ class FundamentalPackService:
                 extra_gaps=(gap,),
             )
 
-        results: list[ProviderResult] = []
+        results: list[ProviderResult] = list(warehouse_results)
         for spec in specs:
+            if _coverage_group_satisfied(spec=spec, previous_results=results):
+                continue
             results.append(self._execute_spec(request, spec))
         return self.builder.build(
             request=request,
@@ -452,7 +507,8 @@ class FundamentalPackService:
                 gap
                 for gap in run_plan.initial_gaps
                 if gap.domain == PackDomain.FUNDAMENTAL
-            ),
+            )
+            + warehouse_gaps,
         )
 
     def _execute_spec(self, request: PackRequest, spec: ProviderCallSpec) -> ProviderResult:
@@ -492,54 +548,27 @@ class FundamentalPackService:
                 latency_ms=int((time.perf_counter() - t0) * 1000),
             )
 
-        helper = self.provider_execution_helper
-        if helper is not None:
-            return helper.execute(
+        executor = self.provider_execution_helper
+        if executor is not None and getattr(executor, "gate_controlled", False):
+            return executor.execute(
                 request=request,
                 spec=spec,
                 adapter=adapter,
                 started_at=started,
             )
 
-        try:
-            fetch = adapter.fetch(spec, request)
-            normalized = adapter.normalize(spec, fetch)
-        except Exception as exc:  # pragma: no cover - explicit remote error path
-            return self._build_result(
-                request=request,
-                spec=spec,
-                started=started,
-                status=ProviderStatus.REMOTE_ERROR,
-                freshness=FreshnessStatus.NOT_FETCHED,
-                rows=(),
-                row_count=0,
-                raw_ref=None,
-                normalized_ref=None,
-                error_code=type(exc).__name__,
-                error_message=str(exc),
-                latency_ms=int((time.perf_counter() - t0) * 1000),
-            )
-
-        status = normalized.status
-        if status == ProviderStatus.REMOTE_SUCCESS and normalized.row_count <= 0:
-            status = ProviderStatus.EMPTY
-        freshness = FreshnessStatus.FRESH_REMOTE if status == ProviderStatus.REMOTE_SUCCESS else FreshnessStatus.NOT_FETCHED
-        rows = normalized.rows if status == ProviderStatus.REMOTE_SUCCESS else ()
-        row_count = normalized.row_count if status == ProviderStatus.REMOTE_SUCCESS else 0
-        raw_ref = normalized.source_raw_ref
-        normalized_ref = None
         return self._build_result(
             request=request,
             spec=spec,
             started=started,
-            status=status,
-            freshness=freshness,
-            rows=rows,
-            row_count=row_count,
-            raw_ref=raw_ref,
-            normalized_ref=normalized_ref,
-            error_code=normalized.error_code,
-            error_message=normalized.error_message,
+            status=ProviderStatus.EVIDENCE_WRITE_FAILED,
+            freshness=FreshnessStatus.NOT_FETCHED,
+            rows=(),
+            row_count=0,
+            raw_ref=None,
+            normalized_ref=None,
+            error_code="provider_call_gate_missing",
+            error_message="provider call gate is not configured; pack runtime remote calls must use run_provider_call_gate",
             latency_ms=int((time.perf_counter() - t0) * 1000),
         )
 

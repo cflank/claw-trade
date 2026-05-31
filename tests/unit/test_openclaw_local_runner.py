@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
-from pathlib import Path
 import subprocess
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
-
 from claw_trade.runtime import openclaw_local_runner
 from claw_trade.runtime.openclaw_local_runner import OpenClawLocalRunner, create_default_runner
 
@@ -43,12 +42,42 @@ def health_server() -> str:
 def test_factory_builds_runner_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
     monkeypatch.setenv("OPENCLAW_GATEWAY_CALL_BIN", "/tmp/openclaw-custom")
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", "/tmp/openclaw-state")
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", "/tmp/openclaw-state/openclaw.json")
     runner = create_default_runner()
     assert isinstance(runner, OpenClawLocalRunner)
     assert runner.gateway_ws_url == "ws://127.0.0.1:18789"
     assert runner.gateway_call_bin == "/tmp/openclaw-custom"
+    assert runner.state_dir == "/tmp/openclaw-state"
+    assert runner.config_path == "/tmp/openclaw-state/openclaw.json"
     assert callable(getattr(runner, "probe", None))
     assert callable(getattr(runner, "run_worker", None))
+
+
+def test_factory_reads_openclaw_state_from_runtime_env_when_process_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("OPENCLAW_STATE_DIR", raising=False)
+    monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    runtime_dir = tmp_path / ".runtime" / "dev-services"
+    runtime_dir.mkdir(parents=True)
+    runtime_env = runtime_dir / "runtime.env"
+    runtime_env.write_text(
+        "\n".join(
+            [
+                f"OPENCLAW_STATE_DIR={tmp_path}/runtime-state",
+                f"OPENCLAW_CONFIG_PATH={tmp_path}/runtime-state/openclaw.json",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runner = create_default_runner()
+
+    assert runner.state_dir == f"{tmp_path}/runtime-state"
+    assert runner.config_path == f"{tmp_path}/runtime-state/openclaw.json"
 
 
 def test_probe_fails_when_gateway_method_missing(
@@ -152,7 +181,11 @@ def test_run_worker_uses_params_file_for_large_payload(
 def test_run_worker_default_local_gateway_without_credentials_omits_url_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner = OpenClawLocalRunner(gateway_ws_url="ws://127.0.0.1:18789")
+    runner = OpenClawLocalRunner(
+        gateway_ws_url="ws://127.0.0.1:18789",
+        state_dir="/tmp/runtime-openclaw-state",
+        config_path="/tmp/runtime-openclaw-state/openclaw.json",
+    )
     seen_commands: list[list[str]] = []
     seen_envs: list[dict[str, str] | None] = []
     monkeypatch.setenv("OPENCLAW_GATEWAY_URL", "ws://127.0.0.1:18789")
@@ -171,6 +204,8 @@ def test_run_worker_default_local_gateway_without_credentials_omits_url_flag(
     assert seen_envs
     assert isinstance(seen_envs[0], dict)
     assert "OPENCLAW_GATEWAY_URL" not in seen_envs[0]
+    assert seen_envs[0]["OPENCLAW_STATE_DIR"] == "/tmp/runtime-openclaw-state"
+    assert seen_envs[0]["OPENCLAW_CONFIG_PATH"] == "/tmp/runtime-openclaw-state/openclaw.json"
 
 
 def test_run_worker_custom_gateway_with_token_keeps_url_and_token(

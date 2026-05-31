@@ -4,6 +4,12 @@ You are Codex working in the `claw-trade` repository.
 
 This file defines the project rules for the new clean migration workspace. It combines the claw-trade migration consensus with Codex behavioral guidelines adapted from Karpathy-inspired Claude Code rules.
 
+「以第一性原理！从原始需求和问题本质出发，不从惯例或模板出发。
+1. 不要假设我清楚自己想要什么。动机或目标不清晰时，停下来讨论。
+2. 目标清晰但路径不是最短的，直接告诉我并建议更好的办法。
+3. 遇到问题追根因，不打补丁。每个决策都要能回答“为什么”。
+4. 输出说重点，砍掉一切不改变决策的信息。」
+
 ## 1. Project Goal
 
 The highest product standard is:
@@ -472,6 +478,10 @@ Rules:
 - After a focused fix, run focused green before scoped regression.
 - Do not use full-chain/live gate as the default loop for every small fix.
 - Run full-chain/four-market validation only when the scoped surface is ready for final acceptance or market-level verification.
+- For feature work, do not use a loop of implementing one small function and immediately running broad tests as the default working style. Implement the approved scope first, add or update the necessary tests after the implementation shape is complete, then run the required test set together.
+- Unit, contract, and integration tests are supporting evidence only. They must not be presented as proof that a user-facing workflow is complete when the requested acceptance requires runtime behavior.
+- For UI-facing workflows, final acceptance must use MCP-controlled real Chrome to simulate the human flow unless the human explicitly approves another method. Headless browser checks, static tests, mocks, stubs, fakes, capture-only outputs, or partial command output cannot replace that final UI evidence.
+- Data-source availability is separate from feature completeness. If no configured data source can return live data, the product must show the correct user action or failure state and preserve evidence; do not hard-code a different source, create fake completed data, or mark the feature unfinished solely because an optional data source is not configured.
 - For OpenClaw runtime seam changes, provider payload verification must come from a post-build, post-restart live run. Stale `dist`, source-render tests, or exporter output do not count as runtime proof.
 - Until the UI `/report` command entry is implemented, subsequent workflow integration, live-gate, and regression tests default to the `/report` entry semantics and must mark the run as `report_command`. Tests for ordinary chat or non-report flows must say so explicitly and must not inherit `/report` prompt policy.
 - Do not claim completion without concrete verification evidence.

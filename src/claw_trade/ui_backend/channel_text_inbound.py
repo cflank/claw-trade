@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
@@ -20,15 +20,29 @@ class ChannelTextMessage:
 
 
 @dataclass(frozen=True)
+class ChannelReplyTarget:
+    channel_kind: str
+    account_id: str | None
+    sender_id: str
+
+
+@dataclass(frozen=True)
 class _PendingDraft:
     draft_id: str
 
 
 class ChannelTextInboundController:
-    def __init__(self, chat_controller: ChatController) -> None:
+    def __init__(
+        self,
+        chat_controller: ChatController,
+        *,
+        request_full_report_file: Callable[[str, str, ChannelReplyTarget], dict[str, object]] | None = None,
+    ) -> None:
         self._chat_controller = chat_controller
+        self._request_full_report_file = request_full_report_file
         self._pending: dict[str, _PendingDraft] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
+        self._latest_conversation_key: str | None = None
         self._lock = Lock()
 
     def handle_message(self, message: ChannelTextMessage) -> dict[str, Any]:
@@ -40,6 +54,7 @@ class ChannelTextInboundController:
             return self._remember(message.request_id, {"handled": False})
 
         conversation_key = self._conversation_key(message)
+        self._remember_latest_conversation(conversation_key)
         decision = _parse_confirmation_decision(text)
 
         with self._lock:
@@ -62,12 +77,19 @@ class ChannelTextInboundController:
                 decision=decision,
             )
 
-        if not IntentRecognizer.looks_like_report_intent(text):
-            return self._remember(message.request_id, {"handled": False})
+        if _looks_like_full_report_request(text):
+            return self._handle_full_report_request(
+                message=message,
+                conversation_key=conversation_key,
+                text=text,
+            )
 
-        result = self._chat_controller.create_intent_draft(
+        if not IntentRecognizer.looks_like_report_intent(text):
+            return self._handle_normal_chat(message=message, conversation_key=conversation_key, text=text)
+
+        result = self._chat_controller.send_chat_message(
             request_id=message.request_id,
-            source_message_id=message.message_id or message.request_id,
+            context_id=conversation_key,
             text=text,
         )
         error = _extract_error(result)
@@ -103,10 +125,12 @@ class ChannelTextInboundController:
         draft_id: str,
         decision: str,
     ) -> dict[str, Any]:
-        result = self._chat_controller.confirm_intent_draft(
+        result = self._chat_controller.confirm_intent_draft_from_chat(
             request_id=message.request_id,
+            context_id=conversation_key,
             draft_id=draft_id,
             decision=decision,
+            text=message.text,
         )
         with self._lock:
             self._pending.pop(conversation_key, None)
@@ -127,9 +151,113 @@ class ChannelTextInboundController:
             {"handled": True, "replyText": _format_confirmed_reply(result), "state": "confirmed"},
         )
 
+    def _handle_full_report_request(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+    ) -> dict[str, Any]:
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="user",
+            text=text,
+        )
+        snapshot = self._chat_controller.get_chat_session(context_id=conversation_key)
+        context = snapshot.get("context")
+        report_id = ""
+        if isinstance(context, dict):
+            report_id = str(context.get("activeReportId") or "").strip()
+        if not report_id:
+            reply_text = "没有找到可发送的完整报告。请先等待报告完成。"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=reply_text,
+            )
+            return self._remember(
+                message.request_id,
+                {"handled": True, "replyText": reply_text, "state": "failed"},
+            )
+        if self._request_full_report_file is None:
+            reply_text = "完整报告发送暂不可用，请在设备界面查看。"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=reply_text,
+            )
+            return self._remember(
+                message.request_id,
+                {"handled": True, "replyText": reply_text, "state": "failed"},
+            )
+
+        target = ChannelReplyTarget(
+            channel_kind=message.channel_kind,
+            account_id=message.account_id,
+            sender_id=message.sender_id,
+        )
+        result = self._request_full_report_file(
+            report_id,
+            f"channel-full-report:{message.request_id}",
+            target,
+        )
+        reply_text = str(result.get("userMessage") or "").strip() or (
+            "完整报告已发送。" if result.get("sent") else "完整报告文件暂不可发送，请在设备界面查看。"
+        )
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="system",
+            text=reply_text,
+        )
+        return self._remember(
+            message.request_id,
+            {"handled": True, "replyText": reply_text, "state": "sent" if result.get("sent") else "failed"},
+        )
+
+    def _handle_normal_chat(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+    ) -> dict[str, Any]:
+        result = self._chat_controller.send_chat_message(
+            request_id=message.request_id,
+            context_id=conversation_key,
+            text=text,
+        )
+        error = _extract_error(result)
+        if error is not None:
+            return self._remember(
+                message.request_id,
+                {"handled": True, "replyText": error, "state": "failed"},
+            )
+        reply_text = str(result.get("assistantReply") or "").strip()
+        if not reply_text:
+            return self._remember(
+                message.request_id,
+                {"handled": True, "replyText": "已收到，但助手暂时没有返回内容。", "state": "empty_reply"},
+            )
+        return self._remember(
+            message.request_id,
+            {"handled": True, "replyText": reply_text, "state": "replied"},
+        )
+
     def _remember(self, request_id: str, result: dict[str, Any]) -> dict[str, Any]:
         self._idempotency[request_id] = result
         return result
+
+    def latest_conversation_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            conversation_key = self._latest_conversation_key
+        if not conversation_key:
+            return {"channelKind": "wechat_clawbot", "messages": [], "confirmationCards": {}}
+        snapshot = self._chat_controller.get_chat_session(context_id=conversation_key)
+        return {"channelKind": "wechat_clawbot", **snapshot}
+
+    def _remember_latest_conversation(self, conversation_key: str) -> None:
+        with self._lock:
+            self._latest_conversation_key = conversation_key
 
     @staticmethod
     def _conversation_key(message: ChannelTextMessage) -> str:
@@ -143,6 +271,19 @@ def _parse_confirmation_decision(text: str) -> str | None:
     if normalized in {"取消", "放弃", "不要", "cancel", "no", "n"}:
         return "cancel"
     return None
+
+
+def _looks_like_full_report_request(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized in {
+        "发送完整报告",
+        "发完整报告",
+        "发送全文",
+        "发全文",
+        "完整报告",
+        "全文",
+        "send full report",
+    }
 
 
 def _extract_error(result: dict[str, Any]) -> str | None:

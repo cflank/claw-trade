@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
@@ -21,6 +22,7 @@ _RUN_SINGLE_WORKER_SCOPES = ("operator.read", "operator.write")
 
 
 def create_default_runner() -> OpenClawLocalRunner:
+    runtime_env = _read_runtime_env_defaults()
     raw_url = os.environ.get("OPENCLAW_GATEWAY_URL", _DEFAULT_GATEWAY_WS_URL).strip() or _DEFAULT_GATEWAY_WS_URL
     gateway_ws_url = _normalize_gateway_ws_url(raw_url)
     timeout_raw = os.environ.get("OPENCLAW_GATEWAY_TIMEOUT_MS", "").strip()
@@ -28,12 +30,16 @@ def create_default_runner() -> OpenClawLocalRunner:
     gateway_call_bin = os.environ.get("OPENCLAW_GATEWAY_CALL_BIN", "openclaw").strip() or "openclaw"
     token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip() or None
     password = os.environ.get("OPENCLAW_GATEWAY_PASSWORD", "").strip() or None
+    state_dir = os.environ.get("OPENCLAW_STATE_DIR", "").strip() or runtime_env.get("OPENCLAW_STATE_DIR")
+    config_path = os.environ.get("OPENCLAW_CONFIG_PATH", "").strip() or runtime_env.get("OPENCLAW_CONFIG_PATH")
     return OpenClawLocalRunner(
         gateway_ws_url=gateway_ws_url,
         timeout_ms=timeout_ms,
         token=token,
         password=password,
         gateway_call_bin=gateway_call_bin,
+        state_dir=state_dir,
+        config_path=config_path,
     )
 
 
@@ -45,6 +51,8 @@ class OpenClawLocalRunner:
     password: str | None = None
     gateway_health_path: str = "/health"
     gateway_call_bin: str = "openclaw"
+    state_dir: str | None = None
+    config_path: str | None = None
 
     def probe(self) -> ProbeResult:
         health_ok, health_reason = self._probe_health()
@@ -133,11 +141,14 @@ class OpenClawLocalRunner:
             command.extend(["--token", self.token])
         elif self.password:
             command.extend(["--password", self.password])
-        child_env: dict[str, str] | None = None
+        child_env = dict(os.environ)
         if self.gateway_ws_url == _DEFAULT_GATEWAY_WS_URL and not self.token and not self.password:
             # 默认本机直连时移除子进程 URL 环境变量，避免 CLI 误判为 env override。
-            child_env = dict(os.environ)
             child_env.pop("OPENCLAW_GATEWAY_URL", None)
+        if self.state_dir:
+            child_env["OPENCLAW_STATE_DIR"] = self.state_dir
+        if self.config_path:
+            child_env["OPENCLAW_CONFIG_PATH"] = self.config_path
 
         try:
             try:
@@ -199,6 +210,32 @@ def _normalize_gateway_ws_url(raw: str) -> str:
     if "://" not in raw:
         return f"ws://{raw}"
     raise ValueError(f"OPENCLAW_GATEWAY_URL 非法: {raw}")
+
+
+def _read_runtime_env_defaults() -> dict[str, str]:
+    runtime_env_path = Path.cwd() / ".runtime" / "dev-services" / "runtime.env"
+    if not runtime_env_path.is_file():
+        return {}
+    wanted = {"OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH"}
+    values: dict[str, str] = {}
+    for raw_line in runtime_env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _equals, _raw_value = line.partition("=")
+        key = key.strip()
+        if key not in wanted:
+            continue
+        try:
+            parts = shlex.split(line, posix=True)
+        except ValueError:
+            parts = [line]
+        if not parts:
+            continue
+        _parsed_key, _separator, parsed_value = parts[0].partition("=")
+        if parsed_value.strip():
+            values[key] = parsed_value.strip()
+    return values
 
 
 def _health_url_from_ws(ws_url: str, health_path: str) -> str:

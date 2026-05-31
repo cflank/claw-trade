@@ -1,0 +1,17 @@
+{
+  "id": "claw-trade-selection-tools",
+  "name": "claw-trade selection tools",
+  "description": "Registers canonical selection candidate-pack tool.",
+  "contracts": {
+    "tools": [
+      "claw_get_selection_candidate_pack"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

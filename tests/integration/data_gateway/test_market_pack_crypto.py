@@ -41,7 +41,7 @@ def test_market_pack_crypto_keeps_provider_priority_and_chart_root_cause() -> No
         start_date="2026-04-01",
         end_date="2026-05-17",
         current_date="2026-05-17",
-        currency="USD",
+        currency="USDT",
         profile="CRYPTO",
         freshness_policy=FreshnessPolicy(max_age_seconds=300),
     )
@@ -63,7 +63,7 @@ def test_market_pack_crypto_keeps_provider_priority_and_chart_root_cause() -> No
         "ahr999_index",
     }
     assert specs_by_endpoint["crypto_price_historical"].provider == "openbb_yfinance"
-    assert specs_by_endpoint["crypto_price_historical"].params["symbol"] == "BTCUSD"
+    assert specs_by_endpoint["crypto_price_historical"].params["symbol"] == "BTCUSDT"
     assert all(spec.provider_config_version == "cfg-crypto" for spec in specs)
     assert all(spec.coverage_group for spec in specs)
     assert all(spec.coverage_quorum == 1 for spec in specs)
@@ -92,7 +92,7 @@ def test_market_pack_crypto_keeps_provider_priority_and_chart_root_cause() -> No
             "low": 79000 + day,
             "close": 80500 + day,
             "volume": 1000 + day,
-            "currency": "USD",
+            "currency": "USDT",
             "timezone": "UTC",
         }
         for day in range(1, 28)
@@ -384,7 +384,7 @@ def _crypto_request_plan() -> tuple[PackRequest, RunProviderPlan, dict[str, obje
         start_date="2026-04-01",
         end_date="2026-05-17",
         current_date="2026-05-17",
-        currency="USD",
+        currency="USDT",
         profile="CRYPTO",
         freshness_policy=FreshnessPolicy(max_age_seconds=300),
     )
@@ -418,7 +418,7 @@ def _crypto_rows(count: int) -> list[dict[str, object]]:
             "low": 79000 + day,
             "close": 80500 + day,
             "volume": 1000 + day,
-            "currency": "USD",
+            "currency": "USDT",
             "timezone": "UTC",
         }
         for day in range(count)

@@ -59,8 +59,16 @@ class _NoopChannelBridge:
         _ = probe
         return {"state": "connected", "canSendText": True, "canSendFile": True}
 
-    def send_text(self, *, channel_kind: str, text: str, dedupe_key: str) -> dict[str, object]:
-        _ = (channel_kind, text, dedupe_key)
+    def send_text(
+        self,
+        *,
+        channel_kind: str,
+        text: str,
+        dedupe_key: str,
+        target: str | None = None,
+        account_id: str | None = None,
+    ) -> dict[str, object]:
+        _ = (channel_kind, text, dedupe_key, target, account_id)
         return {"sent": True}
 
     def send_report_file_via_channel(
@@ -70,9 +78,12 @@ class _NoopChannelBridge:
         report_id: str,
         channel_kind: str,
         file_name: str,
-        payload: bytes,
+        payload: bytes | None = None,
+        file_path=None,
+        target: str | None = None,
+        account_id: str | None = None,
     ) -> dict[str, object]:
-        _ = (request_id, report_id, channel_kind, file_name, payload)
+        _ = (request_id, report_id, channel_kind, file_name, payload, file_path, target, account_id)
         return {"sent": True, "messageId": "m1"}
 
 
@@ -196,7 +207,7 @@ def test_pdf_file_failure_returns_file_send_unsupported() -> None:
         PdfExportService(repo, renderer=_FailPdfRenderer()),
         _NoopChannelBridge(),
     )
-    result = service.request_full_report_file("r-pdf-fail", "req-pdf-fail")
+    result = service.request_full_report_file("r-pdf-fail", "req-pdf-fail", target="sender-1")
     assert result["sent"] is False
     assert result["code"] == "FILE_SEND_UNSUPPORTED"
 

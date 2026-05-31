@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import hashlib
+from dataclasses import dataclass, field
 from typing import Callable, Iterable, Mapping, Protocol
 
 from claw_trade.data_gateway.errors import DataGatewayError, DataGatewayErrorCode
@@ -98,6 +98,14 @@ class RunProviderPlanner:
 
             for capability in capabilities:
                 call_key = _call_key(capability.domain, capability.adapter_id, capability.endpoint)
+                data_type = capability.data_type or capability.expected_schema_id
+                requirement_id = _requirement_id(
+                    run_id=run_id,
+                    market=market,
+                    domain=domain,
+                    data_type=data_type,
+                    ticker=ticker,
+                )
                 call_specs.append(
                     ProviderCallSpec(
                         call_key=call_key,
@@ -132,6 +140,8 @@ class RunProviderPlanner:
                         priority_source=capability.priority_source,
                         user_preferred=capability.priority_source == PrioritySource.USER_PREFERRED,
                         raw_export_policy=capability.raw_export_policy,
+                        requirement_id=requirement_id,
+                        data_type=data_type,
                     )
                 )
 
@@ -147,7 +157,7 @@ class RunProviderPlanner:
                     DataGap(
                         gap_id=f"{run_id}:{domain.value}:{capability.adapter_id}:credential_missing",
                         domain=domain,
-                        severity=GapSeverity.FAIL,
+                        severity=GapSeverity.FAIL if capability.required else GapSeverity.WARN,
                         reason=DataGapReason.CREDENTIAL_MISSING,
                         field_path="credentials",
                         provider_candidates=(capability.provider,),
@@ -275,6 +285,11 @@ def _call_key(domain: PackDomain, adapter_id: str, endpoint: str) -> str:
     return f"{domain.value}:{adapter_id}:{endpoint}"
 
 
+def _requirement_id(*, run_id: str, market: Market, domain: PackDomain, data_type: str, ticker: str) -> str:
+    raw = "|".join((run_id, market.value, domain.value, data_type, ticker.strip().upper()))
+    return "req:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
 def _provider_params(
     *,
     market: Market,
@@ -307,6 +322,29 @@ def _provider_params(
                 "timezone": "Asia/Hong_Kong",
             }
         )
+    if market == Market.HK and domain == PackDomain.MARKET and endpoint == "chart_yahoo":
+        code = normalize_hk_symbol_for_stock_hk_daily(ticker)
+        yahoo_code = code.lstrip("0")
+        if len(yahoo_code) < 4:
+            yahoo_code = code[-4:]
+        params.update(
+            {
+                "symbol": f"{yahoo_code}.HK",
+                "interval": "1d",
+                "currency": "HKD",
+                "timezone": "Asia/Hong_Kong",
+            }
+        )
+    if market == Market.US and domain == PackDomain.MARKET and endpoint in {"daily_sina", "chart_yahoo"}:
+        params.update(
+            {
+                "symbol": ticker.strip().upper(),
+                "currency": "USD",
+                "timezone": "America/New_York",
+            }
+        )
+        if endpoint == "chart_yahoo":
+            params["interval"] = "1d"
     if market == Market.CRYPTO and domain == PackDomain.MARKET:
         params["symbol"] = _normalize_crypto_symbol_for_openbb(ticker)
         params["timezone"] = "UTC"

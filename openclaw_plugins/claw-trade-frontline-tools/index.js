@@ -44,6 +44,10 @@ const DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS = 25000;
 const SUBPROCESS_TIMEOUT_BUFFER_MS = 5000;
 const STDERR_SUMMARY_MAX_CHARS = 2000;
 const STDOUT_SUMMARY_MAX_CHARS = 2000;
+const WECHAT_CHANNEL_ID = "openclaw-weixin";
+const UI_CHANNEL_KIND = "wechat_clawbot";
+const DEFAULT_UI_INBOUND_TIMEOUT_MS = 60000;
+const IMMEDIATE_INBOUND_ACK_TEXT = "收到，正在处理。";
 
 const OPTIONAL_TEXT = {
   type: "string",
@@ -82,6 +86,21 @@ function isRecord(value) {
 
 function textValue(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function nonNegativeIntegerValue(value) {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+  return parsed;
+}
+
+function readInboundTimeoutMs() {
+  return nonNegativeIntegerValue(process.env.CLAW_TRADE_UI_INBOUND_TIMEOUT_MS) ?? DEFAULT_UI_INBOUND_TIMEOUT_MS;
 }
 
 function safeToken(value, fallback = "unknown") {
@@ -173,6 +192,170 @@ function runtimeOnlyPositiveNumber(runtimeVars, fieldName) {
     );
   }
   return value;
+}
+
+function currentDispatchCounts(dispatcher) {
+  const counts = dispatcher?.getQueuedCounts?.();
+  if (!isRecord(counts)) {
+    return { tool: 0, block: 0, final: 0 };
+  }
+  return {
+    tool: Number(counts.tool) || 0,
+    block: Number(counts.block) || 0,
+    final: Number(counts.final) || 0,
+  };
+}
+
+function resolveInboundChannelId(event) {
+  const ctx = isRecord(event?.ctx) ? event.ctx : {};
+  const channel =
+    textValue(event?.originatingChannel) ??
+    textValue(ctx.OriginatingChannel) ??
+    textValue(ctx.Surface) ??
+    textValue(ctx.Provider);
+  return channel ? channel.toLowerCase() : undefined;
+}
+
+function resolveInboundText(ctx) {
+  return (
+    textValue(ctx.BodyForCommands) ??
+    textValue(ctx.CommandBody) ??
+    textValue(ctx.RawBody) ??
+    textValue(ctx.Body)
+  );
+}
+
+function resolveInboundMessageId(ctx) {
+  return (
+    textValue(ctx.MessageSidFull) ??
+    textValue(ctx.MessageSid) ??
+    textValue(ctx.MessageSidFirst) ??
+    textValue(ctx.MessageSidLast)
+  );
+}
+
+function resolveInboundSenderId(ctx) {
+  return (
+    textValue(ctx.SenderId) ??
+    textValue(ctx.From) ??
+    textValue(ctx.SenderUsername) ??
+    textValue(ctx.SenderName)
+  );
+}
+
+function resolveInboundReceivedAt(ctx) {
+  const timestamp = Number(ctx?.Timestamp);
+  if (Number.isFinite(timestamp) && timestamp > 0) {
+    return new Date(timestamp).toISOString();
+  }
+  return undefined;
+}
+
+function buildUiInboundPayload(event) {
+  if (!isRecord(event?.ctx)) {
+    return null;
+  }
+  if (resolveInboundChannelId(event) !== WECHAT_CHANNEL_ID) {
+    return null;
+  }
+  const ctx = event.ctx;
+  const text = resolveInboundText(ctx);
+  if (!text) {
+    return null;
+  }
+  const senderId = resolveInboundSenderId(ctx);
+  if (!senderId) {
+    return null;
+  }
+  const messageId = resolveInboundMessageId(ctx);
+  const runId = textValue(event.runId) ?? "unknown-run";
+  const requestId = `wechat-inbound-${runId}-${safeToken(messageId ?? senderId)}`;
+  const payload = {
+    requestId,
+    channelKind: UI_CHANNEL_KIND,
+    accountId: textValue(ctx.AccountId) ?? undefined,
+    senderId,
+    text,
+    messageId: messageId ?? undefined,
+    receivedAt: resolveInboundReceivedAt(ctx),
+  };
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
+}
+
+function looksLikeReportRequestText(text) {
+  const normalized = text.trim().toLowerCase();
+  return (
+    normalized === "report" ||
+    normalized.startsWith("report ") ||
+    normalized.startsWith("/report") ||
+    text.includes("报告") ||
+    text.includes("研报") ||
+    text.includes("投研")
+  );
+}
+
+function shouldSendImmediateInboundAck(payload) {
+  const text = textValue(payload?.text);
+  return Boolean(text && !looksLikeReportRequestText(text));
+}
+
+async function postInboundMessageToUi(url, payload, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      console.warn(`[claw-trade-frontline-tools] inbound UI bridge HTTP ${response.status}`);
+      return null;
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function handleReplyDispatchHook(event, ctx) {
+  const counts = currentDispatchCounts(ctx?.dispatcher);
+  const inboundUrl = textValue(process.env.CLAW_TRADE_UI_INBOUND_URL);
+  if (!inboundUrl) {
+    return { handled: false, queuedFinal: false, counts };
+  }
+  const payload = buildUiInboundPayload(event);
+  if (!payload) {
+    return { handled: false, queuedFinal: false, counts };
+  }
+  const ackQueued = shouldSendImmediateInboundAck(payload)
+    ? Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: IMMEDIATE_INBOUND_ACK_TEXT }))
+    : false;
+  try {
+    const inboundResult = await postInboundMessageToUi(inboundUrl, payload, readInboundTimeoutMs());
+    if (!isRecord(inboundResult)) {
+      return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+    }
+    if (inboundResult.handled !== true) {
+      return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+    }
+    const replyText = textValue(inboundResult.replyText);
+    if (!replyText) {
+      console.warn("[claw-trade-frontline-tools] inbound UI bridge returned handled=true without replyText");
+      return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+    }
+    const queuedFinal = Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: replyText }));
+    return {
+      handled: true,
+      queuedFinal: ackQueued || queuedFinal,
+      counts: currentDispatchCounts(ctx?.dispatcher),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[claw-trade-frontline-tools] inbound UI bridge failed: ${message}`);
+    return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+  }
 }
 
 function ignoredModelInputFields(params) {
@@ -813,6 +996,9 @@ export default definePluginEntry({
   name: "claw-trade frontline tools",
   description: "Registers claw-trade frontline data pack tools.",
   register(api) {
+    if (typeof api.on === "function") {
+      api.on("reply_dispatch", handleReplyDispatchHook);
+    }
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetMarketPack,

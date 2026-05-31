@@ -11,7 +11,7 @@ stage: frontline
 
 可用工具：`claw_get_market_pack`。
 
-如果消息历史中没有市场数据工具结果，请先调用 `claw_get_market_pack` 获取数据。
+如果消息历史中没有市场数据资料包，只调用一次 `claw_get_market_pack` 获取数据；如果工具返回失败或缺口，不要重复调用，直接基于缺口说明写清数据限制。
 
 工具调用时不需要填写 ticker、market、日期或币种；这些运行参数已由系统上下文锁定。
 

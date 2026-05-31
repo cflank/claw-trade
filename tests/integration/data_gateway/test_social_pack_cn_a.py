@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -12,6 +13,7 @@ from claw_trade.data_gateway.models import (
     PackRequest,
     PrioritySource,
     ProviderCallSpec,
+    ProviderCapability,
     ProviderFetch,
     ProviderKind,
     ProviderStatus,
@@ -20,8 +22,42 @@ from claw_trade.data_gateway.models import (
     SourceRole,
 )
 from claw_trade.data_gateway.packs.social import SocialPackBuilder
+from claw_trade.data_gateway.providers.execution import ProviderExecutionEvidenceHelper
 from claw_trade.data_gateway.providers.social import build_default_social_adapters, social_capabilities
 from claw_trade.data_gateway.providers.social_source_roles import is_social_search_discovery_provider
+from claw_trade.data_gateway.store.attempts import MongoAttemptStore
+from claw_trade.data_gateway.store.http_evidence import MongoProviderHttpEvidenceStore
+from claw_trade.data_gateway.store.normalized import MongoNormalizedStore
+from claw_trade.data_gateway.store.raw_payloads import MongoRawPayloadStore
+
+
+class _Collection:
+    name = "test_collection"
+
+    def __init__(self) -> None:
+        self.docs: dict[str, dict[str, Any]] = {}
+
+    def update_one(self, query: dict[str, Any], update: dict[str, Any], upsert: bool = False) -> None:
+        del upsert
+        key = query["_id"]
+        current = self.docs.get(key, {})
+        current.update(update.get("$setOnInsert", {}))
+        current.update(update.get("$set", {}))
+        if "_id" not in current:
+            current["_id"] = key
+        self.docs[key] = current
+
+    def insert_one(self, doc: dict[str, Any]) -> None:
+        self.docs[doc["_id"]] = dict(doc)
+
+
+def _helper() -> ProviderExecutionEvidenceHelper:
+    return ProviderExecutionEvidenceHelper(
+        raw_store=MongoRawPayloadStore(_Collection()),
+        normalized_store=MongoNormalizedStore(_Collection()),
+        attempt_store=MongoAttemptStore(_Collection()),
+        http_evidence_store=MongoProviderHttpEvidenceStore(_Collection()),
+    )
 
 
 @dataclass
@@ -32,11 +68,36 @@ class _SocialContractAdapter:
     status: ProviderStatus
     rows: tuple[dict[str, str], ...]
     credential_missing: bool = False
+    market: Market = Market.US
     adapter_kind: str = "project_extension"
     provider_kind: ProviderKind = ProviderKind.PROJECT_EXTENSION
+    endpoint: str | None = None
 
-    def capabilities(self) -> tuple[object, ...]:
-        return ()
+    def capabilities(self) -> tuple[ProviderCapability, ...]:
+        if self.endpoint is None:
+            return ()
+        return (
+            ProviderCapability(
+                provider=self.provider_id,
+                adapter_id=self.adapter_id,
+                provider_kind=self.provider_kind,
+                market=self.market,
+                domain=PackDomain.SOCIAL,
+                endpoint=self.endpoint,
+                source_role=self.source_role,
+                expected_schema_id=f"{self.provider_id}.social.v1",
+                license_policy_id="personal_research",
+                credential_requirements=(),
+                rate_limit_policy_id="test",
+                cache_ttl_seconds=300,
+                required=True,
+                attempt_required=True,
+                coverage_group=None,
+                coverage_quorum=None,
+                priority=0,
+                priority_source=PrioritySource.SYSTEM_DEFAULT,
+            ),
+        )
 
     def validate_credentials(self) -> CredentialStatus:
         if self.credential_missing:
@@ -103,6 +164,8 @@ def _social_request(market: Market) -> PackRequest:
 
 
 def _social_spec(market: Market, adapter: _SocialContractAdapter, endpoint: str) -> ProviderCallSpec:
+    adapter.market = market
+    adapter.endpoint = endpoint
     return ProviderCallSpec(
         call_key=f"social:{adapter.adapter_id}:{endpoint}",
         provider=adapter.provider_id,
@@ -239,6 +302,7 @@ def assert_social_pack_contract_for_market(market: Market) -> None:
         request=request,
         run_plan=_run_plan(market, specs),
         adapters_by_id={adapter.adapter_id: adapter for adapter in adapters},
+        provider_execution_helper=_helper(),
     )
 
     assert result.readiness.status == ReadinessStatus.PARTIAL
@@ -292,6 +356,7 @@ def test_social_pack_crypto_search_discovery_does_not_prove_consensus_or_institu
         request=_social_request(Market.CRYPTO),
         run_plan=_run_plan(Market.CRYPTO, specs),
         adapters_by_id={aggregate.adapter_id: aggregate, search.adapter_id: search},
+        provider_execution_helper=_helper(),
     )
 
     assert result.readiness.status == ReadinessStatus.READY

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
+from claw_trade.instruments.resolver import resolve_instrument_identity
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.scope_guard import FirstVersionScopeError, assert_schedule_frequency_supported
 from claw_trade.ui_contracts.user_dto import (
@@ -14,6 +15,7 @@ from claw_trade.ui_contracts.user_dto import (
     to_report_task_for_user,
     to_scheduled_report_for_user,
 )
+from claw_trade.workflow.report_request_factory import report_display_name
 
 
 class UiServiceError(RuntimeError):
@@ -92,6 +94,8 @@ class SchedulerService:
         if frequency == "weekly":
             if weekday is None or weekday < 0 or weekday > 6:
                 raise UiServiceError("INVALID_INPUT", "每周计划需要 weekday(0-6)。")
+        identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
+        market_value = MarketProfile(identity.profile)
         next_run_at = self.compute_next_run_at(
             frequency=frequency,
             time_of_day=time_text,
@@ -101,8 +105,8 @@ class SchedulerService:
         now_iso = self._now_iso()
         item = ScheduledReport(
             id=self._next_schedule_id(),
-            instrument_code=instrument_code.strip().upper(),
-            instrument_name=instrument_name,
+            instrument_code=identity.ticker,
+            instrument_name=instrument_name or report_display_name(identity.ticker, identity.profile),
             market=market_value,
             frequency=frequency,
             time_of_day=time_text,

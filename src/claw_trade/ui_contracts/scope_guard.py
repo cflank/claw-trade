@@ -60,7 +60,13 @@ def assert_schedule_frequency_supported(frequency: str) -> None:
 
 def assert_data_source_type_supported(source_type: str) -> None:
     normalized = source_type.strip().lower()
-    blocked = {"custom_http", "customjsonmapping", "custom_json_mapping", "unknown_http_json"}
+    blocked = {
+        "custom_http",
+        "customjsonmapping",
+        "custom_json",
+        "custom_json_mapping",
+        "unknown_http_json",
+    }
     if normalized in blocked:
         raise FirstVersionScopeError(
             "unknown_http_json_data_source",

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from claw_trade.selection.confirmation import SelectionConfirmationError, SelectionConfirmRequest
 from claw_trade.ui_backend.channel_text_inbound import ChannelTextMessage
 from claw_trade.ui_backend.error_translator import translate_internal_error_for_user
 from claw_trade.ui_backend.price_alert_service import UiServiceError as PriceAlertServiceError
@@ -51,6 +52,13 @@ class ConfirmIntentDraftRequest(BaseModel):
     draftId: str
     decision: str
     overrides: dict[str, Any] | None = None
+
+
+class ConfirmSelectionReportRequest(BaseModel):
+    requestId: str
+    selectWorkflowRunId: str
+    ticker: str
+    originContextId: str | None = None
 
 
 class CreateScheduledReportRequest(BaseModel):
@@ -112,6 +120,21 @@ class TestLlmRequest(BaseModel):
     provider: str
     model: str | None = None
     endpointUrl: str | None = None
+    apiKeyReplacement: str | None = None
+
+
+class TestEmbeddingRequest(BaseModel):
+    requestId: str
+    embedding: dict[str, Any]
+
+
+class SaveEmbeddingConfigRequest(BaseModel):
+    requestId: str
+    embedding: dict[str, Any]
+
+
+class ResetSettingsToDefaultsRequest(BaseModel):
+    requestId: str
 
 
 class SendReportFileRequest(BaseModel):
@@ -188,6 +211,50 @@ def confirm_intent_draft(payload: ConfirmIntentDraftRequest, request: Request) -
         return _exception_response(exc)
 
 
+@router.post("/confirm-selection-report")
+def confirm_selection_report(payload: ConfirmSelectionReportRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        result = services.selection_confirmation.confirm(
+            SelectionConfirmRequest(
+                confirmation_id=payload.requestId,
+                idempotency_key=f"{payload.selectWorkflowRunId}:{payload.ticker.strip().upper()}:{payload.requestId}",
+                select_workflow_run_id=payload.selectWorkflowRunId,
+                ticker=payload.ticker,
+                origin_context_id=payload.originContextId,
+            )
+        )
+        response: dict[str, Any] = {
+            "code": result.code,
+            "reportTaskId": result.report_task_id,
+            "reportRunId": result.report_run_id,
+            "reportHandoffDedupeKey": result.report_handoff_dedupe_key,
+            "queuePayload": result.queue_payload,
+            "deduped": result.deduped,
+            "queueSnapshot": services.queue.get_report_queue_snapshot_for_user(),
+        }
+        task_id = str(result.report_task_id or "").strip()
+        if task_id:
+            snapshot = response["queueSnapshot"]
+            tasks = []
+            running = snapshot.get("runningTask") if isinstance(snapshot, dict) else None
+            if running is not None:
+                tasks.append(running)
+            queued = snapshot.get("queuedTasks") if isinstance(snapshot, dict) else None
+            if isinstance(queued, list):
+                tasks.extend(queued)
+            terminal = snapshot.get("lastTerminalTask") if isinstance(snapshot, dict) else None
+            if terminal is not None:
+                tasks.append(terminal)
+            response["task"] = next(
+                (task for task in tasks if isinstance(task, dict) and str(task.get("taskId") or "") == task_id),
+                None,
+            )
+        return _success_response(response)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/channel-inbound-message")
 def channel_inbound_message(payload: ChannelInboundMessageRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -204,6 +271,15 @@ def channel_inbound_message(payload: ChannelInboundMessageRequest, request: Requ
             )
         )
         return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/get-channel-chat-snapshot")
+def get_channel_chat_snapshot(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.channel_text_inbound.latest_conversation_snapshot())
     except Exception as exc:
         return _exception_response(exc)
 
@@ -535,6 +611,42 @@ def load_llm_settings(request: Request, provider: str | None = Query(default=Non
         return _exception_response(exc)
 
 
+@router.get("/get-advanced-diagnostics-provider-health")
+def get_advanced_diagnostics_provider_health(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.llm_bridge.get_provider_health_summary())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/get-advanced-diagnostics-runtime-service-status")
+def get_advanced_diagnostics_runtime_service_status(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.llm_bridge.get_runtime_service_status_summary())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/get-advanced-diagnostics-live-run-gap-summary")
+def get_advanced_diagnostics_live_run_gap_summary(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.llm_bridge.get_live_run_gap_summary())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/get-advanced-diagnostics-evidence-failure-reason-summary")
+def get_advanced_diagnostics_evidence_failure_reason_summary(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.llm_bridge.get_evidence_failure_reason_summary())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/save-llm-config-via-openclaw")
 def save_llm_config_via_openclaw(payload: SaveLlmConfigRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -558,10 +670,65 @@ def test_llm_via_openclaw(payload: TestLlmRequest, request: Request) -> JSONResp
                 "provider": payload.provider,
                 "model": payload.model,
                 "endpointUrl": payload.endpointUrl,
+                "apiKeyReplacement": payload.apiKeyReplacement,
             },
             request_id=payload.requestId,
         )
         return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/test-embedding-via-openviking")
+def test_embedding_via_openviking(payload: TestEmbeddingRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        result = services.llm_bridge.test_embedding_via_openviking(
+            payload.embedding,
+            request_id=payload.requestId,
+        )
+        return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/save-embedding-config-via-openviking")
+def save_embedding_config_via_openviking(payload: SaveEmbeddingConfigRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        result = services.llm_bridge.save_embedding_config_via_openviking(
+            payload.embedding,
+            request_id=payload.requestId,
+        )
+        return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/reset-settings-to-defaults")
+def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        llm_result = services.llm_bridge.reset_llm_settings_to_defaults(
+            request_id=f"{payload.requestId}:llm",
+        )
+        data_sources_result = services.data_source_settings.reset_to_defaults(
+            request_id=f"{payload.requestId}:data-sources",
+        )
+        channel_result = services.channel_bridge.save_channel_config_via_openclaw(
+            request_id=f"{payload.requestId}:channel",
+            channel_kind="wechat_clawbot",
+            config_patch={"enabled": False},
+        )
+        return _success_response(
+            {
+                "status": "reset",
+                "userMessage": "设置已恢复默认。",
+                "llm": llm_result,
+                "dataSources": data_sources_result,
+                "channel": channel_result.get("status"),
+            }
+        )
     except Exception as exc:
         return _exception_response(exc)
 
@@ -635,6 +802,8 @@ def _exception_response(exc: Exception) -> JSONResponse:
         return _error_response(exc.code, exc.message)
     if isinstance(exc, PriceAlertServiceError):
         return _error_response(exc.code, exc.message)
+    if isinstance(exc, SelectionConfirmationError):
+        return _error_response("CONFIRMATION_REQUIRED", exc.user_message)
     if isinstance(exc, ValueError) and str(exc).strip() == "assistant_unavailable":
         return _error_response("ASSISTANT_UNAVAILABLE", "助手服务暂不可用，请稍后重试。")
     mapped = translate_internal_error_for_user(exc)
@@ -676,6 +845,7 @@ def _status_code_for_error(code: str) -> int:
         "NOTIFICATION_UNAVAILABLE": 503,
         "FILE_SEND_UNSUPPORTED": 409,
         "ASSISTANT_UNAVAILABLE": 503,
+        "REPORT_MODEL_NOT_READY": 409,
         "DATASOURCE_TEST_FAILED": 409,
         "REPORT_EXPORT_FAILED": 500,
         "PDF_EXPORT_FAILED": 500,

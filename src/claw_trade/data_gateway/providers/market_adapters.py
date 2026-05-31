@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
 import hashlib
 import json
+import math
 import os
+import random
 import re
+import time
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
-import requests
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -27,10 +28,115 @@ from claw_trade.data_gateway.models import (
     SourceRole,
     utc_now_iso,
 )
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
 from claw_trade.data_gateway.providers.base import ProviderAdapter
-from claw_trade.data_gateway.providers.tushare_client import call_tushare_pro_bar, create_tushare_pro
+from claw_trade.data_gateway.providers.tushare_client import (
+    call_tushare_pro_bar,
+    create_tushare_pro,
+)
 
 _HTTP_TIMEOUT_SECONDS = 15
+_EASTMONEY_A_SPOT_HOSTS = (
+    "82.push2.eastmoney.com",
+    "81.push2.eastmoney.com",
+    "80.push2.eastmoney.com",
+    "79.push2.eastmoney.com",
+    "78.push2.eastmoney.com",
+    "77.push2.eastmoney.com",
+    "push2.eastmoney.com",
+)
+_EASTMONEY_A_SPOT_URL = f"https://{_EASTMONEY_A_SPOT_HOSTS[0]}/api/qt/clist/get"
+_EASTMONEY_A_SPOT_PAGE_SIZE = 5000
+_EASTMONEY_A_SPOT_MAX_RETRIES = 12
+_EASTMONEY_A_SPOT_REQUEST_INTERVAL_SECONDS = 0.2
+_EASTMONEY_A_SPOT_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Referer": "https://quote.eastmoney.com/",
+    "Accept": "application/json,text/plain,*/*",
+    "Connection": "close",
+}
+_EASTMONEY_A_SPOT_FIELDS = (
+    "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,f17,f18,"
+    "f20,f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152,f100"
+)
+_CN_A_SELECTION_COMPLETE_BATCH_ENDPOINTS = frozenset(
+    {
+        "stock_zh_a_spot_em_batch",
+    }
+)
+_CN_A_SELECTION_PARTIAL_BATCH_ENDPOINTS = frozenset(
+    {
+        "stock_zh_a_spot_mootdx_batch",
+        "stock_zh_a_spot_tencent_batch",
+        "stock_zh_a_spot_sina_batch",
+        "stock_zh_a_daily_baostock_batch",
+    }
+)
+_CN_A_SELECTION_BATCH_ENDPOINTS = _CN_A_SELECTION_COMPLETE_BATCH_ENDPOINTS | _CN_A_SELECTION_PARTIAL_BATCH_ENDPOINTS
+_CN_A_AKSHARE_ROWSET_ENDPOINTS = frozenset(
+    {
+        "stock_board_industry_name_em",
+        "stock_board_concept_name_em",
+    }
+)
+_CN_A_BATCH_QUOTE_CHUNK_SIZE = 150
+_CN_A_EQUITY_PREFIXES_3 = frozenset(
+    {
+        "000",
+        "001",
+        "002",
+        "003",
+        "300",
+        "301",
+        "430",
+        "431",
+        "432",
+        "433",
+        "434",
+        "435",
+        "436",
+        "437",
+        "438",
+        "439",
+        "600",
+        "601",
+        "603",
+        "605",
+        "688",
+        "689",
+        "830",
+        "831",
+        "832",
+        "833",
+        "834",
+        "835",
+        "836",
+        "837",
+        "838",
+        "839",
+        "870",
+        "871",
+        "872",
+        "873",
+        "874",
+        "875",
+        "876",
+        "877",
+        "878",
+        "879",
+        "920",
+        "921",
+        "922",
+        "923",
+        "924",
+        "925",
+        "926",
+        "927",
+        "928",
+        "929",
+    }
+)
 _COINGLASS_DEFAULT_BASE = "https://open-api-v4.coinglass.com"
 _COINGLASS_METRIC_FIELDS = (
     "value",
@@ -81,6 +187,7 @@ _SENSITIVE_QUERY_KEYS = frozenset(
     }
 )
 _URL_PATTERN = re.compile(r"https?://[^\s)>\]]+")
+_CN_A_BATCH_CHUNK_METADATA: dict[str, Mapping[str, Any]] = {}
 
 
 def normalize_hk_symbol_for_stock_hk_daily(ticker: str) -> str:
@@ -124,7 +231,10 @@ class StaticMarketProviderAdapter:
 
     def capabilities(self) -> tuple[ProviderCapability, ...]:
         items: list[ProviderCapability] = []
+        env = os.environ if self.env is None else self.env
+        configured = bool(self.required_env_keys) and all(str(env.get(key, "")).strip() for key in self.required_env_keys)
         for seed in self.capability_seeds:
+            priority_source = PrioritySource.USER_PREFERRED if configured else PrioritySource.SYSTEM_DEFAULT
             items.append(
                 ProviderCapability(
                     provider=seed.provider,
@@ -144,7 +254,7 @@ class StaticMarketProviderAdapter:
                     coverage_group=seed.coverage_group,
                     coverage_quorum=seed.coverage_quorum,
                     priority=seed.priority,
-                    priority_source=PrioritySource.SYSTEM_DEFAULT,
+                    priority_source=priority_source,
                     raw_export_policy=seed.raw_export_policy,
                 )
             )
@@ -218,6 +328,7 @@ class StaticMarketProviderAdapter:
 
     def normalize(self, spec: ProviderCallSpec, fetch: ProviderFetch) -> NormalizedResult:
         rows = _extract_rows(fetch.payload)
+        payload_params = _extract_payload_params(fetch.payload)
         source_raw_ref = _raw_ref(spec=spec, fetch=fetch)
         if not rows:
             return NormalizedResult(
@@ -243,6 +354,19 @@ class StaticMarketProviderAdapter:
             "ahr999_index",
         }:
             return _normalize_crypto_domain_rows(
+                spec=spec,
+                rows=rows,
+                source_raw_ref=source_raw_ref,
+            )
+        if spec.market == Market.CN_A and spec.endpoint in _CN_A_SELECTION_BATCH_ENDPOINTS:
+            return _normalize_cn_a_selection_batch_rows(
+                spec=spec,
+                rows=rows,
+                source_raw_ref=source_raw_ref,
+                payload_params=payload_params,
+            )
+        if spec.market == Market.CN_A and spec.endpoint in _CN_A_AKSHARE_ROWSET_ENDPOINTS:
+            return _normalize_cn_a_generic_rows(
                 spec=spec,
                 rows=rows,
                 source_raw_ref=source_raw_ref,
@@ -335,6 +459,18 @@ def build_default_market_adapters(
                     priority=1,
                 ),
                 _CapabilitySeed(
+                    provider="akshare_spot",
+                    adapter_id="project.cn_a.market",
+                    endpoint="stock_zh_a_spot_em",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_quote",
+                    coverage_quorum=1,
+                    priority=2,
+                ),
+                _CapabilitySeed(
                     provider="baidu_kline",
                     adapter_id="project.cn_a.market",
                     endpoint="kline_baidu",
@@ -345,6 +481,29 @@ def build_default_market_adapters(
                     coverage_group="cn_a_market_kline",
                     coverage_quorum=1,
                     priority=10,
+                ),
+                _CapabilitySeed(
+                    provider="akshare_kline",
+                    adapter_id="project.cn_a.market",
+                    endpoint="stock_zh_a_hist",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.ohlcv.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_market_kline",
+                    coverage_quorum=1,
+                    priority=11,
+                ),
+                _CapabilitySeed(
+                    provider="akshare_minute",
+                    adapter_id="project.cn_a.market",
+                    endpoint="stock_zh_a_hist_min_em",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.minute_ohlcv.v1",
+                    required=False,
+                    attempt_required=True,
+                    priority=13,
+                    cache_ttl_seconds=120,
                 ),
                 _CapabilitySeed(
                     provider="mootdx_orderbook",
@@ -369,6 +528,28 @@ def build_default_market_adapters(
                     coverage_group="cn_a_market_orderbook",
                     coverage_quorum=1,
                     priority=21,
+                ),
+                _CapabilitySeed(
+                    provider="akshare_board_industry",
+                    adapter_id="project.cn_a.market",
+                    endpoint="stock_board_industry_name_em",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.board.v1",
+                    required=False,
+                    attempt_required=True,
+                    priority=30,
+                    cache_ttl_seconds=900,
+                ),
+                _CapabilitySeed(
+                    provider="akshare_board_concept",
+                    adapter_id="project.cn_a.market",
+                    endpoint="stock_board_concept_name_em",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.market.board.v1",
+                    required=False,
+                    attempt_required=True,
+                    priority=31,
+                    cache_ttl_seconds=900,
                 ),
             ),
         ),
@@ -641,6 +822,205 @@ def build_default_market_adapters(
     )
 
 
+def build_cn_a_selection_batch_adapters(
+    *,
+    provider_config_version: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[ProviderAdapter, ...]:
+    return (
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.mootdx_selection_batch",
+            provider_id="cn_a_mootdx_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=(),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="mootdx_selection_batch",
+                    adapter_id="project.cn_a.mootdx_selection_batch",
+                    endpoint="stock_zh_a_spot_mootdx_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=0,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.tencent_selection_batch",
+            provider_id="cn_a_tencent_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=(),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="tencent_selection_batch",
+                    adapter_id="project.cn_a.tencent_selection_batch",
+                    endpoint="stock_zh_a_spot_tencent_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=1,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.sina_selection_batch",
+            provider_id="cn_a_sina_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=(),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="sina_selection_batch",
+                    adapter_id="project.cn_a.sina_selection_batch",
+                    endpoint="stock_zh_a_spot_sina_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=2,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.baostock_selection_batch",
+            provider_id="cn_a.baostock_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=(),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="baostock_selection_batch",
+                    adapter_id="project.cn_a.baostock_selection_batch",
+                    endpoint="stock_zh_a_daily_baostock_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=3,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.eastmoney_selection_batch",
+            provider_id="cn_a_eastmoney_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=(),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="eastmoney_selection_batch",
+                    adapter_id="project.cn_a.eastmoney_selection_batch",
+                    endpoint="stock_zh_a_spot_em_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=10,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.akshare_selection_batch",
+            provider_id="cn_a_akshare_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=(),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="akshare_selection_batch",
+                    adapter_id="project.cn_a.akshare_selection_batch",
+                    endpoint="stock_zh_a_spot_em_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=11,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+        StaticMarketProviderAdapter(
+            adapter_id="project.cn_a.tushare_selection_batch",
+            provider_id="cn_a_tushare_selection_batch",
+            adapter_kind="project_extension",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            provider_config_version=provider_config_version,
+            required_env_keys=("TUSHARE_TOKEN",),
+            env=env,
+            capability_seeds=(
+                _CapabilitySeed(
+                    provider="tushare_selection_batch",
+                    adapter_id="project.cn_a.tushare_selection_batch",
+                    endpoint="stock_zh_a_spot_em_batch",
+                    source_role=SourceRole.MARKET_DATA,
+                    expected_schema_id="cn_a.selection.batch.v1",
+                    required=False,
+                    attempt_required=True,
+                    coverage_group="cn_a_selection_batch",
+                    coverage_quorum=1,
+                    priority=12,
+                    cache_ttl_seconds=900,
+                ),
+            ),
+        ),
+    )
+
+
+def build_cn_a_selection_batch_adapter(
+    *,
+    provider_config_version: str,
+    env: Mapping[str, str] | None = None,
+) -> ProviderAdapter:
+    adapters = build_cn_a_selection_batch_adapters(
+        provider_config_version=provider_config_version,
+        env=env,
+    )
+    for adapter in adapters:
+        if adapter.adapter_id == "project.cn_a.eastmoney_selection_batch":
+            return adapter
+    return adapters[0]
+
+
 def _build_market_params(*, request: PackRequest, endpoint: str) -> Mapping[str, Any]:
     params: dict[str, Any] = {
         "ticker": request.ticker,
@@ -675,7 +1055,68 @@ def _build_market_params(*, request: PackRequest, endpoint: str) -> Mapping[str,
     }:
         params["symbol"] = _normalize_crypto_symbol_for_openbb(request.ticker)
         params["timezone"] = "UTC"
+    if request.market == Market.CN_A and endpoint in _CN_A_SELECTION_BATCH_ENDPOINTS:
+        params["trade_date"] = request.current_date
+        params["currency"] = "CNY"
+        params["timezone"] = "Asia/Shanghai"
+        params.update(_cn_a_selection_source_metadata(endpoint))
+    if request.market == Market.CN_A and endpoint in {
+        "stock_zh_a_spot_em",
+        "stock_zh_a_hist_min_em",
+        "stock_board_industry_name_em",
+        "stock_board_concept_name_em",
+    }:
+        params["symbol"] = _normalize_cn_symbol_for_akshare(request.ticker)
+        params["currency"] = "CNY"
+        params["timezone"] = "Asia/Shanghai"
+    if request.market == Market.CN_A and endpoint == "stock_zh_a_hist_min_em":
+        params["period"] = "5"
+        params["adjust"] = "qfq"
     return params
+
+
+def _cn_a_selection_source_metadata(endpoint: str) -> Mapping[str, Any]:
+    if endpoint == "stock_zh_a_spot_tencent_batch":
+        return {
+            "selection_candidate_type": "partial_batch_candidate",
+            "universe_source": "mootdx.stock_all",
+            "quote_source": "tencent.qt_gtimg",
+            "mixed_source_chain": ["mootdx.stock_all", "tencent.qt_gtimg"],
+        }
+    if endpoint == "stock_zh_a_spot_sina_batch":
+        return {
+            "selection_candidate_type": "partial_batch_candidate",
+            "universe_source": "mootdx.stock_all",
+            "quote_source": "sina.hq",
+            "mixed_source_chain": ["mootdx.stock_all", "sina.hq"],
+        }
+    if endpoint == "stock_zh_a_spot_mootdx_batch":
+        return {
+            "selection_candidate_type": "partial_batch_candidate",
+            "universe_source": "mootdx.stock_all",
+            "quote_source": "mootdx.quotes",
+            "mixed_source_chain": ["mootdx.stock_all", "mootdx.quotes"],
+        }
+    if endpoint == "stock_zh_a_daily_baostock_batch":
+        return {
+            "selection_candidate_type": "partial_batch_candidate",
+            "universe_source": "baostock.query_all_stock",
+            "quote_source": "baostock.query_all_stock",
+            "mixed_source_chain": ["baostock.query_all_stock"],
+        }
+    if endpoint == "stock_zh_a_spot_em_batch":
+        return {
+            "selection_candidate_type": "complete_batch_candidate",
+            "universe_source": "same_as_quote_source",
+            "quote_source": "provider_specific",
+            "mixed_source_chain": ["provider_specific"],
+        }
+    return {
+        "selection_candidate_type": "unsupported",
+        "universe_source": "unknown",
+        "quote_source": "unknown",
+        "mixed_source_chain": ["unknown"],
+    }
 
 
 def _fetch_cn_a(
@@ -695,6 +1136,7 @@ def _fetch_cn_a(
             ts_code=_normalize_cn_symbol_for_tushare(request.ticker),
             start_date=request.start_date,
             end_date=request.end_date,
+            env=env,
         )
         return _build_fetch(
             provider="tushare",
@@ -713,6 +1155,70 @@ def _fetch_cn_a(
             provider="baidu_kline",
             endpoint=spec.endpoint,
             source_url="https://finance.pae.baidu.com/selfselect/getstockquotation",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_zh_a_hist":
+        rows = _call_akshare_stock_zh_a_hist(
+            symbol=_normalize_cn_symbol_for_akshare(request.ticker),
+            start_date=request.start_date,
+            end_date=request.end_date,
+            adjust="qfq",
+        )
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_zh_a_hist_min_em":
+        rows = _call_akshare_stock_zh_a_hist_min_em(
+            symbol=_normalize_cn_symbol_for_akshare(request.ticker),
+            start_date=request.start_date,
+            end_date=request.end_date,
+            period=str(params.get("period") or "5"),
+            adjust=str(params.get("adjust") or "qfq"),
+        )
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_zh_a_spot_em":
+        rows = _with_default_market_fields(
+            _call_akshare_stock_zh_a_spot(symbol=_normalize_cn_symbol_for_akshare(request.ticker)),
+            trade_date=request.current_date,
+        )
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_board_industry_name_em":
+        rows = _call_akshare_stock_board_industry_name_em()
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_board_concept_name_em":
+        rows = _call_akshare_stock_board_concept_name_em()
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
             request_id=request_id,
             params=params,
             rows=rows,
@@ -743,6 +1249,91 @@ def _fetch_cn_a(
             params=params,
             rows=(row,),
         )
+    if spec.endpoint == "stock_zh_a_spot_em_batch":
+        if spec.provider == "tushare_selection_batch":
+            token = str(env.get("TUSHARE_TOKEN", "")).strip()
+            if not token:
+                raise RuntimeError("missing credential keys: TUSHARE_TOKEN")
+            rows = _call_tushare_stock_zh_a_spot_batch(
+                token=token,
+                trade_date=request.current_date,
+                env=env,
+            )
+            return _build_fetch(
+                provider=spec.provider,
+                endpoint=spec.endpoint,
+                source_url="https://api.tushare.pro",
+                request_id=request_id,
+                params=params,
+                rows=rows,
+            )
+        if spec.provider == "akshare_selection_batch":
+            rows = _call_akshare_stock_zh_a_spot_batch()
+            return _build_fetch(
+                provider=spec.provider,
+                endpoint=spec.endpoint,
+                source_url="https://akshare.akfamily.xyz/data/stock/stock.html",
+                request_id=request_id,
+                params=params,
+                rows=rows,
+            )
+        if spec.provider == "eastmoney_selection_batch":
+            rows = _call_eastmoney_stock_zh_a_spot_batch()
+            return _build_fetch(
+                provider=spec.provider,
+                endpoint=spec.endpoint,
+                source_url=_EASTMONEY_A_SPOT_URL,
+                request_id=request_id,
+                params=params,
+                rows=rows,
+            )
+        raise RuntimeError(f"unsupported selection batch provider for {spec.endpoint}: {spec.provider}")
+    if spec.endpoint == "stock_zh_a_spot_mootdx_batch":
+        rows = _call_mootdx_stock_zh_a_spot_batch(trade_date=request.current_date)
+        fetch_params = dict(params)
+        fetch_params.update(_consume_cn_a_batch_chunk_metadata(endpoint=spec.endpoint))
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="tcp://mootdx:7709",
+            request_id=request_id,
+            params=fetch_params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_zh_a_spot_tencent_batch":
+        rows = _call_tencent_stock_zh_a_spot_batch(trade_date=request.current_date)
+        fetch_params = dict(params)
+        fetch_params.update(_consume_cn_a_batch_chunk_metadata(endpoint=spec.endpoint))
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://qt.gtimg.cn",
+            request_id=request_id,
+            params=fetch_params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_zh_a_spot_sina_batch":
+        rows = _call_sina_stock_zh_a_spot_batch(trade_date=request.current_date)
+        fetch_params = dict(params)
+        fetch_params.update(_consume_cn_a_batch_chunk_metadata(endpoint=spec.endpoint))
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://hq.sinajs.cn",
+            request_id=request_id,
+            params=fetch_params,
+            rows=rows,
+        )
+    if spec.endpoint == "stock_zh_a_daily_baostock_batch":
+        rows = _call_baostock_stock_zh_a_daily_batch(trade_date=request.current_date)
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://www.baostock.com",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
     raise RuntimeError(f"unsupported cn_a endpoint: {spec.endpoint}")
 
 
@@ -763,6 +1354,7 @@ def _fetch_hk(
             ts_code=_normalize_hk_symbol_for_tushare(request.ticker),
             start_date=request.start_date,
             end_date=request.end_date,
+            env=env,
         )
         return _build_fetch(
             provider="tushare_hk",
@@ -921,6 +1513,29 @@ def _build_fetch(
     )
 
 
+def _chunk_error_metadata_from_outcome(outcome: _ChunkedBatchOutcome) -> Mapping[str, Any]:
+    return {
+        "partial_chunk_error_count": int(outcome.partial_chunk_error_count),
+        "partial_chunk_errors": list(outcome.partial_chunk_errors),
+        "failed_chunk_symbols_sample": list(outcome.failed_chunk_symbols_sample),
+    }
+
+
+def _record_cn_a_batch_chunk_metadata(*, endpoint: str, outcome: _ChunkedBatchOutcome) -> None:
+    _CN_A_BATCH_CHUNK_METADATA[endpoint] = _chunk_error_metadata_from_outcome(outcome)
+
+
+def _consume_cn_a_batch_chunk_metadata(*, endpoint: str) -> Mapping[str, Any]:
+    metadata = _CN_A_BATCH_CHUNK_METADATA.pop(endpoint, None)
+    if isinstance(metadata, Mapping):
+        return dict(metadata)
+    return {
+        "partial_chunk_error_count": 0,
+        "partial_chunk_errors": [],
+        "failed_chunk_symbols_sample": [],
+    }
+
+
 def _extract_rows(payload: bytes | str | Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     if isinstance(payload, bytes):
         parsed = json.loads(payload.decode("utf-8"))
@@ -946,8 +1561,23 @@ def _extract_rows(payload: bytes | str | Mapping[str, Any]) -> tuple[Mapping[str
     return tuple(rows)
 
 
+def _extract_payload_params(payload: bytes | str | Mapping[str, Any]) -> Mapping[str, Any]:
+    if isinstance(payload, bytes):
+        parsed = json.loads(payload.decode("utf-8"))
+    elif isinstance(payload, str):
+        parsed = json.loads(payload)
+    else:
+        parsed = payload
+    if not isinstance(parsed, Mapping):
+        return {}
+    raw_params = parsed.get("params")
+    if isinstance(raw_params, Mapping):
+        return {str(key): raw_params[key] for key in raw_params}
+    return {}
+
+
 def _normalize_ohlcv_row(row: Mapping[str, Any], *, market: Market) -> dict[str, Any] | None:
-    date_text = _date_text(_pick(row, "date", "trade_date", "日期"))
+    date_text = _date_text(_pick(row, "date", "trade_date", "日期", "时间"))
     open_value = _to_float(_pick(row, "open", "开盘", "今开"))
     high_value = _to_float(_pick(row, "high", "最高"))
     low_value = _to_float(_pick(row, "low", "最低"))
@@ -969,6 +1599,46 @@ def _normalize_ohlcv_row(row: Mapping[str, Any], *, market: Market) -> dict[str,
     if amount_value is not None:
         mapped["amount"] = amount_value
     return mapped
+
+
+def _normalize_cn_a_generic_rows(
+    *,
+    spec: ProviderCallSpec,
+    rows: Sequence[Mapping[str, Any]],
+    source_raw_ref: str,
+) -> NormalizedResult:
+    normalized_rows = tuple(dict(row) for row in rows if _pick(row, "板块名称", "名称", "代码", "板块代码"))
+    if not normalized_rows:
+        return NormalizedResult(
+            status=ProviderStatus.FIELD_MISSING,
+            schema_id=spec.expected_schema_id,
+            rows=(),
+            compact_facts=_compact_facts(spec=spec, row_count=0, currency="CNY", timezone="Asia/Shanghai"),
+            row_count=0,
+            field_units={},
+            currency="CNY",
+            timezone="Asia/Shanghai",
+            source_raw_ref=source_raw_ref,
+            missing_fields=("板块名称", "名称", "代码", "板块代码"),
+            error_code="field_missing",
+            error_message=f"{spec.provider}/{spec.endpoint} missing recognizable CN A row fields",
+        )
+    return NormalizedResult(
+        status=ProviderStatus.REMOTE_SUCCESS,
+        schema_id=spec.expected_schema_id,
+        rows=normalized_rows,
+        compact_facts=_compact_facts(
+            spec=spec,
+            row_count=len(normalized_rows),
+            currency="CNY",
+            timezone="Asia/Shanghai",
+        ),
+        row_count=len(normalized_rows),
+        field_units={},
+        currency="CNY",
+        timezone="Asia/Shanghai",
+        source_raw_ref=source_raw_ref,
+    )
 
 
 def _compact_facts(
@@ -1020,6 +1690,281 @@ def _normalize_crypto_domain_rows(
         timezone="UTC",
         source_raw_ref=source_raw_ref,
     )
+
+
+def _normalize_cn_a_selection_batch_rows(
+    *,
+    spec: ProviderCallSpec,
+    rows: Sequence[Mapping[str, Any]],
+    source_raw_ref: str,
+    payload_params: Mapping[str, Any] | None = None,
+) -> NormalizedResult:
+    source_row_count = len(rows)
+    amount_multiplier = 1.0
+    if spec.provider == "tushare_selection_batch":
+        amount_multiplier = 1000.0
+    source_metadata = _cn_a_selection_source_metadata_for_spec(spec=spec)
+    chunk_error_metadata = _selection_chunk_error_metadata_from_payload(payload_params)
+    normalized_rows: list[dict[str, Any]] = []
+    dropped_rows = 0
+    for row in rows:
+        mapped = _normalize_cn_a_selection_row(row, amount_multiplier=amount_multiplier)
+        if mapped is not None:
+            normalized_rows.append(mapped)
+        else:
+            dropped_rows += 1
+    if not normalized_rows:
+        dropped_ratio = float(dropped_rows / source_row_count) if source_row_count > 0 else 0.0
+        compact_facts = dict(
+            _compact_facts(spec=spec, row_count=0, currency="CNY", timezone="Asia/Shanghai")
+        )
+        compact_facts["source_row_count"] = source_row_count
+        compact_facts["valid_row_count"] = 0
+        compact_facts["dropped_row_count"] = dropped_rows
+        compact_facts["dropped_row_ratio"] = dropped_ratio
+        compact_facts.update(source_metadata)
+        compact_facts.update(chunk_error_metadata)
+        return NormalizedResult(
+            status=ProviderStatus.FIELD_MISSING,
+            schema_id=spec.expected_schema_id,
+            rows=(),
+            compact_facts=compact_facts,
+            row_count=0,
+            field_units={},
+            currency="CNY",
+            timezone="Asia/Shanghai",
+            source_raw_ref=source_raw_ref,
+            missing_fields=(
+                "ticker",
+                "company_name",
+                "open",
+                "close",
+                "high",
+                "low",
+                "amount_or_volume",
+            ),
+            error_code="field_missing",
+            error_message=(
+                f"{spec.provider}/{spec.endpoint} missing required selection batch fields; "
+                f"source_metadata={json.dumps(source_metadata, ensure_ascii=False, sort_keys=True)}"
+            ),
+        )
+    normalized_rows.sort(key=lambda item: item["ticker"])
+    dropped_ratio = float(dropped_rows / source_row_count) if source_row_count > 0 else 0.0
+    compact_facts = dict(
+        _compact_facts(
+            spec=spec,
+            row_count=len(normalized_rows),
+            currency="CNY",
+            timezone="Asia/Shanghai",
+        )
+    )
+    compact_facts["source_row_count"] = source_row_count
+    compact_facts["valid_row_count"] = len(normalized_rows)
+    compact_facts["dropped_row_count"] = dropped_rows
+    compact_facts["dropped_row_ratio"] = dropped_ratio
+    compact_facts.update(source_metadata)
+    compact_facts.update(chunk_error_metadata)
+    return NormalizedResult(
+        status=ProviderStatus.REMOTE_SUCCESS,
+        schema_id=spec.expected_schema_id,
+        rows=tuple(normalized_rows),
+        compact_facts=compact_facts,
+        row_count=len(normalized_rows),
+        field_units=_cn_a_selection_field_units(rows=normalized_rows),
+        currency="CNY",
+        timezone="Asia/Shanghai",
+        source_raw_ref=source_raw_ref,
+    )
+
+
+def _cn_a_selection_source_metadata_for_spec(*, spec: ProviderCallSpec) -> Mapping[str, Any]:
+    metadata = dict(_cn_a_selection_source_metadata(spec.endpoint))
+    if spec.endpoint == "stock_zh_a_spot_em_batch":
+        metadata["quote_source"] = spec.provider
+        metadata["mixed_source_chain"] = [spec.provider]
+    return metadata
+
+
+def _selection_chunk_error_metadata_from_payload(payload_params: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if not isinstance(payload_params, Mapping):
+        return {
+            "partial_chunk_error_count": 0,
+            "partial_chunk_errors": [],
+            "failed_chunk_symbols_sample": [],
+        }
+    raw_count = payload_params.get("partial_chunk_error_count")
+    if isinstance(raw_count, bool):
+        error_count = 0
+    elif isinstance(raw_count, int):
+        error_count = raw_count
+    elif isinstance(raw_count, float):
+        error_count = int(raw_count)
+    else:
+        try:
+            text = str(raw_count).strip()
+            error_count = int(float(text)) if text else 0
+        except (TypeError, ValueError):
+            error_count = 0
+    raw_errors = payload_params.get("partial_chunk_errors")
+    raw_failed_symbols = payload_params.get("failed_chunk_symbols_sample")
+    partial_chunk_errors = (
+        [
+            str(item)[:200]
+            for item in raw_errors
+            if isinstance(item, (str, bytes, bytearray))
+        ][:3]
+        if isinstance(raw_errors, Sequence) and not isinstance(raw_errors, (str, bytes, bytearray))
+        else []
+    )
+    failed_chunk_symbols_sample = (
+        [
+            str(item)[:220]
+            for item in raw_failed_symbols
+            if isinstance(item, (str, bytes, bytearray))
+        ][:3]
+        if isinstance(raw_failed_symbols, Sequence) and not isinstance(raw_failed_symbols, (str, bytes, bytearray))
+        else []
+    )
+    return {
+        "partial_chunk_error_count": max(0, error_count),
+        "partial_chunk_errors": partial_chunk_errors,
+        "failed_chunk_symbols_sample": failed_chunk_symbols_sample,
+    }
+
+
+def _normalize_cn_a_selection_row(
+    row: Mapping[str, Any],
+    *,
+    amount_multiplier: float = 1.0,
+) -> dict[str, Any] | None:
+    ticker_code = str(_pick(row, "代码", "symbol", "ticker") or "").strip()
+    ticker = _normalize_cn_selection_ticker(ticker_code)
+    company_name = str(_pick(row, "名称", "name", "company_name") or "").strip()
+    industry = str(_pick(row, "行业", "所属行业", "industry") or "").strip()
+    open_value = _to_float(_pick(row, "open", "今开", "开盘"))
+    close_value = _to_float(_pick(row, "close", "最新价", "现价", "收盘"))
+    high_value = _to_float(_pick(row, "high", "最高"))
+    low_value = _to_float(_pick(row, "low", "最低"))
+    amount_value = _to_float(_pick(row, "amount", "成交额", "成交额(元)"))
+    volume_value = _to_float(_pick(row, "volume", "成交量", "vol"))
+    vol_ratio_value = _to_float(_pick(row, "vol_ratio", "量比"))
+    if (
+        not ticker
+        or not company_name
+        or open_value is None
+        or close_value is None
+        or high_value is None
+        or low_value is None
+        or (amount_value is None and volume_value is None)
+    ):
+        return None
+    normalized: dict[str, Any] = {
+        "ticker": ticker,
+        "company_name": company_name,
+        "industry": industry,
+        "open": open_value,
+        "close": close_value,
+        "high": high_value,
+        "low": low_value,
+    }
+    if amount_value is not None:
+        normalized["amount"] = amount_value * amount_multiplier
+    if volume_value is not None:
+        normalized["volume"] = volume_value
+    if vol_ratio_value is not None:
+        normalized["vol_ratio"] = vol_ratio_value
+    history_rows = _normalize_cn_a_selection_history(
+        _pick(row, "history", "historical_rows"),
+        amount_multiplier=amount_multiplier,
+    )
+    if history_rows:
+        normalized["history"] = history_rows
+    event_date = str(_pick(row, "private_placement_event_date", "定增日期", "发行日期") or "").strip()
+    if event_date:
+        normalized["private_placement_event_date"] = event_date
+    private_days = _to_float(_pick(row, "private_placement_days_since"))
+    if private_days is not None:
+        normalized["private_placement_days_since"] = private_days
+    event_source_ref = str(_pick(row, "private_placement_source_ref") or "").strip()
+    if event_source_ref:
+        normalized["private_placement_source_ref"] = event_source_ref
+    return normalized
+
+
+def _normalize_cn_a_selection_history(
+    raw_history: Any,
+    *,
+    amount_multiplier: float,
+) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(raw_history, Sequence) or isinstance(raw_history, (str, bytes, bytearray)):
+        return ()
+    rows: list[Mapping[str, Any]] = []
+    for item in raw_history:
+        if not isinstance(item, Mapping):
+            continue
+        date_text = _date_text(_pick(item, "date", "trade_date", "日期"))
+        open_value = _to_float(_pick(item, "open", "开盘", "今开"))
+        high_value = _to_float(_pick(item, "high", "最高"))
+        low_value = _to_float(_pick(item, "low", "最低"))
+        close_value = _to_float(_pick(item, "close", "收盘", "最新价", "现价"))
+        volume_value = _to_float(_pick(item, "volume", "vol", "成交量", "总手"))
+        if (
+            not date_text
+            or open_value is None
+            or high_value is None
+            or low_value is None
+            or close_value is None
+            or volume_value is None
+        ):
+            continue
+        mapped: dict[str, Any] = {
+            "date": date_text,
+            "open": open_value,
+            "high": high_value,
+            "low": low_value,
+            "close": close_value,
+            "volume": volume_value,
+        }
+        amount_value = _to_float(_pick(item, "amount", "turnover", "成交额", "成交额(元)"))
+        if amount_value is not None:
+            mapped["amount"] = amount_value * amount_multiplier
+        pct_change = _to_float(_pick(item, "p_change_pct", "pct_chg", "涨跌幅"))
+        if pct_change is not None:
+            mapped["p_change_pct"] = pct_change
+        rows.append(mapped)
+    return tuple(sorted(rows, key=lambda row: str(row.get("date") or "")))
+
+
+def _cn_a_selection_field_units(*, rows: Sequence[Mapping[str, Any]]) -> Mapping[str, str]:
+    field_units: dict[str, str] = {
+        "open": "CNY",
+        "close": "CNY",
+        "high": "CNY",
+        "low": "CNY",
+    }
+    if any("amount" in row for row in rows):
+        field_units["amount"] = "CNY"
+    if any("volume" in row for row in rows):
+        field_units["volume"] = "shares"
+    if any("vol_ratio" in row for row in rows):
+        field_units["vol_ratio"] = "ratio"
+    return field_units
+
+
+def _normalize_cn_selection_ticker(code: str) -> str:
+    token = code.strip().upper()
+    if not token:
+        return ""
+    if "." in token:
+        return token
+    if not token.isdigit():
+        return token
+    if token.startswith("6") or token.startswith("9"):
+        return f"{token}.SH"
+    if token.startswith(("4", "8", "92")):
+        return f"{token}.BJ"
+    return f"{token}.SZ"
 
 
 def _raw_ref(*, spec: ProviderCallSpec, fetch: ProviderFetch) -> str:
@@ -1097,21 +2042,7 @@ def _normalize_cn_symbol_parts(ticker: str) -> tuple[str, str | None]:
     return token, None
 
 
-def _call_tencent_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
-    response = requests.get(
-        "https://qt.gtimg.cn/q=" + symbol,
-        headers={"User-Agent": "Mozilla/5.0"},
-        timeout=_HTTP_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    text = response.content.decode("gbk", errors="ignore")
-    matched = re.search(r'="([^"]+)"', text)
-    if matched is None:
-        raise RuntimeError(f"tencent quote parse failed for {symbol}")
-    fields = matched.group(1).split("~")
-    if len(fields) < 49:
-        raise RuntimeError(f"tencent quote payload too short for {symbol}")
-
+def _map_tencent_fields_to_row(*, fields: Sequence[str], symbol: str, fallback_date: str) -> Mapping[str, Any]:
     row: dict[str, Any] = {
         "symbol": symbol,
         "name": fields[1] if len(fields) > 1 else "",
@@ -1144,16 +2075,44 @@ def _call_tencent_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, 
         row[f"ask{level}"] = _to_float(fields[ask_price_idx] if len(fields) > ask_price_idx else None)
         row[f"ask_vol{level}"] = _to_float(fields[ask_volume_idx] if len(fields) > ask_volume_idx else None)
 
-    # The market normalizer expects open/high/low/close/volume to be present.
-    if row["open"] is None:
-        row["open"] = row["close"]
-    if row["high"] is None:
-        row["high"] = row["close"]
-    if row["low"] is None:
-        row["low"] = row["close"]
-    if row["volume"] is None:
-        row["volume"] = 0.0
     return row
+
+
+def _parse_tencent_quote_payload_rows(*, text: str, fallback_date: str) -> tuple[Mapping[str, Any], ...]:
+    rows: list[Mapping[str, Any]] = []
+    for matched in re.finditer(r'v_([^=]+)="([^"]*)";', text):
+        symbol = matched.group(1).strip()
+        payload = matched.group(2)
+        fields = payload.split("~")
+        if len(fields) < 49:
+            continue
+        rows.append(_map_tencent_fields_to_row(fields=fields, symbol=symbol, fallback_date=fallback_date))
+    return tuple(rows)
+
+
+def _call_tencent_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
+    rows = _call_tencent_quote_rows(symbols=(symbol,), fallback_date=fallback_date)
+    row = next((item for item in rows if str(item.get("symbol", "")).lower() == symbol.lower()), None)
+    if row is not None:
+        return row
+    return rows[0]
+
+
+def _call_tencent_quote_rows(*, symbols: Sequence[str], fallback_date: str) -> tuple[Mapping[str, Any], ...]:
+    if not symbols:
+        raise RuntimeError("tencent quote batch symbols is empty")
+    response = managed_requests.get(
+        "https://qt.gtimg.cn/q=" + ",".join(symbols),
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=_HTTP_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    text = response.content.decode("gbk", errors="ignore")
+    rows = _parse_tencent_quote_payload_rows(text=text, fallback_date=fallback_date)
+    if not rows:
+        joined = ",".join(symbols)
+        raise RuntimeError(f"tencent quote parse failed for symbols={joined}")
+    return rows
 
 
 def _call_mootdx_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, Any]:
@@ -1179,7 +2138,11 @@ def _call_mootdx_quote_row(*, symbol: str, fallback_date: str) -> Mapping[str, A
         missing_rendered = ",".join(missing_fields)
         raise RuntimeError(f"mootdx quotes row missing required fields for symbol={symbol}: {missing_rendered}")
     amount_value = _to_float(_pick(source_row, "amount", "turnover", "成交额"))
-    date_text = _date_text(_pick(source_row, "date", "trade_date", "datetime", "servertime", "time")) or fallback_date
+    date_text = _date_text(_pick(source_row, "date", "trade_date", "datetime", "servertime", "time"))
+    if not date_text:
+        missing_fields.append("date")
+        missing_rendered = ",".join(missing_fields)
+        raise RuntimeError(f"mootdx quotes row missing required fields for symbol={symbol}: {missing_rendered}")
     row = dict(source_row)
     row.update(
         {
@@ -1236,6 +2199,305 @@ def _call_mootdx_quotes(*, symbols: Sequence[str]) -> tuple[Mapping[str, Any], .
     return rows
 
 
+def _clean_cn_display_name(value: object) -> str:
+    return str(value or "").replace("\x00", "").strip()
+
+
+def _is_cn_a_equity_code(code: str) -> bool:
+    return len(code) == 6 and code.isdigit() and code[:3] in _CN_A_EQUITY_PREFIXES_3
+
+
+def _iter_chunked(items: Sequence[str], chunk_size: int) -> tuple[tuple[str, ...], ...]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    chunks: list[tuple[str, ...]] = []
+    start = 0
+    total = len(items)
+    while start < total:
+        chunk = tuple(items[start : start + chunk_size])
+        if chunk:
+            chunks.append(chunk)
+        start += chunk_size
+    return tuple(chunks)
+
+
+def _mootdx_cn_a_universe() -> tuple[tuple[str, str], ...]:
+    try:
+        from mootdx.quotes import Quotes  # type: ignore
+    except Exception as exc:
+        raise RuntimeError("mootdx dependency unavailable: install mootdx to build cn_a selection universe") from exc
+
+    try:
+        client = Quotes.factory(market="std")
+    except Exception as exc:
+        raise RuntimeError(f"mootdx stock list client factory failed: {exc}") from exc
+    try:
+        response = client.stock_all()
+    except Exception as exc:
+        raise RuntimeError(f"mootdx stock_all request failed: {exc}") from exc
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    rows = tuple(_df_to_rows(response)) if hasattr(response, "to_dict") else ()
+    if not rows:
+        raise RuntimeError("mootdx stock_all returned empty rows")
+    by_code: dict[str, str] = {}
+    for row in rows:
+        code = _normalize_mootdx_row_code(str(_pick(row, "code", "symbol", "证券代码", "股票代码") or ""))
+        if not _is_cn_a_equity_code(code):
+            continue
+        name = _clean_cn_display_name(_pick(row, "name", "名称", "证券名称"))
+        if not code:
+            continue
+        if code not in by_code or (not by_code[code] and name):
+            by_code[code] = name
+    if not by_code:
+        raise RuntimeError("mootdx stock_all returned no cn_a equity symbols")
+    return tuple((code, by_code[code]) for code in sorted(by_code.keys()))
+
+
+@dataclass(frozen=True)
+class _ChunkedBatchOutcome:
+    rows: tuple[Mapping[str, Any], ...]
+    partial_chunk_error_count: int
+    partial_chunk_errors: tuple[str, ...]
+    failed_chunk_symbols_sample: tuple[str, ...]
+
+
+def _bounded_chunk_error_detail(*, errors: Sequence[str], failed_chunk_symbols: Sequence[str]) -> Mapping[str, Any]:
+    bounded_errors = tuple(str(item)[:200] for item in errors[:3])
+    bounded_failed_symbols = tuple(str(item)[:220] for item in failed_chunk_symbols[:3])
+    return {
+        "partial_chunk_error_count": len(errors),
+        "partial_chunk_errors": list(bounded_errors),
+        "failed_chunk_symbols_sample": list(bounded_failed_symbols),
+    }
+
+
+def _call_mootdx_stock_zh_a_spot_batch_with_chunk_metadata(*, trade_date: str) -> _ChunkedBatchOutcome:
+    universe = _mootdx_cn_a_universe()
+    name_by_code = {code: name for code, name in universe}
+    symbols = [code for code, _name in universe]
+    out_rows: list[Mapping[str, Any]] = []
+    chunk_errors: list[str] = []
+    failed_chunk_symbols: list[str] = []
+    for chunk in _iter_chunked(symbols, _CN_A_BATCH_QUOTE_CHUNK_SIZE):
+        try:
+            quote_rows = _call_mootdx_quotes(symbols=chunk)
+        except Exception as exc:  # noqa: BLE001
+            chunk_errors.append(str(exc))
+            failed_chunk_symbols.append(",".join(chunk[:5]))
+            continue
+        for row in quote_rows:
+            code = _normalize_mootdx_row_code(str(_pick(row, "code", "symbol", "证券代码", "股票代码") or ""))
+            if code not in name_by_code:
+                continue
+            out_rows.append(
+                {
+                    "代码": code,
+                    "名称": name_by_code.get(code, ""),
+                    "今开": _pick(row, "open", "今开"),
+                    "最新价": _pick(row, "price", "close", "现价", "最新价"),
+                    "最高": _pick(row, "high", "最高"),
+                    "最低": _pick(row, "low", "最低"),
+                    "成交额": _pick(row, "amount", "turnover", "成交额"),
+                    "成交量": _pick(row, "volume", "vol", "成交量"),
+                    "trade_date": _date_text(_pick(row, "date", "trade_date", "datetime", "servertime", "time")),
+                }
+            )
+    if not out_rows:
+        chunk_detail = _bounded_chunk_error_detail(errors=chunk_errors, failed_chunk_symbols=failed_chunk_symbols)
+        raise RuntimeError(
+            "mootdx selection batch returned empty quote rows; "
+            f"partial_chunk_error_count={chunk_detail['partial_chunk_error_count']}; "
+            f"partial_chunk_errors={chunk_detail['partial_chunk_errors']}; "
+            f"failed_chunk_symbols_sample={chunk_detail['failed_chunk_symbols_sample']}"
+        )
+    chunk_detail = _bounded_chunk_error_detail(errors=chunk_errors, failed_chunk_symbols=failed_chunk_symbols)
+    return _ChunkedBatchOutcome(
+        rows=tuple(out_rows),
+        partial_chunk_error_count=int(chunk_detail["partial_chunk_error_count"]),
+        partial_chunk_errors=tuple(chunk_detail["partial_chunk_errors"]),
+        failed_chunk_symbols_sample=tuple(chunk_detail["failed_chunk_symbols_sample"]),
+    )
+
+
+def _call_mootdx_stock_zh_a_spot_batch(*, trade_date: str) -> tuple[Mapping[str, Any], ...]:
+    outcome = _call_mootdx_stock_zh_a_spot_batch_with_chunk_metadata(trade_date=trade_date)
+    _record_cn_a_batch_chunk_metadata(endpoint="stock_zh_a_spot_mootdx_batch", outcome=outcome)
+    return outcome.rows
+
+
+def _call_tencent_stock_zh_a_spot_batch_with_chunk_metadata(*, trade_date: str) -> _ChunkedBatchOutcome:
+    universe = _mootdx_cn_a_universe()
+    name_by_code = {code: name for code, name in universe}
+    symbols = [_normalize_cn_symbol_for_tencent(code) for code, _name in universe]
+    out_rows: list[Mapping[str, Any]] = []
+    chunk_errors: list[str] = []
+    failed_chunk_symbols: list[str] = []
+    for chunk in _iter_chunked(symbols, _CN_A_BATCH_QUOTE_CHUNK_SIZE):
+        try:
+            quote_rows = _call_tencent_quote_rows(symbols=chunk, fallback_date=trade_date)
+        except Exception as exc:  # noqa: BLE001
+            chunk_errors.append(str(exc))
+            failed_chunk_symbols.append(",".join(chunk[:5]))
+            continue
+        for row in quote_rows:
+            code = _normalize_mootdx_row_code(str(_pick(row, "code", "symbol") or ""))
+            if code not in name_by_code:
+                continue
+            out_rows.append(
+                {
+                    "代码": code,
+                    "名称": _clean_cn_display_name(_pick(row, "name")) or name_by_code.get(code, ""),
+                    "今开": _pick(row, "open"),
+                    "最新价": _pick(row, "close"),
+                    "最高": _pick(row, "high"),
+                    "最低": _pick(row, "low"),
+                    "成交额": _pick(row, "amount"),
+                    "成交量": _pick(row, "volume", "vol", "成交量"),
+                    "trade_date": _pick(row, "date"),
+                }
+            )
+    if not out_rows:
+        chunk_detail = _bounded_chunk_error_detail(errors=chunk_errors, failed_chunk_symbols=failed_chunk_symbols)
+        raise RuntimeError(
+            "tencent selection batch returned empty quote rows; "
+            f"partial_chunk_error_count={chunk_detail['partial_chunk_error_count']}; "
+            f"partial_chunk_errors={chunk_detail['partial_chunk_errors']}; "
+            f"failed_chunk_symbols_sample={chunk_detail['failed_chunk_symbols_sample']}"
+        )
+    chunk_detail = _bounded_chunk_error_detail(errors=chunk_errors, failed_chunk_symbols=failed_chunk_symbols)
+    return _ChunkedBatchOutcome(
+        rows=tuple(out_rows),
+        partial_chunk_error_count=int(chunk_detail["partial_chunk_error_count"]),
+        partial_chunk_errors=tuple(chunk_detail["partial_chunk_errors"]),
+        failed_chunk_symbols_sample=tuple(chunk_detail["failed_chunk_symbols_sample"]),
+    )
+
+
+def _call_tencent_stock_zh_a_spot_batch(*, trade_date: str) -> tuple[Mapping[str, Any], ...]:
+    outcome = _call_tencent_stock_zh_a_spot_batch_with_chunk_metadata(trade_date=trade_date)
+    _record_cn_a_batch_chunk_metadata(endpoint="stock_zh_a_spot_tencent_batch", outcome=outcome)
+    return outcome.rows
+
+
+def _parse_sina_quote_rows(*, text: str, fallback_date: str) -> tuple[Mapping[str, Any], ...]:
+    rows: list[Mapping[str, Any]] = []
+    for line in text.split(";"):
+        source = line.strip()
+        if not source:
+            continue
+        matched = re.search(r"var hq_str_([a-z]{2}\d{6})=\"([^\"]*)\"", source)
+        if matched is None:
+            continue
+        symbol = matched.group(1).lower()
+        fields = matched.group(2).split(",")
+        if len(fields) < 10:
+            continue
+        code = symbol[2:]
+        date_text = None
+        if len(fields) > 30:
+            resolved_date = _date_text(fields[30])
+            if resolved_date:
+                date_text = resolved_date
+        rows.append(
+            {
+                "symbol": symbol,
+                "code": code,
+                "name": fields[0] if len(fields) > 0 else "",
+                "date": date_text,
+                "open": _to_float(fields[1] if len(fields) > 1 else None),
+                "last_close": _to_float(fields[2] if len(fields) > 2 else None),
+                "close": _to_float(fields[3] if len(fields) > 3 else None),
+                "high": _to_float(fields[4] if len(fields) > 4 else None),
+                "low": _to_float(fields[5] if len(fields) > 5 else None),
+                "volume": _to_float(fields[8] if len(fields) > 8 else None),
+                "amount": _to_float(fields[9] if len(fields) > 9 else None),
+            }
+        )
+    return tuple(rows)
+
+
+def _call_sina_quote_rows(*, symbols: Sequence[str], fallback_date: str) -> tuple[Mapping[str, Any], ...]:
+    if not symbols:
+        raise RuntimeError("sina quote batch symbols is empty")
+    response = managed_requests.get(
+        "https://hq.sinajs.cn/list=" + ",".join(symbols),
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://finance.sina.com.cn/",
+        },
+        timeout=_HTTP_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    text = response.content.decode("gbk", errors="ignore")
+    rows = _parse_sina_quote_rows(text=text, fallback_date=fallback_date)
+    if not rows:
+        joined = ",".join(symbols)
+        raise RuntimeError(f"sina quote parse failed for symbols={joined}")
+    return rows
+
+
+def _call_sina_stock_zh_a_spot_batch_with_chunk_metadata(*, trade_date: str) -> _ChunkedBatchOutcome:
+    universe = _mootdx_cn_a_universe()
+    name_by_code = {code: name for code, name in universe}
+    symbols = [_normalize_cn_symbol_for_tencent(code) for code, _name in universe]
+    out_rows: list[Mapping[str, Any]] = []
+    chunk_errors: list[str] = []
+    failed_chunk_symbols: list[str] = []
+    for chunk in _iter_chunked(symbols, _CN_A_BATCH_QUOTE_CHUNK_SIZE):
+        try:
+            quote_rows = _call_sina_quote_rows(symbols=chunk, fallback_date=trade_date)
+        except Exception as exc:  # noqa: BLE001
+            chunk_errors.append(str(exc))
+            failed_chunk_symbols.append(",".join(chunk[:5]))
+            continue
+        for row in quote_rows:
+            code = _normalize_mootdx_row_code(str(_pick(row, "code", "symbol") or ""))
+            if code not in name_by_code:
+                continue
+            out_rows.append(
+                {
+                    "代码": code,
+                    "名称": _clean_cn_display_name(_pick(row, "name")) or name_by_code.get(code, ""),
+                    "今开": _pick(row, "open"),
+                    "最新价": _pick(row, "close"),
+                    "最高": _pick(row, "high"),
+                    "最低": _pick(row, "low"),
+                    "成交额": _pick(row, "amount"),
+                    "成交量": _pick(row, "volume", "vol", "成交量"),
+                    "trade_date": _pick(row, "date"),
+                }
+            )
+    if not out_rows:
+        chunk_detail = _bounded_chunk_error_detail(errors=chunk_errors, failed_chunk_symbols=failed_chunk_symbols)
+        raise RuntimeError(
+            "sina selection batch returned empty quote rows; "
+            f"partial_chunk_error_count={chunk_detail['partial_chunk_error_count']}; "
+            f"partial_chunk_errors={chunk_detail['partial_chunk_errors']}; "
+            f"failed_chunk_symbols_sample={chunk_detail['failed_chunk_symbols_sample']}"
+        )
+    chunk_detail = _bounded_chunk_error_detail(errors=chunk_errors, failed_chunk_symbols=failed_chunk_symbols)
+    return _ChunkedBatchOutcome(
+        rows=tuple(out_rows),
+        partial_chunk_error_count=int(chunk_detail["partial_chunk_error_count"]),
+        partial_chunk_errors=tuple(chunk_detail["partial_chunk_errors"]),
+        failed_chunk_symbols_sample=tuple(chunk_detail["failed_chunk_symbols_sample"]),
+    )
+
+
+def _call_sina_stock_zh_a_spot_batch(*, trade_date: str) -> tuple[Mapping[str, Any], ...]:
+    outcome = _call_sina_stock_zh_a_spot_batch_with_chunk_metadata(trade_date=trade_date)
+    _record_cn_a_batch_chunk_metadata(endpoint="stock_zh_a_spot_sina_batch", outcome=outcome)
+    return outcome.rows
+
+
 def _select_mootdx_row(*, rows: Sequence[Mapping[str, Any]], symbol: str) -> Mapping[str, Any]:
     for row in rows:
         code = _normalize_mootdx_row_code(str(_pick(row, "code", "symbol", "证券代码", "股票代码") or ""))
@@ -1255,14 +2517,15 @@ def _normalize_mootdx_row_code(value: str) -> str:
     return code
 
 
-def _tencent_quote_date(*, fields: Sequence[str], fallback_date: str) -> str:
+def _tencent_quote_date(*, fields: Sequence[str], fallback_date: str) -> str | None:
     # Tencent field[30] is usually a compact timestamp like YYYYMMDDHHMMSS.
+    _ = fallback_date
     if len(fields) <= 30:
-        return fallback_date
+        return None
     compact = re.sub(r"\D", "", fields[30])
     if len(compact) >= 8:
         return f"{compact[0:4]}-{compact[4:6]}-{compact[6:8]}"
-    return fallback_date
+    return None
 
 
 def _call_baidu_kline_with_ma(*, symbol: str, start_date: str) -> tuple[Mapping[str, Any], ...]:
@@ -1325,7 +2588,7 @@ def _call_baidu_kline_with_ma(*, symbol: str, start_date: str) -> tuple[Mapping[
             "high": _to_float(source.get("high")),
             "low": _to_float(source.get("low")),
             "close": _to_float(source.get("close")),
-            "volume": _to_float(source.get("volume")) or 0.0,
+            "volume": _to_float(source.get("volume")),
             "amount": _to_float(source.get("amount")),
             "ma5avgprice": _to_float(source.get("ma5avgprice")),
             "ma10avgprice": _to_float(source.get("ma10avgprice")),
@@ -1342,25 +2605,215 @@ def _normalize_hk_symbol_for_tushare(ticker: str) -> str:
 
 def _normalize_crypto_symbol_for_openbb(ticker: str) -> str:
     token = ticker.strip().upper()
-    if token.endswith("USD"):
+    for separator in ("/", ".", "-", "_"):
+        if separator in token:
+            base, quote = token.split(separator, 1)
+            return f"{base}{quote}"
+    for quote in ("USDT", "USDC", "USD", "BTC", "ETH"):
+        if token.endswith(quote) and len(token) > len(quote):
+            return token
+    if not token:
         return token
-    return f"{token}USD"
+    return f"{token}USDT"
 
 
-def _call_tushare_daily(*, token: str, ts_code: str, start_date: str, end_date: str) -> tuple[Mapping[str, Any], ...]:
-    pro = create_tushare_pro(token=token)
+def _call_tushare_daily(
+    *,
+    token: str,
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    pro = create_tushare_pro(token=token, env=env)
     frame = call_tushare_pro_bar(
         api=pro,
         ts_code=ts_code,
         start_date=_compact_date(start_date),
         end_date=_compact_date(end_date),
         adj="qfq",
+        env=env,
     )
     return tuple(_df_to_rows(frame))
 
 
-def _call_tushare_hk_daily(*, token: str, ts_code: str, start_date: str, end_date: str) -> tuple[Mapping[str, Any], ...]:
-    pro = create_tushare_pro(token=token)
+def _call_tushare_stock_zh_a_spot_batch(
+    *,
+    token: str,
+    trade_date: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    pro = create_tushare_pro(token=token, env=env)
+    trade_dates = _tushare_selection_trade_dates(pro=pro, trade_date=trade_date, lookback_days=260)
+    if not trade_dates:
+        return ()
+    latest_trade_date = trade_dates[-1]
+    history_by_ts_code = _tushare_selection_history_by_ts_code(pro=pro, trade_dates=trade_dates)
+    if not history_by_ts_code:
+        return ()
+    basic_rows = tuple(_df_to_rows(pro.daily_basic(trade_date=latest_trade_date)))
+    stock_basic_rows = tuple(
+        _df_to_rows(
+            pro.stock_basic(
+                exchange="",
+                list_status="L",
+                fields="ts_code,name,industry",
+            )
+        )
+    )
+    private_events = _akshare_private_placement_events_by_ticker(trade_date=_date_text(latest_trade_date) or trade_date)
+    basics_by_ts_code: dict[str, Mapping[str, Any]] = {}
+    for row in basic_rows:
+        ts_code = str(_pick(row, "ts_code", "ticker", "symbol") or "").strip().upper()
+        if ts_code:
+            basics_by_ts_code[ts_code] = row
+    company_meta_by_ts_code: dict[str, Mapping[str, Any]] = {}
+    for row in stock_basic_rows:
+        ts_code = str(_pick(row, "ts_code", "ticker", "symbol") or "").strip().upper()
+        if ts_code:
+            company_meta_by_ts_code[ts_code] = row
+
+    rows: list[Mapping[str, Any]] = []
+    for ts_code, history_rows in sorted(history_by_ts_code.items()):
+        row = history_rows[-1] if history_rows else {}
+        if not ts_code:
+            continue
+        basic = basics_by_ts_code.get(ts_code, {})
+        company_meta = company_meta_by_ts_code.get(ts_code, {})
+        ticker = _normalize_cn_selection_ticker(ts_code)
+        private_event = private_events.get(ticker, {})
+        rows.append(
+            {
+                "ticker": ticker,
+                "company_name": str(_pick(company_meta, "name", "company_name") or ""),
+                "industry": str(_pick(company_meta, "industry", "所属行业") or ""),
+                "open": _pick(row, "open", "今开", "开盘"),
+                "close": _pick(row, "close", "最新价", "收盘"),
+                "high": _pick(row, "high", "最高"),
+                "low": _pick(row, "low", "最低"),
+                "amount": _pick(row, "amount", "成交额"),
+                "volume": _pick(row, "vol", "volume", "成交量"),
+                "vol_ratio": _pick(basic, "volume_ratio", "vol_ratio", "量比"),
+                "history": history_rows,
+                "private_placement_event_date": str(private_event.get("event_date") or "none"),
+                "private_placement_days_since": float(private_event.get("days_since", 9999.0)),
+                "private_placement_source_ref": str(
+                    private_event.get("source_ref") or f"raw://akshare/stock_qbzf_em/{trade_date}"
+                ),
+            }
+        )
+    return tuple(rows)
+
+
+def _tushare_selection_trade_dates(
+    *,
+    pro: Any,
+    trade_date: str,
+    lookback_days: int,
+) -> tuple[str, ...]:
+    end = date.fromisoformat((_date_text(trade_date) or trade_date)[:10])
+    start = end - timedelta(days=lookback_days * 2 + 30)
+    rows = tuple(
+        _df_to_rows(
+            pro.trade_cal(
+                exchange="",
+                start_date=_compact_date(start.isoformat()),
+                end_date=_compact_date(end.isoformat()),
+                is_open="1",
+            )
+        )
+    )
+    dates = sorted(
+        str(_pick(row, "cal_date", "trade_date", "date") or "").strip()
+        for row in rows
+        if str(_pick(row, "cal_date", "trade_date", "date") or "").strip()
+    )
+    dates = tuple(item for item in dates if item <= _compact_date(end.isoformat()))
+    selected = dates[-lookback_days:]
+    if len(selected) < lookback_days:
+        raise RuntimeError(
+            "tushare trade_cal returned insufficient selection history dates: "
+            f"required={lookback_days}, actual={len(selected)}"
+        )
+    return tuple(selected)
+
+
+def _tushare_selection_history_by_ts_code(
+    *,
+    pro: Any,
+    trade_dates: tuple[str, ...],
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    history: dict[str, list[Mapping[str, Any]]] = {}
+    for trade_date in trade_dates:
+        rows = tuple(_df_to_rows(pro.daily(trade_date=trade_date)))
+        for row in rows:
+            ts_code = str(_pick(row, "ts_code", "ticker", "symbol") or "").strip().upper()
+            if not ts_code:
+                continue
+            history.setdefault(ts_code, []).append(
+                {
+                    "date": _date_text(_pick(row, "trade_date", "date") or trade_date) or trade_date,
+                    "open": _pick(row, "open", "今开", "开盘"),
+                    "high": _pick(row, "high", "最高"),
+                    "low": _pick(row, "low", "最低"),
+                    "close": _pick(row, "close", "最新价", "收盘"),
+                    "volume": _pick(row, "vol", "volume", "成交量"),
+                    "amount": _pick(row, "amount", "成交额"),
+                    "p_change_pct": _pick(row, "pct_chg", "p_change_pct", "涨跌幅"),
+                }
+            )
+    return {
+        ts_code: tuple(sorted(rows, key=lambda item: str(item.get("date") or "")))
+        for ts_code, rows in history.items()
+        if rows
+    }
+
+
+def _akshare_private_placement_events_by_ticker(*, trade_date: str) -> Mapping[str, Mapping[str, Any]]:
+    import akshare as ak
+
+    frame = ak.stock_qbzf_em()
+    rows = tuple(_df_to_rows(frame))
+    end = date.fromisoformat((_date_text(trade_date) or trade_date)[:10])
+    events: dict[str, Mapping[str, Any]] = {}
+    for row in rows:
+        method = str(_pick(row, "发行方式", "增发方式", "方式") or "").strip()
+        if "定向增发" not in method:
+            continue
+        event_date_text = _date_text(_pick(row, "发行日期", "公告日期", "最新公告日期", "增发上市日"))
+        if not event_date_text:
+            continue
+        try:
+            event_day = date.fromisoformat(event_date_text[:10])
+        except ValueError:
+            continue
+        days_since = (end - event_day).days
+        if days_since < 0 or days_since > 7:
+            continue
+        raw_code = str(_pick(row, "股票代码", "代码", "证券代码", "symbol", "ticker") or "").strip()
+        ticker = _normalize_cn_selection_ticker(raw_code)
+        if not ticker:
+            continue
+        current = events.get(ticker)
+        if current is not None and float(current.get("days_since", 9999.0)) <= float(days_since):
+            continue
+        events[ticker] = {
+            "event_date": event_date_text,
+            "days_since": float(days_since),
+            "source_ref": f"raw://akshare/stock_qbzf_em/{trade_date}",
+        }
+    return events
+
+
+def _call_tushare_hk_daily(
+    *,
+    token: str,
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    pro = create_tushare_pro(token=token, env=env)
     frame = pro.hk_daily(ts_code=ts_code, start_date=_compact_date(start_date), end_date=_compact_date(end_date))
     return tuple(_df_to_rows(frame))
 
@@ -1379,6 +2832,26 @@ def _call_akshare_stock_zh_a_hist(
         period="daily",
         start_date=_compact_date(start_date),
         end_date=_compact_date(end_date),
+        adjust=adjust,
+    )
+    return tuple(_df_to_rows(frame))
+
+
+def _call_akshare_stock_zh_a_hist_min_em(
+    *,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    period: str,
+    adjust: str,
+) -> tuple[Mapping[str, Any], ...]:
+    import akshare as ak
+
+    frame = ak.stock_zh_a_hist_min_em(
+        symbol=symbol,
+        start_date=f"{_date_text(start_date) or start_date} 09:30:00",
+        end_date=f"{_date_text(end_date) or end_date} 15:00:00",
+        period=period,
         adjust=adjust,
     )
     return tuple(_df_to_rows(frame))
@@ -1410,6 +2883,192 @@ def _call_akshare_stock_zh_a_spot(*, symbol: str) -> tuple[Mapping[str, Any], ..
         if code == symbol:
             return (row,)
     return ()
+
+
+def _call_akshare_stock_zh_a_spot_batch() -> tuple[Mapping[str, Any], ...]:
+    import akshare as ak
+
+    frame = ak.stock_zh_a_spot_em()
+    return tuple(_df_to_rows(frame))
+
+
+def _call_akshare_stock_board_industry_name_em() -> tuple[Mapping[str, Any], ...]:
+    import akshare as ak
+
+    frame = ak.stock_board_industry_name_em()
+    return tuple(_df_to_rows(frame))
+
+
+def _call_akshare_stock_board_concept_name_em() -> tuple[Mapping[str, Any], ...]:
+    import akshare as ak
+
+    frame = ak.stock_board_concept_name_em()
+    return tuple(_df_to_rows(frame))
+
+
+def _with_default_market_fields(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    trade_date: str,
+) -> tuple[Mapping[str, Any], ...]:
+    out: list[Mapping[str, Any]] = []
+    for row in rows:
+        mapped = dict(row)
+        mapped.setdefault("date", trade_date)
+        mapped.setdefault("currency", "CNY")
+        mapped.setdefault("timezone", "Asia/Shanghai")
+        out.append(mapped)
+    return tuple(out)
+
+
+def _rows_from_baostock_result(result: Any, *, action: str) -> tuple[Mapping[str, Any], ...]:
+    error_code = str(getattr(result, "error_code", "")).strip()
+    if error_code not in {"", "0"}:
+        message = str(getattr(result, "error_msg", "")).strip() or "unknown error"
+        raise RuntimeError(f"baostock {action} failed: {message}")
+    fields = tuple(str(item) for item in (getattr(result, "fields", None) or ()))
+    rows: list[Mapping[str, Any]] = []
+    while getattr(result, "next")():
+        values = tuple(getattr(result, "get_row_data")())
+        mapped = {fields[index]: values[index] if index < len(values) else None for index in range(len(fields))}
+        rows.append(mapped)
+    return tuple(rows)
+
+
+def _call_baostock_stock_zh_a_daily_batch(*, trade_date: str) -> tuple[Mapping[str, Any], ...]:
+    try:
+        import baostock as bs
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("baostock dependency unavailable: install baostock to enable cn_a selection batch adapter") from exc
+    try:
+        login_result = bs.login()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"baostock login failed: {exc}") from exc
+    try:
+        if str(getattr(login_result, "error_code", "")).strip() not in {"", "0"}:
+            message = str(getattr(login_result, "error_msg", "")).strip() or "unknown login error"
+            raise RuntimeError(f"baostock login failed: {message}")
+        universe_rows = _rows_from_baostock_result(
+            bs.query_all_stock(day=trade_date),
+            action="query_all_stock",
+        )
+        out_rows: list[Mapping[str, Any]] = []
+        for row in universe_rows:
+            raw_code = str(_pick(row, "code", "ts_code", "symbol") or "").strip()
+            code, _market = _normalize_cn_symbol_parts(raw_code)
+            if not _is_cn_a_equity_code(code):
+                continue
+            out_rows.append(
+                {
+                    "ticker": _normalize_cn_selection_ticker(raw_code),
+                    "company_name": _clean_cn_display_name(_pick(row, "code_name", "name", "company_name")),
+                    "trade_date": trade_date,
+                }
+            )
+        if not out_rows:
+            raise RuntimeError("baostock query_all_stock returned no cn_a symbols")
+        return tuple(out_rows)
+    finally:
+        try:
+            bs.logout()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _call_eastmoney_stock_zh_a_spot_batch() -> tuple[Mapping[str, Any], ...]:
+    total, first_page_rows = _eastmoney_stock_zh_a_spot_page(page=1)
+    rows: list[Mapping[str, Any]] = list(first_page_rows)
+    total_pages = max(1, math.ceil(total / _EASTMONEY_A_SPOT_PAGE_SIZE))
+    last_request_monotonic = time.monotonic()
+    for page in range(2, total_pages + 1):
+        _wait_eastmoney_page_interval(last_request_monotonic)
+        _ignored_total, page_rows = _eastmoney_stock_zh_a_spot_page(page=page)
+        last_request_monotonic = time.monotonic()
+        rows.extend(page_rows)
+    return tuple(rows)
+
+
+def _eastmoney_stock_zh_a_spot_page(*, page: int) -> tuple[int, tuple[Mapping[str, Any], ...]]:
+    params = {
+        "pn": str(page),
+        "pz": str(_EASTMONEY_A_SPOT_PAGE_SIZE),
+        "po": "1",
+        "np": "1",
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "fltt": "2",
+        "invt": "2",
+        "fid": "f12",
+        "fs": "m:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048",
+        "fields": _EASTMONEY_A_SPOT_FIELDS,
+    }
+    host_ring = _eastmoney_spot_hosts_for_retry()
+    last_error: requests.RequestException | ValueError | RuntimeError | None = None
+    attempt_errors: list[str] = []
+    for attempt in range(1, _EASTMONEY_A_SPOT_MAX_RETRIES + 1):
+        host = host_ring[(attempt - 1) % len(host_ring)]
+        try:
+            response = managed_requests.get(
+                _eastmoney_stock_zh_a_spot_url(host),
+                params=params,
+                headers=_EASTMONEY_A_SPOT_HEADERS,
+                timeout=_HTTP_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data") if isinstance(payload, Mapping) else None
+            if not isinstance(data, Mapping):
+                raise RuntimeError("eastmoney stock batch payload missing data")
+            total = int(data.get("total") or 0)
+            diff = data.get("diff")
+            if not isinstance(diff, Sequence) or isinstance(diff, (str, bytes, bytearray)):
+                raise RuntimeError("eastmoney stock batch payload missing data.diff")
+            rows = tuple(_map_eastmoney_stock_zh_a_spot_row(item) for item in diff if isinstance(item, Mapping))
+            return total, rows
+        except (requests.RequestException, ValueError, RuntimeError) as exc:
+            last_error = exc
+            attempt_errors.append(
+                f"attempt={attempt},host={host},page={page},error={type(exc).__name__}:{exc}"
+            )
+            if attempt >= _EASTMONEY_A_SPOT_MAX_RETRIES:
+                break
+            time.sleep(min(20.0, 0.8 * attempt + random.uniform(0.2, 1.0)))
+    if last_error is not None:
+        detail = "; ".join(attempt_errors[-min(8, len(attempt_errors)) :]) if attempt_errors else str(last_error)
+        raise requests.exceptions.ConnectionError(
+            "eastmoney stock batch request failed: "
+            f"page={page}, retries={_EASTMONEY_A_SPOT_MAX_RETRIES}, details=[{detail}]"
+        ) from last_error
+    raise RuntimeError("eastmoney stock batch request failed without exception")
+
+
+def _eastmoney_spot_hosts_for_retry() -> tuple[str, ...]:
+    return _EASTMONEY_A_SPOT_HOSTS
+
+
+def _eastmoney_stock_zh_a_spot_url(host: str) -> str:
+    return f"https://{host}/api/qt/clist/get"
+
+
+def _wait_eastmoney_page_interval(last_request_monotonic: float) -> None:
+    elapsed = max(0.0, time.monotonic() - last_request_monotonic)
+    remaining = _EASTMONEY_A_SPOT_REQUEST_INTERVAL_SECONDS - elapsed
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+def _map_eastmoney_stock_zh_a_spot_row(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    return {
+        "代码": _pick(row, "f12", "代码", "symbol"),
+        "名称": _pick(row, "f14", "名称", "name"),
+        "行业": _pick(row, "f100", "行业", "所属行业", "industry"),
+        "今开": _pick(row, "f17", "今开", "open"),
+        "最新价": _pick(row, "f2", "最新价", "close"),
+        "最高": _pick(row, "f15", "最高", "high"),
+        "最低": _pick(row, "f16", "最低", "low"),
+        "成交额": _pick(row, "f6", "成交额", "amount"),
+        "成交量": _pick(row, "f5", "成交量", "volume"),
+        "量比": _pick(row, "f10", "量比", "vol_ratio"),
+    }
 
 
 def _call_akshare_stock_hk_spot(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
@@ -1670,7 +3329,7 @@ def _call_crypto_ahr999(*, symbol: str, env: Mapping[str, str] | None = None) ->
 
 def _asset_from_crypto_symbol(symbol: str) -> str:
     token = symbol.strip().upper()
-    for suffix in ("USDT", "USD"):
+    for suffix in ("USDT", "USDC", "USD", "BTC", "ETH"):
         if token.endswith(suffix) and len(token) > len(suffix):
             return token[: -len(suffix)]
     return token
@@ -2101,7 +3760,7 @@ def _http_get_json(
     headers: Mapping[str, str] | None = None,
 ) -> Any:
     try:
-        response = requests.get(url, params=params, headers=headers, timeout=_HTTP_TIMEOUT_SECONDS)
+        response = managed_requests.get(url, params=params, headers=headers, timeout=_HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
         payload = response.json()
     except requests.RequestException as exc:
@@ -2118,7 +3777,7 @@ def _http_post_json(
     json_body: Mapping[str, Any] | None = None,
 ) -> Any:
     try:
-        response = requests.post(url, headers=headers, json=json_body, timeout=_HTTP_TIMEOUT_SECONDS)
+        response = managed_requests.post(url, headers=headers, json=json_body, timeout=_HTTP_TIMEOUT_SECONDS)
         response.raise_for_status()
         payload = response.json()
     except requests.RequestException as exc:
@@ -2262,6 +3921,8 @@ def _default_currency_by_market(market: Market) -> str:
         return "CNY"
     if market == Market.HK:
         return "HKD"
+    if market == Market.CRYPTO:
+        return "USDT"
     return "USD"
 
 

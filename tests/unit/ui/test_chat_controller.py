@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.selection.controller import SelectCommandCode, SelectCommandResult
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
@@ -37,7 +39,24 @@ class _FakeChatTransport:
         return {"text": f"echo:{text}"}
 
 
-def _build_controller() -> tuple[ChatController, _FakeChatTransport, _FakeWorkflowRunner]:
+@dataclass
+class _FakeSelectionController:
+    calls: int = 0
+
+    def handle_select_command(self, *, raw_text: str, request_id: str, user_id: str | None = None) -> SelectCommandResult:
+        self.calls += 1
+        return SelectCommandResult(
+            code=SelectCommandCode.COMPLETED,
+            chat_text="`/select` 测试结果",
+            select_workflow_run_id="select-test-run",
+            evidence_path=Path("runs/selection/workflows/select-test-run/evidence.json"),
+        )
+
+
+def _build_controller(
+    *,
+    selection_controller: _FakeSelectionController | None = None,
+) -> tuple[ChatController, _FakeChatTransport, _FakeWorkflowRunner]:
     transport = _FakeChatTransport()
     workflow_runner = _FakeWorkflowRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(workflow_runner))
@@ -47,6 +66,7 @@ def _build_controller() -> tuple[ChatController, _FakeChatTransport, _FakeWorkfl
         confirmation=ConfirmationController(queue),
         queue=queue,
         settings=ReportWorkflowSettings(),
+        selection_controller=selection_controller,
     )
     return controller, transport, workflow_runner
 
@@ -68,6 +88,27 @@ def test_report_intent_only_builds_confirmation_card() -> None:
     assert "error" not in result
     assert "confirmationCard" in result
     assert result["context"]["kind"] == "intent_confirming"
+    assert transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+def test_natural_language_report_intent_still_builds_confirmation_card() -> None:
+    controller, transport, workflow_runner = _build_controller()
+    result = controller.send_chat_message(request_id="req-2b", context_id="ctx-2b", text="请给我 BTC 报告")
+    assert "error" not in result
+    assert "confirmationCard" in result
+    assert result["context"]["kind"] == "intent_confirming"
+    assert transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+def test_select_command_is_routed_to_selection_before_report_intent() -> None:
+    selection = _FakeSelectionController()
+    controller, transport, workflow_runner = _build_controller(selection_controller=selection)
+    result = controller.send_chat_message(request_id="req-select", context_id="ctx-select", text="/select")
+    assert "error" not in result
+    assert result["selection"]["code"] == "completed"
+    assert selection.calls == 1
     assert transport.calls == 0
     assert workflow_runner.calls == 0
 

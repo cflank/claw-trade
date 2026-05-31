@@ -207,3 +207,48 @@ def test_lockup_provider_source_claim_matches_official_and_datacenter_domains(mo
 
     assert any("cninfo.com.cn" in url for url in called_post)
     assert any("datacenter-web.eastmoney.com" in url for url in called_get)
+
+
+def test_lockup_tushare_120d_flow_fetches_and_normalizes_when_configured(monkeypatch) -> None:
+    class _Frame:
+        def to_dict(self, orient: str):  # noqa: ANN001
+            assert orient == "records"
+            return [
+                {
+                    "trade_date": "20260521",
+                    "buy_elg_amount": "100",
+                    "buy_lg_amount": "10",
+                    "buy_md_amount": "0",
+                    "buy_sm_amount": "0",
+                    "sell_elg_amount": "70",
+                    "sell_lg_amount": "20",
+                    "sell_md_amount": "0",
+                    "sell_sm_amount": "0",
+                }
+            ]
+
+    class _Pro:
+        def moneyflow(self, *, ts_code, start_date, end_date):  # noqa: ANN001
+            assert ts_code == "600519.SH"
+            assert start_date == "20251123"
+            assert end_date == "20260522"
+            return _Frame()
+
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.providers.lockup.create_tushare_pro",
+        lambda *, token, env: _Pro(),
+    )
+
+    adapter = next(
+        item
+        for item in build_default_lockup_adapters(provider_config_version="cfg", env={"TUSHARE_TOKEN": "token"})
+        if item.adapter_id == "lockup.tushare.flow120d.cn_a"
+    )
+    spec = adapter.build_call_specs(_request())[0]
+    fetch = adapter.fetch(spec, _request())
+    result = adapter.normalize(spec, fetch)
+
+    assert fetch.source_url == "https://api.tushare.pro#moneyflow"
+    assert result.status == ProviderStatus.REMOTE_SUCCESS
+    assert result.rows[0]["as_of"] == "20260521"
+    assert result.rows[0]["amount"] == "200000.0"

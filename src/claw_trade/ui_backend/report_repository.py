@@ -45,7 +45,8 @@ class SavedReportRecord:
 class PdfArtifactRecord:
     id: str
     report_id: str
-    content: bytes
+    content: bytes | None
+    path: Path | None
     content_hash: str
     created_at: str
 
@@ -116,6 +117,9 @@ class ReportRepository:
 
     def delete_saved_report(self, report_id: str) -> bool:
         existed = report_id in self._reports or report_id in self._deleted_report_ids
+        for artifact in self._pdf_artifacts.get(report_id, ()):
+            if artifact.path is not None:
+                artifact.path.unlink(missing_ok=True)
         self._reports.pop(report_id, None)
         self._report_order = [item for item in self._report_order if item != report_id]
         self._pdf_artifacts.pop(report_id, None)
@@ -170,12 +174,23 @@ class ReportRepository:
         return assets
 
     def write_pdf_artifact(self, report_id: str, pdf_bytes: bytes) -> PdfArtifactRecord:
-        if report_id not in self._reports:
+        report = self._reports.get(report_id)
+        if report is None:
             raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
+        artifact_id = f"pdf_{uuid4().hex}"
+        content_path: Path | None = None
+        content: bytes | None = pdf_bytes
+        if report.asset_dir is not None:
+            pdf_dir = report.asset_dir.parent / "pdf"
+            pdf_dir.mkdir(parents=True, exist_ok=True)
+            content_path = pdf_dir / f"{artifact_id}.pdf"
+            content_path.write_bytes(pdf_bytes)
+            content = None
         artifact = PdfArtifactRecord(
-            id=f"pdf_{uuid4().hex}",
+            id=artifact_id,
             report_id=report_id,
-            content=pdf_bytes,
+            content=content,
+            path=content_path,
             content_hash=sha256(pdf_bytes).hexdigest(),
             created_at=_now_iso(),
         )
@@ -186,11 +201,44 @@ class ReportRepository:
         items = self._pdf_artifacts.get(report_id, ())
         return items[-1] if items else None
 
+    def remove_pdf_artifact(self, report_id: str, artifact_id: str) -> bool:
+        items = self._pdf_artifacts.get(report_id, ())
+        if not items:
+            return False
+        removed = False
+        remaining: list[PdfArtifactRecord] = []
+        for item in items:
+            if item.id != artifact_id:
+                remaining.append(item)
+                continue
+            removed = True
+            if item.path is not None:
+                item.path.unlink(missing_ok=True)
+        if remaining:
+            self._pdf_artifacts[report_id] = remaining
+        else:
+            self._pdf_artifacts.pop(report_id, None)
+        return removed
+
     def read_pdf_bytes(self, report_id: str, artifact_id: str) -> bytes:
         items = self._pdf_artifacts.get(report_id, ())
         for item in items:
             if item.id == artifact_id:
-                return item.content
+                if item.content is not None:
+                    return item.content
+                if item.path is not None and item.path.exists() and item.path.is_file():
+                    return item.path.read_bytes()
+                break
+        raise UiProductError("REPORT_NOT_READY", "完整报告文件暂不可发送，请在设备界面查看。")
+
+    def pdf_artifact_path(self, report_id: str, artifact_id: str) -> Path | None:
+        items = self._pdf_artifacts.get(report_id, ())
+        for item in items:
+            if item.id != artifact_id:
+                continue
+            if item.path is not None and item.path.exists() and item.path.is_file():
+                return item.path
+            return None
         raise UiProductError("REPORT_NOT_READY", "完整报告文件暂不可发送，请在设备界面查看。")
 
     def get_report_detail(

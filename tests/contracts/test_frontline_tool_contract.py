@@ -6,10 +6,8 @@ import subprocess
 from pathlib import Path
 
 import yaml
-
 from claw_trade.config.stage_policy import load_stage_policy
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
-
 
 EXPECTED_FRONTLINE_VISIBLE_TOOLS = {
     "market_analyst": ("claw_get_market_pack",),
@@ -114,6 +112,18 @@ def test_frontline_skill_manifest_only_exports_worker_profile_tools() -> None:
             assert isinstance(tools, list)
             exported_tools.update(str(tool) for tool in tools)
         assert exported_tools == expected_pack_tools
+
+
+def test_market_analyst_does_not_mount_legacy_alphaear_data_skills() -> None:
+    forbidden = {"alphaear-stock", "alphaear-techlab"}
+    stage_text = Path("agents/market_analyst/STAGES.yaml").read_text(encoding="utf-8")
+    manifest_text = Path("agents/market_analyst/skills/manifest.yaml").read_text(encoding="utf-8")
+    skills_text = Path("agents/market_analyst/SKILLS.md").read_text(encoding="utf-8")
+
+    for skill_name in forbidden:
+        assert skill_name not in stage_text
+        assert skill_name not in manifest_text
+        assert skill_name not in skills_text
 
 
 def test_openviking_write_material_schema_for_non_pm_workers_exposes_only_content() -> None:

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime
-from xml.etree import ElementTree
 import hashlib
 import json
 import os
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from xml.etree import ElementTree
 
 from claw_trade.data_gateway.models import (
     AdmissionCheckStatus,
@@ -26,13 +26,41 @@ from claw_trade.data_gateway.models import (
     ProviderStatus,
     SourceRole,
 )
+from claw_trade.data_gateway.providers import managed_requests
+from claw_trade.data_gateway.providers import managed_requests as requests
 from claw_trade.data_gateway.providers.base import ProviderAdapter
+from claw_trade.data_gateway.providers.openbb_runtime import import_openbb_obb
 from claw_trade.data_gateway.providers.tushare_client import create_tushare_pro
+from claw_trade.instruments.resolver import resolve_crypto_provider_symbols
 
 
 def fundamental_capabilities() -> tuple[ProviderCapability, ...]:
+    env = os.environ
+    return tuple(_apply_runtime_user_preference(capability, env=env) for capability in _base_fundamental_capabilities())
+
+
+def _base_fundamental_capabilities() -> tuple[ProviderCapability, ...]:
     return (
         # CN_A
+        ProviderCapability(
+            provider="tushare",
+            adapter_id="fundamental.tushare.cn_a",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.CN_A,
+            domain=PackDomain.FUNDAMENTAL,
+            endpoint="daily_basic+fina_indicator+income+balancesheet+cashflow+fina_mainbz",
+            source_role=SourceRole.FUNDAMENTAL_DATA,
+            expected_schema_id="cn_a.fundamental.financials.v1",
+            license_policy_id="personal_research",
+            credential_requirements=("TUSHARE_TOKEN",),
+            rate_limit_policy_id="tushare.default",
+            cache_ttl_seconds=900,
+            required=False,
+            attempt_required=True,
+            coverage_group="cn_a_fundamental_financials",
+            coverage_quorum=1,
+            priority=12,
+        ),
         ProviderCapability(
             provider="sina_financials",
             adapter_id="fundamental.cn_a.sina_financials",
@@ -111,6 +139,25 @@ def fundamental_capabilities() -> tuple[ProviderCapability, ...]:
         ),
         # HK
         ProviderCapability(
+            provider="yahoo_quote_summary",
+            adapter_id="fundamental.global_yahoo.hk",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.HK,
+            domain=PackDomain.FUNDAMENTAL,
+            endpoint="quote_summary",
+            source_role=SourceRole.FUNDAMENTAL_DATA,
+            expected_schema_id="hk.fundamental.yahoo_quote_summary.v1",
+            license_policy_id="personal_research",
+            credential_requirements=(),
+            rate_limit_policy_id="yahoo_quote_summary.default",
+            cache_ttl_seconds=900,
+            required=False,
+            attempt_required=True,
+            coverage_group="hk_fundamental_core",
+            coverage_quorum=1,
+            priority=5,
+        ),
+        ProviderCapability(
             provider="tushare_hk",
             adapter_id="fundamental.tushare.hk",
             provider_kind=ProviderKind.PROJECT_EXTENSION,
@@ -168,25 +215,6 @@ def fundamental_capabilities() -> tuple[ProviderCapability, ...]:
             priority=30,
         ),
         ProviderCapability(
-            provider="openbb_yfinance_hk",
-            adapter_id="fundamental.yfinance.hk",
-            provider_kind=ProviderKind.OPENBB_NATIVE,
-            market=Market.HK,
-            domain=PackDomain.FUNDAMENTAL,
-            endpoint="equity_fundamentals_yfinance",
-            source_role=SourceRole.FUNDAMENTAL_DATA,
-            expected_schema_id="hk.fundamental.yfinance.v1",
-            license_policy_id="personal_research",
-            credential_requirements=(),
-            rate_limit_policy_id="openbb_yfinance.default",
-            cache_ttl_seconds=900,
-            required=False,
-            attempt_required=True,
-            coverage_group="hk_fundamental_core",
-            coverage_quorum=1,
-            priority=40,
-        ),
-        ProviderCapability(
             provider="hk_official_filing",
             adapter_id="fundamental.hk.official",
             provider_kind=ProviderKind.PROJECT_EXTENSION,
@@ -206,6 +234,25 @@ def fundamental_capabilities() -> tuple[ProviderCapability, ...]:
             priority=0,
         ),
         # US
+        ProviderCapability(
+            provider="yahoo_quote_summary",
+            adapter_id="fundamental.global_yahoo.us",
+            provider_kind=ProviderKind.PROJECT_EXTENSION,
+            market=Market.US,
+            domain=PackDomain.FUNDAMENTAL,
+            endpoint="quote_summary",
+            source_role=SourceRole.FUNDAMENTAL_DATA,
+            expected_schema_id="us.fundamental.yahoo_quote_summary.v1",
+            license_policy_id="personal_research",
+            credential_requirements=(),
+            rate_limit_policy_id="yahoo_quote_summary.default",
+            cache_ttl_seconds=900,
+            required=False,
+            attempt_required=True,
+            coverage_group="us_fundamental_core",
+            coverage_quorum=1,
+            priority=5,
+        ),
         ProviderCapability(
             provider="openbb_yfinance",
             adapter_id="fundamental.yfinance.us",
@@ -298,7 +345,7 @@ class StaticFundamentalProviderAdapter:
     env: Mapping[str, str] | None = None
 
     def capabilities(self) -> tuple[ProviderCapability, ...]:
-        return (self.capability,)
+        return (_apply_runtime_user_preference(self.capability, env=self._env),)
 
     def validate_credentials(self) -> CredentialStatus:
         env = os.environ if self.env is None else self.env
@@ -318,7 +365,7 @@ class StaticFundamentalProviderAdapter:
         )
 
     def build_call_specs(self, request: PackRequest) -> tuple[ProviderCallSpec, ...]:
-        capability = self.capability
+        capability = self.capabilities()[0]
         spec = ProviderCallSpec(
             call_key=f"{capability.domain.value}:{capability.adapter_id}:{capability.endpoint}",
             provider=capability.provider,
@@ -338,8 +385,8 @@ class StaticFundamentalProviderAdapter:
             license_policy_id=capability.license_policy_id,
             expected_schema_id=capability.expected_schema_id,
             priority=capability.priority,
-            priority_source=PrioritySource.SYSTEM_DEFAULT,
-            user_preferred=False,
+            priority_source=capability.priority_source,
+            user_preferred=capability.priority_source == PrioritySource.USER_PREFERRED,
         )
         return (spec,)
 
@@ -421,7 +468,7 @@ def build_default_fundamental_adapters(
     env: Mapping[str, str] | None = None,
 ) -> tuple[ProviderAdapter, ...]:
     adapters: list[ProviderAdapter] = []
-    for capability in fundamental_capabilities():
+    for capability in _base_fundamental_capabilities():
         adapters.append(
             StaticFundamentalProviderAdapter(
                 adapter_id=capability.adapter_id,
@@ -437,6 +484,16 @@ def build_default_fundamental_adapters(
     return tuple(adapters)
 
 
+def _apply_runtime_user_preference(capability: ProviderCapability, *, env: Mapping[str, str]) -> ProviderCapability:
+    if not capability.credential_requirements:
+        return capability
+    if not all(str(env.get(key, "")).strip() for key in capability.credential_requirements):
+        return capability
+    if capability.provider != "tushare" and capability.provider != "tushare_hk":
+        return capability
+    return replace(capability, priority=0, priority_source=PrioritySource.USER_PREFERRED)
+
+
 def _build_fundamental_params(*, request: PackRequest, capability: ProviderCapability) -> Mapping[str, Any]:
     params: dict[str, Any] = {
         "ticker": request.ticker,
@@ -448,8 +505,8 @@ def _build_fundamental_params(*, request: PackRequest, capability: ProviderCapab
         "market": request.market.value,
     }
     if capability.market == Market.CN_A:
-        params["ts_code"] = _normalize_cn_symbol_for_tushare(request.ticker)
         params["symbol"] = _normalize_cn_symbol_for_akshare(request.ticker)
+        params["ts_code"] = _normalize_cn_symbol_for_tushare(request.ticker)
     if capability.market == Market.HK:
         params["ts_code"] = _normalize_hk_symbol_for_tushare(request.ticker)
         params["symbol"] = _normalize_hk_symbol_for_akshare(request.ticker)
@@ -470,6 +527,25 @@ def _fetch_cn_a(
     request_id: str,
     env: Mapping[str, str],
 ) -> ProviderFetch:
+    if spec.adapter_id == "fundamental.tushare.cn_a":
+        token = str(env.get("TUSHARE_TOKEN", "")).strip()
+        if not token:
+            raise RuntimeError("tushare token missing for cn_a fundamental adapter (TUSHARE_TOKEN)")
+        rows = _call_tushare_cn_a_fundamental(
+            token=token,
+            ts_code=str(params.get("ts_code") or _normalize_cn_symbol_for_tushare(request.ticker)),
+            start_date=str(params.get("start_date") or request.start_date),
+            end_date=str(params.get("end_date") or request.end_date),
+            env=env,
+        )
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://api.tushare.pro",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
     if spec.adapter_id in {
         "fundamental.cn_a.sina_financials",
         "fundamental.cn_a.eastmoney_financials",
@@ -511,6 +587,7 @@ def _fetch_hk(
             ts_code=str(params.get("ts_code") or _normalize_hk_symbol_for_tushare(request.ticker)),
             start_date=str(params.get("start_date") or request.start_date),
             end_date=str(params.get("end_date") or request.end_date),
+            env=env,
         )
         return _build_fetch(
             provider=spec.provider,
@@ -540,13 +617,13 @@ def _fetch_hk(
             params=params,
             rows=rows,
         )
-    if spec.adapter_id == "fundamental.yfinance.hk":
+    if spec.adapter_id == "fundamental.global_yahoo.hk":
         symbol = str(params.get("yfinance_symbol") or _normalize_hk_symbol_for_yfinance(request.ticker))
-        rows = _call_openbb_hk_fundamental_yfinance(symbol=symbol)
+        rows = _call_yahoo_quote_summary_fundamental(symbol=symbol)
         return _build_fetch(
             provider=spec.provider,
             endpoint=spec.endpoint,
-            source_url="https://query1.finance.yahoo.com",
+            source_url="https://query2.finance.yahoo.com/v10/finance/quoteSummary",
             request_id=request_id,
             params=params,
             rows=rows,
@@ -580,6 +657,16 @@ def _fetch_us(
             provider=spec.provider,
             endpoint=spec.endpoint,
             source_url="https://query1.finance.yahoo.com",
+            request_id=request_id,
+            params=params,
+            rows=rows,
+        )
+    if spec.adapter_id == "fundamental.global_yahoo.us":
+        rows = _call_yahoo_quote_summary_fundamental(symbol=symbol)
+        return _build_fetch(
+            provider=spec.provider,
+            endpoint=spec.endpoint,
+            source_url="https://query2.finance.yahoo.com/v10/finance/quoteSummary",
             request_id=request_id,
             params=params,
             rows=rows,
@@ -681,13 +768,15 @@ def _extract_rows(payload: bytes | str | Mapping[str, Any]) -> tuple[Mapping[str
 
 def _normalize_fields(*, spec: ProviderCallSpec, rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     if spec.adapter_id in {
+        "fundamental.tushare.cn_a",
         "fundamental.cn_a.sina_financials",
         "fundamental.cn_a.eastmoney_financials",
         "fundamental.cn_a.ths_estimates",
         "fundamental.cn_a.eastmoney_research",
         "fundamental.tushare.hk",
         "fundamental.akshare.hk",
-        "fundamental.yfinance.hk",
+        "fundamental.global_yahoo.hk",
+        "fundamental.global_yahoo.us",
         "fundamental.yfinance.us",
     }:
         return _extract_equity_fields(rows)
@@ -714,6 +803,8 @@ def _extract_equity_fields(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "roe",
         "roe_ttm",
         "roe_avg",
+        "roe_dt",
+        "roe_waa",
         "roe_yearly",
         "净资产收益率",
         "returnOnEquity",
@@ -806,11 +897,13 @@ def _extract_crypto_defillama_fields(rows: Sequence[Mapping[str, Any]]) -> dict[
 
 def _required_fields_for_adapter(adapter_id: str) -> tuple[str, ...]:
     if adapter_id in {
+        "fundamental.tushare.cn_a",
         "fundamental.cn_a.sina_financials",
         "fundamental.cn_a.eastmoney_financials",
         "fundamental.tushare.hk",
         "fundamental.akshare.hk",
-        "fundamental.yfinance.hk",
+        "fundamental.global_yahoo.hk",
+        "fundamental.global_yahoo.us",
         "fundamental.yfinance.us",
     }:
         return ("valuation.pe", "valuation.pb", "financial_indicators.roe")
@@ -878,21 +971,6 @@ def _compact_date(value: str) -> str:
     return value.strip().replace("-", "")
 
 
-def _normalize_cn_symbol_for_tushare(ticker: str) -> str:
-    token = ticker.strip().upper()
-    if token.startswith("SH") and token[2:].isdigit():
-        return f"{token[2:].zfill(6)}.SH"
-    if token.startswith("SZ") and token[2:].isdigit():
-        return f"{token[2:].zfill(6)}.SZ"
-    if token.endswith(".SH") or token.endswith(".SZ"):
-        code, market = token.split(".", maxsplit=1)
-        return f"{code.zfill(6)}.{market}"
-    if token.isdigit():
-        suffix = "SH" if token.startswith(("5", "6", "9")) else "SZ"
-        return f"{token.zfill(6)}.{suffix}"
-    return token
-
-
 def _normalize_cn_symbol_for_akshare(ticker: str) -> str:
     token = ticker.strip().upper()
     if token.startswith("SH") or token.startswith("SZ"):
@@ -901,6 +979,28 @@ def _normalize_cn_symbol_for_akshare(ticker: str) -> str:
         token = token[: -3]
     if token.isdigit() and len(token) < 6:
         return token.zfill(6)
+    return token
+
+
+def _normalize_cn_symbol_for_tushare(ticker: str) -> str:
+    token = ticker.strip().upper()
+    if token.startswith(("SH", "SZ", "BJ")):
+        prefix, code = token[:2], token[2:]
+        if code.isdigit() and len(code) < 6:
+            code = code.zfill(6)
+        return f"{code}.{prefix}"
+    if token.endswith((".SH", ".SZ", ".BJ")):
+        code, exchange = token.rsplit(".", 1)
+        if code.isdigit() and len(code) < 6:
+            code = code.zfill(6)
+        return f"{code}.{exchange}"
+    if token.isdigit():
+        code = token.zfill(6)
+        if code.startswith(("4", "8", "9")):
+            return f"{code}.BJ"
+        if code.startswith(("5", "6")):
+            return f"{code}.SH"
+        return f"{code}.SZ"
     return token
 
 
@@ -926,35 +1026,13 @@ def _normalize_hk_symbol_for_yfinance(ticker: str) -> str:
 
 
 def _normalize_crypto_coin_id(ticker: str) -> str:
-    token = ticker.strip().upper()
-    mapping = {
-        "BTC": "bitcoin",
-        "ETH": "ethereum",
-        "SOL": "solana",
-    }
-    return mapping.get(token, token.lower())
+    symbols = resolve_crypto_provider_symbols(ticker)
+    return symbols.coingecko_coin_id or ticker.strip().lower()
 
 
 def _normalize_defillama_protocol_slug(ticker: str) -> str:
-    token = ticker.strip().upper()
-    mapping = {
-        "BTC": "bitcoin",
-        "ETH": "ethereum",
-        "SOL": "solana",
-    }
-    return mapping.get(token, token.lower())
-
-
-def _call_tushare_cn_a_fundamental(*, token: str, ts_code: str) -> tuple[Mapping[str, Any], ...]:
-    pro = create_tushare_pro(token=token)
-    primary = _df_to_rows(pro.fina_indicator(ts_code=ts_code, limit=1))
-    extra = _df_to_rows(pro.daily_basic(ts_code=ts_code, limit=1))
-    if not primary and not extra:
-        return ()
-    merged = dict(primary[0] if primary else {})
-    if extra:
-        merged.update(extra[0])
-    return (merged,)
+    symbols = resolve_crypto_provider_symbols(ticker)
+    return symbols.defillama_protocol_slug or ticker.strip().lower()
 
 
 def _call_akshare_cn_a_fundamental(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
@@ -971,14 +1049,61 @@ def _call_akshare_cn_a_fundamental(*, symbol: str) -> tuple[Mapping[str, Any], .
     return (merged,) if merged else ()
 
 
+def _call_tushare_cn_a_fundamental(
+    *,
+    token: str,
+    ts_code: str,
+    start_date: str,
+    end_date: str,
+    env: Mapping[str, str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    pro = create_tushare_pro(token=token, env=env)
+    start = _compact_date(start_date)
+    end = _compact_date(end_date)
+    rows: list[Mapping[str, Any]] = []
+    endpoint_calls = (
+        ("daily_basic", {"ts_code": ts_code, "start_date": start, "end_date": end}),
+        ("fina_indicator", {"ts_code": ts_code, "start_date": start, "end_date": end}),
+        ("income", {"ts_code": ts_code, "start_date": start, "end_date": end}),
+        ("balancesheet", {"ts_code": ts_code, "start_date": start, "end_date": end}),
+        ("cashflow", {"ts_code": ts_code, "start_date": start, "end_date": end}),
+        ("fina_mainbz", {"ts_code": ts_code, "start_date": start, "end_date": end}),
+    )
+    errors: list[str] = []
+    for endpoint, kwargs in endpoint_calls:
+        try:
+            method = getattr(pro, endpoint)
+        except AttributeError:
+            errors.append(f"{endpoint}: unavailable")
+            continue
+        try:
+            endpoint_rows = _df_to_rows(method(**kwargs))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{endpoint}: {exc}")
+            continue
+        if endpoint_rows:
+            first = dict(endpoint_rows[0])
+            first["tushare_endpoint"] = endpoint
+            rows.append(first)
+    if rows:
+        if errors:
+            first = dict(rows[0])
+            first["tushare_endpoint_errors"] = tuple(errors)
+            rows[0] = first
+        return tuple(rows)
+    detail = "; ".join(errors) if errors else "all endpoints returned empty"
+    raise RuntimeError(f"tushare cn_a fundamental returned no rows for {ts_code}: {detail}")
+
+
 def _call_tushare_hk_fundamental(
     *,
     token: str,
     ts_code: str,
     start_date: str,
     end_date: str,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
-    pro = create_tushare_pro(token=token)
+    pro = create_tushare_pro(token=token, env=env)
     rows = _df_to_rows(
         pro.hk_fina_indicator(
             ts_code=ts_code,
@@ -1010,7 +1135,7 @@ def _call_akshare_hk_income(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
 def _call_hk_official_filings(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
     url = "https://www.hkex.com.hk/Services/RSS-Feeds/regulatory-announcements?sc_lang=en"
     request = Request(url, headers={"User-Agent": "claw-trade-openbb-fundamental-adapter/1.0"}, method="GET")
-    with urlopen(request, timeout=20.0) as response:
+    with managed_requests.urlopen(request, timeout=20.0) as response:
         xml_text = response.read().decode("utf-8", errors="replace")
     root = ElementTree.fromstring(xml_text)
     symbol_token = symbol.strip().upper().replace(".HK", "")
@@ -1043,23 +1168,48 @@ def _call_openbb_us_fundamental_yfinance(*, symbol: str) -> tuple[Mapping[str, A
         symbol=symbol,
         provider="yfinance",
         candidates=(
-            "equity.fundamental.ratios",
             "equity.fundamental.metrics",
-            "equity.fundamental.valuation",
+            "equity.profile",
         ),
     )
 
 
-def _call_openbb_hk_fundamental_yfinance(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
-    return _call_openbb_fundamental_with_candidates(
-        symbol=symbol,
-        provider="yfinance",
-        candidates=(
-            "equity.fundamental.ratios",
-            "equity.fundamental.metrics",
-            "equity.fundamental.valuation",
-        ),
+def _call_yahoo_quote_summary_fundamental(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
+    session = managed_requests.Session()
+    session.headers["User-Agent"] = "Mozilla/5.0"
+    session.get("https://fc.yahoo.com", timeout=10)
+    crumb_response = session.get("https://query2.finance.yahoo.com/v1/test/getcrumb", timeout=10)
+    crumb_response.raise_for_status()
+    crumb = crumb_response.text.strip()
+    response = session.get(
+        f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}",
+        params={
+            "modules": ",".join(("summaryDetail", "defaultKeyStatistics", "financialData")),
+            "crumb": crumb,
+        },
+        timeout=20,
     )
+    response.raise_for_status()
+    payload = response.json()
+    result = payload.get("quoteSummary", {}).get("result", [{}])
+    data = result[0] if result else {}
+    if not isinstance(data, Mapping):
+        return ()
+    summary = data.get("summaryDetail") if isinstance(data.get("summaryDetail"), Mapping) else {}
+    statistics = data.get("defaultKeyStatistics") if isinstance(data.get("defaultKeyStatistics"), Mapping) else {}
+    financial = data.get("financialData") if isinstance(data.get("financialData"), Mapping) else {}
+    pe_value = _yahoo_raw_value(_pick_from_row(summary, "trailingPE"))
+    if pe_value is None:
+        pe_value = _yahoo_raw_value(_pick_from_row(statistics, "trailingPE"))
+    row = {
+        "pe_ratio": pe_value,
+        "forward_pe": _yahoo_raw_value(_pick_from_row(statistics, "forwardPE")),
+        "price_to_book": _yahoo_raw_value(_pick_from_row(statistics, "priceToBook")),
+        "return_on_equity": _yahoo_raw_value(_pick_from_row(financial, "returnOnEquity")),
+        "target_mean_price": _yahoo_raw_value(_pick_from_row(financial, "targetMeanPrice")),
+        "recommendation_mean": _yahoo_raw_value(_pick_from_row(financial, "recommendationMean")),
+    }
+    return ({key: value for key, value in row.items() if value is not None},)
 
 
 def _call_openbb_us_fundamental_fmp(*, symbol: str, api_key: str) -> tuple[Mapping[str, Any], ...]:
@@ -1073,6 +1223,15 @@ def _call_openbb_us_fundamental_fmp(*, symbol: str, api_key: str) -> tuple[Mappi
             "equity.fundamental.valuation",
         ),
     )
+
+
+def _yahoo_raw_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if "raw" in value:
+            return value.get("raw")
+        if "fmt" in value:
+            return value.get("fmt")
+    return value
 
 
 def _call_openbb_us_sec_filings(*, symbol: str) -> tuple[Mapping[str, Any], ...]:
@@ -1092,10 +1251,7 @@ def _call_openbb_fundamental_with_candidates(
     provider: str,
     candidates: Sequence[str],
 ) -> tuple[Mapping[str, Any], ...]:
-    try:
-        from openbb import obb  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"openbb import failed for fundamental adapter: {exc}") from exc
+    obb = import_openbb_obb(context="fundamental adapter", required_attrs=("equity",))
 
     errors: list[str] = []
     for path in candidates:
@@ -1161,7 +1317,7 @@ def _call_defillama_fundamental(*, protocol_slug: str) -> Mapping[str, Any]:
 def _http_get_json(url: str, *, headers: Mapping[str, str] | None = None, timeout: float = 20.0) -> Mapping[str, Any]:
     request = Request(url, headers=dict(headers or {}), method="GET")
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with managed_requests.urlopen(request, timeout=timeout) as response:
             data = response.read().decode("utf-8")
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
@@ -1296,6 +1452,8 @@ def _default_currency(market: Market) -> str:
         return "CNY"
     if market == Market.HK:
         return "HKD"
+    if market == Market.CRYPTO:
+        return "USDT"
     return "USD"
 
 

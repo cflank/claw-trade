@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
-from claw_trade.instruments.resolver import InstrumentResolveError, resolve_instrument_identity
+from claw_trade.instruments.resolver import InstrumentResolveError, crypto_display_name, resolve_instrument_identity
 from claw_trade.workflow.models import RunRequest, Stage, StopPoint, WorkflowEntryPoint
 
 DEFAULT_REPORT_LOOKBACK_DAYS = 365
@@ -76,7 +76,7 @@ def resolve_report_dates(
 
 def report_display_name(ticker: str, profile: str) -> str:
     if profile == "CRYPTO":
-        return _CRYPTO_DISPLAY_NAMES.get(ticker, ticker)
+        return crypto_display_name(ticker) or _CRYPTO_DISPLAY_NAMES.get(ticker, ticker)
     return ticker
 
 

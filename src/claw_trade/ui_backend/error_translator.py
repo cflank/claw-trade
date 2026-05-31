@@ -61,6 +61,7 @@ _CODE_TO_MESSAGE = {
     "NOTIFICATION_UNAVAILABLE": "微信通知暂不可用，请在设备界面查看。",
     "FILE_SEND_UNSUPPORTED": "完整报告文件暂不可发送，请在设备界面查看。",
     "ASSISTANT_UNAVAILABLE": "助手服务暂不可用，请稍后重试。",
+    "REPORT_MODEL_NOT_READY": "报告模型尚未就绪，请先在设置中完成测试。",
     "DATASOURCE_TEST_FAILED": "数据源连接或鉴权失败，请到设置页更新后重试。",
     "REPORT_EXPORT_FAILED": "报告导出失败：缺少图表或报告资产，请检查数据源后重试。",
     "PDF_EXPORT_FAILED": "PDF 暂不可用，完整报告仍可在设备界面查看。",

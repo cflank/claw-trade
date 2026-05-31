@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import threading
+from pathlib import Path
+
 import pytest
 
+from claw_trade.ui_backend import channel_bridge as channel_bridge_module
 from claw_trade.ui_backend.channel_bridge import ChannelBridge, USER_CHANNEL_KIND
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 
@@ -20,6 +24,9 @@ class _FakeChannelClient:
         qr_data_url=None,
         qr_session_key=None,
         wait_connected=False,
+        start_already_connected=False,
+        wait_already_connected=False,
+        start_message="scan qr",
         wait_message="scan qr",
         start_exception: Exception | None = None,
         wait_exception: Exception | None = None,
@@ -34,6 +41,9 @@ class _FakeChannelClient:
         self.qr_data_url = qr_data_url
         self.qr_session_key = qr_session_key
         self.wait_connected = wait_connected
+        self.start_already_connected = start_already_connected
+        self.wait_already_connected = wait_already_connected
+        self.start_message = start_message
         self.wait_message = wait_message
         self.start_exception = start_exception
         self.wait_exception = wait_exception
@@ -42,6 +52,7 @@ class _FakeChannelClient:
         self.channels_status_calls: list[dict[str, object]] = []
         self.web_login_start_calls: list[dict[str, object]] = []
         self.web_login_wait_calls: list[dict[str, object]] = []
+        self.config_get_calls: list[tuple[str, ...]] = []
 
     def plugins_list(self):
         self.plugins_list_calls += 1
@@ -76,11 +87,20 @@ class _FakeChannelClient:
         )
         return {"restartRequired": True}
 
+    def config_get(self, *, paths=()):
+        self.config_get_calls.append(tuple(paths))
+        return {"channels": {"openclaw-weixin": {"enabled": self.enabled}}}
+
     def web_login_start(self, *, force=False, timeout_ms=12000):
         self.web_login_start_calls.append({"force": force, "timeoutMs": timeout_ms})
         if self.start_exception:
             raise self.start_exception
-        return {"qrDataUrl": self.qr_data_url, "message": "scan qr", "sessionKey": self.qr_session_key}
+        return {
+            "qrDataUrl": self.qr_data_url,
+            "message": self.start_message,
+            "sessionKey": self.qr_session_key,
+            "alreadyConnected": self.start_already_connected,
+        }
 
     def web_login_wait(self, *, timeout_ms=1500, current_qr_data_url=None, session_key=None):
         self.web_login_wait_calls.append(
@@ -88,23 +108,30 @@ class _FakeChannelClient:
         )
         if self.wait_exception:
             raise self.wait_exception
-        return {"connected": self.wait_connected, "qrDataUrl": self.qr_data_url, "message": self.wait_message}
+        return {
+            "connected": self.wait_connected,
+            "alreadyConnected": self.wait_already_connected,
+            "qrDataUrl": self.qr_data_url,
+            "message": self.wait_message,
+        }
 
-    def channels_send_text(self, *, channel, text, dedupe_key):
+    def channels_send_text(self, *, channel, text, dedupe_key, to, account_id=None):
         if not self.has_text_api:
             raise AttributeError("missing")
         assert channel == "openclaw-weixin"
         assert text
         assert dedupe_key
+        assert to
         return {"sent": True}
 
-    def channels_send_file(self, *, channel, file_name, payload, dedupe_key):
+    def channels_send_file(self, *, channel, file_name, dedupe_key, to, payload=None, file_path=None, account_id=None):
         if not self.has_file_api:
             raise AttributeError("missing")
         assert channel == "openclaw-weixin"
         assert file_name
-        assert payload
+        assert payload or file_path
         assert dedupe_key
+        assert to
         if not self.send_file_success:
             return {"sent": False}
         return {"sent": True, "messageId": "msg-1"}
@@ -121,6 +148,67 @@ class _FakeAccountStatusClient(_FakeChannelClient):
             "channelAccounts": {"openclaw-weixin": [self.account]},
             "channelDefaultAccountId": {"openclaw-weixin": str(self.account["accountId"])},
         }
+
+
+class _RestartingConfigClient(_FakeChannelClient):
+    def __init__(self) -> None:
+        super().__init__(connected=True)
+        self.transient_status_failures = 1
+
+    def channels_status(self, *, probe=False):
+        if self.config_patch_calls and self.transient_status_failures > 0:
+            self.channels_status_calls.append({"probe": probe})
+            self.transient_status_failures -= 1
+            raise RuntimeError("gateway starting")
+        return super().channels_status(probe=probe)
+
+
+class _DisabledStaleChannelClient(_FakeChannelClient):
+    def __init__(self) -> None:
+        super().__init__(enabled=False, connected=False)
+
+    def channels_status(self, *, probe=False):
+        self.channels_status_calls.append({"probe": probe})
+        return {
+            "channels": {
+                "openclaw-weixin": {
+                    "state": "disconnected",
+                    "accountLabel": None,
+                }
+            }
+        }
+
+
+class _PluginEnabledNoChannelClient(_FakeChannelClient):
+    def __init__(self) -> None:
+        super().__init__(enabled=True, connected=False, qr_data_url="data:image/png;base64,real-qr")
+
+    def channels_status(self, *, probe=False):
+        self.channels_status_calls.append({"probe": probe})
+        return {"channels": {}}
+
+
+class _ChannelDisabledConfigClient(_FakeChannelClient):
+    def __init__(self) -> None:
+        super().__init__(enabled=True, connected=False, qr_data_url="data:image/png;base64,real-qr")
+
+    def channels_status(self, *, probe=False):
+        self.channels_status_calls.append({"probe": probe})
+        return {"channels": {}}
+
+    def config_get(self, *, paths=()):
+        self.config_get_calls.append(tuple(paths))
+        return {"channels": {"openclaw-weixin": {"enabled": False}}}
+
+
+class _RawFileResponseClient(_FakeChannelClient):
+    def __init__(self, raw_response) -> None:  # type: ignore[no-untyped-def]
+        super().__init__()
+        self.raw_response = raw_response
+
+    def channels_send_file(self, *, channel, file_name, dedupe_key, to, payload=None, file_path=None, account_id=None):
+        _ = (channel, file_name, dedupe_key, to, payload, file_path, account_id)
+        return self.raw_response
 
 
 def test_get_channel_status_hides_provider_channel_id() -> None:
@@ -151,12 +239,12 @@ def test_get_channel_status_treats_running_configured_account_as_connected() -> 
     assert payload["canSendText"] is True
 
 
-def test_get_channel_status_uses_conservative_file_capability_when_probe_unavailable() -> None:
+def test_get_channel_status_allows_tentative_file_send_when_probe_unavailable() -> None:
     bridge = ChannelBridge(_FakeChannelClient(caps_error=True))
     payload = bridge.get_channel_status(probe=True)
     assert payload["canSendText"] is True
-    assert payload["canSendFile"] is False
-    assert "暂不可发送" in (payload["lastErrorMessage"] or "")
+    assert payload["canSendFile"] is True
+    assert "未验证" in (payload["lastErrorMessage"] or "")
 
 
 def test_get_channel_status_does_not_repeat_unsupported_capability_probe() -> None:
@@ -204,6 +292,66 @@ def test_get_channel_status_can_include_real_qr_data_url() -> None:
     assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
 
 
+def test_get_channel_status_refreshes_qr_even_when_channel_is_connected() -> None:
+    client = _FakeChannelClient(
+        connected=True,
+        qr_data_url="data:image/png;base64,reconnect-qr",
+        qr_session_key="login-session-reconnect",
+    )
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True, refresh_qr=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["qrCodeImageDataUrl"] == "data:image/png;base64,reconnect-qr"
+    assert payload["qrCodeRefreshRequired"] is False
+    assert payload["lastErrorMessage"] == "请用微信扫描二维码完成登录。"
+    assert client.web_login_start_calls == [{"force": True, "timeoutMs": 12000}]
+
+
+def test_get_channel_status_keeps_connected_when_refresh_returns_no_qr() -> None:
+    client = _FakeChannelClient(connected=True)
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True, refresh_qr=True)
+
+    assert payload["state"] == "connected"
+    assert payload["canSendText"] is True
+    assert payload["qrCodeImageDataUrl"] is None
+    assert client.web_login_start_calls == [{"force": True, "timeoutMs": 12000}]
+
+
+def test_get_channel_status_treats_start_already_connected_as_connected() -> None:
+    client = _FakeChannelClient(
+        connected=False,
+        start_already_connected=True,
+    )
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "connected"
+    assert payload["canSendText"] is True
+    assert payload["qrCodeImageDataUrl"] is None
+    assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
+
+
+def test_get_channel_status_treats_wechat_already_connected_message_as_connected() -> None:
+    client = _FakeChannelClient(
+        connected=False,
+        start_already_connected=True,
+        start_message="已连接过此 OpenClaw，无需重复连接。",
+    )
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "connected"
+    assert payload["canSendText"] is True
+    assert payload["qrCodeImageDataUrl"] is None
+    assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
+
+
 def test_get_channel_status_polls_qr_login_with_session_key_until_connected() -> None:
     client = _FakeChannelClient(
         connected=False,
@@ -214,14 +362,46 @@ def test_get_channel_status_polls_qr_login_with_session_key_until_connected() ->
     bridge = ChannelBridge(client)
 
     first = bridge.get_channel_status(probe=True, include_qr=True)
-    second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    second = {"state": "disconnected"}
+    for _ in range(20):
+        second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+        if second["state"] == "connected":
+            break
 
     assert first["state"] == "disconnected"
     assert second["state"] == "connected"
     assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
     assert client.web_login_wait_calls == [
         {
-            "timeoutMs": 8000,
+            "timeoutMs": 480000,
+            "currentQrDataUrl": "data:image/png;base64,real-qr",
+            "sessionKey": "login-session-1",
+        }
+    ]
+
+
+def test_get_channel_status_polls_qr_login_until_already_connected() -> None:
+    client = _FakeChannelClient(
+        connected=False,
+        qr_data_url="data:image/png;base64,real-qr",
+        qr_session_key="login-session-1",
+        wait_already_connected=True,
+    )
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=True, include_qr=True)
+    second = {"state": "disconnected"}
+    for _ in range(20):
+        second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+        if second["state"] == "connected":
+            break
+
+    assert first["state"] == "disconnected"
+    assert second["state"] == "connected"
+    assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
+    assert client.web_login_wait_calls == [
+        {
+            "timeoutMs": 480000,
             "currentQrDataUrl": "data:image/png;base64,real-qr",
             "sessionKey": "login-session-1",
         }
@@ -243,8 +423,27 @@ def test_get_channel_status_returns_existing_qr_without_polling_on_page_load() -
     assert first["state"] == "disconnected"
     assert second["state"] == "disconnected"
     assert second["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
-    assert client.plugins_list_calls == 0
-    assert client.channels_status_calls == [{"probe": True}]
+    assert client.plugins_list_calls == 2
+    assert client.channels_status_calls == [{"probe": True}, {"probe": True}]
+    assert client.web_login_wait_calls == []
+
+
+def test_get_channel_status_reuses_qr_without_session_key() -> None:
+    client = _FakeChannelClient(
+        connected=False,
+        qr_data_url="data:image/png;base64,real-qr",
+        qr_session_key=None,
+    )
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=True, include_qr=True)
+    second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    third = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+
+    assert first["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
+    assert second["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
+    assert third["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
+    assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
     assert client.web_login_wait_calls == []
 
 
@@ -259,7 +458,11 @@ def test_get_channel_status_restarts_qr_after_closed_login_session() -> None:
 
     first = bridge.get_channel_status(probe=True, include_qr=True)
     client.qr_data_url = None
-    second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    second = {"qrCodeImageDataUrl": "data:image/png;base64,real-qr", "lastErrorMessage": None}
+    for _ in range(20):
+        second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+        if second["qrCodeImageDataUrl"] is None:
+            break
     client.qr_data_url = "data:image/png;base64,real-qr"
     third = bridge.get_channel_status(probe=True, include_qr=True)
 
@@ -283,7 +486,11 @@ def test_get_channel_status_clears_qr_when_provider_disappears_during_poll() -> 
     bridge = ChannelBridge(client)
 
     first = bridge.get_channel_status(probe=True, include_qr=True)
-    second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    second = {"qrCodeImageDataUrl": "data:image/png;base64,real-qr", "lastErrorMessage": None}
+    for _ in range(20):
+        second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+        if second["qrCodeImageDataUrl"] is None:
+            break
     third = bridge.get_channel_status(probe=True, include_qr=True)
 
     assert first["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
@@ -294,6 +501,87 @@ def test_get_channel_status_clears_qr_when_provider_disappears_during_poll() -> 
     assert client.web_login_start_calls == [
         {"force": False, "timeoutMs": 12000},
         {"force": False, "timeoutMs": 12000},
+    ]
+
+
+def test_get_channel_status_poll_login_reuses_single_background_wait() -> None:
+    class _BlockingWaitClient(_FakeChannelClient):
+        def __init__(self) -> None:
+            super().__init__(
+                connected=False,
+                qr_data_url="data:image/png;base64,real-qr",
+                qr_session_key="login-session-1",
+            )
+            self.wait_started = threading.Event()
+            self.wait_release = threading.Event()
+
+        def web_login_wait(self, *, timeout_ms=1500, current_qr_data_url=None, session_key=None):  # type: ignore[no-untyped-def]
+            self.web_login_wait_calls.append(
+                {"timeoutMs": timeout_ms, "currentQrDataUrl": current_qr_data_url, "sessionKey": session_key}
+            )
+            self.wait_started.set()
+            self.wait_release.wait(0.5)
+            return {"connected": False, "qrDataUrl": self.qr_data_url, "message": "scan qr"}
+
+    client = _BlockingWaitClient()
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=True, include_qr=True)
+    second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    assert client.wait_started.wait(0.2)
+    third = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    client.wait_release.set()
+
+    assert first["state"] == "disconnected"
+    assert second["state"] == "disconnected"
+    assert third["state"] == "disconnected"
+    assert len(client.web_login_wait_calls) == 1
+
+
+def test_get_channel_status_refresh_qr_ignores_stale_wait_result_from_old_session() -> None:
+    class _SessionSwapClient(_FakeChannelClient):
+        def __init__(self) -> None:
+            super().__init__(connected=False)
+            self.wait_started = threading.Event()
+            self.wait_release = threading.Event()
+
+        def web_login_start(self, *, force=False, timeout_ms=12000):  # type: ignore[no-untyped-def]
+            self.web_login_start_calls.append({"force": force, "timeoutMs": timeout_ms})
+            if force:
+                self.qr_data_url = "data:image/png;base64,qr-2"
+                self.qr_session_key = "login-session-2"
+            else:
+                self.qr_data_url = "data:image/png;base64,qr-1"
+                self.qr_session_key = "login-session-1"
+            return {"qrDataUrl": self.qr_data_url, "message": "scan qr", "sessionKey": self.qr_session_key}
+
+        def web_login_wait(self, *, timeout_ms=1500, current_qr_data_url=None, session_key=None):  # type: ignore[no-untyped-def]
+            self.web_login_wait_calls.append(
+                {"timeoutMs": timeout_ms, "currentQrDataUrl": current_qr_data_url, "sessionKey": session_key}
+            )
+            if session_key == "login-session-1":
+                self.wait_started.set()
+                self.wait_release.wait(0.5)
+                return {"connected": True, "message": "connected"}
+            return {"connected": False, "qrDataUrl": "data:image/png;base64,qr-2", "message": "scan qr"}
+
+    client = _SessionSwapClient()
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=True, include_qr=True)
+    _ = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+    assert client.wait_started.wait(0.2)
+    refreshed = bridge.get_channel_status(probe=True, include_qr=True, refresh_qr=True)
+    client.wait_release.set()
+    final_status = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+
+    assert first["qrCodeImageDataUrl"] == "data:image/png;base64,qr-1"
+    assert refreshed["qrCodeImageDataUrl"] == "data:image/png;base64,qr-2"
+    assert final_status["state"] == "disconnected"
+    assert final_status["qrCodeImageDataUrl"] == "data:image/png;base64,qr-2"
+    assert client.web_login_start_calls == [
+        {"force": False, "timeoutMs": 12000},
+        {"force": True, "timeoutMs": 12000},
     ]
 
 
@@ -310,6 +598,61 @@ def test_get_channel_status_refreshes_qr_without_accepting_non_image_url() -> No
     assert payload["qrCodeRefreshRequired"] is True
     assert payload["lastErrorMessage"] == "当前通道未返回二维码，请打开设备界面查看。"
     assert client.web_login_start_calls == [{"force": True, "timeoutMs": 12000}]
+
+
+def test_get_channel_status_clears_cached_qr_after_channel_disabled() -> None:
+    client = _FakeChannelClient(
+        connected=False,
+        qr_data_url="data:image/png;base64,real-qr",
+        qr_session_key="login-session-1",
+    )
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=True, include_qr=True)
+    client.enabled = False
+    second = bridge.get_channel_status(probe=True, include_qr=True)
+
+    assert first["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
+    assert second["qrCodeImageDataUrl"] is None
+    assert second["lastErrorMessage"] == "请先启用微信 ClawBot 插件。"
+
+
+def test_get_channel_status_does_not_request_qr_when_login_provider_disabled() -> None:
+    client = _DisabledStaleChannelClient()
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["qrCodeImageDataUrl"] is None
+    assert payload["lastErrorMessage"] == "请先启用微信 ClawBot 插件。"
+    assert client.web_login_start_calls == []
+
+
+def test_get_channel_status_does_not_request_qr_until_channel_is_registered() -> None:
+    client = _PluginEnabledNoChannelClient()
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["qrCodeImageDataUrl"] is None
+    assert payload["lastErrorMessage"] == "微信登录服务启动中，请稍后重试。"
+    assert client.web_login_start_calls == []
+
+
+def test_get_channel_status_reports_user_disabled_channel_without_auto_qr() -> None:
+    client = _ChannelDisabledConfigClient()
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["qrCodeImageDataUrl"] is None
+    assert payload["qrCodeRefreshRequired"] is True
+    assert payload["lastErrorMessage"] == "微信已解除连接，请点击刷新二维码重新扫码。"
+    assert client.web_login_start_calls == []
+    assert client.config_get_calls == [("channels.openclaw-weixin",)]
 
 
 def test_save_channel_config_rejects_non_wechat_channel_kind() -> None:
@@ -340,6 +683,78 @@ def test_save_channel_config_marks_wechat_channel_as_configured_when_enabled() -
     assert result["status"]["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
 
 
+def test_save_channel_config_waits_for_gateway_restart_after_enable(monkeypatch) -> None:
+    monkeypatch.setattr(channel_bridge_module, "_CONFIG_PATCH_STATUS_SETTLE_INTERVAL_SECONDS", 0)
+    client = _RestartingConfigClient()
+    bridge = ChannelBridge(client)
+
+    result = bridge.save_channel_config_via_openclaw(
+        request_id="req-enable-wechat-after-restart",
+        channel_kind="wechat_clawbot",
+        config_patch={"enabled": True},
+    )
+
+    assert result["status"]["state"] == "connected"
+    assert len(client.channels_status_calls) == 2
+
+
+def test_save_channel_config_does_not_request_qr_when_disabled() -> None:
+    client = _FakeChannelClient(connected=True)
+    bridge = ChannelBridge(client)
+
+    result = bridge.save_channel_config_via_openclaw(
+        request_id="req-disable-wechat",
+        channel_kind="wechat_clawbot",
+        config_patch={"enabled": False},
+    )
+
+    patch = client.config_patch_calls[0]["patch"]
+    assert patch["channels"]["openclaw-weixin"]["enabled"] is False
+    assert result["status"]["state"] == "disconnected"
+    assert result["status"]["lastErrorMessage"] == "已解除连接。"
+    assert client.web_login_start_calls == []
+
+
+def test_save_channel_config_disabled_clears_weixin_login_state(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (state_dir / "openclaw-weixin" / "accounts.json").write_text('["acc-1"]', encoding="utf-8")
+    (accounts_dir / "acc-1.json").write_text('{"token":"secret"}', encoding="utf-8")
+    (accounts_dir / "acc-1.sync.json").write_text('{"get_updates_buf":"abc"}', encoding="utf-8")
+    (accounts_dir / "acc-1.context-tokens.json").write_text("{}", encoding="utf-8")
+    legacy_credentials = state_dir / "credentials" / "openclaw-weixin" / "credentials.json"
+    legacy_credentials.parent.mkdir(parents=True)
+    legacy_credentials.write_text('{"token":"legacy"}', encoding="utf-8")
+    legacy_sync = (
+        state_dir / "agents" / "default" / "sessions" / ".openclaw-weixin-sync" / "default.json"
+    )
+    legacy_sync.parent.mkdir(parents=True)
+    legacy_sync.write_text('{"get_updates_buf":"legacy"}', encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+
+    class _PluginWritesSyncDuringDisableClient(_FakeChannelClient):
+        def config_patch(self, *, expected_settings_version=None, patch=None):  # type: ignore[no-untyped-def]
+            result = super().config_patch(expected_settings_version=expected_settings_version, patch=patch)
+            (accounts_dir / "acc-1.sync.json").write_text('{"get_updates_buf":"rewritten"}', encoding="utf-8")
+            return result
+
+    bridge = ChannelBridge(_PluginWritesSyncDuringDisableClient(connected=True))
+    result = bridge.save_channel_config_via_openclaw(
+        request_id="req-disable-wechat-clear-state",
+        channel_kind="wechat_clawbot",
+        config_patch={"enabled": False},
+    )
+
+    assert result["status"]["state"] == "disconnected"
+    assert not (state_dir / "openclaw-weixin" / "accounts.json").exists()
+    assert not (accounts_dir / "acc-1.json").exists()
+    assert not (accounts_dir / "acc-1.sync.json").exists()
+    assert not (accounts_dir / "acc-1.context-tokens.json").exists()
+    assert not legacy_credentials.exists()
+    assert not legacy_sync.exists()
+
+
 def test_save_channel_config_hides_provider_error_detail() -> None:
     class _FailingConfigClient(_FakeChannelClient):
         def config_patch(self, *, expected_settings_version=None, patch=None):  # type: ignore[no-untyped-def]
@@ -361,7 +776,12 @@ def test_save_channel_config_hides_provider_error_detail() -> None:
 
 def test_send_text_uses_runtime_capability_and_returns_sent_result() -> None:
     bridge = ChannelBridge(_FakeChannelClient())
-    result = bridge.send_text(channel_kind="wechat_clawbot", text="报告完成", dedupe_key="d-1")
+    result = bridge.send_text(
+        channel_kind="wechat_clawbot",
+        text="报告完成",
+        dedupe_key="d-1",
+        target="sender-1",
+    )
     assert result["sent"] is True
     assert result["messageId"] is None
 
@@ -369,19 +789,44 @@ def test_send_text_uses_runtime_capability_and_returns_sent_result() -> None:
 def test_send_text_returns_notification_unavailable_when_not_connected() -> None:
     bridge = ChannelBridge(_FakeChannelClient(connected=False))
     with pytest.raises(UiBoundaryError) as exc:
-        bridge.send_text(channel_kind="wechat_clawbot", text="报告完成", dedupe_key="d-2")
+        bridge.send_text(
+            channel_kind="wechat_clawbot",
+            text="报告完成",
+            dedupe_key="d-2",
+            target="sender-1",
+        )
     assert exc.value.code == "NOTIFICATION_UNAVAILABLE"
 
 
-def test_send_report_file_returns_file_send_unsupported_without_media_capability() -> None:
+def test_send_report_file_attempts_send_when_media_capability_is_unverified() -> None:
     bridge = ChannelBridge(_FakeChannelClient(caps_error=True))
+    result = bridge.send_report_file_via_channel(
+        request_id="r-1",
+        report_id="rp-1",
+        channel_kind="wechat_clawbot",
+        file_name="report.pdf",
+        payload=b"pdf",
+        target="sender-1",
+    )
+    assert result["sent"] is True
+
+
+def test_send_report_file_returns_file_send_unsupported_without_file_sender() -> None:
+    class _NoFileSenderClient(_FakeChannelClient):
+        def __getattribute__(self, name: str):  # type: ignore[no-untyped-def]
+            if name == "channels_send_file":
+                raise AttributeError("missing")
+            return super().__getattribute__(name)
+
+    bridge = ChannelBridge(_NoFileSenderClient(caps_error=True))
     with pytest.raises(UiBoundaryError) as exc:
         bridge.send_report_file_via_channel(
-            request_id="r-1",
+            request_id="r-1b",
             report_id="rp-1",
             channel_kind="wechat_clawbot",
             file_name="report.pdf",
             payload=b"pdf",
+            target="sender-1",
         )
     assert exc.value.code == "FILE_SEND_UNSUPPORTED"
 
@@ -394,6 +839,48 @@ def test_send_report_file_returns_provider_result_without_fake_message_id() -> N
         channel_kind="wechat_clawbot",
         file_name="report.pdf",
         payload=b"pdf",
+        target="sender-1",
     )
     assert result["sent"] is True
     assert result["messageId"] == "msg-1"
+
+
+@pytest.mark.parametrize(
+    ("raw_response", "expected_sent", "expected_message_id"),
+    [
+        ({"messageId": "m-1"}, True, "m-1"),
+        ({"message_id": "m-1"}, True, "m-1"),
+        ({"sent": True, "messageId": "m-1"}, True, "m-1"),
+        ({"sent": False, "messageId": "m-1"}, False, "m-1"),
+        ({"ok": False, "error": "boom"}, False, None),
+        ({}, False, None),
+        (None, False, None),
+        ("ok", False, None),
+    ],
+)
+def test_send_report_file_result_matrix(
+    raw_response, expected_sent: bool, expected_message_id: str | None
+) -> None:  # type: ignore[no-untyped-def]
+    bridge = ChannelBridge(_RawFileResponseClient(raw_response))
+    if expected_sent:
+        result = bridge.send_report_file_via_channel(
+            request_id="r-matrix",
+            report_id="rp-matrix",
+            channel_kind="wechat_clawbot",
+            file_name="report.pdf",
+            payload=b"pdf",
+            target="sender-1",
+        )
+        assert result["sent"] is True
+        assert result["messageId"] == expected_message_id
+        return
+    with pytest.raises(UiBoundaryError) as exc:
+        bridge.send_report_file_via_channel(
+            request_id="r-matrix",
+            report_id="rp-matrix",
+            channel_kind="wechat_clawbot",
+            file_name="report.pdf",
+            payload=b"pdf",
+            target="sender-1",
+        )
+    assert exc.value.code == "FILE_SEND_UNSUPPORTED"

@@ -34,6 +34,23 @@ function inferPdf(detail: ReportDetailForUser): PdfExportForUser {
   };
 }
 
+function channelStateLabel(state?: string | null) {
+  switch (state) {
+    case 'connected':
+      return '已连接';
+    case 'connecting':
+      return '连接中';
+    case 'reconnecting':
+      return '重连中';
+    case 'disconnected':
+      return '待连接';
+    case 'error':
+      return '不可用';
+    default:
+      return '检查中';
+  }
+}
+
 function TaskBlock({ queue }: { queue: ReportQueueSnapshotForUser }) {
   const rows = [
     ...(queue.runningTask ? [queue.runningTask] : []),
@@ -146,13 +163,15 @@ function ChatSummaryBlock({
   channel: ChannelStatusForUser | null;
   latestReport: SavedReportForUser | null;
 }) {
+  const channelState = channel?.state ?? 'pending';
+  const channelStateDisplay = channelStateLabel(channel?.state);
   return (
     <>
       <section className="ct-right-section">
         <h2>微信通知</h2>
         <div className="ct-kv">
           <span>{channel?.displayName ?? '微信 ClawBot'}</span>
-          <span className={statusClass(channel?.state ?? 'unknown')}>{channel?.state ?? 'unknown'}</span>
+          <span className={statusClass(channelState)}>{channelStateDisplay}</span>
         </div>
         <div className="ct-small">
           {channel?.lastErrorMessage ??

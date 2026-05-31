@@ -109,6 +109,7 @@ def _deserialize_attempt(doc: dict[str, Any]) -> ProviderAttempt:
         error_message=doc.get("error_message"),
         schema_id=str(doc["schema_id"]),
         license_note=str(doc["license_note"]),
+        source_metadata=doc.get("source_metadata"),
     )
 
 

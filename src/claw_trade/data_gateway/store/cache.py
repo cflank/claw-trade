@@ -252,6 +252,11 @@ class MongoCacheStore:
         evidence_hash: str,
         ttl_seconds: int,
     ) -> CacheReceipt:
+        if not raw_ref or not normalized_ref:
+            raise DataGatewayError(
+                DataGatewayErrorCode.EVIDENCE_WRITE_FAILED,
+                "cache put_success requires raw_ref and normalized_ref",
+            )
         cache_key, params_hash = build_cache_key(spec, request)
         created_at = utc_now_iso()
         expires_at = (
