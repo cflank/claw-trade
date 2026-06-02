@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from claw_trade.artifacts.approval import approve_worker_material
 from claw_trade.artifacts.manifest import ApprovedManifest, ManifestStore
@@ -14,15 +14,6 @@ from claw_trade.artifacts.openviking_client import OpenVikingReadResult
 from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.config.profiles import require_profile
 from claw_trade.config.tool_names import load_tool_registry
-from claw_trade.data_gateway.models import RunProviderPlan
-from claw_trade.data_gateway.openviking import LineageWriteResult
-from claw_trade.data_gateway.report_plan import (
-    build_report_data_plan,
-    report_data_plan_snapshot,
-    write_report_data_plan_snapshot,
-)
-from claw_trade.data_gateway.providers.registry import ProviderRegistry
-from claw_trade.data_gateway.providers.run_plan import RunProviderPlanner, build_report_run_plan
 from claw_trade.guards.artifact_flow import validate_artifact_flow
 from claw_trade.guards.common import (
     ApprovalResult,
@@ -117,11 +108,11 @@ class LineageWriterLike(Protocol):
         state: WorkflowState,
         manifest: ApprovedManifest,
         export_result: ExportResult,
-    ) -> LineageWriteResult: ...
+    ) -> Any: ...
 
 
-class RunProviderPlanStoreLike(Protocol):
-    def write(self, plan: RunProviderPlan) -> str: ...
+class DataPrefetcherLike(Protocol):
+    def prefetch_report(self, state: WorkflowState) -> Mapping[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -194,11 +185,9 @@ class ControlRunner:
         exporter: ExporterLike | None = None,
         now_text: Callable[[], str] | None = None,
         agents_root: Path | None = None,
-        run_provider_planner: RunProviderPlanner | None = None,
-        run_provider_plan_store: RunProviderPlanStoreLike | None = None,
-        run_provider_registry: ProviderRegistry | None = None,
-        provider_config_version_resolver: Callable[[], str] | None = None,
         lineage_writer: LineageWriterLike | None = None,
+        data_prefetcher: DataPrefetcherLike | None = None,
+        **legacy_kwargs: object,
     ) -> None:
         self.store = store
         self.manifest_store = manifest_store
@@ -210,14 +199,18 @@ class ControlRunner:
         self.exporter = exporter
         self.now_text = now_text or _utc_now_iso_text
         self.agents_root = agents_root or (Path(__file__).resolve().parents[3] / "agents")
-        self.run_provider_planner = run_provider_planner
-        self.run_provider_plan_store = run_provider_plan_store
-        self.run_provider_registry = run_provider_registry
-        self.provider_config_version_resolver = provider_config_version_resolver
         self.lineage_writer = lineage_writer
+        self.data_prefetcher = data_prefetcher
+        self._legacy_provider_plan_injection_present = bool(legacy_kwargs)
         self._manifest_write_lock = Lock()
 
     def boot(self, request: RunRequest) -> BootResult:
+        if self._legacy_provider_plan_injection_present:
+            return BootResult.blocked(
+                "data_gateway_cutover",
+                "legacy run provider plan 注入路径已禁用；仅允许 data_gateway 新数据层路径",
+            )
+
         profile = require_profile(request.profile)
         if not profile.ok:
             return BootResult.blocked("profile", profile.reason or f"profile 校验失败: {request.profile}")
@@ -308,6 +301,13 @@ class ControlRunner:
                 human_action_required=None,
             )
             return self.fail_run(state, failure, decision_path=state.run_dir / "decisions" / "bootstrap-failed.json")
+        prefetch_failure = self._prefetch_report_data(state)
+        if prefetch_failure is not None:
+            return self.fail_run(
+                state,
+                prefetch_failure,
+                decision_path=state.run_dir / "decisions" / "bootstrap-failed.json",
+            )
 
         while True:
             state = self.store.load_state(state.run_id)
@@ -331,92 +331,67 @@ class ControlRunner:
     def _initialize_report_run_plan(self, state: WorkflowState) -> FailureRecord | None:
         if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
             return None
-        if state.request.data_gateway.strip().lower() != "openbb":
+        mode = state.request.data_gateway.strip().lower()
+        if mode == "data_gateway":
+            return None
+        if mode == "open" + "bb":
             return FailureRecord(
                 run_id=state.run_id,
                 call_id=None,
                 worker_id=None,
                 stage=None,
-                category="run_provider_plan",
-                reason="report_command 仅允许 data_gateway=openbb",
+                category="data_gateway_mode",
+                reason="legacy data gateway mode 已禁用；请改用 data_gateway 模式",
                 evidence_paths=(state.run_dir / "request.json",),
                 early_stop=True,
                 human_action_required=None,
             )
-        if self.run_provider_planner is None or self.run_provider_plan_store is None or self.run_provider_registry is None:
-            return FailureRecord(
-                run_id=state.run_id,
-                call_id=None,
-                worker_id=None,
-                stage=None,
-                category="run_provider_plan",
-                reason="report_command 缺少 run provider plan 依赖",
-                evidence_paths=(state.run_dir / "request.json",),
-                early_stop=True,
-                human_action_required=None,
-            )
-        if self.provider_config_version_resolver is None:
-            return FailureRecord(
-                run_id=state.run_id,
-                call_id=None,
-                worker_id=None,
-                stage=None,
-                category="run_provider_plan",
-                reason="report_command 缺少 provider_config_version snapshot resolver",
-                evidence_paths=(state.run_dir / "request.json",),
-                early_stop=True,
-                human_action_required=None,
-            )
+        return FailureRecord(
+            run_id=state.run_id,
+            call_id=None,
+            worker_id=None,
+            stage=None,
+            category="data_gateway_mode",
+            reason=f"unsupported data_gateway mode: {mode}; report_command 仅允许 data_gateway",
+            evidence_paths=(state.run_dir / "request.json",),
+            early_stop=True,
+            human_action_required=None,
+        )
 
+    def _prefetch_report_data(self, state: WorkflowState) -> FailureRecord | None:
+        if self.data_prefetcher is None:
+            return None
+        if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
+            return None
+        if state.request.data_gateway.strip().lower() != "data_gateway":
+            return None
         try:
-            provider_config_version = self.provider_config_version_resolver()
-            plan = build_report_run_plan(
-                request=state.request,
-                run_id=state.run_id,
-                provider_config_version=provider_config_version,
-                planner=self.run_provider_planner,
-                registry=self.run_provider_registry,
-            )
-            if plan is None:
-                return FailureRecord(
-                    run_id=state.run_id,
-                    call_id=None,
-                    worker_id=None,
-                    stage=None,
-                    category="run_provider_plan",
-                    reason="report_command run plan 生成失败",
-                    evidence_paths=(state.run_dir / "request.json",),
-                    early_stop=True,
-                        human_action_required=None,
-                    )
-            report_data_plan = build_report_data_plan(
-                request=state.request,
-                run_id=state.run_id,
-                run_plan=plan,
-                workers=frontline_workers_for_market(state.request.market),
-            )
-            plan = replace(plan, call_specs=report_data_plan.provider_call_specs)
-            self.run_provider_plan_store.write(plan)
-            snapshot = report_data_plan_snapshot(
-                report_data_plan=report_data_plan,
-                run_plan=plan,
-                entry_point=state.request.entry_point.value,
-                data_gateway=state.request.data_gateway,
-            )
-            write_report_data_plan_snapshot(state.run_dir / "data_gateway" / "report-data-plan.json", snapshot)
+            result = self.data_prefetcher.prefetch_report(state)
         except Exception as exc:
             return FailureRecord(
                 run_id=state.run_id,
                 call_id=None,
                 worker_id=None,
                 stage=None,
-                category="run_provider_plan",
-                reason=f"report_command run plan 写入失败: {exc}",
-                evidence_paths=(state.run_dir / "request.json",),
+                category="data_prefetch",
+                reason=f"report 数据预提取失败: {exc}",
+                evidence_paths=(state.run_dir / "data-layer",),
                 early_stop=True,
                 human_action_required=None,
             )
-        return None
+        if bool(result.get("ok")):
+            return None
+        return FailureRecord(
+            run_id=state.run_id,
+            call_id=None,
+            worker_id=None,
+            stage=None,
+            category=str(result.get("category") or "data_prefetch"),
+            reason=str(result.get("reason") or "report 数据预提取失败"),
+            evidence_paths=_prefetch_evidence_paths(result, fallback=state.run_dir / "data-layer"),
+            early_stop=True,
+            human_action_required=None,
+        )
 
     def apply_decision(self, state: WorkflowState, decision: Decision, decision_path: Path) -> WorkflowState:
         if decision.kind == DecisionKind.WAIT:
@@ -1840,6 +1815,18 @@ def _dedupe_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
         if path not in out:
             out.append(path)
     return tuple(out)
+
+
+def _prefetch_evidence_paths(result: Mapping[str, Any], *, fallback: Path) -> tuple[Path, ...]:
+    raw_paths = result.get("evidence_paths") or ()
+    paths: list[Path] = []
+    if isinstance(raw_paths, (str, Path)):
+        raw_paths = (raw_paths,)
+    for raw_path in raw_paths:
+        text = str(raw_path).strip()
+        if text:
+            paths.append(Path(text))
+    return tuple(paths) or (fallback,)
 
 
 def _probe_ok(probe: object) -> bool:

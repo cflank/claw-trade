@@ -738,8 +738,8 @@ def test_sel13_selection_layer_only_delegates_to_data_gateway_facade(monkeypatch
             trade_date="2026-05-26",
             plan_id=plan.provider_batch_plan_ref,
         ),
-        attempt_refs=("attempt://mongo/openbb_provider_attempts/delegate",),
-        normalized_refs=("normalized://mongo/openbb_normalized/delegate",),
+        attempt_refs=("attempt://mongo/provider_attempts/delegate",),
+        normalized_refs=("normalized://mongo/normalized_datasets/delegate",),
         rows=(
             {
                 "ticker": "600519.SH",
@@ -751,7 +751,7 @@ def test_sel13_selection_layer_only_delegates_to_data_gateway_facade(monkeypatch
                 "low": 1598.0,
                 "amount": 3000000000.0,
                 "vol_ratio": 1.8,
-                "source_ref": "normalized://mongo/openbb_normalized/delegate",
+                "source_ref": "normalized://mongo/normalized_datasets/delegate",
             },
         ),
         data_gaps=(),

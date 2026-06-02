@@ -16,13 +16,13 @@ const TOOL_NAMES = Object.freeze({
   clawGetLockupPack: "claw_get_lockup_pack",
 });
 const FRONTLINE_STAGE = "frontline";
-const OPENBB_PACK_DOMAIN_MARKET = "market";
-const OPENBB_PACK_DOMAIN_FUNDAMENTAL = "fundamental";
-const OPENBB_PACK_DOMAIN_NEWS = "news";
-const OPENBB_PACK_DOMAIN_SOCIAL = "social";
-const OPENBB_PACK_DOMAIN_POLICY = "policy";
-const OPENBB_PACK_DOMAIN_HOT_MONEY = "hot_money";
-const OPENBB_PACK_DOMAIN_LOCKUP = "lockup";
+const DATA_PACK_DOMAIN_MARKET = "market";
+const DATA_PACK_DOMAIN_FUNDAMENTAL = "fundamental";
+const DATA_PACK_DOMAIN_NEWS = "news";
+const DATA_PACK_DOMAIN_SOCIAL = "social";
+const DATA_PACK_DOMAIN_POLICY = "policy";
+const DATA_PACK_DOMAIN_HOT_MONEY = "hot_money";
+const DATA_PACK_DOMAIN_LOCKUP = "lockup";
 const MARKET_CN_A = "CN_A";
 const MARKET_HK = "HK";
 const MARKET_US = "US";
@@ -37,6 +37,7 @@ const TOOL_ERROR_CODES = Object.freeze({
   protocolError: "TOOL_PROTOCOL_ERROR",
 });
 const DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS = 30000;
+const DEFAULT_MARKET_PACK_TIMEOUT_MS = 120000;
 const DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS = 120000;
 const DEFAULT_NEWS_TOTAL_TIMEOUT_MS = 20000;
 const DEFAULT_SOCIAL_PACK_TIMEOUT_MS = 20000;
@@ -74,7 +75,7 @@ const PACK_INPUT_SCHEMA = {
   },
 };
 
-const OPENBB_PACK_INPUT_SCHEMA = {
+const DATA_PACK_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {},
@@ -103,10 +104,10 @@ function readInboundTimeoutMs() {
   return nonNegativeIntegerValue(process.env.CLAW_TRADE_UI_INBOUND_TIMEOUT_MS) ?? DEFAULT_UI_INBOUND_TIMEOUT_MS;
 }
 
-function safeToken(value, fallback = "unknown") {
-  const raw = textValue(value) ?? fallback;
+function safeToken(value, defaultValue = "unknown") {
+  const raw = textValue(value) ?? defaultValue;
   const safe = raw.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96);
-  return safe || fallback;
+  return safe || defaultValue;
 }
 
 function packEvidenceCallId(workerCallId, toolCallId) {
@@ -395,7 +396,7 @@ function buildToolInput(runtimeVars, params, requiredFields = []) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
-function buildOpenbbPackToolInput(runtimeVars, params) {
+function buildDataPackToolInput(runtimeVars, params) {
   if (!isRecord(params)) {
     throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool params must be a JSON object");
   }
@@ -471,18 +472,18 @@ function pythonExecutable() {
   return "python3";
 }
 
-function positiveIntegerEnv(name, fallback) {
+function positiveIntegerEnv(name, defaultValue) {
   const raw = textValue(process.env[name]);
   if (!raw) {
-    return fallback;
+    return defaultValue;
   }
   const value = Number.parseInt(raw, 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
+  return Number.isFinite(value) && value > 0 ? value : defaultValue;
 }
 
-function positiveSecondsEnvToMs(name, fallbackMs) {
-  const fallbackSeconds = Math.ceil(fallbackMs / 1000);
-  const seconds = positiveIntegerEnv(name, fallbackSeconds);
+function positiveSecondsEnvToMs(name, defaultMs) {
+  const defaultSeconds = Math.ceil(defaultMs / 1000);
+  const seconds = positiveIntegerEnv(name, defaultSeconds);
   return seconds * 1000;
 }
 
@@ -641,9 +642,12 @@ function toolResult(payload, isError = false) {
 
 function modelFacingToolText(payload, isError = false) {
   if (isRecord(payload)) {
-    const readerBrief = textValue(payload.reader_brief) ?? textValue(payload.reader_brief_md);
-    if (readerBrief) {
-      return readerBrief;
+    const modelVisibleText =
+      textValue(payload.model_visible_text) ??
+      textValue(payload["reader" + "_brief"]) ??
+      textValue(payload["reader" + "_brief_md"]);
+    if (modelVisibleText) {
+      return modelVisibleText;
     }
     const error = isRecord(payload.error) ? payload.error : undefined;
     if (error) {
@@ -783,122 +787,59 @@ function runtimeErrorToResult(toolName, expectedWorkerId, error) {
   });
 }
 
-function openbbPackScriptConfig(expectedWorkerId, packDomain) {
+function dataPackScriptConfig(expectedWorkerId, packDomain) {
   return {
     expectedWorkerId,
     expectedMarket: ALL_MARKETS,
     args: [
       "-c",
       [
-        "import json, os, sys",
-        "from pathlib import Path",
-        "from urllib.parse import urlparse",
+        "import json, sys",
         "try:",
-        "    from pymongo import MongoClient",
+        "    from claw_trade.reports.data_pack_bridge import run_frontline_data_pack",
+        "    payload = json.load(sys.stdin)",
+        "    tool_input = dict(payload.get('tool_input') or {})",
+        "    runtime_context = dict(payload.get('runtime_context') or {})",
+        "    tool_input.setdefault('start_date', runtime_context.get('start_date') or '')",
+        "    tool_input.setdefault('end_date', runtime_context.get('end_date') or '')",
+        "    tool_input.setdefault('current_date', runtime_context.get('current_date') or '')",
+        "    result = run_frontline_data_pack(tool_input, runtime_context)",
         "except Exception as exc:",
-        "    print(json.dumps({'ok': False, 'error': {'code': 'pack_runtime_blocked', 'message': f'pymongo unavailable: {exc}'}}, ensure_ascii=False))",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'data_pack_runtime_blocked', 'message': str(exc)}}, ensure_ascii=False, default=str))",
         "    raise SystemExit(0)",
-        "from claw_trade.data_gateway.errors import DataGatewayError",
-        "from claw_trade.data_gateway.mcp.runtime_wrapper import OpenBBRuntimeWrapper, PackToolInput",
-        "from claw_trade.data_gateway.models import GatewaySettings, PackDomain",
-        "from claw_trade.data_gateway.packs.service import DomainPackService",
-        "from claw_trade.data_gateway.providers.defaults import default_provider_config_version, load_default_system_capabilities",
-        "from claw_trade.data_gateway.providers.defaults import build_default_provider_adapters",
-        "from claw_trade.data_gateway.store import OPENBB_RUN_PROVIDER_PLANS, MongoRunProviderPlanStore, ensure_openbb_store_indexes",
-        "payload = json.load(sys.stdin)",
-        "tool_input = dict(payload.get('tool_input') or {})",
-        "runtime_context = dict(payload.get('runtime_context') or {})",
-        "tool_input.setdefault('run_id', runtime_context.get('run_id') or '')",
-        "tool_input.setdefault('call_id', runtime_context.get('call_id') or '')",
-        "tool_input.setdefault('worker_id', runtime_context.get('worker_id') or '')",
-        "tool_input.setdefault('start_date', runtime_context.get('start_date') or '')",
-        "tool_input.setdefault('end_date', runtime_context.get('end_date') or '')",
-        "tool_input.setdefault('current_date', runtime_context.get('current_date') or '')",
-        "evidence_root = str(runtime_context.get('evidence_root') or '').strip()",
-        "default_object_store_uri = (Path(evidence_root) / 'techlab' / 'charts-local').resolve().as_uri() if evidence_root else Path('.runtime/dev-services/openbb-evidence').resolve().as_uri()",
-        "mongo_uri = (os.environ.get('DATA_GATEWAY_MONGODB_URI') or '').strip() or (os.environ.get('CN_A_MONGODB_URI') or '').strip()",
-        "if not mongo_uri:",
-        "    print(json.dumps({'ok': False, 'error': {'code': 'pack_runtime_blocked', 'message': 'DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI is not configured'}}, ensure_ascii=False))",
-        "    raise SystemExit(0)",
-        "db_name = (os.environ.get('DATA_GATEWAY_MONGODB_DATABASE') or '').strip()",
-        "if not db_name:",
-        "    parsed = urlparse(mongo_uri)",
-        "    path_name = parsed.path.strip('/')",
-        "    db_name = path_name.split('/', 1)[0] if path_name else 'claw_trade_openbb'",
-        "capabilities = load_default_system_capabilities()",
-        "provider_config_version = default_provider_config_version(capabilities)",
-        "allowed_domains_raw = (os.environ.get('DATA_GATEWAY_ALLOWED_DECLARATIVE_PROVIDER_DOMAINS') or 'example.com')",
-        "allowed_domains = tuple(item.strip() for item in allowed_domains_raw.split(',') if item.strip())",
-        "settings = GatewaySettings(",
-        "    openbb_runtime_url=(os.environ.get('OPENBB_RUNTIME_URL') or 'http://127.0.0.1:8001').strip(),",
-        "    openbb_home=(os.environ.get('OPENBB_HOME') or '.runtime/dev-services/openbb').strip(),",
-        "    mongo_uri=mongo_uri,",
-        "    provider_config_version=provider_config_version,",
-        "    provider_catalog_path=(os.environ.get('DATA_GATEWAY_PROVIDER_CATALOG_PATH') or '.runtime/dev-services/openbb/provider-catalog.json').strip(),",
-        "    provider_catalog={},",
-        "    provider_settings={},",
-        "    secret_store_uri=(os.environ.get('DATA_GATEWAY_SECRET_STORE_URI') or 'env://').strip(),",
-        "    object_store_uri=(os.environ.get('DATA_GATEWAY_OBJECT_STORE_URI') or default_object_store_uri).strip(),",
-        "    single_flight_lease_seconds=int((os.environ.get('DATA_GATEWAY_SINGLE_FLIGHT_LEASE_SECONDS') or '60').strip()),",
-        "    raw_payload_inline_max_bytes=int((os.environ.get('DATA_GATEWAY_RAW_PAYLOAD_INLINE_MAX_BYTES') or '4096').strip()),",
-        "    allowed_declarative_provider_domains=allowed_domains,",
-        ")",
-        "client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)",
-        "db = client[db_name]",
-        "ensure_openbb_store_indexes(db)",
-        "plan_store = MongoRunProviderPlanStore(db[OPENBB_RUN_PROVIDER_PLANS])",
-        "adapters = build_default_provider_adapters(provider_config_version=provider_config_version)",
-        "pack_service = DomainPackService(settings=settings, adapters=adapters)",
-        "wrapper = OpenBBRuntimeWrapper(",
-        "    settings=settings,",
-        "    adapters=adapters,",
-        "    pack_service=pack_service,",
-        "    run_provider_plan_store=plan_store,",
-        ")",
-        "try:",
-        "    result = wrapper.get_pack(PackDomain(sys.argv[1]), PackToolInput.from_payload(tool_input))",
-        "except DataGatewayError as exc:",
-        "    print(json.dumps({'ok': False, 'error': {'code': exc.code.value, 'message': exc.root_cause}}, ensure_ascii=False, default=str))",
-        "    raise SystemExit(0)",
-        "except Exception as exc:",
-        "    print(json.dumps({'ok': False, 'error': {'code': 'pack_runtime_blocked', 'message': str(exc)}}, ensure_ascii=False, default=str))",
-        "    raise SystemExit(0)",
-        "print(json.dumps({'ok': True, 'status': result.readiness.status.value, 'readiness': {'status': result.readiness.status.value}, 'reader_brief': result.reader_brief_md}, ensure_ascii=False, default=str))",
+        "print(json.dumps(result, ensure_ascii=False, default=str))",
       ].join("\n"),
       packDomain,
     ],
     pythonPathDirs: [path.join(REPO_ROOT, "src")],
-    inputBuilder: buildOpenbbPackToolInput,
+    inputBuilder: buildDataPackToolInput,
     totalTimeoutMs: domainToolTimeoutMs(providerTotalTimeoutMs()),
     packDomain,
   };
 }
 
 function resolvePackTotalTimeoutMs(config, toolInput, toolName) {
-  if (
-    toolName === TOOL_NAMES.clawGetMarketPack
-    && textValue(toolInput.market) === MARKET_CRYPTO
-  ) {
-    return domainToolTimeoutMs(DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS);
+  if (toolName === TOOL_NAMES.clawGetMarketPack) {
+    return domainToolTimeoutMs(DEFAULT_MARKET_PACK_TIMEOUT_MS);
   }
   return config.totalTimeoutMs;
 }
 
 const TOOL_CONFIG_FACTORIES = Object.freeze({
-  [TOOL_NAMES.clawGetMarketPack]: () => openbbPackScriptConfig("market_analyst", OPENBB_PACK_DOMAIN_MARKET),
-  [TOOL_NAMES.clawGetFundamentalPack]: () => openbbPackScriptConfig("fundamental_analyst", OPENBB_PACK_DOMAIN_FUNDAMENTAL),
-  [TOOL_NAMES.clawGetNewsPack]: () => openbbPackScriptConfig("news_analyst", OPENBB_PACK_DOMAIN_NEWS),
-  [TOOL_NAMES.clawGetSocialPack]: () => openbbPackScriptConfig("social_analyst", OPENBB_PACK_DOMAIN_SOCIAL),
+  [TOOL_NAMES.clawGetMarketPack]: () => dataPackScriptConfig("market_analyst", DATA_PACK_DOMAIN_MARKET),
+  [TOOL_NAMES.clawGetFundamentalPack]: () => dataPackScriptConfig("fundamental_analyst", DATA_PACK_DOMAIN_FUNDAMENTAL),
+  [TOOL_NAMES.clawGetNewsPack]: () => dataPackScriptConfig("news_analyst", DATA_PACK_DOMAIN_NEWS),
+  [TOOL_NAMES.clawGetSocialPack]: () => dataPackScriptConfig("social_analyst", DATA_PACK_DOMAIN_SOCIAL),
   [TOOL_NAMES.clawGetPolicyPack]: () => ({
-    ...openbbPackScriptConfig("policy_analyst", OPENBB_PACK_DOMAIN_POLICY),
+    ...dataPackScriptConfig("policy_analyst", DATA_PACK_DOMAIN_POLICY),
     expectedMarket: [MARKET_CN_A],
   }),
   [TOOL_NAMES.clawGetHotMoneyPack]: () => ({
-    ...openbbPackScriptConfig("hot_money_tracker", OPENBB_PACK_DOMAIN_HOT_MONEY),
+    ...dataPackScriptConfig("hot_money_tracker", DATA_PACK_DOMAIN_HOT_MONEY),
     expectedMarket: [MARKET_CN_A],
   }),
   [TOOL_NAMES.clawGetLockupPack]: () => ({
-    ...openbbPackScriptConfig("lockup_watcher", OPENBB_PACK_DOMAIN_LOCKUP),
+    ...dataPackScriptConfig("lockup_watcher", DATA_PACK_DOMAIN_LOCKUP),
     expectedMarket: [MARKET_CN_A],
   }),
 });
@@ -1002,51 +943,51 @@ export default definePluginEntry({
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetMarketPack,
-      "Load one market pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one market data pack through the canonical claw-trade data layer.",
       runClawGetMarketPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetFundamentalPack,
-      "Load one fundamental pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one fundamental data pack through the canonical claw-trade data layer.",
       runClawGetFundamentalPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetNewsPack,
-      "Load one news pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one news data pack through the canonical claw-trade data layer.",
       runClawGetNewsPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetSocialPack,
-      "Load one social pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one social data pack through the canonical claw-trade data layer.",
       runClawGetSocialPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetPolicyPack,
-      "Load one policy pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one policy data pack through the canonical claw-trade data layer.",
       runClawGetPolicyPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetHotMoneyPack,
-      "Load one hot-money pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one hot-money data pack through the canonical claw-trade data layer.",
       runClawGetHotMoneyPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
     registerFrontlineTool(
       api,
       TOOL_NAMES.clawGetLockupPack,
-      "Load one lockup pack from the canonical OpenBB gateway/runtime contract.",
+      "Load one lockup data pack through the canonical claw-trade data layer.",
       runClawGetLockupPack,
-      OPENBB_PACK_INPUT_SCHEMA,
+      DATA_PACK_INPUT_SCHEMA,
     );
   },
 });

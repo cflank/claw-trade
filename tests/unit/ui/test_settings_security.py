@@ -99,5 +99,14 @@ def test_ui_boundary_errors_only_use_product_error_codes() -> None:
 def test_data_source_env_allowlist_is_declared_for_supported_builtin_types() -> None:
     keys = allowed_data_source_env_keys()
     assert "TUSHARE_TOKEN" in keys
+    assert "FINNHUB_API_KEY" in keys
     assert "COINGLASS_API_KEY" in keys
     assert "COINGLASS_API_HEADER_NAME" in keys
+
+
+def test_env_example_documents_data_source_env_allowlist() -> None:
+    env_example = Path(__file__).resolve().parents[3] / ".env.example"
+    text = env_example.read_text(encoding="utf-8")
+
+    for key in allowed_data_source_env_keys():
+        assert f"{key}=" in text

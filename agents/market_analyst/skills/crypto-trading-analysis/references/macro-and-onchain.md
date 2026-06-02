@@ -13,11 +13,11 @@ data.macro
 data.onchain
 data.events
 data.ahr999
-readiness.domains.macro
-readiness.domains.onchain
-readiness.domains.events
-readiness.domains.ahr999
-data_gaps[]
+data-quality state for macro
+data-quality state for on-chain
+data-quality state for events
+data-quality state for AHR999
+open data gaps
 conflicts[]
 sources[]
 as_of
@@ -43,17 +43,17 @@ Rules:
 - If macro provider fails, do not confirm a macro risk window.
 - Macro latest values are not numerically merged across conflicting sources; report by source.
 
-## ETF And Traditional Flows
+## Institutional Product And Traditional Flows
 
 Use:
 
-- ETF inflow: traditional marginal demand context
-- ETF outflow: risk appetite weakness or capital withdrawal context
+- institutional product inflow: traditional marginal demand context
+- institutional product outflow: risk appetite weakness or capital withdrawal context
 
 Limits:
 
-- Do not invent ETF figures from memory.
-- ETF flows do not replace price structure or risk controls.
+- Do not invent institutional product flow figures from memory.
+- Institutional product flows do not replace price structure or risk controls.
 
 ## On-Chain
 
@@ -109,7 +109,7 @@ Rules:
 Macro/on-chain:
 - macro regime:
 - major event window:
-- ETF/flows:
+- institutional product flows:
 - on-chain cycle:
 - AHR999:
 - event risk:

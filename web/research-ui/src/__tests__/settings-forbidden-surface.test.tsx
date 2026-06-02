@@ -62,16 +62,10 @@ describe('settings forbidden surface', () => {
           supportedTypes: [
             'tushare',
             'alpha_vantage',
-            'fmp',
-            'polygon',
             'finnhub',
-            'tiingo',
-            'nasdaq_data_link',
+            'fred',
             'coingecko_pro',
-            'coinmarketcap',
-            'newsapi',
-            'x',
-            'reddit',
+            'coinglass',
           ],
           instances: [
             {
@@ -91,18 +85,8 @@ describe('settings forbidden surface', () => {
               enabled: false,
               state: 'draft',
             },
-            { instanceId: 'builtin-fmp', supportedType: 'fmp', group: 'global_data', displayName: 'FMP', enabled: false, state: 'draft' },
-            { instanceId: 'builtin-polygon', supportedType: 'polygon', group: 'global_data', displayName: 'Polygon', enabled: false, state: 'draft' },
             { instanceId: 'builtin-finnhub', supportedType: 'finnhub', group: 'global_data', displayName: 'Finnhub', enabled: false, state: 'draft' },
-            { instanceId: 'builtin-tiingo', supportedType: 'tiingo', group: 'global_data', displayName: 'Tiingo', enabled: false, state: 'draft' },
-            {
-              instanceId: 'builtin-nasdaq',
-              supportedType: 'nasdaq_data_link',
-              group: 'global_data',
-              displayName: 'Nasdaq Data Link',
-              enabled: false,
-              state: 'draft',
-            },
+            { instanceId: 'builtin-fred', supportedType: 'fred', group: 'global_macro', displayName: 'FRED', enabled: false, state: 'draft' },
             {
               instanceId: 'builtin-coingecko-pro',
               supportedType: 'coingecko_pro',
@@ -111,17 +95,7 @@ describe('settings forbidden surface', () => {
               enabled: false,
               state: 'draft',
             },
-            {
-              instanceId: 'builtin-cmc',
-              supportedType: 'coinmarketcap',
-              group: 'crypto_data',
-              displayName: 'CoinMarketCap',
-              enabled: false,
-              state: 'draft',
-            },
-            { instanceId: 'builtin-newsapi', supportedType: 'newsapi', group: 'global_news', displayName: 'NewsAPI', enabled: false, state: 'draft' },
-            { instanceId: 'builtin-x', supportedType: 'x', group: 'global_social', displayName: 'X.com', enabled: false, state: 'draft' },
-            { instanceId: 'builtin-reddit', supportedType: 'reddit', group: 'global_social', displayName: 'Reddit', enabled: false, state: 'draft' },
+            { instanceId: 'builtin-coinglass', supportedType: 'coinglass', group: 'crypto_data', displayName: 'Coinglass', enabled: false, state: 'draft' },
           ],
         });
       }
@@ -170,7 +144,7 @@ describe('settings forbidden surface', () => {
     for (const item of forbidden) {
       expect(text).not.toContain(item);
     }
-    for (const approved of ['x.com', 'reddit', 'newsapi', 'coingecko pro']) {
+    for (const approved of ['coingecko pro', 'coinglass']) {
       expect(text).toContain(approved);
     }
     for (const hiddenDefaultOrInternal of [
@@ -182,6 +156,10 @@ describe('settings forbidden surface', () => {
       'binance',
       'okx',
       'ccxt',
+      'newsapi',
+      'x.com',
+      'reddit',
+      'longport',
     ]) {
       expect(text).not.toContain(hiddenDefaultOrInternal);
     }

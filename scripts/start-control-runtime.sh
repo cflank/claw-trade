@@ -113,9 +113,6 @@ UV_CACHE_DIR="${UV_CACHE_DIR:-${RUNTIME_DIR}/uv-cache}"
 UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export UV_CACHE_DIR UV_LINK_MODE
 OPENVIKING_RUNTIME_DIR="${RUNTIME_DIR}/openviking"
-OPENBB_RUNTIME_DIR="${RUNTIME_DIR}/openbb"
-OPENBB_ENV_TEMPLATE_PATH="${OPENBB_RUNTIME_DIR}/openbb.env.template"
-OPENBB_ENV_PATH="${OPENBB_RUNTIME_DIR}/openbb.env"
 OPENVIKING_CONFIG_FILE="${OPENVIKING_CONFIG_FILE:-${OPENVIKING_RUNTIME_DIR}/ov.conf}"
 OPENVIKING_DATA_DIR="${OPENVIKING_DATA_DIR:-${OPENVIKING_RUNTIME_DIR}/data}"
 OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH:-${RUNTIME_DIR}/openviking-write.lock}"
@@ -1178,26 +1175,6 @@ fs.writeFileSync(outputPath, `${JSON.stringify(mergedConfig, null, 2)}\n`, "utf8
 NODE
 }
 
-prepare_openbb_runtime_template() {
-  mkdir -p "${OPENBB_RUNTIME_DIR}"
-  cat > "${OPENBB_ENV_TEMPLATE_PATH}" <<'EOF'
-# OpenBB local runtime template for claw-trade dev only.
-# Do not start MCP/provider services from this template.
-OPENBB_HOME=.runtime/dev-services/openbb/home
-OPENBB_USER_SETTINGS_DIRECTORY=.runtime/dev-services/openbb/user_settings
-OPENBB_LOG_DIRECTORY=.runtime/dev-services/openbb/logs
-OPENBB_AUTO_BUILD=0
-EOF
-  if [[ ! -f "${OPENBB_ENV_PATH}" ]]; then
-    cp "${OPENBB_ENV_TEMPLATE_PATH}" "${OPENBB_ENV_PATH}"
-  fi
-  if grep -q "^OPENBB_AUTO_BUILD=" "${OPENBB_ENV_PATH}"; then
-    sed -i "s|^OPENBB_AUTO_BUILD=.*|OPENBB_AUTO_BUILD=0|" "${OPENBB_ENV_PATH}"
-  else
-    printf 'OPENBB_AUTO_BUILD=0\n' >> "${OPENBB_ENV_PATH}"
-  fi
-}
-
 prepare_openviking_runtime_config() {
   mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
   if [[ "${OPENVIKING_CONFIG_FILE}" != "${OPENVIKING_RUNTIME_DIR}/ov.conf" ]]; then
@@ -1349,7 +1326,6 @@ find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 start_local_mongodb_if_needed
 load_mongo_ui_settings_into_process_env
 configure_openviking_embedding_runtime_flags
-prepare_openbb_runtime_template
 ensure_openclaw_control_ui_assets
 ensure_openclaw_weixin_plugin_ready
 prepare_openclaw_trade_agent_config

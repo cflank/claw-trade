@@ -78,7 +78,7 @@ def test_crypto_frontline_tool_calls_rejects_recorded_without_required_pack() ->
     assert guard.reason is not None and "claw_get_social_pack" in guard.reason
 
 
-def test_crypto_frontline_tool_calls_accepts_required_pack_call() -> None:
+def test_crypto_frontline_tool_calls_rejects_failed_required_pack_call() -> None:
     call = _crypto_social_call()
     evidence = _provider_evidence(call, tool_calls_status="recorded")
     _write_tool_calls(
@@ -96,6 +96,34 @@ def test_crypto_frontline_tool_calls_accepts_required_pack_call() -> None:
                     "tool_name": "claw_get_social_pack",
                     "action": "call",
                     "status": "error",
+                    "result_sha256": "s" * 64,
+                }
+            ],
+        },
+    )
+    guard = validate_tool_calls(call, evidence)
+    assert not guard.ok
+    assert guard.reason is not None and "frontline 资料包工具调用失败" in guard.reason
+
+
+def test_crypto_frontline_tool_calls_accepts_successful_required_pack_call() -> None:
+    call = _crypto_social_call()
+    evidence = _provider_evidence(call, tool_calls_status="recorded")
+    _write_tool_calls(
+        evidence.tool_calls_path,
+        {
+            "source": "model_tool_events",
+            "status": "recorded",
+            "run_id": call.run_id,
+            "call_id": call.call_id,
+            "worker_id": call.worker_id,
+            "stage": call.stage.value,
+            "openclaw_run_id": evidence.openclaw_run_id,
+            "calls": [
+                {
+                    "tool_name": "claw_get_social_pack",
+                    "action": "call",
+                    "status": "success",
                     "result_sha256": "s" * 64,
                 }
             ],

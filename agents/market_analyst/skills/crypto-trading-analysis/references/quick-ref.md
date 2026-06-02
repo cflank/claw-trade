@@ -10,9 +10,9 @@ market/macro context -> on-chain and derivatives -> multi-timeframe technicals -
 
 ## Data First
 
-- Start with `claw_get_market_pack`; it returns compact natural-language market material for the worker.
-- Preserve `status`, `as_of`, `sources[]`, `confidence`, `readiness`, `warnings[]`, `data_gaps[]`, `conflicts[]`, and `next_actions[]`.
-- Do not re-query domains that are already `ready` unless stale, incomplete, conflicting, or explicitly requested.
+- Start with the visible market data pack; it returns compact natural-language market material for the worker.
+- Preserve status, data time, sources, confidence, data-quality state, warnings, open data gaps, conflicts, and next actions.
+- Do not re-query domains that are already usable unless stale, incomplete, conflicting, or explicitly requested.
 - Browser or user-observed chart evidence stays low confidence and cannot close structured gaps.
 - Every analysis must include `指标覆盖`: account for Bollinger, Vegas, double-line reversal, AMD, 123, FVG, OB, RSI, MACD, KD, TD 9/13, harmonic, volume profile, liquidation map, CVD, funding, OI/long-short, macro, on-chain, and AHR999 as `已引用`, `有数据但未构成信号`, `缺失/不可用`, or `不适用`.
 - Every full analysis must include `指标推导过程`: for each material signal family, write `数据 -> 推导 -> 交易作用 -> 失效`. A coverage matrix plus one-line conclusions is incomplete.
@@ -68,7 +68,7 @@ It is invalid if price accepts beyond the swept level.
 ## Macro And On-Chain
 
 - FOMC, CPI, nonfarm payrolls, and rate/yield shocks can invalidate short-term technical triggers.
-- ETF and stablecoin flows indicate marginal demand/liquidity, not guaranteed direction.
+- Institutional product and stablecoin flows indicate marginal demand/liquidity, not guaranteed direction.
 - AHR999 is long-term valuation context only, not a short-term chase signal.
 
 ## Risk Lines

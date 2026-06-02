@@ -15,7 +15,7 @@ from claw_trade.config.tool_names import (
 from claw_trade.workflow.models import Stage
 
 
-def test_load_tool_registry_defaults_to_canonical_openbb_pack_intents(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_tool_registry_defaults_to_canonical_data_pack_intents(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", raising=False)
     monkeypatch.delenv("CLAW_TRADE_OPENBB_TOOL_SCHEMA_ENABLED", raising=False)
     result = load_tool_registry()
@@ -112,6 +112,9 @@ def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_fi
         "claw_get_fundamental_pack",
         "claw_get_news_pack",
         "claw_get_social_pack",
+        "claw_get_policy_pack",
+        "claw_get_hot_money_pack",
+        "claw_get_lockup_pack",
     }
 
     plugin_entry = (plugin_root / "index.js").read_text(encoding="utf-8")

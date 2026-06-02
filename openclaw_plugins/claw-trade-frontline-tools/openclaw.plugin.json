@@ -1,7 +1,7 @@
 {
   "id": "claw-trade-frontline-tools",
   "name": "claw-trade frontline tools",
-  "description": "Registers canonical claw-trade OpenBB frontline pack tools.",
+  "description": "Registers canonical claw-trade frontline data pack tools.",
   "contracts": {
     "tools": [
       "claw_get_market_pack",

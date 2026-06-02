@@ -189,10 +189,10 @@ class ReportContextRetriever:
             for ref in refs[:_MAX_MONGO_REFS]:
                 collection, document_id = _parse_mongo_ref(ref)
                 if collection not in {
-                    "openbb_provider_attempts",
-                    "openbb_raw_payloads",
-                    "openbb_normalized",
-                    "crypto_lens_analysis_evidence",
+                    "provider_attempts",
+                    "raw_payloads",
+                    "normalized_datasets",
+                    "dataset_manifests",
                 }:
                     continue
                 doc = db[collection].find_one({"_id": document_id})
@@ -314,19 +314,16 @@ def _parse_mongo_ref(ref: str) -> tuple[str, str]:
 
 
 def _summarize_mongo_doc(collection: str, document_id: str, doc: dict[str, Any]) -> str:
-    if collection == "openbb_provider_attempts":
+    if collection == "provider_attempts":
         provider = str(doc.get("provider") or "")
         endpoint = str(doc.get("endpoint") or "")
         status = str(doc.get("status") or "")
         return f"{collection}/{document_id}: provider={provider} endpoint={endpoint} status={status}"
-    if collection == "crypto_lens_analysis_evidence":
-        readiness = str(doc.get("readiness") or doc.get("status") or "")
-        return f"{collection}/{document_id}: readiness={readiness}"
-    if collection == "openbb_normalized":
+    if collection == "normalized_datasets":
         provider = str(doc.get("provider") or "")
-        endpoint = str(doc.get("endpoint") or "")
+        dataset = str(doc.get("dataset") or "")
         schema = str(doc.get("schema_id") or "")
-        return f"{collection}/{document_id}: provider={provider} endpoint={endpoint} schema={schema}"
+        return f"{collection}/{document_id}: provider={provider} dataset={dataset} schema={schema}"
     return f"{collection}/{document_id}: raw payload stored in Mongo"
 
 

@@ -83,6 +83,11 @@ function createDataSourceDraft(source?: DataSourceInstanceForUser): DataSourceIn
     endpointUrl: source?.endpointUrl ?? '',
     state: source?.state ?? 'draft',
     requiresKey: true,
+    rateLimitMaxCalls: source?.rateLimitMaxCalls ?? '',
+    rateLimitWindowSeconds: source?.rateLimitWindowSeconds ?? '',
+    rateLimitSafetyMargin: source?.rateLimitSafetyMargin ?? '',
+    rateLimitOverflow: source?.rateLimitOverflow ?? '',
+    rateLimitWaitTimeoutSeconds: source?.rateLimitWaitTimeoutSeconds ?? '',
   };
 }
 
@@ -97,6 +102,11 @@ function draftFromDataSource(item: DataSourceInstanceForUser): DataSourceInstanc
     endpointUrl: item.endpointUrl ?? '',
     state: item.state,
     requiresKey: true,
+    rateLimitMaxCalls: item.rateLimitMaxCalls ?? '',
+    rateLimitWindowSeconds: item.rateLimitWindowSeconds ?? '',
+    rateLimitSafetyMargin: item.rateLimitSafetyMargin ?? '',
+    rateLimitOverflow: item.rateLimitOverflow ?? '',
+    rateLimitWaitTimeoutSeconds: item.rateLimitWaitTimeoutSeconds ?? '',
   };
 }
 
@@ -111,6 +121,11 @@ function toDataSourceDraftPayload(draft: DataSourceInstanceDraftInput): DataSour
     endpointUrl: draft.endpointUrl ?? '',
     state: draft.state ?? 'draft',
     requiresKey: draft.requiresKey,
+    rateLimitMaxCalls: draft.rateLimitMaxCalls ?? '',
+    rateLimitWindowSeconds: draft.rateLimitWindowSeconds ?? '',
+    rateLimitSafetyMargin: draft.rateLimitSafetyMargin ?? '',
+    rateLimitOverflow: draft.rateLimitOverflow ?? '',
+    rateLimitWaitTimeoutSeconds: draft.rateLimitWaitTimeoutSeconds ?? '',
   };
 }
 

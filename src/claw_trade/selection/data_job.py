@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from claw_trade.data_gateway.select_plan import build_select_data_plan, select_data_plan_snapshot
 from claw_trade.selection.artifacts import SelectionFileArtifactBackend
 from claw_trade.selection.candidate_pack import (
     ApprovedCandidatePack,
@@ -34,6 +34,7 @@ from claw_trade.selection.models import (
     SelectionBatchScope,
     SelectionDataRun,
     SelectionDataRunStatus,
+    SelectionMarket,
     SelectionProviderBatchPlan,
     SelectionRunPlan,
 )
@@ -73,6 +74,53 @@ class SelectionDataJobStepError(ValueError):
         self.data_gaps = data_gaps
 
 
+class _SelectionPlanSupportStatus(StrEnum):
+    SUPPORTED = "supported"
+    TARGET_DESIGN = "target_design"
+
+
+class _SelectionWarehouseStatus(StrEnum):
+    FRESH = "fresh"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True)
+class _SelectionDataPlanGap:
+    gap_id: str
+    requirement_id: str
+    domain: str
+    reason: str
+    severity: DataGapSeverity
+    worker_visible_text: str
+    market: SelectionMarket
+    data_type: str
+    field_path: str | None
+    next_action: str
+
+    @property
+    def root_cause(self) -> str:
+        return self.worker_visible_text
+
+
+@dataclass(frozen=True)
+class _SelectionWarehouseCheck:
+    check_id: str
+    status: _SelectionWarehouseStatus
+    should_call_provider: bool
+    data_gaps: tuple[_SelectionDataPlanGap, ...] = ()
+
+
+@dataclass(frozen=True)
+class _SelectionDataPlan:
+    plan_id: str
+    support_status: _SelectionPlanSupportStatus
+    requirement_batch: Mapping[str, object]
+    warehouse_checks: tuple[_SelectionWarehouseCheck, ...]
+    provider_call_specs: tuple[Mapping[str, object], ...]
+    data_gap_ids: tuple[str, ...]
+    store_contract: Mapping[str, object]
+
+
 class SelectionDataJob:
     def __init__(
         self,
@@ -107,7 +155,7 @@ class SelectionDataJob:
         lease_id = f"lease://{plan.selection_run_id}"
         self._save_status(plan, status=SelectionDataRunStatus.RUNNING, lease_id=lease_id)
         try:
-            select_data_plan = build_select_data_plan(plan=plan, provider_result=None)
+            select_data_plan = build_selection_data_plan(plan=plan, provider_result=None)
             select_data_plan_ref = select_data_plan.plan_id
             initial_blocker_gaps = _select_plan_blocker_gap_refs(select_data_plan)
             if initial_blocker_gaps and not any(check.should_call_provider for check in select_data_plan.warehouse_checks):
@@ -121,7 +169,7 @@ class SelectionDataJob:
             self._validate_provider_result(plan, provider_result)
             provider_attempt_refs = provider_result.attempt_refs
             normalized_refs = provider_result.normalized_refs
-            select_data_plan = build_select_data_plan(plan=plan, provider_result=provider_result)
+            select_data_plan = build_selection_data_plan(plan=plan, provider_result=provider_result)
             select_data_plan_ref = select_data_plan.plan_id
             warehouse_check_ref = provider_result.warehouse_check_ref
             all_data_gaps.extend(provider_result.data_gaps)
@@ -246,7 +294,7 @@ class SelectionDataJob:
                     manifest=None,
                     provider_attempt_refs=provider_attempt_refs,
                     normalized_refs=normalized_refs,
-                    select_data_plan=build_select_data_plan(plan=plan, provider_result=provider_result_or_none)
+                    select_data_plan=build_selection_data_plan(plan=plan, provider_result=provider_result_or_none)
                     if provider_result_or_none is not None
                     else None,
                     feature_snapshot=feature_snapshot,
@@ -295,7 +343,7 @@ class SelectionDataJob:
                 manifest=approved_pack.manifest if approved_pack is not None else None,
                 provider_attempt_refs=provider_attempt_refs,
                 normalized_refs=normalized_refs,
-                select_data_plan=build_select_data_plan(plan=plan, provider_result=provider_result_or_none)
+                select_data_plan=build_selection_data_plan(plan=plan, provider_result=provider_result_or_none)
                 if provider_result_or_none is not None
                 else select_data_plan,
                 feature_snapshot=feature_snapshot,
@@ -383,7 +431,7 @@ class SelectionDataJob:
                         gap_code="selection_warehouse_normalized_refs_missing",
                         severity=DataGapSeverity.BLOCKER,
                         attempt_refs=provider_result.attempt_refs,
-                        reader_message="选股仓库检查缺少 openbb_normalized 引用，不能生成可用 /select run。",
+                        reader_message="选股仓库检查缺少 normalized_datasets 引用，不能生成可用 /select run。",
                     ),
                 ),
             )
@@ -403,12 +451,12 @@ class SelectionDataJob:
                 ),
             )
         invalid_normalized_refs = tuple(
-            ref for ref in provider_result.normalized_refs if not _is_openbb_normalized_ref(ref)
+            ref for ref in provider_result.normalized_refs if not _is_unified_normalized_ref(ref)
         )
         if invalid_normalized_refs:
             raise SelectionDataJobStepError(
                 "selection_warehouse_check_missing",
-                "selection warehouse normalized refs 未指向 openbb_normalized",
+                "selection warehouse normalized refs 未指向 normalized_datasets",
                 data_gaps=(
                     DataGapRef(
                         gap_id=f"{plan.selection_run_id}-warehouse-normalized-refs-invalid",
@@ -416,7 +464,7 @@ class SelectionDataJob:
                         gap_code="selection_warehouse_normalized_refs_invalid",
                         severity=DataGapSeverity.BLOCKER,
                         attempt_refs=provider_result.attempt_refs,
-                        reader_message="选股仓库检查发现 normalized refs 未指向 Mongo openbb_normalized，不能用本地/旧快路径结果满足 /select。",
+                        reader_message="选股仓库检查发现 normalized refs 未指向 Mongo normalized_datasets，不能用本地/旧快路径结果满足 /select。",
                         source_metadata={"invalid_refs": invalid_normalized_refs[:20]},
                     ),
                 ),
@@ -544,7 +592,7 @@ class SelectionDataJob:
             "provider_attempt_refs": list(provider_attempt_refs),
             "normalized_refs": list(normalized_refs),
             "select_data_plan_ref": data_run.select_data_plan_ref,
-            "select_data_plan": select_data_plan_snapshot(select_data_plan)
+            "select_data_plan": selection_data_plan_snapshot(select_data_plan)
             if select_data_plan is not None
             else None,
             "warehouse_check_ref": data_run.warehouse_check_ref,
@@ -606,23 +654,217 @@ def _is_no_candidate_outcome(exc: Exception) -> bool:
     return any(gap.gap_code in {"filtered_universe_empty", "scoring_rows_empty"} for gap in exc.data_gaps)
 
 
+def build_selection_data_plan(
+    *,
+    plan: SelectionRunPlan,
+    provider_result: SelectionProviderBatchResult | None = None,
+) -> _SelectionDataPlan:
+    plan_id = f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}"
+    requirement_id = f"{plan.selection_run_id}:selection:{plan.trade_date}"
+    requirement_batch: Mapping[str, object] = {
+        "request_kind": "select",
+        "selection_run_id": plan.selection_run_id,
+        "merged_requirements": (
+            {
+                "requirement_id": requirement_id,
+                "market": plan.market.value,
+                "profile": plan.profile.value,
+                "trade_date": plan.trade_date,
+                "lookback_trading_days": plan.lookback_trading_days,
+                "universe_scope": plan.universe_scope,
+                "granularity": "daily",
+                "coverage_groups": ("universe", "daily", "fundamental"),
+                "source_role_required": "market_data",
+                "field_set": ("strategy_signal_myhhub_volume_rise", "private_placement_days_since", "amount"),
+                "target_collection": "normalized_datasets",
+            },
+        ),
+    }
+    store_contract = {
+        "no_select_data_plans_collection": True,
+        "normalized_collection": "normalized_datasets",
+    }
+    if provider_result is not None:
+        gaps = tuple(
+            _plan_gap_from_data_gap(plan=plan, requirement_id=requirement_id, gap=gap)
+            for gap in provider_result.data_gaps
+        )
+        has_warehouse_refs = bool(provider_result.normalized_refs) and bool(
+            provider_result.warehouse_check_ref and provider_result.warehouse_check_ref.strip()
+        )
+        status = _SelectionWarehouseStatus.FRESH if has_warehouse_refs and not gaps else _SelectionWarehouseStatus.MISSING
+        return _SelectionDataPlan(
+            plan_id=plan_id,
+            support_status=_SelectionPlanSupportStatus.SUPPORTED,
+            requirement_batch=requirement_batch,
+            warehouse_checks=(
+                _SelectionWarehouseCheck(
+                    check_id=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}",
+                    status=status,
+                    should_call_provider=False,
+                    data_gaps=gaps,
+                ),
+            ),
+            provider_call_specs=()
+            if status == _SelectionWarehouseStatus.FRESH
+            else (
+                {
+                    "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+                    "scope": SelectionBatchScope.SELECTION_BATCH.value,
+                    "market": plan.market.value,
+                    "profile": plan.profile.value,
+                    "coverage_group": "cn_a_selection_batch",
+                    "data_type": "cn_a_select_features",
+                    "params": {
+                        "lookback_trading_days": plan.lookback_trading_days,
+                        "universe_scope": plan.universe_scope,
+                    },
+                },
+            ),
+            data_gap_ids=tuple(gap.gap_id for gap in gaps),
+            store_contract=store_contract,
+        )
+
+    if plan.market == SelectionMarket.CRYPTO:
+        gap = _SelectionDataPlanGap(
+            gap_id=f"{plan.selection_run_id}:select:mongo_missing",
+            requirement_id=requirement_id,
+            domain="selection",
+            reason="mongo_missing",
+            severity=DataGapSeverity.BLOCKER,
+            worker_visible_text="CRYPTO /select 历史包尚未批准下载并入 Mongo normalized_datasets，不能走旧 select plan 或本地文件入口。",
+            market=plan.market,
+            data_type="selection_history",
+            field_path=None,
+            next_action="approve_crypto_selection_history_ingest",
+        )
+        return _SelectionDataPlan(
+            plan_id=plan_id,
+            support_status=_SelectionPlanSupportStatus.TARGET_DESIGN,
+            requirement_batch=requirement_batch,
+            warehouse_checks=(
+                _SelectionWarehouseCheck(
+                    check_id=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}",
+                    status=_SelectionWarehouseStatus.MISSING,
+                    should_call_provider=False,
+                    data_gaps=(gap,),
+                ),
+            ),
+            provider_call_specs=(),
+            data_gap_ids=(gap.gap_id,),
+            store_contract=store_contract,
+        )
+
+    return _SelectionDataPlan(
+        plan_id=plan_id,
+        support_status=_SelectionPlanSupportStatus.SUPPORTED,
+        requirement_batch=requirement_batch,
+        warehouse_checks=(
+            _SelectionWarehouseCheck(
+                check_id=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}",
+                status=_SelectionWarehouseStatus.MISSING,
+                should_call_provider=True,
+                data_gaps=(),
+            ),
+        ),
+        provider_call_specs=(
+            {
+                "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+                "scope": SelectionBatchScope.SELECTION_BATCH.value,
+                "market": plan.market.value,
+                "profile": plan.profile.value,
+                "coverage_group": "cn_a_selection_batch",
+                "data_type": "cn_a_select_features",
+                "params": {
+                    "lookback_trading_days": plan.lookback_trading_days,
+                    "universe_scope": plan.universe_scope,
+                },
+            },
+        ),
+        data_gap_ids=(),
+        store_contract=store_contract,
+    )
+
+
+def selection_data_plan_snapshot(select_data_plan: _SelectionDataPlan) -> Mapping[str, object]:
+    return {
+        "schema_version": "selection_data_plan.v1",
+        "plan_id": select_data_plan.plan_id,
+        "select_data_plan": {
+            "support_status": select_data_plan.support_status,
+            "data_gap_ids": list(select_data_plan.data_gap_ids),
+        },
+        "requirement_batch": {
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in select_data_plan.requirement_batch.items()
+        },
+        "warehouse_checks": [
+            {
+                "check_id": check.check_id,
+                "status": check.status.value,
+                "should_call_provider": check.should_call_provider,
+                "data_gaps": [_selection_plan_gap_snapshot(gap) for gap in check.data_gaps],
+            }
+            for check in select_data_plan.warehouse_checks
+        ],
+        "provider_call_specs": [dict(item) for item in select_data_plan.provider_call_specs],
+        "data_gap_ids": list(select_data_plan.data_gap_ids),
+        "store_contract": dict(select_data_plan.store_contract),
+    }
+
+
+def _plan_gap_from_data_gap(
+    *,
+    plan: SelectionRunPlan,
+    requirement_id: str,
+    gap: DataGapRef,
+) -> _SelectionDataPlanGap:
+    return _SelectionDataPlanGap(
+        gap_id=gap.gap_id,
+        requirement_id=requirement_id,
+        domain=gap.domain,
+        reason=gap.gap_code,
+        severity=gap.severity,
+        worker_visible_text=gap.reader_message,
+        market=plan.market,
+        data_type=str(gap.source_metadata.get("data_type", "selection_history")) if gap.source_metadata else "selection_history",
+        field_path=str(gap.source_metadata.get("field")) if gap.source_metadata and gap.source_metadata.get("field") else None,
+        next_action=str(gap.source_metadata.get("next_action", "inspect_data_gap")) if gap.source_metadata else "inspect_data_gap",
+    )
+
+
+def _selection_plan_gap_snapshot(gap: _SelectionDataPlanGap) -> Mapping[str, object]:
+    return {
+        "gap_id": gap.gap_id,
+        "requirement_id": gap.requirement_id,
+        "domain": gap.domain,
+        "reason": gap.reason,
+        "severity": gap.severity.value,
+        "worker_visible_text": gap.worker_visible_text,
+        "market": gap.market.value,
+        "data_type": gap.data_type,
+        "field_path": gap.field_path,
+        "next_action": gap.next_action,
+    }
+
+
 def _select_plan_blocker_gap_refs(select_data_plan: Any) -> tuple[DataGapRef, ...]:
     refs: list[DataGapRef] = []
     for check in select_data_plan.warehouse_checks:
         for gap in check.data_gaps:
-            if gap.severity.value not in {"blocker", "fail"}:
+            if gap.severity != DataGapSeverity.BLOCKER:
                 continue
             refs.append(
                 DataGapRef(
                     gap_id=gap.gap_id,
-                    domain=gap.domain.value,
-                    gap_code=gap.reason.value,
+                    domain=gap.domain,
+                    gap_code=gap.reason,
                     severity=DataGapSeverity.BLOCKER,
                     attempt_refs=(select_data_plan.plan_id,),
                     reader_message=gap.worker_visible_text,
                     source_metadata={
                         "requirement_id": gap.requirement_id,
-                        "market": gap.market.value if gap.market is not None else None,
+                        "market": gap.market.value,
                         "data_type": gap.data_type,
                         "field_path": gap.field_path,
                         "next_action": gap.next_action,
@@ -695,8 +937,8 @@ def _candidate_pack_stage(status: SelectionDataRunStatus, manifest: CandidatePac
     return "draft_only"
 
 
-def _is_openbb_normalized_ref(ref: str) -> bool:
-    return ref.startswith("normalized://mongo/openbb_normalized/") or ref.startswith("mongo://openbb_normalized/")
+def _is_unified_normalized_ref(ref: str) -> bool:
+    return ref.startswith("normalized://mongo/normalized_datasets/") or ref.startswith("mongo://normalized_datasets/")
 
 
 def _feature_snapshot_payload(feature_snapshot: FeatureSnapshot | None) -> list[dict[str, object]]:

@@ -13,10 +13,6 @@ from claw_trade.config.report_workflow_settings import (
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
 )
-from claw_trade.data_gateway.ui_runtime_checks import (
-    build_data_source_health_tester,
-    build_price_alert_quote_provider,
-)
 from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
 from claw_trade.selection.confirmation import SelectionConfirmationController
 from claw_trade.selection.controller import SelectionController
@@ -28,6 +24,10 @@ from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.data_source_settings import (
     DataSourceSettingsService,
+)
+from claw_trade.ui_backend.data_source_runtime_checks import (
+    build_data_source_health_tester,
+    build_price_alert_quote_provider,
 )
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge

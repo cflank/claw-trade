@@ -418,8 +418,8 @@ def _smoke_result(*, rows: int, gaps: tuple[DataGapRef, ...]) -> SelectionProvid
     mapped_rows = tuple({"ticker": f"60051{idx}.SH"} for idx in range(rows))
     return SelectionProviderBatchResult(
         provider_batch_plan=plan,
-        attempt_refs=("attempt://mongo/openbb_provider_attempts/test",),
-        normalized_refs=("normalized://mongo/openbb_normalized/test",),
+        attempt_refs=("attempt://mongo/provider_attempts/test",),
+        normalized_refs=("normalized://mongo/normalized_datasets/test",),
         rows=mapped_rows,
         data_gaps=gaps,
     )
@@ -431,7 +431,7 @@ def _gap(*, gap_code: str, severity: DataGapSeverity) -> DataGapRef:
         domain="selection",
         gap_code=gap_code,
         severity=severity,
-        attempt_refs=("attempt://mongo/openbb_provider_attempts/test",),
+        attempt_refs=("attempt://mongo/provider_attempts/test",),
         reader_message="test",
     )
 
@@ -472,7 +472,7 @@ def test_smoke_cli_output_includes_structured_gap_metadata(
         domain="selection",
         gap_code="selection_batch_empty",
         severity=DataGapSeverity.WARN,
-        attempt_refs=("attempt://mongo/openbb_provider_attempts/test",),
+        attempt_refs=("attempt://mongo/provider_attempts/test",),
         reader_message="structured gap test",
         source_metadata={
             "selection_candidate_type": "partial_batch_candidate",

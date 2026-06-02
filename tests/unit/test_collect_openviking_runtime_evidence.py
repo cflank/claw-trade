@@ -46,8 +46,8 @@ def test_relation_query_uris_include_manifest_and_lineage_sources(tmp_path: Path
             {
                 "relations": [
                     {
-                        "from_uri": "mongo://openbb_provider_attempts/attempt-1",
-                        "to_uri": "mongo://openbb_raw_payloads/raw-1",
+                        "from_uri": "mongo://provider_attempts/attempt-1",
+                        "to_uri": "mongo://raw_payloads/raw-1",
                     }
                 ]
             }
@@ -66,8 +66,8 @@ def test_relation_query_uris_include_manifest_and_lineage_sources(tmp_path: Path
     assert "viking://resources/workflow/run-openviking/frontline/market/" in uris
     assert "viking://resources/workflow/run-openviking/frontline/market/evidence/index.json" in uris
     assert "viking://resources/workflow/run-openviking/frontline/market/evidence/" in uris
-    assert "mongo://openbb_provider_attempts/attempt-1" in uris
-    assert "mongo://openbb_raw_payloads/raw-1" in uris
+    assert "mongo://provider_attempts/attempt-1" in uris
+    assert "mongo://raw_payloads/raw-1" in uris
     assert len(uris) == len(set(uris))
 
 

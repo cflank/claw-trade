@@ -15,7 +15,7 @@ def test_cn_a_social_skill_metadata_contains_required_fields() -> None:
     assert "name: cn-a-social-data" in text
     assert "tool: claw_get_social_pack" in text
     assert "entrypoint: openclaw_plugins/claw-trade-frontline-tools/index.js" in text
-    assert "schema_version: openbb_social_pack.v1" in text
+    assert "schema_version: claw_data_social_pack.v1" in text
 
 
 def test_cn_a_social_analyst_visible_tools_are_exactly_approved_set() -> None:

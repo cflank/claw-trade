@@ -249,6 +249,11 @@ export interface DataSourceInstanceForUser {
   state: 'draft' | 'testing' | 'validated' | 'enabled' | 'disabled' | 'degraded' | 'rejected';
   lastSuccessAt?: string | null;
   lastTestAt?: string | null;
+  rateLimitMaxCalls?: number | null;
+  rateLimitWindowSeconds?: number | null;
+  rateLimitSafetyMargin?: number | null;
+  rateLimitOverflow?: 'wait' | 'fail_fast' | null;
+  rateLimitWaitTimeoutSeconds?: number | null;
 }
 
 export interface DataSourceInstanceDraftInput {
@@ -261,6 +266,11 @@ export interface DataSourceInstanceDraftInput {
   endpointUrl?: string | null;
   state?: DataSourceInstanceForUser['state'];
   requiresKey?: boolean;
+  rateLimitMaxCalls?: number | string | null;
+  rateLimitWindowSeconds?: number | string | null;
+  rateLimitSafetyMargin?: number | string | null;
+  rateLimitOverflow?: 'wait' | 'fail_fast' | '' | null;
+  rateLimitWaitTimeoutSeconds?: number | string | null;
 }
 
 export interface ChannelStatusForUser {

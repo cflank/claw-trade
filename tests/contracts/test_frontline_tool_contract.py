@@ -45,6 +45,16 @@ EXPECTED_WORKER_PACK_EXPORTS = {
     "social_analyst": {"claw_get_social_pack"},
 }
 
+EXPECTED_PLUGIN_TOOLS = {
+    "claw_get_market_pack",
+    "claw_get_fundamental_pack",
+    "claw_get_news_pack",
+    "claw_get_social_pack",
+    "claw_get_policy_pack",
+    "claw_get_hot_money_pack",
+    "claw_get_lockup_pack",
+}
+
 
 def test_cn_a_frontline_visible_tools_match_domain_pack_only() -> None:
     registry_result = load_tool_registry()
@@ -173,19 +183,14 @@ console.log(JSON.stringify(registrations));
     )
     registrations = json.loads(result.stdout)
     names = {item["name"] for item in registrations}
-    assert names == {
-        "claw_get_market_pack",
-        "claw_get_fundamental_pack",
-        "claw_get_news_pack",
-        "claw_get_social_pack",
-    }
+    assert names == EXPECTED_PLUGIN_TOOLS
     for item in registrations:
         assert item["schemaType"] == "object"
         assert item["additionalProperties"] is False
         assert set(item["fields"]) == OPENBB_PACK_TOOL_PARAM_FIELDS
 
 
-def test_frontline_plugin_legacy_rollback_flag_still_registers_only_openbb_tools() -> None:
+def test_frontline_plugin_legacy_rollback_flag_still_registers_only_canonical_tools() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     plugin_path = repo_root / "openclaw_plugins" / "claw-trade-frontline-tools" / "index.js"
     script = f"""
@@ -210,9 +215,4 @@ console.log(JSON.stringify(registrations));
     )
 
     names = set(json.loads(result.stdout))
-    assert {
-        "claw_get_market_pack",
-        "claw_get_fundamental_pack",
-        "claw_get_news_pack",
-        "claw_get_social_pack",
-    } == names
+    assert EXPECTED_PLUGIN_TOOLS == names

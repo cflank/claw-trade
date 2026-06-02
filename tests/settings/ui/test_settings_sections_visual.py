@@ -251,9 +251,9 @@ def test_settings_sections_visual_surface_live() -> None:
         assert isinstance(source_instances, list)
         assert len(source_instances) == len(SUPPORTED_DATA_SOURCE_TYPES)
         listed_types = {str(item.get("supportedType", "")).lower() for item in source_instances if isinstance(item, dict)}
-        for expected_type in ("tushare", "x", "reddit", "bloomberg", "reuters", "coingecko_pro", "coinmetrics", "dune"):
+        for expected_type in ("tushare", "alpha_vantage", "finnhub", "fred", "coingecko_pro", "coinglass"):
             assert expected_type in listed_types
-        for hidden_type in ("openbb", "akshare", "coingecko", "binance", "okx", "ccxt", "imf"):
+        for hidden_type in ("openbb", "akshare", "coingecko", "binance", "okx", "ccxt", "imf", "longport"):
             assert hidden_type not in listed_types
         assert any(
             isinstance(item, dict)

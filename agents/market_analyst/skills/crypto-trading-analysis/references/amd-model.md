@@ -21,7 +21,7 @@ data.technical.timeframe_roles.auxiliary
 data.technical.timeframes[*].patterns.amd
 data.technical.timeframes[*].sample_status
 data.technical.limitations
-readiness.domains.technical
+data-quality state for technical analysis
 ```
 
 Screenshots, browser pages, or user chart descriptions can support low-confidence observation only.

@@ -2,7 +2,7 @@
 
 Rule version: `bb-indicators-skill-v1`.
 
-Indicators provide context, confirmation, or risk filters. They do not replace structure, readiness, invalidation, or stop logic.
+Indicators provide context, confirmation, or risk filters. They do not replace structure, data-quality state, invalidation, or stop logic.
 
 ## Required Inputs
 
@@ -78,7 +78,7 @@ Use:
 Limits:
 
 - KD is noisy on low timeframes.
-- Confirm with structure and readiness before using it in a plan.
+- Confirm with structure and data-quality state before using it in a plan.
 
 ## FVG
 

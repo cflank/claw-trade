@@ -506,7 +506,7 @@ def _validate_lineage_refs(*, plan: SelectionRunPlan, source_lineage_refs: tuple
 
 
 def _is_normalized_lineage_ref(ref: str) -> bool:
-    return ref.startswith("normalized://") or ref.startswith("mongo://openbb_normalized/")
+    return ref.startswith("normalized://") or ref.startswith("mongo://normalized_datasets/")
 
 
 def _validate_candidate_strategy_field_completeness(rows: tuple[CandidateFactRow, ...]) -> None:

@@ -1,11 +1,11 @@
 ---
 name: crypto-trading-analysis
-description: Use only for claw-trade CRYPTO profile market analysis. Crypto trading analysis workflow for BTC, ETH, and major altcoins using OpenBB-routed market packs plus CryptoLens analysis material, AMD/SMC, 123 reversal rules, chart patterns, Vegas/FVG/OB, RSI/MACD/KD, derivatives, liquidation maps, on-chain and macro risk checks. Do not use for US, CN_A, or HK equity profiles.
+description: Use only for claw-trade CRYPTO profile market analysis. Crypto trading analysis workflow for BTC, ETH, and major altcoins using claw-trade data layer market packs plus local technical analysis material, AMD/SMC, 123 reversal rules, chart patterns, Vegas/FVG/OB, RSI/MACD/KD, derivatives, liquidation maps, on-chain and macro risk checks. Do not use for US, CN_A, or HK equity profiles.
 ---
 
 # Crypto Trading Analysis
 
-Use this skill to produce Chinese, evidence-grounded crypto trade analysis. CryptoLens is an offline analysis layer over OpenBB normalized market data, not a data source, provider, external MCP, order system, wallet, account manager, or PM/trader decision owner.
+Use this skill to produce Chinese, evidence-grounded crypto trade analysis. The local technical analysis layer works over claw-trade normalized market data; it is not a data source, provider, external MCP, order system, wallet, account manager, or PM/trader decision owner.
 
 ## Core Standard
 
@@ -14,7 +14,7 @@ The default output must be a process-first trade analysis, not a checklist.
 For every reader-facing market analysis:
 
 - Explain the conclusion in plain Chinese first.
-- Preserve the data path: source, timestamp, readiness, warnings, gaps, and conflicts.
+- Preserve the data path: source, timestamp, data-quality state, warnings, gaps, and conflicts.
 - For each material indicator, write the reasoning chain: `数据 -> 推导 -> 交易作用 -> 失效`.
 - Do not compress indicators into one-line labels such as "偏多" or "偏空" unless the full reasoning is already shown.
 - Treat `指标覆盖` as proof that data was checked, not as the analysis itself.
@@ -37,9 +37,9 @@ Do not use model memory as current market data.
 
 ## Data Routing
 
-Call OpenClaw visible tool `claw_get_market_pack` first. This pack centrally reads OpenBB-routed market structure, derivatives, liquidation, on-chain, macro, events, and AHR999 when those sources are configured, then adds local OHLCV-derived indicators and PNG chart assets.
+Call the OpenClaw-visible market data pack tool first. This pack centrally reads market structure, derivatives, liquidation, on-chain, macro, events, and AHR999 through the claw-trade data layer when those sources are configured, then adds local OHLCV-derived indicators and PNG chart assets.
 
-The worker should use the pack's natural-language `reader_brief`, compact data summary, `provider_attempts`, `data_gaps`, `conflicts`, and `readiness`. Do not use raw CryptoLens JSON, OpenBB raw payload, legacy external crypto MCP atomic output, or provider raw JSON as the report body; raw payloads are evidence storage only.
+The worker should use the pack's natural-language material, compact data summary, source-attempt notes, data gaps, conflicts, and data-quality state. Do not use raw analysis JSON, raw provider payload, legacy external crypto MCP atomic output, or provider raw JSON as the report body; raw payloads are evidence storage only.
 
 The data tool call does not need model-supplied ticker, market, company_name, or date fields; those values are locked by runtime context.
 
@@ -53,22 +53,22 @@ Rules:
 
 ## Market Pack Data Gap Path
 
-If `claw_get_market_pack` reports that the CRYPTO market route is unavailable:
+If the market data pack reports that the CRYPTO market route is unavailable:
 
-1. For market data, call only `claw_get_market_pack`; do not call OpenBB atomic provider tools, CryptoLens raw tools, or any legacy external data tool.
-2. Treat the unavailable route as a data gap from the pack result, preserving its `provider_attempts`, `data_gaps`, `conflicts`, and `readiness`.
-3. State which OpenBB/data_gateway domains failed or were blocked, such as credential missing, rate limited, field missing, stale, or schema invalid.
+1. For market data, call only the market data pack; do not call atomic provider tools, raw analysis tools, or any legacy external data tool.
+2. Treat the unavailable route as a data gap from the pack result, preserving source-attempt notes, data gaps, conflicts, and data-quality state.
+3. State which data-layer domains failed or were blocked, such as credential missing, rate limited, field missing, stale, or schema invalid.
 4. If the pack returns partial market facts, analyze only those facts and lower confidence where missing domains matter.
 5. If the pack returns no usable market facts, ask for rerun/provider health or user-provided chart/context and output a data gap report.
 
-Never hide this data gap. State which approved pack material was available and which `data_gaps[]` remain open.
+Never hide this data gap. State which approved pack material was available and which data gaps remain open.
 
 ## No Duplicate Ready-Domain Queries
 
 Read the full envelope first. Do not re-query ready domains in the same asset/time window unless one condition is true:
 
 - the domain is missing from `data`
-- `readiness.domains[domain].state` is not `ready`
+- the data-quality state for the domain is not usable
 - `as_of` is older than the domain freshness window
 - related fields are present in `conflicts[]`
 - the user explicitly asks for a narrower recheck
@@ -81,7 +81,7 @@ Freshness guide:
 | `technical` | 60-300 seconds, adjusted by timeframe |
 | `derivatives` | 60-180 seconds |
 | `liquidation_map` | 60-300 seconds |
-| `events` | ETF 1-6 hours; token unlocks 6-24 hours; news 5-30 minutes |
+| `events` | institutional product flows 1-6 hours; token unlocks 6-24 hours; news 5-30 minutes |
 | `macro` | 6-24 hours; recheck around major releases |
 | `onchain` | 1-6 hours unless provider says otherwise |
 | `ahr999` | 1-24 hours; never a short-term entry trigger |
@@ -176,8 +176,8 @@ data.macro
 data.onchain
 data.events
 data.ahr999
-readiness.domains
-data_gaps[]
+data-quality state by domain
+open data gaps
 ```
 
 The coverage section must account for each item below with one of `已引用`, `有数据但未构成信号`, `缺失/不可用`, or `不适用`:
@@ -225,11 +225,11 @@ Hard rules:
 - If an item is `有数据但未构成信号`, still explain why it does not affect the plan.
 - A full analysis that only lists the coverage matrix but does not expand these tutorial signals into `数据 -> 推导 -> 交易作用 -> 失效` is incomplete.
 
-## Readiness Usage
+## Data-Quality Usage
 
 This is a worker-facing data-quality rule, not a claw-trade runtime guard or hard stop.
 
-Treat `readiness` as the structured data-quality boundary.
+Treat the data-quality state as the structured evidence boundary.
 
 - `ready`: full analysis is allowed if no material conflicts block the conclusion.
 - `partial`: give scenarios and conditions, with explicit gaps and confidence limits.
@@ -244,7 +244,7 @@ Treat `readiness` as the structured data-quality boundary.
 - W/M/top/bottom/channel/wedge patterns: `references/chart-patterns.md`
 - Vegas/MACD/RSI/KD/FVG/OB: `references/indicators.md`
 - Liquidation/CVD/funding/OI: `references/liquidity-and-derivatives.md`
-- Macro/on-chain/ETF/AHR999: `references/macro-and-onchain.md`
+- Macro/on-chain/institutional product flows/AHR999: `references/macro-and-onchain.md`
 - Position sizing/risk: `references/risk-and-position-sizing.md`
 - Output templates: `references/output-templates.md`
 - Data boundaries: `references/source-boundaries.md`
@@ -255,7 +255,7 @@ Read only the reference files needed for the current task.
 
 Every reader-facing analysis should include:
 
-- data time, sources, status, confidence, and readiness
+- data time, sources, status, confidence, and data-quality state
 - a short verdict and why it could be wrong
 - mandatory `指标覆盖` matrix for the tutorial checklist
 - mandatory `指标推导过程` with `数据 -> 推导 -> 交易作用 -> 失效` for each required signal family

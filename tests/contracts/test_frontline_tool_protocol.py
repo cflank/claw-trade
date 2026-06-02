@@ -190,7 +190,7 @@ process.stdout.write(JSON.stringify({{ result, captured, hookCount: hooks.length
     return json.loads(completed.stdout)
 
 
-def test_plugin_registers_only_canonical_openbb_pack_tools() -> None:
+def test_plugin_registers_only_canonical_data_pack_tools() -> None:
     script = f"""
 import plugin from {json.dumps(str(PLUGIN_PATH))};
 const tools = [];
@@ -324,12 +324,16 @@ def test_reply_dispatch_hook_does_not_send_when_ui_returns_unhandled() -> None:
     assert result["captured"]["finalReplies"] == []
 
 
-def test_plugin_source_uses_openbb_runtime_and_not_legacy_provider_executor() -> None:
+def test_plugin_source_uses_data_layer_bridge_and_not_legacy_pack_runtime() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
 
-    assert "OpenBBRuntimeWrapper" in source
-    assert "DomainPackService" in source
-    assert "build_default_provider_adapters" in source
+    assert "run_frontline_data_pack" in source
+    assert "claw_trade.reports.data_pack_bridge" in source
+    assert ("Open" + "BBRuntimeWrapper") not in source
+    assert "DomainPackService" not in source
+    assert "build_default_provider_adapters" not in source
+    assert ("claw_trade.data_gateway." + "mcp") not in source
+    assert ("claw_trade.data_gateway." + "packs") not in source
     assert "frontline_data_pack.provider_executor" not in source
     assert "import frontline_data_pack.us_data_pack" not in source
     assert "get_stock_data" not in source
@@ -353,9 +357,9 @@ def test_worker_mismatch_returns_worker_mismatch_error() -> None:
 
 def test_non_frontline_stage_returns_context_incomplete_without_spawning_python(tmp_path: Path) -> None:
     marker = tmp_path / "python_called.txt"
-    fake_python = tmp_path / "fake_python.sh"
+    probe_python = tmp_path / "probe_python.sh"
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo called > {marker}
 echo '{{"ok": true}}'
@@ -365,7 +369,7 @@ echo '{{"ok": true}}'
         tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst", stage="investment_debate"),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is True
     assert _error_code(result) == "TOOL_CONTEXT_INCOMPLETE"
@@ -378,9 +382,9 @@ def test_missing_runtime_required_field_returns_context_incomplete_without_spawn
     missing_field: str,
 ) -> None:
     marker = tmp_path / "python_called.txt"
-    fake_python = tmp_path / "fake_python.sh"
+    probe_python = tmp_path / "probe_python.sh"
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo called > {marker}
 echo '{{"ok": true}}'
@@ -394,7 +398,7 @@ echo '{{"ok": true}}'
         tool_name="claw_get_market_pack",
         ctx=ctx,
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is True
     assert _error_code(result) == "TOOL_CONTEXT_INCOMPLETE"
@@ -402,16 +406,16 @@ echo '{{"ok": true}}'
 
 
 @pytest.mark.parametrize(("tool_name", "worker_id", "_pack_domain"), CANONICAL_TOOLS)
-def test_missing_required_openbb_pack_field_returns_params_error_without_spawning_python(
+def test_missing_required_data_pack_field_returns_params_error_without_spawning_python(
     tmp_path: Path,
     tool_name: str,
     worker_id: str,
     _pack_domain: str,
 ) -> None:
     marker = tmp_path / "python_called.txt"
-    fake_python = tmp_path / "fake_python.sh"
+    probe_python = tmp_path / "probe_python.sh"
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo called > {marker}
 echo '{{"ok": true}}'
@@ -421,7 +425,7 @@ echo '{{"ok": true}}'
         tool_name=tool_name,
         ctx=_runtime_ctx(worker_id=worker_id, runtime_vars={"company_name": ""}),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is True
     assert _error_code(result) == "TOOL_PARAMS_INVALID"
@@ -429,22 +433,22 @@ echo '{{"ok": true}}'
 
 
 @pytest.mark.parametrize(("tool_name", "worker_id", "pack_domain"), CANONICAL_TOOLS)
-def test_successful_canonical_pack_passes_openbb_context_to_python(
+def test_successful_canonical_pack_passes_data_layer_context_to_python(
     tmp_path: Path,
     tool_name: str,
     worker_id: str,
     pack_domain: str,
 ) -> None:
     stdin_path = tmp_path / "stdin.json"
-    fake_python = tmp_path / "fake_python_pack.sh"
+    probe_python = tmp_path / "probe_python_pack.sh"
     payload = {
         "ok": True,
         "schema_version": f"{tool_name}.test.v1",
         "tool_name": tool_name,
-        "reader_brief": f"{tool_name} returned natural-language material.",
+        "model_visible_text": f"{tool_name} returned natural-language material.",
     }
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 cat > {stdin_path}
 echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
@@ -454,10 +458,10 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
         tool_name=tool_name,
         ctx=_runtime_ctx(worker_id=worker_id),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is False
-    assert result["content"][0]["text"] == payload["reader_brief"]
+    assert result["content"][0]["text"] == payload["model_visible_text"]
     stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
     assert stdin_payload["tool_input"]["ticker"] == "00700.HK"
     assert stdin_payload["tool_input"]["market"] == "HK"
@@ -468,15 +472,15 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert stdin_payload["runtime_context"]["pack_domain"] == pack_domain
 
 
-def test_model_supplied_openbb_runtime_fields_are_ignored_in_favor_of_python_context(tmp_path: Path) -> None:
+def test_model_supplied_data_layer_runtime_fields_are_ignored_in_favor_of_python_context(tmp_path: Path) -> None:
     stdin_path = tmp_path / "stdin.json"
-    fake_python = tmp_path / "fake_python_pack.sh"
+    probe_python = tmp_path / "probe_python_pack.sh"
     payload = {
         "ok": True,
-        "reader_brief": "资料包已返回。",
+        "model_visible_text": "资料包已返回。",
     }
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 cat > {stdin_path}
 echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
@@ -510,7 +514,7 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
             "currency": "EUR",
             "freshness_max_age_seconds": -1,
         },
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
 
     assert result.get("isError") is False
@@ -540,9 +544,9 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 def test_non_json_stdout_returns_protocol_error_with_redacted_stderr_summary(tmp_path: Path) -> None:
     long_secret = "token=super_secret " + ("x" * 2600) + " mongodb://user:pass@localhost:27017/db"
     stdout_secret = "HTTPConnectionPool token=stdout_secret_value mongodb://user:pass@localhost:27017/db"
-    fake_python = tmp_path / "fake_python_non_json.sh"
+    probe_python = tmp_path / "probe_python_non_json.sh"
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo {json.dumps(stdout_secret)}
 echo {json.dumps(long_secret)} 1>&2
@@ -553,7 +557,7 @@ exit 0
         tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst"),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is True
     assert _error_code(result) == "TOOL_PROTOCOL_ERROR"
@@ -574,9 +578,9 @@ exit 0
 
 
 def test_python_early_exit_stdin_epipe_returns_protocol_error(tmp_path: Path) -> None:
-    fake_python = tmp_path / "fake_python_exit_immediately.sh"
+    probe_python = tmp_path / "probe_python_exit_immediately.sh"
     _write_executable(
-        fake_python,
+        probe_python,
         """#!/usr/bin/env bash
 exit 0
 """,
@@ -604,7 +608,7 @@ const result = await tool.execute("call", params);
 process.stdout.write(JSON.stringify(result));
 """
     env = os.environ.copy()
-    env["CLAW_TRADE_FRONTLINE_TOOL_PYTHON"] = str(fake_python)
+    env["CLAW_TRADE_FRONTLINE_TOOL_PYTHON"] = str(probe_python)
     completed = subprocess.run(
         ["node", "--input-type=module", "-e", script],
         cwd=REPO_ROOT,
@@ -626,12 +630,12 @@ process.stdout.write(JSON.stringify(result));
 
 
 def test_successful_pack_only_exposes_natural_material_to_model_and_keeps_details_off_prompt(tmp_path: Path) -> None:
-    fake_python = tmp_path / "fake_python_pack.sh"
+    probe_python = tmp_path / "probe_python_pack.sh"
     payload = {
         "ok": True,
-        "schema_version": "openbb_news_pack.v1",
+        "schema_version": "data_result_pack.v1",
         "tool_name": "claw_get_news_pack",
-        "reader_brief": "资料范围：已采集公司新闻十条。材料正文：公司新闻包括腾讯发布经营进展公告。证据缺口：宏观新闻不足。",
+        "model_visible_text": "资料范围：已采集公司新闻十条。材料正文：公司新闻包括腾讯发布经营进展公告。证据缺口：宏观新闻不足。",
         "provider_attempts": [
             {
                 "provider": "openbb",
@@ -643,7 +647,7 @@ def test_successful_pack_only_exposes_natural_material_to_model_and_keeps_detail
         "openviking_l2_refs": ["viking://resources/workflow/run/frontline/news/normalized_pack.json"],
     }
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 """,
@@ -652,12 +656,12 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
         tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst"),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is False
     content = result.get("content")
     assert isinstance(content, list)
-    assert content[0]["text"] == payload["reader_brief"]
+    assert content[0]["text"] == payload["model_visible_text"]
     assert "viking://" not in content[0]["text"]
     assert "provider_attempts" not in content[0]["text"]
     assert "raw_payload_ref" not in content[0]["text"]
@@ -668,9 +672,9 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 
 
 def test_pack_runtime_uses_tool_call_scoped_provider_call_id(tmp_path: Path) -> None:
-    fake_python = tmp_path / "fake_python_pack.py"
+    probe_python = tmp_path / "probe_python_pack.py"
     _write_executable(
-        fake_python,
+        probe_python,
         """#!/usr/bin/env python3
 import json
 import sys
@@ -679,7 +683,7 @@ payload = json.load(sys.stdin)
 runtime = payload["runtime_context"]
 print(json.dumps({
     "ok": True,
-    "reader_brief": "资料包已返回。",
+    "model_visible_text": "资料包已返回。",
     "runtime_call_id": runtime["call_id"],
     "dispatch_id": runtime["dispatch_id"],
     "worker_call_id": runtime["worker_call_id"],
@@ -691,7 +695,7 @@ print(json.dumps({
         tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst"),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
 
     assert result.get("isError") is False
@@ -704,7 +708,7 @@ print(json.dumps({
 
 
 def test_pack_runtime_blocked_exit_zero_is_reported_as_tool_error(tmp_path: Path) -> None:
-    fake_python = tmp_path / "fake_python_pack.sh"
+    probe_python = tmp_path / "probe_python_pack.sh"
     payload = {
         "ok": False,
         "error": {
@@ -713,7 +717,7 @@ def test_pack_runtime_blocked_exit_zero_is_reported_as_tool_error(tmp_path: Path
         },
     }
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 exit 0
@@ -723,7 +727,7 @@ exit 0
         tool_name="claw_get_news_pack",
         ctx=_runtime_ctx(worker_id="news_analyst"),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
     assert result.get("isError") is True
     assert _error_code(result) == "pack_runtime_blocked"
@@ -735,9 +739,9 @@ exit 0
 @pytest.mark.parametrize(
     ("status", "ok", "brief_field", "expected_is_error"),
     (
-        ("partial", True, "reader_brief", False),
-        ("insufficient", True, "reader_brief", False),
-        ("blocked", False, "reader_brief_md", True),
+        ("partial", True, "model_visible_text", False),
+        ("insufficient", True, "model_visible_text", False),
+        ("blocked", False, "model_visible_text", True),
     ),
 )
 def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness(
@@ -747,16 +751,16 @@ def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness
     brief_field: str,
     expected_is_error: bool,
 ) -> None:
-    fake_python = tmp_path / "fake_python_pack.sh"
-    reader_brief = (
+    probe_python = tmp_path / "probe_python_pack.sh"
+    model_visible_text = (
         f"00700.HK 的 HK 舆情资料包资料就绪度为{status}："
         "没有原始社交事实源。数据缺口：搜索发现不能替代舆情事实。"
     )
     payload = {
         "ok": ok,
-        "schema_version": "openbb_social_pack.v1",
+        "schema_version": "data_result_pack.v1",
         "tool_name": "claw_get_social_pack",
-        brief_field: reader_brief,
+        brief_field: model_visible_text,
         "readiness": {"status": status, "reason": "没有原始社交事实源。"},
         "provider_attempts": [
             {
@@ -769,10 +773,10 @@ def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness
     if not ok:
         payload["error"] = {
             "code": "pack_runtime_blocked",
-            "message": "资料源配置阻断，但 reader brief 已说明可见缺口。",
+            "message": "资料源配置阻断，但 worker-visible brief 已说明可见缺口。",
         }
     _write_executable(
-        fake_python,
+        probe_python,
         f"""#!/usr/bin/env bash
 echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 """,
@@ -782,12 +786,12 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
         tool_name="claw_get_social_pack",
         ctx=_runtime_ctx(worker_id="social_analyst"),
         params={"ticker": "00700.HK", "market": "HK"},
-        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(fake_python)},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
     )
 
     assert result.get("isError") is expected_is_error
     text = result["content"][0]["text"]
-    assert text == reader_brief
+    assert text == model_visible_text
     assert "资料包工具已返回" not in text
     assert "资料就绪状态为" not in text
     assert "这只证明工具调用完成" not in text
@@ -804,10 +808,10 @@ def test_provider_total_timeout_contract_keeps_subprocess_plus_five_seconds_buff
     assert "Math.max(totalTimeout + SUBPROCESS_TIMEOUT_BUFFER_MS, DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS)" in source
 
 
-def test_crypto_market_pack_uses_extended_timeout_contract() -> None:
+def test_market_pack_uses_extended_timeout_contract() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
+    assert "DEFAULT_MARKET_PACK_TIMEOUT_MS = 120000" in source
     assert "DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS = 120000" in source
     assert "function resolvePackTotalTimeoutMs(config, toolInput, toolName)" in source
     assert "toolName === TOOL_NAMES.clawGetMarketPack" in source
-    assert "textValue(toolInput.market) === MARKET_CRYPTO" in source
-    assert "domainToolTimeoutMs(DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS)" in source
+    assert "domainToolTimeoutMs(DEFAULT_MARKET_PACK_TIMEOUT_MS)" in source

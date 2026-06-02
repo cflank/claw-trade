@@ -1,337 +1,165 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
-from claw_trade.data_gateway.errors import DataGatewayError
-from claw_trade.data_gateway.models import (
-    AdmissionCheckStatus,
-    DeclarativeProviderManifest,
-    LicenseCheckResult,
-    Market,
-    PackDomain,
-    PrioritySource,
-    ProviderAdmissionStatus,
-    ProviderCapability,
-    ProviderKind,
-    SourceRole,
-)
-from claw_trade.data_gateway.providers.admission import DeclarativeProviderSecurityPolicy, ProviderAdmissionValidator
-from claw_trade.data_gateway.providers.catalog import ProviderCatalog
-from claw_trade.data_gateway.providers.declarative import config_version_for_manifest
-from claw_trade.data_gateway.providers.license_policy import LicensePolicyStore
+from claw_trade.data_gateway.providers.base import CapabilityError
+from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
-from claw_trade.data_gateway.providers.secrets import SecretStore
-from claw_trade.data_gateway.store.manifests import MongoProviderManifestStore
 
 
-def _cap(
-    *,
-    adapter_id: str,
-    source_role: SourceRole,
-    priority: int,
-    priority_source: PrioritySource,
-    coverage_group: str | None = None,
-    data_type: str = "crypto_news_fact",
-) -> ProviderCapability:
-    return ProviderCapability(
-        provider=adapter_id.split(".")[-1],
-        adapter_id=adapter_id,
-        provider_kind=ProviderKind.PROJECT_EXTENSION,
-        market=Market.CRYPTO,
-        domain=PackDomain.NEWS,
-        endpoint="news",
-        source_role=source_role,
-        expected_schema_id="news.v1",
-        license_policy_id="personal_research",
-        credential_requirements=(),
-        rate_limit_policy_id="default",
-        cache_ttl_seconds=300,
-        required=True,
-        attempt_required=True,
-        coverage_group=coverage_group,
-        coverage_quorum=1 if coverage_group else None,
-        priority=priority,
-        priority_source=priority_source,
-        data_type=data_type,
-    )
+@dataclass(frozen=True)
+class BatchPolicy:
+    supports_batch: bool
+    batch_by: str
+    max_symbols_per_call: int | None = None
+    max_days_per_call: int | None = None
+    mergeable_fields: tuple[str, ...] = ()
+    pagination_policy: object = "none"
+    split_policy: object = "strict"
 
 
-def _catalog_with_user_manifest() -> ProviderCatalog:
-    validator = ProviderAdmissionValidator(
-        secret_store=SecretStore({"RSS_TOKEN": "token"}),
-        license_store=LicensePolicyStore(
-            {
-                "user.custom": LicenseCheckResult(
-                    status=AdmissionCheckStatus.PASS,
-                    license_policy_id="user.custom",
-                    cost_tier="free",
-                    raw_export_policy="metadata_only",
-                    commercial_use_allowed=False,
-                    note="ok",
-                )
-            }
+@dataclass(frozen=True)
+class CredentialPolicy:
+    credential_required: bool
+    credential_names: tuple[str, ...]
+    credential_scope: str | None
+    missing_behavior: str
+
+
+@dataclass(frozen=True)
+class LicensePolicy:
+    raw_storage_mode: str
+    normalized_storage_allowed: bool
+    redistribution_allowed: bool
+    retention_days: int | None
+
+
+@dataclass(frozen=True)
+class EndpointCapability:
+    endpoint_id: str
+    market: str
+    data_type: str
+    source_role: str
+    supported_granularities: tuple[str, ...]
+    coverage_fields: tuple[str, ...]
+    freshness_supported: tuple[str, ...]
+    http_visibility: str
+    batch_policy: BatchPolicy
+    priority_rank: int | None = None
+    rate_limit_policy: object | None = None
+    license_policy: LicensePolicy | None = None
+    can_be_formal_fact_source: bool | None = None
+
+
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    provider_id: str
+    plugin_version: str
+    endpoints: tuple[EndpointCapability, ...]
+    credentials: CredentialPolicy
+    license_policy: LicensePolicy
+    default_rate_limit_policy: object
+    default_priority_rank: int = 100
+
+
+class FakePlugin:
+    def __init__(self, capabilities: ProviderCapabilities) -> None:
+        self._capabilities = capabilities
+        self.plugin_id = capabilities.provider_id
+        self.version = capabilities.plugin_version
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
+
+    def build_fetch_tasks(self, batch: object) -> tuple[object, ...]:
+        del batch
+        return ()
+
+    def fetch(self, task: object, ctx: object) -> object:
+        del task
+        del ctx
+        raise NotImplementedError
+
+
+def _plugin(*, provider_id: str = "official_feed", endpoint_id: str = "daily", market: str = "US", data_type: str = "daily_bar", priority_rank: int | None = None, credentials_required: bool = False, credential_names: tuple[str, ...] = ()) -> FakePlugin:
+    caps = ProviderCapabilities(
+        provider_id=provider_id,
+        plugin_version="1.0.0",
+        endpoints=(
+            EndpointCapability(
+                endpoint_id=endpoint_id,
+                market=market,
+                data_type=data_type,
+                source_role="official",
+                supported_granularities=("daily",),
+                coverage_fields=("close", "volume"),
+                freshness_supported=("trading_day",),
+                http_visibility="managed_http",
+                priority_rank=priority_rank,
+                batch_policy=BatchPolicy(
+                    supports_batch=True,
+                    batch_by="symbol",
+                    max_symbols_per_call=50,
+                    mergeable_fields=("close", "volume"),
+                ),
+            ),
         ),
-        security_policy=DeclarativeProviderSecurityPolicy(
-            allowed_domains=("feeds.example.com",),
-            dns_resolver=lambda host: ("93.184.216.34",),
+        credentials=CredentialPolicy(
+            credential_required=credentials_required,
+            credential_names=credential_names,
+            credential_scope="user" if credentials_required else None,
+            missing_behavior="credential_missing",
         ),
-        sample_ref_exists=lambda ref: ref.startswith("mongo://openbb_"),
+        license_policy=LicensePolicy(
+            raw_storage_mode="metadata_only",
+            normalized_storage_allowed=True,
+            redistribution_allowed=False,
+            retention_days=30,
+        ),
+        default_rate_limit_policy={"window_seconds": 60, "max_calls": 10},
     )
-    catalog = ProviderCatalog(validator=validator)
-    draft = DeclarativeProviderManifest(
-        provider_id="custom_news",
-        adapter_id="user.crypto.news",
-        display_name="Custom News",
-        version="1",
-        config_version="",
-        markets=(Market.CRYPTO,),
-        domains=(PackDomain.NEWS,),
-        endpoints=("rss_items",),
-        source_role=SourceRole.SEARCH_DISCOVERY,
-        expected_schema_id="news.discovery.v1",
-        base_url="https://feeds.example.com",
-        request_template={"path": "/v1"},
-        response_mapping={"title": "headline"},
-        credential_requirements=("RSS_TOKEN",),
-        rate_limit_policy_id="user.custom.default",
-        cache_ttl_seconds=300,
-        license_policy_id="user.custom",
-        raw_export_policy="metadata_only",
-        healthcheck={
-            "method": "GET",
-            "path": "/health",
-            "sample_raw_ref": "mongo://openbb_raw_payloads/registry",
-            "sample_normalized_ref": "mongo://openbb_normalized/registry",
-        },
-        enabled=True,
-        admission_status=ProviderAdmissionStatus.DRAFT,
-        priority=10,
-        priority_source=PrioritySource.USER_PREFERRED,
-        coverage_group="crypto_news_discovery",
-        coverage_quorum=1,
+    return FakePlugin(caps)
+
+
+def test_registry_register_and_index_capabilities() -> None:
+    registry = ProviderRegistry()
+    registry.register(_plugin(provider_id="official_feed", priority_rank=3))
+    registry.register(_plugin(provider_id="backup_feed", priority_rank=7))
+
+    listed = registry.list_capabilities("US", "daily_bar")
+    assert [cap.provider_id for cap in listed] == ["official_feed", "backup_feed"]
+    snapshot = registry.read_capabilities(["official_feed"])
+    cap = snapshot.get("official_feed", "daily", market="US", data_type="daily_bar")
+    assert cap.priority_rank == 3
+    assert registry.get("official_feed").plugin_id == "official_feed"
+
+
+def test_registry_rejects_duplicate_provider_and_endpoint_key() -> None:
+    registry = ProviderRegistry()
+    plugin = _plugin(provider_id="official_feed")
+    registry.register(plugin)
+    with pytest.raises(CapabilityError, match="duplicate_provider:official_feed"):
+        registry.register(plugin)
+
+
+def test_registry_rejects_invalid_credential_policy() -> None:
+    registry = ProviderRegistry()
+    plugin = _plugin(
+        provider_id="needs_key",
+        credentials_required=True,
+        credential_names=(),
     )
-    manifest = DeclarativeProviderManifest(**{**draft.__dict__, "config_version": config_version_for_manifest(draft)})
-    catalog.validate_manifest(manifest, actor="user:test", reason="create")
-    return catalog
+    with pytest.raises(CapabilityError, match="credential_required=True 时必须声明 credential_names"):
+        registry.register(plugin)
 
 
-class _FakeManifestCollection:
-    def __init__(self, docs: tuple[dict[str, object], ...]) -> None:
-        self._docs = docs
+def test_registry_registers_minimal_market_plugins_for_all_markets() -> None:
+    registry = ProviderRegistry()
+    for plugin in iter_minimal_market_plugins():
+        registry.register(plugin)
 
-    def find(self, query: dict[str, object]) -> tuple[dict[str, object], ...]:
-        del query
-        return self._docs
-
-
-def test_user_preferred_priority_only_reorders_within_same_role_and_group() -> None:
-    registry = ProviderRegistry(
-        capabilities=(
-            _cap(
-                adapter_id="system.official",
-                source_role=SourceRole.OFFICIAL_ORIGINAL,
-                priority=1,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-            ),
-            _cap(
-                adapter_id="system.discovery",
-                source_role=SourceRole.SEARCH_DISCOVERY,
-                priority=1,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-                coverage_group="crypto_news_discovery",
-            ),
-            _cap(
-                adapter_id="user.discovery",
-                source_role=SourceRole.SEARCH_DISCOVERY,
-                priority=5,
-                priority_source=PrioritySource.USER_PREFERRED,
-                coverage_group="crypto_news_discovery",
-            ),
-            _cap(
-                adapter_id="user.discovery.other_group",
-                source_role=SourceRole.SEARCH_DISCOVERY,
-                priority=0,
-                priority_source=PrioritySource.USER_PREFERRED,
-                coverage_group="other_group",
-            ),
-        )
-    )
-
-    ordered = registry.capabilities_for(market=Market.CRYPTO, domain=PackDomain.NEWS)
-    ordered_ids = [item.adapter_id for item in ordered]
-    assert ordered_ids[0] == "system.official"
-    assert ordered_ids[1:3] == ["user.discovery", "system.discovery"]
-
-
-def test_apply_user_preferred_does_not_cross_official_original_boundary() -> None:
-    registry = ProviderRegistry(
-        capabilities=(
-            _cap(
-                adapter_id="system.official",
-                source_role=SourceRole.OFFICIAL_ORIGINAL,
-                priority=10,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-            ),
-            _cap(
-                adapter_id="user.market",
-                source_role=SourceRole.MARKET_DATA,
-                priority=1,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-            ),
-        )
-    )
-    registry.apply_user_preferred(
-        adapter_id="user.market",
-        market=Market.CRYPTO,
-        domain=PackDomain.NEWS,
-        source_role=SourceRole.MARKET_DATA,
-        coverage_group=None,
-    )
-    ordered = registry.capabilities_for(market=Market.CRYPTO, domain=PackDomain.NEWS)
-    assert ordered[0].adapter_id == "system.official"
-    assert ordered[1].priority_source == PrioritySource.USER_PREFERRED
-
-
-def test_priority_is_resolved_within_same_data_type_only() -> None:
-    registry = ProviderRegistry(
-        capabilities=(
-            _cap(
-                adapter_id="official.news",
-                source_role=SourceRole.OFFICIAL_ORIGINAL,
-                priority=10,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-                data_type="official_filing",
-            ),
-            _cap(
-                adapter_id="market.news",
-                source_role=SourceRole.MARKET_DATA,
-                priority=0,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-                data_type="official_filing",
-            ),
-            _cap(
-                adapter_id="discovery.news",
-                source_role=SourceRole.SEARCH_DISCOVERY,
-                priority=0,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-                data_type="news_discovery",
-            ),
-        )
-    )
-
-    official_filing = registry.capabilities_for_data_type(
-        market=Market.CRYPTO,
-        domain=PackDomain.NEWS,
-        data_type="official_filing",
-    )
-    assert [item.adapter_id for item in official_filing] == ["official.news", "market.news"]
-
-    news_discovery = registry.capabilities_for_data_type(
-        market=Market.CRYPTO,
-        domain=PackDomain.NEWS,
-        data_type="news_discovery",
-    )
-    assert [item.adapter_id for item in news_discovery] == ["discovery.news"]
-
-
-def test_apply_user_preferred_without_data_type_fails_when_multiple_data_types_match() -> None:
-    registry = ProviderRegistry(
-        capabilities=(
-            _cap(
-                adapter_id="user.same",
-                source_role=SourceRole.MARKET_DATA,
-                priority=5,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-                data_type="official_filing",
-            ),
-            _cap(
-                adapter_id="user.same",
-                source_role=SourceRole.MARKET_DATA,
-                priority=5,
-                priority_source=PrioritySource.SYSTEM_DEFAULT,
-                data_type="news_discovery",
-            ),
-        )
-    )
-
-    with pytest.raises(ValueError, match="user_preferred_requires_data_type:user.same"):
-        registry.apply_user_preferred(
-            adapter_id="user.same",
-            market=Market.CRYPTO,
-            domain=PackDomain.NEWS,
-            source_role=SourceRole.MARKET_DATA,
-            coverage_group=None,
-        )
-
-
-def test_registry_loads_only_enabled_candidates_from_catalog() -> None:
-    catalog = _catalog_with_user_manifest()
-    registry = ProviderRegistry.from_catalog(catalog)
-
-    candidates = catalog.enabled_candidates()
-    assert len(candidates) == 1
-    caps = registry.capabilities_for(market=Market.CRYPTO, domain=PackDomain.NEWS)
-    assert [item.adapter_id for item in caps] == [candidates[0].adapter_id]
-
-
-def test_registry_from_enabled_manifests_matches_catalog_enabled_candidates() -> None:
-    catalog = _catalog_with_user_manifest()
-    expected = ProviderRegistry.from_catalog(catalog)
-    actual = ProviderRegistry.from_enabled_manifests(enabled_manifests=catalog.enabled_candidates())
-
-    expected_ids = [item.adapter_id for item in expected.capabilities_for(market=Market.CRYPTO, domain=PackDomain.NEWS)]
-    actual_ids = [item.adapter_id for item in actual.capabilities_for(market=Market.CRYPTO, domain=PackDomain.NEWS)]
-    assert actual_ids == expected_ids
-
-
-def test_manifest_store_enabled_candidates_decode_failure_is_not_silently_dropped() -> None:
-    bad_doc = {
-        "_id": "user.bad.manifest",
-        "adapter_id": "user.bad.manifest",
-        "provider_id": "bad_provider",
-        "display_name": "Bad Provider",
-        "version": "1",
-        "config_version": "cfg://bad",
-        "markets": [Market.CN_A.value],
-        "domains": [PackDomain.MARKET.value],
-        "endpoints": [],
-    }
-    good_doc = {
-        "_id": "user.good.manifest",
-        "provider_id": "good_provider",
-        "adapter_id": "user.good.manifest",
-        "display_name": "Good Provider",
-        "version": "1",
-        "config_version": "cfg://good",
-        "markets": [Market.CN_A.value],
-        "domains": [PackDomain.MARKET.value],
-        "endpoints": ["stock_zh_a_spot_em_batch"],
-        "source_role": SourceRole.MARKET_DATA.value,
-        "expected_schema_id": "cn_a.selection.batch.v1",
-        "base_url": "https://example.com",
-        "request_template": {"path": "/selection"},
-        "response_mapping": {"rows": "rows"},
-        "credential_requirements": [],
-        "rate_limit_policy_id": "user.good.default",
-        "cache_ttl_seconds": 900,
-        "license_policy_id": "personal_research",
-        "raw_export_policy": "metadata_only",
-        "healthcheck": {"method": "GET", "path": "/health"},
-        "enabled": True,
-        "admission_status": ProviderAdmissionStatus.ENABLED_CANDIDATE.value,
-        "priority": 1,
-        "priority_source": PrioritySource.USER_PREFERRED.value,
-        "coverage_group": "cn_a_selection_batch",
-        "coverage_quorum": 1,
-    }
-    store = MongoProviderManifestStore(_FakeManifestCollection((bad_doc, good_doc)))
-
-    with pytest.raises(DataGatewayError) as excinfo:
-        store.enabled_candidates(
-            market=Market.CN_A,
-            domain=PackDomain.MARKET,
-            endpoint="stock_zh_a_spot_em_batch",
-        )
-
-    assert "_id=user.bad.manifest" in str(excinfo.value)
-    assert "provider manifest decode failed" in str(excinfo.value)
+    listed = registry.read_capabilities(("cn_a_primary", "us_primary", "hk_sina_public", "crypto_primary")).list()
+    assert {cap.market for cap in listed} == {"CN_A", "US", "HK", "CRYPTO"}
+    assert {cap.provider_id for cap in listed} == {"cn_a_primary", "us_primary", "hk_sina_public", "crypto_primary"}

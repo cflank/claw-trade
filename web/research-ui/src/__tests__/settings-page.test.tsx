@@ -59,15 +59,31 @@ describe('settings-wechat settings page', () => {
       }
       if (url.includes('/api/ui/list-data-sources')) {
         return json({
-          supportedTypes: ['tushare', 'newsapi'],
+          supportedTypes: ['finnhub', 'coingecko_pro', 'coinglass'],
           instances: [
             {
               instanceId: 'ds-1',
-              supportedType: 'newsapi',
-              group: 'cn_a_news',
-              displayName: 'NewsAPI',
+              supportedType: 'finnhub',
+              group: 'global_data',
+              displayName: 'Finnhub',
               enabled: true,
               state: 'enabled',
+            },
+            {
+              instanceId: 'ds-2',
+              supportedType: 'coingecko_pro',
+              group: 'crypto_data',
+              displayName: 'CoinGecko Pro',
+              enabled: false,
+              state: 'draft',
+            },
+            {
+              instanceId: 'ds-3',
+              supportedType: 'coinglass',
+              group: 'crypto_data',
+              displayName: 'Coinglass',
+              enabled: false,
+              state: 'draft',
             },
           ],
         });
@@ -127,20 +143,20 @@ describe('settings-wechat settings page', () => {
     expect(settingsScope.textContent?.toLowerCase() ?? '').not.toContain('receipt');
     expect(settingsScope.textContent ?? '').not.toContain('/runtime/dev-services/openviking/ov.conf');
     const dataSourceSection = screen.getByRole('heading', { name: '增强数据源' }).closest('section') as HTMLElement;
-    expect(within(dataSourceSection).getAllByText('此功能可配置的增强源')).toHaveLength(1);
+    expect(within(dataSourceSection).getAllByText('此功能可配置的增强源')).toHaveLength(3);
     expect(within(dataSourceSection).queryByRole('tab', { name: 'A股' })).not.toBeInTheDocument();
     expect(within(dataSourceSection).getByRole('tab', { name: '港股' })).toHaveAttribute('aria-selected', 'true');
     expect(within(dataSourceSection).getByRole('tab', { name: '美股' })).toBeInTheDocument();
     expect(within(dataSourceSection).getByRole('tab', { name: '全球市场/宏观' })).toBeInTheDocument();
     expect(within(dataSourceSection).getByRole('tab', { name: '加密货币' })).toBeInTheDocument();
     expect(within(dataSourceSection).getByText('新闻公告')).toBeInTheDocument();
-    expect(within(dataSourceSection).queryByText('行情')).not.toBeInTheDocument();
-    expect(within(dataSourceSection).queryByText('基本面')).not.toBeInTheDocument();
+    expect(within(dataSourceSection).getByText('行情')).toBeInTheDocument();
+    expect(within(dataSourceSection).getByText('基本面')).toBeInTheDocument();
     expect(within(dataSourceSection).queryByText('社交舆情')).not.toBeInTheDocument();
     expect(screen.queryByText('代理地址')).not.toBeInTheDocument();
     expect(screen.queryByText('请求头名')).not.toBeInTheDocument();
     expect(screen.queryByText('优先级')).not.toBeInTheDocument();
-    expect(dataSourceSection.querySelectorAll('.ct-source-category-card')).toHaveLength(1);
+    expect(dataSourceSection.querySelectorAll('.ct-source-category-card')).toHaveLength(3);
     expect(dataSourceSection.querySelectorAll('.ct-source-row')).toHaveLength(0);
     expect(screen.queryByText('Custom Vendor')).not.toBeInTheDocument();
   });
@@ -942,6 +958,21 @@ describe('settings-wechat settings page', () => {
     fireEvent.change(within(dataSection as HTMLElement).getByLabelText('API Key / Token'), {
       target: { value: 'tushare-key' },
     });
+    fireEvent.change(within(dataSection as HTMLElement).getByLabelText('限流次数'), {
+      target: { value: '10' },
+    });
+    fireEvent.change(within(dataSection as HTMLElement).getByLabelText('限流窗口秒数'), {
+      target: { value: '60' },
+    });
+    fireEvent.change(within(dataSection as HTMLElement).getByLabelText('安全余量'), {
+      target: { value: '1' },
+    });
+    fireEvent.change(within(dataSection as HTMLElement).getByLabelText('超额策略'), {
+      target: { value: 'wait' },
+    });
+    fireEvent.change(within(dataSection as HTMLElement).getByLabelText('最长等待秒数'), {
+      target: { value: '75' },
+    });
     fireEvent.click(within(dataSection as HTMLElement).getByRole('checkbox'));
     fireEvent.click(within(dataSection as HTMLElement).getByRole('button', { name: '测试数据源' }));
     expect(await screen.findByText('数据源测试通过。')).toBeInTheDocument();
@@ -966,6 +997,11 @@ describe('settings-wechat settings page', () => {
     const dataSave = calls.find((call) => call.url.includes('/api/ui/save-data-source-instance'));
     expect(dataSave?.body).toContain('"supportedType":"tushare"');
     expect(dataSave?.body).toContain('tushare-key');
+    expect(dataSave?.body).toContain('"rateLimitMaxCalls":"10"');
+    expect(dataSave?.body).toContain('"rateLimitWindowSeconds":"60"');
+    expect(dataSave?.body).toContain('"rateLimitSafetyMargin":"1"');
+    expect(dataSave?.body).toContain('"rateLimitOverflow":"wait"');
+    expect(dataSave?.body).toContain('"rateLimitWaitTimeoutSeconds":"75"');
   });
 
   it('settings-embedding shows optional embedding guidance without runtime internals', async () => {
@@ -1061,7 +1097,7 @@ describe('settings-wechat settings page', () => {
       }
       if (url.includes('/api/ui/list-data-sources')) {
         return json({
-          supportedTypes: ['tushare', 'newsapi'],
+          supportedTypes: ['tushare', 'finnhub'],
           instances: [],
         });
       }
@@ -1108,7 +1144,7 @@ describe('settings-wechat settings page', () => {
       }
       if (url.includes('/api/ui/list-data-sources')) {
         return json({
-          supportedTypes: ['tushare', 'newsapi'],
+          supportedTypes: ['tushare', 'finnhub'],
           instances: [],
         });
       }

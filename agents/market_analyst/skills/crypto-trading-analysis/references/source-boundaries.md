@@ -6,7 +6,7 @@ This file defines what counts as evidence and what cannot be used to close data 
 
 ## Source Hierarchy
 
-1. `claw_get_market_pack` natural-language brief plus OpenBB-routed structured summary.
+1. Market data pack natural-language brief plus claw-trade data layer structured summary.
 2. Raw BB/CoinGlass payload saved by the pack under provider evidence, used for audit rather than report body.
 3. Single-domain BB/provider tools only for targeted debugging or gap investigation outside the normal worker turn.
 4. Browser evidence only as low-confidence visual observation.
@@ -21,9 +21,9 @@ Structured facts must include:
 - `as_of`
 - `sources[]`
 - `confidence`
-- `readiness`
+- data-quality state
 - `warnings[]`
-- `data_gaps[]`
+- open data gaps
 - `conflicts[]`
 
 Do not summarize away these fields when they affect the conclusion.
@@ -98,7 +98,7 @@ Health, error, and log output must not show:
 
 ## Data Gap Rules
 
-- Provider failure, rate limit, missing key, plan limit, stale data, unsupported asset, and conflict must remain visible in `data_gaps[]`.
+- Provider failure, rate limit, missing key, plan limit, stale data, unsupported asset, and conflict must remain visible as open data gaps.
 - `technical.patterns` cannot close macro, on-chain, liquidation, or derivatives gaps.
 - Browser evidence cannot close structured gaps.
 - Direct provider route must be labeled degraded if it bypasses `build_trade_context`.

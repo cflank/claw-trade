@@ -2,15 +2,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from hashlib import sha1
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
-from claw_trade.data_gateway.models import ProviderDisplayDecision, ProviderDisplayStatus
-from claw_trade.data_gateway.providers.market_policy import default_market_policy_registry, ui_display_decisions
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
 from claw_trade.ui_contracts.scope_guard import FirstVersionScopeError
 from claw_trade.ui_contracts.scope_guard import assert_data_source_type_supported
+
+
+class ProviderDisplayStatus(str, Enum):
+    SHOW = "show"
+    HIDE = "hide"
+
+
+@dataclass(frozen=True)
+class ProviderDisplayDecision:
+    provider_id: str
+    market: Any
+    display_status: ProviderDisplayStatus
+    reason: str
+    requires_user_credential: bool
+    changes_report_or_select_result: bool
+    writes_mongo_and_evidence: bool
+    enters_domain_pack: bool
+    consumed_by_worker_or_strategy: bool
+    live_fresh_evidence_ref: str | None = None
+    probe_only: bool = False
+
 
 @dataclass(frozen=True)
 class _SupportedSourceProfile:
@@ -21,13 +41,29 @@ class _SupportedSourceProfile:
     env_key_map: dict[str, str]
 
 
+def _api_env_map(prefix: str, *, api_key: str, endpoint_url: str | None = None, header_name: str | None = None) -> dict[str, str]:
+    mapping = {
+        "api_key": api_key,
+        "rate_limit_max_calls": f"{prefix}_RATE_LIMIT_MAX_CALLS",
+        "rate_limit_window_seconds": f"{prefix}_RATE_LIMIT_WINDOW_SECONDS",
+        "rate_limit_safety_margin": f"{prefix}_RATE_LIMIT_SAFETY_MARGIN",
+        "rate_limit_overflow": f"{prefix}_RATE_LIMIT_OVERFLOW",
+        "rate_limit_wait_timeout_seconds": f"{prefix}_RATE_LIMIT_WAIT_TIMEOUT_SECONDS",
+    }
+    if endpoint_url:
+        mapping["endpoint_url"] = endpoint_url
+    if header_name:
+        mapping["header_name"] = header_name
+    return mapping
+
+
 _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
     _SupportedSourceProfile(
         supported_type="tushare",
         group="cn_a_data",
         default_display_name="Tushare",
         requires_key=True,
-        env_key_map={"api_key": "TUSHARE_TOKEN", "endpoint_url": "TUSHARE_HTTP_URL"},
+        env_key_map=_api_env_map("TUSHARE", api_key="TUSHARE_TOKEN", endpoint_url="TUSHARE_HTTP_URL"),
     ),
     _SupportedSourceProfile(
         supported_type="akshare",
@@ -170,25 +206,11 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         env_key_map={"api_key": "FUTU_API_KEY", "endpoint_url": "FUTU_OPEND_HOST"},
     ),
     _SupportedSourceProfile(
-        supported_type="longport",
-        group="global_data",
-        default_display_name="LongPort",
-        requires_key=True,
-        env_key_map={"api_key": "LONGPORT_APP_SECRET", "endpoint_url": "LONGPORT_BASE_URL"},
-    ),
-    _SupportedSourceProfile(
         supported_type="yahoo_finance",
         group="global_data",
         default_display_name="Yahoo Finance",
         requires_key=False,
         env_key_map={"endpoint_url": "YAHOO_FINANCE_BASE_URL"},
-    ),
-    _SupportedSourceProfile(
-        supported_type="openbb",
-        group="global_data",
-        default_display_name="OpenBB",
-        requires_key=False,
-        env_key_map={"api_key": "OPENBB_API_KEY", "endpoint_url": "OPENBB_BASE_URL"},
     ),
     _SupportedSourceProfile(
         supported_type="iex_cloud",
@@ -230,7 +252,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         group="global_data",
         default_display_name="Alpha Vantage",
         requires_key=True,
-        env_key_map={"api_key": "ALPHA_VANTAGE_API_KEY", "endpoint_url": "ALPHA_VANTAGE_BASE_URL"},
+        env_key_map=_api_env_map("ALPHA_VANTAGE", api_key="ALPHA_VANTAGE_API_KEY", endpoint_url="ALPHA_VANTAGE_BASE_URL"),
     ),
     _SupportedSourceProfile(
         supported_type="fmp",
@@ -251,7 +273,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         group="global_data",
         default_display_name="Finnhub",
         requires_key=True,
-        env_key_map={"api_key": "FINNHUB_TOKEN", "endpoint_url": "FINNHUB_BASE_URL"},
+        env_key_map=_api_env_map("FINNHUB", api_key="FINNHUB_API_KEY", endpoint_url="FINNHUB_BASE_URL"),
     ),
     _SupportedSourceProfile(
         supported_type="tiingo",
@@ -391,7 +413,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         group="global_macro",
         default_display_name="FRED",
         requires_key=True,
-        env_key_map={"api_key": "FRED_API_KEY", "endpoint_url": "FRED_BASE_URL"},
+        env_key_map=_api_env_map("FRED", api_key="FRED_API_KEY", endpoint_url="FRED_BASE_URL"),
     ),
     _SupportedSourceProfile(
         supported_type="world_bank",
@@ -475,7 +497,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         group="crypto_data",
         default_display_name="CoinGecko Pro",
         requires_key=True,
-        env_key_map={"api_key": "COINGECKO_PRO_API_KEY", "endpoint_url": "COINGECKO_PRO_BASE_URL"},
+        env_key_map=_api_env_map("COINGECKO_PRO", api_key="COINGECKO_PRO_API_KEY", endpoint_url="COINGECKO_PRO_BASE_URL"),
     ),
     _SupportedSourceProfile(
         supported_type="coinmarketcap",
@@ -510,11 +532,12 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         group="crypto_data",
         default_display_name="Coinglass",
         requires_key=True,
-        env_key_map={
-            "api_key": "COINGLASS_API_KEY",
-            "endpoint_url": "COINGLASS_API_BASE",
-            "header_name": "COINGLASS_API_HEADER_NAME",
-        },
+        env_key_map=_api_env_map(
+            "COINGLASS",
+            api_key="COINGLASS_API_KEY",
+            endpoint_url="COINGLASS_API_BASE",
+            header_name="COINGLASS_API_HEADER_NAME",
+        ),
     ),
     _SupportedSourceProfile(
         supported_type="cryptocompare",
@@ -619,8 +642,16 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
 _SUPPORTED_SOURCE_BY_TYPE: dict[str, _SupportedSourceProfile] = {
     item.supported_type: item for item in _SUPPORTED_SOURCE_PROFILES
 }
+_API_SETTINGS_SOURCE_TYPES: tuple[str, ...] = (
+    "tushare",
+    "alpha_vantage",
+    "finnhub",
+    "fred",
+    "coingecko_pro",
+    "coinglass",
+)
 _SETTINGS_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = tuple(
-    item for item in _SUPPORTED_SOURCE_PROFILES if item.requires_key
+    item for item in _SUPPORTED_SOURCE_PROFILES if item.requires_key and item.supported_type in _API_SETTINGS_SOURCE_TYPES
 )
 _SETTINGS_SOURCE_BY_TYPE: dict[str, _SupportedSourceProfile] = {
     item.supported_type: item for item in _SETTINGS_SOURCE_PROFILES
@@ -648,6 +679,11 @@ class DataSourceInstanceForUser:
     state: str
     last_success_at: str | None
     last_test_at: str | None
+    rate_limit_max_calls: int | None
+    rate_limit_window_seconds: int | None
+    rate_limit_safety_margin: int | None
+    rate_limit_overflow: str | None
+    rate_limit_wait_timeout_seconds: int | None
 
     def to_user_dict(self) -> dict[str, Any]:
         return {
@@ -661,6 +697,11 @@ class DataSourceInstanceForUser:
             "state": self.state,
             "lastSuccessAt": self.last_success_at,
             "lastTestAt": self.last_test_at,
+            "rateLimitMaxCalls": self.rate_limit_max_calls,
+            "rateLimitWindowSeconds": self.rate_limit_window_seconds,
+            "rateLimitSafetyMargin": self.rate_limit_safety_margin,
+            "rateLimitOverflow": self.rate_limit_overflow,
+            "rateLimitWaitTimeoutSeconds": self.rate_limit_wait_timeout_seconds,
         }
 
 
@@ -803,6 +844,11 @@ class DataSourceSettingsService:
                 "last_success_at": normalized["last_success_at"],
                 "last_test_at": normalized["last_test_at"] or _now_iso(),
                 "requires_key": requires_key,
+                "rate_limit_max_calls": normalized["rate_limit_max_calls"],
+                "rate_limit_window_seconds": normalized["rate_limit_window_seconds"],
+                "rate_limit_safety_margin": normalized["rate_limit_safety_margin"],
+                "rate_limit_overflow": normalized["rate_limit_overflow"],
+                "rate_limit_wait_timeout_seconds": normalized["rate_limit_wait_timeout_seconds"],
             }
         )
         self._write_env_updates(saved, api_key_replacement)
@@ -856,6 +902,11 @@ class DataSourceSettingsService:
             "last_test_at": _optional_str(data.get("lastTestAt")),
             "requiresKey": profile.requires_key,
             "apiKeyReplacement": _optional_str(data.get("apiKeyReplacement")),
+            "rate_limit_max_calls": _optional_positive_int(data.get("rateLimitMaxCalls")),
+            "rate_limit_window_seconds": _optional_positive_int(data.get("rateLimitWindowSeconds")),
+            "rate_limit_safety_margin": _optional_non_negative_int(data.get("rateLimitSafetyMargin")),
+            "rate_limit_overflow": _optional_overflow(data.get("rateLimitOverflow")),
+            "rate_limit_wait_timeout_seconds": _optional_non_negative_int(data.get("rateLimitWaitTimeoutSeconds")),
         }
 
     def _probe_health(
@@ -943,8 +994,24 @@ class DataSourceSettingsService:
             updates[mapping["proxy_url"]] = proxy
         if header and mapping.get("header_name"):
             updates[mapping["header_name"]] = header
+        clear_keys: list[str] = []
+        for setting_name, record_key in (
+            ("rate_limit_max_calls", "rate_limit_max_calls"),
+            ("rate_limit_window_seconds", "rate_limit_window_seconds"),
+            ("rate_limit_safety_margin", "rate_limit_safety_margin"),
+            ("rate_limit_overflow", "rate_limit_overflow"),
+            ("rate_limit_wait_timeout_seconds", "rate_limit_wait_timeout_seconds"),
+        ):
+            value = saved.get(record_key)
+            env_key = mapping.get(setting_name)
+            if value is not None and env_key:
+                updates[env_key] = str(value)
+            elif env_key:
+                clear_keys.append(env_key)
         if updates:
             self._env_writer.write_allowed_env_keys(updates)
+        if clear_keys:
+            self._env_writer.clear_allowed_env_keys(tuple(clear_keys))
 
     def _visible_settings_profiles(self) -> dict[str, _SupportedSourceProfile]:
         decisions = self._display_decision_source()
@@ -977,6 +1044,11 @@ def to_data_source_instance_for_user(instance: Mapping[str, Any]) -> DataSourceI
         state=str(instance.get("state", "draft")),
         last_success_at=_optional_str(instance.get("last_success_at")),
         last_test_at=_optional_str(instance.get("last_test_at")),
+        rate_limit_max_calls=_optional_int(instance.get("rate_limit_max_calls")),
+        rate_limit_window_seconds=_optional_int(instance.get("rate_limit_window_seconds")),
+        rate_limit_safety_margin=_optional_int(instance.get("rate_limit_safety_margin")),
+        rate_limit_overflow=_optional_str(instance.get("rate_limit_overflow")),
+        rate_limit_wait_timeout_seconds=_optional_int(instance.get("rate_limit_wait_timeout_seconds")),
     )
 
 
@@ -1006,6 +1078,43 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _optional_int(value: Any) -> int | None:
+    text = _optional_str(value)
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise UiBoundaryError("INVALID_INPUT", "限流配置必须填写整数。") from exc
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    number = _optional_int(value)
+    if number is None:
+        return None
+    if number <= 0:
+        raise UiBoundaryError("INVALID_INPUT", "限流次数和窗口秒数必须大于 0。")
+    return number
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    number = _optional_int(value)
+    if number is None:
+        return None
+    if number < 0:
+        raise UiBoundaryError("INVALID_INPUT", "限流安全余量和等待秒数不能小于 0。")
+    return number
+
+
+def _optional_overflow(value: Any) -> str | None:
+    text = _optional_str(value)
+    if text is None:
+        return None
+    if text not in {"wait", "fail_fast"}:
+        raise UiBoundaryError("INVALID_INPUT", "限流超额策略只能是 wait 或 fail_fast。")
+    return text
 
 
 def _now_iso() -> str:
@@ -1042,6 +1151,11 @@ def _built_in_source_row(supported_type: str) -> dict[str, Any]:
         "last_success_at": None,
         "last_test_at": None,
         "requires_key": profile.requires_key,
+        "rate_limit_max_calls": None,
+        "rate_limit_window_seconds": None,
+        "rate_limit_safety_margin": None,
+        "rate_limit_overflow": None,
+        "rate_limit_wait_timeout_seconds": None,
     }
 
 
@@ -1050,24 +1164,25 @@ def _supported_type_label() -> str:
 
 
 def _default_display_decision_source() -> tuple[ProviderDisplayDecision, ...]:
-    return ui_display_decisions(default_market_policy_registry(), evidence_by_provider={})
+    return ()
+
+
+_PROVIDER_ID_TO_SETTINGS_SOURCE_TYPES: dict[str, tuple[str, ...]] = {
+    "cn_a_primary": ("tushare",),
+    "cn_a_tushare_fundamental": ("tushare",),
+    "hk_tushare": ("tushare",),
+    "us_primary": ("alpha_vantage",),
+    "us_alpha_vantage_data": ("alpha_vantage",),
+    "us_finnhub_data": ("finnhub",),
+    "hk_finnhub_data": ("finnhub",),
+    "us_fred_macro": ("fred",),
+    "crypto_coingecko_market": ("coingecko_pro",),
+    "crypto_coinglass_derivatives": ("coinglass",),
+}
 
 
 def _supported_types_for_display_decision(decision: ProviderDisplayDecision) -> tuple[str, ...]:
     direct = _SETTINGS_SOURCE_BY_TYPE.get(decision.provider_id)
     if direct is not None:
         return (direct.supported_type,)
-
-    registry = default_market_policy_registry()
-    matched_env_keys = {
-        item.user_config_key
-        for item in registry.all_capabilities()
-        if item.market == decision.market and item.provider == decision.provider_id and item.user_config_key
-    }
-    if not matched_env_keys:
-        return ()
-    return tuple(
-        profile.supported_type
-        for profile in _SETTINGS_SOURCE_PROFILES
-        if matched_env_keys.intersection(profile.env_key_map.values())
-    )
+    return _PROVIDER_ID_TO_SETTINGS_SOURCE_TYPES.get(decision.provider_id, ())

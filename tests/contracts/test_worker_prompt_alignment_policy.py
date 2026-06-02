@@ -423,12 +423,11 @@ def test_approved_crypto_worker_prompts_are_real_prompts_not_fail_closed_placeho
 def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
     text = (Path("agents") / "market_analyst" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
 
-    assert "可用工具：`claw_get_market_pack`" in text
-    assert "worker 不直接读取 CryptoLens raw JSON" in text
+    assert "可用工具：本阶段可见的市场资料包工具" in text
+    assert "worker 不直接读取原始大 JSON" in text
     assert "资料就绪度只能说明资料覆盖和通道质量" in text
-    assert "若上游材料含内部字段名或键值串" in text
-    assert "上方最近清算簇" in text
-    assert "主动买卖量累计差值" in text
+    assert "若上游材料含内部字段名、键值串、英文状态词" in text
+    assert "任何工具名、审计计数、机器状态码、带下划线字段" in text
     assert "不得推断其正常、过热或极端" in text
     assert "如果资料包只列出价格历史和本地技术指标成功" in text
     assert "每个小节必须使用 Markdown 表格" in text
@@ -439,8 +438,8 @@ def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
 def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> None:
     expected_snippets = {
         "fundamental_analyst": ("加密资产基本面分析师", "代币经济分析", "FDV/TVL", "买入/持有/卖出"),
-        "news_analyst": ("加密市场新闻与事件分析师", "监管", "ETF", "Markdown 表格"),
-        "social_analyst": ("加密社区与市场情绪分析师", "X、Telegram、Discord、Reddit", "1-5 天市场反应"),
+        "news_analyst": ("加密市场新闻与事件分析师", "监管", "机构资金", "Markdown 表格"),
+        "social_analyst": ("加密社区与市场情绪分析师", "真实平台样本", "1-5 天市场反应"),
         "bull_researcher": ("看涨加密资产研究员", "反驳看跌观点", "清算挤压"),
         "bear_researcher": ("看跌加密资产研究员", "反驳看涨观点", "代币释放/解锁"),
         "research_manager": ("买入、卖出或持有", "避免仅仅因为双方都有有效观点就默认选择持有", "价格区间与交易条件分析"),
@@ -469,25 +468,25 @@ def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> N
 def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() -> None:
     expected_snippets = {
         "fundamental_analyst": (
-            "claw_get_fundamental_pack",
+            "基本面资料包工具",
             "资料包未可用 / 未调用成功 / 覆盖不足",
             "不得用模型常识、历史印象或上游未提供的证据补写缺失事实",
         ),
         "news_analyst": (
-            "claw_get_news_pack",
+            "新闻资料包工具",
             "不得写真实新闻、真实公告、真实监管事件或真实市场反应结论",
-            "搜索摘要只能作为发现线索",
-            "即使搜索摘要提到 ETF、机构、资金流、监管或链上活动，也不能写成已验证事实",
-            "Polymarket 只能表达事件预期或盘口概率",
-            "Alternative.me 是市场级情绪指标，不是新闻源",
+            "搜索摘要和媒体聚合标题只能作为发现线索",
+            "即使线索提到机构资金、监管、链上活动或其它市场主题，也不能写成已验证事实",
+            "事件预期来源只能表达事件预期或盘口概率",
+            "市场级情绪指标不是新闻源",
         ),
         "social_analyst": (
-            "claw_get_social_pack",
+            "舆情资料包工具",
             "不得写真实社交平台观点、真实 KOL 立场、真实社区共识或真实情绪结论",
             "搜索摘要只能作为公开讨论线索",
-            "即使搜索摘要提到 ETF、机构、资金流、链上大户或交易所行为，也不能写成已验证事实",
-            "Polymarket 只能表达事件预期或盘口概率",
-            "Alternative.me 只能表达市场级恐惧/贪婪情绪",
+            "即使搜索摘要提到机构资金、链上大户或交易所行为，也不能写成已验证事实",
+            "事件预期来源只能表达事件预期或盘口概率",
+            "市场级情绪指标只能表达市场级情绪",
         ),
     }
     for worker_id, snippets in expected_snippets.items():
@@ -503,7 +502,56 @@ def test_crypto_downstream_prompts_condition_on_upstream_data_gaps_without_filli
         assert "不得补写缺失事实" in text
         assert "数据缺口本身不是看涨或看跌事实" in text
         assert "必须逐项写明缺少哪些数据" in text
-        assert "搜索发现、公共知识或历史印象不能填补 ETF/机构资金、链上、衍生品、清算或社交共识缺口" in text
+        assert "搜索发现、模型记忆或历史印象不能填补机构资金、链上、衍生品、清算或社交共识缺口" in text
+
+
+def test_crypto_trader_and_polisher_forbid_unaudited_liquidation_price_calculation() -> None:
+    trader_text = (Path("agents") / "trader" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+    polisher_text = (Path("agents") / "report_polisher" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (trader_text, polisher_text):
+        assert "交易所、合约类型、保证金模式、维持保证金率和实际持仓参数" in text
+        assert "不得" in text
+        assert "具体清算价或强制平仓类价格" in text
+        assert "清算价无法由现有材料审计计算" in text
+
+
+def test_crypto_prompts_forbid_public_knowledge_gap_fill_facts() -> None:
+    prompt_paths = (
+        Path("agents") / "fundamental_analyst" / "prompts" / "CRYPTO.md",
+        Path("agents") / "bull_researcher" / "prompts" / "CRYPTO.md",
+        Path("agents") / "bear_researcher" / "prompts" / "CRYPTO.md",
+        Path("agents") / "research_manager" / "prompts" / "CRYPTO.md",
+        Path("agents") / "risk_challenger" / "prompts" / "CRYPTO.md",
+        Path("agents") / "risk_guardian" / "prompts" / "CRYPTO.md",
+        Path("agents") / "risk_moderator" / "prompts" / "CRYPTO.md",
+        Path("agents") / "portfolio_manager" / "prompts" / "CRYPTO.md",
+        Path("agents") / "report_polisher" / "prompts" / "CRYPTO.md",
+    )
+
+    for prompt_path in prompt_paths:
+        text = prompt_path.read_text(encoding="utf-8")
+        assert "输出前做读者版清理" in text
+        assert "不要列举具体" in text or "具体事实名称" in text or "具体内容" in text
+        assert (
+            "上游数据" in text
+            or "数据层证据" in text
+            or "上游未验证" in text
+            or "数据层恢复后再验证" in text
+            or "未验证的" in text
+            or "上游材料" in text
+        )
+
+    bull_text = (Path("agents") / "bull_researcher" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+    assert "没有可用的基本面多头证据" in bull_text
+    assert "不得来自模型记忆或信仰叙事" in bull_text
+
+    challenger_text = (Path("agents") / "risk_challenger" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+    assert "只能列为待验证条件" in challenger_text
 
 
 @pytest.mark.parametrize(("worker_id", "profile"), APPROVED_CRYPTO_PROMPT_CASES)
@@ -782,9 +830,17 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "项目与代币基本面分析" in crypto_text
     assert "FDV、市值、TVL、协议收入" in crypto_text
     assert "不得把搜索摘要写成事实" in crypto_text
-    assert "不要把这些词当作硬性禁词" in crypto_text
-    assert "`openbb_yfinance` 可写成“行情历史来源”" in crypto_text
-    assert "`tavily/catalyst_events` 可写成“事件线索来源”" in crypto_text
+    assert "不得把原始内部标识直接放进正文" in crypto_text
+    assert "带下划线字段" in crypto_text
+    assert "审计计数写成" in crypto_text
+    assert "时间覆盖缺口写成" in crypto_text
+    assert "终稿输出前最后自检" in crypto_text
+    assert "不要用反引号保留内部标识" in crypto_text
+    assert "未形成可引用的数据集、原始来源或来源尝试记录" in crypto_text
+    assert "不要为了说明某条论据不可引用而写出未验证事实本身" in crypto_text
+    assert "未验证的供给、网络采用、机构资金、宏观或链上线索" in crypto_text
+    assert "任何工具名、审计计数、机器状态码、带下划线字段" in crypto_text
+    assert "未验证的具体机构产品" in crypto_text
     assert "不要写“某工具标记为就绪”这类内部过程句" in crypto_text
     assert "终稿必须完整写到 `## 八、最终结论`" in crypto_text
     assert "不得停在任一中间章节、半句或列表项" in crypto_text
@@ -794,7 +850,64 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "这里可以简洁，但前面各节不能压缩成摘要" in crypto_text
     assert "第一行必须是正式报告的 Markdown H1 标题" in user_text
     assert "不要以“好的”“收到”“我将”等过程性回应开头" in user_text
+    assert "带下划线字段和资料包引用计数" in user_text
     assert "不能把它们压成几个提纲式结论" in user_text
+
+
+def test_crypto_model_visible_prompts_do_not_seed_internal_or_unverified_literal_lists() -> None:
+    prompt_paths = (
+        *(Path("agents") / worker_id / "prompts" / "CRYPTO.md" for worker_id in REQUIRED_WORKERS),
+        Path("agents") / "report_polisher" / "USER.md",
+        Path("agents") / "market_analyst" / "skills" / "crypto-trading-analysis" / "SKILL.md",
+        Path("agents") / "market_analyst" / "skills" / "crypto-trading-analysis" / "agents" / "openai.yaml",
+        *(Path("agents") / "market_analyst" / "skills" / "crypto-trading-analysis" / "references" / name for name in (
+            "amd-model.md",
+            "indicators.md",
+            "liquidity-and-derivatives.md",
+            "macro-and-onchain.md",
+            "output-templates.md",
+            "quick-ref.md",
+            "source-boundaries.md",
+        )),
+    )
+    banned = (
+        "dataset_refs",
+        "raw_refs",
+        "attempt_refs",
+        "date_range_missing",
+        "warehouse_missing",
+        "readiness",
+        "data_gaps",
+        "provider_attempts",
+        "reader" + "_brief",
+        "CryptoLens",
+        "Alternative.me",
+        "LunarCrush",
+        "Polymarket",
+        "一切皆有可能",
+        "没有证据证明不存在",
+        "黄金坑",
+        "洗盘",
+        "历史上",
+        "Short Squeeze",
+        "空头回补",
+        "清算单",
+        "聪明钱",
+        "ETF",
+        "减半",
+        "闪电网络",
+        "工作量证明",
+        "MicroStrategy",
+        "S2F",
+        "数字黄金",
+        "强平价",
+        "爆仓价",
+        "输出前逐字搜索",
+    )
+    for prompt_path in prompt_paths:
+        text = prompt_path.read_text(encoding="utf-8")
+        for token in banned:
+            assert token not in text, f"{prompt_path} seeds literal token {token!r}"
 
 
 def test_report_polisher_prompts_support_sectioned_generation_without_protocol_leakage() -> None:
@@ -821,11 +934,11 @@ def test_report_polisher_prompts_support_sectioned_generation_without_protocol_l
     assert "不要把每个分段都写成完整八节" in crypto_text
     assert "所有编号章节必须使用 `##` 二级标题" in crypto_text
     assert "最后一段仍必须是完整自然段" in crypto_text
-    assert "Polymarket 事件预期" in crypto_text
+    assert "事件预期" in crypto_text
     assert "数据缺口本身不是看涨或看跌事实" in crypto_text
     assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
     assert "如果保留来源名有助于读者理解" in crypto_text
-    assert "`readiness/ready` 可写成“资料可用性/资料就绪”" in crypto_text
+    assert "可用性状态写成“资料可用性/资料就绪”" in crypto_text
 
     user_text = (Path("agents") / "report_polisher" / "USER.md").read_text(encoding="utf-8")
     assert "final_report_section_instruction" in user_text

@@ -510,7 +510,7 @@ def _selection_controller_with_completed_run(
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
-                normalized_refs=(f"normalized://mongo/openbb_normalized/{run_id}",),
+                normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
                 provider_attempt_refs=(f"attempt://{run_id}",),
                 select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
                 warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",

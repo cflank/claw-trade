@@ -1,6 +1,6 @@
 interface:
   display_name: "Crypto Trading Analysis"
   short_description: "用 BB 结构化数据输出可审计的中文加密交易分析，覆盖技术、衍生品、清算、链上、宏观、事件和风险边界。"
-  default_prompt: "使用 $crypto-trading-analysis 基于 claw_get_market_pack 返回的 OpenBB 行情资料包和本地图表补充分析 BTC 或山寨币市场结构。必须先调用 claw_get_market_pack，并输出过程完整的中文报告：数据状态、指标覆盖、指标推导过程（每个关键指标写 数据 -> 推导 -> 交易作用 -> 失效）、多空/观望场景、触发条件、失效条件、止损逻辑、目标逻辑和风险缺口。不要只给一句指标结论。"
+  default_prompt: "使用 $crypto-trading-analysis 基于 claw-trade 数据层行情资料包和本地图表补充分析 BTC 或山寨币市场结构。必须先调用本阶段可见的市场资料包工具，并输出过程完整的中文报告：数据状态、指标覆盖、指标推导过程（每个关键指标写 数据 -> 推导 -> 交易作用 -> 失效）、多空/观望场景、触发条件、失效条件、止损逻辑、目标逻辑和风险缺口。不要只给一句指标结论。"
 policy:
   allow_implicit_invocation: true

@@ -91,7 +91,7 @@ def test_cn_a_frontline_visible_tools_are_exactly_one_canonical_pack() -> None:
         assert _scan_openclaw_llm_provider_payload(_payload(worker_id, tools)) == tools
 
 
-def test_downstream_workers_have_no_openbb_tools_in_cn_a() -> None:
+def test_downstream_workers_have_no_legacy_provider_tools_in_cn_a() -> None:
     registry_result = load_tool_registry()
     assert registry_result.ok is True and registry_result.registry is not None
     registry = registry_result.registry
@@ -150,7 +150,7 @@ def test_payload_scan_rejects_legacy_or_atomic_tools(forbidden: str) -> None:
         "debug_trace",
     ),
 )
-def test_payload_scan_rejects_openbb_admin_discovery_cache_and_alias(forbidden: str) -> None:
+def test_payload_scan_rejects_legacy_admin_discovery_cache_and_alias(forbidden: str) -> None:
     payload = _payload("policy_analyst", (forbidden,))
     with pytest.raises(ValueError, match="forbidden tool"):
         _scan_openclaw_llm_provider_payload(payload)
@@ -190,7 +190,7 @@ def test_provider_requests_jsonl_sequence_2_scan_rejects_runtime_wrapper_message
         _scan_provider_requests_jsonl_sequence_2(jsonl)
 
 
-def test_provider_requests_jsonl_sequence_2_scan_accepts_natural_reader_brief_message_text() -> None:
+def test_provider_requests_jsonl_sequence_2_scan_accepts_natural_model_visible_message_text() -> None:
     payload = _payload("policy_analyst", ("claw_get_policy_pack",)) | {
         "sequence": 2,
         "payload": {

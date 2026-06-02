@@ -11,6 +11,15 @@ from claw_trade.workflow.models import WorkerCall
 _TOOL_CALLS_STATUS = {"none", "recorded"}
 _CALL_STATUS = {"success", "error"}
 _REQUIRED_CALL_FIELDS = ("tool_name", "action", "status", "result_sha256")
+_FRONTLINE_PACK_TOOLS = {
+    "claw_get_market_pack",
+    "claw_get_fundamental_pack",
+    "claw_get_news_pack",
+    "claw_get_social_pack",
+    "claw_get_policy_pack",
+    "claw_get_hot_money_pack",
+    "claw_get_lockup_pack",
+}
 _CRYPTO_FRONTLINE_REQUIRED_PACK_TOOLS = {
     "market_analyst": "claw_get_market_pack",
     "fundamental_analyst": "claw_get_fundamental_pack",
@@ -103,6 +112,12 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
                 reason=f"tool-calls calls[{index}].status 非法: {item.get('status')!r}",
                 paths=(evidence.tool_calls_path,),
             )
+        if _is_frontline_pack_tool_failure(call, item):
+            return guard_failed(
+                category="tool_calls",
+                reason=f"frontline 资料包工具调用失败: {item['tool_name']}",
+                paths=(evidence.tool_calls_path,),
+            )
         seen_tools.add(item["tool_name"].strip())
     required_tool = _required_crypto_frontline_pack_tool(call)
     if required_tool is not None and required_tool not in seen_tools:
@@ -112,6 +127,15 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
             paths=(evidence.tool_calls_path,),
         )
     return guard_passed(category="tool_calls")
+
+
+def _is_frontline_pack_tool_failure(call: WorkerCall, item: dict[str, Any]) -> bool:
+    # Guard source: AGENTS Truthfulness Hard Gates; 2026-06-01 human request to stop
+    # treating failed data-layer/tool calls as successful report evidence.
+    if call.stage.value != "frontline":
+        return False
+    tool_name = str(item.get("tool_name") or "").strip()
+    return tool_name in _FRONTLINE_PACK_TOOLS and item.get("status") == "error"
 
 
 def _required_crypto_frontline_pack_tool(call: WorkerCall) -> str | None:

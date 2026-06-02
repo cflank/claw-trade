@@ -183,10 +183,10 @@ def test_build_candidate_pack_contract_produces_fact_only_model_visible_pack() -
     assert any(ref.startswith("score://") for ref in draft.source_lineage_refs)
 
 
-def test_build_candidate_pack_accepts_mongo_openbb_normalized_refs() -> None:
+def test_build_candidate_pack_accepts_mongo_normalized_datasets_refs() -> None:
     plan = _plan()
     inputs = _normalized_inputs(count=1)
-    mongo_ref = "mongo://openbb_normalized/sha256:abc123"
+    mongo_ref = "mongo://normalized_datasets/sha256:abc123"
     mongo_inputs = replace(
         inputs,
         normalized_refs=(mongo_ref,),

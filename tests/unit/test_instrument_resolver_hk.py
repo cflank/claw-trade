@@ -69,7 +69,7 @@ def test_crypto_pair_identity_normalizes_user_input_to_slash_pair(raw_ticker: st
     assert identity.currency == "USDT"
     assert identity.provider_symbols.crypto_base_symbol == "AR"
     assert identity.provider_symbols.crypto_quote_symbol == "USDT"
-    assert identity.provider_symbols.crypto_openbb_symbol == "ARUSDT"
+    assert identity.provider_symbols.crypto_provider_symbol == "ARUSDT"
     assert identity.provider_symbols.coinglass_asset_symbol == "AR"
     assert identity.provider_symbols.coinglass_contract_symbol == "ARUSDT"
     assert identity.provider_symbols.coingecko_coin_id == "arweave"

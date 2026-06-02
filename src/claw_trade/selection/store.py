@@ -301,13 +301,13 @@ def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> S
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     if not data_run.normalized_refs:
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
-    if any(not _is_openbb_normalized_ref(ref) for ref in data_run.normalized_refs):
+    if any(not _is_unified_normalized_ref(ref) for ref in data_run.normalized_refs):
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     return None
 
 
-def _is_openbb_normalized_ref(ref: str) -> bool:
-    return ref.startswith("normalized://mongo/openbb_normalized/") or ref.startswith("mongo://openbb_normalized/")
+def _is_unified_normalized_ref(ref: str) -> bool:
+    return ref.startswith("normalized://mongo/normalized_datasets/") or ref.startswith("mongo://normalized_datasets/")
 
 
 def _parse_iso_timestamp(value: str | None) -> datetime:

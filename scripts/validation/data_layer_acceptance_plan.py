@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-PlanStatus = Literal["planned", "blocked"]
+PlanStatus = Literal["planned", "verified", "out_of_scope"]
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,13 @@ class AcceptanceBlocker:
 
 
 @dataclass(frozen=True)
+class ScopeNote:
+    note_id: str
+    source: str
+    detail: str
+
+
+@dataclass(frozen=True)
 class FinalAcceptancePlan:
     task_id: str
     status: PlanStatus
@@ -46,6 +53,7 @@ class FinalAcceptancePlan:
     allowed_mongo_collections: tuple[str, ...]
     openviking_allowed_roles: tuple[str, ...]
     blockers: tuple[AcceptanceBlocker, ...]
+    scope_notes: tuple[ScopeNote, ...]
 
 
 def final_acceptance_plan() -> FinalAcceptancePlan:
@@ -53,39 +61,61 @@ def final_acceptance_plan() -> FinalAcceptancePlan:
 
     return FinalAcceptancePlan(
         task_id="T14",
-        status="blocked",
+        status="planned",
         batches=(
             AcceptanceBatch(
                 batch_id="focused-unit-contract",
                 status="planned",
-                purpose="Run focused unit and contract checks before broader integration.",
+                purpose="Run the current DLT unit and contract checks before broader integration.",
                 required_commands=(
-                    "uv run pytest tests/contracts/test_data_layer_models.py "
-                    "tests/contracts/test_data_layer_failure_semantics.py "
-                    "tests/contracts/test_data_layer_gate_semantics.py",
-                    "uv run pytest tests/contracts/test_report_data_plan_cutover.py "
-                    "tests/contracts/test_select_warehouse_cutover.py "
-                    "tests/contracts/test_old_new_cutover.py",
+                    "uv run pytest tests/unit/data_gateway/test_models.py "
+                    "tests/contracts/test_data_api_contract.py "
+                    "tests/contracts/test_data_layer_module_boundaries.py "
+                    "tests/unit/data_gateway/test_data_service_flow.py "
+                    "tests/unit/data_gateway/test_query_planner.py "
+                    "tests/contracts/test_data_service_ten_step_flow.py",
+                    "uv run pytest tests/contracts/test_provider_capabilities.py "
+                    "tests/unit/data_gateway/test_provider_registry.py "
+                    "tests/unit/data_gateway/test_provider_selector.py "
+                    "tests/unit/data_gateway/test_ingest_pipeline.py "
+                    "tests/contracts/test_evidence_chain.py",
                 ),
                 required_evidence=(
                     "explicit failure-state assertions",
-                    "cutover contract output",
+                    "current DLT contract output",
                     "status redline checks for non-network branches versus remote_success",
                 ),
             ),
             AcceptanceBatch(
                 batch_id="scoped-integration",
                 status="planned",
-                purpose="Run scoped integration only after focused checks are green.",
+                purpose="Run scoped data-gateway integration only after focused checks are green.",
                 required_commands=(
-                    "uv run pytest tests/integration/data_gateway/test_pack_runtime_report_plan.py",
-                    "uv run pytest tests/integration/selection/test_data_job_pipeline.py "
-                    "tests/integration/selection/test_select_command_chat_flow.py",
+                    "uv run pytest tests/integration/data_gateway/test_real_component_flow.py",
+                    "uv run pytest --collect-only tests/unit/data_gateway tests/integration/data_gateway tests/contracts",
                 ),
                 required_evidence=(
                     "Mongo evidence references",
-                    "selection evidence file references",
-                    "OpenViking material lineage/readback references when materialized",
+                    "dataset manifest references",
+                    "collection boundary audit",
+                ),
+            ),
+            AcceptanceBatch(
+                batch_id="authenticity-audit",
+                status="planned",
+                purpose="Audit success semantics and old data-layer path isolation.",
+                required_commands=(
+                    'rg -n "stub|mock|fake|fallback|placeholder|capture-only|capture_only" '
+                    "src/claw_trade/data_gateway tests/unit/data_gateway tests/integration/data_gateway tests/contracts",
+                    'rg -n "data_gateway_bak|openbb_|OpenViking|worker pack|reader brief|report plan|select plan|material writer" '
+                    "src/claw_trade/data_gateway tests/unit/data_gateway tests/integration/data_gateway tests/contracts",
+                    'rg -n "remote_success|cache_hit|shared_result|rate_limited|cached_empty|cooldown_skipped|sdk_http_unknown|evidence_write_failed" '
+                    "src/claw_trade/data_gateway tests/unit/data_gateway tests/integration/data_gateway tests/contracts",
+                ),
+                required_evidence=(
+                    "no production provider path uses capture-only or legacy success",
+                    "negative tests isolate old paths without importing them",
+                    "non-remote statuses remain distinct from remote_success",
                 ),
             ),
         ),
@@ -98,63 +128,79 @@ def final_acceptance_plan() -> FinalAcceptancePlan:
         runtime_proof_slots=(
             RuntimeProofSlot(
                 slot_id="report-command",
-                status="planned",
+                status="out_of_scope",
                 entrypoint="/report",
                 runtime_command_template="scripts/start-control-runtime.sh -- <focused /report proof command>",
                 required_evidence=(
                     "provider payload when OpenClaw runtime behavior is in scope",
-                    "run provider plan snapshot",
+                    "workflow runtime proof outside data-layer-only acceptance",
                     "attempt/raw/normalized/http evidence references",
-                    "worker-visible pack material references",
                 ),
             ),
             RuntimeProofSlot(
                 slot_id="a-share-select-command",
-                status="planned",
+                status="out_of_scope",
                 entrypoint="A-share /select",
                 runtime_command_template="scripts/start-control-runtime.sh -- <focused A-share /select proof command>",
                 required_evidence=(
                     "warehouse marker",
-                    "openbb_normalized references",
-                    "selection evidence file references",
-                    "cutover proof that legacy completed evidence was not accepted",
+                    "normalized_datasets references",
+                    "selection command proof outside data-layer-only acceptance",
                 ),
             ),
             RuntimeProofSlot(
                 slot_id="ui-provider-display",
-                status="planned",
+                status="out_of_scope",
                 entrypoint="UI provider display",
                 runtime_command_template="scripts/start-control-runtime.sh -- <focused UI provider display proof command>",
                 required_evidence=(
                     "real browser screenshot for UI-facing acceptance",
                     "provider display decision inputs",
-                    "main-chain evidence proving configured provider changes runtime data",
+                    "UI proof outside data-layer-only acceptance",
                 ),
             ),
             RuntimeProofSlot(
-                slot_id="price-alert-data-entry",
-                status="blocked",
-                entrypoint="price alert probe",
-                runtime_command_template="scripts/start-control-runtime.sh -- <focused price alert data proof command>",
+                slot_id="crypto-daily-bar-incremental",
+                status="verified",
+                entrypoint="CRYPTO daily_bar maintenance incremental",
+                runtime_command_template="uv run python <audited CRYPTO daily incremental runner>",
                 required_evidence=(
-                    "data requirement through the shared data entry",
-                    "attempt/evidence references",
-                    "gap or alert result without old-path fallback",
+                    "Binance Public Data / REST Kline source",
+                    "job:daily_incremental:crypto:daily_bar:2026-05:attempt-006",
+                    "latest normalized daily_bar date 2026-05-31",
+                    "dataset manifest and maintenance job references",
                 ),
-                blocked_by=("DG-GEN-002",),
             ),
             RuntimeProofSlot(
-                slot_id="crypto-history-warehouse",
-                status="blocked",
-                entrypoint="Crypto history warehouse",
-                runtime_command_template="scripts/start-control-runtime.sh -- <approved Crypto history proof command>",
+                slot_id="cn-a-live-provider",
+                status="planned",
+                entrypoint="CN_A daily_bar provider",
+                runtime_command_template="uv run python <audited CN_A provider smoke>",
                 required_evidence=(
-                    "approved universe/range",
-                    "manifest hash",
-                    "raw/normalized/attempt/http evidence references",
-                    "OpenViking audit/readback references",
+                    "Tushare credential and endpoint read from Mongo settings",
+                    "managed_http observation",
+                    "no environment credential read",
                 ),
-                blocked_by=("T9B",),
+            ),
+            RuntimeProofSlot(
+                slot_id="us-live-provider",
+                status="out_of_scope",
+                entrypoint="US daily_bar provider",
+                runtime_command_template="uv run python <audited US provider smoke>",
+                required_evidence=(
+                    "requires configured data_source:alpha_vantage in Mongo settings",
+                    "must return credential_missing until configured",
+                ),
+            ),
+            RuntimeProofSlot(
+                slot_id="hk-live-provider",
+                status="out_of_scope",
+                entrypoint="HK daily_bar provider",
+                runtime_command_template="uv run python <audited HK provider smoke>",
+                required_evidence=(
+                    "requires configured data_source:longport in Mongo settings",
+                    "must return credential_missing until configured",
+                ),
             ),
         ),
         collect_first_rule=(
@@ -166,28 +212,26 @@ def final_acceptance_plan() -> FinalAcceptancePlan:
             "architecture boundary drift appears",
             "PM authority or worker conclusion ownership is at risk",
             "provider evidence chain is untrustworthy",
-            "old path fallback appears",
+            "legacy data path success appears",
             "runtime preflight fails",
         ),
         audit_checks=(
-            "project prohibited-success keyword scan on changed and acceptance paths",
-            "old-new cutover contract output",
+            "context-aware authenticity keyword scan on data-layer paths",
+            "new data layer cutover contract output",
             "evidence-chain audit from attempt to raw, normalized, and HTTP evidence where applicable",
-            "Mongo collection audit limited to approved openbb collections",
+            "Mongo collection audit limited to docs/数据层详细设计.md §11 approved collections",
             "OpenViking role audit limited to material refs, lineage, readback, and summary",
             "status audit: cache_hit/shared_result/rate_limited/cached_empty/cooldown_skipped are not remote_success",
         ),
         allowed_mongo_collections=(
-            "openbb_provider_manifests",
-            "openbb_provider_validation_receipts",
-            "openbb_run_provider_plans",
-            "openbb_provider_attempts",
-            "openbb_provider_http_evidence",
-            "openbb_raw_payloads",
-            "openbb_normalized",
-            "openbb_cache_entries",
-            "openbb_rate_limits",
-            "openbb_single_flight_calls",
+            "normalized_datasets",
+            "raw_payloads",
+            "provider_attempts",
+            "provider_rate_limits",
+            "single_flight_calls",
+            "provider_result_cache",
+            "dataset_manifests",
+            "maintenance_jobs",
         ),
         openviking_allowed_roles=(
             "materials",
@@ -195,33 +239,20 @@ def final_acceptance_plan() -> FinalAcceptancePlan:
             "readback",
             "summary",
         ),
-        blockers=(
-            AcceptanceBlocker(
-                blocker_id="T9B",
-                source="docs/data-layer task list T9B",
-                reason=(
-                    "Crypto history warehouse remains blocked until human approval defines "
-                    "universe, source/exchange, history range, interval, and license boundary."
+        blockers=(),
+        scope_notes=(
+            ScopeNote(
+                note_id="crypto-source",
+                source="docs/加密币选币讨论纪要.md",
+                detail=(
+                    "CRYPTO daily OHLCV uses Binance Public Data / REST Kline as primary source; "
+                    "CoinGecko Pro is an enhanced settings source for metadata/market data, not the primary K-line source."
                 ),
-                stop_condition="Do not run Crypto history live proof or mark Crypto warehouse ready.",
             ),
-            AcceptanceBlocker(
-                blocker_id="DG-GEN-002",
-                source="docs/data-layer task list DG-GEN-002",
-                reason=(
-                    "Price alert and UI probe do not yet have complete proof through the shared "
-                    "data entry with attempts/evidence/gaps."
-                ),
-                stop_condition="Do not claim unified data entry acceptance until price alert and UI probe have main-chain proof.",
-            ),
-            AcceptanceBlocker(
-                blocker_id="DATAREQ-SELECTPLAN",
-                source="docs/data-layer task list §5.1/§5.18/§5.19",
-                reason=(
-                    "Report/select planning still lacks full granular DataRequirement and "
-                    "SelectDataPlan evidence chain coverage."
-                ),
-                stop_condition="Do not treat domain-pack-only planning as complete DataRequirement/SelectDataPlan coverage.",
+            ScopeNote(
+                note_id="report-select-boundary",
+                source="docs/数据层详细设计.md",
+                detail="Report/select workflow proof is a workflow acceptance item; data layer only returns data, gaps, and evidence.",
             ),
         ),
     )

@@ -5,9 +5,9 @@ description: CN_A 基本面资料包数据服务 skill，仅向 fundamental_anal
 tool: claw_get_fundamental_pack
 tool_name: claw_get_fundamental_pack
 entrypoint: openclaw_plugins/claw-trade-frontline-tools/index.js
-schema_version: openbb_fundamental_pack.v1
+schema_version: claw_data_fundamental_pack.v1
 ---
 
 # cn-a-fundamental-data
 
-该 skill 只负责提供 `claw_get_fundamental_pack` OpenBB 基本面资料包能力，不负责生成最终报告正文、投资结论、评级或目标价。
+该 skill 只负责提供 `claw_get_fundamental_pack` claw-trade 数据层基本面资料包能力，不负责生成最终报告正文、投资结论、评级或目标价。

@@ -75,43 +75,6 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "supervise_started_services" in text
     assert "脚本将持续运行并监控服务状态" in text
     assert "运行测试命令" in text
-    assert "OPENBB_AUTO_BUILD=0" in text
-    assert 'sed -i "s|^OPENBB_AUTO_BUILD=.*|OPENBB_AUTO_BUILD=0|" "${OPENBB_ENV_PATH}"' in text
-
-
-def test_start_control_runtime_openbb_template_forces_auto_build_off(tmp_path: Path) -> None:
-    text = _script_path().read_text(encoding="utf-8")
-    start = text.index("prepare_openbb_runtime_template() {")
-    end = text.index("\n}\n\nprepare_openviking_runtime_config()", start) + 3
-    function_text = text[start:end]
-    runtime_dir = tmp_path / "openbb"
-    runtime_dir_arg = shlex.quote(str(runtime_dir))
-    shell_script = f"""
-set -euo pipefail
-OPENBB_RUNTIME_DIR={runtime_dir_arg}
-OPENBB_ENV_TEMPLATE_PATH="${{OPENBB_RUNTIME_DIR}}/openbb.env.template"
-OPENBB_ENV_PATH="${{OPENBB_RUNTIME_DIR}}/openbb.env"
-mkdir -p "${{OPENBB_RUNTIME_DIR}}"
-printf 'OPENBB_AUTO_BUILD=1\\n' > "${{OPENBB_ENV_PATH}}"
-{function_text}
-prepare_openbb_runtime_template
-printf '%s\\n' '---TEMPLATE---'
-cat "${{OPENBB_ENV_TEMPLATE_PATH}}"
-printf '%s\\n' '---ENV---'
-cat "${{OPENBB_ENV_PATH}}"
-"""
-    completed = subprocess.run(
-        ["bash", "-c", shell_script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-    template_text = completed.stdout.split("---TEMPLATE---", 1)[1].split("---ENV---", 1)[0]
-    env_text = completed.stdout.split("---ENV---", 1)[1]
-    assert "OPENBB_AUTO_BUILD=0" in template_text
-    assert env_text.strip().splitlines() == ["OPENBB_AUTO_BUILD=0"]
-
 
 def test_start_control_runtime_script_has_explicit_mcp_sidecar_args() -> None:
     text = _script_path().read_text(encoding="utf-8")
@@ -557,7 +520,7 @@ def test_start_control_runtime_script_has_no_forbidden_success_patterns() -> Non
 def test_prepare_openclaw_trade_agent_config_preserves_existing_weixin_channel_fields(tmp_path: Path) -> None:
     text = _script_path().read_text(encoding="utf-8")
     start = text.index("prepare_openclaw_trade_agent_config() {")
-    end = text.index("\n}\n\nprepare_openbb_runtime_template()", start) + 3
+    end = text.index("\n}\n\nprepare_openviking_runtime_config()", start) + 3
     function_text = text[start:end]
 
     runtime_dir = tmp_path / "runtime"

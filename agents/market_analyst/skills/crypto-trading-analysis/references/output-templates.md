@@ -2,7 +2,7 @@
 
 Rule version: `bb-output-template-skill-v3-process-first`.
 
-Use these templates to keep analysis auditable. Keep reader-facing output in Chinese, but preserve exact envelope field names when citing data quality.
+Use these templates to keep analysis auditable. Keep reader-facing output in Chinese and explain data quality without copying machine field names.
 
 ## Envelope Fields To Preserve
 
@@ -13,21 +13,21 @@ status
 as_of
 sources
 confidence
-readiness
+data-quality state
 warnings
-data_gaps
+open data gaps
 conflicts
 next_actions
 ```
 
 Mapping:
 
-- `sources[]` and `as_of` -> data time and data source section
-- `warnings[]` -> data status or risk notes
-- `data_gaps[]` -> data gap section, not only prose
-- `conflicts[]` -> conflict section; never merge into one silent number
-- `next_actions[]` -> next data/review action
-- `status=error` -> no full trade plan
+- sources and data time -> data time and data source section
+- warnings -> data status or risk notes
+- open data gaps -> data gap section, not only prose
+- conflicts -> conflict section; never merge into one silent number
+- next actions -> next data/review action
+- error status -> no full trade plan
 
 ## Process-First Rule
 
@@ -183,12 +183,12 @@ Expansion rules:
 ```text
 数据状态：
 - status:
-- as_of:
+- data time:
 - confidence:
-- readiness:
+- data-quality state:
 - sources:
 - warnings:
-- data_gaps:
+- open data gaps:
 - conflicts:
 
 结论：
@@ -226,9 +226,9 @@ Expansion rules:
 风险提示：
 ```
 
-## Limited Readiness Template
+## Limited Data-Quality Template
 
-Use when `readiness.overall_level=limited|not_reliable` or `status=error`.
+Use when data quality is limited/not reliable or status is error.
 
 ```text
 当前只能输出有限观察：

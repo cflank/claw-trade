@@ -4,11 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from claw_trade.data_gateway.models import Market, ProviderDisplayDecision, ProviderDisplayStatus
+from claw_trade.data_gateway.models import Market
 from claw_trade.ui_backend.data_source_settings import (
     DataSourceSettingsService,
     InMemoryDataSourceStore,
     InMemorySecretStore,
+    ProviderDisplayDecision,
+    ProviderDisplayStatus,
     allowed_data_source_env_keys,
 )
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
@@ -64,7 +66,7 @@ def test_save_data_source_requires_test_before_enable() -> None:
 
 
 def test_save_data_source_masks_secret_and_hides_credential_ref(tmp_path: Path) -> None:
-    writer = EnvLocalAllowlistWriter(tmp_path / ".env.local", allowed_keys=("TUSHARE_TOKEN", "TUSHARE_HTTP_URL"))
+    writer = EnvLocalAllowlistWriter(tmp_path / ".env.local", allowed_keys=allowed_data_source_env_keys())
     service = _service_with_displayed_tushare(
         data_source_store=InMemoryDataSourceStore(),
         secret_store=InMemorySecretStore(),
@@ -87,6 +89,83 @@ def test_save_data_source_masks_secret_and_hides_credential_ref(tmp_path: Path) 
     assert payload["apiKeyMasked"].startswith("***")
     assert "credentialRef" not in payload
     assert "path" not in payload
+
+
+def test_save_data_source_persists_rate_limit_settings_to_env(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env.local"
+    writer = EnvLocalAllowlistWriter(env_path, allowed_keys=allowed_data_source_env_keys())
+    service = _service_with_displayed_tushare(
+        data_source_store=InMemoryDataSourceStore(),
+        secret_store=InMemorySecretStore(),
+        env_writer=writer,
+        health_tester=lambda _item: {"status": "validated", "message": "连接测试通过。"},
+    )
+
+    payload = service.save_data_source_instance(
+        {
+            "supportedType": "tushare",
+            "enabled": True,
+            "state": "validated",
+            "apiKeyReplacement": "secret-token-abc",
+            "rateLimitMaxCalls": "10",
+            "rateLimitWindowSeconds": "60",
+            "rateLimitSafetyMargin": "1",
+            "rateLimitOverflow": "wait",
+            "rateLimitWaitTimeoutSeconds": "75",
+        },
+        request_id="req-rate-limit-env",
+    )
+
+    assert payload["rateLimitMaxCalls"] == 10
+    assert payload["rateLimitWindowSeconds"] == 60
+    assert payload["rateLimitSafetyMargin"] == 1
+    assert payload["rateLimitOverflow"] == "wait"
+    assert payload["rateLimitWaitTimeoutSeconds"] == 75
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "TUSHARE_RATE_LIMIT_MAX_CALLS=10" in env_text
+    assert "TUSHARE_RATE_LIMIT_WINDOW_SECONDS=60" in env_text
+    assert "TUSHARE_RATE_LIMIT_SAFETY_MARGIN=1" in env_text
+    assert "TUSHARE_RATE_LIMIT_OVERFLOW=wait" in env_text
+    assert "TUSHARE_RATE_LIMIT_WAIT_TIMEOUT_SECONDS=75" in env_text
+
+
+def test_save_data_source_clears_stale_rate_limit_env_when_fields_are_blank(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env.local"
+    env_path.write_text(
+        "\n".join(
+            (
+                "TUSHARE_TOKEN=old-secret",
+                "TUSHARE_RATE_LIMIT_MAX_CALLS=10",
+                "TUSHARE_RATE_LIMIT_WINDOW_SECONDS=60",
+                "KEEP_ME=1",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    writer = EnvLocalAllowlistWriter(env_path, allowed_keys=allowed_data_source_env_keys())
+    service = _service_with_displayed_tushare(
+        data_source_store=InMemoryDataSourceStore(),
+        secret_store=InMemorySecretStore(),
+        env_writer=writer,
+        health_tester=lambda _item: {"status": "validated", "message": "连接测试通过。"},
+    )
+
+    payload = service.save_data_source_instance(
+        {
+            "supportedType": "tushare",
+            "enabled": False,
+            "state": "draft",
+        },
+        request_id="req-clear-rate-limit-env",
+    )
+
+    assert payload["rateLimitMaxCalls"] is None
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "TUSHARE_RATE_LIMIT_MAX_CALLS" not in env_text
+    assert "TUSHARE_RATE_LIMIT_WINDOW_SECONDS" not in env_text
+    assert "TUSHARE_TOKEN=old-secret" in env_text
+    assert "KEEP_ME=1" in env_text
 
 
 def test_reset_data_sources_clears_saved_sources_and_allowed_env_keys(tmp_path: Path) -> None:

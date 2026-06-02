@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -26,6 +26,7 @@ from claw_trade.workflow.models import (
     WorkerCall,
     WorkerResult,
     WorkerStatus,
+    WorkflowEntryPoint,
     WorkflowState,
 )
 from claw_trade.workflow.runner import ControlRunner
@@ -155,16 +156,24 @@ class _LineageWriter:
         self.calls = 0
 
     def link_after_export(self, *, state: WorkflowState, manifest, export_result: ExportResult):  # type: ignore[no-untyped-def]
-        from claw_trade.data_gateway.openviking import LineageWriteResult
-
         self.calls += 1
         _ = (state, manifest, export_result)
         if self.ok:
-            return LineageWriteResult.passed(relation_count=1, paths=(state.run_dir / "openviking" / "lineage.json",))
-        return LineageWriteResult.failed(
-            "relations API unavailable",
+            return _LineageWriteResult(ok=True, category=None, reason=None, paths=(state.run_dir / "openviking" / "lineage.json",))
+        return _LineageWriteResult(
+            ok=False,
+            category="openviking_lineage",
+            reason="relations API unavailable",
             paths=(state.run_dir / "openviking" / "approved-manifest.json",),
         )
+
+
+@dataclass(frozen=True)
+class _LineageWriteResult:
+    ok: bool
+    category: str | None
+    reason: str | None
+    paths: tuple[Path, ...]
 
 
 class _RunnerHarness:
@@ -183,6 +192,69 @@ class _RunnerHarness:
             tool_registry_probe=self.tool_registry,
             now_text=lambda: "2026-05-04T12:00:00Z",
         )
+
+
+class _DataPrefetcher:
+    def __init__(self, result: dict[str, object]) -> None:
+        self.result = result
+        self.calls: list[WorkflowState] = []
+
+    def prefetch_report(self, state: WorkflowState):
+        self.calls.append(state)
+        return self.result
+
+
+def test_report_command_prefetches_data_before_controller_dispatch(monkeypatch, tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    prefetcher = _DataPrefetcher({"ok": True, "evidence_paths": (str(tmp_path / "prefetch.json"),)})
+    harness.runner.data_prefetcher = prefetcher
+
+    def _wait_after_prefetch(input) -> Decision:  # type: ignore[no-untyped-def]
+        del input
+        return Decision(kind=DecisionKind.WAIT)
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _wait_after_prefetch)
+
+    state = harness.runner.run(replace(_request(), entry_point=WorkflowEntryPoint.REPORT_COMMAND))
+
+    assert state.status == RunStatus.CREATED
+    assert len(prefetcher.calls) == 1
+    assert prefetcher.calls[0].run_id == state.run_id
+    assert harness.openviking.ensure_namespace_calls == [state.openviking_namespace]
+
+
+def test_report_command_prefetch_failure_fails_before_worker_dispatch(monkeypatch, tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    prefetch_path = tmp_path / "prefetch-failed.json"
+    prefetcher = _DataPrefetcher(
+        {
+            "ok": False,
+            "category": "data_prefetch",
+            "reason": "rate_limited",
+            "evidence_paths": (str(prefetch_path),),
+        }
+    )
+    harness.runner.data_prefetcher = prefetcher
+    controller_calls = 0
+
+    def _controller_should_not_run(input) -> Decision:  # type: ignore[no-untyped-def]
+        nonlocal controller_calls
+        controller_calls += 1
+        del input
+        return Decision(kind=DecisionKind.WAIT)
+
+    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _controller_should_not_run)
+
+    state = harness.runner.run(replace(_request(), entry_point=WorkflowEntryPoint.REPORT_COMMAND))
+
+    assert state.status == RunStatus.FAILED
+    assert "data_prefetch: rate_limited" in (state.failure_reason or "")
+    assert len(prefetcher.calls) == 1
+    assert controller_calls == 0
+    failure_files = sorted((state.run_dir / "failures").glob("*.json"))
+    assert len(failure_files) == 1
+    failure_payload = json.loads(failure_files[0].read_text(encoding="utf-8"))
+    assert failure_payload["evidence_paths"] == [str(prefetch_path)]
 
 
 def test_crypto_market_worker_reaches_openclaw_with_compact_market_pack(tmp_path: Path) -> None:

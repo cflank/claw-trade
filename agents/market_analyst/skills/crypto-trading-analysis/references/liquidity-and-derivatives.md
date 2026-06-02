@@ -11,9 +11,9 @@ Use structured fields from:
 ```text
 data.derivatives
 data.liquidation_map
-readiness.domains.derivatives
-readiness.domains.liquidation_map
-data_gaps[]
+data-quality state for derivatives
+data-quality state for liquidation map
+open data gaps
 conflicts[]
 sources[]
 as_of

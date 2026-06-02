@@ -67,7 +67,7 @@ class RunRequest:
     current_date: str
     start_date: str
     end_date: str
-    data_gateway: str = "openbb"
+    data_gateway: str = "data_gateway"
     stop_point: StopPoint = StopPoint.NONE
     target_worker_id: str | None = None
     target_stage: Stage | None = None

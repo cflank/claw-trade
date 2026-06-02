@@ -29,10 +29,11 @@ def test_t14_plan_orders_focused_checks_before_scoped_integration() -> None:
     assert [batch.batch_id for batch in plan.batches] == [
         "focused-unit-contract",
         "scoped-integration",
+        "authenticity-audit",
     ]
     assert plan.batches[0].required_commands[0].startswith("uv run pytest")
-    assert "test_report_data_plan_cutover.py" in " ".join(plan.batches[0].required_commands)
-    assert "test_select_warehouse_cutover.py" in " ".join(plan.batches[0].required_commands)
+    assert "test_data_api_contract.py" in " ".join(plan.batches[0].required_commands)
+    assert "test_provider_capabilities.py" in " ".join(plan.batches[0].required_commands)
     assert "tests/integration/" in " ".join(plan.batches[1].required_commands)
 
 
@@ -44,7 +45,10 @@ def test_t14_plan_requires_agents_runtime_preflight_and_wrapped_live_commands() 
     assert "OpenViking 1933 health" in preflight_text
     assert "OpenClaw gateway 18789 health" in preflight_text
     assert "scripts/start-control-runtime.sh -- <command>" in preflight_text
+    runtime_slots = {"report-command", "a-share-select-command", "ui-provider-display"}
     for slot in plan.runtime_proof_slots:
+        if slot.slot_id not in runtime_slots:
+            continue
         assert slot.runtime_command_template.startswith("scripts/start-control-runtime.sh -- ")
 
 
@@ -52,13 +56,22 @@ def test_t14_plan_keeps_required_future_runtime_proof_slots() -> None:
     plan = _plan()
     slots = {slot.slot_id: slot for slot in plan.runtime_proof_slots}
 
-    assert {"report-command", "a-share-select-command", "ui-provider-display", "price-alert-data-entry"} <= set(slots)
+    assert {
+        "report-command",
+        "a-share-select-command",
+        "ui-provider-display",
+        "crypto-daily-bar-incremental",
+        "cn-a-live-provider",
+        "us-live-provider",
+        "hk-live-provider",
+    } <= set(slots)
     assert slots["report-command"].entrypoint == "/report"
     assert slots["a-share-select-command"].entrypoint == "A-share /select"
     assert "real browser screenshot for UI-facing acceptance" in slots["ui-provider-display"].required_evidence
-    assert slots["price-alert-data-entry"].status == "blocked"
-    assert slots["price-alert-data-entry"].blocked_by == ("DG-GEN-002",)
-    assert "data requirement through the shared data entry" in slots["price-alert-data-entry"].required_evidence
+    assert slots["crypto-daily-bar-incremental"].status == "verified"
+    assert "latest normalized daily_bar date 2026-05-31" in slots["crypto-daily-bar-incremental"].required_evidence
+    assert slots["us-live-provider"].status == "out_of_scope"
+    assert slots["hk-live-provider"].status == "out_of_scope"
 
 
 def test_t14_plan_collects_first_but_preserves_early_stop_exceptions() -> None:
@@ -69,7 +82,7 @@ def test_t14_plan_collects_first_but_preserves_early_stop_exceptions() -> None:
         "data authenticity is untrustworthy",
         "architecture boundary drift appears",
         "PM authority or worker conclusion ownership is at risk",
-        "old path fallback appears",
+        "legacy data path success appears",
         "runtime preflight fails",
     ):
         assert expected in plan.early_stop_exceptions
@@ -79,28 +92,26 @@ def test_t14_plan_includes_cutover_evidence_chain_and_status_audits() -> None:
     plan = _plan()
     checks = " ".join(plan.audit_checks)
 
-    assert "project prohibited-success keyword scan" in checks
-    assert "old-new cutover contract output" in checks
+    assert "context-aware authenticity keyword scan" in checks
+    assert "new data layer cutover contract output" in checks
     assert "evidence-chain audit" in checks
     assert "Mongo collection audit" in checks
     assert "OpenViking role audit" in checks
     assert "cache_hit/shared_result/rate_limited/cached_empty/cooldown_skipped are not remote_success" in checks
 
 
-def test_t14_plan_allows_only_existing_openbb_mongo_collections() -> None:
+def test_t14_plan_allows_only_eight_authorized_mongo_collections() -> None:
     plan = _plan()
-    forbidden_parallel_names = {
-        "market" + "_bars",
-        "select" + "_data" + "_plans",
-        "provider" + "_cooldowns",
-        "http" + "_cache",
-        "provider" + "_cache",
-        "data" + "_gaps",
-    }
-
-    assert plan.allowed_mongo_collections
-    assert all(collection.startswith("openbb_") for collection in plan.allowed_mongo_collections)
-    assert not (set(plan.allowed_mongo_collections) & forbidden_parallel_names)
+    assert plan.allowed_mongo_collections == (
+        "normalized_datasets",
+        "raw_payloads",
+        "provider_attempts",
+        "provider_rate_limits",
+        "single_flight_calls",
+        "provider_result_cache",
+        "dataset_manifests",
+        "maintenance_jobs",
+    )
 
 
 def test_t14_plan_keeps_openviking_out_of_provider_storage() -> None:
@@ -109,18 +120,13 @@ def test_t14_plan_keeps_openviking_out_of_provider_storage() -> None:
     assert plan.openviking_allowed_roles == ("materials", "lineage", "readback", "summary")
 
 
-def test_t14_plan_records_current_code_doc_blockers() -> None:
+def test_t14_plan_records_scope_notes_without_stale_blockers() -> None:
     plan = _plan()
-    blockers = {blocker.blocker_id: blocker for blocker in plan.blockers}
-    crypto_slot = next(slot for slot in plan.runtime_proof_slots if slot.slot_id == "crypto-history-warehouse")
+    notes = {note.note_id: note for note in plan.scope_notes}
 
-    assert plan.status == "blocked"
-    assert crypto_slot.status == "blocked"
-    assert crypto_slot.blocked_by == ("T9B",)
-    assert "T9B" in blockers
-    assert "universe, source/exchange, history range, interval, and license boundary" in blockers["T9B"].reason
-    assert "T9A-FULL-ACCEPTANCE" not in blockers
-    assert "DG-GEN-002" in blockers
-    assert "Price alert and UI probe" in blockers["DG-GEN-002"].reason
-    assert "DATAREQ-SELECTPLAN" in blockers
-    assert "DataRequirement and SelectDataPlan" in blockers["DATAREQ-SELECTPLAN"].reason
+    assert plan.status == "planned"
+    assert plan.blockers == ()
+    assert "crypto-source" in notes
+    assert "Binance Public Data / REST Kline" in notes["crypto-source"].detail
+    assert "CoinGecko Pro" in notes["crypto-source"].detail
+    assert "report-select-boundary" in notes

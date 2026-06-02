@@ -28,7 +28,7 @@ def build_report_run_request(
     current_date: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    data_gateway: str = "openbb",
+    data_gateway: str = "data_gateway",
     stop_point: StopPoint = StopPoint.NONE,
     target_worker_id: str | None = None,
     target_stage: Stage | None = None,

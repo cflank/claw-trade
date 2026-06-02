@@ -45,7 +45,9 @@ APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     "openviking_access.py": "4248c2f0be83ffdaccdcb5ee7fe1cc7ab2c5f259331382d15b5ea34996551d3c",
     "openviking_receipt.py": "50cb4f10d40fd9a387073f44bcaf09d915937adb469f4636d00e0bcc3e9ec634",
     "provider_request.py": "cce82afc14107ea55a344c5677a5efb3d15bfd2c20db29a0c0856f5f9a028ab4",
-    "tool_calls.py": "c0ecaa1c6d34f2aba1cf489388e2497ab40e006188a7a8473c5ab535bf4f0c8a",
+    # Guard source: AGENTS Truthfulness Hard Gates; human-approved 2026-06-01
+    # fix to fail failed frontline data-pack tool calls instead of exporting fake success.
+    "tool_calls.py": "6571b1ac8c30c4769d632cccaa16adab90f97e76e6aea6631d680f38a8e1d2e4",
     "visible_tools.py": "0b18078feda9cb416e05ad4d6bbf8dacbc3118c895cf8947c84a5f7dc61695a5",
     "workspace_evidence.py": "332420a1ebac0af35fac0101a0c8d5814e57888a39dd84440e80f75f409319ab",
 }

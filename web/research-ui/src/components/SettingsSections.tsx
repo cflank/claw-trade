@@ -215,13 +215,13 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
     id: 'cn-a',
     title: 'A股',
     categories: [
-      { id: 'quotes', title: '行情', types: ['tushare', 'wind', 'choice', 'ifind', 'joinquant', 'ricequant'] },
+      { id: 'quotes', title: '行情', types: ['tushare'] },
       {
         id: 'fundamental',
         title: '基本面',
-        types: ['tushare', 'wind', 'choice', 'ifind', 'csmar', 'resset', 'joinquant', 'ricequant'],
+        types: ['tushare'],
       },
-      { id: 'news', title: '新闻公告', types: ['tushare', 'wind', 'choice', 'ifind'] },
+      { id: 'news', title: '新闻公告', types: ['tushare'] },
     ],
   },
   {
@@ -231,14 +231,14 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '行情',
-        types: ['longport', 'bloomberg', 'lseg_refinitiv'],
+        types: ['finnhub'],
       },
       {
         id: 'fundamental',
         title: '基本面',
-        types: ['longport', 'bloomberg', 'lseg_refinitiv', 'factset', 'morningstar', 'sp_capital_iq'],
+        types: ['finnhub'],
       },
-      { id: 'news', title: '新闻公告', types: ['finnhub', 'newsapi', 'reuters', 'dow_jones', 'bloomberg', 'lseg_refinitiv'] },
+      { id: 'news', title: '新闻公告', types: ['finnhub'] },
     ],
   },
   {
@@ -248,42 +248,15 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '行情',
-        types: [
-          'polygon',
-          'tiingo',
-          'finnhub',
-          'iex_cloud',
-          'twelve_data',
-          'alpha_vantage',
-          'eodhd',
-          'marketstack',
-          'intrinio',
-          'bloomberg',
-          'lseg_refinitiv',
-          'tradingview',
-          'barchart',
-          'finazon',
-        ],
+        types: ['alpha_vantage', 'finnhub'],
       },
       {
         id: 'fundamental',
         title: '基本面',
-        types: [
-          'fmp',
-          'nasdaq_data_link',
-          'intrinio',
-          'eodhd',
-          'finnhub',
-          'bloomberg',
-          'lseg_refinitiv',
-          'factset',
-          'morningstar',
-          'sp_capital_iq',
-        ],
+        types: ['alpha_vantage', 'finnhub'],
       },
-      { id: 'filings', title: '公告披露', types: ['intrinio', 'fmp', 'finnhub', 'eodhd'] },
-      { id: 'news', title: '新闻', types: ['benzinga', 'finnhub', 'newsapi', 'reuters', 'dow_jones', 'bloomberg', 'lseg_refinitiv'] },
-      { id: 'social', title: '社交舆情', types: ['x', 'reddit', 'finnhub'] },
+      { id: 'filings', title: '公告披露', types: ['finnhub'] },
+      { id: 'news', title: '新闻', types: ['alpha_vantage', 'finnhub'] },
     ],
   },
   {
@@ -293,30 +266,19 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '跨市场行情',
-        types: [
-          'twelve_data',
-          'marketstack',
-          'eodhd',
-          'alpha_vantage',
-          'bloomberg',
-          'lseg_refinitiv',
-          'tradingview',
-          'barchart',
-          'finazon',
-        ],
+        types: ['alpha_vantage', 'finnhub'],
       },
       {
         id: 'fundamental',
         title: '跨市场基本面',
-        types: ['fmp', 'intrinio', 'eodhd', 'finnhub', 'nasdaq_data_link', 'factset', 'morningstar', 'sp_capital_iq'],
+        types: ['finnhub'],
       },
       {
         id: 'macro',
         title: '宏观经济',
-        types: ['fred', 'bea', 'eia'],
+        types: ['fred'],
       },
-      { id: 'news', title: '全球新闻', types: ['newsapi', 'benzinga', 'finnhub', 'reuters', 'dow_jones', 'bloomberg', 'lseg_refinitiv'] },
-      { id: 'social', title: '全球社交舆情', types: ['x', 'reddit'] },
+      { id: 'news', title: '全球新闻', types: ['finnhub'] },
     ],
   },
   {
@@ -326,29 +288,17 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '行情交易所',
-        types: ['coingecko_pro', 'coinmarketcap', 'cryptocompare', 'kaiko', 'amberdata', 'twelve_data', 'alpha_vantage'],
+        types: ['coingecko_pro'],
       },
       {
         id: 'fundamental',
         title: '链上与基本面',
         types: [
           'coinglass',
-          'glassnode',
-          'santiment',
-          'messari',
           'coingecko_pro',
-          'coinmetrics',
-          'dune',
-          'nansen',
-          'token_terminal',
-          'the_graph',
-          'amberdata',
-          'kaiko',
         ],
       },
-      { id: 'derivatives', title: '衍生品与资金', types: ['coinglass', 'amberdata', 'kaiko'] },
-      { id: 'news', title: '新闻与事件', types: ['cryptocompare', 'newsapi', 'messari'] },
-      { id: 'social', title: '社交情绪', types: ['lunarcrush', 'x', 'reddit', 'santiment'] },
+      { id: 'derivatives', title: '衍生品与资金', types: ['coinglass'] },
     ],
   },
 ];
@@ -759,6 +709,61 @@ export function SettingsSections({
                 onChange={(event) => onDataSourceDraftChange({ enabled: event.target.checked })}
               />
               <span>启用这个增强源</span>
+            </label>
+            <label className="ct-field">
+              <span>限流次数</span>
+              <input
+                type="number"
+                min="1"
+                value={dataSourceDraft.rateLimitMaxCalls ?? ''}
+                onChange={(event) => onDataSourceDraftChange({ rateLimitMaxCalls: event.target.value })}
+                placeholder="例如 10"
+              />
+            </label>
+            <label className="ct-field">
+              <span>限流窗口秒数</span>
+              <input
+                type="number"
+                min="1"
+                value={dataSourceDraft.rateLimitWindowSeconds ?? ''}
+                onChange={(event) => onDataSourceDraftChange({ rateLimitWindowSeconds: event.target.value })}
+                placeholder="例如 60"
+              />
+            </label>
+            <label className="ct-field">
+              <span>安全余量</span>
+              <input
+                type="number"
+                min="0"
+                value={dataSourceDraft.rateLimitSafetyMargin ?? ''}
+                onChange={(event) => onDataSourceDraftChange({ rateLimitSafetyMargin: event.target.value })}
+                placeholder="默认 0"
+              />
+            </label>
+            <label className="ct-field">
+              <span>超额策略</span>
+              <select
+                value={dataSourceDraft.rateLimitOverflow ?? ''}
+                onChange={(event) =>
+                  onDataSourceDraftChange({
+                    rateLimitOverflow: event.target.value as DataSourceInstanceDraftInput['rateLimitOverflow'],
+                  })
+                }
+              >
+                <option value="">使用默认</option>
+                <option value="wait">等待下一窗口</option>
+                <option value="fail_fast">立即失败</option>
+              </select>
+            </label>
+            <label className="ct-field">
+              <span>最长等待秒数</span>
+              <input
+                type="number"
+                min="0"
+                value={dataSourceDraft.rateLimitWaitTimeoutSeconds ?? ''}
+                onChange={(event) => onDataSourceDraftChange({ rateLimitWaitTimeoutSeconds: event.target.value })}
+                placeholder="例如 75"
+              />
             </label>
           </div>
           <div className="ct-button-row ct-settings-actions">

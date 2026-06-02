@@ -5,8 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from claw_trade.data_gateway.select_plan import build_select_data_plan
-from claw_trade.selection.data_job import SelectionDataJob, SelectionProviderBatchResult
+from claw_trade.selection.data_job import SelectionDataJob, SelectionProviderBatchResult, build_selection_data_plan
 from claw_trade.selection.engine import ApprovedSelectionStrategy, StableTop20Rule
 from claw_trade.selection.models import (
     SelectionBatchScope,
@@ -70,7 +69,7 @@ def test_select_data_plan_crypto_history_missing_has_blocker_gap() -> None:
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
 
-    select_data_plan = build_select_data_plan(plan=plan)
+    select_data_plan = build_selection_data_plan(plan=plan)
 
     assert select_data_plan.support_status.value == "target_design"
     assert select_data_plan.provider_call_specs == ()
@@ -79,7 +78,7 @@ def test_select_data_plan_crypto_history_missing_has_blocker_gap() -> None:
     assert warehouse_check.status.value == "missing"
     assert warehouse_check.should_call_provider is False
     [gap] = warehouse_check.data_gaps
-    assert gap.reason.value == "mongo_missing"
+    assert gap.reason == "mongo_missing"
     assert "历史包尚未批准下载并入 Mongo" in gap.root_cause
 
 
@@ -126,7 +125,7 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
     normalized_refs: list[str] = []
     for idx in range(20):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://mongo/openbb_normalized/row-{idx + 1}"
+        ref = f"normalized://mongo/normalized_datasets/row-{idx + 1}"
         normalized_refs.append(ref)
         open_price = 10.0 + idx * 0.1
         close_price = open_price + 0.2
@@ -224,14 +223,14 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     assert payload["candidate_pack_manifest"]["weight_version"] == "cn_a.selection_weights.v1"
     assert payload["candidate_pack_manifest"]["candidate_scores_ref"] == "score://sel-run-03-success"
     assert payload["candidate_pack_manifest"]["stable_top20_rule"]["primary"] == "score_desc"
-    assert payload["normalized_refs"] == [f"normalized://mongo/openbb_normalized/row-{idx}" for idx in range(1, 21)]
+    assert payload["normalized_refs"] == [f"normalized://mongo/normalized_datasets/row-{idx}" for idx in range(1, 21)]
     assert payload["warehouse_check_ref"] == "warehouse-check://selection/sel-run-03-success/2026-05-26/success"
-    assert payload["select_data_plan"]["schema_version"] == "select_data_plan.v1"
+    assert payload["select_data_plan"]["schema_version"] == "selection_data_plan.v1"
     assert payload["select_data_plan"]["select_data_plan"]["support_status"] == "supported"
     assert payload["select_data_plan"]["requirement_batch"]["request_kind"] == "select"
     [select_requirement] = payload["select_data_plan"]["requirement_batch"]["merged_requirements"]
     assert select_requirement["granularity"] == "daily"
-    assert select_requirement["lookback_window_days"] == 260
+    assert select_requirement["lookback_trading_days"] == 260
     assert select_requirement["source_role_required"] == "market_data"
     assert "strategy_signal_myhhub_volume_rise" in select_requirement["field_set"]
     assert "private_placement_days_since" in select_requirement["field_set"]
@@ -311,14 +310,19 @@ def test_data_job_pipeline_provider_failure_fails_closed_without_fallback(tmp_pa
     assert payload["select_data_plan_ref"] == "select-data-plan://selection/sel-run-03-success/2026-05-26"
     assert payload["select_data_plan"]["warehouse_checks"][0]["status"] == "missing"
     provider_specs = payload["select_data_plan"]["provider_call_specs"]
-    assert [spec["provider"] for spec in provider_specs] == [
-        "mootdx_selection_batch",
-        "tencent_selection_batch",
-        "sina_selection_batch",
-        "baostock_selection_batch",
-        "eastmoney_selection_batch",
-        "akshare_selection_batch",
-        "tushare_selection_batch",
+    assert provider_specs == [
+        {
+            "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+            "scope": "selection_batch",
+            "market": "CN_A",
+            "profile": "CN_A",
+            "coverage_group": "cn_a_selection_batch",
+            "data_type": "cn_a_select_features",
+            "params": {
+                "lookback_trading_days": plan.lookback_trading_days,
+                "universe_scope": plan.universe_scope,
+            },
+        }
     ]
     assert provider_specs[0]["coverage_group"] == "cn_a_selection_batch"
     assert provider_specs[0]["data_type"] == "cn_a_select_features"
@@ -368,7 +372,7 @@ def test_data_job_pipeline_accepts_candidate_count_less_than_20(tmp_path: Path) 
         refs: list[str] = []
         for idx in range(19):
             ticker = f"{300000 + idx:06d}.SZ"
-            ref = f"normalized://mongo/openbb_normalized/insufficient-{idx + 1}"
+            ref = f"normalized://mongo/normalized_datasets/insufficient-{idx + 1}"
             refs.append(ref)
             rows.append(
                 {
@@ -425,7 +429,7 @@ def test_data_job_pipeline_marks_no_candidate_without_approved_pack(tmp_path: Pa
         refs: list[str] = []
         for idx in range(3):
             ticker = f"{300000 + idx:06d}.SZ"
-            ref = f"normalized://mongo/openbb_normalized/no-candidate-{idx + 1}"
+            ref = f"normalized://mongo/normalized_datasets/no-candidate-{idx + 1}"
             refs.append(ref)
             rows.append(
                 {
@@ -515,7 +519,7 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
         return SelectionProviderBatchResult(
             provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
             attempt_refs=("attempt://current-only",),
-            normalized_refs=("normalized://mongo/openbb_normalized/current-only-1",),
+            normalized_refs=("normalized://mongo/normalized_datasets/current-only-1",),
             rows=(
                 {
                     "ticker": "600999.SH",
@@ -527,7 +531,7 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
                     "low": 9.9,
                     "amount": 300000000.0,
                     "vol_ratio": 2.5,
-                    "source_ref": "normalized://mongo/openbb_normalized/current-only-1",
+                    "source_ref": "normalized://mongo/normalized_datasets/current-only-1",
                 },
             ),
             warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/strategy-fields-missing",
@@ -567,8 +571,8 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
             provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
             attempt_refs=("attempt://duplicate",),
             normalized_refs=(
-                "normalized://mongo/openbb_normalized/duplicate-1",
-                "normalized://mongo/openbb_normalized/duplicate-2",
+                "normalized://mongo/normalized_datasets/duplicate-1",
+                "normalized://mongo/normalized_datasets/duplicate-2",
             ),
             rows=(
                 {
@@ -580,7 +584,7 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
                     "high": 10.5,
                     "low": 9.9,
                     "amount": 300000000.0,
-                    "source_ref": "normalized://mongo/openbb_normalized/duplicate-1",
+                    "source_ref": "normalized://mongo/normalized_datasets/duplicate-1",
                 },
                 {
                     "ticker": "600998.SH",
@@ -591,7 +595,7 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
                     "high": 10.5,
                     "low": 9.9,
                     "amount": 300000000.0,
-                    "source_ref": "normalized://mongo/openbb_normalized/duplicate-2",
+                    "source_ref": "normalized://mongo/normalized_datasets/duplicate-2",
                 },
             ),
             warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/duplicate",

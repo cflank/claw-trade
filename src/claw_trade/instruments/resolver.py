@@ -58,7 +58,7 @@ class ProviderSymbols:
     crypto_base_symbol: str | None = None
     crypto_quote_symbol: str | None = None
     crypto_pair_symbol: str | None = None
-    crypto_openbb_symbol: str | None = None
+    crypto_provider_symbol: str | None = None
     coinglass_asset_symbol: str | None = None
     coinglass_contract_symbol: str | None = None
     coingecko_coin_id: str | None = None
@@ -298,7 +298,7 @@ def _normalize_crypto_ticker(token: str) -> tuple[str, str, ProviderSymbols]:
         crypto_base_symbol=base,
         crypto_quote_symbol=quote,
         crypto_pair_symbol=f"{base}/{quote}",
-        crypto_openbb_symbol=f"{base}{quote}",
+        crypto_provider_symbol=f"{base}{quote}",
         coinglass_asset_symbol=base,
         coinglass_contract_symbol=f"{base}{quote}",
         coingecko_coin_id=_CRYPTO_COINGECKO_IDS.get(base, base.lower()),
