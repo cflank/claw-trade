@@ -55,7 +55,7 @@ def _normalized_inputs() -> SelectionNormalizedInputs:
     refs = []
     for idx in range(20):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://row-{idx + 1}"
+        ref = f"normalized://mongo/normalized_datasets/row-{idx + 1}"
         refs.append(ref)
         rows.append(
             SelectionNormalizedRow(
@@ -205,6 +205,10 @@ def test_candidate_pack_approval_uses_real_write_readback_hash_manifest_lineage(
             data_run=SelectionDataRun(
                 selection_run_id=plan.selection_run_id,
                 status=SelectionDataRunStatus.COMPLETED,
+                normalized_refs=inputs.normalized_refs,
+                provider_attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
+                select_data_plan_ref=f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",
+                warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/ok",
                 candidate_pack_ref=ref,
                 completed_at="2026-05-26T09:00:00+00:00",
             ),

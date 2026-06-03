@@ -422,9 +422,10 @@ function buildRuntimeContext(runtime, toolName, toolCallId) {
   const currentDate = textValue(runtime.runtimeVars.current_date);
   const startDate = textValue(runtime.runtimeVars.start_date);
   const endDate = textValue(runtime.runtimeVars.end_date);
+  const reportPrefetchManifestPath = textValue(runtime.runtimeVars.report_prefetch_manifest_path);
   const workerCallId = runtime.callId;
   const providerCallId = packEvidenceCallId(workerCallId, toolCallId);
-  return {
+  const context = {
     run_id: runtime.runId,
     stage: runtime.stage,
     worker_id: runtime.workerId,
@@ -439,6 +440,11 @@ function buildRuntimeContext(runtime, toolName, toolCallId) {
     end_date: endDate,
     current_time: new Date().toISOString(),
   };
+  if (reportPrefetchManifestPath) {
+    context.report_prefetch_required = true;
+    context.report_prefetch_manifest_path = reportPrefetchManifestPath;
+  }
+  return context;
 }
 
 function assertExpectedMarket(toolName, toolInput, expectedMarket) {

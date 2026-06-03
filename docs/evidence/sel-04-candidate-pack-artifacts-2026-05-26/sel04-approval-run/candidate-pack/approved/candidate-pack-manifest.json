@@ -1,0 +1,29 @@
+{
+  "schema_version": "sel-04-candidate-pack-v1",
+  "selection_run_id": "sel04-approval-run",
+  "market": "CN_A",
+  "profile": "CN_A",
+  "trade_date": "2026-05-26",
+  "candidate_count": 20,
+  "source_lineage_refs": [
+    "plan://cn-a-2026-05-26",
+    "attempt://akshare-1",
+    "normalized://mongo/normalized_datasets/sel04-fixture",
+    "feature://sel04-approval-run",
+    "score://sel04-approval-run"
+  ],
+  "pack_body_sha256": "01118caac986a3fa852fb8cd905b39d2ba2878e2cbba2b1b59af760c283b166e",
+  "strategy_config_ref": "config://cn-a-approved-v1",
+  "strategy_config_version": "cn_a.selection_strategy.v1",
+  "weight_version": "cn_a.selection_weights.v1",
+  "candidate_scores_ref": "score://sel04-approval-run",
+  "stable_top20_rule": {
+    "primary": "score_desc",
+    "tie_break": [
+      "amount_desc"
+    ]
+  },
+  "readback_status": "verified",
+  "stage": "approving_candidate_pack",
+  "target": "candidate_pack"
+}

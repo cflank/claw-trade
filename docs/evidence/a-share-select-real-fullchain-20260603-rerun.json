@@ -1,0 +1,165 @@
+{
+  "selection_run_id": "sel-real-fullchain-20260603",
+  "request_id": "select-real-fullchain-20260603-rerun",
+  "data_job": {
+    "status": "failed",
+    "failure_code": "candidate_pack_lineage_incomplete",
+    "failure_reason": "lineage must include provider plan/attempts/normalized/feature/score refs",
+    "trade_date": "2026-05-27",
+    "provider_attempt_refs": [
+      "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:68fd352e3aff",
+      "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:6890ad02b553",
+      "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:ad566cef8d4e",
+      "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:508d575a7675",
+      "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:a1ac8fd0a234",
+      "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:8baf4b7e78f0"
+    ],
+    "normalized_ref_count": 5502,
+    "top20_tickers": [
+      "003036.SZ",
+      "301377.SZ",
+      "002957.SZ",
+      "300835.SZ",
+      "000636.SZ",
+      "600545.SH",
+      "300308.SZ",
+      "603989.SH",
+      "603629.SH",
+      "600396.SH",
+      "603601.SH",
+      "300672.SZ",
+      "688146.SH",
+      "000711.SZ",
+      "688519.SH",
+      "300201.SZ",
+      "300757.SZ",
+      "002552.SZ",
+      "300408.SZ",
+      "688260.SH"
+    ],
+    "candidate_pack_material_id": null,
+    "candidate_pack_l1_uri": null,
+    "candidate_pack_summary_ref": null,
+    "evidence_path": "runs/selection/2026-05-27/sel-real-fullchain-20260603.json",
+    "data_gaps": [
+      {
+        "gap_code": "selection_batch_rows_dropped",
+        "severity": "warn",
+        "reader_message": "selection batch 中部分本地预打包股票缺少足够历史日线，已剔除。 count=112。",
+        "attempt_refs": [
+          "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:68fd352e3aff",
+          "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:6890ad02b553",
+          "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:ad566cef8d4e",
+          "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:508d575a7675",
+          "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:a1ac8fd0a234",
+          "attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:8baf4b7e78f0"
+        ],
+        "source_metadata": {
+          "tickers_sample": [
+            "001220.SZ",
+            "001221.SZ",
+            "001233.SZ",
+            "001257.SZ",
+            "001280.SZ",
+            "001285.SZ",
+            "001325.SZ",
+            "001369.SZ",
+            "001386.SZ",
+            "001388.SZ",
+            "001390.SZ",
+            "001396.SZ",
+            "301449.SZ",
+            "301491.SZ",
+            "301563.SZ",
+            "301575.SZ",
+            "301584.SZ",
+            "301590.SZ",
+            "301595.SZ",
+            "301609.SZ"
+          ],
+          "required_history_days": 260
+        }
+      },
+      {
+        "gap_code": "selection_strategy_variant_disabled",
+        "severity": "warn",
+        "reader_message": "策略 Sequoia-X:sequoia_private_placement 缺少本轮专用数据字段，本次禁用该策略，其它策略继续。",
+        "attempt_refs": [
+          "feature://sel-real-fullchain-20260603"
+        ],
+        "source_metadata": {
+          "source": "Sequoia-X",
+          "variant_id": "sequoia_private_placement",
+          "decision": "disabled_for_current_run",
+          "reason": "strategy_specific_data_missing",
+          "missing_fields": [
+            "private_placement_days_since",
+            "private_placement_event_date"
+          ],
+          "not_interpreted_as_no_event": true,
+          "missing_by_field": {
+            "private_placement_days_since": {
+              "missing_ticker_count": 5382,
+              "missing_tickers_sample": [
+                "000001.SZ",
+                "000002.SZ",
+                "000004.SZ",
+                "000006.SZ",
+                "000007.SZ",
+                "000008.SZ",
+                "000009.SZ",
+                "000010.SZ",
+                "000011.SZ",
+                "000012.SZ",
+                "000014.SZ",
+                "000016.SZ",
+                "000017.SZ",
+                "000019.SZ",
+                "000020.SZ",
+                "000021.SZ",
+                "000025.SZ",
+                "000026.SZ",
+                "000027.SZ",
+                "000028.SZ"
+              ]
+            },
+            "private_placement_event_date": {
+              "missing_ticker_count": 5382,
+              "missing_tickers_sample": [
+                "000001.SZ",
+                "000002.SZ",
+                "000004.SZ",
+                "000006.SZ",
+                "000007.SZ",
+                "000008.SZ",
+                "000009.SZ",
+                "000010.SZ",
+                "000011.SZ",
+                "000012.SZ",
+                "000014.SZ",
+                "000016.SZ",
+                "000017.SZ",
+                "000019.SZ",
+                "000020.SZ",
+                "000021.SZ",
+                "000025.SZ",
+                "000026.SZ",
+                "000027.SZ",
+                "000028.SZ"
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "select_result": {
+    "code": "unavailable",
+    "ok": false,
+    "select_workflow_run_id": "select-20260603T184840-select-real-fullchain-20260603-rerun",
+    "evidence_path": "runs/selection/workflows/select-20260603T184840-select-real-fullchain-20260603-rerun/selection-workflow-evidence.json",
+    "unavailable_code": "no_completed_selection_run",
+    "failure_reason": "selection_data_refresh_not_configured",
+    "chat_text": "`/select` 当前不可用：没有可用的已完成选股批次。 已确认需要补数，但当前运行环境没有配置后台补数通道。"
+  }
+}

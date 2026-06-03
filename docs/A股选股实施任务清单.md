@@ -9,7 +9,7 @@
 - 第一版只做 A股 `CN_A`。
 - 选股算法必须按原项目最新代码等价实现，先审计后落地；不得发明新算法、权重、阈值。
 - 默认北京时间 16:00 后台跑；设置里允许用户修改。
-- 数据源沿用 OpenBB/data_gateway/provider registry/Mongo/OpenViking 证据链，不走旧直连路径。
+- 数据源沿用 data_gateway/provider registry/Mongo/OpenViking 证据链，不走旧直连路径；OpenBB 本体不是目标运行时依赖。
 - prompt 按总体/详细设计中的 selection worker 草案落地。
 - `/select` 第一版只在聊天输出结果，不做复杂结果页。
 - 第一版不做手动补跑/backfill/rerun 的用户入口。
@@ -22,7 +22,7 @@
 |---|---|---|---|
 | SEL-00 | 原项目算法审计与等价映射 | 无 | 否 |
 | SEL-01 | 选择域模型与状态机骨架 | SEL-00 | 否 |
-| SEL-02 | selection run store 与 latest-completed 只读门 | SEL-01 | 否 |
+| SEL-02 | selection run store 与 refresh 触发门 | SEL-01 | 否 |
 | SEL-03 | 后台确定性 data job（16:00 默认） | SEL-00, SEL-02 | 部分可并行 |
 | SEL-04 | candidate pack 与 artifact authority | SEL-03 | 否 |
 | SEL-05 | selection tool 与 tool_names 映射 | SEL-04 | 否 |
@@ -65,16 +65,16 @@
 - 依赖任务：SEL-00。
 - 是否可并行：否。
 
-### SEL-02 selection run store 与 latest terminal 只读门
+### SEL-02 selection run store 与 refresh 触发门
 - 来源行：`docs/A股选股详细设计.md:40,49-51,127-130,197-205,1515-1519`，`docs/A股选股总体设计.md:168-171,1538-1546`
-- 目标：实现 run store、latest terminal 选择、stale 校验；确保 `/select` 只读 latest terminal run，且只有 completed + approved pack 可启动 workers。
-- 允许修改范围：`src/claw_trade/selection/store.py`（新增）、`src/claw_trade/selection/controller.py`（只读查询部分）。
-- 禁止修改范围：后台任务入口、OpenClaw 调度代码。
-- 实现要求：no completed/no_candidate/stale/not approved/hash mismatch 时直接 unavailable；latest no_candidate 不得回退旧 completed run；不得触发现场拉数。
+- 目标：实现 run store、latest terminal 选择、stale 校验和 refresh 触发入口；确保只有 completed + approved pack 可启动 workers，不可用时由 `/select` 触发后台补数状态返回。
+- 允许修改范围：`src/claw_trade/selection/store.py`（新增）、`src/claw_trade/selection/controller.py`（查询与 refresh enqueue 部分）、必要最小 `src/claw_trade/selection/scheduler.py` enqueue 接口。
+- 禁止修改范围：后台任务执行实现、OpenClaw 调度代码。
+- 实现要求：no completed/no_candidate/stale/warehouse 证据不足时触发后台 selection data refresh/job，并返回“补数已启动/已有补数在跑/补数通道未配置”；latest no_candidate 不得回退旧 completed run；不得现场拉数、直接调 provider、直接读表或同步跑全市场；not approved/hash/readback/lineage mismatch 仍 fail closed。
 - 验收证据：store 状态迁移记录与不可用返回码对照。
 - 必跑测试/命令：`uv run pytest tests/integration/selection/test_latest_completed_gate.py`
-- stop conditions：`/select` 路径触发 provider fetch 或创建 data job。
-- mock/stub/fake/fallback 检查：provider spy 必须证明未调用。
+- stop conditions：`/select` 路径触发 provider fetch、直接读 warehouse 表、同步执行全市场 data job，或用补数隐藏 hash/readback/lineage 损坏。
+- mock/stub/fake/fallback 检查：provider/table spy 必须证明未调用；refresh gateway 只能创建/复用后台 job。
 - 依赖任务：SEL-01。
 - 是否可并行：否。
 
@@ -112,8 +112,8 @@
 - 来源行：`docs/A股选股详细设计.md:135-137,888-929,1499-1505`，`docs/A股选股总体设计.md:240-257,845-850,859-870`，`src/claw_trade/config/tool_names.py:28-52`
 - 目标：落地 `claw_get_selection_candidate_pack`，并把 intent 映射到唯一 canonical tool 名。
 - 允许修改范围：`src/claw_trade/selection/tools.py`（新增）、`src/claw_trade/config/tool_names.py`、selection plugin wrapper。
-- 禁止修改范围：OpenBB pack endpoint 业务实现、旧 report tool contracts。
-- 实现要求：tool 无业务参数；只读 runtime context 对应 approved pack；不调 OpenBB/provider/Mongo raw，不重排或扩大 candidate pack。
+- 禁止修改范围：report pack endpoint 业务实现、旧 report tool contracts。
+- 实现要求：tool 无业务参数；只读 runtime context 对应 approved pack；不调 data_gateway/provider/Mongo raw，不重排或扩大 candidate pack。
 - 验收证据：tool schema + runtime call evidence（同一 hash pack 被 strategist/skeptic 读取）。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_selection_tool_contract.py tests/contracts/test_selection_tool_import_block.py`
 - stop conditions：tool 接受 ticker/date/topN 等业务参数；tool 路径触发外部取数。
@@ -152,11 +152,11 @@
 - 目标：接入 `/select` 命令流程，输出聊天文本结果（进入 `/report` / 观察 / 放弃）。
 - 允许修改范围：`src/claw_trade/ui_backend/chat_controller.py` 或 command router、`src/claw_trade/selection/controller.py`。
 - 禁止修改范围：复杂结果页、新 UI 路由、`/report` 业务逻辑。
-- 实现要求：`/select` 不现场拉全市场数据；只读 latest terminal selection data run；只有 completed + approved candidate pack 才启动 workers；结果只在聊天输出。
-- no-candidate 要求：若 latest terminal data run 是 `no_candidate`，聊天只提示本轮无候选，不启动 selection workers，不回退旧 completed run。
+- 实现要求：`/select` 不现场拉全市场数据、不直接调 provider、不直接读表、不同步跑全市场；先检查可用 completed + approved candidate pack，只有可用 pack 才启动 workers；无可用 pack/no_candidate/stale/warehouse 证据不足时触发后台 selection data refresh/job 并返回“补数已启动/已有补数在跑/补数通道未配置”；结果只在聊天输出。
+- no-candidate 要求：若 latest terminal data run 是 `no_candidate`，不启动 selection workers，不回退旧 completed run，不生成 fake candidate pack；只触发后台 refresh/job 并返回补数状态。
 - 验收证据：一次完整 `/select` 聊天回合日志与 selection workflow run evidence。
 - 必跑测试/命令：`uv run pytest tests/integration/selection/test_select_command_chat_flow.py`
-- stop conditions：无 completed run 时启动后台 job；输出超出三分类语义。
+- stop conditions：`/select` 同步跑全市场、直接调 provider/读表、用 fake completed pack 代替补数；输出超出三分类语义。
 - mock/stub/fake/fallback 检查：禁止 capture-only 文案通过（必须有 workflow/evidence 对应）。
 - 依赖任务：SEL-02, SEL-07。
 - 是否可并行：否。
@@ -210,7 +210,7 @@
 - 目标：真实 UI runtime 启动时可恢复已完成的 selection data run，`/select` 不再因空内存 store 必然 `no_completed_selection_run`。
 - 允许修改范围：`src/claw_trade/selection/**`（store/persistence/data_job runtime glue）、`src/claw_trade/ui_backend/chat_controller.py`、`src/claw_trade/web/state.py`、`tests/unit/selection/**`、`tests/integration/selection/**`、`tests/unit/ui/**`、`tests/contracts/test_selection_*.py`、`docs/evidence/**`、`memory/2026-05-26.md`。
 - 禁止修改范围：`third_party/openclaw/**`、`/report` PM 决策逻辑与 exporter/prompt、selection 算法参数/权重/阈值、provider fallback/fake provider/runtime 假 artifact。
-- 实现要求：恢复源必须是 data job completed evidence 或同等可审计 persisted record；没有真实 completed run 仍 fail-closed；`/select` 请求内不得触发全市场抓取/补跑。
+- 实现要求：恢复源必须是 data job completed evidence 或同等可审计 persisted record；没有真实 completed run 不得伪造恢复；`/select` 请求内不得触发全市场同步抓取，但必须走后台 refresh/job 返回“补数已启动/已有补数在跑/补数通道未配置”。
 - 验收证据：`docs/evidence/sel-12-ui-completed-selection-run.md`（恢复来源、运行路径、测试结果、fail-closed 证明）。
 - 必跑测试/命令：
   - `uv run pytest tests/integration/selection/test_store_persistence_restore.py`
@@ -220,23 +220,23 @@
 - 依赖任务：SEL-11。
 - 是否可并行：否。
 
-### SEL-13 OpenBB/data_gateway selection batch 接线
+### SEL-13 data_gateway selection batch 接线
 - 来源行：`docs/A股选股总体设计.md:1421-1460,1467-1546,1604-1642`，`docs/A股选股详细设计.md:0.2,3.16,5.3-5.5,11.1,11.4,15.2`，`docs/evidence/sel-12-ui-completed-selection-run.md`，`memory/2026-05-26.md` 最新 SEL-12 Chrome 条目
-- 目标：为现有 `SelectionDataJob` 接入真实 OpenBB/data_gateway 批量取数适配层，产出可审计 `SelectionProviderBatchResult`；`/select` 继续只读 latest terminal run，不在请求中现场拉全市场。
+- 目标：为现有 `SelectionDataJob` 接入真实 data_gateway 批量取数适配层，产出可审计 `SelectionProviderBatchResult`；`/select` 只检查可用 completed+approved pack，不在请求中现场拉全市场，不可用时触发后台 refresh/job。
 - 允许修改范围：`src/claw_trade/selection/**`（`provider_batch.py`、`scheduler.py`、`data_job.py` 必要 glue）、`src/claw_trade/data_gateway/**` 最小复用/适配、必要最小 `src/claw_trade/web/state.py` runtime wiring、`tests/unit/selection/**`、`tests/integration/selection/**`、`tests/contracts/test_selection_*.py`、`docs/evidence/**`、`memory/2026-05-26.md`。
 - 禁止修改范围：`third_party/openclaw/**`、`/report` PM 决策逻辑与 exporter/prompt、selection 算法权重/阈值/排序规则、新增 runtime guard/hard gate、mock/stub/fake/fallback/capture-only 冒充 runtime/live。
-- 实现要求：必须走现有 OpenBB/data_gateway/provider registry/Mongo/OpenViking 证据链；无可用数据源或字段不足时 fail closed 并写 data gaps，不得生成 fake completed run；provider attempts/normalized refs/provider batch plan/data gaps 必须可审计。
-- 验收证据：`docs/evidence/sel-13-openbb-data-gateway-batch-*.md`（或 `*-blocked-*.md`）+ 对应 run/测试证据路径。
+- 实现要求：必须走现有 data_gateway/provider registry/Mongo/OpenViking 证据链；无可用数据源或字段不足时 fail closed 并写 data gaps，不得生成 fake completed run；provider attempts/normalized refs/provider batch plan/data gaps 必须可审计。
+- 验收证据：`docs/evidence/sel-13-data-gateway-batch-*.md`（或 `*-blocked-*.md`）+ 对应 run/测试证据路径；旧 `sel-13-openbb-*` 文件名只作为历史证据，不代表 OpenBB 是当前运行依赖。
 - 必跑测试/命令：
   - `uv run pytest tests/integration/selection/test_data_job_pipeline.py`
   - `uv run pytest tests/integration/selection/test_store_persistence_restore.py`
   - `uv run pytest tests/integration/selection/test_latest_completed_gate.py`
   - SEL-13 新增 focused 测试
-- stop conditions：现有 OpenBB/data_gateway 无法提供批量全市场字段；或 provider config/strategy config/交易日历来源缺失导致无法闭环；或需要绕过 OpenBB/data_gateway 才能通过。
+- stop conditions：现有 data_gateway 无法提供批量全市场字段；或 provider config/strategy config/交易日历来源缺失导致无法闭环；或需要绕过 data_gateway 才能通过。
 - mock/stub/fake/fallback 检查：禁止用测试夹具、手工假 record、capture-only 或隐藏 fallback 伪造 completed run。
 - 依赖任务：SEL-12。
 - 是否可并行：否。
-- 最新执行（2026-05-26，SEL-13-REWORK）：已完成功能接线与回归测试，证据见 `docs/evidence/sel-13-openbb-data-gateway-batch-2026-05-26.md`；真实 provider smoke 出现远端断连，状态 `DONE_WITH_CONCERNS`。
+- 最新执行（2026-06-03，SEL-13-REWORK）：已完成功能接线与回归测试；当前运行目标是 data_gateway/provider registry/Mongo/OpenViking 证据链，不是 OpenBB。真实本地预打包 smoke 已不再出现旧 `symbol_required`，但用户当前包缺公司名/行业身份和定增覆盖，候选池按真实缺口 fail closed。
 
 ## 3. 派发规则（给实现 agent）
 

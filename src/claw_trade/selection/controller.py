@@ -31,6 +31,7 @@ from claw_trade.selection.models import (
     SelectionWorkerId,
     SelectRequest,
 )
+from claw_trade.selection.refresh import SelectionDataRefreshResult
 from claw_trade.selection.store import (
     LatestCompletedSelectionRun,
     SelectionRunStore,
@@ -42,6 +43,7 @@ from claw_trade.workflow.models import WorkflowEntryPoint
 
 class SelectCommandCode(StrEnum):
     COMPLETED = "completed"
+    DATA_REFRESH_REQUESTED = "data_refresh_requested"
     UNAVAILABLE = "unavailable"
     FAILED = "failed"
     BLOCKED_ASK_HUMAN = "blocked_ask_human"
@@ -56,6 +58,7 @@ class SelectCommandResult:
     unavailable_code: SelectUnavailableCode | None = None
     failure_reason: str | None = None
     decision: SelectionDecision | None = None
+    data_refresh: SelectionDataRefreshResult | None = None
 
     @property
     def ok(self) -> bool:
@@ -145,6 +148,16 @@ _READER_VISIBLE_FIELD_LABELS = {
 
 _READER_VISIBLE_RAW_FIELD_NAMES = tuple(_READER_VISIBLE_FIELD_LABELS)
 
+_REFRESHABLE_UNAVAILABLE_CODES = frozenset(
+    {
+        SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+        SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN,
+        SelectUnavailableCode.STALE_SELECTION_RUN,
+        SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED,
+        SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING,
+    }
+)
+
 
 class SelectionController:
     """
@@ -226,6 +239,32 @@ class SelectionController:
                 selection_run_id=None,
                 reason=gate.unavailable_code.value,
             )
+            refresh_result = self._request_data_refresh_if_needed(
+                request=request,
+                unavailable_code=gate.unavailable_code,
+                workflow_run_id=workflow_run_id,
+            )
+            if refresh_result is not None:
+                payload["data_refresh"] = _data_refresh_payload(refresh_result)
+                evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                if refresh_result.status in {"started", "already_running"}:
+                    return SelectCommandResult(
+                        code=SelectCommandCode.DATA_REFRESH_REQUESTED,
+                        chat_text=_data_refresh_chat_text(refresh_result),
+                        select_workflow_run_id=workflow_run_id,
+                        evidence_path=evidence_path,
+                        unavailable_code=gate.unavailable_code,
+                        data_refresh=refresh_result,
+                    )
+                return SelectCommandResult(
+                    code=SelectCommandCode.UNAVAILABLE,
+                    chat_text=_data_refresh_unavailable_chat_text(gate.unavailable_code, refresh_result),
+                    select_workflow_run_id=workflow_run_id,
+                    evidence_path=evidence_path,
+                    unavailable_code=gate.unavailable_code,
+                    failure_reason=refresh_result.error_code or refresh_result.reason,
+                    data_refresh=refresh_result,
+                )
             evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
@@ -439,6 +478,9 @@ class SelectionController:
             "enter_report": [item.ticker for item in decision.enter_report],
             "watch": [item.ticker for item in decision.watch],
             "reject": [item.ticker for item in decision.reject],
+            "enter_report_items": _decision_tickers_payload(decision.enter_report),
+            "watch_items": _decision_tickers_payload(decision.watch),
+            "reject_items": _decision_tickers_payload(decision.reject),
             "approved_material_id": decision.approved_material_id,
             "approval_status": "approved",
             "select_workflow_run_id": decision.select_workflow_run_id,
@@ -455,6 +497,39 @@ class SelectionController:
             evidence_path=evidence_path,
             decision=decision,
         )
+
+    def _request_data_refresh_if_needed(
+        self,
+        *,
+        request: SelectRequest,
+        unavailable_code: SelectUnavailableCode,
+        workflow_run_id: str,
+    ) -> SelectionDataRefreshResult | None:
+        if unavailable_code not in _REFRESHABLE_UNAVAILABLE_CODES:
+            return None
+        if self._scheduler_enqueue is None:
+            return SelectionDataRefreshResult(
+                status="not_configured",
+                selection_run_id=None,
+                trade_date=request.trade_date,
+                reason=unavailable_code.value,
+                error_code="selection_data_refresh_not_configured",
+            )
+        try:
+            raw_result = self._scheduler_enqueue(
+                request=request,
+                unavailable_code=unavailable_code,
+                select_workflow_run_id=workflow_run_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return SelectionDataRefreshResult(
+                status="failed",
+                selection_run_id=None,
+                trade_date=request.trade_date,
+                reason=unavailable_code.value,
+                error_code=f"{type(exc).__name__}: {exc}",
+            )
+        return _coerce_data_refresh_result(raw_result, default_reason=unavailable_code.value)
 
 
 def _parse_select_request(
@@ -1052,6 +1127,17 @@ def _render_rows(rows: tuple[DecisionTicker, ...]) -> list[str]:
     return rendered
 
 
+def _decision_tickers_payload(rows: tuple[DecisionTicker, ...]) -> list[dict[str, str]]:
+    return [
+        {
+            "ticker": row.ticker,
+            "company_name": row.company_name,
+            "rationale_excerpt": row.rationale_excerpt,
+        }
+        for row in rows
+    ]
+
+
 def _base_workflow_evidence_payload(
     *,
     request: SelectRequest,
@@ -1078,6 +1164,71 @@ def _write_selection_workflow_evidence(*, evidence_dir: Path, payload: dict[str,
     path = evidence_dir / "selection-workflow-evidence.json"
     path.write_text(f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n", encoding="utf-8")
     return path
+
+
+def _coerce_data_refresh_result(raw_result: object, *, default_reason: str) -> SelectionDataRefreshResult:
+    if isinstance(raw_result, SelectionDataRefreshResult):
+        return raw_result
+    if isinstance(raw_result, Mapping):
+        return SelectionDataRefreshResult(
+            status=str(raw_result.get("status") or "started"),
+            selection_run_id=_optional_result_text(raw_result.get("selection_run_id")),
+            trade_date=_optional_result_text(raw_result.get("trade_date")),
+            reason=str(raw_result.get("reason") or default_reason),
+            error_code=_optional_result_text(raw_result.get("error_code")),
+        )
+    selection_run_id = _optional_result_text(getattr(raw_result, "selection_run_id", None))
+    trade_date = _optional_result_text(getattr(raw_result, "trade_date", None))
+    status = str(getattr(raw_result, "status", "started") or "started")
+    reason = str(getattr(raw_result, "reason", default_reason) or default_reason)
+    error_code = _optional_result_text(getattr(raw_result, "error_code", None))
+    return SelectionDataRefreshResult(
+        status=status,
+        selection_run_id=selection_run_id,
+        trade_date=trade_date,
+        reason=reason,
+        error_code=error_code,
+    )
+
+
+def _optional_result_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _data_refresh_payload(refresh: SelectionDataRefreshResult) -> dict[str, object | None]:
+    return {
+        "status": refresh.status,
+        "selection_run_id": refresh.selection_run_id,
+        "trade_date": refresh.trade_date,
+        "reason": refresh.reason,
+        "error_code": refresh.error_code,
+    }
+
+
+def _data_refresh_chat_text(refresh: SelectionDataRefreshResult) -> str:
+    if refresh.status == "already_running":
+        return (
+            "`/select` 发现当前没有可用候选包；已有后台补数任务在运行。"
+            f" 批次：`{refresh.selection_run_id}`，交易日：`{refresh.trade_date}`。补完后再次发送 `/select`。"
+        )
+    return (
+        "`/select` 发现当前数据不够，已启动后台补数和选股数据任务。"
+        f" 批次：`{refresh.selection_run_id}`，交易日：`{refresh.trade_date}`。补完后再次发送 `/select`。"
+    )
+
+
+def _data_refresh_unavailable_chat_text(
+    code: SelectUnavailableCode,
+    refresh: SelectionDataRefreshResult,
+) -> str:
+    if refresh.status == "not_configured":
+        return (
+            f"{_unavailable_chat_text(code)} 已确认需要补数，但当前运行环境没有配置后台补数通道。"
+        )
+    return f"{_unavailable_chat_text(code)} 已尝试启动后台补数，但调度失败：{refresh.error_code or refresh.reason}。"
 
 
 def _unavailable_chat_text(code: SelectUnavailableCode) -> str:

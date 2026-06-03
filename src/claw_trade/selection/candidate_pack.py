@@ -214,7 +214,7 @@ def build_candidate_pack(
     source_lineage_refs = _dedup_refs(
         (
             plan.provider_batch_plan_ref,
-            *provider_attempt_refs,
+            *(_canonical_lineage_ref(ref) for ref in provider_attempt_refs),
             *inputs.normalized_refs,
             feature_snapshot_ref,
             score_ref,
@@ -507,6 +507,15 @@ def _validate_lineage_refs(*, plan: SelectionRunPlan, source_lineage_refs: tuple
 
 def _is_normalized_lineage_ref(ref: str) -> bool:
     return ref.startswith("normalized://") or ref.startswith("mongo://normalized_datasets/")
+
+
+def _canonical_lineage_ref(ref: str) -> str:
+    text = ref.strip()
+    if text.startswith("attempt://"):
+        return text
+    if text.startswith("attempt:"):
+        return f"attempt://mongo/provider_attempts/{text}"
+    return text
 
 
 def _validate_candidate_strategy_field_completeness(rows: tuple[CandidateFactRow, ...]) -> None:

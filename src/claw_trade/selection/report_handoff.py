@@ -97,6 +97,8 @@ def _task_input_from_handoff(handoff: ReportHandoffRequest) -> dict[str, Any]:
         "startDate": report_request.start_date,
         "endDate": report_request.end_date,
         "currentDate": report_request.current_date,
+        "selectionContextRef": handoff.selection_context_ref,
+        "selectionStageMarker": handoff.selection_stage_marker.value,
         "workflowSettings": {
             "maxDebateRounds": report_request.max_debate_rounds,
             "maxRiskDiscussRounds": report_request.max_risk_discuss_rounds,

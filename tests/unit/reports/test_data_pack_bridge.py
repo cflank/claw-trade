@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 from claw_trade.data_gateway.models import DataGap, DataResult, DataResultStatus, Market
 from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
-from claw_trade.reports.data_pack_bridge import _build_requests, _model_visible_text, run_report_data_prefetch
+from claw_trade.reports.data_pack_bridge import (
+    _build_requests,
+    _model_visible_text,
+    run_frontline_data_pack,
+    run_report_data_prefetch,
+)
 from claw_trade.workflow.models import RunRequest, WorkflowEntryPoint
 
 
@@ -99,6 +105,75 @@ def test_report_data_prefetch_batches_all_frontline_domains_once(monkeypatch, tm
     assert any(":news:" in item for item in request_ids)
     assert any(":social:" in item for item in request_ids)
     assert (tmp_path / "data-layer" / "report-prefetch.json").exists()
+
+
+def test_frontline_data_pack_uses_report_prefetch_manifest_without_data_api(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    manifest_path = tmp_path / "data-layer" / "report-prefetch.json"
+    manifest_path.parent.mkdir(parents=True)
+    result = DataResult(
+        request_id="run-prefetch:report-prefetch:news:1:company_news",
+        status=DataResultStatus.READY,
+        rows=({"published_at": "2026-06-02", "source": "provider"},),
+        dataset_refs=("dataset:news",),
+        attempt_refs=("attempt:news",),
+        as_of=as_of,
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "schema_version": "report_data_prefetch.v1",
+                "run_id": "run-prefetch",
+                "market": "US",
+                "domains": ("market", "fundamental", "news", "social"),
+                "data_results": [result.model_dump(mode="json")],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def _blocked_api():
+        raise AssertionError("frontline data pack must consume report prefetch manifest")
+
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge._build_data_api", _blocked_api)
+
+    payload = run_frontline_data_pack(
+        {"ticker": "AAPL", "market": "US", "current_date": "2026-06-02"},
+        {
+            "run_id": "run-prefetch",
+            "tool_name": "claw_get_news_pack",
+            "pack_domain": "news",
+            "report_prefetch_required": True,
+            "report_prefetch_manifest_path": str(manifest_path),
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert payload["data_results"][0]["request_id"] == "run-prefetch:report-prefetch:news:1:company_news"
+
+
+def test_frontline_data_pack_fails_when_report_prefetch_manifest_missing(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    def _blocked_api():
+        raise AssertionError("missing report manifest must not fall back to DataAPI")
+
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge._build_data_api", _blocked_api)
+
+    payload = run_frontline_data_pack(
+        {"ticker": "AAPL", "market": "US", "current_date": "2026-06-02"},
+        {
+            "run_id": "run-prefetch",
+            "tool_name": "claw_get_news_pack",
+            "pack_domain": "news",
+            "report_prefetch_required": True,
+            "report_prefetch_manifest_path": str(tmp_path / "data-layer" / "report-prefetch.json"),
+        },
+    )
+
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "report_prefetch_manifest_missing"
 
 
 def test_model_visible_text_summarizes_rows_in_chinese_labels() -> None:

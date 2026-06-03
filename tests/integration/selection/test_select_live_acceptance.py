@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.runtime.openclaw_client import OpenClawClient
 from claw_trade.runtime.openclaw_local_runner import create_default_runner
@@ -99,6 +100,15 @@ _READER_REQUIRED_CANDIDATE_FACT_TERMS = (
     "数据缺口扣分",
     "流动性/可交易性",
 )
+_LIVE_SELECTION_ACCEPTANCE_ENV = "CLAW_TRADE_RUN_LIVE_SELECTION_ACCEPTANCE"
+_LLM_AUTH_ENV_KEYS = (
+    "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "QWEN_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "MODELSTUDIO_API_KEY",
+    "CLAW_TRADE_RUNTIME_REPORT_MODEL_API_KEY",
+)
 
 
 def _assert_candidate_fact_body_is_reader_chinese(text: str) -> None:
@@ -106,6 +116,70 @@ def _assert_candidate_fact_body_is_reader_chinese(text: str) -> None:
         assert term not in text
     for term in _READER_REQUIRED_CANDIDATE_FACT_TERMS:
         assert term in text
+
+
+def _require_live_selection_acceptance_enabled() -> None:
+    if os.environ.get(_LIVE_SELECTION_ACCEPTANCE_ENV) != "1":
+        pytest.skip(f"set {_LIVE_SELECTION_ACCEPTANCE_ENV}=1 and run through scripts/start-control-runtime.sh for live proof")
+
+
+def _skip_if_openclaw_llm_auth_missing(reason: str | None) -> None:
+    text = reason or ""
+    if "No API key found for provider" in text:
+        pytest.skip(f"OpenClaw LLM auth missing: {text}")
+
+
+def _skip_if_openclaw_llm_auth_not_configured() -> None:
+    if any(os.environ.get(key) for key in _LLM_AUTH_ENV_KEYS):
+        return
+    state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR", ".runtime/dev-services/openclaw-state"))
+    config_path = Path(os.environ.get("OPENCLAW_CONFIG_PATH", str(state_dir / "openclaw.json")))
+    if _openclaw_config_has_model_provider_key(config_path):
+        return
+    if any(_json_file_has_auth_secret(path) for path in state_dir.glob("agents/*/agent/auth-profiles.json")):
+        return
+    pytest.skip("OpenClaw LLM auth missing: no LLM API key env var, provider apiKey, or agent auth profile")
+
+
+def _openclaw_config_has_model_provider_key(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    models = payload.get("models")
+    if not isinstance(models, dict):
+        return False
+    providers = models.get("providers")
+    if not isinstance(providers, dict):
+        return False
+    return _json_value_has_auth_secret(providers)
+
+
+def _json_file_has_auth_secret(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return _json_value_has_auth_secret(payload)
+
+
+def _json_value_has_auth_secret(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).replace("_", "").replace("-", "").lower()
+            if normalized in {"apikey", "token", "accesskey", "secretkey"} and str(item or "").strip():
+                return True
+            if _json_value_has_auth_secret(item):
+                return True
+    if isinstance(value, list):
+        return any(_json_value_has_auth_secret(item) for item in value)
+    return False
 
 
 def _project_root() -> Path:
@@ -202,6 +276,57 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
     summary_path.write_text(candidate_pack_body, encoding="utf-8")
     pack_body_path = artifact_root / "candidate-pack-approved.md"
     pack_body_sha = _write_verified_text(pack_body_path, candidate_pack_body)
+    _write_verified_text(
+        artifact_root / "candidate-pack.json",
+        json.dumps(
+            {
+                "schema_version": "sel-04-candidate-pack-v1",
+                "selection_run_id": run_id,
+                "market": SelectionMarket.CN_A.value,
+                "trade_date": "2026-05-26",
+                "candidate_count": 3,
+                "strategy_config_version": "cn_a.selection_strategy.v1",
+                "weight_version": "cn_a.selection_weights.v1",
+                "data_quality_summary": "数据质量：本批次未发现阻断级或提示级缺口。",
+                "source_summary": "来源摘要：交易日全市场标准化快照、特征快照与确定性评分结果。",
+                "candidates": [
+                    _candidate_pack_json_row(
+                        rank=1,
+                        ticker="600519.SH",
+                        company_name="贵州茅台",
+                        industry="酿酒行业",
+                        score=91.0,
+                        amount=3000000000,
+                        close=1612,
+                        strategy_hit="myhhub/stock::myhhub_volume_rise",
+                    ),
+                    _candidate_pack_json_row(
+                        rank=2,
+                        ticker="000858.SZ",
+                        company_name="五粮液",
+                        industry="酿酒行业",
+                        score=83.0,
+                        amount=900000000,
+                        close=132,
+                        strategy_hit="Sequoia-X::sequoia_ma_volume",
+                    ),
+                    _candidate_pack_json_row(
+                        rank=3,
+                        ticker="300750.SZ",
+                        company_name="宁德时代",
+                        industry="电力设备",
+                        score=67.0,
+                        amount=500000000,
+                        close=240,
+                        strategy_hit="",
+                    ),
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+    )
     manifest_path = artifact_root / "candidate-pack-manifest.json"
     manifest_payload = {
         "schema_version": "sel-04-candidate-pack-v1",
@@ -252,6 +377,10 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
+                normalized_refs=("normalized://mongo/normalized_datasets/sel-11-live",),
+                provider_attempt_refs=("attempt://sel-11-live",),
+                select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
+                warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",
                 candidate_pack_ref=candidate_pack_ref,
                 completed_at=approved_at,
             ),
@@ -272,6 +401,50 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
         )
     )
     return store, run_id
+
+
+def _candidate_pack_json_row(
+    *,
+    rank: int,
+    ticker: str,
+    company_name: str,
+    industry: str,
+    score: float,
+    amount: int,
+    close: float,
+    strategy_hit: str,
+) -> dict[str, Any]:
+    strategy_hits = [strategy_hit] if strategy_hit else []
+    feature_values = {
+        "amount": amount,
+        "close": close,
+        "liquidity_tradability_score": 15.0,
+        "rps_trend_score": 8.0,
+        "risk_penalty_score": 0.0,
+        "data_gap_penalty_score": 0.0,
+        "strategy_required_field_count": 64,
+        "strategy_missing_field_count": 0,
+    }
+    return {
+        "rank": rank,
+        "ticker": ticker,
+        "company_name": company_name,
+        "industry": industry,
+        "total_score": score,
+        "strategy_hits": strategy_hits,
+        "feature_values": feature_values,
+        "component_scores": {
+            "liquidity_tradability_score": feature_values["liquidity_tradability_score"],
+            "rps_trend_score": feature_values["rps_trend_score"],
+        },
+        "hit_fields": {"amount": amount} if strategy_hits else {},
+        "actual_metric_values": {"amount": amount, "close": close},
+        "risk_penalty": feature_values["risk_penalty_score"],
+        "data_gap_penalty": feature_values["data_gap_penalty_score"],
+        "tie_break_fields": {"amount": amount},
+        "data_quality": "完整",
+        "source_summary": "标准化行情与财务快照",
+    }
 
 
 def _write_verified_text(path: Path, content: str) -> str:
@@ -369,11 +542,13 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def test_select_live_acceptance_provider_payload_and_handoff() -> None:
+    _require_live_selection_acceptance_enabled()
     artifact_root = _selection_artifact_root()
     workflow_root = artifact_root / "selection-workflows"
     workflow_root.mkdir(parents=True, exist_ok=True)
     store, selection_run_id = _build_store(artifact_root)
     _ensure_selection_agents_registered()
+    _skip_if_openclaw_llm_auth_not_configured()
 
     openclaw = OpenClawClient(create_default_runner())
     probe = openclaw.probe()
@@ -387,6 +562,7 @@ def test_select_live_acceptance_provider_payload_and_handoff() -> None:
     )
     live_request_id = f"sel-11-live-acceptance-{uuid4().hex[:8]}"
     result = controller.handle_select_command(raw_text="/select 2026-05-26", request_id=live_request_id)
+    _skip_if_openclaw_llm_auth_missing(result.failure_reason)
     assert result.code == SelectCommandCode.COMPLETED, (
         "BLOCKED_ASK_HUMAN: /select live run not completed, "
         f"code={result.code.value}, reason={result.failure_reason}, evidence={result.evidence_path}"

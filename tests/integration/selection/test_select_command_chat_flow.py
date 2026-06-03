@@ -25,6 +25,7 @@ from claw_trade.selection.models import (
     SelectionTriggerSource,
 )
 from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
+from claw_trade.selection.refresh import SelectionDataRefreshResult
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
@@ -556,10 +557,53 @@ def test_select_command_no_completed_run_returns_unavailable_and_does_not_touch_
     assert "error" not in result
     assert result["selection"]["code"] == "unavailable"
     assert result["selection"]["unavailableCode"] == "no_completed_selection_run"
+    assert result["selection"]["dataRefresh"]["status"] == "not_configured"
     assert Path(result["selection"]["evidencePath"]).is_file()
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
     assert result["context"]["kind"] == "normal_chat"
+
+
+@pytest.mark.integration
+def test_select_command_no_completed_run_requests_background_data_refresh(tmp_path: Path) -> None:
+    refresh_calls: list[dict[str, object]] = []
+
+    def _refresh(**kwargs: object) -> SelectionDataRefreshResult:
+        refresh_calls.append(dict(kwargs))
+        return SelectionDataRefreshResult(
+            status="started",
+            selection_run_id="sel-refresh-1",
+            trade_date="2026-05-26",
+            reason="no_completed_selection_run",
+        )
+
+    selection_controller = SelectionController(
+        store=SelectionRunStore(),
+        now_fn=lambda: datetime.fromisoformat("2026-05-26T10:00:00+00:00").astimezone(UTC),
+        scheduler_enqueue=_refresh,
+        workflow_evidence_root=tmp_path / "selection-workflows",
+    )
+    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+
+    result = controller.send_chat_message(request_id="sel-08-refresh", context_id="ctx-refresh", text="/select")
+
+    assert "error" not in result
+    assert result["selection"]["code"] == "data_refresh_requested"
+    assert result["selection"]["unavailableCode"] == "no_completed_selection_run"
+    assert result["selection"]["dataRefresh"] == {
+        "status": "started",
+        "selectionRunId": "sel-refresh-1",
+        "tradeDate": "2026-05-26",
+        "reason": "no_completed_selection_run",
+        "errorCode": None,
+    }
+    assert len(refresh_calls) == 1
+    assert refresh_calls[0]["select_workflow_run_id"] == result["selection"]["workflowRunId"]
+    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
+    assert evidence_payload["data_refresh"]["status"] == "started"
+    assert evidence_payload["data_refresh"]["selection_run_id"] == "sel-refresh-1"
+    assert chat_transport.calls == 0
+    assert workflow_runner.calls == 0
 
 
 @pytest.mark.integration
@@ -719,6 +763,10 @@ def test_real_select_evidence_passes_confirmation_pm_decision_material_gate(tmp_
     assert confirm_result.code == "report_handoff_started"
     assert confirm_result.handoff_request["selectionContextRef"] == decision_payload["approved_material_id"]
     assert confirm_result.handoff_request["selectionContextRef"] != "mat-sel-run-08"
+    assert confirm_result.handoff_request["companyName"] == "贵州茅台"
+    assert confirm_result.queue_payload["task"]["companyName"] == "贵州茅台"
+    assert confirm_result.queue_payload["task"]["selectionContextRef"] == decision_payload["approved_material_id"]
+    assert confirm_result.queue_payload["task"]["selectionStageMarker"] == "selection_report_handoff"
     assert confirm_runner.calls == 1
 
 

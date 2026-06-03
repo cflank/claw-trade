@@ -226,13 +226,14 @@ class SelectionConfirmationController:
                 "selection_decision_missing_or_unapproved",
                 "选股决策缺失或未通过批准，无法确认。",
             )
+        company_name_by_ticker = _decision_company_names(decision_payload)
         return _SelectionWorkflowContext(
             select_workflow_run_id=select_workflow_run_id,
             status=status,
             selection_run_id=selection_run_id,
             enter_report_tickers=frozenset(str(item).strip().upper() for item in raw_enter if str(item).strip()),
             decision_approved_material_id=approved_material_id,
-            company_name_by_ticker={},
+            company_name_by_ticker=company_name_by_ticker,
         )
 
     def _load_and_validate_record(self, context: _SelectionWorkflowContext) -> SelectionDataRunRecord:
@@ -319,6 +320,22 @@ def _resolve_company_name(*, ticker: str, company_name_by_ticker: dict[str, str]
         return resolved
     identity = resolve_instrument_identity(ticker, market_hint="CN_A")
     return identity.ticker
+
+
+def _decision_company_names(decision_payload: dict[str, Any]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for key in ("enter_report_items", "watch_items", "reject_items"):
+        items = decision_payload.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker") or "").strip().upper()
+            company_name = str(item.get("company_name") or "").strip()
+            if ticker and company_name:
+                result[ticker] = company_name
+    return result
 
 
 def _idempotency_key(*, select_workflow_run_id: str, ticker: str, confirmation_id: str) -> str:

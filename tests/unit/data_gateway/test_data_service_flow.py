@@ -85,9 +85,16 @@ def _batch_plan(request_id: str) -> ProviderBatchPlan:
 
 
 class _Warehouse:
-    def __init__(self, events: list[str], *, satisfied_on_check: bool) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        satisfied_on_check: bool,
+        attempt_refs: tuple[str, ...] = (),
+    ) -> None:
         self._events = events
         self._satisfied_on_check = satisfied_on_check
+        self._attempt_refs = attempt_refs
 
     def check(self, checks, coverage) -> WarehouseResult:
         self._events.append("warehouse.check")
@@ -96,6 +103,7 @@ class _Warehouse:
                 satisfied=True,
                 rows=({"close": 1.0},),
                 dataset_refs=("dataset:warehouse",),
+                attempt_refs=self._attempt_refs,
                 freshness={"policy": "trading_day"},
             )
         request_id = checks[0].request_id
@@ -325,6 +333,27 @@ def test_data_service_warehouse_hit_does_not_fetch_remote() -> None:
     result = service.get_data(_request("req-hit"))
     assert result.status == DataResultStatus.READY
     assert result.dataset_refs == ("dataset:warehouse",)
+    assert events == ["query_planner.validate_and_normalize", "warehouse.check"]
+
+
+def test_data_service_warehouse_hit_returns_attempt_refs() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_Warehouse(events, satisfied_on_check=True, attempt_refs=("attempt:warehouse",)),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+
+    result = service.get_data(_request("req-hit-lineage"))
+
+    assert result.status == DataResultStatus.READY
+    assert result.dataset_refs == ("dataset:warehouse",)
+    assert result.attempt_refs == ("attempt:warehouse",)
     assert events == ["query_planner.validate_and_normalize", "warehouse.check"]
 
 

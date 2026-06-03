@@ -675,6 +675,8 @@ class WarehouseResult(BaseModel):
     satisfied: bool
     rows: tuple[dict[str, Any], ...] = ()
     dataset_refs: tuple[str, ...] = ()
+    attempt_refs: tuple[str, ...] = ()
+    attempt_refs_by_dataset_ref: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     gaps: tuple[DataGap, ...] = ()
     freshness: dict[str, Any] = Field(default_factory=dict)
 

@@ -1,9 +1,9 @@
 # A股选股详细设计
 
-状态：详细设计草案，未进入实现。  
+状态：详细设计草案，已有首版实现，本文按当前实现口径同步。
 日期：2026-05-24  
 唯一主设计来源：`docs/A股选股总体设计.md`。  
-参考边界：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据源openbb引入方案.md`。
+参考边界：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`。旧 `docs/数据源openbb引入方案.md` 只作历史背景。
 
 说明：
 
@@ -21,9 +21,9 @@
 | 总体设计要求 | 详细设计章节 | 覆盖方式 | 是否需要人类确认 |
 |---|---|---|---|
 | `/select` 是独立 workflow，不能偷用 `report_command` | 1、2、3、4、9 | 新增 `select_command` 入口、`SelectRequest`、selection workflow run；普通 chat 不静默进入 | 否 |
-| `/select` 不实时拉全市场数据 | 1、4、6、9 | 所有 no-run/stale/integrity 失败都返回不可用，不触发后台 fetch | 否 |
+| `/select` 不实时拉全市场数据 | 1、4、6、9 | no-run/no_candidate/stale/warehouse 证据不足时只触发后台 selection data refresh/job，不直接调 provider、不直接读表、不同步跑全市场；integrity 失败仍 fail closed | 否 |
 | 收盘后确定性批处理生成 top 20 candidate pack | 2、4、5、6 | 后台 data run 状态机、函数级 job、candidate pack contract；策略全集和 v1 跨策略排序权重已按 2026-05-28 口径确认 | 否；provider adapter 与字段覆盖实测仍见 §0.2 |
-| 全市场取数和计算属于 `claw-trade` 确定性层 | 1、2、5、11 | `src/claw_trade/selection/**` 后台任务复用 OpenBB/data_gateway evidence | 否 |
+| 全市场取数和计算属于 `claw-trade` 确定性层 | 1、2、5、11 | `src/claw_trade/selection/**` 后台任务复用 data_gateway evidence | 否 |
 | OpenClaw 只执行 single worker turn，不拥有 selection workflow | 1、2、8、9 | selection controller 串行调度 4 次 OpenClaw wake；OpenClaw 只收单 turn command | 否 |
 | 不把 selection 业务写入 `third_party/openclaw` | 1、2、7、14 | 所有业务落在 `src/claw_trade/selection/**`、`agents/selection_*`、插件 tool wrapper | 否 |
 | 第一版 worker 固定 4 个 | 3、4、8 | `selection_strategist`、`selection_skeptic`、`selection_manager`、`selection_portfolio_manager` 固定调度 | 否 |
@@ -31,20 +31,20 @@
 | strategist/skeptic 第一版可见 candidate pack tool | 7、8、13 | stage policy 和 provider payload 验收严格等于 `claw_get_selection_candidate_pack` | 否 |
 | manager/PM 第一版无工具 | 7、8、13 | `allowed_tools=()`，provider payload 不得有 tool schema | 否 |
 | `claw_get_selection_candidate_pack` 只读 approved pack | 6、7、9 | runtime context 锁定 run；只读 OpenViking approved material；不带业务参数 | 否 |
-| selection tool 不调 OpenBB/provider、不查 raw、不重新打分 | 6、7、13 | tool backend 明确禁止 provider/raw/Mongo raw/score/sort/topN 变更 | 否 |
-| candidate pack 未批准、过期或 hash/readback 不一致不得进入 prompt | 4、6、7、9、12 | approval/readback/hash/manifest/lineage gate；失败状态不启动 worker | 否 |
+| selection tool 不调 data_gateway/provider、不查 raw、不重新打分 | 6、7、13 | tool backend 明确禁止 provider/raw/Mongo raw/score/sort/topN 变更 | 否 |
+| candidate pack 未批准、过期或 hash/readback 不一致不得进入 prompt | 4、6、7、9、12 | approval/readback/hash/manifest/lineage gate；未批准或过期不启动 worker，可触发后台 refresh；hash/readback/lineage 损坏 fail closed | 否 |
 | Python 确定性层不能写自然语言入选理由或投资判断 | 1、2、5、6、12 | candidate pack 只含事实表、字段说明、数据质量、来源摘要；理由由 worker L1 产出 | 否 |
 | `/select` 最终结论只能是进入 `/report`、观察、放弃 | 3、8、9、10、13 | `SelectionDecision` 枚举和 reader-facing artifact contract | 否 |
 | `/select` 只做三分类候选分流；表达类措辞不作为 runtime 失败条件 | 1、6、8、9、13 | 约束三分类机械解析与候选池边界，不约束 `/report` PM 表达 | 否 |
 | `/select` 完成后不自动触发 `/report` | 4、9、10、13 | `waiting_report_confirmation` 后必须等用户确认 | 否 |
 | 用户确认后只对确认 ticker 启动现有 `/report` workflow | 10、14 | `ReportHandoffRequest` 复用 `ReportTaskQueue.enqueue_report_task` / existing `/report` request factory | 否 |
 | 用户确认必须幂等 | 3、4、10、13 | 请求幂等键 `select_workflow_run_id + ticker + confirmation_id` + report handoff 去重键 `select_workflow_run_id + ticker` | 否 |
-| no completed run/stale run/pack 未批准/hash 不一致不能现场拉数 | 4、7、9、13 | `SelectUnavailableCode` 和 tool error code fail closed | 否 |
+| no completed run/stale run/warehouse 证据不足不能现场拉数 | 4、7、9、13 | `SelectUnavailableCode` 触发后台 refresh 返回；tool error code 与 hash/readback/lineage integrity 失败仍 fail closed | 否 |
 | 第一版只面向 CN_A A股日频收盘后选股 | 1、3、4、11 | `SelectRequest.market/profile` 只接受 `CN_A`；其它市场 fail closed | 否 |
 | HK/US/CRYPTO 不 fallback 到 CN_A prompt 或策略 | 1、3、4、15 | 非 CN_A 直接 `market_strategy_unapproved`；不复用 A股策略 | 非 CN_A 策略需未来确认 |
 | provider payload 是工具可见性和 prompt 边界最终验收证据 | 7、8、13 | live provider payload 必验工具 schema、model-visible materials、runtime marker | 否 |
 | candidate pack 摘要可给 manager/PM，但不得含 raw/debug/protocol/ref/hash 文本 | 3、6、8、13 | `CandidatePackSummary` 单独模型；manifest/hash/lineage 仅审计可见 | 否 |
-| 数据源复用 OpenBB/data_gateway、Mongo、OpenViking | 2、5、11、12 | selection batch plan 复用 provider attempt/cache/normalized/gap/readiness 语义 | 具体 provider adapter 实测需确认 |
+| 数据源复用 data_gateway、Mongo、OpenViking | 2、5、11、12 | selection batch plan 复用 provider attempt/cache/normalized/gap/readiness 语义 | 具体 provider plugin/adapter 实测需确认 |
 | 东财不作为默认稳定依赖，不允许隐藏 fallback provider | 11、13、15 | provider 来源从 approved registry/batch plan 取；失败写 attempt/gap，不切旧路径 | 具体 provider matrix 需实测 |
 | myhhub/stock 与 Sequoia-X 策略全部纳入第一版优先实现 | 5、6、11、13 | 每条策略以 source + variant 形式进入 approved strategy config；缺字段必须补数据合同，不得静默裁剪 | 否 |
 | v1 透明排序权重已确认 | 5、6、13 | 基础分 100 + 风险/数据缺口扣分；权重必须进入 strategy config 与 candidate pack 审计 | 否 |
@@ -73,7 +73,7 @@
 | 新 enum/class/file 名 | 影响代码命名 | 全部标注建议名，需实现时按代码风格确认 | 是 |
 | 非 CN_A 市场策略 | 影响 HK/US/CRYPTO `/select` | 第一版 fail closed；未来独立设计 | 是 |
 | 交易日历来源 | 影响 TTL、backfill latest pointer | 本文只定义口径；实现需选 approved calendar source | 是 |
-| provider adapter 具体矩阵 | 影响字段覆盖和吞吐 | 本文复用 OpenBB/data_gateway 语义；实测后固化 | 是 |
+| provider adapter 具体矩阵 | 影响字段覆盖和吞吐 | 本文复用 data_gateway 语义；实测后固化 | 是 |
 
 阻塞判断：未发现总体设计内部矛盾。上表未确认项会阻塞生产启用相应行为，但不阻塞编码接口设计，因为本文要求缺少已批准配置时 fail closed。
 
@@ -113,7 +113,7 @@
 - 不修改 `third_party/openclaw`；如未来发现必须修改，只能按 AGENTS 的通用 runtime seam 规则另行审批。
 - 不把 `/select` workflow、A股策略、candidate pack 生成、用户确认或 report handoff 写入 OpenClaw。
 - 不让 `/select` 现场拉全市场数据。
-- 不让 selection worker 调 OpenBB/provider、Mongo raw、OpenViking deep read/write 或任何未批准工具。
+- 不让 selection worker 调 data_gateway/provider、Mongo raw、OpenViking deep read/write 或任何未批准工具。
 - 不把 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本放入模型可见 prompt。
 - 不让 Python 写自然语言入选理由、投资判断、最终结论、目标价、止损价、交易建议。
 - 不隐藏 fallback provider，不用旧 MCP 或旧 provider executor 兜底。
@@ -127,9 +127,9 @@
 |---|---|---|---|---|---|---|---|
 | selection request model | `src/claw_trade/selection/models.py`（新增） | 定义 `SelectRequest`、run、pack、dispatch、decision、confirmation DTO | `/select` 命令解析结果、latest run refs | typed DTO | 不复用 ticker-centric `RunRequest` 承担 selection 语义 | `src/claw_trade/data_gateway/models.py` 的 `Market` | 无效市场/profile/date 返回 typed error |
 | workflow entry point | `src/claw_trade/workflow/models.py`（现有，扩展建议）或 `src/claw_trade/selection/models.py` | 增加 `select_command` 入口语义 | chat command | entry point value | 不让 ordinary chat 静默进入 selection | `ChatController` | 非 `/select` 继续普通 chat |
-| select command controller | `src/claw_trade/selection/controller.py`（新增） | 读取 latest terminal run；仅 completed 才校验 pack、调度 4 worker、产出结果 | `SelectRequest` | `SelectionWorkflowRun` / reader result | 不拉数、不打分、不写理由 | selection store、OpenViking、OpenClaw client | 进入明确 unavailable/failed 状态 |
+| select command controller | `src/claw_trade/selection/controller.py`（新增） | 检查可用 completed+approved pack；可用才调度 4 worker、产出结果；不可用且属于 no-run/no_candidate/stale/candidate_pack_not_approved/warehouse 证据不足时触发后台 refresh | `SelectRequest` | `SelectionWorkflowRun` / reader result / refresh 状态 | 不直接调 provider、不直接读表、不同步跑全市场、不打分、不写理由 | selection store、scheduler/refresh gateway、OpenViking、OpenClaw client | 返回“补数已启动/已有补数在跑/补数通道未配置”或明确 failed 状态 |
 | selection run store | `src/claw_trade/selection/store.py`（新增） | 保存后台 data run 与用户 workflow run；latest pointer；confirmation；UI 启动恢复 | run DTO、artifact refs、data job terminal evidence | persisted run state | 不覆盖 completed/no_candidate run；不把 failed run 当 latest；不允许仅内存字典启动 `/select` | filesystem/Mongo 可选，OpenViking refs | 写入/恢复失败则 stop，不启动 worker |
-| background selection data job | `src/claw_trade/selection/data_job.py`（新增） | 执行收盘后全市场 batch | `SelectionRunPlan` | `SelectionDataRun` | 不在用户 `/select` 请求内执行 | data_gateway、store、lease | 失败写 attempts/gaps/status |
+| background selection data job | `src/claw_trade/selection/data_job.py`（新增） | 执行收盘后全市场 batch，也承接 `/select` 触发的后台 refresh | `SelectionRunPlan` | `SelectionDataRun` | 不在用户 `/select` 请求内同步执行；不由 `/select` 直接调 provider 或读表 | data_gateway、store、lease | 失败写 attempts/gaps/status |
 | scheduler / lease | `src/claw_trade/selection/scheduler.py`（新增） | scheduled/backfill/rerun 触发与互斥 | market、trade_date、trigger_source | lease/data run id | 不并发写同一 active run | store/clock/calendar | `already_running` 或 lease takeover with lineage |
 | feature builder | `src/claw_trade/selection/features.py`（新增） | 从 normalized refs 计算可复算特征 | normalized refs、universe | `feature_snapshot` | 不写投资判断 | data_gateway store | 缺关键字段写 gap 或 blocked |
 | selection engine | `src/claw_trade/selection/engine.py`（新增） | 硬过滤、策略命中、评分排序到 top 20 | feature snapshot、approved config | scores/hits/top20 | 不使用未批准权重/阈值；不写自然语言理由 | strategy config store | 缺 approved config 则 `strategy_config_unapproved` |
@@ -460,6 +460,9 @@ market_strategy_unapproved
 no_completed_selection_run
 no_candidate_selection_run
 stale_selection_run
+selection_data_refresh_started
+selection_data_refresh_running
+selection_data_refresh_unconfigured
 candidate_pack_not_approved
 candidate_pack_integrity_failed
 candidate_pack_lineage_incomplete
@@ -474,7 +477,7 @@ failed
 |---|---|---|---|---:|---:|
 | `received` | command parsed | `resolving_request` | `market_strategy_unapproved` | 是 | 否 |
 | `resolving_request` | CN_A request valid | `loading_completed_selection_run` | `market_strategy_unapproved` | 是 | 否 |
-| `loading_completed_selection_run` | latest found | `validating_candidate_pack` | `no_completed_selection_run` / `no_candidate_selection_run` / `stale_selection_run` | 是 | 否 |
+| `loading_completed_selection_run` | latest found | `validating_candidate_pack` | `no_completed_selection_run` / `no_candidate_selection_run` / `stale_selection_run`，并尝试触发后台 refresh 返回 started/running/unconfigured | 是 | 否 |
 | `validating_candidate_pack` | pack verified | `select_run_created` | pack failure states | 是，after new data run | 否 |
 | `select_run_created` | strategist command built | `strategist_running` | `tool_schema_violation` | 是 | 否 |
 | `strategist_running` | L1 approved | `strategist_approved` | worker/artifact failure | 仅 rerun workflow | 否 |
@@ -594,7 +597,7 @@ def confirm_selection_ticker(request):
 
 #### 5.0.1 第一版优先实现策略
 
-2026-05-28 人类确认：`myhhub/stock` 与 `Sequoia-X` 审计到的本地可复现策略全部纳入第一版优先实现。实现时不得因为当前字段或 provider 未接好而裁剪策略；缺字段必须补 OpenBB/data_gateway 字段合同和 provider adapter。运行时不得伪造命中，真实字段不可得时应在 candidate pack 中记录该策略本轮资料缺口。
+2026-05-28 人类确认：`myhhub/stock` 与 `Sequoia-X` 审计到的本地可复现策略全部纳入第一版优先实现。实现时不得因为当前字段或 provider 未接好而裁剪策略；缺字段必须补 data_gateway 字段合同和 provider plugin/adapter。运行时不得伪造命中，真实字段不可得时应在 candidate pack 中记录该策略本轮资料缺口。
 
 | source | variant_id | 策略名 | 输入字段类型 | 第一版处理 |
 |---|---|---|---|---|
@@ -720,7 +723,7 @@ def build_selection_run_plan(...):
 - signature: `fetch_selection_market_data(plan: SelectionRunPlan) -> SelectionMarketDataRefs`
 - 输入：selection batch plan。
 - 输出：universe, market/fundamental/snapshot normalized refs and gaps。
-- side effects：调用 OpenBB/data_gateway approved provider adapters；写 Mongo attempts/raw/normalized/cache/gaps。
+- side effects：调用 data_gateway approved provider plugins/adapters；写 Mongo attempts/raw/normalized/cache/gaps。
 - failure modes：provider plan missing、evidence write failed、credential/rate/license gaps、data authenticity failure。
 
 ```python
@@ -976,18 +979,18 @@ Python 确定性层只可以写可复算事实和读者化来源摘要：
 - 非交易日可继续使用最近交易日 completed run。
 - 跨过下一个交易日收盘数据窗口后，旧 run stale。
 - 用户显式指定历史 `trade_date` 时可读取该日期 completed run，但 reader-facing 输出必须标明历史日期。
-- stale 不触发现场拉数，只返回 unavailable。
+- stale 不触发现场拉数；`/select` 只尝试触发后台 refresh/job，并返回“补数已启动/已有补数在跑/补数通道未配置”。
 
 ### 6.7 approved-only 读取规则
 
-`claw_get_selection_candidate_pack` 和 `/select` controller 只读取：
+`claw_get_selection_candidate_pack` 只读取 approved pack；`/select` controller 只有在进入 worker 前才读取并绑定：
 
 - status=`completed` 的 data run。
 - approved candidate pack。
 - readback/hash/manifest/lineage 全部通过的 pack。
 - market/profile 与 request 匹配的 pack。
 
-其它状态全部 fail closed。
+其它状态不得进入 worker。no-run/no_candidate/stale/warehouse 证据不足由 `/select` 触发后台 refresh/job；hash/readback/manifest/lineage 损坏仍 fail closed。
 
 ### 6.8 raw/debug/provider envelope 禁止进入 prompt
 
@@ -995,7 +998,7 @@ Python 确定性层只可以写可复算事实和读者化来源摘要：
 
 - raw/debug/provider/cache/attempt JSON。
 - Mongo collection 名、OpenViking URI、hash、manifest、lineage、receipt。
-- OpenClaw/OpenViking/OpenBB runtime wrapper prose。
+- OpenClaw/OpenViking/legacy OpenBB runtime wrapper prose。
 - provider secrets、headers、tokens。
 
 ## 7. `claw_get_selection_candidate_pack` 工具详细设计
@@ -1100,7 +1103,7 @@ def claw_get_selection_candidate_pack(ctx):
 
 ### 7.8 明确禁止
 
-- 不调用 OpenBB/provider。
+- 不调用 data_gateway/provider。
 - 不查 raw。
 - 不读 Mongo raw/debug。
 - 不重新打分。
@@ -1196,20 +1199,20 @@ def handle_select_command(raw_text, request_id, user_id):
         trade_date=request.trade_date,
     )
     if latest is None:
-        return unavailable("no_completed_selection_run")
+        return trigger_selection_data_refresh_or_unavailable(request, reason="no_completed_selection_run")
     if latest.status == "no_candidate":
-        return unavailable("no_candidate_selection_run")
+        return trigger_selection_data_refresh_or_unavailable(request, reason="no_candidate_selection_run")
 
     if is_stale(latest, now=clock.now()):
-        return unavailable("stale_selection_run")
+        return trigger_selection_data_refresh_or_unavailable(request, reason="stale_selection_run")
 
     pack_ref = latest.candidate_pack_ref
     if pack_ref is None:
-        return unavailable("candidate_pack_not_approved")
+        return trigger_selection_data_refresh_or_unavailable(request, reason="candidate_pack_not_approved")
 
     pack_check = validate_candidate_pack_for_select(pack_ref, request)
     if pack_check.code == "candidate_pack_not_approved":
-        return unavailable("candidate_pack_not_approved")
+        return trigger_selection_data_refresh_or_unavailable(request, reason="candidate_pack_not_approved")
     if pack_check.code == "candidate_pack_integrity_failed":
         return unavailable("candidate_pack_integrity_failed")
     if pack_check.code == "candidate_pack_lineage_incomplete":
@@ -1341,7 +1344,8 @@ def handle_select_command(raw_text, request_id, user_id):
 
 失败分支共同规则：
 
-- `no_completed_selection_run`、`no_candidate_selection_run`、`stale_selection_run`、`candidate_pack_not_approved`、`candidate_pack_integrity_failed`、`candidate_pack_lineage_incomplete` 不启动任何 worker。
+- `no_completed_selection_run`、`no_candidate_selection_run`、`stale_selection_run`、`candidate_pack_not_approved`、warehouse 证据不足不启动任何 worker，只触发后台 refresh/job 并返回 started/running/unconfigured。
+- `candidate_pack_integrity_failed`、`candidate_pack_lineage_incomplete` 不启动任何 worker；hash/readback/lineage 损坏仍 fail closed，不用补数隐藏问题。
 - tool/payload/material violation 是硬失败，不继续下游 worker。
 - worker artifact approval failed 不进入下游 prompt。
 - completed 后只等待确认，不自动 report。
@@ -1437,9 +1441,9 @@ handoff 不向 `/report` 注入 `/select` 最终判断、评级、目标价、�
 
 ## 11. Provider/Data Gateway 详细设计
 
-### 11.1 selection batch 如何复用 OpenBB/data_gateway
+### 11.1 selection batch 如何复用 data_gateway
 
-后台 selection batch 复用 OpenBB/data_gateway 的 provider adapter、attempt、raw/normalized/cache、readiness/data gap 语义。区别是 scope：
+后台 selection batch 复用 data_gateway 的 provider plugin/adapter、attempt、raw/normalized/cache、readiness/data gap 语义。区别是 scope：
 
 - `/report RunProviderPlan` 是单 ticker、单 report run。
 - selection batch plan 是全市场/批量 scope，不能把 5000 只股票伪装成某个 ticker。
@@ -1499,8 +1503,8 @@ OpenViking 不做外部 provider，不做 cache freshness 判断，不让 worker
 
 - 东财系接口只能作为经批准 adapter 的候选实测来源。
 - 不作为默认稳定依赖。
-- 不作为 OpenBB/provider 失败后的隐藏 fallback。
-- 如果新增 baostock 或其它源，必须纳入 provider registry/evidence 链，不得绕过 OpenBB/data_gateway。
+- 不作为 data_gateway/provider 失败后的隐藏 fallback。
+- 如果新增 baostock 或其它源，必须纳入 provider registry/evidence 链，不得绕过 data_gateway。
 
 ## 12. Artifact Authority
 
@@ -1576,7 +1580,7 @@ Guard source: `docs/A股选股总体设计.md §2.2/§3.8.5/§11.1`。
 |---|---|---|---|---|
 | `test_select_request_cn_a_only` | CN_A/HK/US/CRYPTO requests | build `SelectRequest` | CN_A ok；其它 `market_strategy_unapproved` | 第一版 CN_A only，非 CN_A fail closed |
 | `test_select_request_system_context_policy_single_worker_minimal` | `/select` command parse fixture | parse request | `system_context_policy == single_worker_minimal` | 总体设计 §7.1 |
-| `test_selection_latest_terminal_handles_no_candidate` | completed/no_candidate/running/failed runs | `load_latest_terminal_selection_run` | completed 可用；latest no_candidate 返回 unavailable | `/select` 只读 latest terminal 且不回退旧 run |
+| `test_selection_latest_terminal_handles_no_candidate` | completed/no_candidate/running/failed runs | `load_latest_terminal_selection_run` | completed 可用；latest no_candidate 返回 unavailable/refresh reason | `/select` 不回退旧 run，后续只触发后台补数 |
 | `test_selection_ttl_stales_after_next_close_window` | trade calendar fixture | `is_selection_run_stale` | next close 后 stale | TTL 交易日口径 |
 | `test_candidate_pack_schema_rejects_forbidden_python_reason` | pack body with opinion text | `validate_candidate_pack_contract` | rejected | Python 不写自然语言入选理由 |
 | `test_candidate_pack_top_limit` | 21 rows | `build_candidate_pack` | fails `top_limit_exceeded` | top 20 |
@@ -1611,11 +1615,11 @@ Guard source: `docs/A股选股总体设计.md §2.2/§3.8.5/§11.1`。
 | `test_selection_data_job_generates_approved_candidate_pack` | small CN_A normalized fixture + approved config | run background job | completed run + approved pack + lineage | 后台确定性闭环 |
 | `test_selection_scheduler_lease_backfill_rerun_and_latest_pointer_rules` | scheduled/backfill/rerun fixtures | run scheduler + store transitions | lease 互斥；backfill 不抢 latest；rerun 新 run id 并有 supersedes lineage | backfill/rerun/lease/latest pointer |
 | `test_selection_completed_run_is_immutable` | completed run fixture | try overwrite completed run | `immutable_run_update_forbidden` | immutable completed run |
-| `test_select_no_completed_run_does_not_fetch` | empty store + provider fetch spy | `/select` | `no_completed_selection_run` and provider spy not called | 不现场拉数 |
-| `test_select_no_candidate_run_does_not_fetch_or_use_old_completed` | latest no-candidate + older completed + provider fetch spy | `/select` | `no_candidate_selection_run` and provider spy not called | 0 候选不造 pack、不回退旧 run |
-| `test_select_stale_run_does_not_fetch` | stale completed run + provider spy | `/select` | `stale_selection_run`, no worker, no provider | stale fail closed |
+| `test_select_no_completed_run_triggers_refresh_without_fetch` | empty store + provider fetch spy + refresh gateway spy | `/select` | refresh started/running/unconfigured；provider spy not called | 不现场拉数，只触发后台补数 |
+| `test_select_no_candidate_run_triggers_refresh_without_old_completed` | latest no-candidate + older completed + provider fetch spy + refresh gateway spy | `/select` | refresh started/running/unconfigured；provider spy not called | 0 候选不造 pack、不回退旧 run，触发后台补数 |
+| `test_select_stale_run_triggers_refresh_without_fetch` | stale completed run + provider spy + refresh gateway spy | `/select` | refresh started/running/unconfigured；no worker；no provider | stale 触发后台补数但不现场拉数 |
 | `test_select_non_cn_a_does_not_start_worker_or_fetch_or_prompt_fallback` | HK/US/CRYPTO `/select` request + spies | `/select` | `market_strategy_unapproved`；no worker；no provider fetch；no CN_A prompt fallback | 非 CN_A fail closed |
-| `test_select_unapproved_pack_stops_before_worker` | completed run without approved pack | `/select` | `candidate_pack_not_approved`, no OpenClaw call | approved-only |
+| `test_select_unapproved_pack_triggers_refresh_before_worker` | completed run without approved pack | `/select` | `candidate_pack_not_approved` + refresh started/running/unconfigured；no OpenClaw call | approved-only；不使用半成品 |
 | `test_select_hash_mismatch_stops_before_worker` | pack readback mismatch | `/select` | `candidate_pack_integrity_failed` | hash/readback gate |
 | `test_selection_confirmation_stale_or_integrity_mismatch_does_not_start_report` | waiting workflow + stale/hash mismatch pack | confirm | `selection_decision_stale`/integrity error；report queue unchanged | 确认再校验门 |
 | `test_selection_full_workflow_dispatch_order` | approved pack + real OpenClaw focused run evidence（或纯状态机 fixture，且标注“非 runtime/live 验收”） | `/select` | 4 dispatches fixed order | LLM 不决定调度 |
@@ -1649,8 +1653,8 @@ Guard source: `docs/A股选股总体设计.md §2.2/§3.8.5/§11.1`。
 | 测试名 | fixture | 执行动作 | 断言 | 证明哪个总体设计要求 |
 |---|---|---|---|---|
 | `test_selection_data_job_provider_failure_records_gap_no_hidden_fallback` | first provider fails, second succeeds | run job | both attempts visible; no old path import | no hidden fallback |
-| `test_selection_tool_never_calls_openbb` | approved pack + OpenBB spy raising | call tool | tool succeeds from approved pack; OpenBB spy not called | tool only reads approved pack |
-| `test_select_unavailable_never_schedules_data_job` | no completed run | `/select` | scheduler not called | `/select` 不现场拉数 |
+| `test_selection_tool_never_calls_openbb` | approved pack + data_gateway/provider spy raising | call tool | tool succeeds from approved pack; data_gateway/provider spy not called | tool only reads approved pack |
+| `test_select_unavailable_only_schedules_background_refresh` | no completed run | `/select` | refresh gateway called once；provider/table fetch not called；response is started/running/unconfigured | `/select` 不现场拉数，只触发后台补数 |
 
 ### 13.7 No-auto-report tests
 
@@ -1731,8 +1735,8 @@ Live/fresh provider payload proof must follow AGENTS live runtime preflight. Req
 
 - 修改文件：`src/claw_trade/ui_backend/chat_controller.py` 或 command router、`src/claw_trade/selection/controller.py`。
 - 新增函数：`handle_select_command`、`parse_select_command`。
-- 验收测试：`test_select_no_completed_run_does_not_fetch`、`test_selection_full_workflow_dispatch_order`。
-- 不允许顺手做的事：不做最终 UI 视觉卡片，不自动 backfill。
+- 验收测试：`test_select_no_completed_run_triggers_refresh_without_fetch`、`test_selection_full_workflow_dispatch_order`。
+- 不允许顺手做的事：不做最终 UI 视觉卡片，不直接调 provider/读表/同步跑全市场。
 
 ### 14.8 confirmation/report handoff
 
@@ -1761,7 +1765,7 @@ Live/fresh provider payload proof must follow AGENTS live runtime preflight. Req
 
 1. 第一版只做 `CN_A`。
 2. 策略条件和阈值必须回指 SEL-00 审计证据中的来源策略；跨策略排序权重按本文 §5.0.2 已确认的 claw-trade v1 透明排序合同落地，不得用未批准算法、权重或阈值替代。
-3. 数据源路径已定为 OpenBB/data_gateway/provider registry/Mongo/OpenViking 证据链。
+3. 数据源路径已定为 data_gateway/provider registry/Mongo/OpenViking 证据链。
 4. selection worker prompt 按本文草案落地，并以 provider payload 做对齐验收。
 5. 默认北京时间 16:00 后台跑；设置中允许用户修改。
 6. `/select` 第一版在聊天中输出结果，不做复杂结果页。

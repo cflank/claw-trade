@@ -234,13 +234,19 @@ def run_frontline_data_pack(tool_input: Mapping[str, Any], runtime_context: Mapp
     except ValueError:
         return _error_payload("invalid_request", f"unsupported market: {tool_input.get('market')}")
 
-    try:
-        with redirect_stdout(sys.stderr):
-            api = _build_data_api()
-            requests = _build_requests(tool_input=tool_input, runtime_context=runtime_context, market=market, domain=domain)
-            results = api.get_data_batch(requests)
-    except Exception as exc:
-        return _error_payload("data_layer_runtime_blocked", str(exc))
+    prefetch = _load_report_prefetch_results(runtime_context=runtime_context, market=market, domain=domain)
+    if prefetch.error is not None:
+        return _error_payload(prefetch.error[0], prefetch.error[1])
+    if prefetch.results is not None:
+        results = prefetch.results
+    else:
+        try:
+            with redirect_stdout(sys.stderr):
+                api = _build_data_api()
+                requests = _build_requests(tool_input=tool_input, runtime_context=runtime_context, market=market, domain=domain)
+                results = api.get_data_batch(requests)
+        except Exception as exc:
+            return _error_payload("data_layer_runtime_blocked", str(exc))
 
     status = _aggregate_status(results)
     chart_payload = _market_chart_payload(
@@ -269,6 +275,79 @@ def run_frontline_data_pack(tool_input: Mapping[str, Any], runtime_context: Mapp
         "attempt_refs": tuple(_dedupe(ref for item in results for ref in item.attempt_refs)),
         **chart_payload,
     }
+
+
+@dataclass(frozen=True)
+class _PrefetchLoadResult:
+    results: tuple[DataResult, ...] | None = None
+    error: tuple[str, str] | None = None
+
+
+def _load_report_prefetch_results(
+    *,
+    runtime_context: Mapping[str, Any],
+    market: Market,
+    domain: str,
+) -> _PrefetchLoadResult:
+    manifest_path = _report_prefetch_manifest_path(runtime_context)
+    prefetch_required = bool(runtime_context.get("report_prefetch_required"))
+    if manifest_path is None:
+        if prefetch_required:
+            return _PrefetchLoadResult(
+                error=("report_prefetch_manifest_missing", "report_prefetch_required=true but manifest path is missing")
+            )
+        return _PrefetchLoadResult()
+    if not manifest_path.exists():
+        return _PrefetchLoadResult(
+            error=("report_prefetch_manifest_missing", f"report prefetch manifest not found: {manifest_path}")
+        )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            return _PrefetchLoadResult(error=("report_prefetch_manifest_invalid", "manifest payload must be an object"))
+        if payload.get("schema_version") != "report_data_prefetch.v1":
+            return _PrefetchLoadResult(error=("report_prefetch_manifest_invalid", "unsupported manifest schema_version"))
+        if payload.get("ok") is not True:
+            reason = str(payload.get("reason") or "report prefetch manifest is not ok")
+            return _PrefetchLoadResult(error=("report_prefetch_manifest_not_ready", reason))
+        runtime_run_id = str(runtime_context.get("run_id") or "").strip()
+        manifest_run_id = str(payload.get("run_id") or "").strip()
+        if runtime_run_id and manifest_run_id and runtime_run_id != manifest_run_id:
+            return _PrefetchLoadResult(
+                error=("report_prefetch_manifest_mismatch", f"manifest run_id {manifest_run_id} != runtime run_id {runtime_run_id}")
+            )
+        if str(payload.get("market") or "").strip().upper() != market.value:
+            return _PrefetchLoadResult(error=("report_prefetch_manifest_mismatch", "manifest market does not match tool input"))
+        domains = tuple(str(item) for item in payload.get("domains") or ())
+        if domain not in domains:
+            return _PrefetchLoadResult(error=("report_prefetch_manifest_mismatch", f"manifest does not contain domain: {domain}"))
+        raw_results = payload.get("data_results")
+        if not isinstance(raw_results, Sequence) or isinstance(raw_results, (str, bytes, bytearray)):
+            return _PrefetchLoadResult(error=("report_prefetch_manifest_invalid", "manifest data_results must be a list"))
+        results = tuple(
+            DataResult.model_validate(item)
+            for item in raw_results
+            if isinstance(item, Mapping) and _result_domain(str(item.get("request_id") or "")) == domain
+        )
+    except Exception as exc:
+        return _PrefetchLoadResult(error=("report_prefetch_manifest_invalid", str(exc)))
+    if not results:
+        return _PrefetchLoadResult(error=("report_prefetch_manifest_mismatch", f"manifest has no results for domain: {domain}"))
+    return _PrefetchLoadResult(results=results)
+
+
+def _report_prefetch_manifest_path(runtime_context: Mapping[str, Any]) -> Path | None:
+    value = str(runtime_context.get("report_prefetch_manifest_path") or "").strip()
+    if not value:
+        return None
+    return Path(value).expanduser()
+
+
+def _result_domain(request_id: str) -> str:
+    parts = request_id.split(":")
+    if len(parts) < 5:
+        return ""
+    return parts[2]
 
 
 def run_report_data_prefetch(request: Any, *, run_id: str, evidence_root: Path) -> dict[str, Any]:

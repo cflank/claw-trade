@@ -65,7 +65,7 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
     normalized_refs: list[str] = []
     for idx in range(20):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://row-{idx + 1}"
+        ref = f"normalized://mongo/normalized_datasets/row-{idx + 1}"
         normalized_refs.append(ref)
         open_price = 10.0 + idx * 0.1
         close_price = open_price + 0.2
@@ -80,6 +80,15 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
                 "low": open_price - 0.1,
                 "amount": 200000000.0 + idx * 10000000.0,
                 "vol_ratio": 1.5 + idx * 0.1,
+                **_complete_strategy_fields(idx=idx, open_price=open_price, close_price=close_price),
+                "strategy_hit_coverage_score": 30.0 - idx * 0.1,
+                "strategy_inner_strength_score": 25.0 - idx * 0.1,
+                "rps_trend_score": 20.0 - idx * 0.1,
+                "liquidity_tradability_score": 15.0 - idx * 0.1,
+                "industry_theme_score": 5.0,
+                "evidence_completeness_score": 5.0,
+                "risk_penalty_score": 0.0,
+                "data_gap_penalty_score": 0.0,
                 "source_ref": ref,
             }
         )
@@ -88,7 +97,54 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
         attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
         normalized_refs=tuple(normalized_refs),
         rows=tuple(rows),
+        warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/success",
     )
+
+
+def _complete_strategy_fields(*, idx: int, open_price: float, close_price: float) -> dict[str, object]:
+    return {
+        "p_change_pct": 3.0,
+        "ma30": 30.0 + idx,
+        "ma30_slope_5d": -0.2,
+        "ma30_slope_10d": -0.1,
+        "ma30_growth_30d": 0.0,
+        "limit_up_recent": 0.0,
+        "post_limit_up_range_pct": 999.0,
+        "post_limit_up_return_abs_pct": 999.0,
+        "post_limit_up_window_days": 0.0,
+        "ma250": 90.0,
+        "ma250_backtrace_days": -1.0,
+        "ma250_back_ratio": 999.0,
+        "ma60": close_price + 1.0,
+        "platform_deviation_pct": 999.0,
+        "return_60d": 0.0,
+        "single_day_min_return_60d": -6.0,
+        "highest_close_60d": close_price + 1.0,
+        "limit_up_count_20d": 0.0,
+        "return_40d": 0.0,
+        "limit_up_streak_2d": 0.0,
+        "limit_down_today": 0.0,
+        "atr_14": 20.0,
+        "range_pct": 0.0,
+        "prev_ma5": 21.0,
+        "prev_ma20": 20.0,
+        "ma5": 22.0,
+        "ma20": 21.0,
+        "volume_ma20": 100.0,
+        "volume": 170.0,
+        "high_20d": close_price + 1.0,
+        "prev_close": close_price - 0.2,
+        "range_10d": 10.0,
+        "low_10d": 90.0,
+        "high_40d": 100.0,
+        "limit_up_yesterday": 0.0,
+        "prev_volume": 100.0,
+        "prev_ma60": 20.0,
+        "rps120": 50.0,
+        "roll_high_120d": close_price,
+        "private_placement_event_date": "none",
+        "private_placement_days_since": 9999.0,
+    }
 
 
 def _run_successful_data_job(*, tmp_path: Path, persisted: bool) -> str:

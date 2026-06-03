@@ -3,7 +3,7 @@
 状态：任务拆解稿，未进入实现。
 日期：2026-05-21
 
-本清单依据当前已批准文档拆解，只定义真实可交付任务，不允许 mock、fake、stub、fallback、骨架实现、占位实现、假成功、假 provider、假 artifact、假 provider payload 或假 OpenBB evidence。
+本清单依据当前已批准文档拆解，只定义真实可交付任务，不允许 mock、fake、stub、fallback、骨架实现、占位实现、假成功、假 provider、假 artifact、假 provider payload 或假数据层 evidence。
 
 ## Verdict
 
@@ -13,13 +13,15 @@
 
 ## Source Coverage Map
 
+说明：旧 `docs/数据源openbb引入方案.md` 和 `docs/数据源修改实施方案.md` 只作为历史背景或负面路径参考；当前实施合同以 `docs/数据层详细设计.md`、`docs/数据层实施任务清单.md` 和 active A股设计为准。
+
 | 文档 | 章节/范围 | 是否覆盖 | 对应任务编号 | 备注 |
 |---|---|---:|---|---|
 | `AGENTS.md` | 1 项目目标 | 是 | P0-01, P1-08, P1-09, P1-14 | 报告感、真实性、图表证据进入验收 |
 | `AGENTS.md` | 2/2.1 判断与中文解释 | 是 | P0-01, P1-15 | 任务证据与边界评审要求 |
 | `AGENTS.md` | 3/4 架构问题回答与 pushback | 是 | P0-01, P1-15 | stop condition 与边界检查 |
 | `AGENTS.md` | 5 编码纪律 | 是 | 全部任务 | 小范围、可验证、禁止 speculative |
-| `AGENTS.md` | 3 架构边界 | 是 | P1-01, P1-04, P1-05, P1-08 | claw-trade/OpenClaw/OpenBB/OpenViking 分工 |
+| `AGENTS.md` | 3 架构边界 | 是 | P1-01, P1-04, P1-05, P1-08 | claw-trade/OpenClaw/data_gateway/OpenViking 分工 |
 | `AGENTS.md` | 4 OpenClaw agent 边界 | 是 | P1-08, P1-09, P1-10 | 新 worker 必须 OpenClaw turn |
 | `AGENTS.md` | 5 workflow 控制面 | 是 | P1-08, P1-10 | CN_A 7-frontline + downstream |
 | `AGENTS.md` | 6/6.1 prompt | 是 | P1-09, P1-10 | baseline/provider payload/L1 对齐 |
@@ -39,7 +41,7 @@
 | `AGENTS.md` | 19 非迁移旧规则 | 是 | P1-13 | 不恢复旧 direct LLM/旧启动口径 |
 | `docs/A股扩展方案.md` | 1 结论 | 是 | P1-06 至 P1-10 | CN_A A股专属扩展 |
 | `docs/A股扩展方案.md` | 2 项目来源定位 | 是 | P1-06, P1-09 | `a-stock-data` / TradingAgents-astock / astock-peg 边界 |
-| `docs/A股扩展方案.md` | 3 架构硬边界 | 是 | P1-01, P1-04, P1-05 | OpenBB 唯一入口 |
+| `docs/A股扩展方案.md` | 3 架构硬边界 | 是 | P1-01, P1-04, P1-05 | data_gateway 统一数据层入口 |
 | `docs/A股扩展方案.md` | 4 CN_A workflow | 是 | P1-08 | 7 frontline + downstream |
 | `docs/A股扩展方案.md` | 5 新增三域与 pack | 是 | P1-07 | policy/hot_money/lockup |
 | `docs/A股扩展方案.md` | 6 七个 A股资料域 | 是 | P1-06, P1-07 | Phase 1 七域全量 |
@@ -56,7 +58,7 @@
 | `docs/A股扩展详细设计.md` | 3 架构边界 | 是 | P1-01, P1-04, P1-05, P1-15 | 允许/禁止链路 |
 | `docs/A股扩展详细设计.md` | 4 workflow | 是 | P1-08 | CN_A-only 7 frontline |
 | `docs/A股扩展详细设计.md` | 5 新增数据域设计 | 是 | P1-01, P1-07 | 三域模型和 normalized schema |
-| `docs/A股扩展详细设计.md` | 6 新增 OpenBB pack 设计 | 是 | P1-05, P1-07 | 三新增 pack endpoint |
+| `docs/A股扩展详细设计.md` | 6 新增 data_gateway pack 设计 | 是 | P1-05, P1-07 | 三新增 pack tool |
 | `docs/A股扩展详细设计.md` | 7 Provider adapter 设计 | 是 | P1-03, P1-06, P1-07 | 七域矩阵、7.2A 默认源 |
 | `docs/A股扩展详细设计.md` | 8 用户声明式 provider 设计 | 是 | P1-03, P3-01 | 七域声明式 provider |
 | `docs/A股扩展详细设计.md` | 9 Provider 优先级与失败策略 | 是 | P1-03, P1-04, P1-06, P1-07 | official_original attempt/readiness |
@@ -68,26 +70,12 @@
 | `docs/A股扩展详细设计.md` | 15 分阶段实施计划 | 是 | 全部 Phase | Phase 1 不漏到 Phase 2 |
 | `docs/A股扩展详细设计.md` | 16 人类拍板清单 | 是 | Questions | 当前无阻断新增问题 |
 | `docs/A股扩展详细设计.md` | 17 总体停止条件 | 是 | 全部任务 | 原样进入任务 stop conditions |
-| `docs/数据源openbb引入方案.md` | 1-4 定位/职责/流程图 | 是 | P1-01, P1-04, P1-05, P1-12 | 三平面架构 |
-| `docs/数据源openbb引入方案.md` | 5 数据模型 | 是 | P1-01 | ProviderResult/Attempt/Gap/Readiness |
-| `docs/数据源openbb引入方案.md` | 6 provider 优先级/HK 缺图 | 是 | P1-06, P1-14, P2-01 | A/HK/US/CRYPTO 与图表 readiness |
-| `docs/数据源openbb引入方案.md` | 7 授权/安全 | 是 | P0-01, P1-03, P1-06 | license/raw/secret/schema drift |
-| `docs/数据源openbb引入方案.md` | 8 迁移路线 | 是 | P1-13, P2-01 | 旧路径退休 |
-| `docs/数据源openbb引入方案.md` | 9 测试矩阵 | 是 | P1-14 | live/fresh 证据 |
-| `docs/数据源openbb引入方案.md` | 10 合同冻结 | 是 | P1-15 | 不新增风格/投资 gate |
-| `docs/数据源openbb引入方案.md` | 11 分阶段交付清单 | 是 | 全部 Phase | Phase 1 七域全量 |
-| `docs/数据源openbb引入方案.md` | 12 非目标 | 是 | Boundary Check | 不做并列数据 MCP |
-| `docs/数据源openbb引入方案.md` | 13 代码级详细设计 | 是 | P1-01 至 P1-15, P2-01, P3-01 | 主合同转任务 |
-| `docs/数据源openbb引入方案.md` | 14 参考 | 是 | P0-01 | 只作阅读/证据来源 |
-| `docs/数据源修改实施方案.md` | 1 Verdict | 是 | P0-01 | OpenBB 基础设施门 |
-| `docs/数据源修改实施方案.md` | 2 Scope | 是 | 全部 Phase | 七 pack/OpenViking/旧路径/live |
-| `docs/数据源修改实施方案.md` | 3 Source Of Truth | 是 | P0-01 | 主合同优先 |
-| `docs/数据源修改实施方案.md` | 4 Human Decision Gates | 是 | P0-01 | 已关闭项仍要核验证据 |
-| `docs/数据源修改实施方案.md` | 5 Implementation Principles | 是 | 全部任务 | no mock/fake/fallback |
-| `docs/数据源修改实施方案.md` | 6 Dependency Graph | 是 | 依赖字段 | 并行/串行关系 |
-| `docs/数据源修改实施方案.md` | 7 Atomic Task List | 是 | P0-01 至 P3-02 | 重写为 A股七域全量任务 |
-| `docs/数据源修改实施方案.md` | 8 Subagent Work Packages | 是 | P1-15 | 派发模板依据 |
-| `docs/数据源修改实施方案.md` | 9 Integration Strategy | 是 | P1-15 | 集成顺序 |
+| `docs/数据层详细设计.md` | 1-4 目标/模块/数据流/接口 | 是 | P1-01, P1-04, P1-05, P1-12 | `DataRequest -> DataResult`、6 层数据层、provider registry/Mongo evidence |
+| `docs/数据层详细设计.md` | 5-11 模型/provider/执行/入库/Mongo | 是 | P1-01 至 P1-07, P1-14 | `ProviderPlugin.capabilities()`、attempt/raw/normalized/cache、8 个 Mongo collection |
+| `docs/数据层实施任务清单.md` | 1-7 当前状态/边界/cutover/stop | 是 | P0-01, P1-02, P1-03, P1-13 | OpenBB 本体不是目标运行时依赖；旧 `openbb_*` 只作 forbidden legacy path |
+| `docs/数据源openbb引入方案.md` | superseded 历史口径 | 否 | Historical only | 只作背景；不得作为当前实施合同或验收来源 |
+| `docs/数据层实施任务清单.md` | 1 设计来源与硬边界 | 是 | P0-01 | 当前数据层边界 |
+| `docs/数据源修改实施方案.md` | superseded 历史口径 | 否 | Historical only | 只作背景；不得作为当前实施合同或验收来源 |
 | `docs/数据源修改实施方案.md` | 10 Test Matrix | 是 | P1-14 | unit/integration/live |
 | `docs/数据源修改实施方案.md` | 11 Stop Conditions | 是 | 全部任务 | 原样纳入 |
 | `docs/数据源修改实施方案.md` | 12 Rollback And Deletion Plan | 是 | P1-13, P2-01 | Git/VCS 回滚，不 silent fallback |
@@ -96,7 +84,7 @@
 | `docs/架构设计.md` | 1-4 总体/边界/workflow/数据流 | 是 | P1-04, P1-08, P1-12 | 控制面与单 worker turn |
 | `docs/架构设计.md` | 5 worker/prompt 架构 | 是 | P1-09, P1-10 | prompt 不在 Python |
 | `docs/架构设计.md` | 6 tool/skill 架构 | 是 | P1-05, P1-10 | stage tool schema |
-| `docs/架构设计.md` | 7 provider 架构 | 是 | P1-03, P1-06, P1-07 | OpenBB/data_gateway |
+| `docs/架构设计.md` | 7 provider 架构 | 是 | P1-03, P1-06, P1-07 | data_gateway/provider registry |
 | `docs/架构设计.md` | 8 artifact 架构 | 是 | P1-11, P1-12 | approved material 权威 |
 | `docs/架构设计.md` | 9 图表与图片架构 | 是 | P1-06, P1-07, P1-14 | 图表/root cause |
 | `docs/架构设计.md` | 10 OpenClaw runtime seam | 是 | P1-10, P1-14 | payload/tool capture |
@@ -116,14 +104,14 @@
 - 任务编号：P0-01
 - 任务名称：A股扩展实施冻结门核验
 - 来源文档和章节：`A股扩展详细设计` 15/16；`数据源修改实施方案` 1/4；`数据源openbb引入方案` 13.0；`memory/2026-05-21` 10:40/10:56/11:18。
-- 目标：核验 OpenBB pinned source、SSRF 策略、七域 provider 作用域、raw/license、baseline 路径、chart readiness、official_original readiness 均按已批准文档冻结。
+- 目标：核验当前 `data_gateway` 合同、SSRF 策略、七域 provider 作用域、raw/license、baseline 路径、chart readiness、official_original readiness 均按已批准文档冻结。
 - 明确不做什么：不写运行代码；不重新缩小 Phase 1；不把 provider 样本缺失改成人类拍板门。
 - 允许修改范围：实施时仅 `docs/evidence/**`、`memory/YYYY-MM-DD.md`。
 - 禁止修改范围：`src/**`、`agents/**`、`openclaw_plugins/**`、`third_party/**`、runtime guard。
 - 实现要求：逐项记录证据路径；若证据缺失，标为“实施前阻断”，不是自行改设计。
-- 验收证据：冻结门核对表；OpenBB submodule/version/security evidence；TradingAgents-astock commit `661ccffa812f5182079f604838d4eea3b4abc7ea` 可读。
-- 必跑测试/命令：`git submodule status third_party/openbb`；`test -s docs/evidence/openbb-submodule-version.md`；`test -s docs/evidence/openbb-declarative-provider-security.md`。
-- stop conditions：任一证据仍是占位；发现 OpenBB 无法承载 pack endpoint；SSRF 策略放松。
+- 验收证据：冻结门核对表；数据层合同对齐 evidence；TradingAgents-astock commit `661ccffa812f5182079f604838d4eea3b4abc7ea` 可读。
+- 必跑测试/命令：`uv run pytest tests/contracts/test_data_gateway_cutover.py tests/contracts/test_mongo_collection_contract.py`。
+- stop conditions：任一证据仍是占位；需要恢复 OpenBB 本体或旧 provider executor 才能承载 pack；SSRF 策略放松。
 - mock/stub/fake/fallback 检查：不得用“计划写”或空 evidence 文件冒充关闭。
 - 依赖任务：无。
 - 是否可并行：否，串行前置。
@@ -153,7 +141,7 @@
 - 任务名称：Mongo evidence store 与 persistent single-flight
 - 来源文档和章节：`数据源openbb引入方案` 13.4、13.5；`数据源修改实施方案` T3。
 - 目标：实现 provider manifests、validation receipts、attempts、raw payloads、cache、normalized、rate limits、run plans、single-flight stores。
-- 明确不做什么：不让 Mongo 成为 worker 材料源；不以 OpenBB 内部 cache 替代 Mongo evidence。
+- 明确不做什么：不让 Mongo 成为 worker 材料源；不以 legacy OpenBB cache 替代 Mongo evidence。
 - 允许修改范围：`src/claw_trade/data_gateway/store/**`、cache/attempt/run-plan integration tests。
 - 禁止修改范围：pack reader brief、provider adapter、worker prompt、exporter。
 - 实现要求：raw/normalized/cache/attempt 写失败必须显式失败；single-flight 用 Mongo lease，多进程有效。
@@ -198,36 +186,36 @@
 - 依赖任务：P1-01, P1-02, P1-03。
 - 是否可并行：否，packs 前置。
 
-#### P1-05：OpenBB runtime / MCP / 7-pack endpoint wrapper
+#### P1-05：data_gateway pack tool / 7-pack 接线
 
 - 任务编号：P1-05
-- 任务名称：OpenBB runtime / MCP / 7-pack endpoint wrapper
+- 任务名称：data_gateway pack tool / 7-pack 接线
 - 来源文档和章节：`数据源openbb引入方案` 4.8、13.1.1、13.12、13.12.1；`A股扩展详细设计` 6。
-- 目标：通过 OpenBB runtime/approved shim 暴露七个 canonical pack endpoint/tool。
-- 明确不做什么：不暴露 OpenBB atomic/admin/discovery/debug/cache tools；不 import 旧 provider executor fallback。
-- 允许修改范围：OpenBB extension shim 相关文件（仅 generic extension/runtime shim；如触及 `third_party/openbb/**`，不得写入 claw-trade 业务逻辑）、`src/claw_trade/data_gateway/mcp/**`、pack wrapper、OpenBB runtime 配置、wrapper tests。
+- 目标：通过当前 `data_gateway` 和 stage-scoped tool schema 暴露七个 canonical pack tool。
+- 明确不做什么：不暴露 provider atomic/admin/discovery/debug/cache tools；不 import 旧 provider executor fallback；不恢复 OpenBB runtime。
+- 允许修改范围：`src/claw_trade/data_gateway/**` 的 pack/tool 接线、OpenClaw plugin wrapper、tool schema tests。
 - 禁止修改范围：workflow DAG、PM/exporter 结论、worker business prompt、OpenViking provider 行为。
-- 实现要求：工具返回 worker-visible 自然语言 `reader_brief_md`；audit payload 写 evidence；带 `openbb_runtime_marker`/extension version。
-- 验收证据：runtime marker；extension version；7 endpoint audit；无旧 executor import 证据。
-- 必跑测试/命令：`uv run pytest tests/unit/data_gateway/test_openbb_runtime_wrapper.py tests/integration/data_gateway/test_mcp_pack_endpoints.py`。
-- stop conditions：OpenBB 无法承载 pack endpoint；只能本地 Python 直连 provider；wrapper 需旧 executor。
+- 实现要求：工具返回 worker-visible 自然语言 `reader_brief_md`；audit payload 写 data_gateway/provider evidence；provider payload 证明模型只看 canonical pack tool。
+- 验收证据：data_gateway evidence refs；7 endpoint/tool audit；无旧 executor import 证据。
+- 必跑测试/命令：`uv run pytest tests/contracts/test_frontline_tool_protocol.py tests/contracts/test_tool_registry_contract.py tests/unit/reports/test_data_pack_bridge.py`。
+- stop conditions：必须恢复 OpenBB runtime 或旧 executor；只能本地 Python 直连 provider；tool 需要绕过 `DataAPI`/provider registry。
 - mock/stub/fake/fallback 检查：endpoint 不能返回占位 reader brief 或假 success。
 - 依赖任务：P1-01, P1-04。
-- 是否可并行：runtime discovery 可早做，接入需等 P1-01。
+- 是否可并行：tool registry / pack bridge 审计可早做，接入需等 P1-01。
 
 #### P1-06：四个既有 A股域 provider 矩阵接入
 
 - 任务编号：P1-06
 - 任务名称：四个既有 A股域 provider 矩阵接入
 - 来源文档和章节：`A股扩展方案` 6/12；`A股扩展详细设计` 7.2/7.2A；`数据源openbb引入方案` 13.16。
-- 目标：把 `market/fundamental/news/social` 的 A股 provider coverage_group 全量落到 OpenBB/data_gateway adapters。
+- 目标：把 `market/fundamental/news/social` 的 A股 provider coverage_group 全量落到 `data_gateway` provider plugins/adapters。
 - 明确不做什么：不把 Tushare 作为默认源；不把 astock-peg 引入；不让新闻/搜索替代 official_original、财报或资金事实。
 - 允许修改范围：`src/claw_trade/data_gateway/providers/cn_a/**`、`packs/{market,fundamental,news,social}.py`、normalizers、fixtures/tests。
 - 禁止修改范围：workflow 调度、worker prompt、report exporter 投资结论、runtime guards。
 - 实现要求：覆盖 market `cn_a_market_quote/cn_a_market_kline/cn_a_market_orderbook`；fundamental `cn_a_fundamental_financials/cn_a_fundamental_estimates/cn_a_fundamental_research`，含 PEG 字段；news `cn_a_news_company/cn_a_news_announcement/cn_a_news_flash/cn_a_news_macro_global/cn_a_news_discovery`；social `cn_a_social_concept/cn_a_social_search_discovery`。
 - 验收证据：每个计划 provider attempt；请求/状态/字段/单位/source refs/raw policy；reader brief gaps/readiness；图表或 root cause。
 - 必跑测试/命令：`uv run pytest tests/integration/data_gateway/test_market_pack_cn_a.py tests/integration/data_gateway/test_fundamental_pack_cn_a.py tests/integration/data_gateway/test_news_pack_cn_a.py tests/integration/data_gateway/test_social_pack_cn_a.py tests/unit/data_gateway/test_source_roles.py tests/unit/data_gateway/test_readiness.py`。
-- stop conditions：某源只能绕过 OpenBB；PE/PB/ROE/PEG 被补造；official_original 无 attempt。
+- stop conditions：某源只能绕过 `data_gateway`；PE/PB/ROE/PEG 被补造；official_original 无 attempt。
 - mock/stub/fake/fallback 检查：不能用假 provider response；fixture 必须来自真实 adapter 样本或失败样本。
 - 依赖任务：P1-01 至 P1-05。
 - 是否可并行：四域可并行，shared model/registry 不可冲突。
@@ -244,7 +232,7 @@
 - 实现要求：policy 覆盖 `cn_a_policy_official/cn_a_policy_news/cn_a_policy_macro/cn_a_policy_discovery`；hot_money 覆盖 `cn_a_hot_money_dragon_tiger/cn_a_hot_money_fund_flow/cn_a_hot_money_northbound/cn_a_hot_money_sector_flow/cn_a_hot_money_theme_heat`；lockup 覆盖 `cn_a_lockup_unlock/cn_a_lockup_shareholder_count/cn_a_lockup_block_trade/cn_a_lockup_margin_financing/cn_a_lockup_dividend/cn_a_lockup_120d_flow`。
 - 验收证据：attempt/http/raw/normalized/cache refs；官方失败 root cause；chart refs 或 non-ready root cause；L1 缺口说明样本。
 - 必跑测试/命令：`uv run pytest tests/integration/data_gateway/test_policy_pack_cn_a.py tests/integration/data_gateway/test_hot_money_pack_cn_a.py tests/integration/data_gateway/test_lockup_pack_cn_a.py tests/unit/data_gateway/test_policy_normalizer.py tests/unit/data_gateway/test_hot_money_normalizer.py tests/unit/data_gateway/test_lockup_normalizer.py`。
-- stop conditions：任一新增 pack 需绕过 OpenBB；图表缺失靠假图/静默；官方原文失败被 ready。
+- stop conditions：任一新增 pack 需绕过 `data_gateway`；图表缺失靠假图/静默；官方原文失败被 ready。
 - mock/stub/fake/fallback 检查：不得先返回空壳 pack；不得用“暂无数据”替代 provider attempt。
 - 依赖任务：P1-01 至 P1-05。
 - 是否可并行：三域可并行，chart/readiness 合同需统一。
@@ -288,14 +276,14 @@
 - 任务编号：P1-10
 - 任务名称：OpenClaw visible tool schema 与 provider payload 边界
 - 来源文档和章节：`数据源openbb引入方案` 13.17；`A股扩展详细设计` 11.1/14.4；`AGENTS.md` 11。
-- 目标：frontline worker 只见对应 canonical pack tool，downstream worker 不见 OpenBB 数据工具，并用真实 `openclaw_llm_provider_payload` 验收。
-- 明确不做什么：不把 OpenBB HTTP/raw evidence 当 LLM payload；不让 OpenViking write/read 成为 model-visible 工具。
+- 目标：frontline worker 只见对应 canonical pack tool，downstream worker 不见数据工具，并用真实 `openclaw_llm_provider_payload` 验收。
+- 明确不做什么：不把 data_gateway raw/attempt evidence 当 LLM payload；不让 OpenViking write/read 成为 model-visible 工具。
 - 允许修改范围：`src/claw_trade/config/tool_names.py`、OpenClaw plugin wrapper、tool schema tests、payload scan tests。
 - 禁止修改范围：OpenClaw 业务 DAG、worker prompt 风格、report exporter。
-- 实现要求：禁止旧 alias、US atomics、OpenBB admin/discovery/raw/debug/cache、OpenViking 工具进入 payload。
-- 验收证据：每 worker visible tools；provider payload scan；OpenBB gateway audit marker。
+- 实现要求：禁止旧 alias、US atomics、provider admin/discovery/raw/debug/cache、OpenViking 工具进入 payload。
+- 验收证据：每 worker visible tools；provider payload scan；data_gateway audit refs。
 - 必跑测试/命令：`uv run pytest tests/unit/data_gateway/test_tool_schema.py tests/integration/data_gateway/test_mcp_visible_tools.py tests/contracts/test_provider_payload_visible_tools.py`。
-- stop conditions：worker 必须看 atomic provider tool；downstream 看 OpenBB 工具；payload capture 缺失。
+- stop conditions：worker 必须看 atomic provider tool；downstream 看数据工具；payload capture 缺失。
 - mock/stub/fake/fallback 检查：payload 必须来自 fresh/live call，不用日志/静态输出替代。
 - 依赖任务：P1-05, P1-08, P1-09。
 - 是否可并行：可与 P1-11/P1-12 准备并行。
@@ -323,13 +311,13 @@
 - 任务名称：Downstream approved L1 material 与 exporter 边界
 - 来源文档和章节：`A股扩展详细设计` 11.2、13；`AGENTS.md` 8/9；`架构设计` 8。
 - 目标：下游 CN_A workers 接收 7 份 approved frontline L1 原文；`portfolio_manager` 后必须进入 `report_polisher/final_report` 生成终稿 L1；exporter 只导出 approved final_report/material，不补事实、不改 PM。
-- 明确不做什么：不摘要/压缩/改写 L1；不让 downstream 读 OpenBB raw/cache；不新增 PM sidecar。
+- 明确不做什么：不摘要/压缩/改写 L1；不让 downstream 读 provider raw/cache；不新增 PM sidecar。
 - 允许修改范围：runtime request builder、artifact manifest flow、exporter boundary tests。
 - 禁止修改范围：PM natural-language conclusion、runtime guard、worker prompt 风格策略。
 - 实现要求：CN_A downstream prompt 变量包含 7 份 L1 正文；`report_polisher` 是终稿 worker，不是 frontline；raw/debug/cache envelope 不进入 prompt。
 - 验收证据：downstream provider payload；PM 后 `report_polisher/final_report` provider payload/L1；approved manifest/readback/hash；exporter read trace。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_prompt_material_boundary.py tests/integration/data_gateway/test_exporter_material_boundary.py tests/contracts/test_final_report_evidence_chain.py`。
-- stop conditions：Python 改写 PM 结论；exporter 读 Mongo raw 补事实；downstream 看 OpenBB 数据工具。
+- stop conditions：Python 改写 PM 结论；exporter 读 Mongo raw 补事实；downstream 看数据工具。
 - mock/stub/fake/fallback 检查：不得用 fake approved material 或假 OpenViking receipt。
 - 依赖任务：P1-08, P1-10, P1-11。
 - 是否可并行：可与 P1-13 准备并行。
@@ -343,11 +331,11 @@
 - 明确不做什么：不保留旧 provider runtime fallback；不一次性大爆炸删除未验收路径；compare 结果不进 worker 正文。
 - 允许修改范围：迁移看板、import-block tests、已验收 pack 旧路径删除 diff。
 - 禁止修改范围：未验收 pack 旧路径、新 pack internals、workflow、worker prompt、runtime guards。
-- 实现要求：OpenBB flag 下旧 provider_executor/direct modules 被 monkeypatch/import-block 后，pack 仍经 OpenBB 成功或显式失败。
+- 实现要求：data_gateway 路径下旧 provider_executor/direct modules 被 monkeypatch/import-block 后，pack 仍经当前数据层成功或显式失败。
 - 验收证据：`rg` hit list；import-block 输出；删除/隔离 diff；Git/VCS rollback doc。
 - 必跑测试/命令：`rg -n "frontline_data_pack\\.provider_executor|provider_executor|get_stock_data|get_indicators|get_fundamentals|get_balance_sheet|get_cashflow|get_income_statement" src openclaw_plugins agents`；`uv run pytest tests/integration/data_gateway/test_old_provider_import_block.py tests/integration/data_gateway/test_mcp_visible_tools.py`。
-- stop conditions：旧路径仍 silent fallback；删除需要跨 pack 大改；回滚吞掉 OpenBB 失败原因。
-- mock/stub/fake/fallback 检查：不得以旧路径成功证明 OpenBB 成功。
+- stop conditions：旧路径仍 silent fallback；删除需要跨 pack 大改；回滚吞掉 data_gateway 失败原因。
+- mock/stub/fake/fallback 检查：不得以旧路径成功证明 data_gateway 成功。
 - 依赖任务：P1-06/P1-07/P1-10 对应 pack 完成。
 - 是否可并行：盘点可早做；删除按 pack 串行。
 
@@ -360,7 +348,7 @@
 - 明确不做什么：不使用 capture-only、mock provider、假 artifact、假 payload；不首错即停，除非命中早停例外。
 - 允许修改范围：live evidence docs、collect-first report、memory；不改源码。
 - 禁止修改范围：源码、runtime guard、fallback 逻辑、worker prompt。
-- 实现要求：manager 先打印 fixed runtime preflight；命令模式启动；分离 `openclaw_llm_provider_payload` 与 `openbb_provider_http/raw_evidence`。
+- 实现要求：manager 先打印 fixed runtime preflight；命令模式启动；分离 `openclaw_llm_provider_payload` 与 data_gateway raw/attempt evidence。
 - 验收证据：run_id；preflight 表；7 frontline calls；provider payloads；tool calls；Mongo attempts/raw/normalized/cache；OpenViking manifest/relations；charts/root cause；`report_polisher/final_report` payload 与 L1；exporter 输出的 reader-facing final report。
 - 必跑测试/命令：`scripts/start-control-runtime.sh -- uv run python scripts/run_claw_trade_fresh_report.py --market CN_A --ticker 600519`；再跑 payload/evidence scan tests。
 - stop conditions：无 preflight；runtime alignment 不可信；同类 gate focused fix 后二次失败；数据真实性/PM authority 边界失败。
@@ -414,7 +402,7 @@
 - 目标：UI 展示 CN_A 七域、coverage_group、source_role、system/user provider、priority、health/admission/license/raw、official_original 标识，并在报告详情展示 provider trace。
 - 明确不做什么：不新增第二套 provider 后端；不允许用户上传代码 provider；不展示 raw/token/headers。
 - 允许修改范围：`src/claw_trade/ui_backend/**`、`src/claw_trade/ui_contracts/**`、前端设置页/报告详情、UI tests。
-- 禁止修改范围：worker tool schema、OpenClaw prompt、provider direct code upload、OpenBB bypass。
+- 禁止修改范围：worker tool schema、OpenClaw prompt、provider direct code upload、data_gateway bypass。
 - 实现要求：active run 固定 config version；UI 修改只影响下一 run；用户源同组 priority 管理。
 - 验收证据：设置页 API/截图；provider trace DTO；redaction tests；priority reorder trace。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_ui_api_contracts.py tests/unit/ui tests/integration/data_gateway/test_declarative_provider_admission.py`。
@@ -432,17 +420,17 @@
 - 明确不做什么：不改源码；不降低验收；不把 HK/US/CRYPTO 缺口塞进 A股任务补做。
 - 允许修改范围：`docs/evidence/**`、collect-first report、memory、最终验收文档。
 - 禁止修改范围：源码、runtime guard、fallback 逻辑、worker prompt、exporter。
-- 实现要求：fixed runtime preflight；分离 LLM payload 与 OpenBB HTTP/raw；OpenViking tree/grep/glob/relations/ovpack；chart readiness。
+- 实现要求：fixed runtime preflight；分离 LLM payload 与 data_gateway raw/attempt evidence；OpenViking tree/grep/glob/relations/ovpack；chart readiness。
 - 验收证据：四市场 run evidence；final acceptance checklist；rollback 文档；residual risks。
 - 必跑测试/命令：`scripts/start-control-runtime.sh -- uv run python scripts/run_claw_trade_fresh_report.py ...` 按市场执行；配套 evidence scan。
 - stop conditions：无 preflight；使用 mock/stub/fake/capture-only；runtime state 不可信；同类 gate 二次失败。
-- mock/stub/fake/fallback 检查：任何假 payload、假 OpenBB evidence、假 artifact 直接失败。
+- mock/stub/fake/fallback 检查：任何假 payload、假 data_gateway evidence、假 artifact 直接失败。
 - 依赖任务：P1-15, P2-01, P3-01。
 - 是否可并行：市场证据采集可并行，但 manager preflight 必须先做。
 
 ## Phase 1 Completeness Check
 
-| domain | coverage_group 覆盖 | OpenBB/data_gateway adapter | pack endpoint | worker/tool schema | evidence tests | 是否完整 |
+| domain | coverage_group 覆盖 | data_gateway adapter | pack endpoint | worker/tool schema | evidence tests | 是否完整 |
 |---|---|---|---|---|---|---|
 | market | `cn_a_market_quote/kline/orderbook` | P1-06 | `claw_get_market_pack` P1-05 | `market_analyst` only P1-10 | P1-06/P1-14 | 是 |
 | fundamental | `cn_a_fundamental_financials/estimates/research`，含 PEG 字段 | P1-06 | `claw_get_fundamental_pack` P1-05 | `fundamental_analyst` only P1-10 | P1-06/P1-14 | 是 |
@@ -456,13 +444,13 @@
 
 | 边界 | 是否违反 | 涉及任务 | 说明 |
 |---|---:|---|---|
-| OpenBB/data_gateway 是唯一 provider 入口 | 否 | P1-04 至 P1-07 | provider fetch 只在 OpenBB/data_gateway pack 内 |
+| data_gateway 是统一 provider 入口 | 否 | P1-04 至 P1-07 | provider fetch 只在 data_gateway pack/tool backend 内 |
 | OpenClaw 只运行单 worker turn | 否 | P1-08 至 P1-10、P1-12 | 不让 OpenClaw 承担 DAG/provider 编排；`report_polisher` 也必须是单 worker turn |
 | claw-trade 控制 workflow DAG | 否 | P1-08 | stage plan 在 claw-trade |
 | OpenViking 不做 provider | 否 | P1-11 | 只做 material/lineage/health |
 | Python 控制层不预取 provider | 否 | P1-04 | run plan no-fetch |
 | worker 不直连 provider | 否 | P1-05 至 P1-10 | worker 只见 canonical pack tool |
-| downstream worker 不看 OpenBB 原子工具 | 否 | P1-10/P1-12 | downstream visible tools 为空 |
+| downstream worker 不看 provider 原子工具 | 否 | P1-10/P1-12 | downstream visible tools 为空 |
 | CN_A PM 后进入终稿 worker | 否 | P1-12/P1-14 | `portfolio_manager` 后必须唤醒 `report_polisher/final_report`，exporter 再输出读者报告 |
 | 用户 provider 不覆盖 official_original | 否 | P1-03/P1-06/P1-07 | 普通用户不可声明 official_original |
 | 无 mock/fake/stub/fallback | 否 | 全部任务 | 每任务有检查项 |

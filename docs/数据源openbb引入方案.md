@@ -1,16 +1,24 @@
-# 数据源 OpenBB 引入方案（详细设计）
+# 数据源 OpenBB 引入方案（历史口径，已 superseded）
+
+> **SUPERSEDED / 历史背景**
+>
+> 本文是 2026-05 期间“引入 OpenBB 作为统一数据入口”的旧方案记录，当前不再作为实施合同、验收合同或目标运行时口径。
+>
+> 当前数据层主合同是 `docs/数据层详细设计.md` 和 `docs/数据层实施任务清单.md`：数据层核心为 `src/claw_trade/data_gateway` 的 `DataRequest -> DataResult`；Provider 能力来自 `ProviderPlugin.capabilities()`；Mongo 目标 collection 固定为 8 个；OpenBB 本体已删除/不再作为目标运行时依赖；旧 `openbb_*` 名称不得作为新目标表名、模块名或证据链名。
+>
+> 本文中“OpenBB 唯一入口 / submodule / runtime core / OpenBB wrapper / openbb evidence”等表述只保留为历史背景或 forbidden legacy path 参考。需要实施或验收时，以当前数据层文档和代码为准。
 
 ## 1. 文档定位
 
-本文是 **数据源与资料包边界** 的详细设计，不是“已完成实现”说明。
+本文是 **历史存档**，不是当前详细设计，也不是当前“已完成实现”说明。
 
 阅读方式：
 
-- 第 1-12 章定义产品边界、组件职责、架构图、状态语义和迁移原则。
-- 第 13 章是代码级实施主合同，包含目标目录、核心接口、数据结构、伪码、OpenViking/Mongo/OpenBB 数据流和测试拆分。
-- 实施时以第 13 章的函数级设计为准；前文原则与第 13 章冲突时，必须停下修正文档，不允许边写边解释。
+- 全文只用于理解 2026-05 的旧决策背景和 forbidden legacy path。
+- 文中任何“必须引入 OpenBB / OpenBB 唯一入口 / OpenBB runtime core / openbb_* collection / 第 13 章实施主合同”等表述均已作废。
+- 当前实施和验收只看 `docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`、相关 A股/CRYPTO active 设计和当前代码。
 
-目标是把 OpenBB 能力纳入 claw-trade，同时保持既有架构边界：
+原历史目标如下，**不得按当前任务执行**：
 
 - OpenBB 作为项目唯一数据源入口，替代此前分散的自研数据 MCP / provider 入口。
 - OpenBB 以 `third_party/openbb` submodule 方式纳入项目，像 OpenClaw / OpenViking 一样成为受控基础组件。

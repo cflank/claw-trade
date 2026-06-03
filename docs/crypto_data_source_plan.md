@@ -8,25 +8,25 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 
 目标架构是：
 
-- OpenBB/data_gateway 统一调用 CoinGlass、Binance、Bybit、Deribit、CoinGecko、FRED、Glassnode、DefiLlama 等 approved provider，并写入 provider evidence。
-- CryptoLens 是加密指标分析引擎，只消费 OpenBB normalized crypto bundle，不作为数据源或 provider。
+- `src/claw_trade/data_gateway` 统一调用 CoinGlass、Binance、Bybit、Deribit、CoinGecko、FRED、Glassnode、DefiLlama 等 approved provider，并写入 provider evidence。
+- CryptoLens 是加密指标分析引擎，只消费 data_gateway normalized crypto bundle，不作为数据源或 provider。
 - DefiLlama / CoinGecko 做项目资料和基本面补充。
 - 商业搜索与官方公告源做新闻事件层。
 - LunarCrush / Polymarket 做舆情和事件预期层。
 - OpenViking 继续做 approved material、L1/L2 报告和证据存储，不当作行情、新闻、舆情或链上数据源。
 - OpenClaw worker 只看到按 worker 分域封装后的资料包工具，不直接看到一堆底层 provider 原子接口。
 
-最新人类决策：正式 12 个 CRYPTO TradingAgents worker 和 `report_polisher` 全部打开。当前 OpenBB 迁移后的统一入口是 `claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`。`market_analyst` 只通过 `claw_get_market_pack` 获取自然语言市场资料包；CRYPTO 市场资料包由 OpenBB/data_gateway 取数、归一化，再交给 CryptoLens 做离线指标分析。新闻/舆情资料包若缺 key、失败、返回空或覆盖不足，worker 必须在自己的 L1 报告中直接说明缺哪些资料。`report_polisher` 只能整理已批准上游报告，不能补写新闻、舆情、基本面事实或投资结论。Python 不补写新闻、舆情或基本面事实，也不静默 fallback。
+最新人类决策：正式 12 个 CRYPTO TradingAgents worker 和 `report_polisher` 全部打开。当前统一入口是 `claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`。`market_analyst` 只通过 `claw_get_market_pack` 获取自然语言市场资料包；CRYPTO 市场资料包由 data_gateway 取数、归一化，再交给 CryptoLens 做离线指标分析。新闻/舆情资料包若缺 key、失败、返回空或覆盖不足，worker 必须在自己的 L1 报告中直接说明缺哪些资料。`report_polisher` 只能整理已批准上游报告，不能补写新闻、舆情、基本面事实或投资结论。Python 不补写新闻、舆情或基本面事实，也不静默 fallback。
 
 新闻与舆情资料包的详细实现边界见 [CRYPTO 新闻与舆情资料包详细设计](crypto_news_social_data_pack_design.md)。
 
-CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens接入方案.md)。
+CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](CryptoLens接入方案.md)。
 
 ## 2. 设计原则
 
-1. 优先使用已经付费并跑通的数据源，但数据源入口只能是 OpenBB/data_gateway。
-   - CoinGlass 等外部 provider 必须经 OpenBB/data_gateway adapter 进入证据链。
-   - CryptoLens 只分析 OpenBB normalized bundle，不读取 key、不出网、不写 provider evidence。
+1. 优先使用已经付费并跑通的数据源，但数据源入口只能是 data_gateway。
+   - CoinGlass 等外部 provider 必须经 data_gateway provider plugin/adapter 进入证据链。
+   - CryptoLens 只分析 data_gateway normalized bundle，不读取 key、不出网、不写 provider evidence。
    - 不能用 CoinGecko、DefiLlama 或免费爬虫替代 CoinGlass 的衍生品结构数据。
 
 2. 免费源只能做补充。
@@ -49,7 +49,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 | 数据层 | 主源 | 补充源 | 主要 worker | 说明 |
 |---|---|---|---|---|
-| 市场结构 | OpenBB provider adapters：CoinGlass / Binance / Bybit / Deribit 等 approved source | CoinGecko OHLC、交易所流动性 | `market_analyst` | 资金费率、OI、清算、多空比、期权、ETF、链上周期指标；CryptoLens 只做分析层 |
+| 市场结构 | data_gateway provider plugins/adapters：CoinGlass / Binance / Bybit / Deribit 等 approved source | CoinGecko OHLC、交易所流动性 | `market_analyst` | 资金费率、OI、清算、多空比、期权、ETF、链上周期指标；CryptoLens 只做分析层 |
 | 项目资料 / 基本面 | DefiLlama + CoinGecko | Dune、The Graph、项目官网、白皮书、治理论坛 | `fundamental_analyst` | TVL、fees、revenue、stablecoins、bridges、hacks、unlocks、metadata、FDV、流通量 |
 | 新闻事件 | 商业搜索 API + 官方公告源 | CoinGlass ETF / 链上事件、Polymarket 事件盘口 | `news_analyst` | 项目公告、协议升级、交易所公告、监管、ETF、安全事件 |
 | 舆情 / 情绪 | LunarCrush | X / Reddit / Telegram / Discord 搜索、Polymarket | `social_analyst` | 社交热度、KOL 叙事、社区分歧、机器人噪音、事件预期 |
@@ -58,9 +58,9 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 ## 4. 数据源逐项判断
 
-### 4.1 OpenBB CRYPTO market providers + CryptoLens
+### 4.1 data_gateway CRYPTO market providers + CryptoLens
 
-定位：OpenBB/data_gateway 是 CRYPTO 市场结构的外部取数入口；CryptoLens 是指标分析引擎，不是数据源。
+定位：data_gateway 是 CRYPTO 市场结构的外部取数入口；CryptoLens 是指标分析引擎，不是数据源。
 
 适合：
 
@@ -82,9 +82,9 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 接入建议：
 
 - `market_analyst` 只看到 `claw_get_market_pack`。
-- `claw_get_market_pack` 内部通过 OpenBB/data_gateway 执行 CoinGlass、Binance、Bybit、FRED 等 approved provider adapter，并写 OpenBB HTTP/raw/normalized evidence。
-- CryptoLens 只读取 OpenBB normalized crypto bundle 做离线分析，输出指标解释、条件场景、失效条件和数据缺口。
-- 禁止任何 worker 直接调用旧 BB MCP、CryptoLens raw tool 或 OpenBB atomic provider tool。下游 worker 默认读取前线已批准报告。
+- `claw_get_market_pack` 内部通过 data_gateway 执行 CoinGlass、Binance、Bybit、FRED 等 approved provider plugin/adapter，并写 data_gateway attempt/raw/normalized evidence。
+- CryptoLens 只读取 data_gateway normalized crypto bundle 做离线分析，输出指标解释、条件场景、失效条件和数据缺口。
+- 禁止任何 worker 直接调用旧 BB MCP、CryptoLens raw tool 或 legacy OpenBB atomic provider tool。下游 worker 默认读取前线已批准报告。
 
 ### 4.2 CoinGecko
 
@@ -139,9 +139,9 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 - 对 DeFi 协议、公链生态、L2、DEX、借贷、稳定币和桥类项目优先使用。
 - 对非 DeFi 资产，资料包必须明确说明 DefiLlama 覆盖不足。
 
-### 4.4 OpenBB
+### 4.4 legacy OpenBB
 
-定位：当前目标态的唯一外部数据入口、唯一 provider 接口层和唯一数据 MCP；它是统一数据接入平台，不是单一数据源。
+定位：历史评估过的统一数据接入平台。OpenBB 本体已删除，不再作为当前目标运行时、唯一外部数据入口或 provider 接口层。
 
 适合：
 
@@ -155,10 +155,10 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 - OpenBB 本身开源不等于底层数据都免费。
 - 许多高质量 provider 仍然需要单独 key 或订阅。
 
-接入建议：
+当前口径：
 
-- 作为 OpenBB 迁移后的 CRYPTO provider 主干，但只能在资料包内部使用。
-- 不能把 OpenBB 全量工具、discovery/admin tool 或 atomic provider tool 暴露给 worker。
+- CRYPTO provider 主干落在 `src/claw_trade/data_gateway`。
+- 不恢复 OpenBB runtime/submodule，也不把 legacy OpenBB 全量工具、discovery/admin tool 或 atomic provider tool 暴露给 worker。
 
 ### 4.5 商业搜索 API
 
@@ -274,14 +274,14 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 第一阶段 CRYPTO 市场分析只有一个 worker 可见工具：
 
-- `claw_get_market_pack`。它是 market worker 的统一资料包入口，不是数据源、不是 CryptoLens、不是 OpenBB 本体。
-- CRYPTO 下的内部链路是：`claw_get_market_pack -> OpenBB/data_gateway 取数 -> normalized crypto bundle -> CryptoLens analysis engine -> reader_brief`。
-- worker 只看到资料包的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；OpenBB raw payload、CryptoLens raw result、Mongo raw/cache object 都不得成为 worker 主材料。
+- `claw_get_market_pack`。它是 market worker 的统一资料包入口，不是数据源、不是 CryptoLens、不是 legacy OpenBB 本体。
+- CRYPTO 下的内部链路是：`claw_get_market_pack -> data_gateway 取数 -> normalized crypto bundle -> CryptoLens analysis engine -> reader_brief`。
+- worker 只看到资料包的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；provider raw payload、CryptoLens raw result、Mongo raw/cache object 都不得成为 worker 主材料。
 
 注册边界：
 
 - `bb_crypto_data__build_trade_context` 不暴露给 `market_analyst` 的 CRYPTO stage，避免 worker 直接接收旧 BB 原始大 JSON。
-- 旧 `crypto_market_data_pack` 只作为历史实现/迁移 alias 讨论；目标态不得作为 OpenBB 失败后的 fallback。
+- 旧 `crypto_market_data_pack` 只作为历史实现/迁移 alias 讨论；目标态不得作为 data_gateway 失败后的 fallback。
 - `claw_get_market_pack` 不能把缺失的 OI、资金费率、清算、多空比、主动买卖、期权、ETF 或链上周期指标补写成已覆盖；缺失必须进入 `data_gaps`。
 - CRYPTO market stage 是否真实可用，必须看 fresh provider payload 中的 visible tool schema 和真实 tool call 证据，不能只看静态合同。
 
@@ -296,7 +296,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 - 主动买卖。
 - ETF。
 - 链上周期指标。
-- 图表资产：目标态由 `claw_get_market_pack` 的 OpenBB market pack 生成真实 OHLCV 衍生技术图表，供最终报告复制图片时使用；旧 `crypto_market_data_pack` 只作为历史实现说明。
+- 图表资产：目标态由 `claw_get_market_pack` 的 data_gateway market pack 生成真实 OHLCV 衍生技术图表，供最终报告复制图片时使用；旧 `crypto_market_data_pack` 只作为历史实现说明。
 
 ### 5.2 `claw_get_fundamental_pack`
 
@@ -398,7 +398,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 ### 7.1 已打开
 
-- `market_analyst` / CRYPTO：只挂 `claw_get_market_pack`。OpenBB/data_gateway 负责所有外部 provider 取数，CryptoLens 负责对 normalized bundle 做离线指标分析。
+- `market_analyst` / CRYPTO：只挂 `claw_get_market_pack`。data_gateway 负责所有外部 provider 取数，CryptoLens 负责对 normalized bundle 做离线指标分析。
 - `fundamental_analyst` / CRYPTO：只挂 `claw_get_fundamental_pack`，当前目标覆盖 CoinGecko 与 DefiLlama 边界。
 - `news_analyst` / CRYPTO：只挂 `claw_get_news_pack`；该包覆盖官方公告/RSS/页面、GitHub releases、交易所公告配置源、监管 feed、DefiLlama 安全/融资背景、Polymarket 事件预期和商业搜索发现。
 - `social_analyst` / CRYPTO：只挂 `claw_get_social_pack`；该包覆盖 Alternative.me、LunarCrush、X、Reddit、Telegram、Discord、Polymarket 和公开讨论搜索发现。只有真实 provider payload 返回的平台才算覆盖。
@@ -442,7 +442,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 | worker | CRYPTO 工具策略 |
 |---|---|
-| `market_analyst` | 只挂 `claw_get_market_pack`；工具内部经 OpenBB/data_gateway 获取 CRYPTO 市场资料，再调用 CryptoLens 离线分析引擎生成自然语言资料包 |
+| `market_analyst` | 只挂 `claw_get_market_pack`；工具内部经 data_gateway 获取 CRYPTO 市场资料，再调用 CryptoLens 离线分析引擎生成自然语言资料包 |
 | `fundamental_analyst` | 只挂 `claw_get_fundamental_pack`；缺 key、失败、partial 或 insufficient 必须写入 L1 缺口 |
 | `news_analyst` | 只挂 `claw_get_news_pack`；搜索发现、Polymarket 和 DefiLlama 背景不能被写成新闻事实，缺原始源必须上报 |
 | `social_analyst` | 只挂 `claw_get_social_pack`；Alternative.me / Polymarket / 搜索发现不能被写成完整社交舆情，缺原始平台必须上报 |
@@ -459,7 +459,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 | 数据源 | 收费判断 | 稳定性判断 | 备注 |
 |---|---|---|---|
-| CoinGlass 等 OpenBB CRYPTO provider（CryptoLens 仅分析） | CoinGlass 已付费；CryptoLens 是项目内部分析代码 | 高，旧 BB 项目已跑通但目标态需迁入本仓库 | CoinGlass 等外部源只经 OpenBB/data_gateway；CryptoLens 不作为数据源 |
+| CoinGlass 等 CRYPTO provider（CryptoLens 仅分析） | CoinGlass 已付费；CryptoLens 是项目内部分析代码 | 高，旧 BB 项目已跑通但目标态需迁入本仓库 | CoinGlass 等外部源只经 data_gateway；CryptoLens 不作为数据源 |
 | DefiLlama | 免费 API + Pro/API plan | 中高，DeFi 覆盖强 | MCP/API 高额度通常需要计划 |
 | CoinGecko | Freemium / Pro | 中高，币种基础覆盖强 | 高频和高级能力需付费 |
 | LunarCrush | 商业 / Freemium 倾向 | 待确认 | 社交舆情候选主源 |
@@ -471,7 +471,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 | Polymarket | 市场数据公开程度高 | 中 | 事件预期，不是新闻事实 |
 | Dune | Freemium / paid | 高 | 深度链上，成本和查询维护较高 |
 | The Graph | Freemium / paid | 中高 | 链上查询，依赖 subgraph/API 覆盖 |
-| OpenBB | 框架开源，数据源另算 | 取决于底层 provider | 当前目标态唯一外部数据入口；不得把全量工具暴露给 worker |
+| legacy OpenBB | 框架开源，数据源另算 | 不作为当前目标运行时 | 只保留历史评估和 forbidden legacy path 语境 |
 | Awesome-finance-skills | 代码免费 | 取决于底层免费源 | 适合参考 skill 设计 |
 | daily_stock_analysis | 代码免费 | 取决于底层免费/商业源 | 适合参考配置设计 |
 | Kronos | 模型开源 | 取决于输入数据和回测 | 不是数据源 |
@@ -479,7 +479,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 ## 10. 推荐实施顺序
 
 1. 保持正式 12 个 CRYPTO worker 与 `report_polisher` 打开；当前能力标记为“CRYPTO 全链路，新闻/舆情覆盖不完整”，不声称完整新闻或完整社交舆情覆盖。
-2. 用 fresh provider payload 证明 `market_analyst` 实际只看到 `claw_get_market_pack`，并由该资料包内部真实调用 OpenBB/data_gateway provider adapters 产出市场结构材料，再由 CryptoLens 生成指标分析材料。
+2. 用 fresh provider payload 证明 `market_analyst` 实际只看到 `claw_get_market_pack`，并由该资料包内部真实调用 data_gateway provider plugins/adapters 产出市场结构材料，再由 CryptoLens 生成指标分析材料。
 3. 对 `claw_get_fundamental_pack` 做 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告验证。
 4. 为 `claw_get_news_pack` 配置项目官方公告 / GitHub releases / 交易所公告 / 监管源，并验证 provider attempts 与 source URL。
 5. 为 `claw_get_social_pack` 配置 LunarCrush、X、Reddit、Telegram、Discord 等真实社交源，并验证 provider attempts 与平台覆盖状态。
@@ -508,7 +508,7 @@ CryptoLens 迁入口径和 OpenBB 边界见 [CryptoLens 接入方案](CryptoLens
 
 ## 12. 暂不做
 
-- 不把 OpenBB 全量 MCP 直接挂给 worker。
+- 不把 legacy OpenBB 全量 MCP 直接挂给 worker。
 - 不把 CoinGecko 当成 CoinGlass 替代品。
 - 不把 DefiLlama 当成所有币种的万能基本面源。
 - 不把 Polymarket 当新闻事实源。

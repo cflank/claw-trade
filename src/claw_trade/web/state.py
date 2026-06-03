@@ -16,6 +16,15 @@ from claw_trade.config.report_workflow_settings import (
 from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
 from claw_trade.selection.confirmation import SelectionConfirmationController
 from claw_trade.selection.controller import SelectionController
+from claw_trade.selection.data_job import SelectionDataJob
+from claw_trade.selection.provider_batch import (
+    build_selection_provider_batch_plan,
+    fetch_selection_batch_from_data_gateway,
+    load_cn_a_selection_v1_strategy,
+    load_cn_a_selection_v1_strategy_config_ref,
+    resolve_cn_a_closed_trade_date_for_scheduler,
+)
+from claw_trade.selection.refresh import SelectionDataRefreshService
 from claw_trade.selection.store import restore_selection_run_store
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
 from claw_trade.ui_backend.channel_text_inbound import ChannelTextInboundController
@@ -247,6 +256,18 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
     )
     selection_store = restore_selection_run_store()
+    selection_data_job = SelectionDataJob(
+        store=selection_store,
+        provider_fetch_batch=fetch_selection_batch_from_data_gateway,
+        strategy_config_loader=load_cn_a_selection_v1_strategy,
+    )
+    selection_refresh_service = SelectionDataRefreshService(
+        store=selection_store,
+        run_data_job=selection_data_job.run,
+        resolve_closed_trade_date=resolve_cn_a_closed_trade_date_for_scheduler,
+        load_approved_strategy_config_ref=load_cn_a_selection_v1_strategy_config_ref,
+        build_provider_batch_plan=build_selection_provider_batch_plan,
+    )
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(rpc_client),
         recognizer=IntentRecognizer(),
@@ -257,6 +278,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         selection_controller=SelectionController(
             store=selection_store,
             openclaw=workflow_runner.selection_openclaw_client(),
+            scheduler_enqueue=selection_refresh_service.request_refresh,
         ),
     )
     selection_confirmation = SelectionConfirmationController(

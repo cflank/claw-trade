@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -16,6 +16,7 @@ from claw_trade.selection.candidate_pack import (
 )
 from claw_trade.selection.engine import (
     ApprovedSelectionStrategy,
+    StrategyRule,
     ScoringResult,
     SelectionEngineError,
     run_hard_filters,
@@ -188,7 +189,12 @@ class SelectionDataJob:
 
             self._save_status(plan, status=SelectionDataRunStatus.FILTERING_AND_SCORING, lease_id=lease_id)
             strategy = self._load_approved_strategy(plan.approved_strategy_config_ref)
-            _validate_strategy_field_coverage(plan=plan, snapshot=feature_snapshot, strategy=strategy)
+            strategy, strategy_gap_refs = _strategy_with_available_optional_variants(
+                plan=plan,
+                snapshot=feature_snapshot,
+                strategy=strategy,
+            )
+            all_data_gaps.extend(strategy_gap_refs)
             filtered = run_hard_filters(plan=plan, snapshot=feature_snapshot, strategy=strategy)
             scoring = score_candidates(plan=plan, filtered=filtered, strategy=strategy)
 
@@ -545,6 +551,7 @@ class SelectionDataJob:
                 }
                 for item in (strategy.strategy_set if strategy is not None else ())
             ],
+            "disabled_strategy_variants": _disabled_strategy_variants(data_gaps),
             "trigger_source": plan.trigger_source.value,
             "supersedes_run_id": plan.supersedes_run_id,
             "status": data_run.status.value,
@@ -607,6 +614,9 @@ class SelectionDataJob:
                     "score": item.score,
                     "strategy_hits": list(item.strategy_hits),
                     "strategy_hit_count": item.feature_values.get("strategy_hit_count"),
+                    "strategy_variant_count": item.feature_values.get("strategy_variant_count"),
+                    "strategy_missing_field_count": item.feature_values.get("strategy_missing_field_count"),
+                    "strategy_required_field_count": item.feature_values.get("strategy_required_field_count"),
                     "strategy_hit_coverage_score": item.feature_values.get("strategy_hit_coverage_score"),
                     "strategy_inner_strength_score": item.feature_values.get("strategy_inner_strength_score"),
                     "rps_trend_score": item.feature_values.get("rps_trend_score"),
@@ -692,7 +702,8 @@ def build_selection_data_plan(
         has_warehouse_refs = bool(provider_result.normalized_refs) and bool(
             provider_result.warehouse_check_ref and provider_result.warehouse_check_ref.strip()
         )
-        status = _SelectionWarehouseStatus.FRESH if has_warehouse_refs and not gaps else _SelectionWarehouseStatus.MISSING
+        has_blocker_gaps = any(gap.severity == DataGapSeverity.BLOCKER for gap in gaps)
+        status = _SelectionWarehouseStatus.FRESH if has_warehouse_refs and not has_blocker_gaps else _SelectionWarehouseStatus.MISSING
         return _SelectionDataPlan(
             plan_id=plan_id,
             support_status=_SelectionPlanSupportStatus.SUPPORTED,
@@ -874,59 +885,177 @@ def _select_plan_blocker_gap_refs(select_data_plan: Any) -> tuple[DataGapRef, ..
     return tuple(refs)
 
 
-def _validate_strategy_field_coverage(
+_OPTIONAL_STRATEGY_VARIANTS = frozenset({("Sequoia-X", "sequoia_private_placement")})
+
+
+def _strategy_with_available_optional_variants(
     *,
     plan: SelectionRunPlan,
     snapshot: FeatureSnapshot,
     strategy: ApprovedSelectionStrategy,
-) -> None:
-    missing = _missing_strategy_fields(snapshot=snapshot, strategy=strategy)
-    if not missing:
-        return
-    raise SelectionDataJobStepError(
-        "selection_strategy_fields_missing",
-        "approved strategy 必需字段未闭合",
-        data_gaps=tuple(
-            DataGapRef(
-                gap_id=f"{plan.selection_run_id}-strategy-field-missing-{field}",
-                domain="selection",
-                gap_code="selection_strategy_field_missing",
-                severity=DataGapSeverity.BLOCKER,
-                attempt_refs=(snapshot.feature_snapshot_ref,),
-                reader_message=f"策略字段缺失：{field}。字段不足时不能生成 approved candidate pack。",
-                source_metadata={
-                    "field": field,
-                    "missing_ticker_count": len(tickers),
-                    "missing_tickers_sample": list(tickers[:20]),
-                    "strategy_variants": [
-                        rule.name
-                        for rule in strategy.strategy_set
-                        if field in rule.required_fields
-                    ],
-                },
+) -> tuple[ApprovedSelectionStrategy, tuple[DataGapRef, ...]]:
+    missing_by_rule = _missing_strategy_fields_by_rule(snapshot=snapshot, strategy=strategy)
+    if not missing_by_rule:
+        return strategy, ()
+
+    blocker_missing: dict[str, tuple[str, ...]] = {}
+    disabled_rules: list[StrategyRule] = []
+    warning_gaps: list[DataGapRef] = []
+    for rule in strategy.strategy_set:
+        missing = missing_by_rule.get((rule.source, rule.name))
+        if not missing:
+            continue
+        if _is_optional_strategy_rule(rule):
+            disabled_rules.append(rule)
+            warning_gaps.append(
+                _optional_strategy_variant_gap(
+                    plan=plan,
+                    snapshot=snapshot,
+                    rule=rule,
+                    missing=missing,
+                )
             )
-            for field, tickers in missing.items()
-        ),
+            continue
+        for field, tickers in missing.items():
+            blocker_missing[field] = _dedup_tickers((*blocker_missing.get(field, ()), *tickers))
+
+    if blocker_missing:
+        raise SelectionDataJobStepError(
+            "selection_strategy_fields_missing",
+            "approved strategy 必需字段未闭合",
+            data_gaps=_strategy_field_blocker_gaps(
+                plan=plan,
+                snapshot=snapshot,
+                strategy=strategy,
+                missing=blocker_missing,
+            ),
+        )
+
+    if not disabled_rules:
+        return strategy, ()
+    disabled_keys = {(rule.source, rule.name) for rule in disabled_rules}
+    active_rules = tuple(
+        rule
+        for rule in strategy.strategy_set
+        if (rule.source, rule.name) not in disabled_keys
+    )
+    if not active_rules:
+        raise SelectionDataJobStepError(
+            "selection_strategy_fields_missing",
+            "本轮没有可参与评分的策略变体",
+            data_gaps=(
+                DataGapRef(
+                    gap_id=f"{plan.selection_run_id}-strategy-variants-unavailable",
+                    domain="selection",
+                    gap_code="selection_strategy_variants_unavailable",
+                    severity=DataGapSeverity.BLOCKER,
+                    attempt_refs=(snapshot.feature_snapshot_ref,),
+                    reader_message="全部策略变体缺少本轮必需字段，不能生成 candidate pack。",
+                ),
+            ),
+        )
+    return replace(strategy, strategy_set=active_rules), tuple(warning_gaps)
+
+
+def _strategy_field_blocker_gaps(
+    *,
+    plan: SelectionRunPlan,
+    snapshot: FeatureSnapshot,
+    strategy: ApprovedSelectionStrategy,
+    missing: Mapping[str, tuple[str, ...]],
+) -> tuple[DataGapRef, ...]:
+    return tuple(
+        DataGapRef(
+            gap_id=f"{plan.selection_run_id}-strategy-field-missing-{field}",
+            domain="selection",
+            gap_code="selection_strategy_field_missing",
+            severity=DataGapSeverity.BLOCKER,
+            attempt_refs=(snapshot.feature_snapshot_ref,),
+            reader_message=f"策略字段缺失：{field}。字段不足时不能生成 approved candidate pack。",
+            source_metadata={
+                "field": field,
+                "missing_ticker_count": len(tickers),
+                "missing_tickers_sample": list(tickers[:20]),
+                "strategy_variants": [
+                    rule.name
+                    for rule in strategy.strategy_set
+                    if field in rule.required_fields
+                ],
+            },
+        )
+        for field, tickers in missing.items()
     )
 
 
-def _missing_strategy_fields(
+def _optional_strategy_variant_gap(
+    *,
+    plan: SelectionRunPlan,
+    snapshot: FeatureSnapshot,
+    rule: StrategyRule,
+    missing: Mapping[str, tuple[str, ...]],
+) -> DataGapRef:
+    missing_fields = tuple(sorted(missing))
+    return DataGapRef(
+        gap_id=f"{plan.selection_run_id}-strategy-variant-disabled-{rule.name}",
+        domain="selection",
+        gap_code="selection_strategy_variant_disabled",
+        severity=DataGapSeverity.WARN,
+        attempt_refs=(snapshot.feature_snapshot_ref,),
+        reader_message=(
+            f"策略 {rule.source}:{rule.name} 缺少本轮专用数据字段，"
+            "本次禁用该策略，其它策略继续。"
+        ),
+        source_metadata={
+            "source": rule.source,
+            "variant_id": rule.name,
+            "decision": "disabled_for_current_run",
+            "reason": "strategy_specific_data_missing",
+            "missing_fields": missing_fields,
+            "not_interpreted_as_no_event": True,
+            "missing_by_field": {
+                field: {
+                    "missing_ticker_count": len(tickers),
+                    "missing_tickers_sample": list(tickers[:20]),
+                }
+                for field, tickers in missing.items()
+            },
+        },
+    )
+
+
+def _is_optional_strategy_rule(rule: StrategyRule) -> bool:
+    return (rule.source, rule.name) in _OPTIONAL_STRATEGY_VARIANTS
+
+
+def _missing_strategy_fields_by_rule(
     *,
     snapshot: FeatureSnapshot,
     strategy: ApprovedSelectionStrategy,
-) -> dict[str, tuple[str, ...]]:
-    required: set[str] = set()
+) -> dict[tuple[str, str], dict[str, tuple[str, ...]]]:
+    missing: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
     for rule in strategy.strategy_set:
-        required.update(field for field in rule.required_fields if field.strip())
-    if not required:
-        return {}
-    missing: dict[str, tuple[str, ...]] = {}
-    for row in snapshot.rows:
-        for field in required:
-            if row.feature_values.get(field) is None:
-                missing.setdefault(field, ())
-                missing[field] = (*missing[field], row.ticker)
-    return {field: missing[field] for field in sorted(missing)}
+        required = tuple(field for field in rule.required_fields if field.strip())
+        if not required:
+            continue
+        rule_key = (rule.source, rule.name)
+        for row in snapshot.rows:
+            for field in required:
+                if row.feature_values.get(field) is None:
+                    missing.setdefault(rule_key, {})
+                    missing[rule_key].setdefault(field, ())
+                    missing[rule_key][field] = (*missing[rule_key][field], row.ticker)
+    return {
+        rule_key: {field: _dedup_tickers(tickers) for field, tickers in sorted(field_missing.items())}
+        for rule_key, field_missing in missing.items()
+    }
+
+
+def _dedup_tickers(tickers: tuple[str, ...]) -> tuple[str, ...]:
+    seen: dict[str, None] = {}
+    for ticker in tickers:
+        if ticker not in seen:
+            seen[ticker] = None
+    return tuple(seen)
 
 
 def _candidate_pack_stage(status: SelectionDataRunStatus, manifest: CandidatePackManifest | None) -> str:
@@ -984,6 +1113,24 @@ def _per_strategy_raw_hits(
             }
         )
     return rows
+
+
+def _disabled_strategy_variants(data_gaps: tuple[DataGapRef, ...]) -> list[dict[str, object]]:
+    variants: list[dict[str, object]] = []
+    for gap in data_gaps:
+        if gap.gap_code != "selection_strategy_variant_disabled":
+            continue
+        metadata = dict(gap.source_metadata or {})
+        variants.append(
+            {
+                "source": metadata.get("source"),
+                "variant_id": metadata.get("variant_id"),
+                "reason": metadata.get("reason"),
+                "decision": metadata.get("decision"),
+                "missing_fields": list(metadata.get("missing_fields", ())),
+            }
+        )
+    return variants
 
 
 def _isoformat(value: datetime) -> str:

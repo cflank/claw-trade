@@ -176,6 +176,7 @@ class DataService:
             status=DataResultStatus.READY,
             rows=warehouse_result.rows,
             dataset_refs=warehouse_result.dataset_refs,
+            attempt_refs=warehouse_result.attempt_refs,
             gaps=warehouse_result.gaps,
             freshness=warehouse_result.freshness,
             as_of=datetime.now(tz=UTC),
@@ -189,7 +190,7 @@ class DataService:
     ) -> DataResult:
         dataset_refs: list[str] = list(final_warehouse.dataset_refs)
         raw_refs: list[str] = []
-        attempt_refs: list[str] = []
+        attempt_refs: list[str] = list(final_warehouse.attempt_refs)
         gaps: list[DataGap] = [self._coerce_gap(gap, request_id=request_id) for gap in final_warehouse.gaps]
         for ingest_result in ingest_results:
             if not final_warehouse.dataset_refs:
@@ -335,8 +336,36 @@ class DataService:
             satisfied=not request_gaps and bool(dataset_refs),
             rows=rows,
             dataset_refs=dataset_refs,
+            attempt_refs=DataService._warehouse_attempt_refs_for_dataset_refs(
+                warehouse_result=warehouse_result,
+                dataset_refs=dataset_refs,
+            ),
+            attempt_refs_by_dataset_ref={
+                dataset_ref: refs
+                for dataset_ref, refs in warehouse_result.attempt_refs_by_dataset_ref.items()
+                if dataset_ref in set(dataset_refs)
+            },
             gaps=request_gaps,
             freshness=freshness,
+        )
+
+    @staticmethod
+    def _warehouse_attempt_refs_for_dataset_refs(
+        *,
+        warehouse_result: WarehouseResult,
+        dataset_refs: Sequence[str],
+    ) -> tuple[str, ...]:
+        if not dataset_refs:
+            return ()
+        refs_by_dataset = warehouse_result.attempt_refs_by_dataset_ref
+        if not refs_by_dataset:
+            return warehouse_result.attempt_refs
+        return tuple(
+            dict.fromkeys(
+                attempt_ref
+                for dataset_ref in dataset_refs
+                for attempt_ref in refs_by_dataset.get(dataset_ref, ())
+            )
         )
 
     @staticmethod

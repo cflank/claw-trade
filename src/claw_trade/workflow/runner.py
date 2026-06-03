@@ -638,6 +638,7 @@ class ControlRunner:
                     "final_report_section_instruction",
                     spec.section_plan.instruction,
                 )
+            call = _with_report_prefetch_manifest(call, state)
             result = self.run_single_worker(call)
             self.store.save_worker_result(result)
             worker_results.append(result)
@@ -816,7 +817,7 @@ class ControlRunner:
                 worker_results_by_id[worker_id] = result
                 break
 
-            prepared_calls.append(prompt_result.call)
+            prepared_calls.append(_with_report_prefetch_manifest(prompt_result.call, state))
 
         if prepared_calls:
             with ThreadPoolExecutor(max_workers=len(prepared_calls)) as executor:
@@ -1595,6 +1596,32 @@ def _final_report_material_sizes(*, manifest: ApprovedManifest, run_id: str) -> 
 
 def _with_prompt_runtime_var(call: WorkerCall, key: str, value: str) -> WorkerCall:
     return replace(call, prompt_runtime_vars={**call.prompt_runtime_vars, key: value})
+
+
+_REPORT_PREFETCH_WORKERS = frozenset(
+    {
+        "market_analyst",
+        "fundamental_analyst",
+        "news_analyst",
+        "social_analyst",
+    }
+)
+
+
+def _with_report_prefetch_manifest(call: WorkerCall, state: WorkflowState) -> WorkerCall:
+    if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
+        return call
+    if state.request.data_gateway.strip().lower() != "data_gateway":
+        return call
+    if call.stage != Stage.FRONTLINE:
+        return call
+    if call.worker_id not in _REPORT_PREFETCH_WORKERS:
+        return call
+    return _with_prompt_runtime_var(
+        call,
+        "report_prefetch_manifest_path",
+        str(state.run_dir / "data-layer" / "report-prefetch.json"),
+    )
 
 
 def _blocked_worker_result_from_failure(

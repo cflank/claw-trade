@@ -449,6 +449,121 @@ def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None
     assert result.failures == ()
 
 
+def test_report_frontline_worker_calls_receive_prefetch_manifest_path(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(replace(_request(), entry_point=WorkflowEntryPoint.REPORT_COMMAND))
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FRONTLINE,
+        worker_ids=("market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=True,
+        stop_point=StopPoint.NONE,
+    )
+    calls_seen: list[WorkerCall] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        calls_seen.append(call)
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-{call.worker_id}",
+            failure=None,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    expected_path = str(state.run_dir / "data-layer" / "report-prefetch.json")
+    assert {call.worker_id for call in calls_seen} == set(batch.worker_ids)
+    assert all(call.prompt_runtime_vars["report_prefetch_manifest_path"] == expected_path for call in calls_seen)
+
+
+def test_generic_frontline_worker_calls_do_not_receive_prefetch_manifest_path(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request())
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FRONTLINE,
+        worker_ids=("market_analyst",),
+        scope=BatchScope.SINGLE_WORKER,
+        collect_first=False,
+        stop_point=StopPoint.NONE,
+    )
+    calls_seen: list[WorkerCall] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        calls_seen.append(call)
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id="mat-market",
+            failure=None,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert len(calls_seen) == 1
+    assert "report_prefetch_manifest_path" not in calls_seen[0].prompt_runtime_vars
+
+
+def test_cn_a_unprefetched_frontline_workers_do_not_receive_prefetch_manifest_path(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    request = replace(
+        _request(profile="CN_A"),
+        ticker="600519",
+        company_name="贵州茅台",
+        market="CN_A",
+        currency="CNY",
+        currency_symbol="¥",
+        entry_point=WorkflowEntryPoint.REPORT_COMMAND,
+    )
+    state = harness.store.create_run(request)
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FRONTLINE,
+        worker_ids=("policy_analyst", "hot_money_tracker", "lockup_watcher"),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=True,
+        stop_point=StopPoint.NONE,
+    )
+    calls_seen: list[WorkerCall] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        calls_seen.append(call)
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-{call.worker_id}",
+            failure=None,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert {call.worker_id for call in calls_seen} == set(batch.worker_ids)
+    assert all("report_prefetch_manifest_path" not in call.prompt_runtime_vars for call in calls_seen)
+
+
 def test_final_report_batch_runs_report_polisher_dynamic_serial_section_turns(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "openclaw.json"
     config_path.write_text(

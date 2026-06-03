@@ -100,6 +100,10 @@ def _completed_record(
     data_run = SelectionDataRun(
         selection_run_id=run_id,
         status=SelectionDataRunStatus.COMPLETED,
+        normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
+        provider_attempt_refs=(f"attempt://{run_id}",),
+        select_data_plan_ref=f"select-data-plan://selection/{run_id}/{trade_date}",
+        warehouse_check_ref=f"warehouse-check://selection/{run_id}/{trade_date}/ok",
         candidate_pack_ref=pack_ref,
         completed_at=completed_at,
     )
@@ -312,6 +316,10 @@ def test_select_manifest_missing_returns_integrity_failure() -> None:
     data_run = SelectionDataRun(
         selection_run_id=run_id,
         status=SelectionDataRunStatus.COMPLETED,
+        normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
+        provider_attempt_refs=(f"attempt://{run_id}",),
+        select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
+        warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",
         candidate_pack_ref=_pack_ref(run_id),
         completed_at="2026-05-26T08:30:00+00:00",
     )

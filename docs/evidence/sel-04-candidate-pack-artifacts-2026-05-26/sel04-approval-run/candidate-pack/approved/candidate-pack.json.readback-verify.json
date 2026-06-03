@@ -1,0 +1,9 @@
+{
+  "uri": "local://selection/sel04-approval-run/candidate-pack/approved/candidate-pack.json",
+  "path": "docs/evidence/sel-04-candidate-pack-artifacts-2026-05-26/sel04-approval-run/candidate-pack/approved/candidate-pack.json",
+  "status": "verified",
+  "expected_sha256": "21b12a7605f24ed5667d0b53348766dfcd85d20bc010ba86fe225cd5a2fa9b29",
+  "readback_sha256": "21b12a7605f24ed5667d0b53348766dfcd85d20bc010ba86fe225cd5a2fa9b29",
+  "size_bytes": 1555,
+  "verified_at": "2026-05-26T09:00:00Z"
+}

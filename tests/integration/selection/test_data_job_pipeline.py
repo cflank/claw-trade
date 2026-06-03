@@ -273,6 +273,80 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
 
 
 @pytest.mark.integration
+def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields_missing(tmp_path: Path) -> None:
+    plan = _plan()
+    store = SelectionRunStore()
+
+    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+        rows = []
+        normalized_refs: list[str] = []
+        for idx in range(20):
+            ticker = f"{600100 + idx:06d}.SH"
+            ref = f"normalized://mongo/normalized_datasets/private-missing-{idx + 1}"
+            normalized_refs.append(ref)
+            open_price = 10.0 + idx * 0.1
+            close_price = open_price + 0.2
+            strategy_fields = _complete_strategy_fields(idx=idx, open_price=open_price, close_price=close_price)
+            strategy_fields.pop("private_placement_event_date")
+            strategy_fields.pop("private_placement_days_since")
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "company_name": f"定增缺口样本{idx + 1}",
+                    "industry": "样本行业",
+                    "open": open_price,
+                    "close": close_price,
+                    "high": close_price + 0.1,
+                    "low": open_price - 0.1,
+                    "amount": 200000000.0 + idx * 10000000.0,
+                    "vol_ratio": 2.5 + idx * 0.1,
+                    **strategy_fields,
+                    "source_ref": ref,
+                }
+            )
+        return SelectionProviderBatchResult(
+            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+            attempt_refs=("attempt://akshare-1",),
+            normalized_refs=tuple(normalized_refs),
+            rows=tuple(rows),
+            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/private-missing",
+        )
+
+    job = SelectionDataJob(
+        store=store,
+        provider_fetch_batch=provider_fetch,
+        strategy_config_loader=lambda _config_ref: _approved_strategy(),
+        now_fn=lambda: datetime(2026, 5, 26, 9, 0, tzinfo=UTC),
+        evidence_root=tmp_path,
+    )
+
+    result = job.run(plan)
+
+    assert result.record.data_run.status == SelectionDataRunStatus.COMPLETED
+    assert result.record.data_run.failure_code is None
+    assert len(result.top20_tickers) == 20
+    payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    assert payload["failure_code"] is None
+    assert payload["candidate_pack_stage"] == "approved"
+    assert len(payload["strategy_variants"]) == 16
+    assert "sequoia_private_placement" not in {item["variant_id"] for item in payload["strategy_variants"]}
+    assert payload["disabled_strategy_variants"] == [
+        {
+            "source": "Sequoia-X",
+            "variant_id": "sequoia_private_placement",
+            "reason": "strategy_specific_data_missing",
+            "decision": "disabled_for_current_run",
+            "missing_fields": ["private_placement_days_since", "private_placement_event_date"],
+        }
+    ]
+    [gap] = [item for item in payload["data_gaps"] if item["gap_code"] == "selection_strategy_variant_disabled"]
+    assert gap["severity"] == "warn"
+    assert gap["source_metadata"]["not_interpreted_as_no_event"] is True
+    assert payload["top20"][0]["strategy_missing_field_count"] == 0.0
+    assert payload["top20"][0]["strategy_required_field_count"] > 0.0
+
+
+@pytest.mark.integration
 def test_data_job_pipeline_provider_failure_fails_closed_without_fallback(tmp_path: Path) -> None:
     plan = _plan()
     store = SelectionRunStore()
@@ -557,7 +631,8 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
     missing_fields = {gap["source_metadata"]["field"] for gap in payload["data_gaps"]}
     assert "ma30" in missing_fields
     assert "rps120" in missing_fields
-    assert "private_placement_event_date" in missing_fields
+    assert "private_placement_event_date" not in missing_fields
+    assert "private_placement_days_since" not in missing_fields
     assert all(gap["gap_code"] == "selection_strategy_field_missing" for gap in payload["data_gaps"])
 
 

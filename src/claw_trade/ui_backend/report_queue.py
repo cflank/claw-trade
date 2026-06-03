@@ -51,6 +51,8 @@ class ReportTask:
     progress: dict[str, Any] | None = None
     completed_report_saved: bool = False
     origin_context_id: str | None = None
+    selection_context_ref: str | None = None
+    selection_stage_marker: str | None = None
 
 
 class ReportTaskQueue:
@@ -112,6 +114,8 @@ class ReportTaskQueue:
             priority=100 if source == "manual" else 10,
             created_at=now,
             origin_context_id=origin_context_id,
+            selection_context_ref=_optional_task_text(task_input.get("selectionContextRef")),
+            selection_stage_marker=_optional_task_text(task_input.get("selectionStageMarker")),
         )
         self._tasks[task.task_id] = task
         self._right_rail_active.add(task.task_id)
@@ -253,6 +257,10 @@ class ReportTaskQueue:
         }
         if task.progress is not None:
             payload["progress"] = task.progress
+        if task.selection_context_ref is not None:
+            payload["selectionContextRef"] = task.selection_context_ref
+        if task.selection_stage_marker is not None:
+            payload["selectionStageMarker"] = task.selection_stage_marker
         if task.status == ReportTaskStatus.SUCCEEDED and task.run_id:
             payload["reportId"] = task.run_id
         if task.failure is not None:
@@ -366,6 +374,13 @@ def _status_label(status: ReportTaskStatus) -> str:
         ReportTaskStatus.CANCELLED: "已取消",
     }
     return mapping[status]
+
+
+def _optional_task_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _workflow_status_value(workflow_state: dict[str, Any] | Any) -> str:

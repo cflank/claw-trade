@@ -1,8 +1,8 @@
 # A股选股总体设计
 
-状态：总体设计草案，已完成人类方向确认，未进入实现。  
+状态：总体设计草案，已有首版实现，本文按当前实现口径同步。
 日期：2026-05-24  
-依据：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据源openbb引入方案.md`、`docs/设置模块设计文档.md`，以及对 `myhhub/stock`、`ArvinLovegood/go-stock`、`sngyai/Sequoia-X` 的源码调研。
+依据：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`、`docs/设置模块设计文档.md`，以及对 `myhhub/stock`、`ArvinLovegood/go-stock`、`sngyai/Sequoia-X` 的源码调研。旧 `docs/数据源openbb引入方案.md` 只作为历史背景。
 
 ## 1. 总体结论
 
@@ -30,13 +30,13 @@
 - 全市场数据量不适合在用户点 `/select` 时实时拉取和计算。A股约 5000 只以上股票，260 个交易日回看约 130-150 万行日线数据；用户交互阶段只能读取已准备好的候选池。
 - 300-500 只候选仍然不适合发给 LLM。这个阶段必须继续由本地策略评分引擎压缩到 top 20。
 - `myhhub/stock`、`go-stock`、`Sequoia-X` 都没有让 LLM 直接获取和筛选全市场。它们共同证明：全市场选股首先是批量数据工程和确定性计算问题。
-- 东财接口稳定性不足，第一版设计不绑定具体东财 endpoint。具体 provider 后续通过 OpenBB/data_gateway provider adapter 实测决定。
+- 东财接口稳定性不足，第一版设计不绑定具体东财 endpoint。具体 provider 后续通过 data_gateway provider plugin/adapter 实测决定。
 
 ### 已确认事实
 
 - `claw-trade` 当前架构中，工作流状态机、调度、artifact 权威、hard gate 和报告导出归 `claw-trade`。
 - OpenClaw 负责单个 worker turn、真实 provider prompt、tool schema、tool call、LLM response 和 provider payload capture。
-- OpenBB/data_gateway 是项目设计中的外部数据入口和 provider evidence 记录层。
+- data_gateway 是当前外部数据入口和 provider evidence 记录层；OpenBB 本体不是目标运行时依赖。
 - Mongo 已用于保存 provider attempts、raw payloads、normalized results、cache entries、run provider plans 等证据。
 - OpenViking 已用于 approved L1/L2 material、manifest、hash、lineage 和下游 handoff。
 - 现有请求模型是单标的报告路径中心的 `RunRequest`，不是全市场或候选池中心的 selection 请求模型。
@@ -67,8 +67,8 @@
 
 ### 未知
 
-- 最终采用哪些 OpenBB/provider adapter 接口，需要后续实测字段覆盖、限流、失败率、时效和许可边界。
-- Tushare、AkShare、baostock、OpenBB 原生源、东财系接口在本项目运行环境中的真实吞吐和字段稳定性仍需 live evidence。
+- 最终采用哪些 data_gateway provider adapter 接口，需要后续实测字段覆盖、限流、失败率、时效和许可边界。
+- Tushare、AkShare、baostock、东财系接口在本项目运行环境中的真实吞吐和字段稳定性仍需 live evidence。
 - UI 最终展示形式需要产品确认，例如普通消息、结果卡片或确认卡片；本文设计明确不自动触发 `/report`，必须等用户确认。
 
 ### Recommendation
@@ -117,7 +117,7 @@
 - 用户在 `/select` 中快速获得 top 1-3 候选，而不是等待全市场计算。
 - 候选入选、观察、放弃均有读者化来源摘要或明确数据缺口。
 - `/select` 输出的是“是否值得进入 `/report`”，不是最终买卖建议。
-- 可复用现有 OpenBB/data_gateway、Mongo、OpenViking、OpenClaw single-worker 机制。
+- 可复用现有 data_gateway、Mongo、OpenViking、OpenClaw single-worker 机制。
 
 ### 2.2 非目标
 
@@ -127,7 +127,7 @@
 - 全市场 LLM 扫描。
 - 自动下单或自动交易。
 - 把“买入/持有/卖出、目标价、止损价、交易计划”当作 `/select` runtime 失败 gate。
-- 让 selection worker 调 OpenBB 或直接抓外部数据。
+- 让 selection worker 调 data_gateway/provider 或直接抓外部数据。
 - 把 `/report` 的 12 个 worker 跑在全市场或 top 20 上。
 - HK、US、CRYPTO 自动复用 CN_A prompt、A股策略、A股阈值或 A股 provider 矩阵。
 
@@ -150,7 +150,7 @@ OpenClaw worker 负责评审 top 20 值不值得进入完整投研。
 | `/select` 入口模块 | `claw-trade` | 接收用户 `/select`，读取最新可用 selection run，启动 selection worker DAG | 用户命令、market、trade_date 可选参数 | selection workflow run |
 | 定时调度模块 | `claw-trade` | 收盘后触发日频选股，支持 backfill/rerun | 交易日历、market、date | `selection_run_plan` |
 | 股票池模块 | `claw-trade` | 生成本轮全市场股票池，处理上市状态、ST、停牌、退市风险 | provider 股票列表、交易日历 | `universe_snapshot` |
-| 数据入口模块 | OpenBB/data_gateway | 统一调用 OpenBB/provider adapter，记录 attempts/raw/normalized/cache 证据 | provider settings、run plan | normalized market/fundamental refs |
+| 数据入口模块 | data_gateway | 统一调用 provider plugin/adapter，记录 attempts/raw/normalized/cache 证据 | provider settings、data requests | normalized market/fundamental refs |
 | 证据存储模块 | Mongo + evidence store | 保存 provider raw refs、normalized refs、feature refs、audit refs | data_gateway 输出 | 可追溯数据引用 |
 | 特征计算模块 | `claw-trade` | 计算收益、趋势、RPS、波动、量能、风险、行业强弱 | normalized refs、universe | `feature_snapshot` |
 | 策略筛选模块 | `claw-trade` | 硬过滤、策略命中、评分排序，把全市场压缩到 top 20 | `feature_snapshot`、规则配置 | `candidate_scores`、`strategy_hits` |
@@ -166,9 +166,9 @@ OpenClaw worker 负责评审 top 20 值不值得进入完整投研。
 
 #### 入口与控制模块
 
-`/select` 入口模块只负责识别用户意图、选择 market/profile、读取最新终态 selection data run，并且只有在 `completed + approved candidate_pack` 时启动 selection workflow。它不拉全市场数据，不计算指标，不写入选理由。
+`/select` 入口模块只负责识别用户意图、选择 market/profile、检查是否已有可用 `completed + approved candidate_pack`，可用时启动 selection workflow；如果没有可用 completed candidate pack、最新终态为 no_candidate、run stale、candidate pack 尚未 approved 或 warehouse 证据不足，则触发后台 selection data refresh/job。它不直接调 provider，不直接读表，不同步跑全市场，不计算指标，不写入选理由。
 
-定时调度模块负责交易日收盘后的自动运行，以及 `backfill/rerun`。它生成本轮 `selection_run_plan`，并把 run 状态从 `planned` 推到 `completed`、`no_candidate` 或 `failed`。如果没有可用 completed run，用户 `/select` 应得到“数据未准备好”；如果最新终态是 no-candidate，应得到“本轮无候选”，而不是临时启动全市场实时计算。
+定时调度模块负责交易日收盘后的自动运行，以及 `backfill/rerun` 和 `/select` 触发的后台 refresh。它生成本轮 `selection_run_plan`，并把 run 状态从 `planned` 推到 `completed`、`no_candidate` 或 `failed`。如果没有可用 completed candidate pack、最新终态是 no_candidate、run stale、candidate pack 尚未 approved 或 warehouse 证据不足，用户 `/select` 应得到“补数已启动/已有补数在跑/补数通道未配置”，而不是临时同步启动全市场实时计算。hash/readback/lineage 损坏仍 fail closed，不用后台补数隐藏完整性问题。
 
 建议落点：
 
@@ -180,7 +180,7 @@ src/claw_trade/cli/
 
 #### 数据入口与证据模块
 
-数据入口模块复用 OpenBB/data_gateway 的 provider adapter、settings、attempt capture、cache、normalized result 机制。它负责“从哪里拿数据”和“证据怎么留”，不负责选股结论。
+数据入口模块复用 data_gateway 的 provider plugin/adapter、settings、attempt capture、cache、normalized result 机制。它负责“从哪里拿数据”和“证据怎么留”，不负责选股结论。
 
 Mongo/evidence store 保存 raw refs、normalized refs、feature refs 和 provider attempts。OpenViking 保存 approved candidate pack、worker L1、manifest、hash、lineage。模型可见材料只能来自 approved candidate pack 或 approved L1，不直接读取 raw/debug/provider envelope。
 
@@ -242,7 +242,7 @@ src/claw_trade/selection/
 
 它不允许：
 
-- 调 OpenBB/provider。
+- 调 data_gateway/provider。
 - 查 Mongo raw collection。
 - 重新打分或改排序。
 - 扩大 top 20。
@@ -295,7 +295,7 @@ src/claw_trade/reports/
 
 | 边界 | 正确归属 | 禁止事项 |
 |---|---|---|
-| 全市场取数 | OpenBB/data_gateway + `claw-trade` 后台任务 | selection worker 直接拉全市场 |
+| 全市场取数 | data_gateway + `claw-trade` 后台任务 | selection worker 直接拉全市场 |
 | 全市场计算 | `feature_builder` + `selection_engine` | LLM 计算 300-500 只股票特征或排名 |
 | 候选评审 | OpenClaw selection workers | Python 写自然语言入选理由或投资判断 |
 | 工具暴露 | `STAGES.yaml` + `tool_names.py` + `allowed_tools` | prompt 临时要求 worker 调未批准工具 |
@@ -324,7 +324,7 @@ flowchart LR
   end
 
   subgraph DataPlane["数据入口与证据层"]
-    Gateway["OpenBB/data_gateway"]
+    Gateway["data_gateway"]
     Providers["Provider adapters"]
     Mongo["Mongo/evidence refs"]
     OpenViking["OpenViking approved material"]
@@ -394,7 +394,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant S as 定时调度
-  participant DG as OpenBB/data_gateway
+  participant DG as data_gateway
   participant M as Mongo/evidence
   participant F as feature_builder
   participant E as selection_engine
@@ -417,7 +417,7 @@ sequenceDiagram
   P->>A: 提交 candidate_pack artifact
   A->>OV: 校验并写 approved candidate_pack
   U->>Chat: 输入 /select
-  Chat->>A: 校验 latest terminal run；只有 completed 才继续校验 approved candidate_pack
+  Chat->>A: 校验可用 completed+approved candidate_pack；不可用时只触发后台补数，不同步拉全市场
   Chat->>OC: 调度 selection_strategist single worker turn
   OC->>T: strategist/skeptic 调用候选包工具
   T->>OV: 只读取 approved candidate_pack
@@ -443,7 +443,7 @@ sequenceDiagram
 ```text
 SelectionScheduler
   -> SelectionDataJob
-  -> OpenBB/data_gateway provider adapters
+  -> data_gateway provider plugins/adapters
   -> Mongo raw refs / normalized refs
   -> FeatureBuilder
   -> SelectionEngine
@@ -458,7 +458,8 @@ SelectionScheduler
 
 ```text
 SelectCommandController
-  -> load latest terminal selection data run
+  -> check usable completed+approved candidate pack
+  -> if no usable pack / no_candidate / stale / warehouse evidence insufficient, trigger background selection data refresh/job and return refresh status
   -> wake selection_strategist with claw_get_selection_candidate_pack
   -> approve selection_strategy_review
   -> wake selection_skeptic with claw_get_selection_candidate_pack
@@ -487,7 +488,7 @@ selection_portfolio_decision
 | 接口 | 调用方 | 被调用方 | 传递内容 |
 |---|---|---|---|
 | `run scheduled_selection_job(CN_A, trade_date)` | scheduler/backfill | selection batch | market、trade_date、lookback_days |
-| `fetch_market_data(run_plan)` | `selection_data_job` | OpenBB/data_gateway | 股票池、日线、快照、估值/行业字段需求 |
+| `fetch_market_data(run_plan)` | `selection_data_job` | data_gateway | 股票池、日线、快照、估值/行业字段需求 |
 | `read_normalized_refs(selection_run_id)` | `feature_builder` | Mongo/evidence | normalized data refs，不读模型 prompt |
 | `build_candidate_pack(selection_run_id)` | `candidate_pack_builder` | selection artifacts | top 20 排序事实、候选摘要表、数据质量和审计引用 |
 | `claw_get_selection_candidate_pack()` | OpenClaw worker | selection tool backend | 当前 run 的 approved candidate pack |
@@ -550,8 +551,8 @@ sequenceDiagram
 |---:|---|---|---|---|
 | 1 | Chat 入口 | 识别用户输入是否为 `/select`，切换到 selection workflow | `select_command` | 非 `/select` 走普通 chat 或其他命令 |
 | 2 | Select 控制器 | 解析 market/profile/date。第一版默认 `CN_A`，日期默认最新终态交易日 | `SelectRequest` | HK/US/CRYPTO 未批准时 fail，不 fallback |
-| 3 | Select 控制器 | 查询 latest terminal `selection_data_run` | `selection_run_id` 或 no-candidate 状态 | 没有 completed run：提示数据未准备好；最新 no-candidate：提示本轮无候选 |
-| 4 | Select 控制器 | 检查 run 时效、market/profile、candidate_pack approval、hash/readback | `SelectedCandidatePackRef` | run 过期、未批准、hash 不一致：停止 |
+| 3 | Select 控制器 | 检查可用 `completed + approved candidate_pack` | `selection_run_id` 或 refresh 状态 | 没有可用 completed pack、最新 no-candidate、run stale 或 warehouse 证据不足：触发后台补数并返回补数状态 |
+| 4 | Select 控制器 | 检查 run 时效、market/profile、candidate_pack approval、hash/readback | `SelectedCandidatePackRef` | run 过期或 candidate pack 未 approved：触发后台补数并返回补数状态；hash/readback/lineage 不一致：停止 |
 | 5 | Select 控制器 | 创建本次 `/select` workflow run，绑定 `selection_run_id` | `select_workflow_run_id` | run state 无法写入：停止 |
 | 6 | Select 控制器 | 准备 `selection_strategist` 的 prompt vars、allowed_tools、material_target | OpenClaw single-worker request | 工具解析不等于 candidate pack：停止 |
 | 7 | OpenClaw | 唤醒 `selection_strategist` | provider payload、tool schema、raw LLM output | provider/runtime 失败：记录失败并停止 |
@@ -602,7 +603,7 @@ selection_result_invalid
 
 关键原则：
 
-- `no_completed_selection_run` 和 `stale_selection_run` 只提示用户，不自动触发全市场抓取。
+- `no_completed_selection_run`、`no_candidate_selection_run`、`stale_selection_run`、`candidate_pack_not_approved` 和 warehouse 证据不足不启动 worker；`/select` 只触发后台 selection data refresh/job 并返回“补数已启动/已有补数在跑/补数通道未配置”。
 - `tool_schema_violation` 是硬失败，因为它说明 worker 看到的工具边界不可信。
 - `artifact_approval_failed` 后的材料不能进入下游 prompt。
 - `/select` completed 以后仍不能自动跑 `/report`，必须等用户确认。
@@ -653,7 +654,7 @@ selection_result_invalid
 - 不实时获取全市场行情。
 - 不在聊天请求里计算全市场特征。
 - 不把 300-500 只股票发给 LLM。
-- 不让 worker 调 OpenBB/provider 原子工具。
+- 不让 worker 调 data_gateway/provider 原子工具。
 - 不让 Python 代 worker 写入选理由。
 - 不在没有用户确认时自动启动 `/report`。
 - 不把候选评审结论包装成最终交易建议。
@@ -710,9 +711,9 @@ selection_result_invalid
 
 数据原则：
 
-- 缺字段不是裁剪策略的理由。实现时必须优先补 OpenBB/data_gateway 下的数据字段合同和 provider adapter。
+- 缺字段不是裁剪策略的理由。实现时必须优先补 data_gateway 下的数据字段合同和 provider plugin/adapter。
 - 运行时不得伪造策略命中。若某个策略所需字段在所有已配置真实来源中都不可得，候选包必须列出“该策略本轮数据不足”，而不是把策略从清单中静默移除。
-- selection 层不直接接触具体数据源；它只消费 OpenBB/data_gateway 输出的标准化字段和证据。
+- selection 层不直接接触具体数据源；它只消费 data_gateway 输出的标准化字段和证据。
 
 输出：
 
@@ -854,7 +855,7 @@ worker 不可见材料：
 - 全市场 OHLCV 明细表。
 - provider raw JSON。
 - Mongo raw payload。
-- OpenBB debug envelope。
+- legacy OpenBB debug envelope。
 - 5000 只股票完整数据。
 - provider secret、token、HTTP headers。
 - raw/debug/provider envelope、Mongo/OpenViking 协议、manifest/hash/lineage/receipt 机器字段正文。
@@ -866,7 +867,7 @@ worker 不可见材料：
 
 ```text
 report frontline 工具：
-  从 OpenBB/data_gateway 获取单标的资料包。
+  从 data_gateway 获取单标的资料包。
 
 select review 工具：
   只读取已完成 selection run 的 top 20 候选包。
@@ -884,8 +885,8 @@ select review 工具：
 | `agents/<worker>/STAGES.yaml` 决定当前 worker 的 tool intent | `selection_*` worker 也用 `STAGES.yaml` 声明 tool intent | prompt 可说明已授权工具的用法，但不能成为工具授权来源；Python 不临时拼工具 |
 | `src/claw_trade/config/tool_names.py` 把 intent 映射成 canonical provider-visible tool | 新增 `selection_candidate_pack -> claw_get_selection_candidate_pack` | provider payload 只允许出现 canonical tool 名 |
 | `allowed_tools` 随 OpenClaw single worker wake 传入 | `/select` 每次 worker wake 同样传入精确 `allowed_tools` | worker 不共享上一轮或其他 worker 的工具 |
-| frontline worker 可见领域 pack tool，下游 worker 不可见 OpenBB 工具 | `selection_strategist` / `selection_skeptic` 可见 candidate pack tool，manager / PM 不可见工具 | 决策层只读 approved L1 和 candidate pack prompt variable |
-| OpenBB/data_gateway 负责外部数据，OpenViking 负责 approved material | 后台 selection job 负责全市场取数，candidate pack tool 只读 approved selection artifact | selection worker 不能实时出网、不能扩大股票池 |
+| frontline worker 可见领域 pack tool，下游 worker 不可见数据工具 | `selection_strategist` / `selection_skeptic` 可见 candidate pack tool，manager / PM 不可见工具 | 决策层只读 approved L1 和 candidate pack prompt variable |
+| data_gateway 负责外部数据，OpenViking 负责 approved material | 后台 selection job 负责全市场取数，candidate pack tool 只读 approved selection artifact | selection worker 不能实时出网、不能扩大股票池 |
 | 验收看 OpenClaw provider payload 的 `tools` | `/select` 同样以 provider payload 为准 | 静态渲染、日志、文档声明不算工具边界证明 |
 
 #### 5.3.1 Tool 分层
@@ -897,7 +898,7 @@ select review 工具：
 | `selection_engine` | 否 | 硬过滤、策略命中、评分、top 20 | 后台确定性任务，不是 OpenClaw tool |
 | `claw_get_selection_candidate_pack` | 是 | 读取本轮 top 20 candidate pack | selection worker 可见的 canonical pack tool |
 | `openviking_read_with_capability` | 可选，默认否 | 深读本轮 approved evidence | 仅未来需要时开启，不做第一版默认能力 |
-| OpenBB/provider atomic tools | 否 | 外部数据抓取 | selection worker 禁止可见 |
+| data_gateway/provider atomic tools | 否 | 外部数据抓取 | selection worker 禁止可见 |
 
 #### 5.3.2 第一版 worker-visible tool matrix
 
@@ -962,7 +963,7 @@ selection_run_meta:
 - 全市场 OHLCV 明细。
 - top 20 以外完整候选列表。
 - provider raw JSON。
-- OpenBB provider attempt 完整对象。
+- provider attempt 完整对象。
 - Mongo raw payload。
 - token、HTTP headers、debug envelope。
 - OpenClaw/OpenViking 工程协议块。
@@ -973,13 +974,13 @@ selection_run_meta:
 
 ```text
 no_completed_selection_run:
-  当天没有可用 selection run。worker 必须写数据未准备好，不得临时拉数。
+  当天没有可用 selection run。`/select` 不启动 worker，只触发后台补数并返回补数状态；不得临时拉数。
 
 candidate_pack_not_approved:
-  候选包未通过 artifact approval。worker 必须停止，不得使用半成品。
+  候选包未通过 artifact approval。worker 必须停止，不得使用半成品；`/select` 控制层可以触发后台补数/重建候选包。
 
 candidate_pack_stale:
-  候选包过期。worker 只能说明时效问题，不能当作最新结论。
+  候选包过期。`/select` 不启动 worker，只触发后台补数并返回补数状态；不能当作最新结论。
 ```
 
 #### 5.3.4 Stage policy 示例
@@ -1034,7 +1035,7 @@ selection_manager visible tools == []
 selection_portfolio_manager visible tools == []
 ```
 
-任何 OpenBB atomic/admin/discovery/provider tool、Mongo/debug/raw tool、OpenViking write tool 出现在 selection worker 的 provider payload 中，均判定不符合设计。
+任何 legacy OpenBB atomic/admin/discovery/provider tool、Mongo/debug/raw tool、OpenViking write tool 出现在 selection worker 的 provider payload 中，均判定不符合设计。
 
 #### 5.3.6 Runtime 边界
 
@@ -1042,7 +1043,7 @@ selection_portfolio_manager visible tools == []
 
 - 调用方必须是 OpenClaw worker turn，不是 Python 预先代 worker 调用。
 - 工具只根据 runtime context 读取当前 `selection_run_id` 的 approved artifact。
-- 工具不得调用 OpenBB、EastMoney、baostock、Mongo raw provider collection 或任何外部 provider。
+- 工具不得调用 data_gateway、EastMoney、baostock、Mongo raw provider collection 或任何外部 provider。
 - 工具不得重新打分、重新排序、补股票、删除股票或生成投资结论。
 - 工具返回分为两层：模型可见的候选事实表、字段说明、数据质量和读者化来源摘要；审计可见的 refs/hash/lineage。
 - provider raw、attempt、cache、debug envelope、OpenViking 协议块只能留在 evidence/audit，不得进模型可见 tool result。
@@ -1449,38 +1450,38 @@ selection_portfolio_decision.md
 
 本文不冻结具体外部接口。后续实测后再确认。
 
-后台收盘后定时任务是 `claw-trade` 的确定性数据作业，数据层通过共享 OpenBB/data_gateway、Mongo、OpenViking approved material 机制生成 candidate pool。它不是 `/select` 聊天控制器现场抓全市场，也不是 OpenClaw worker 抓数。
+后台收盘后定时任务是 `claw-trade` 的确定性数据作业，数据层通过共享 data_gateway、Mongo、OpenViking approved material 机制生成 candidate pool。它不是 `/select` 聊天控制器现场抓全市场，也不是 OpenClaw worker 抓数。
 
-外部数据入口优先复用 OpenBB/data_gateway 的 provider adapter、provider attempt、cache、normalized result、run provider plan 和 readiness/data gap 机制。东财系接口只能作为经批准 adapter 的候选实测来源，不作为默认稳定依赖；任何 provider 失败都必须在 attempts/gaps/readiness 中可见，禁止隐藏 fallback provider。
+外部数据入口优先复用 data_gateway 的 provider plugin/adapter、provider attempt、cache、normalized result、batch plan 和 readiness/data gap 机制。东财系接口只能作为经批准 adapter 的候选实测来源，不作为默认稳定依赖；任何 provider 失败都必须在 attempts/gaps/readiness 中可见，禁止隐藏 fallback provider。
 
 第一版候选 provider 类别：
 
 ```text
 股票列表：
   Tushare stock_basic
-  AkShare / OpenBB 对应适配器
+  AkShare 对应适配器
   可选新增 baostock adapter
 
 日线历史：
   Tushare pro_bar / daily
   AkShare stock_zh_a_hist
-  OpenBB 可用行情接口
+  data_gateway 可用行情 provider
   可选新增 baostock query_history_k_data_plus
 
 当日全市场快照：
   AkShare stock_zh_a_spot_em
-  OpenBB 可用 snapshot 接口
+  data_gateway 可用 snapshot provider
   其他经批准 provider adapter
 
 基础估值/行业：
   Tushare daily_basic / stock_basic / fina_indicator
-  OpenBB 可用 fundamentals 接口
+  data_gateway 可用 fundamentals provider
   其他经批准 provider adapter
 ```
 
 东财系接口可作为候选实测来源，但不得成为无证据 fallback。
 
-如果新增 baostock，必须作为正式 provider adapter 纳入 settings/provider registry/evidence 链，不得绕过 OpenBB/data_gateway。
+如果新增 baostock，必须作为正式 provider adapter 纳入 settings/provider registry/evidence 链，不得绕过 data_gateway。
 
 ### 9.1 Selection provider batch plan
 
@@ -1537,7 +1538,7 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 - `backfill` 用于缺失历史日期；如果目标日期已有 completed run，默认拒绝，除非显式 rerun。
 - `rerun` 用于重新生成同一日期；必须产生新 run id，不得修改旧 run 的 candidate pack、hash、manifest 或 provider evidence。
-- 两者都必须复用 OpenBB/data_gateway provider plan 和 evidence 记录，不得用临时 provider 或隐藏 fallback。
+- 两者都必须复用 data_gateway provider plan 和 evidence 记录，不得用临时 provider 或隐藏 fallback。
 
 ### 10.3 `/select` 用户交互
 
@@ -1545,10 +1546,10 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 ```text
 用户输入 /select
-  -> 读取最新终态 selection data run
-  -> 如果最新终态是 no_candidate，提示本轮没有符合已批准策略条件的候选，不启动 worker
-  -> 如果不存在 completed run、过期、未批准或 hash/readback 不一致，提示数据未准备好
-  -> 不默认现拉全市场，不自动 backfill
+  -> 检查是否已有可用 completed + approved candidate pack
+  -> 如果最新终态是 no_candidate、不存在可用 completed pack、run 过期、candidate pack 尚未 approved 或 warehouse 证据不足，触发后台 selection data refresh/job，不启动 worker
+  -> 如果 hash/readback/lineage 损坏，fail closed，不触发隐藏 fallback
+  -> 不默认现拉全市场，不直接调 provider，不直接读表，不同步跑全市场
   -> 如数据可用，运行 selection_strategist / skeptic / manager / portfolio_manager
   -> 展示进入 /report、观察、放弃
   -> 等用户确认后才启动 /report
@@ -1558,9 +1559,10 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 | 状态 | 用户看到什么 | 系统实际做什么 |
 |---|---|---|
-| `no_completed_selection_run` | “今日选股数据未准备好，可稍后重试或触发后台补跑。” | 不启动 worker，不拉全市场 |
-| `no_candidate_selection_run` | “本轮没有符合已批准策略条件的候选股票。” | 不启动 worker，不生成 fake candidate pack |
-| `stale_selection_run` | “最近候选池已过期，不建议作为今日选股依据。” | 不启动 worker，提示可 backfill/rerun |
+| `no_completed_selection_run` | “今日选股数据未准备好，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker；只触发后台 refresh/job；不直接拉全市场 |
+| `no_candidate_selection_run` | “本轮没有符合已批准策略条件的候选股票，已启动新一轮后台补数/已有补数在跑/补数通道未配置。” | 不启动 worker，不生成 fake candidate pack，不回退旧 completed run；只触发后台 refresh/job |
+| `stale_selection_run` | “最近候选池已过期，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker；只触发后台 refresh/job |
+| `candidate_pack_not_approved` | “候选池事实包尚未批准，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker，不使用半成品；只触发后台 refresh/job |
 | `selection_running` | “正在评审候选池。” | 顺序唤醒 4 个 selection workers |
 | `selection_completed` | 展示进入 `/report`、观察、放弃 | 保存 approved decision，等待用户确认 |
 | `waiting_report_confirmation` | 提供可进入 `/report` 的股票列表 | 不自动创建 report task |
@@ -1568,10 +1570,10 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 ### 10.4 latest terminal run 与 TTL
 
-`/select` 只能读取 latest terminal selection data run；只有 `completed + approved candidate pack` 可以进入 worker，选择规则必须明确：
+`/select` 先检查 latest terminal selection data run 是否能提供 `completed + approved candidate pack`；只有可用 pack 可以进入 worker，选择规则必须明确：
 
 - market/profile 必须匹配当前 `/select` 请求。
-- 若最新终态 run 是 `no_candidate`，直接进入 `no_candidate_selection_run`，不得回退到更旧的 completed run 凑候选。
+- 若最新终态 run 是 `no_candidate`，直接进入 `no_candidate_selection_run` 并触发后台 refresh/job，不得回退到更旧的 completed run 凑候选。
 - run status 必须是 `completed`，且 candidate pack approval、OpenViking readback、hash/manifest 校验全部通过，才可启动 selection workers。
 - latest 的排序依据是交易日和 completed_at；failed、running、partial、artifact_approval_failed 的 run 不参与选择。
 - UI runtime 启动时必须从真实 persisted terminal run（completed/no_candidate evidence）恢复 selection run store，禁止只用进程内临时字典导致 `/select` 恒为 no-run。
@@ -1580,10 +1582,10 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 失败语义：
 
-- 无 completed run：进入 `no_completed_selection_run`，不启动 worker，不现场抓全市场。
-- 最新终态 run 为 no-candidate：进入 `no_candidate_selection_run`，不启动 worker，不生成 fake approved pack。
-- run 过期：进入 `stale_selection_run`，不启动 worker。
-- candidate pack 未批准：进入 `candidate_pack_not_approved`，不启动 worker。
+- 无 completed run：进入 `no_completed_selection_run`，不启动 worker，只触发后台 refresh/job，不现场抓全市场。
+- 最新终态 run 为 no-candidate：进入 `no_candidate_selection_run`，不启动 worker，不生成 fake approved pack，只触发后台 refresh/job。
+- run 过期：进入 `stale_selection_run`，不启动 worker，只触发后台 refresh/job。
+- candidate pack 未批准：进入 `candidate_pack_not_approved`，不启动 worker，只触发后台 refresh/job。
 - pack hash/readback/manifest/lineage 不一致：进入 `candidate_pack_integrity_failed`，不启动 worker。
 - provider plan 或 feature snapshot lineage 缺失：进入 `candidate_pack_lineage_incomplete`，不启动 worker。
 
@@ -1625,9 +1627,10 @@ select rerun --market CN_A --date YYYY-MM-DD
 - reader-facing `/select` artifact 语义验收：最终结论只能是“进入 `/report` / 观察 / 放弃”，且 ticker 必须来自 candidate pack、不得重复；表达类措辞不作为 runtime 失败条件。
 - `selection_engine` 对固定 fixture 输出稳定 top 20。
 - `feature_builder` 对固定 OHLCV fixture 计算稳定特征。
-- `/select` 无 completed selection run 时进入 `no_completed_selection_run`，不启动 worker。
-- `/select` 最新终态是 no-candidate 时进入 `no_candidate_selection_run`，不启动 worker，不回退旧 completed run。
-- `/select` run 过期时进入 `stale_selection_run`，不启动 worker。
+- `/select` 无 completed selection run 时进入 `no_completed_selection_run`，不启动 worker，只触发后台 refresh/job。
+- `/select` 最新终态是 no-candidate 时进入 `no_candidate_selection_run`，不启动 worker，不回退旧 completed run，只触发后台 refresh/job。
+- `/select` run 过期时进入 `stale_selection_run`，不启动 worker，只触发后台 refresh/job。
+- `/select` candidate pack 未 approved 时进入 `candidate_pack_not_approved`，不启动 worker，只触发后台 refresh/job。
 - `/select` 完成后进入 `waiting_report_confirmation`，不自动创建 report task。
 - Worker 聊天不属于 `/select` 首版单元测试范围；旧 selection worker 追问设计已撤回。
 
@@ -1666,12 +1669,12 @@ Provider payload 是 `/select` 工具可见性和 prompt 材料边界的最终�
 必须停止并问人：
 
 - 要让 worker 或 LLM 拉全市场数据。
-- 要让 selection worker 调 OpenBB/provider fetch。
+- 要让 selection worker 调 data_gateway/provider fetch。
 - 要把 300-500 只完整数据发给 LLM。
 - 要把买入/持有/卖出、目标价、止损、仓位或交易计划等表达重新做成 `/select` runtime 失败 gate。
 - 在 `/select` 或 selection worker 场景内，要让 `@worker` 在没有 completed/approved `/select` 上下文时自由聊天。通用 `generic_worker_chat` 另见 `docs/worker聊天详细设计.md`，不受本条禁止。
 - 要让 `@worker` 改写 `/select` 正式结论、自动触发 `/report`，或替代 PM 正式决策。
-- 要新增 fallback provider 绕过 OpenBB/data_gateway。
+- 要新增 fallback provider 绕过 data_gateway。
 - 要把 baostock 或东财直连作为非批准隐藏路径。
 - 候选包没有审计证据索引、manifest、hash/readback 或 lineage。
 - Python 直接写最终投资结论。
@@ -1707,7 +1710,7 @@ Provider payload 是 `/select` 工具可见性和 prompt 材料边界的最终�
 
 ### Phase 4：真实 provider 实测
 
-- 实测 Tushare/OpenBB/AkShare/可选 baostock。
+- 实测 Tushare/AkShare/可选 baostock。
 - 固化 provider matrix。
 - 写 live evidence。
 - 对失败率、限流、字段漂移做记录。

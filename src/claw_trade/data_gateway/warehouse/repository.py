@@ -221,6 +221,30 @@ class _CollectionAdapter:
         if callable(deleter):
             deleter({self.key_field: key})
 
+    def delete_many(self, criteria: Mapping[str, Any]) -> int:
+        criteria_dict = dict(criteria)
+        if isinstance(self.backend, MutableMapping):
+            keys = [
+                key
+                for key, item in self.backend.items()
+                if _matches_criteria(item, criteria_dict)
+            ]
+            for key in keys:
+                self.backend.pop(key, None)
+            return len(keys)
+        deleter = getattr(self.backend, "delete_many", None)
+        if callable(deleter):
+            result = deleter(criteria_dict)
+            return int(getattr(result, "deleted_count", 0))
+        deleted = 0
+        for row in self.find(criteria_dict):
+            key = row.get(self.key_field)
+            if key is None:
+                continue
+            self.pop(str(key))
+            deleted += 1
+        return deleted
+
     def values(self) -> tuple[dict[str, Any], ...]:
         if isinstance(self.backend, MutableMapping):
             return tuple(dict(item) for item in self.backend.values())
@@ -264,6 +288,19 @@ def _mongo_safe_document(value: Any) -> Any:
     if isinstance(value, list):
         return [_mongo_safe_document(item) for item in value]
     return value
+
+
+def _matches_criteria(item: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
+    return all(_lookup_dotted(item, str(key)) == value for key, value in criteria.items())
+
+
+def _lookup_dotted(item: Mapping[str, Any], key: str) -> Any:
+    current: Any = item
+    for part in key.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+    return current
 
 
 class DatasetRepository:
@@ -390,6 +427,26 @@ class DatasetRepository:
         with self._lock:
             return self._collection("provider_attempts").get(attempt_ref)
 
+    def find_provider_attempt_refs_by_dataset_ref(
+        self,
+        dataset_refs: Sequence[str],
+    ) -> dict[str, tuple[str, ...]]:
+        wanted = {str(ref) for ref in dataset_refs if str(ref).strip()}
+        if not wanted:
+            return {}
+        found: dict[str, list[str]] = {ref: [] for ref in wanted}
+        with self._lock:
+            attempts = self._collection("provider_attempts").values()
+        for attempt in attempts:
+            attempt_ref = str(attempt.get("attempt_ref") or "").strip()
+            if not attempt_ref:
+                continue
+            for dataset_ref in tuple(attempt.get("dataset_refs", ()) or ()):
+                normalized_ref = str(dataset_ref).strip()
+                if normalized_ref in found and attempt_ref not in found[normalized_ref]:
+                    found[normalized_ref].append(attempt_ref)
+        return {ref: tuple(refs) for ref, refs in found.items() if refs}
+
     def write_dataset_manifest(self, manifest: Mapping[str, Any]) -> str:
         doc = dict(manifest)
         manifest_ref = str(doc.get("manifest_ref") or f"manifest:{uuid4().hex[:12]}")
@@ -457,6 +514,10 @@ class DatasetRepository:
     def delete_provider_result_cache(self, cache_key: str) -> None:
         with self._lock:
             self._collection("provider_result_cache").pop(cache_key)
+
+    def delete_normalized_documents(self, criteria: Mapping[str, Any]) -> int:
+        with self._lock:
+            return self._collection("normalized_datasets").delete_many(criteria)
 
     # provider_rate_limits collection
     def get_or_init_rate_limit_record(

@@ -470,6 +470,40 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert stdin_payload["runtime_context"]["tool_name"] == tool_name
     assert stdin_payload["runtime_context"]["worker_id"] == worker_id
     assert stdin_payload["runtime_context"]["pack_domain"] == pack_domain
+    assert "report_prefetch_manifest_path" not in stdin_payload["runtime_context"]
+
+
+def test_successful_canonical_pack_passes_report_prefetch_manifest_path_to_python(tmp_path: Path) -> None:
+    stdin_path = tmp_path / "stdin.json"
+    probe_python = tmp_path / "probe_python_pack.sh"
+    payload = {
+        "ok": True,
+        "schema_version": "claw_get_news_pack.test.v1",
+        "tool_name": "claw_get_news_pack",
+        "model_visible_text": "news pack returned natural-language material.",
+    }
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env bash
+cat > {stdin_path}
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+    manifest_path = tmp_path / "runs" / "run-1" / "data-layer" / "report-prefetch.json"
+    result = _run_tool(
+        tool_name="claw_get_news_pack",
+        ctx=_runtime_ctx(
+            worker_id="news_analyst",
+            runtime_vars={"report_prefetch_manifest_path": str(manifest_path)},
+        ),
+        params={},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
+    )
+
+    assert result.get("isError") is False
+    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
+    assert stdin_payload["runtime_context"]["report_prefetch_required"] is True
+    assert stdin_payload["runtime_context"]["report_prefetch_manifest_path"] == str(manifest_path)
 
 
 def test_model_supplied_data_layer_runtime_fields_are_ignored_in_favor_of_python_context(tmp_path: Path) -> None:

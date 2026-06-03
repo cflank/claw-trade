@@ -10,10 +10,10 @@ CN_A 采用 A股专属扩展方案。
 本方案不是简单补几个数据接口，而是把 A股特色变量纳入正式报告工作流：
 
 - 扩展 CN_A frontline worker。
-- 新增 A股特色 OpenBB 资料包。
-- 将 `a-stock-data` 的免费数据源分类和默认顺序转成 OpenBB provider 矩阵。
+- 新增 A股特色统一数据层资料包。
+- 将 `a-stock-data` 的免费数据源分类和默认顺序转成 `data_gateway` provider 矩阵。
 - 复用现有用户声明式 provider/catalog/admission/registry 能力。
-- 保持 OpenBB 作为唯一外部数据入口和唯一 provider 接口层。
+- 保持 `src/claw_trade/data_gateway` 作为统一数据层入口；Provider 能力来自 `ProviderPlugin.capabilities()`，证据落入当前 Mongo/attempt/raw/normalized 合同。
 
 适用范围只包括 CN_A。US、HK、CRYPTO 不因本方案自动扩展 worker。
 
@@ -35,8 +35,8 @@ CN_A 采用 A股专属扩展方案。
 
 - worker 直连脚本。
 - 独立 MCP。
-- 绕过 OpenBB 的 Python provider 执行器。
-- OpenBB 失败后的旧路径 silent fallback。
+- 绕过 `data_gateway` 的 Python provider 执行器。
+- `data_gateway` 失败后的旧路径 silent fallback。
 
 ### `TradingAgents-astock`
 
@@ -75,13 +75,13 @@ PEG、估值消化和增长匹配逻辑进入：
 
 ### 数据入口
 
-所有外部数据源必须进入 OpenBB/data_gateway：
+所有外部数据源必须进入统一数据层：
 
 ```text
 外部数据源
-  -> OpenBB project extension / provider adapter
-  -> OpenBB provider attempt / http / raw / normalized / cache evidence
-  -> OpenBB domain pack
+  -> data_gateway ProviderPlugin / ProviderRegistry
+  -> provider attempt / raw / normalized / cache evidence
+  -> domain pack / material builder
   -> OpenClaw worker
   -> OpenViking approved L1/L2 material
 ```
@@ -93,14 +93,14 @@ worker -> a-stock-data 脚本
 worker -> Python 直连东财/同花顺/腾讯/巨潮
 OpenClaw tool -> 旧 provider executor
 用户配置源 -> claw-trade 控制层直接调用
-OpenBB 失败 -> 旧数据路径 silent fallback
+data_gateway 失败 -> 旧数据路径 silent fallback
 ```
 
 ### 运行职责
 
 - claw-trade 控制工作流状态机、worker 调度、artifact 权威、hard gate 和报告导出。
 - OpenClaw 只运行单个 worker turn，负责真实 provider prompt、tool schema、tool call 和 LLM response。
-- OpenBB/data_gateway 是唯一外部数据入口、唯一 provider 接口层和 provider evidence 记录者。
+- `src/claw_trade/data_gateway` 是统一数据层入口和 provider evidence 记录者；OpenBB 本体不是目标运行时依赖。
 - Mongo 保存 provider raw/cache/attempt/normalized 等运行证据。
 - OpenViking 保存 approved L1/L2 material、manifest、hash、lineage 和下游 handoff。
 
@@ -165,7 +165,7 @@ hot_money
 lockup
 ```
 
-新增 3 个 worker-visible OpenBB 资料包：
+新增 3 个 worker-visible 资料包：
 
 ```text
 policy_analyst    -> claw_get_policy_pack
@@ -383,7 +383,7 @@ lockup
 出厂默认：
 
 ```text
-使用 a-stock-data 已整理的 A股源分类、字段经验和默认顺序作为 CN_A system provider 矩阵参考；所有实现都必须落到 OpenBB/data_gateway provider/adapter 下。
+使用 a-stock-data 已整理的 A股源分类、字段经验和默认顺序作为 CN_A system provider 矩阵参考；所有实现都必须落到 `data_gateway` provider plugin/adapter 下。
 ```
 
 用户配置后：
@@ -478,7 +478,7 @@ priority_source=USER_PREFERRED
 
 ```text
 1. 先尝试用户已配置、已验证、已启用的 provider。
-2. 用户 provider 失败后，尝试同一 coverage_group 下的系统 OpenBB 默认源。
+2. 用户 provider 失败后，尝试同一 coverage_group 下的系统默认源。
 3. 同组默认源也失败时，记录 data gap。
 4. worker 报告只能说明缺口，不能补写事实。
 ```
@@ -517,9 +517,9 @@ worker 不应直接看到：
 - HTTP headers。
 - provider token。
 - Mongo raw/cache/debug envelope。
-- OpenBB atomic/admin/discovery tools。
+- legacy OpenBB atomic/admin/discovery tools。
 - OpenViking protocol 文本。
-- OpenClaw/OpenViking/OpenBB 内部工程协议。
+- OpenClaw/OpenViking/legacy OpenBB 内部工程协议。
 
 资料包应返回：
 
@@ -574,7 +574,7 @@ CN_A
 运行页或报告详情需要展示：
 
 - 本次实际使用了哪些数据源。
-- 哪些用户源失败后切到了系统 OpenBB 默认源。
+- 哪些用户源失败后切到了系统默认源。
 - 哪些数据域 partial/insufficient。
 - 哪些关键事实来自官方原始披露。
 
@@ -587,7 +587,7 @@ CN_A
 - 扩展 CN_A workflow。
 - 新增 3 个 worker。
 - 新增 3 个 domain。
-- 新增 3 个 OpenBB pack。
+- 新增 3 个 data_gateway pack。
 - 七个 A股资料域的 provider 矩阵都进入工程任务范围。
 - 用户声明式 provider 可以在七个 CN_A domain 下按声明作用域参与 registry 和 run plan。
 
@@ -631,7 +631,7 @@ lockup:
 
 - CN_A `/report` 可跑出 7 个 frontline L1。
 - 新增 3 个 worker 均为 OpenClaw worker turn。
-- 新增 3 个 pack 均通过 OpenBB/data_gateway 取数。
+- 新增 3 个 pack 均通过 `data_gateway` 取数。
 - provider attempt/http/raw/normalized/cache evidence 可追溯。
 - 用户声明式 provider 在七个 CN_A domain 下可按声明作用域进入 enabled candidate 和 run plan。
 - 下游 bull/bear/research_manager/trader/risk/PM 可读取 7 份 approved L1。
@@ -669,13 +669,13 @@ lockup:
 
 遇到以下情况必须停下重新评审：
 
-- 某个 A股源必须绕过 OpenBB 才能取数。
+- 某个 A股源必须绕过 `data_gateway` 才能取数。
 - 新增 worker 必须直接调用 provider 脚本才能工作。
 - 需要新增第二套用户 provider 配置系统。
 - 用户 provider 试图覆盖官方原始披露事实源。
 - 缺数据时想用新闻、搜索或模型推断冒充公告、财报、资金事实。
 - 需要让 Python 控制层写投资判断或 PM 最终结论。
-- 需要把 OpenBB atomic/admin/discovery tools 暴露给报告 worker。
+- 需要把 legacy OpenBB atomic/admin/discovery tools 暴露给报告 worker。
 - 需要恢复旧 provider executor 或旧 MCP 作为 runtime fallback。
 
 ## 14. 成功标准
@@ -684,9 +684,9 @@ lockup:
 
 - CN_A 扩展 workflow 只对 A股生效。
 - 7 个 frontline worker 都是真实 OpenClaw turn。
-- 新增 3 个 pack 都走 OpenBB/data_gateway。
+- 新增 3 个 pack 都走 `data_gateway`。
 - 用户声明式 provider 能参与新增三域排序。
-- A股七域 provider 矩阵都进入 OpenBB/data_gateway，并且每个计划 provider 都有 attempt。
+- A股七域 provider 矩阵都进入 `data_gateway`，并且每个计划 provider 都有 attempt。
 - 官方原始披露源边界不被用户源覆盖。
 - provider attempts、raw、normalized、cache、gaps 和 readiness 可追溯。
 - 最终报告体现政策、游资/资金、限售/筹码三类 A股特色分析。

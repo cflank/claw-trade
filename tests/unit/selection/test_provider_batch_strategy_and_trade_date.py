@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from claw_trade.data_gateway.models import DataGap, DataResult, DataResultStatus, Market
 from claw_trade.data_gateway.selection_batch import (
     _selection_missing_strategy_required_fields,
     _selection_strategy_required_source_fields,
 )
 from claw_trade.data_gateway.selection_batch import (
+    fetch_selection_batch_from_data_gateway as fetch_gateway_selection_batch,
     load_cn_a_selection_v1_strategy as load_gateway_strategy,
 )
 from claw_trade.selection.data_job import SelectionProviderBatchResult
@@ -284,19 +286,18 @@ def test_strategy_config_ref_loader_is_cn_a_only() -> None:
     assert load_cn_a_selection_v1_strategy_config_ref(SelectionMarket.CN_A, SelectionProfile.CN_A) == "config://cn-a-selection-v1"
 
 
-def test_selection_provider_batch_plan_includes_free_cn_a_market_candidates_beyond_tushare_and_eastmoney() -> None:
+def test_selection_provider_batch_plan_uses_current_unified_data_api_provider_ids() -> None:
     plan = build_selection_provider_batch_plan(
         market=SelectionMarket.CN_A,
         profile=SelectionProfile.CN_A,
         trade_date="2026-05-26",
     )
-    assert "tushare_selection_batch" in plan.provider_candidates
-    assert "eastmoney_selection_batch" in plan.provider_candidates
-    assert "akshare_selection_batch" in plan.provider_candidates
-    assert "baostock_selection_batch" in plan.provider_candidates
-    assert "mootdx_selection_batch" in plan.provider_candidates
-    assert "tencent_selection_batch" in plan.provider_candidates
-    assert "sina_selection_batch" in plan.provider_candidates
+    assert "cn_a_primary" in plan.provider_candidates
+    assert "cn_a_tushare_fundamental" in plan.provider_candidates
+    assert "cn_a_akshare_social_news" in plan.provider_candidates
+    assert "cn_a_eastmoney_market_data" in plan.provider_candidates
+    assert "cn_a_baostock_market" in plan.provider_candidates
+    assert "cn_a_mootdx_market" in plan.provider_candidates
 
 
 def test_selection_strategy_amount_threshold_is_unchanged() -> None:
@@ -339,8 +340,8 @@ def test_selection_gateway_marks_current_only_rows_missing_strategy_history() ->
     )
 
     assert "history" in missing
-    assert "private_placement_days_since" in missing
-    assert "private_placement_event_date" in missing
+    assert "private_placement_days_since" not in missing
+    assert "private_placement_event_date" not in missing
 
 
 def test_selection_gateway_accepts_rows_with_required_history_and_private_event_fields() -> None:
@@ -366,6 +367,417 @@ def test_selection_gateway_accepts_rows_with_required_history_and_private_event_
     )
 
     assert missing == ()
+
+
+def test_selection_gateway_fetch_uses_data_api_select_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = _selection_run_plan("sel-unit-data-api-fetch")
+    fake_api = _FakeDataAPI(
+        (
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                status=DataResultStatus.READY,
+                rows=(
+                    {
+                        "ticker": "600204.SH",
+                        "company_name": "完整历史样本",
+                        "industry": "样本行业",
+                        "history": _history_rows(base_close=10.0, daily_step=0.03, latest_volume=3000000.0),
+                        "private_placement_event_date": "none",
+                        "private_placement_days_since": 9999.0,
+                    },
+                ),
+                dataset_refs=("dataset:daily_bar:CN_A:unit",),
+                attempt_refs=("attempt:cn_a_primary:daily_bar:unit",),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert result.provider_batch_plan.plan_id == plan.provider_batch_plan_ref
+    assert result.attempt_refs == ("attempt:cn_a_primary:daily_bar:unit",)
+    assert result.normalized_refs == ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",)
+    assert result.warehouse_check_ref == "warehouse-check://selection/sel-unit-data-api-fetch/2026-05-26/data-api"
+    assert len(result.rows) == 1
+    assert result.rows[0]["ticker"] == "600204.SH"
+    assert result.data_gaps == ()
+    assert len(fake_api.requests) == 1
+    assert fake_api.requests[0].consumer == "select"
+    assert fake_api.requests[0].consumer_id == plan.selection_run_id
+    assert fake_api.requests[0].universe_ref == "all_a_shares"
+    assert fake_api.requests[0].data_type == "daily_bar"
+    assert len(fake_api.calls) == 1
+
+
+def test_selection_gateway_does_not_fetch_supplemental_when_prepackaged_direct_rows_are_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _selection_run_plan("sel-unit-prepackaged-incomplete")
+    fake_api = _FakeDataAPI(
+        (
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                status=DataResultStatus.READY,
+                rows=(
+                    {
+                        "ticker": "600205.SH",
+                        "history": _history_rows(base_close=10.0, daily_step=0.03, latest_volume=3000000.0),
+                    },
+                ),
+                dataset_refs=("dataset:daily_bar:CN_A:prepackaged-incomplete",),
+                attempt_refs=("attempt:cn_a_primary:daily_bar:prepackaged-incomplete",),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert len(fake_api.calls) == 1
+    assert [request.data_type for request in fake_api.calls[0]] == ["daily_bar"]
+    assert result.rows == ()
+    assert {gap.gap_code for gap in result.data_gaps} == {
+        "selection_batch_rows_dropped",
+        "selection_batch_rows_empty",
+    }
+
+
+def test_selection_gateway_backfills_old_direct_rows_with_short_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _selection_run_plan("sel-unit-history-backfill")
+    old_short_history = _history_rows_from(start=date(2025, 12, 3), count=114, ticker="688981.SH")
+    new_short_history = _history_rows_from(start=date(2026, 2, 3), count=72, ticker="001220.SZ")
+    repaired_history = _history_rows_from(start=date(2025, 5, 27), count=260, ticker="688981.SH")
+    old_short_direct_row = {
+        "ticker": "688981.SH",
+        "company_name": "中芯国际",
+        "industry": "半导体",
+        "history": old_short_history,
+        "private_placement_event_date": "none",
+        "private_placement_days_since": 9999.0,
+    }
+    fake_api = _SequencedFakeDataAPI(
+        (
+            (
+                DataResult(
+                    request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                    status=DataResultStatus.READY,
+                    rows=(
+                        {
+                            "ticker": "600204.SH",
+                            "company_name": "完整历史样本",
+                            "industry": "样本行业",
+                            "history": _history_rows(base_close=10.0, daily_step=0.03, latest_volume=3000000.0),
+                            "private_placement_event_date": "none",
+                            "private_placement_days_since": 9999.0,
+                        },
+                        old_short_direct_row,
+                        {
+                            "ticker": "001220.SZ",
+                            "company_name": "世盟股份",
+                            "industry": "样本行业",
+                            "list_date": "2026-02-03",
+                            "history": new_short_history,
+                            "private_placement_event_date": "none",
+                            "private_placement_days_since": 9999.0,
+                        },
+                    ),
+                    dataset_refs=("dataset:daily_bar:CN_A:prepackaged",),
+                    attempt_refs=("attempt:local_a_share_prepackaged:daily_bar:prepackaged",),
+                    as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                ),
+            ),
+            (
+                DataResult(
+                    request_id=f"{plan.selection_run_id}:selection:history_backfill:1:688981.SH:daily_bar",
+                    status=DataResultStatus.PARTIAL,
+                    rows=(old_short_direct_row, *repaired_history),
+                    dataset_refs=("dataset:daily_bar:CN_A:688981.SH:repair",),
+                    attempt_refs=("attempt:cn_a_primary:daily_bar:688981-repair",),
+                    gaps=(
+                        DataGap.by_reason(
+                            "empty_result",
+                            request_id=f"{plan.selection_run_id}:selection:history_backfill:1:688981.SH:daily_bar",
+                            market=Market.CN_A,
+                            data_type="daily_bar",
+                            granularity="daily",
+                            evidence_refs=("attempt:cn_a_backup:daily_bar:688981-empty",),
+                            message="backup provider returned no rows but primary repaired the history",
+                            as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                        ),
+                    ),
+                    as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                ),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._listing_dates_for_tickers",
+        lambda tickers: {"688981.SH": date(2020, 7, 16)},
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert len(fake_api.calls) == 2
+    assert [request.data_type for request in fake_api.calls[0]] == ["daily_bar"]
+    backfill_requests = fake_api.calls[1]
+    assert [request.symbol_id for request in backfill_requests] == ["688981.SH"]
+    assert all(request.universe_ref is None for request in backfill_requests)
+    assert backfill_requests[0].date_range_start < date(2025, 5, 27)
+    tickers = {str(row["ticker"]) for row in result.rows}
+    assert "600204.SH" in tickers
+    assert "688981.SH" in tickers
+    assert "001220.SZ" not in tickers
+    assert [str(row["ticker"]) for row in result.rows].count("688981.SH") == 1
+    repaired = next(row for row in result.rows if row["ticker"] == "688981.SH")
+    assert len(repaired["history"]) >= 260
+    dropped_gap = next(gap for gap in result.data_gaps if gap.gap_code == "selection_batch_rows_dropped")
+    assert dropped_gap.severity == DataGapSeverity.WARN
+    assert dropped_gap.source_metadata is not None
+    assert dropped_gap.source_metadata["listed_old_history_missing_tickers"] == ("688981.SH",)
+    assert dropped_gap.source_metadata["remaining_listed_old_history_missing_tickers"] == ()
+    assert dropped_gap.source_metadata["history_backfilled_tickers"] == ("688981.SH",)
+    assert dropped_gap.source_metadata["history_shortfall_classification_counts"] == {
+        "listed_old_history_missing_should_backfill": 1,
+        "listing_too_recent_cannot_backfill": 1,
+    }
+    assert not any(
+        "history_backfill:1:688981.SH" in gap.gap_id
+        for gap in result.data_gaps
+        if gap.gap_code == "selection_data_api_empty_result"
+    )
+
+
+def test_selection_gateway_records_history_backfill_failure_without_fake_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _selection_run_plan("sel-unit-history-backfill-fail")
+    fake_api = _SequencedFakeDataAPI(
+        (
+            (
+                DataResult(
+                    request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                    status=DataResultStatus.READY,
+                    rows=(
+                        {
+                            "ticker": "600204.SH",
+                            "company_name": "完整历史样本",
+                            "industry": "样本行业",
+                            "history": _history_rows(base_close=10.0, daily_step=0.03, latest_volume=3000000.0),
+                            "private_placement_event_date": "none",
+                            "private_placement_days_since": 9999.0,
+                        },
+                        {
+                            "ticker": "688981.SH",
+                            "company_name": "中芯国际",
+                            "industry": "半导体",
+                            "history": _history_rows_from(start=date(2025, 12, 3), count=114, ticker="688981.SH"),
+                            "private_placement_event_date": "none",
+                            "private_placement_days_since": 9999.0,
+                        },
+                    ),
+                    dataset_refs=("dataset:daily_bar:CN_A:prepackaged",),
+                    attempt_refs=("attempt:local_a_share_prepackaged:daily_bar:prepackaged",),
+                    as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                ),
+            ),
+            (
+                DataResult(
+                    request_id=f"{plan.selection_run_id}:selection:history_backfill:1:688981.SH:daily_bar",
+                    status=DataResultStatus.MISSING,
+                    rows=(),
+                    attempt_refs=("attempt:cn_a_primary:daily_bar:688981-repair",),
+                    gaps=(
+                        DataGap.by_reason(
+                            "warehouse_missing",
+                            request_id=f"{plan.selection_run_id}:selection:history_backfill:1:688981.SH:daily_bar",
+                            market=Market.CN_A,
+                            data_type="daily_bar",
+                            granularity="daily",
+                            evidence_refs=("attempt:cn_a_primary:daily_bar:688981-repair",),
+                            message="provider returned no historical repair rows",
+                            as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                        ),
+                    ),
+                    as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                ),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._listing_dates_for_tickers",
+        lambda tickers: {"688981.SH": date(2020, 7, 16)},
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert {str(row["ticker"]) for row in result.rows} == {"600204.SH"}
+    repair_gap = next(gap for gap in result.data_gaps if gap.gap_code == "selection_data_api_warehouse_missing")
+    assert repair_gap.severity == DataGapSeverity.WARN
+    assert repair_gap.attempt_refs == ("attempt:cn_a_primary:daily_bar:688981-repair",)
+    assert not any(gap.severity == DataGapSeverity.BLOCKER for gap in result.data_gaps)
+
+
+def test_selection_gateway_joins_valuation_metric_rows_into_selection_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _selection_run_plan("sel-unit-valuation-join")
+    fake_api = _FakeDataAPI(
+        (
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                status=DataResultStatus.READY,
+                rows=tuple(
+                    {
+                        **row,
+                        "ticker": "600204.SH",
+                        "company_name": "估值样本",
+                        "industry": "样本行业",
+                        "dataset_ref": f"dataset:daily_bar:CN_A:unit:{idx}",
+                    }
+                    for idx, row in enumerate(_history_rows(base_close=10.0, daily_step=0.03, latest_volume=3000000.0))
+                ),
+                dataset_refs=("dataset:daily_bar:CN_A:unit",),
+                attempt_refs=("attempt:cn_a_primary:daily_bar:unit",),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:2:corporate_action",
+                status=DataResultStatus.READY,
+                rows=(),
+                dataset_refs=("dataset:corporate_action:CN_A:unit",),
+                attempt_refs=("attempt:cn_a_market:corporate_action:unit",),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:4:valuation_metric",
+                status=DataResultStatus.READY,
+                rows=(
+                    {
+                        "ticker": "600204.SH",
+                        "date": "2026-05-26",
+                        "pe": 12.3,
+                        "pb": 1.4,
+                        "ps": 2.5,
+                        "market_cap": 123456.0,
+                        "dataset_ref": "dataset:valuation_metric:CN_A:unit",
+                    },
+                ),
+                dataset_refs=("dataset:valuation_metric:CN_A:unit",),
+                attempt_refs=("attempt:cn_a_tushare:valuation_metric:unit",),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["pe"] == 12.3
+    assert result.rows[0]["pb"] == 1.4
+    assert result.rows[0]["ps"] == 2.5
+    assert result.rows[0]["market_cap"] == 123456.0
+    assert result.rows[0]["valuation_source_ref"] == "normalized://mongo/normalized_datasets/dataset:valuation_metric:CN_A:unit"
+
+
+def test_selection_gateway_fetch_returns_data_api_gap_without_fake_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = _selection_run_plan("sel-unit-data-api-gap")
+    fake_api = _FakeDataAPI(
+        (
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                status=DataResultStatus.MISSING,
+                attempt_refs=("attempt:cn_a_primary:daily_bar:missing",),
+                gaps=(
+                    DataGap.by_reason(
+                        "warehouse_missing",
+                        request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                        market=Market.CN_A,
+                        data_type="daily_bar",
+                        granularity="daily",
+                        evidence_refs=("attempt:cn_a_primary:daily_bar:missing",),
+                        message="warehouse_missing",
+                        as_of=datetime(2026, 5, 26, tzinfo=UTC),
+                    ),
+                ),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert result.rows == ()
+    assert result.normalized_refs == ()
+    assert result.attempt_refs == ("attempt:cn_a_primary:daily_bar:missing",)
+    assert result.warehouse_check_ref is None
+    assert result.data_gaps[0].gap_code == "selection_data_api_warehouse_missing"
+    assert result.data_gaps[0].severity == DataGapSeverity.BLOCKER
+
+
+def test_selection_gateway_private_placement_missing_is_warn_not_blocker(monkeypatch: pytest.MonkeyPatch) -> None:
+    plan = _selection_run_plan("sel-unit-private-placement-warn")
+    fake_api = _FakeDataAPI(
+        (
+            DataResult(
+                request_id=f"{plan.selection_run_id}:selection:1:daily_bar",
+                status=DataResultStatus.READY,
+                rows=tuple(
+                    {
+                        **row,
+                        "ticker": "600204.SH",
+                        "company_name": "定增缺口样本",
+                        "industry": "样本行业",
+                        "dataset_ref": f"dataset:daily_bar:CN_A:private-missing:{idx}",
+                    }
+                    for idx, row in enumerate(_history_rows(base_close=10.0, daily_step=0.03, latest_volume=3000000.0))
+                ),
+                dataset_refs=("dataset:daily_bar:CN_A:private-missing",),
+                attempt_refs=("attempt:cn_a_primary:daily_bar:private-missing",),
+                as_of=datetime(2026, 5, 26, tzinfo=UTC),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        lambda: _FakeGateway(fake_api),
+    )
+
+    result = fetch_gateway_selection_batch(plan)
+
+    assert len(fake_api.calls) == 2
+    assert [request.data_type for request in fake_api.calls[0]] == ["daily_bar"]
+    assert [request.data_type for request in fake_api.calls[1]] == ["corporate_action", "valuation_metric"]
+    assert len(result.rows) == 1
+    private_gap = next(gap for gap in result.data_gaps if gap.gap_code == "selection_private_placement_source_missing")
+    assert private_gap.severity == DataGapSeverity.WARN
+    assert not any(gap.severity == DataGapSeverity.BLOCKER for gap in result.data_gaps)
 
 
 def test_score_candidates_keeps_variants_and_penalizes_missing_strategy_fields() -> None:
@@ -523,6 +935,38 @@ def _selection_run_plan(selection_run_id: str) -> SelectionRunPlan:
     )
 
 
+class _FakeDataAPI:
+    def __init__(self, results: tuple[DataResult, ...]) -> None:
+        self._results = results
+        self.requests = ()
+        self.calls: list[tuple[object, ...]] = []
+
+    def get_data_batch(self, requests):
+        self.requests = tuple(requests)
+        self.calls.append(self.requests)
+        return list(self._results)
+
+
+class _SequencedFakeDataAPI:
+    def __init__(self, result_batches: tuple[tuple[DataResult, ...], ...]) -> None:
+        self._result_batches = list(result_batches)
+        self.requests = ()
+        self.calls: list[tuple[object, ...]] = []
+
+    def get_data_batch(self, requests):
+        self.requests = tuple(requests)
+        self.calls.append(self.requests)
+        if not self._result_batches:
+            return []
+        return list(self._result_batches.pop(0))
+
+
+class _FakeGateway:
+    def __init__(self, data_api: _FakeDataAPI) -> None:
+        self.data_api = data_api
+        self.provider_candidates = ("cn_a_primary",)
+
+
 def _strategy_signal_row(*, ticker: str, close_open_ratio_case: str, extra: dict[str, float]) -> dict[str, object]:
     if close_open_ratio_case == "up":
         open_price = 100.0
@@ -572,4 +1016,24 @@ def _history_rows(*, base_close: float, daily_step: float, latest_volume: float)
                 "amount": close * volume,
             }
         )
+    return tuple(rows)
+
+
+def _history_rows_from(*, start: date, count: int, ticker: str | None = None) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    for idx in range(count):
+        close = 10.0 + idx * 0.01
+        row: dict[str, object] = {
+            "date": (start + timedelta(days=idx)).isoformat(),
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": 1000000.0 + idx,
+            "amount": close * (1000000.0 + idx),
+        }
+        if ticker is not None:
+            row["ticker"] = ticker
+            row["symbol_id"] = ticker
+        rows.append(row)
     return tuple(rows)

@@ -209,6 +209,26 @@ def test_build_candidate_pack_accepts_mongo_normalized_datasets_refs() -> None:
     assert mongo_ref in draft.source_lineage_refs
 
 
+def test_build_candidate_pack_canonicalizes_mongo_attempt_refs() -> None:
+    plan = _plan()
+    inputs = _normalized_inputs(count=1)
+    filtered = _filtered_universe(inputs)
+    scoring = _scoring_result(count=1)
+
+    draft = build_candidate_pack(
+        plan=plan,
+        inputs=inputs,
+        filtered=filtered,
+        scoring=scoring,
+        provider_attempt_refs=("attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:abc123",),
+        data_gaps=(),
+        feature_snapshot_ref="feature://sel04-contract-run",
+        score_ref="score://sel04-contract-run",
+    )
+
+    assert "attempt://mongo/provider_attempts/attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:abc123" in draft.source_lineage_refs
+
+
 def test_build_candidate_pack_rejects_blocker_data_gap() -> None:
     plan = _plan()
     inputs = _normalized_inputs()
@@ -237,6 +257,36 @@ def test_build_candidate_pack_rejects_blocker_data_gap() -> None:
         )
 
     assert exc_info.value.code == "candidate_pack_data_gap_blocker"
+
+
+def test_build_candidate_pack_accepts_disabled_strategy_warn_gap() -> None:
+    plan = _plan()
+    inputs = _normalized_inputs()
+    filtered = _filtered_universe(inputs)
+    scoring = _scoring_result()
+
+    draft = build_candidate_pack(
+        plan=plan,
+        inputs=inputs,
+        filtered=filtered,
+        scoring=scoring,
+        provider_attempt_refs=("attempt://akshare-1",),
+        data_gaps=(
+            DataGapRef(
+                gap_id="sel04-private-placement-disabled",
+                domain="selection",
+                gap_code="selection_strategy_variant_disabled",
+                severity=DataGapSeverity.WARN,
+                attempt_refs=("feature://sel04-contract-run",),
+                reader_message="定增策略本次禁用，其它策略继续。",
+            ),
+        ),
+        feature_snapshot_ref="feature://sel04-contract-run",
+        score_ref="score://sel04-contract-run",
+    )
+
+    assert len(draft.summary.candidates) == 20
+    assert "selection_strategy_variant_disabled" in draft.summary.data_quality_summary
 
 
 def test_build_candidate_pack_accepts_count_less_than_20() -> None:

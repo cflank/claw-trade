@@ -173,6 +173,51 @@ class SelectionRunStore:
     def load_data_run_record(self, selection_run_id: str) -> SelectionDataRunRecord | None:
         return self._runs.get(selection_run_id)
 
+    def load_active_data_run_record(
+        self,
+        *,
+        market: SelectionMarket,
+        profile: SelectionProfile,
+        trade_date: str,
+    ) -> SelectionDataRunRecord | None:
+        active = [
+            item
+            for item in self._runs.values()
+            if item.run_plan.market == market
+            and item.run_plan.profile == profile
+            and item.run_plan.trade_date == trade_date
+            and item.data_run.status
+            in {
+                SelectionDataRunStatus.PLANNED,
+                SelectionDataRunStatus.LEASE_PENDING,
+                SelectionDataRunStatus.RUNNING,
+                SelectionDataRunStatus.FETCHING_DATA,
+                SelectionDataRunStatus.NORMALIZING_INPUTS,
+                SelectionDataRunStatus.BUILDING_FEATURES,
+                SelectionDataRunStatus.FILTERING_AND_SCORING,
+                SelectionDataRunStatus.BUILDING_CANDIDATE_PACK,
+                SelectionDataRunStatus.APPROVING_CANDIDATE_PACK,
+            }
+        ]
+        if not active:
+            return None
+        return max(
+            active,
+            key=lambda item: (
+                _parse_iso_timestamp(item.data_run.started_at or item.run_plan.trade_date + "T00:00:00+00:00"),
+                item.run_plan.selection_run_id,
+            ),
+        )
+
+    def has_active_data_run(
+        self,
+        *,
+        market: SelectionMarket,
+        profile: SelectionProfile,
+        trade_date: str,
+    ) -> bool:
+        return self.load_active_data_run_record(market=market, profile=profile, trade_date=trade_date) is not None
+
     def lookup_confirmation(self, idempotency_key: str) -> SelectionReportHandoffRecord | None:
         return self._confirmations_by_idempotency_key.get(idempotency_key)
 

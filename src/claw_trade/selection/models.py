@@ -62,6 +62,7 @@ class SelectionSystemContextPolicy(StrEnum):
 
 class SelectionTriggerSource(StrEnum):
     SCHEDULED = "scheduled"
+    SELECT_COMMAND_REFRESH = "select_command_refresh"
     MANUAL_BACKFILL = "manual_backfill"
     MANUAL_RERUN = "manual_rerun"
 

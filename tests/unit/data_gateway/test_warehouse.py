@@ -61,6 +61,30 @@ def test_warehouse_ready_when_dataset_and_freshness_match() -> None:
     assert result.dataset_refs
 
 
+def test_warehouse_ready_result_includes_import_attempt_lineage() -> None:
+    record = _base_record()
+    record["dataset_ref"] = "dataset:daily:600519"
+    repo = DatasetRepository(records=[record])
+    repo.insert_provider_attempt(
+        {
+            "attempt_ref": "attempt:local-import:1",
+            "provider": "local_a_share_prepackaged",
+            "endpoint": "a_share_prepackaged_selection_import",
+            "status": "local_seed_imported",
+            "remote_attempted": False,
+            "remote_success": False,
+            "dataset_refs": ("dataset:daily:600519",),
+            "raw_refs": ("raw:local-import:1",),
+        }
+    )
+
+    result = Warehouse(repo).query(_request())
+
+    assert result.status == "ready"
+    assert result.dataset_refs == ("dataset:daily:600519",)
+    assert result.attempt_refs == ("attempt:local-import:1",)
+
+
 def test_warehouse_rejects_granularity_mismatch() -> None:
     repo = DatasetRepository(records=[_base_record()])
     result = Warehouse(repo).query(_request(granularity="intraday"))

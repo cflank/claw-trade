@@ -63,6 +63,7 @@ def schedule_selection_job(
 
     if context.trigger_source not in {
         SelectionTriggerSource.SCHEDULED,
+        SelectionTriggerSource.SELECT_COMMAND_REFRESH,
         SelectionTriggerSource.MANUAL_BACKFILL,
         SelectionTriggerSource.MANUAL_RERUN,
     }:

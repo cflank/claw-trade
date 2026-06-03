@@ -54,11 +54,21 @@ class Warehouse:
 
         unique_rows = tuple(rows)
         dataset_refs_for_rows = tuple(dataset_refs)
+        attempt_refs_by_dataset_ref = self._repository.find_provider_attempt_refs_by_dataset_ref(dataset_refs_for_rows)
+        attempt_refs = tuple(
+            dict.fromkeys(
+                attempt_ref
+                for dataset_ref in dataset_refs_for_rows
+                for attempt_ref in attempt_refs_by_dataset_ref.get(dataset_ref, ())
+            )
+        )
         satisfied = not gaps and bool(dataset_refs_for_rows)
         return WarehouseResult(
             satisfied=satisfied,
             rows=unique_rows,
             dataset_refs=dataset_refs_for_rows,
+            attempt_refs=attempt_refs,
+            attempt_refs_by_dataset_ref=attempt_refs_by_dataset_ref,
             gaps=tuple(gaps),
             freshness=freshness,
         )

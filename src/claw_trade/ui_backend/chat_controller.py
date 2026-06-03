@@ -314,6 +314,8 @@ class ChatController:
             )
             if select_result.code == SelectCommandCode.COMPLETED:
                 message_kind = "selection_result"
+            elif select_result.code == SelectCommandCode.DATA_REFRESH_REQUESTED:
+                message_kind = "selection_refreshing"
             else:
                 message_kind = "selection_unavailable"
             self._append_message(
@@ -331,6 +333,14 @@ class ChatController:
                 "unavailableCode": select_result.unavailable_code.value if select_result.unavailable_code else None,
                 "failureReason": select_result.failure_reason,
             }
+            if select_result.data_refresh is not None:
+                payload["selection"]["dataRefresh"] = {
+                    "status": select_result.data_refresh.status,
+                    "selectionRunId": select_result.data_refresh.selection_run_id,
+                    "tradeDate": select_result.data_refresh.trade_date,
+                    "reason": select_result.data_refresh.reason,
+                    "errorCode": select_result.data_refresh.error_code,
+                }
             return payload
         if self._recognizer.looks_like_report_intent(content):
             try:
