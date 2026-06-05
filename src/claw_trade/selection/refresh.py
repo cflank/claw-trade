@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from threading import Lock, Thread
+from datetime import UTC, datetime, timedelta
+from threading import Event, Lock, Thread
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from claw_trade.selection.data_job import SelectionDataJobExecution
 from claw_trade.selection.models import (
@@ -40,6 +41,7 @@ class SelectionDataRefreshService:
         resolve_closed_trade_date: Callable[[str | None], str],
         load_approved_strategy_config_ref: Callable[[SelectionMarket, SelectionProfile], str | None],
         build_provider_batch_plan: Callable[..., SelectionProviderBatchPlan],
+        run_data_check: Callable[[SelectionRunPlan], object] | None = None,
         now_fn: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[], str] | None = None,
     ) -> None:
@@ -48,9 +50,13 @@ class SelectionDataRefreshService:
         self._resolve_closed_trade_date = resolve_closed_trade_date
         self._load_approved_strategy_config_ref = load_approved_strategy_config_ref
         self._build_provider_batch_plan = build_provider_batch_plan
+        self._run_data_check = run_data_check or run_data_job
         self._now_fn = now_fn or _utc_now
         self._run_id_factory = run_id_factory
         self._lock = Lock()
+        self._auto_refresh_stop = Event()
+        self._auto_refresh_thread: Thread | None = None
+        self._auto_refresh_trade_date: str | None = None
 
     def request_refresh(
         self,
@@ -72,6 +78,19 @@ class SelectionDataRefreshService:
             )
 
         with self._lock:
+            existing = self._store.load_latest_completed_selection_run(
+                market=request.market,
+                profile=request.profile,
+                trade_date=trade_date,
+                now=self._now_fn(),
+            )
+            if existing.is_available and existing.run is not None:
+                return SelectionDataRefreshResult(
+                    status="completed",
+                    selection_run_id=existing.run.run_plan.selection_run_id,
+                    trade_date=trade_date,
+                    reason=f"{reason}:candidate_pack_valid",
+                )
             active = self._store.load_active_data_run_record(
                 market=request.market,
                 profile=request.profile,
@@ -138,6 +157,184 @@ class SelectionDataRefreshService:
                 reason=reason,
             )
 
+    def start_automatic_refresh_scheduler(self) -> None:
+        with self._lock:
+            if self._auto_refresh_thread is not None and self._auto_refresh_thread.is_alive():
+                return
+            self._auto_refresh_stop.clear()
+            self._auto_refresh_thread = Thread(
+                target=self._automatic_refresh_loop,
+                daemon=True,
+                name="selection-auto-refresh-scheduler",
+            )
+            self._auto_refresh_thread.start()
+
+    def stop_automatic_refresh_scheduler(self, *, timeout_seconds: float = 1.0) -> None:
+        self._auto_refresh_stop.set()
+        thread = self._auto_refresh_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout_seconds)
+
+    def run_automatic_refresh_once(self, *, reason: str) -> SelectionDataRefreshResult:
+        try:
+            trade_date = self._resolve_closed_trade_date(None)
+        except Exception as exc:  # noqa: BLE001
+            return SelectionDataRefreshResult(
+                status="failed",
+                selection_run_id=None,
+                trade_date=None,
+                reason=f"{reason}:trade_date_resolution_failed",
+                error_code=type(exc).__name__,
+            )
+
+        with self._lock:
+            existing = self._store.load_latest_completed_selection_run(
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date=trade_date,
+                now=self._now_fn(),
+            )
+            if existing.is_available and existing.run is not None:
+                return SelectionDataRefreshResult(
+                    status="completed",
+                    selection_run_id=existing.run.run_plan.selection_run_id,
+                    trade_date=trade_date,
+                    reason=f"{reason}:candidate_pack_valid",
+                )
+            if self._auto_refresh_trade_date == trade_date:
+                return SelectionDataRefreshResult(
+                    status="already_running",
+                    selection_run_id=None,
+                    trade_date=trade_date,
+                    reason=reason,
+                )
+            if self._store.has_active_data_run(
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date=trade_date,
+            ):
+                return SelectionDataRefreshResult(
+                    status="already_running",
+                    selection_run_id=None,
+                    trade_date=trade_date,
+                    reason=reason,
+                )
+            try:
+                plan = schedule_selection_job(
+                    context=SelectionScheduleContext(
+                        market=SelectionMarket.CN_A,
+                        profile=SelectionProfile.CN_A,
+                        trade_date=trade_date,
+                        trigger_source=SelectionTriggerSource.SCHEDULED,
+                    ),
+                    resolve_closed_trade_date=self._resolve_closed_trade_date,
+                    has_active_job=lambda market, profile, date_value: self._store.has_active_data_run(
+                        market=market,
+                        profile=profile,
+                        trade_date=date_value,
+                    ),
+                    load_approved_strategy_config_ref=self._load_approved_strategy_config_ref,
+                    build_provider_batch_plan=self._build_provider_batch_plan,
+                    run_id_factory=self._run_id_factory,
+                )
+            except SelectionSchedulingError as exc:
+                return SelectionDataRefreshResult(
+                    status="failed",
+                    selection_run_id=None,
+                    trade_date=trade_date,
+                    reason=reason,
+                    error_code=exc.code,
+                )
+            self._store.save_data_run_record(
+                SelectionDataRunRecord(
+                    run_plan=plan,
+                    data_run=SelectionDataRun(
+                        selection_run_id=plan.selection_run_id,
+                        status=SelectionDataRunStatus.PLANNED,
+                        lease_id=f"auto-refresh://{reason}",
+                        started_at=self._now_fn().isoformat(),
+                    ),
+                    manifest=None,
+                )
+            )
+            self._auto_refresh_trade_date = trade_date
+
+        try:
+            self._run_data_check(plan)
+        except Exception as exc:  # noqa: BLE001
+            failed_at = self._now_fn().isoformat()
+            self._store.save_data_run_record(
+                SelectionDataRunRecord(
+                    run_plan=plan,
+                    data_run=SelectionDataRun(
+                        selection_run_id=plan.selection_run_id,
+                        status=SelectionDataRunStatus.FAILED,
+                        lease_id=f"auto-refresh://{reason}",
+                        started_at=failed_at,
+                        failed_at=failed_at,
+                        failure_code="selection_auto_refresh_failed",
+                        failure_reason=f"{type(exc).__name__}: {exc}",
+                    ),
+                    manifest=None,
+                )
+            )
+            return SelectionDataRefreshResult(
+                status="failed",
+                selection_run_id=plan.selection_run_id,
+                trade_date=trade_date,
+                reason=reason,
+                error_code=type(exc).__name__,
+            )
+        finally:
+            with self._lock:
+                if self._auto_refresh_trade_date == trade_date:
+                    self._auto_refresh_trade_date = None
+
+        return SelectionDataRefreshResult(
+            status="completed",
+            selection_run_id=plan.selection_run_id,
+            trade_date=trade_date,
+            reason=reason,
+        )
+
+    def latest_progress_for_user(
+        self,
+        *,
+        market: SelectionMarket = SelectionMarket.CN_A,
+        profile: SelectionProfile = SelectionProfile.CN_A,
+        trade_date: str | None = None,
+    ) -> dict[str, object]:
+        if trade_date is None:
+            record = self._store.load_latest_active_data_run_record(market=market, profile=profile)
+            if record is None:
+                record = self._store.load_latest_any_data_run_record(market=market, profile=profile)
+            if record is None:
+                return {"selectionProgress": None}
+            return {
+                "selectionProgress": _data_run_progress_for_user(
+                    record.data_run,
+                    trade_date=record.run_plan.trade_date,
+                )
+            }
+        try:
+            resolved_trade_date = self._resolve_closed_trade_date(trade_date)
+        except Exception:  # noqa: BLE001
+            return {"selectionProgress": None}
+        record = self._store.load_active_data_run_record(
+            market=market,
+            profile=profile,
+            trade_date=resolved_trade_date,
+        )
+        if record is None:
+            record = self._store.load_latest_data_run_record(
+                market=market,
+                profile=profile,
+                trade_date=resolved_trade_date,
+            )
+        if record is None:
+            return {"selectionProgress": None}
+        return {"selectionProgress": _data_run_progress_for_user(record.data_run, trade_date=resolved_trade_date)}
+
     def _run_job_and_record_failure(self, plan: SelectionRunPlan) -> None:
         try:
             self._run_data_job(plan)
@@ -159,6 +356,110 @@ class SelectionDataRefreshService:
                 )
             )
 
+    def _automatic_refresh_loop(self) -> None:
+        self.run_automatic_refresh_once(reason="startup_data_check")
+        while not self._auto_refresh_stop.wait(_seconds_until_next_daily_refresh(self._now_fn())):
+            self.run_automatic_refresh_once(reason="daily_1600_data_check")
+
 
 def _utc_now() -> datetime:
     return datetime.now(tz=UTC)
+
+
+def _seconds_until_next_daily_refresh(now: datetime) -> float:
+    shanghai_now = _to_shanghai(now)
+    target = shanghai_now.replace(hour=16, minute=0, second=0, microsecond=0)
+    if shanghai_now >= target:
+        target = target + timedelta(days=1)
+    return max(0.0, (target - shanghai_now).total_seconds())
+
+
+def _to_shanghai(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(ZoneInfo("Asia/Shanghai"))
+
+
+_DATA_RUN_STAGE_UI: dict[SelectionDataRunStatus, tuple[str, str, int]] = {
+    SelectionDataRunStatus.PLANNED: ("排队准备", "已创建选股数据刷新任务，等待数据作业启动。", 5),
+    SelectionDataRunStatus.LEASE_PENDING: ("申请执行锁", "正在申请选股数据作业执行权。", 10),
+    SelectionDataRunStatus.RUNNING: ("数据作业启动", "选股数据作业已启动。", 15),
+    SelectionDataRunStatus.FETCHING_DATA: ("拉取/补齐行情数据", "正在读取本地仓库并补齐缺失行情。", 35),
+    SelectionDataRunStatus.NORMALIZING_INPUTS: ("标准化输入", "正在整理选股所需的行情、因子和身份字段。", 50),
+    SelectionDataRunStatus.BUILDING_FEATURES: ("构建特征", "正在生成选股策略使用的特征快照。", 65),
+    SelectionDataRunStatus.FILTERING_AND_SCORING: ("过滤并打分", "正在执行硬过滤、策略命中和候选打分。", 78),
+    SelectionDataRunStatus.BUILDING_CANDIDATE_PACK: ("生成候选包", "正在生成 top20 候选事实包。", 88),
+    SelectionDataRunStatus.APPROVING_CANDIDATE_PACK: ("审批候选包", "正在校验候选包证据和读回完整性。", 95),
+    SelectionDataRunStatus.NO_CANDIDATE: ("未产出候选", "本轮补数据完成，但没有可进入选股的候选。", 100),
+    SelectionDataRunStatus.COMPLETED: ("数据已准备", "当前交易日选股数据和候选包已准备完成。", 100),
+    SelectionDataRunStatus.FAILED: ("补数据失败", "选股数据刷新失败，请查看失败原因。", 100),
+}
+
+_DATA_RUN_ORDER = tuple(_DATA_RUN_STAGE_UI.keys())
+
+
+def _data_run_progress_for_user(data_run: SelectionDataRun, *, trade_date: str) -> dict[str, object]:
+    stage_label, current_action, percent = _DATA_RUN_STAGE_UI[data_run.status]
+    progress_completed = data_run.progress_completed
+    progress_total = data_run.progress_total
+    has_progress = progress_completed is not None and progress_total is not None and progress_total > 0
+    if data_run.status == SelectionDataRunStatus.FETCHING_DATA and has_progress:
+        percent = min(49, max(35, 35 + int(14 * progress_completed / progress_total)))
+        progress_label = data_run.progress_label or current_action
+        current_action = f"{progress_label}：已完成 {progress_completed}/{progress_total}。"
+    completed_labels = [
+        _DATA_RUN_STAGE_UI[status][0]
+        for status in _DATA_RUN_ORDER
+        if _DATA_RUN_STAGE_UI[status][2] < percent
+        and status != data_run.status
+        and status not in {SelectionDataRunStatus.NO_CANDIDATE, SelectionDataRunStatus.FAILED}
+    ]
+    waiting_labels = [
+        _DATA_RUN_STAGE_UI[status][0]
+        for status in _DATA_RUN_ORDER
+        if _DATA_RUN_STAGE_UI[status][2] > percent
+        and status not in {
+            SelectionDataRunStatus.NO_CANDIDATE,
+            SelectionDataRunStatus.COMPLETED,
+            SelectionDataRunStatus.FAILED,
+        }
+    ]
+    if data_run.status == SelectionDataRunStatus.FAILED:
+        status = "failed"
+        status_label = "补数据失败"
+    elif data_run.status == SelectionDataRunStatus.NO_CANDIDATE:
+        status = "failed"
+        status_label = "无候选"
+    elif data_run.status == SelectionDataRunStatus.COMPLETED:
+        status = "completed"
+        status_label = "数据已准备"
+    else:
+        status = "running"
+        status_label = "补数据中"
+    if has_progress:
+        worker_status_labels = [f"{stage_label}：{status_label}（{progress_completed}/{progress_total}）"]
+    else:
+        worker_status_labels = [f"{stage_label}：{status_label}"]
+    if data_run.failure_reason:
+        worker_status_labels.append(f"失败原因：{_failure_reason_for_user(data_run)}")
+    return {
+        "status": status,
+        "statusLabel": status_label,
+        "command": f"/select 补数据 {trade_date}",
+        "stageLabel": stage_label,
+        "currentAction": current_action,
+        "percent": percent,
+        "workerStatusLabels": worker_status_labels,
+        "completedRoleLabels": completed_labels,
+        "waitingRoleLabels": waiting_labels,
+        "startedAt": data_run.started_at or data_run.completed_at or data_run.failed_at or "",
+        "finishedAt": data_run.completed_at or data_run.failed_at,
+        "workflowRunId": data_run.selection_run_id,
+    }
+
+
+def _failure_reason_for_user(data_run: SelectionDataRun) -> str:
+    reason = (data_run.failure_reason or "").strip()
+    if data_run.failure_code == "provider_evidence_failed" or reason == "provider attempts 缺失":
+        return "缺少数据源调用证据（provider attempts 缺失）"
+    return reason

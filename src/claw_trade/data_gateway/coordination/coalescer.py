@@ -83,6 +83,7 @@ class RequestCoalescer:
                     "required_levels": OrderedDict(),
                     "request_ids": OrderedDict(),
                     "symbol_ids": OrderedDict(),
+                    "universe_ref": None,
                     "fields": OrderedDict(),
                     "date_range_start": None,
                     "date_range_end": None,
@@ -98,10 +99,12 @@ class RequestCoalescer:
 
             request_id = str(_read_attr(candidate, "request_id"))
             symbol_id = _read_attr(candidate, "symbol_id", None)
+            universe_ref = _read_attr(candidate, "universe_ref", None)
             fields = tuple(sorted(set(_as_tuple(_read_attr(candidate, "fields", ())))))
             item = MergeItem(
                 request_id=request_id,
                 symbol_ids=((str(symbol_id),) if symbol_id else ()),
+                universe_ref=str(universe_ref) if universe_ref else None,
                 date_range_start=_read_attr(candidate, "date_range_start", None),
                 date_range_end=_read_attr(candidate, "date_range_end", None),
                 fields=fields,
@@ -121,6 +124,8 @@ class RequestCoalescer:
 
             if symbol_id:
                 bucket["symbol_ids"][str(symbol_id)] = None
+            if universe_ref:
+                bucket["universe_ref"] = str(universe_ref)
 
             for field in fields:
                 bucket["fields"][field] = None
@@ -145,6 +150,7 @@ class RequestCoalescer:
                     priority_rank=int(bucket["priority_rank"]),
                     request_ids=tuple(bucket["request_ids"].keys()),
                     symbol_ids=tuple(bucket["symbol_ids"].keys()),
+                    universe_ref=bucket["universe_ref"],
                     date_range_start=bucket["date_range_start"],
                     date_range_end=bucket["date_range_end"],
                     exchange=bucket["exchange"],

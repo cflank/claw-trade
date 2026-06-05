@@ -81,6 +81,7 @@ class ProviderRegistry:
         if credentials is None:
             credentials = _read_attr(caps, "credential_policy")
         credential_required = bool(_read_attr(credentials, "credential_required", False))
+        credential_names = tuple(str(name) for name in _as_tuple(_read_attr(credentials, "credential_names", ())))
         credential_scope = _read_attr(credentials, "credential_scope", None)
         provider_license_policy = _read_attr(caps, "license_policy")
         default_rate_limit_policy = _read_attr(caps, "default_rate_limit_policy")
@@ -128,6 +129,7 @@ class ProviderRegistry:
                 coverage_fields=tuple(coverage_fields),
                 priority_rank=priority_rank,
                 credential_required=credential_required,
+                credential_names=credential_names,
                 credential_scope=credential_scope,
                 http_visibility=str(_read_attr(endpoint, "http_visibility")),
                 can_be_formal_fact_source=bool(can_be_formal_fact_source),

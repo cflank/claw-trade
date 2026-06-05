@@ -160,6 +160,7 @@ class ProviderCapabilityView:
     coverage_fields: tuple[str, ...]
     priority_rank: int
     credential_required: bool
+    credential_names: tuple[str, ...]
     credential_scope: str | None
     http_visibility: str
     can_be_formal_fact_source: bool

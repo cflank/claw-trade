@@ -35,6 +35,7 @@ import type {
   SaveLlmConfigViaOpenClawOutput,
   ScheduledReportForUser,
   ScheduledReportInput,
+  SelectionRefreshSnapshotForUser,
   SendChatMessageInput,
   SendChatMessageOutput,
   TestDataSourceInput,
@@ -137,6 +138,10 @@ export function sendChatMessage(input: SendChatMessageInput) {
 
 export function getReportQueueSnapshot() {
   return requestJson<ReportQueueSnapshotForUser>('/api/ui/get-report-queue-snapshot');
+}
+
+export function getSelectionRefreshSnapshot() {
+  return requestJson<SelectionRefreshSnapshotForUser>('/api/ui/get-selection-refresh-snapshot');
 }
 
 export function createIntentDraft(input: CreateIntentDraftInput) {

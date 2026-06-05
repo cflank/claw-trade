@@ -9,7 +9,6 @@ from typing import Any, Iterable
 
 from claw_trade.artifacts.openviking_backend_http import create_default_backend
 from claw_trade.artifacts.openviking_client import OpenVikingAccessError, OpenVikingClient
-from claw_trade.data_gateway.openviking import OpenVikingMaterialPlane
 
 
 def main() -> int:
@@ -23,22 +22,26 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     client = OpenVikingClient(create_default_backend())
-    plane = OpenVikingMaterialPlane(client)
     run_root_uri = f"viking://resources/workflow/{args.run_id}/"
 
-    tree = plane.tree_run(args.run_id)
-    grep = plane.grep_run(args.run_id, args.grep_pattern)
-    glob = plane.glob_run(args.run_id, args.glob_pattern)
-    context_index = plane.index_run_context(args.run_id)
-    runtime_health = plane.runtime_health()
+    tree = client.tree_run(run_id=args.run_id)
+    grep = client.grep_run(run_id=args.run_id, pattern=args.grep_pattern)
+    glob = client.glob_run(run_id=args.run_id, pattern=args.glob_pattern)
+    context_index = client.find_approved_materials(run_id=args.run_id, query=args.grep_pattern)
+    runtime_health = {
+        "metrics": _safe_client_call(lambda: client.runtime_metrics()),
+        "observer": _safe_client_call(lambda: client.runtime_observer()),
+        "locks": _safe_client_call(lambda: client.runtime_locks()),
+        "semantic_queue": _safe_client_call(lambda: client.runtime_semantic_queue()),
+    }
     relation_queries = _relation_query_uris(args.run_id, run_root_uri)
     relations_by_uri = {uri: _safe_relations(client, uri) for uri in relation_queries}
     relations = relations_by_uri.get(run_root_uri, {})
     relations_non_empty = any(_relation_count(item) > 0 for item in relations_by_uri.values())
-    export_receipt = plane.export_run_pack(args.run_id, str(output_dir / "ovpack"))
+    export_receipt = client.export_run_pack(run_id=args.run_id, output_dir=str(output_dir / "ovpack"))
     import_receipt = None
     if export_receipt.portability_status != "blocked" and Path(export_receipt.bundle_path).exists():
-        import_receipt = plane.import_run_pack(
+        import_receipt = client.import_run_pack(
             bundle_path=export_receipt.bundle_path,
             target_run_id=f"import-check-{args.run_id}",
         )
@@ -70,6 +73,16 @@ def _safe_relations(client: OpenVikingClient, uri: str) -> object:
         return {
             "status": "blocked",
             "root_cause": f"relations blocked: {exc.category}:{exc}",
+        }
+
+
+def _safe_client_call(call: object) -> object:
+    try:
+        return call()  # type: ignore[operator]
+    except OpenVikingAccessError as exc:
+        return {
+            "status": "blocked",
+            "root_cause": f"runtime query blocked: {exc.category}:{exc}",
         }
 
 

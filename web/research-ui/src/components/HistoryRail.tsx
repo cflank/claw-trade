@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { SavedReportForUser } from '../api/contracts';
+import type { SavedReportForUser, SelectionReportForUser } from '../api/contracts';
 import { EmptyHistoryRail } from './EmptyStates';
 
 function formatDate(value: string) {
@@ -8,14 +8,20 @@ function formatDate(value: string) {
 
 export function HistoryRail({
   items,
+  selectionItems = [],
   activeReportId,
+  activeSelectionReportId,
   onOpenReport,
   onDeleteReport,
+  onOpenSelectionReport,
 }: {
   items: SavedReportForUser[];
+  selectionItems?: SelectionReportForUser[];
   activeReportId?: string | null;
+  activeSelectionReportId?: string | null;
   onOpenReport: (report: SavedReportForUser) => void;
   onDeleteReport: (report: SavedReportForUser) => void;
+  onOpenSelectionReport?: (report: SelectionReportForUser) => void;
 }) {
   const [query, setQuery] = useState('');
   const normalized = query.trim().toLowerCase();
@@ -31,6 +37,27 @@ export function HistoryRail({
 
   return (
     <aside className="ct-rail ct-history-rail" data-testid="history-rail">
+      {selectionItems.length ? (
+        <>
+          <div className="ct-panel-title">选股报告</div>
+          <ul className="ct-history-list">
+            {selectionItems.map((item) => (
+              <li key={item.id} className="ct-history-item">
+                <button
+                  type="button"
+                  className={`ct-history-open${item.id === activeSelectionReportId ? ' is-active' : ''}`}
+                  onClick={() => onOpenSelectionReport?.(item)}
+                >
+                  <div className="ct-history-code">/select</div>
+                  <div className="ct-history-title">{item.title}</div>
+                  <div className="ct-history-time">{formatDate(item.generatedAt)}</div>
+                  <div className="ct-history-summary">{item.summarySnippet}</div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <div className="ct-panel-title">正式报告历史</div>
       <div className="ct-history-search">
         <input

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -339,7 +340,11 @@ def _prompt_context_with_model_visible_materials(dispatch: SelectionWorkerDispat
         return run_id
 
     sections = _prompt_material_sections(dispatch)
-    lines = [run_id, "", "[模型可见已批准材料]"]
+    lines = [run_id]
+    checklist = _candidate_checklist_from_material_sections(sections)
+    if checklist:
+        lines.extend(("", "[候选池完整核对清单]", checklist))
+    lines.extend(("", "[模型可见已批准材料]"))
     for marker, material in sections:
         lines.append(f"【{marker}】")
         lines.append(material.strip())
@@ -355,6 +360,80 @@ def _prompt_material_sections(dispatch: SelectionWorkerDispatch) -> tuple[tuple[
     if dispatch.worker_id == SelectionWorkerId.PORTFOLIO_MANAGER:
         return tuple(zip(_PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS, materials, strict=True))
     return ()
+
+
+def _candidate_checklist_from_material_sections(sections: tuple[tuple[str, str], ...]) -> str:
+    for marker, material in sections:
+        if marker == "candidate_pack_summary":
+            return _candidate_checklist_from_summary(material)
+    return ""
+
+
+def _candidate_checklist_from_summary(candidate_pack_summary_md: str) -> str:
+    rows: list[tuple[str, str, str]] = []
+    rank_index: int | None = None
+    ticker_index: int | None = None
+    company_index: int | None = None
+
+    for line in candidate_pack_summary_md.splitlines():
+        cells = _markdown_table_cells(line)
+        if not cells:
+            continue
+        normalized = [_normalize_header_cell(cell) for cell in cells]
+        if ticker_index is None:
+            ticker_index = _index_of_any(normalized, {"股票代码", "代码", "ticker"})
+            company_index = _index_of_any(normalized, {"股票名称", "公司", "名称", "company", "companyname"})
+            rank_index = _index_of_any(normalized, {"排名", "rank"})
+            if ticker_index is not None and company_index is not None:
+                continue
+            ticker_index = None
+            company_index = None
+            rank_index = None
+            continue
+        if len(cells) <= max(ticker_index, company_index):
+            continue
+        ticker = _clean_markdown_table_value(cells[ticker_index]).upper()
+        if not _looks_like_ticker(ticker):
+            continue
+        company = _clean_markdown_table_value(cells[company_index])
+        rank = _clean_markdown_table_value(cells[rank_index]) if rank_index is not None and len(cells) > rank_index else ""
+        rows.append((rank or str(len(rows) + 1), ticker, company or "-"))
+
+    if not rows:
+        return ""
+
+    lines = [f"本轮候选池共 {len(rows)} 只；后续分组或三分类必须覆盖下面每一只，不能只沿用上游分组："]
+    lines.extend(f"- {rank} | {ticker} | {company}" for rank, ticker, company in rows)
+    return "\n".join(lines)
+
+
+def _markdown_table_cells(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return []
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if len(cells) < 2:
+        return []
+    return cells
+
+
+def _normalize_header_cell(value: str) -> str:
+    return re.sub(r"[\s_`*:/-]+", "", value.strip().lower())
+
+
+def _index_of_any(values: list[str], expected: set[str]) -> int | None:
+    for index, value in enumerate(values):
+        if value in expected:
+            return index
+    return None
+
+
+def _clean_markdown_table_value(value: str) -> str:
+    return value.strip().strip("`").strip("*").strip()
+
+
+def _looks_like_ticker(value: str) -> bool:
+    return bool(re.match(r"^[A-Z0-9][A-Z0-9._/-]*$", value)) and any(char.isdigit() for char in value)
 
 
 def _build_upstream_material_refs(

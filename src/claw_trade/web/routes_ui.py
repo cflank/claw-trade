@@ -293,6 +293,15 @@ def get_report_queue_snapshot(request: Request) -> JSONResponse:
         return _exception_response(exc)
 
 
+@router.get("/get-selection-refresh-snapshot")
+def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.selection_refresh_service.latest_progress_for_user())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/create-scheduled-report")
 def create_scheduled_report(payload: CreateScheduledReportRequest, request: Request) -> JSONResponse:
     services = _services(request)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
@@ -58,7 +58,7 @@ class _HttpDailyBarPlugin:
                         max_days_per_call=1000,
                         mergeable_fields=self.fields,
                     ),
-                    priority_rank=20,
+                    priority_rank=5,
                     rate_limit_policy={"window_seconds": 60, "max_calls": None},
                     license_policy=license_policy,
                 ),
@@ -93,14 +93,13 @@ class _HttpDailyBarPlugin:
         if managed_http is None or not callable(getattr(managed_http, "send_capture", None)):
             return FetchResult.from_error(task, status="error", error=RuntimeError("managed_http_required"))
 
-        symbols = tuple(str(item).strip().upper() for item in getattr(task, "symbol_ids", ()) if str(item).strip())
-        if not symbols:
-            return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
+        request_targets = self._request_targets(task, token=token, ctx=ctx)
+        if not request_targets:
+            return FetchResult.from_error(task, status="error", error=RuntimeError(self._empty_target_error(task)))
 
         rows: list[dict[str, Any]] = []
         observations: list[Any] = []
-        for symbol in symbols:
-            request = self._request_for(task, symbol=symbol, token=token, ctx=ctx)
+        for symbol, request in request_targets:
             capture = managed_http.send_capture(request)
             observations.append(capture.observation)
             if capture.observation.error_code:
@@ -143,6 +142,14 @@ class _HttpDailyBarPlugin:
             http_observations=tuple(observations),
         )
 
+    def _request_targets(self, task: Any, *, token: str, ctx: Any) -> tuple[tuple[str, HttpRequestSpec], ...]:
+        symbols = tuple(str(item).strip().upper() for item in getattr(task, "symbol_ids", ()) if str(item).strip())
+        return tuple((symbol, self._request_for(task, symbol=symbol, token=token, ctx=ctx)) for symbol in symbols)
+
+    def _empty_target_error(self, task: Any) -> str:
+        del task
+        return "symbol_required"
+
     def _request_for(self, task: Any, *, symbol: str, token: str, ctx: Any) -> HttpRequestSpec:
         raise NotImplementedError
 
@@ -175,13 +182,63 @@ class _HttpDailyBarPlugin:
 class TushareDailyBarPlugin(_HttpDailyBarPlugin):
     plugin_id = "cn_a_primary"
     market = "CN_A"
+    universe_endpoint_id = "daily_bar_by_trade_date"
     credential_name = "data_source:tushare"
     default_endpoint = "https://api.tushare.pro"
     source_role = "paid_data"
-    fields = ("open", "high", "low", "close", "volume", "amount")
+    fields = ("date", "open", "high", "low", "close", "volume", "amount")
     _currency = "CNY"
     _timezone = "Asia/Shanghai"
     _calendar = "CN_A_SSE_SZSE"
+
+    def __init__(self) -> None:
+        super().__init__()
+        base = self._capabilities
+        universe_capability = EndpointCapability(
+            endpoint_id=self.universe_endpoint_id,
+            market=self.market,
+            data_type="daily_bar",
+            source_role=self.source_role,
+            granularity=("daily",),
+            fields=self.fields,
+            freshness_supported=("trading_day",),
+            http_visibility="managed_http",
+            batch_policy=BatchPolicy(
+                supports_batch=True,
+                batch_by="date",
+                max_days_per_call=1,
+                mergeable_fields=self.fields,
+            ),
+            priority_rank=5,
+            rate_limit_policy={"window_seconds": 60, "max_calls": None},
+            license_policy=base.license_policy,
+        )
+        self._capabilities = ProviderCapabilities(
+            provider_id=base.provider_id,
+            plugin_version=base.plugin_version,
+            endpoints=(*base.endpoints, universe_capability),
+            credential_policy=base.credential_policy,
+            license_policy=base.license_policy,
+            default_rate_limit_policy=base.default_rate_limit_policy,
+            default_priority_rank=base.default_priority_rank,
+        )
+
+    def _request_targets(self, task: Any, *, token: str, ctx: Any) -> tuple[tuple[str, HttpRequestSpec], ...]:
+        if str(getattr(task, "endpoint_id", "")) != self.universe_endpoint_id:
+            return super()._request_targets(task, token=token, ctx=ctx)
+        days = _date_range_values(getattr(task, "date_range_start", None), getattr(task, "date_range_end", None))
+        return tuple(
+            (
+                f"trade_date:{day.strftime('%Y%m%d')}",
+                self._trade_date_request_for(task, trade_date=day, token=token, ctx=ctx),
+            )
+            for day in days
+        )
+
+    def _empty_target_error(self, task: Any) -> str:
+        if str(getattr(task, "endpoint_id", "")) == self.universe_endpoint_id:
+            return "trade_date_required"
+        return super()._empty_target_error(task)
 
     def _request_for(self, task: Any, *, symbol: str, token: str, ctx: Any) -> HttpRequestSpec:
         host, path = _endpoint(ctx, self.credential_name, self.default_endpoint)
@@ -196,6 +253,23 @@ class TushareDailyBarPlugin(_HttpDailyBarPlugin):
             "api_name": "daily",
             "token": token,
             "params": params,
+            "fields": "ts_code,trade_date,open,high,low,close,vol,amount",
+        }
+        return HttpRequestSpec(
+            method="POST",
+            host=host,
+            path=path,
+            body=json.dumps(body, ensure_ascii=True, separators=(",", ":")),
+            headers={"accept": "application/json", "content-type": "application/json"},
+            provider_config_version=getattr(task, "provider_config_version", None),
+        )
+
+    def _trade_date_request_for(self, task: Any, *, trade_date: date, token: str, ctx: Any) -> HttpRequestSpec:
+        host, path = _endpoint(ctx, self.credential_name, self.default_endpoint)
+        body = {
+            "api_name": "daily",
+            "token": token,
+            "params": {"trade_date": trade_date.strftime("%Y%m%d")},
             "fields": "ts_code,trade_date,open,high,low,close,vol,amount",
         }
         return HttpRequestSpec(
@@ -239,9 +313,12 @@ class TushareDailyBarPlugin(_HttpDailyBarPlugin):
             if period is None or values is None:
                 continue
             row = self._base_row(symbol=str(mapped.get("ts_code") or symbol), period=period, **values)
+            row["date"] = period
             row["exchange"] = _cn_a_exchange(row["symbol_id"])
             if mapped.get("amount") is not None:
-                row["amount"] = _decimal_float(mapped.get("amount"))
+                # Tushare daily.amount is reported in thousand CNY; normalized daily_bar.amount is CNY.
+                row["amount"] = _decimal_float(mapped.get("amount")) * 1000.0
+                row["amount_unit"] = "CNY"
             rows.append(row)
         return rows
 
@@ -373,6 +450,19 @@ def _yyyymmdd(value: Any) -> str | None:
     return day.strftime("%Y%m%d") if day else None
 
 
+def _date_range_values(start_value: Any, end_value: Any) -> tuple[date, ...]:
+    start = _date_value(start_value)
+    end = _date_value(end_value) or start
+    if start is None or end is None or start > end:
+        return ()
+    days: list[date] = []
+    current = start
+    while current <= end:
+        days.append(current)
+        current += timedelta(days=1)
+    return tuple(days)
+
+
 def _parse_yyyymmdd(value: Any) -> date | None:
     text = _non_empty(value)
     if text is None or len(text) < 8:
@@ -400,6 +490,8 @@ def _cn_a_exchange(symbol: str) -> str | None:
         return "XSHG"
     if symbol.endswith(".SZ"):
         return "XSHE"
+    if symbol.endswith(".BJ"):
+        return "BJSE"
     return None
 
 

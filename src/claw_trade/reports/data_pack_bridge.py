@@ -432,7 +432,7 @@ def _build_data_api() -> DataAPI:
     service = DataService(
         query_planner=QueryPlanner(),
         warehouse=Warehouse(repository),
-        provider_selector=ProviderSelector(registry),
+        provider_selector=ProviderSelector(registry, credential_resolver=credential_resolver),
         coalescer=RequestCoalescer(),
         batch_planner=ProviderBatchPlanner(
             rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
@@ -969,6 +969,7 @@ def _gap_reason_label(value: str) -> str:
         "warehouse_stale": "仓库记录已过期",
         "field_missing": "必需字段缺失",
         "date_range_missing": "未覆盖完整分析区间",
+        "data_integrity_failed": "本地数据校验失败",
         "granularity_mismatch": "数据粒度不匹配",
         "license_blocked": "许可限制",
         "evidence_write_failed": "证据写入失败",
@@ -990,6 +991,7 @@ def _human_error(value: str | None) -> str:
         "date_range_missing": "未覆盖完整分析区间",
         "warehouse_missing": "仓库没有可用记录",
         "field_missing": "必需字段缺失",
+        "data_integrity_failed": "本地数据校验失败",
         "provider_error": "来源调用失败",
         "empty_result": "来源返回为空",
         "credential_missing": "接口凭证缺失",

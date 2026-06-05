@@ -59,6 +59,7 @@ class SelectCommandResult:
     failure_reason: str | None = None
     decision: SelectionDecision | None = None
     data_refresh: SelectionDataRefreshResult | None = None
+    reader_report_markdown: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -104,6 +105,7 @@ _CANDIDATE_PACK_REQUIRED_SUMMARY_LABELS = (
     "策略变体",
     "命中字段",
     "实际指标值",
+    "策略命中明细",
     "风险扣分",
     "数据缺口扣分",
     "tie-break",
@@ -147,6 +149,190 @@ _READER_VISIBLE_FIELD_LABELS = {
 }
 
 _READER_VISIBLE_RAW_FIELD_NAMES = tuple(_READER_VISIBLE_FIELD_LABELS)
+_READER_TEXT_REPLACEMENTS = (
+    ("MA30_10日斜率", "30日均线10日斜率"),
+    ("30日均线_10日斜率", "30日均线10日斜率"),
+    ("cn_a.selection_strategy.v1 / 权重版本 cn_a.selection_weights.v1", "当前已批准配置"),
+    ("cn_a.selection_strategy.v1 / 评分权重 cn_a.selection_weights.v1", "当前已批准配置"),
+    ("cn_a.selection_strategy.v1", "当前已批准策略配置"),
+    ("cn_a.selection_weights.v1", "当前已批准评分权重"),
+    ("selection_ranked_watchlist", "综合观察清单"),
+    ("selection_strategy_review", "选股策略评审"),
+    ("selection_skeptic_review", "反方审查意见"),
+    ("candidate_pack_summary", "候选池摘要"),
+    ("watchlist", "观察清单"),
+    ("Selection 反方审查员 Review", "反方审查"),
+    ("Selection", "选股"),
+    ("Review", "审查"),
+    ("review", "审查"),
+    ("Top 8", "前8名"),
+    ("L1 评审报告", "评审报告"),
+    (" L1 ", " "),
+    (" L1", ""),
+    ("Strategist", "策略评审员"),
+    ("strategist", "策略评审员"),
+    ("Sceptic", "反方审查员"),
+    ("Skeptic", "反方审查员"),
+    ("skeptic", "反方审查员"),
+    ("ma30_slope_10d", "30日均线10日斜率"),
+    ("industry_theme_strength_score", "行业/主题强度评分"),
+    ("industry_theme_score", "行业/主题强度评分"),
+    ("limit_up_count_20d", "20日涨停次数"),
+    ("ma250", "250日均线"),
+    ("ma60", "60日均线"),
+    ("ma30", "30日均线"),
+    ("ma20", "20日均线"),
+    ("ma5", "5日均线"),
+    ("rps120", "120日相对强度"),
+    ("rps60", "60日相对强度"),
+    ("rps", "相对强度"),
+    ("limit_up_streak_2d", "两日连板信号"),
+    ("platform_deviation_pct", "平台偏离度"),
+    ("post_limit_up_window_days", "涨停后观察天数"),
+    ("post_limit_up_window", "涨停后观察窗口"),
+    ("post_limit_up_return_abs_pct", "涨停后绝对收益"),
+    ("post_limit_up_range_pct", "涨停后区间振幅"),
+    ("post_limit_up", "涨停后"),
+    ("single_day_min_return_60d", "60日单日最大回撤"),
+    ("ma30_growth_30d", "30日均线30日涨幅"),
+    ("return_120d", "120日涨幅"),
+    ("return_60d", "60日涨幅"),
+    ("return_40d", "40日涨幅"),
+    ("return_10d", "10日涨幅"),
+    ("p_change_pct", "涨跌幅"),
+    ("slope_10d", "10日斜率"),
+    ("strategy_signal_myhhub_volume_rise", "放量上涨"),
+    ("strategy_signal_myhhub_ma30_keep_increasing", "30日均线持续上行"),
+    ("strategy_signal_myhhub_parking_apron", "平台整理信号"),
+    ("strategy_signal_myhhub_backtrace_ma250", "年线回踩"),
+    ("strategy_signal_myhhub_breakthrough_platform", "平台突破"),
+    ("strategy_signal_myhhub_low_backtrace_increase", "低回撤上涨"),
+    ("strategy_signal_myhhub_turtle_60_close", "60日突破收盘"),
+    ("strategy_signal_myhhub_high_tight_flag", "高紧旗形态"),
+    ("strategy_signal_myhhub_climax_limitdown", "极端跌停修复"),
+    ("strategy_signal_myhhub_low_atr", "低波动条件"),
+    ("strategy_signal_sequoia_ma_volume", "量价放量"),
+    ("strategy_signal_sequoia_turtle_20_high", "20日突破高点"),
+    ("strategy_signal_sequoia_high_tight_flag", "高紧旗形态"),
+    ("strategy_signal_sequoia_limit_up_shakeout", "涨停后洗盘"),
+    ("strategy_signal_sequoia_uptrend_limit_down", "上升趋势跌停修复"),
+    ("strategy_signal_sequoia_rps_breakout", "相对强度突破"),
+    ("strategy_signal_sequoia_private_placement", "定增事件信号"),
+    ("myhhub_volume_rise", "放量上涨"),
+    ("myhhub_ma30_keep_increasing", "30日均线持续上行"),
+    ("myhhub_parking_apron", "平台整理信号"),
+    ("myhhub_backtrace_ma250", "年线回踩"),
+    ("myhhub_breakthrough_platform", "平台突破"),
+    ("myhhub_turtle_60_close", "60日突破收盘"),
+    ("myhhub_high_tight_flag", "高紧旗形态"),
+    ("myhhub_climax_limitdown", "极端跌停修复"),
+    ("myhhub_low_atr", "低波动条件"),
+    ("myhhub_low_backtrace_increase", "低回撤上涨"),
+    ("sequoia_ma_volume", "量价放量"),
+    ("sequoia_turtle_20_high", "20日突破高点"),
+    ("sequoia_high_tight_flag", "高紧旗形态"),
+    ("sequoia_limit_up_shakeout", "涨停后洗盘"),
+    ("sequoia_uptrend_limit_down", "上升趋势跌停修复"),
+    ("sequoia_rps_breakout", "相对强度突破"),
+    ("sequoia_private_placement", "定增事件信号"),
+    ("volume_breakout", "放量突破"),
+    ("volume_rise", "放量上涨"),
+    ("ma30_keep_increasing", "30日均线持续上行"),
+    ("backtrace_ma250", "年线回踩"),
+    ("breakthrough_platform", "平台突破"),
+    ("turtle_60_close", "60日突破收盘"),
+    ("high_tight_flag", "高紧旗形态"),
+    ("climax_limitdown", "极端跌停修复"),
+    ("low_atr", "低波动条件"),
+    ("low_backtrace_increase", "低回撤上涨"),
+    ("parking_apron", "平台整理信号"),
+    ("ma_volume", "量价放量"),
+    ("turtle_20_high", "20日突破高点"),
+    ("limit_up_shakeout", "涨停后洗盘"),
+    ("uptrend_limit_down", "上升趋势跌停修复"),
+    ("rps_breakout", "相对强度突破"),
+    ("private_placement", "定增事件信号"),
+    ("hit_volume_breakout", "放量突破"),
+    ("PE TTM", "滚动市盈率"),
+    ("PE ttm", "滚动市盈率"),
+    ("PE_TTM", "滚动市盈率"),
+    ("PE_ttm", "滚动市盈率"),
+    ("pe_ttm", "滚动市盈率"),
+    ("市盈率 TTM", "滚动市盈率"),
+    ("市盈率/TTM", "滚动市盈率"),
+    ("市盈率_ttm", "滚动市盈率"),
+    ("PB TTM", "滚动市净率"),
+    ("PB ttm", "滚动市净率"),
+    ("PB_TTM", "滚动市净率"),
+    ("PB_ttm", "滚动市净率"),
+    ("pb_ttm", "滚动市净率"),
+    ("PS TTM", "滚动市销率"),
+    ("PS ttm", "滚动市销率"),
+    ("PS_TTM", "滚动市销率"),
+    ("PS_ttm", "滚动市销率"),
+    ("ps_ttm", "滚动市销率"),
+    ("pe/roe", "市盈率/净资产收益率"),
+    ("pe/", "市盈率/"),
+    ("peak", "高点"),
+    ("低ATR", "低波动条件"),
+    ("PB", "市净率"),
+    ("PE", "市盈率"),
+    ("atr_14", "14日波动指标"),
+    ("ATR", "波动指标"),
+    ("RPS120/60", "120日/60日相对强度"),
+    ("RPS120", "120日相对强度"),
+    ("RPS60", "60日相对强度"),
+    ("RPS", "相对强度"),
+    ("MA30", "30日均线"),
+    ("MA20", "20日均线"),
+    ("CN_A", "A股"),
+    ("PE(TTM)", "滚动市盈率"),
+    ("市盈率(TTM)", "滚动市盈率"),
+    ("PS", "市销率"),
+    ("myhhub/stock", "动量策略来源"),
+    ("Sequoia-X", "突破策略来源"),
+    ("sequoia 系列", "突破策略系列"),
+    ("sequoia", "突破策略"),
+    ("high tight flag", "高紧旗形态"),
+    ("tight flag", "紧旗形态"),
+    ("策略变体", "策略条件"),
+    ("候选事实表", "候选池数据"),
+    ("候选事实包", "候选池数据"),
+    ("命中字段", "触发指标"),
+    ("排序 tie-break 字段", "同分排序字段"),
+    ("tie-break", "同分排序"),
+    ("分项得分", "维度得分"),
+    ("策略配置版本", "策略配置"),
+    ("权重版本", "评分权重"),
+)
+_READER_STRATEGY_EXPLANATIONS = {
+    "放量上涨": "成交额和量价配合达标，用来确认上涨不是缺少成交支撑的孤立波动。",
+    "放量突破": "成交活跃度明显放大，用来确认价格信号有资金参与。",
+    "30日均线持续上行": "中期均线保持上行，用来确认趋势仍在延续。",
+    "平台整理信号": "前期强势后进入整理区间，用来观察蓄势后的再启动可能。",
+    "年线回踩": "价格回到长期均线附近并出现支撑迹象，用来观察中长期趋势承接。",
+    "平台突破": "价格脱离整理平台，用来确认横盘后的方向选择。",
+    "低回撤上涨": "上涨过程中回撤较浅，用来衡量趋势质量和持仓稳定性。",
+    "60日突破收盘": "收盘价突破近60日区间，用来确认中期新高信号。",
+    "高紧旗形态": "强势上涨后保持紧凑整理，用来观察强趋势延续。",
+    "极端跌停修复": "极端下跌后出现修复条件，用来提示后续必须重点验证风险释放是否真实。",
+    "低波动条件": "波动水平相对可控，用来降低追高后剧烈波动的风险。",
+    "量价放量": "均线关系和成交量同时改善，用来确认价格和资金同步。",
+    "20日突破高点": "价格突破近20日高点，用来确认短期突破信号。",
+    "涨停后洗盘": "涨停后出现承接和整理，用来观察强势股回踩后的延续性。",
+    "上升趋势跌停修复": "上升趋势内经历剧烈下跌后出现修复条件，用来识别需要复核的高风险反转样本。",
+    "相对强度突破": "相对市场的强弱指标进入优势区间，用来确认不是只跟随大盘上涨。",
+    "定增事件信号": "公司事件进入策略观察窗口，用来提示后续需要核验事件进展和兑现风险。",
+}
+_READER_STRATEGY_FALLBACK_EXPLANATION = "用于确认候选股在某一类趋势、量价、事件或风险条件上达标。"
+_READER_SUMMARY_GAP_REPLACEMENTS = (
+    ("selection_batch_rows_dropped", "部分原始行因数据不足被剔除"),
+    ("selection_data_api_date_range_missing", "数据源未返回请求区间"),
+    ("selection_data_api_empty_result", "部分数据源返回空结果"),
+    ("selection_data_api_provider_error", "部分数据源调用异常"),
+    ("selection_strategy_variant_disabled", "部分策略条件被禁用"),
+    ("selection_data_api", "数据源"),
+)
 
 _REFRESHABLE_UNAVAILABLE_CODES = frozenset(
     {
@@ -174,6 +360,7 @@ class SelectionController:
         provider_fetch: Callable[..., object] | None = None,
         scheduler_enqueue: Callable[..., object] | None = None,
         data_job_runner: Callable[..., object] | None = None,
+        default_trade_date_resolver: Callable[[str | None], str] | None = None,
     ) -> None:
         self._store = store
         self._now_fn = now_fn or _utc_now
@@ -183,6 +370,7 @@ class SelectionController:
         self._provider_fetch = provider_fetch
         self._scheduler_enqueue = scheduler_enqueue
         self._data_job_runner = data_job_runner
+        self._default_trade_date_resolver = default_trade_date_resolver
 
     def load_latest_completed_for_select(self, request: SelectRequest) -> SelectReadGateResult:
         resolved = resolve_latest_terminal_selection_run(
@@ -225,6 +413,10 @@ class SelectionController:
         user_id: str | None = None,
     ) -> SelectCommandResult:
         request = _parse_select_request(raw_text=raw_text, request_id=request_id, user_id=user_id, now_fn=self._now_fn)
+        if request.trade_date is None and self._default_trade_date_resolver is not None:
+            resolved_trade_date = self._default_trade_date_resolver(None).strip()
+            date.fromisoformat(resolved_trade_date)
+            request = replace(request, trade_date=resolved_trade_date)
         workflow_run_id = _build_select_workflow_run_id(request_id=request.request_id, now_fn=self._now_fn)
         evidence_dir = self._workflow_evidence_root / workflow_run_id
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -462,8 +654,11 @@ class SelectionController:
             )
 
         decision = decision_parse.decision
-        reader_text = _render_selection_reader_chat_message(
+        reader_text = _render_selection_reader_chat_message(decision)
+        reader_report_markdown = _render_selection_reader_report(
             decision,
+            selection_worker_reports=approved_l1,
+            portfolio_manager_report=pm_raw_text,
             candidate_pack_summary_md=summary_md,
         )
         payload = _base_workflow_evidence_payload(
@@ -496,6 +691,7 @@ class SelectionController:
             select_workflow_run_id=workflow_run_id,
             evidence_path=evidence_path,
             decision=decision,
+            reader_report_markdown=reader_report_markdown,
         )
 
     def _request_data_refresh_if_needed(
@@ -873,7 +1069,9 @@ def _reader_visible_label(key: str) -> str:
 def _reader_friendly_summary_text(text: str) -> str:
     out = text.replace("BLOCKER", "阻断").replace("WARN", "提示")
     out = out.replace(" provider ", " 数据源 ").replace("provider 调用", "数据源调用")
-    return out
+    for source, target in _READER_SUMMARY_GAP_REPLACEMENTS:
+        out = out.replace(source, target)
+    return _reader_friendly_selection_text(out)
 
 
 def _format_candidate_number(value: object) -> str:
@@ -936,7 +1134,7 @@ def _extract_allowed_ticker_companies_from_summary(summary_md: str) -> dict[str,
             continue
         ticker = cells[1].upper()
         company_name = cells[2]
-        if not re.fullmatch(r"\d{6}\.(?:SH|SZ)", ticker, re.IGNORECASE):
+        if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", ticker, re.IGNORECASE):
             continue
         if not company_name or company_name in {"-", "股票名称", "公司", "名称"}:
             continue
@@ -1094,28 +1292,79 @@ def _parse_decision_rows(lines: tuple[str, ...]) -> tuple[DecisionTicker, ...] |
     return tuple(rows)
 
 
-def _render_selection_reader_chat_message(
-    decision: SelectionDecision,
-    *,
-    candidate_pack_summary_md: str | None = None,
-) -> str:
+def _render_selection_reader_chat_message(decision: SelectionDecision) -> str:
     lines: list[str] = []
     lines.append("`/select` 已完成，本轮仅进入等待确认，不会自动启动 `/report`。")
+    lines.append("")
+    lines.append("简报：")
+    lines.append(f"- 进入 `/report`：{_category_brief(decision.enter_report)}")
+    lines.append(f"- 观察：{_category_brief(decision.watch)}")
+    lines.append(f"- 放弃：{_category_brief(decision.reject)}")
     lines.append("")
     lines.append("进入 `/report`：")
     lines.extend(_render_rows(decision.enter_report))
     lines.append("")
     lines.append("观察：")
-    lines.extend(_render_rows(decision.watch))
+    lines.append(f"- {_category_brief(decision.watch)}")
     lines.append("")
     lines.append("放弃：")
-    lines.extend(_render_rows(decision.reject))
-    summary = (candidate_pack_summary_md or "").strip()
-    if summary:
-        lines.append("")
-        lines.append("候选事实包：")
-        lines.append(summary)
+    lines.append(f"- {_category_brief(decision.reject)}")
+    lines.append("")
+    lines.append("完整观察与放弃名单请查看左侧选股报告。")
     return "\n".join(lines).strip()
+
+
+def _render_selection_reader_report(
+    decision: SelectionDecision,
+    *,
+    selection_worker_reports: Mapping[SelectionWorkerId, str] | None = None,
+    portfolio_manager_report: str | None = None,
+    candidate_pack_summary_md: str | None = None,
+) -> str:
+    worker_reports = selection_worker_reports or {}
+    lines: list[str] = [
+        "# A股选股报告",
+        "",
+        "## 一、候选分组结论",
+        "",
+        "### 进入 `/report`",
+        *_render_rows(decision.enter_report),
+        "",
+        "### 观察",
+        *_render_rows(decision.watch),
+        "",
+        "### 放弃",
+        *_render_rows(decision.reject),
+        "",
+        "## 二、正方策略观点",
+        _selection_worker_report_text(worker_reports, SelectionWorkerId.STRATEGIST),
+        "",
+        "## 三、反方审查意见",
+        _selection_worker_report_text(worker_reports, SelectionWorkerId.SKEPTIC),
+        "",
+        "## 四、综合取舍",
+        _selection_worker_report_text(worker_reports, SelectionWorkerId.MANAGER),
+        "",
+        "## 五、最终分流决策",
+        _reader_friendly_selection_text(portfolio_manager_report or ""),
+    ]
+    strategy_analysis = _reader_strategy_analysis(candidate_pack_summary_md)
+    if strategy_analysis:
+        lines.extend(("", "## 六、策略命中与分析过程", strategy_analysis))
+    summary = _reader_selection_summary(candidate_pack_summary_md)
+    if summary:
+        lines.extend(("", "## 七、数据范围与质量", summary))
+    lines.extend(("", "## 八、进入 `/report` 的验证重点", *_render_validation_focus_rows(decision.enter_report)))
+    return "\n".join(lines).strip()
+
+
+def _category_brief(rows: tuple[DecisionTicker, ...]) -> str:
+    if not rows:
+        return "无"
+    shown = "、".join(f"{row.ticker} {row.company_name}".strip() for row in rows[:3])
+    if len(rows) <= 3:
+        return shown
+    return f"{shown} 等 {len(rows)} 只"
 
 
 def _render_rows(rows: tuple[DecisionTicker, ...]) -> list[str]:
@@ -1123,8 +1372,243 @@ def _render_rows(rows: tuple[DecisionTicker, ...]) -> list[str]:
         return ["- 无"]
     rendered: list[str] = []
     for row in rows:
-        rendered.append(f"- {row.ticker} {row.company_name}：{row.rationale_excerpt}")
+        rendered.append(f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}")
     return rendered
+
+
+def _selection_worker_report_text(
+    worker_reports: Mapping[SelectionWorkerId, str],
+    worker_id: SelectionWorkerId,
+) -> str:
+    return _reader_friendly_selection_text(worker_reports.get(worker_id, "")) or "无"
+
+
+def _render_validation_focus_rows(rows: tuple[DecisionTicker, ...]) -> list[str]:
+    if not rows:
+        return ["- 无"]
+    return [f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}" for row in rows]
+
+
+def _reader_strategy_analysis(candidate_pack_summary_md: str | None) -> str:
+    summary = (candidate_pack_summary_md or "").strip()
+    if not summary:
+        return ""
+    candidate_rows = _reader_candidate_strategy_rows(summary)
+    strategy_names = _reader_strategy_names(summary, candidate_rows)
+    lines: list[str] = ["### 命中的策略条件"]
+    if strategy_names:
+        for name in strategy_names:
+            explanation = _READER_STRATEGY_EXPLANATIONS.get(name, _READER_STRATEGY_FALLBACK_EXPLANATION)
+            lines.append(f"- {name}：{explanation}")
+    else:
+        lines.append("- 候选包没有提供可读的策略条件明细；本报告不补造策略名称。")
+
+    if candidate_rows:
+        lines.extend(
+            (
+                "",
+                "### 逐只策略核对",
+                "| 候选 | 命中的策略条件 |",
+                "| --- | --- |",
+            )
+        )
+        for candidate, strategy_text in candidate_rows:
+            lines.append(f"| {_markdown_table_cell(candidate)} | {_markdown_table_cell(strategy_text)} |")
+
+    lines.extend(
+        (
+            "",
+            "### 分析过程",
+            "- 第一步：先看每只股票命中的策略条件数量，判断是否是多类信号共振，而不是单一指标触发。",
+            "- 第二步：再看趋势强度、相对强度和均线状态，确认上涨是否仍有延续性。",
+            "- 第三步：检查成交额、量比等可交易性，排除流动性不足或异常波动过大的候选。",
+            "- 第四步：扣除风险项和数据缺口，把候选分为进入 `/report`、观察、放弃三类。",
+            "- 说明：报告里类似“命中6/8”的说法，指该标的命中了已批准策略集合中的多个条件；具体条件以本节逐只核对为准。",
+        )
+    )
+    return "\n".join(lines).strip()
+
+
+def _reader_candidate_strategy_rows(summary_md: str) -> tuple[tuple[str, str], ...]:
+    header: tuple[str, ...] | None = None
+    ticker_idx = company_idx = strategy_idx = -1
+    rows: list[tuple[str, str]] = []
+    for line in summary_md.splitlines():
+        cells = _markdown_table_cells(line)
+        if not cells:
+            if header is not None and rows:
+                break
+            continue
+        if header is None:
+            strategy_header = _first_index(cells, ("策略变体", "策略命中"))
+            ticker_header = _first_index(cells, ("股票代码", "代码"))
+            company_header = _first_index(cells, ("股票名称", "公司"))
+            if strategy_header >= 0 and ticker_header >= 0 and company_header >= 0:
+                header = cells
+                strategy_idx = strategy_header
+                ticker_idx = ticker_header
+                company_idx = company_header
+            continue
+        if _is_markdown_separator_row(cells):
+            continue
+        if len(cells) <= max(ticker_idx, company_idx, strategy_idx):
+            continue
+        ticker = _reader_friendly_selection_text(cells[ticker_idx])
+        company = _reader_friendly_selection_text(cells[company_idx])
+        names = _reader_strategy_names_from_text(cells[strategy_idx])
+        strategy_text = "、".join(names) if names else "未记录"
+        rows.append((f"{ticker} {company}".strip(), strategy_text))
+    return tuple(rows)
+
+
+def _reader_strategy_names(summary_md: str, candidate_rows: tuple[tuple[str, str], ...]) -> tuple[str, ...]:
+    names: list[str] = []
+    for _candidate, strategy_text in candidate_rows:
+        names.extend(strategy_text.split("、"))
+    for line in _reader_section_lines(summary_md, "策略命中明细"):
+        matched = re.search(r"策略变体\s*[：:]\s*(?P<value>[^。；]+)", line)
+        if matched:
+            names.extend(_reader_strategy_names_from_text(matched.group("value")))
+    return _dedupe_strategy_names(names)
+
+
+def _reader_strategy_names_from_text(text: str) -> tuple[str, ...]:
+    raw = text.strip().strip("-")
+    if not raw or raw == "未记录":
+        return ()
+    names: list[str] = []
+    for part in re.split(r"[、,，]\s*", raw):
+        name = _reader_friendly_selection_text(part).strip(" -。；,，")
+        if not name or name in {"-", "相关指标", "未记录"}:
+            continue
+        names.append(name)
+    return _dedupe_strategy_names(names)
+
+
+def _reader_section_lines(summary_md: str, heading: str) -> tuple[str, ...]:
+    lines = summary_md.splitlines()
+    collected: list[str] = []
+    inside = False
+    for line in lines:
+        if line.startswith("## "):
+            title = line[3:].strip()
+            if inside and title != heading:
+                break
+            inside = title == heading
+            continue
+        if inside and line.strip():
+            collected.append(line.strip())
+    return tuple(collected)
+
+
+def _dedupe_strategy_names(values: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        name = value.strip()
+        if not name or name in seen or name == "未记录":
+            continue
+        seen.add(name)
+        out.append(name)
+    return tuple(out)
+
+
+def _markdown_table_cells(line: str) -> tuple[str, ...]:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return ()
+    return tuple(cell.strip() for cell in stripped.strip("|").split("|"))
+
+
+def _is_markdown_separator_row(cells: tuple[str, ...]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
+
+
+def _first_index(values: tuple[str, ...], candidates: tuple[str, ...]) -> int:
+    for candidate in candidates:
+        if candidate in values:
+            return values.index(candidate)
+    return -1
+
+
+def _markdown_table_cell(value: str) -> str:
+    return value.replace("|", "｜").replace("\n", " ").strip()
+
+
+def _reader_selection_summary(candidate_pack_summary_md: str | None) -> str:
+    summary = (candidate_pack_summary_md or "").strip()
+    if not summary:
+        return ""
+    scope = _reader_scope_values(summary)
+    data_quality = _reader_section_text(summary, "数据质量摘要")
+    source_summary = _reader_section_text(summary, "来源摘要")
+    lines: list[str] = ["### 数据范围与质量"]
+    if scope:
+        for label in ("交易日", "市场", "候选数量"):
+            value = scope.get(label)
+            if value:
+                lines.append(f"- {label}：{_reader_friendly_selection_text(value)}")
+    if data_quality:
+        lines.append(f"- 数据质量：{_reader_friendly_summary_text(data_quality)}")
+    if source_summary:
+        lines.append(f"- 来源摘要：{_reader_friendly_summary_text(source_summary)}")
+    if not lines[1:]:
+        return ""
+    lines.append("- 指标口径：总分和实际指标值用于候选核对；默认报告不展开内部字段清单。")
+    return "\n".join(lines).strip()
+
+
+def _reader_scope_values(summary_md: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in summary_md.splitlines():
+        matched = re.match(r"^\s*-\s*(交易日|市场|候选数量)\s*[：:]\s*(?P<value>.+?)\s*$", line)
+        if matched:
+            values[matched.group(1)] = matched.group("value")
+    return values
+
+
+def _reader_section_text(summary_md: str, heading: str) -> str:
+    lines = summary_md.splitlines()
+    collected: list[str] = []
+    inside = False
+    for line in lines:
+        if line.startswith("## "):
+            title = line[3:].strip()
+            if inside and title != heading:
+                break
+            inside = title == heading
+            continue
+        if inside and line.strip():
+            collected.append(line.strip())
+    return " ".join(collected).strip()
+
+
+def _reader_friendly_selection_text(text: str) -> str:
+    out = text.strip()
+    if not out:
+        return ""
+    for source, target in sorted(_READER_TEXT_REPLACEMENTS, key=lambda item: len(item[0]), reverse=True):
+        out = out.replace(source, target)
+    for source, target in sorted(_READER_VISIBLE_FIELD_LABELS.items(), key=lambda item: len(item[0]), reverse=True):
+        out = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(source)}(?![A-Za-z0-9_])", target, out)
+    out = re.sub(r"approved_[^\s，。；,;)）]+_l1", "已批准的正向策略评审", out)
+    out = re.sub(r"[（(]\s*U\d+\s*[）)]", "", out)
+    out = re.sub(r"`?([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`?", "指标", out)
+    out = out.replace("指标_评分", "评分").replace("指标评分", "评分")
+    out = re.sub(r"指标\s*=", "指标值=", out)
+    out = re.sub(r"([0-9一-龥]+(?:日)?均线)\\?_指标值", r"\1指标值", out)
+    out = re.sub(r"([0-9一-龥]+(?:日)?均线)\\?_指标", r"\1指标", out)
+    out = re.sub(r"涨停后[_\s-]*(\d+)日", r"涨停后\1日", out)
+    out = re.sub(r"30日均线[_\s-]*(\d+)d增长", r"30日均线\1日涨幅", out)
+    out = re.sub(r"30日均线[_\s-]*(\d+)日增长", r"30日均线\1日涨幅", out)
+    out = re.sub(r"\bscore\b", "评分", out)
+    out = re.sub(r"\bpe\b", "市盈率", out)
+    out = re.sub(r"\bpb\b", "市净率", out)
+    out = re.sub(r"\broe\b", "净资产收益率", out)
+    out = out.replace("市净率（市净率）", "市净率")
+    out = out.replace("平台整理信号信号", "平台整理信号")
+    out = out.replace("低 波动指标", "低波动条件")
+    return out
 
 
 def _decision_tickers_payload(rows: tuple[DecisionTicker, ...]) -> list[dict[str, str]]:

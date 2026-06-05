@@ -34,6 +34,7 @@ dependencies = [
     "tushare>=1.4.24,<2",
     "uvicorn>=0.40.0,<0.41.0",
     "yfinance>=0.2.54",
+    "duckdb>=1.2,<2",
 ]
 
 [tool.uv.sources]
@@ -57,3 +58,5 @@ packages = ["src/claw_trade"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["."]

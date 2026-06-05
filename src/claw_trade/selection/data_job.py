@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+from inspect import Parameter, signature
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -14,8 +15,10 @@ from claw_trade.selection.candidate_pack import (
     approve_candidate_pack,
     build_candidate_pack,
 )
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.engine import (
     ApprovedSelectionStrategy,
+    FilteredUniverse,
     StrategyRule,
     ScoringResult,
     SelectionEngineError,
@@ -25,6 +28,7 @@ from claw_trade.selection.engine import (
 from claw_trade.selection.features import (
     FeatureSnapshot,
     SelectionFeatureError,
+    SelectionNormalizedInputs,
     build_feature_snapshot,
     normalize_selection_inputs,
 )
@@ -54,6 +58,15 @@ class SelectionProviderBatchResult:
     rows: tuple[Mapping[str, object], ...]
     data_gaps: tuple[DataGapRef, ...] = ()
     warehouse_check_ref: str | None = None
+    columnar_manifest_ref: str | None = None
+    columnar_manifest_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class SelectionDataFetchProgress:
+    label: str
+    completed: int
+    total: int
 
 
 @dataclass(frozen=True)
@@ -127,7 +140,7 @@ class SelectionDataJob:
         self,
         *,
         store: SelectionRunStore,
-        provider_fetch_batch: Callable[[SelectionRunPlan], SelectionProviderBatchResult],
+        provider_fetch_batch: Callable[..., SelectionProviderBatchResult],
         strategy_config_loader: Callable[[str], ApprovedSelectionStrategy | None],
         now_fn: Callable[[], datetime] | None = None,
         evidence_root: Path | None = None,
@@ -145,6 +158,9 @@ class SelectionDataJob:
     def run(self, plan: SelectionRunPlan) -> SelectionDataJobExecution:
         provider_attempt_refs: tuple[str, ...] = ()
         normalized_refs: tuple[str, ...] = ()
+        warehouse_check_ref: str | None = None
+        columnar_manifest_ref: str | None = None
+        columnar_manifest_sha256: str | None = None
         feature_snapshot: FeatureSnapshot | None = None
         scoring: ScoringResult | None = None
         strategy: ApprovedSelectionStrategy | None = None
@@ -166,13 +182,25 @@ class SelectionDataJob:
                     data_gaps=initial_blocker_gaps,
                 )
             self._save_status(plan, status=SelectionDataRunStatus.FETCHING_DATA, lease_id=lease_id)
-            provider_result = self._provider_fetch_batch(plan)
+            provider_result = self._call_provider_fetch_batch(
+                plan,
+                progress_callback=lambda progress: self._save_status(
+                    plan,
+                    status=SelectionDataRunStatus.FETCHING_DATA,
+                    lease_id=lease_id,
+                    progress_label=progress.label,
+                    progress_completed=progress.completed,
+                    progress_total=progress.total,
+                ),
+            )
             self._validate_provider_result(plan, provider_result)
             provider_attempt_refs = provider_result.attempt_refs
             normalized_refs = provider_result.normalized_refs
             select_data_plan = build_selection_data_plan(plan=plan, provider_result=provider_result)
             select_data_plan_ref = select_data_plan.plan_id
             warehouse_check_ref = provider_result.warehouse_check_ref
+            columnar_manifest_ref = provider_result.columnar_manifest_ref
+            columnar_manifest_sha256 = provider_result.columnar_manifest_sha256
             all_data_gaps.extend(provider_result.data_gaps)
 
             self._save_status(plan, status=SelectionDataRunStatus.NORMALIZING_INPUTS, lease_id=lease_id)
@@ -183,6 +211,7 @@ class SelectionDataJob:
                 attempt_refs=provider_result.attempt_refs,
                 upstream_gaps=provider_result.data_gaps,
             )
+            provider_result = None
 
             self._save_status(plan, status=SelectionDataRunStatus.BUILDING_FEATURES, lease_id=lease_id)
             feature_snapshot = build_feature_snapshot(plan=plan, inputs=normalized_inputs)
@@ -197,6 +226,13 @@ class SelectionDataJob:
             all_data_gaps.extend(strategy_gap_refs)
             filtered = run_hard_filters(plan=plan, snapshot=feature_snapshot, strategy=strategy)
             scoring = score_candidates(plan=plan, filtered=filtered, strategy=strategy)
+            feature_snapshot = _top20_feature_snapshot(feature_snapshot, scoring=scoring)
+            normalized_inputs = SelectionNormalizedInputs(
+                normalized_refs=normalized_refs,
+                rows=(),
+                data_gaps=normalized_inputs.data_gaps,
+            )
+            filtered = FilteredUniverse(rows=(), decisions=())
 
             self._save_status(plan, status=SelectionDataRunStatus.BUILDING_CANDIDATE_PACK, lease_id=lease_id)
             draft = build_candidate_pack(
@@ -230,10 +266,12 @@ class SelectionDataJob:
                 provider_attempt_refs=provider_attempt_refs,
                 select_data_plan_ref=select_data_plan_ref,
                 warehouse_check_ref=warehouse_check_ref,
+                columnar_manifest_ref=columnar_manifest_ref,
+                columnar_manifest_sha256=columnar_manifest_sha256,
                 feature_snapshot_ref=feature_snapshot.feature_snapshot_ref,
                 candidate_pack_ref=approved_pack.candidate_pack_ref,
                 data_gaps=tuple(all_data_gaps),
-                started_at=completed_at,
+                started_at=self._started_at_for(plan, fallback=completed_at),
                 completed_at=completed_at,
             )
             record = SelectionDataRunRecord(
@@ -270,7 +308,6 @@ class SelectionDataJob:
             if isinstance(raw_exc, CandidatePackError):
                 exc = SelectionDataJobStepError(raw_exc.code, raw_exc.reason)
             all_data_gaps.extend(exc.data_gaps)
-            provider_result_or_none = provider_result if "provider_result" in locals() else None
             if _is_no_candidate_outcome(raw_exc):
                 completed_at = _isoformat(self._now_fn())
                 no_candidate_run = SelectionDataRun(
@@ -280,12 +317,12 @@ class SelectionDataJob:
                     normalized_refs=normalized_refs,
                     provider_attempt_refs=provider_attempt_refs,
                     select_data_plan_ref=select_data_plan_ref,
-                    warehouse_check_ref=provider_result_or_none.warehouse_check_ref
-                    if provider_result_or_none is not None
-                    else None,
+                    warehouse_check_ref=warehouse_check_ref,
+                    columnar_manifest_ref=columnar_manifest_ref,
+                    columnar_manifest_sha256=columnar_manifest_sha256,
                     feature_snapshot_ref=feature_snapshot.feature_snapshot_ref if feature_snapshot else None,
                     data_gaps=tuple(all_data_gaps),
-                    started_at=completed_at,
+                    started_at=self._started_at_for(plan, fallback=completed_at),
                     completed_at=completed_at,
                 )
                 record = SelectionDataRunRecord(
@@ -300,9 +337,7 @@ class SelectionDataJob:
                     manifest=None,
                     provider_attempt_refs=provider_attempt_refs,
                     normalized_refs=normalized_refs,
-                    select_data_plan=build_selection_data_plan(plan=plan, provider_result=provider_result_or_none)
-                    if provider_result_or_none is not None
-                    else None,
+                    select_data_plan=select_data_plan,
                     feature_snapshot=feature_snapshot,
                     scoring=scoring,
                     strategy=strategy,
@@ -327,12 +362,12 @@ class SelectionDataJob:
                 normalized_refs=normalized_refs,
                 provider_attempt_refs=provider_attempt_refs,
                 select_data_plan_ref=select_data_plan_ref,
-                warehouse_check_ref=provider_result_or_none.warehouse_check_ref
-                if provider_result_or_none is not None
-                else None,
+                warehouse_check_ref=warehouse_check_ref,
+                columnar_manifest_ref=columnar_manifest_ref,
+                columnar_manifest_sha256=columnar_manifest_sha256,
                 feature_snapshot_ref=feature_snapshot.feature_snapshot_ref if feature_snapshot else None,
                 data_gaps=tuple(all_data_gaps),
-                started_at=failed_at,
+                started_at=self._started_at_for(plan, fallback=failed_at),
                 failed_at=failed_at,
                 failure_code=exc.code,
                 failure_reason=exc.reason,
@@ -349,9 +384,7 @@ class SelectionDataJob:
                 manifest=approved_pack.manifest if approved_pack is not None else None,
                 provider_attempt_refs=provider_attempt_refs,
                 normalized_refs=normalized_refs,
-                select_data_plan=build_selection_data_plan(plan=plan, provider_result=provider_result_or_none)
-                if provider_result_or_none is not None
-                else select_data_plan,
+                select_data_plan=select_data_plan,
                 feature_snapshot=feature_snapshot,
                 scoring=scoring,
                 strategy=strategy,
@@ -375,12 +408,24 @@ class SelectionDataJob:
         *,
         status: SelectionDataRunStatus,
         lease_id: str | None = None,
+        progress_label: str | None = None,
+        progress_completed: int | None = None,
+        progress_total: int | None = None,
     ) -> None:
+        existing = self._store.load_data_run_record(plan.selection_run_id)
+        started_at = (
+            existing.data_run.started_at
+            if existing is not None and existing.data_run.started_at is not None
+            else (_isoformat(self._now_fn()) if status != SelectionDataRunStatus.LEASE_PENDING else None)
+        )
         data_run = SelectionDataRun(
             selection_run_id=plan.selection_run_id,
             status=status,
             lease_id=lease_id,
-            started_at=_isoformat(self._now_fn()) if status != SelectionDataRunStatus.LEASE_PENDING else None,
+            started_at=started_at,
+            progress_label=progress_label,
+            progress_completed=progress_completed,
+            progress_total=progress_total,
         )
         record = SelectionDataRunRecord(
             run_plan=plan,
@@ -388,6 +433,22 @@ class SelectionDataJob:
             manifest=None,
         )
         self._store.save_data_run_record(record)
+
+    def _call_provider_fetch_batch(
+        self,
+        plan: SelectionRunPlan,
+        *,
+        progress_callback: Callable[[SelectionDataFetchProgress], None],
+    ) -> SelectionProviderBatchResult:
+        if _supports_progress_callback(self._provider_fetch_batch):
+            return self._provider_fetch_batch(plan, progress_callback=progress_callback)
+        return self._provider_fetch_batch(plan)
+
+    def _started_at_for(self, plan: SelectionRunPlan, *, fallback: str) -> str:
+        existing = self._store.load_data_run_record(plan.selection_run_id)
+        if existing is not None and existing.data_run.started_at is not None:
+            return existing.data_run.started_at
+        return fallback
 
     def _validate_provider_result(self, plan: SelectionRunPlan, provider_result: SelectionProviderBatchResult) -> None:
         batch_plan = provider_result.provider_batch_plan
@@ -453,6 +514,54 @@ class SelectionDataJob:
                         severity=DataGapSeverity.BLOCKER,
                         attempt_refs=provider_result.attempt_refs,
                         reader_message="选股仓库检查缺少 warehouse_check_ref，不能把本批次作为 /select 可用 run。",
+                    ),
+                ),
+            )
+        if provider_result.columnar_manifest_ref is None or not provider_result.columnar_manifest_ref.strip():
+            raise SelectionDataJobStepError(
+                "selection_warehouse_check_missing",
+                "selection columnar manifest 缺失",
+                data_gaps=(
+                    DataGapRef(
+                        gap_id=f"{plan.selection_run_id}-columnar-manifest-missing",
+                        domain="selection",
+                        gap_code="selection_columnar_manifest_missing",
+                        severity=DataGapSeverity.BLOCKER,
+                        attempt_refs=provider_result.attempt_refs,
+                        reader_message="选股列式仓库 manifest 缺失，不能把本批次作为 /select 可用 run。",
+                    ),
+                ),
+            )
+        if provider_result.columnar_manifest_sha256 is None or not provider_result.columnar_manifest_sha256.strip():
+            raise SelectionDataJobStepError(
+                "selection_warehouse_check_missing",
+                "selection columnar manifest hash 缺失",
+                data_gaps=(
+                    DataGapRef(
+                        gap_id=f"{plan.selection_run_id}-columnar-manifest-hash-missing",
+                        domain="selection",
+                        gap_code="selection_columnar_manifest_hash_missing",
+                        severity=DataGapSeverity.BLOCKER,
+                        attempt_refs=provider_result.attempt_refs,
+                        reader_message="选股列式仓库 manifest hash 缺失，不能把本批次作为 /select 可用 run。",
+                    ),
+                ),
+            )
+        if not SelectionColumnarWarehouse.default().validate_manifest_ref(
+            provider_result.columnar_manifest_ref,
+            expected_sha256=provider_result.columnar_manifest_sha256,
+        ):
+            raise SelectionDataJobStepError(
+                "selection_warehouse_check_missing",
+                "selection columnar manifest 校验失败",
+                data_gaps=(
+                    DataGapRef(
+                        gap_id=f"{plan.selection_run_id}-columnar-manifest-invalid",
+                        domain="selection",
+                        gap_code="selection_columnar_manifest_invalid",
+                        severity=DataGapSeverity.BLOCKER,
+                        attempt_refs=provider_result.attempt_refs,
+                        reader_message="选股列式仓库 manifest 或 Parquet 文件校验失败，不能把本批次作为 /select 可用 run。",
                     ),
                 ),
             )
@@ -603,6 +712,8 @@ class SelectionDataJob:
             if select_data_plan is not None
             else None,
             "warehouse_check_ref": data_run.warehouse_check_ref,
+            "columnar_manifest_ref": data_run.columnar_manifest_ref,
+            "columnar_manifest_sha256": data_run.columnar_manifest_sha256,
             "feature_snapshot_ref": feature_snapshot.feature_snapshot_ref if feature_snapshot else None,
             "feature_snapshot": _feature_snapshot_payload(feature_snapshot),
             "score_ref": scoring.score_ref if scoring else None,
@@ -1070,6 +1181,17 @@ def _is_unified_normalized_ref(ref: str) -> bool:
     return ref.startswith("normalized://mongo/normalized_datasets/") or ref.startswith("mongo://normalized_datasets/")
 
 
+def _top20_feature_snapshot(feature_snapshot: FeatureSnapshot, *, scoring: ScoringResult) -> FeatureSnapshot:
+    top20_tickers = {row.ticker for row in scoring.top20}
+    if not top20_tickers:
+        return FeatureSnapshot(feature_snapshot_ref=feature_snapshot.feature_snapshot_ref, rows=())
+    top20_by_ticker = {row.ticker: row for row in feature_snapshot.rows if row.ticker in top20_tickers}
+    return FeatureSnapshot(
+        feature_snapshot_ref=feature_snapshot.feature_snapshot_ref,
+        rows=tuple(top20_by_ticker[row.ticker] for row in scoring.top20 if row.ticker in top20_by_ticker),
+    )
+
+
 def _feature_snapshot_payload(feature_snapshot: FeatureSnapshot | None) -> list[dict[str, object]]:
     if feature_snapshot is None:
         return []
@@ -1092,15 +1214,17 @@ def _per_strategy_raw_hits(
 ) -> list[dict[str, object]]:
     if strategy is None or scoring is None:
         return []
+    scored_rows = scoring.all_scores or scoring.top20
     rows: list[dict[str, object]] = []
     for rule in strategy.strategy_set:
         hit_name = f"{rule.source}:{rule.name}" if rule.source else rule.name
-        hit_rows = [row for row in scoring.all_scores if hit_name in row.strategy_hits]
+        hit_rows = [row for row in scored_rows if hit_name in row.strategy_hits]
         rows.append(
             {
                 "source": rule.source,
                 "variant_id": rule.name,
                 "required_fields": list(rule.required_fields),
+                "hit_count_basis": "all_scores" if scoring.all_scores else "top20",
                 "hit_count": len(hit_rows),
                 "hits": [
                     {
@@ -1136,6 +1260,16 @@ def _disabled_strategy_variants(data_gaps: tuple[DataGapRef, ...]) -> list[dict[
 def _isoformat(value: datetime) -> str:
     utc = value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
     return utc.isoformat().replace("+00:00", "Z")
+
+
+def _supports_progress_callback(callback: Callable[..., object]) -> bool:
+    try:
+        callback_signature = signature(callback)
+    except (TypeError, ValueError):
+        return False
+    return "progress_callback" in callback_signature.parameters or any(
+        parameter.kind == Parameter.VAR_KEYWORD for parameter in callback_signature.parameters.values()
+    )
 
 
 def _utc_now() -> datetime:

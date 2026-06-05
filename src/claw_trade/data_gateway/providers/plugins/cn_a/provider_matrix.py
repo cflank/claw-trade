@@ -636,7 +636,7 @@ class AkShareSocialNewsPlugin:
                     source_role="built_in_public",
                     granularity=("daily",),
                     fields=("date", "open", "high", "low", "close", "volume", "amount", "adjustment"),
-                    priority_rank=24,
+                    priority_rank=20,
                 ),
                 _endpoint(
                     endpoint_id="stock_zh_a_spot_em",
@@ -1281,7 +1281,7 @@ class EastMoneyCNMarketDataPlugin:
                     source_role="built_in_public",
                     granularity=("daily",),
                     fields=("date", "open", "high", "low", "close", "volume", "amount", "adjustment"),
-                    priority_rank=22,
+                    priority_rank=30,
                 ),
                 _endpoint(
                     endpoint_id="stock_info",

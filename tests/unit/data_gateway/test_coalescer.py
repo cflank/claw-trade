@@ -16,7 +16,8 @@ def _candidate(
     granularity: str = "daily",
     source_role: str = "official",
     priority_rank: int = 10,
-    symbol_id: str = "AAPL",
+    symbol_id: str | None = "AAPL",
+    universe_ref: str | None = None,
     fields: tuple[str, ...] = ("close",),
     start: date | None = None,
     end: date | None = None,
@@ -31,6 +32,7 @@ def _candidate(
         source_role=source_role,
         priority_rank=priority_rank,
         symbol_id=symbol_id,
+        universe_ref=universe_ref,
         fields=fields,
         date_range_start=start,
         date_range_end=end,
@@ -70,6 +72,30 @@ def test_coalescer_deduplicates_same_request_and_merges_fields_ranges() -> None:
     assert group.currency == "USD"
     assert group.timezone == "America/New_York"
     assert group.calendar == "US_NYSE_NASDAQ"
+
+
+def test_coalescer_preserves_universe_ref_for_universe_request() -> None:
+    coalescer = RequestCoalescer()
+
+    groups = coalescer.coalesce(
+        (),
+        (
+            _candidate(
+                request_id="req-universe",
+                symbol_id=None,
+                universe_ref="all_a_shares",
+                start=date(2026, 6, 4),
+                end=date(2026, 6, 4),
+            ),
+        ),
+        capabilities=None,
+    )
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.symbol_ids == ()
+    assert group.universe_ref == "all_a_shares"
+    assert group.items[0].universe_ref == "all_a_shares"
 
 
 def test_coalescer_splits_different_source_roles() -> None:

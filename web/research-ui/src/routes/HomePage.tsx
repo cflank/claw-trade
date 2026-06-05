@@ -20,6 +20,7 @@ import {
   getReportChartEvidence,
   getReportDetail,
   getReportQueueSnapshot,
+  getSelectionRefreshSnapshot,
   listSavedReports,
   loadLlmSettings,
   sendChatMessage,
@@ -33,6 +34,8 @@ import {
   type ReportDetailForUser,
   type ReportQueueSnapshotForUser,
   type SavedReportForUser,
+  type SelectionProgressForUser,
+  type SelectionReportForUser,
 } from '../api/workspace';
 
 const DEFAULT_CONTEXT: ChatContextForUser = {
@@ -74,6 +77,10 @@ const DEFAULT_LLM_DRAFT: LlmConfigDraft = {
     enabled: false,
   },
 };
+
+const SELECTION_WORKER_LABELS = ['策略评审', '反方评审', '整合排序', '组合经理'];
+
+type PendingChatCommand = 'select' | 'chat';
 
 type ReportQaEntry = {
   id: string;
@@ -137,6 +144,47 @@ function selectionReportStartedMessage(ticker: string, reportTaskId?: string | n
   };
 }
 
+function isExplicitSelectCommand(text: string) {
+  return /^\s*\/select(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
+}
+
+function localSelectPendingMessages(text: string): ChatMessageForUser[] {
+  const createdAt = new Date().toISOString();
+  return [
+    {
+      messageId: `local-select-user-${Date.now()}`,
+      contextKind: 'normal_chat',
+      actor: 'user',
+      kind: 'plain',
+      text,
+      createdAt,
+    },
+    {
+      messageId: `local-select-progress-${Date.now()}`,
+      contextKind: 'normal_chat',
+      actor: 'system',
+      kind: 'task_progress',
+      text: '`/select` 已收到，正在运行选股工作流。通常需要 1-3 分钟，完成后会显示可确认的候选结果。',
+      createdAt,
+    },
+  ];
+}
+
+function runningSelectionProgress(command: string): SelectionProgressForUser {
+  return {
+    status: 'running',
+    statusLabel: '选股中',
+    command,
+    stageLabel: '选股工作流执行中',
+    currentAction: '已启动选股工作流，正在等待 4 位选股评审返回结果。',
+    percent: 35,
+    workerStatusLabels: SELECTION_WORKER_LABELS.map((label) => `${label}：已纳入本轮选股流程`),
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    workflowRunId: null,
+  };
+}
+
 function attachSelectionMetadata(
   messages: ChatMessageForUser[],
   selection: ChatMessageForUser['selection'] | undefined,
@@ -152,6 +200,32 @@ function attachSelectionMetadata(
     }
     return message;
   }).reverse();
+}
+
+function selectionReportFromMessage(message: ChatMessageForUser): SelectionReportForUser | null {
+  const markdown = message.selection?.readerReportMarkdown?.trim();
+  const id = message.selection?.workflowRunId?.trim();
+  if (!markdown || !id) {
+    return null;
+  }
+  return {
+    id,
+    title: '选股结果报告',
+    generatedAt: message.createdAt,
+    summarySnippet: selectionSummarySnippet(message.text),
+    markdown,
+  };
+}
+
+function selectionSummarySnippet(text: string) {
+  const line = text
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find((item) => item.startsWith('- 进入 `/report`：') || item.startsWith('进入 `/report`：'));
+  if (!line) {
+    return '`/select` 已完成，等待确认候选。';
+  }
+  return line.replace(/^- /, '').slice(0, 80);
 }
 
 function modelStatusState(draft: LlmConfigDraft) {
@@ -210,9 +284,12 @@ export function HomePage() {
   const [savedReports, setSavedReports] = useState<SavedReportForUser[]>([]);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusForUser | null>(null);
   const [activeDetail, setActiveDetail] = useState<ReportDetailForUser | null>(null);
+  const [activeSelectionDetail, setActiveSelectionDetail] = useState<SelectionReportForUser | null>(null);
+  const [selectionProgress, setSelectionProgress] = useState<SelectionProgressForUser | null>(null);
   const [qaEntries, setQaEntries] = useState<ReportQaEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [pendingChatCommand, setPendingChatCommand] = useState<PendingChatCommand | null>(null);
   const [cardSubmittingId, setCardSubmittingId] = useState<string | null>(null);
   const [selectionSubmittingKey, setSelectionSubmittingKey] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -220,11 +297,17 @@ export function HomePage() {
   const consumedReportIdRef = useRef<string | null>(null);
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const channelRefreshInFlightRef = useRef(false);
+  const selectionRequestInFlightRef = useRef(false);
   const activeDetailRef = useRef<ReportDetailForUser | null>(null);
+  const activeSelectionDetailRef = useRef<SelectionReportForUser | null>(null);
 
   useEffect(() => {
     activeDetailRef.current = activeDetail;
   }, [activeDetail]);
+
+  useEffect(() => {
+    activeSelectionDetailRef.current = activeSelectionDetail;
+  }, [activeSelectionDetail]);
 
   const mergeConfirmationCard = useCallback((card: ConfirmationCard | undefined) => {
     if (!card) {
@@ -252,11 +335,21 @@ export function HomePage() {
     [showFailedTask],
   );
 
+  const applySelectionRefreshSnapshot = useCallback((snapshot: { selectionProgress?: SelectionProgressForUser | null } | null) => {
+    if (snapshot?.selectionProgress) {
+      setSelectionProgress(snapshot.selectionProgress);
+      return;
+    }
+    if (!selectionRequestInFlightRef.current) {
+      setSelectionProgress(null);
+    }
+  }, []);
+
   const applyChannelChatSnapshot = useCallback((snapshot: ChannelChatSnapshotForUser | null | undefined) => {
     if (!snapshot?.context || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
       return;
     }
-    if (activeDetailRef.current) {
+    if (activeDetailRef.current || activeSelectionDetailRef.current) {
       return;
     }
     setContext(snapshot.context);
@@ -265,20 +358,23 @@ export function HomePage() {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
     setActiveDetail(null);
+    setActiveSelectionDetail(null);
   }, []);
 
   const loadWorkspace = useCallback(async () => {
     setError('');
     try {
-      const [historyResult, queueResult, llmResult, channelChatResult] = await Promise.all([
+      const [historyResult, queueResult, llmResult, channelChatResult, selectionRefreshResult] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
         loadLlmSettings().catch(() => null),
         getChannelChatSnapshot().catch(() => null),
+        getSelectionRefreshSnapshot().catch(() => null),
       ]);
       setSavedReports(historyResult.items);
       applyQueueSnapshot(queueResult);
       applyChannelChatSnapshot(channelChatResult);
+      applySelectionRefreshSnapshot(selectionRefreshResult);
       if (llmResult) {
         setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
       }
@@ -298,7 +394,7 @@ export function HomePage() {
           channelRefreshInFlightRef.current = false;
         });
     }
-  }, [applyChannelChatSnapshot, applyQueueSnapshot]);
+  }, [applyChannelChatSnapshot, applyQueueSnapshot, applySelectionRefreshSnapshot]);
 
   useEffect(() => {
     void loadWorkspace();
@@ -306,14 +402,16 @@ export function HomePage() {
 
   const refreshWorkspace = useCallback(async () => {
     try {
-      const [historyResult, queueResult, channelChatResult] = await Promise.all([
+      const [historyResult, queueResult, channelChatResult, selectionRefreshResult] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
         getChannelChatSnapshot().catch(() => null),
+        getSelectionRefreshSnapshot().catch(() => null),
       ]);
       setSavedReports(historyResult.items);
       applyQueueSnapshot(queueResult);
       applyChannelChatSnapshot(channelChatResult);
+      applySelectionRefreshSnapshot(selectionRefreshResult);
     } catch {
       // 保留当前 UI 状态，轮询失败不打断用户操作。
     }
@@ -329,7 +427,7 @@ export function HomePage() {
       .finally(() => {
         channelRefreshInFlightRef.current = false;
       });
-  }, [applyChannelChatSnapshot, applyQueueSnapshot, channelStatus?.qrCodeImageDataUrl]);
+  }, [applyChannelChatSnapshot, applyQueueSnapshot, applySelectionRefreshSnapshot, channelStatus?.qrCodeImageDataUrl]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -353,6 +451,7 @@ export function HomePage() {
         activeTaskId: null,
         activeReportId: report.id,
       });
+      setActiveSelectionDetail(null);
       setActiveDetail({
         ...detailResult,
         chartEvidence: {
@@ -372,11 +471,47 @@ export function HomePage() {
   const returnToChat = useCallback(() => {
     setError('');
     setActiveDetail(null);
+    setActiveSelectionDetail(null);
     setQaEntries([]);
     setContext(DEFAULT_CONTEXT);
   }, []);
 
   const activeReportId = context.activeReportId ?? activeDetail?.report.id ?? null;
+  const activeSelectionReportId = activeSelectionDetail?.id ?? null;
+  const selectionReports = useMemo(() => {
+    const reports = new Map<string, SelectionReportForUser>();
+    for (const message of messages) {
+      const report = selectionReportFromMessage(message);
+      if (report) {
+        reports.set(report.id, report);
+      }
+    }
+    return [...reports.values()].reverse();
+  }, [messages]);
+
+  const openSelectionReport = useCallback((report: SelectionReportForUser) => {
+    setError('');
+    setQaEntries([]);
+    setActiveDetail(null);
+    setActiveSelectionDetail(report);
+    setContext({
+      contextId: `selection-${report.id}`,
+      kind: 'normal_chat',
+      title: report.title,
+      activeTaskId: null,
+      activeReportId: null,
+    });
+  }, []);
+
+  const openSelectionReportFromMessage = useCallback(
+    (message: ChatMessageForUser) => {
+      const report = selectionReportFromMessage(message);
+      if (report) {
+        openSelectionReport(report);
+      }
+    },
+    [openSelectionReport],
+  );
 
   const deleteReport = useCallback(
     async (report: SavedReportForUser) => {
@@ -402,8 +537,15 @@ export function HomePage() {
 
   const onSendChat = useCallback(
     async (text: string) => {
+      const isSelectCommand = isExplicitSelectCommand(text);
       setSending(true);
+      setPendingChatCommand(isSelectCommand ? 'select' : 'chat');
       setError('');
+      if (isSelectCommand) {
+        selectionRequestInFlightRef.current = true;
+        setMessages((current) => [...current, ...localSelectPendingMessages(text)]);
+        setSelectionProgress(runningSelectionProgress(text));
+      }
       try {
         const result = await sendChatMessage({
           requestId: nextRequestId(),
@@ -419,14 +561,29 @@ export function HomePage() {
         if (result.queueSnapshot) {
           applyQueueSnapshot(result.queueSnapshot);
         }
+        if (isSelectCommand) {
+          selectionRequestInFlightRef.current = false;
+          const refreshSnapshot = await getSelectionRefreshSnapshot().catch(() => null);
+          if (refreshSnapshot?.selectionProgress) {
+            applySelectionRefreshSnapshot(refreshSnapshot);
+          } else {
+            setSelectionProgress(null);
+          }
+        }
         setActiveDetail(null);
+        setActiveSelectionDetail(null);
       } catch (sendError) {
+        if (isSelectCommand) {
+          selectionRequestInFlightRef.current = false;
+          setSelectionProgress(null);
+        }
         setError((sendError as Error).message);
       } finally {
         setSending(false);
+        setPendingChatCommand(null);
       }
     },
-    [applyQueueSnapshot, context.contextId, mergeConfirmationCard],
+    [applyQueueSnapshot, applySelectionRefreshSnapshot, context.contextId, mergeConfirmationCard],
   );
 
   const onAskReport = useCallback(
@@ -492,6 +649,7 @@ export function HomePage() {
           activeTaskId: null,
           activeReportId: reportId,
         });
+        setActiveSelectionDetail(null);
         setActiveDetail({
           ...detailResult,
           chartEvidence: {
@@ -563,6 +721,7 @@ export function HomePage() {
           });
         }
         setActiveDetail(null);
+        setActiveSelectionDetail(null);
         await refreshWorkspace();
       } catch (decisionError) {
         setError((decisionError as Error).message);
@@ -610,6 +769,7 @@ export function HomePage() {
           });
         }
         setActiveDetail(null);
+        setActiveSelectionDetail(null);
         await refreshWorkspace();
       } catch (selectionError) {
         setError((selectionError as Error).message);
@@ -726,8 +886,11 @@ export function HomePage() {
     return `${running} 运行中 · ${queued} 排队中`;
   }, [queueSnapshot.queuedTasks.length, queueSnapshot.runningTask]);
 
+  const readerTitle = activeDetail?.report.title ?? activeSelectionDetail?.title ?? '投研工作台';
+  const contextLabel = activeDetail ? '报告阅读' : activeSelectionDetail ? '选股报告' : '聊天会话';
+  const isReading = Boolean(activeDetail || activeSelectionDetail);
   const modelState = modelStatusState(modelDraft);
-  const showModelWarning = !loading && !activeDetail && modelState !== 'ready';
+  const showModelWarning = !loading && !isReading && modelState !== 'ready';
   const modelWarningIsError = modelState === 'failed';
 
   return (
@@ -735,22 +898,25 @@ export function HomePage() {
       <main className="ct-workspace" data-testid="workspace-layout">
         <HistoryRail
           items={savedReports}
+          selectionItems={selectionReports}
           activeReportId={activeReportId}
+          activeSelectionReportId={activeSelectionReportId}
           onOpenReport={(report) => void openReport(report)}
           onDeleteReport={(report) => void deleteReport(report)}
+          onOpenSelectionReport={openSelectionReport}
         />
 
         <section className="ct-center-panel">
           <header className="ct-center-head">
-            <h1>{activeDetail ? activeDetail.report.title : '投研工作台'}</h1>
+            <h1>{readerTitle}</h1>
             <div className="ct-center-head-actions">
-              <span className="ct-context-label">{context.kind === 'report_reading' ? '报告阅读' : '聊天会话'}</span>
-              {!activeDetail ? (
+              <span className="ct-context-label">{contextLabel}</span>
+              {!isReading ? (
                 <a className="ct-text-button" href={DEVICE_UI_HREF} target="_blank" rel="noreferrer">
                   打开设备界面
                 </a>
               ) : null}
-              {activeDetail ? (
+              {isReading ? (
                 <button type="button" className="ct-text-button ct-report-back-button" onClick={returnToChat}>
                   返回聊天
                 </button>
@@ -822,6 +988,10 @@ export function HomePage() {
                 buttonLabel={sending ? '追问中' : '追问'}
               />
             </>
+          ) : activeSelectionDetail ? (
+            <article className="ct-report-prose" data-testid="reading-selection-report-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{activeSelectionDetail.markdown}</ReactMarkdown>
+            </article>
           ) : (
             <>
               <MessageStream
@@ -836,12 +1006,13 @@ export function HomePage() {
                 onOpenReport={(reportId) => void openReportById(reportId)}
                 selectionSubmittingKey={selectionSubmittingKey}
                 onConfirmSelectionCandidate={(item, ticker) => void confirmSelectionCandidate(item, ticker)}
+                onOpenSelectionReport={openSelectionReportFromMessage}
               />
               <Composer
                 onSend={onSendChat}
                 disabled={sending}
                 placeholder="输入问题，或提交报告任务需求"
-                buttonLabel={sending ? '发送中' : '发送'}
+                buttonLabel={pendingChatCommand === 'select' ? '选股中' : sending ? '发送中' : '发送'}
                 hint={REPORT_INPUT_FORMAT_HINT}
               />
             </>
@@ -851,6 +1022,7 @@ export function HomePage() {
         <RightRail
           queue={queueSnapshot}
           detail={activeDetail}
+          selectionProgress={selectionProgress}
           channel={channelStatus}
           latestReport={savedReports[0] ?? null}
           onPrintReport={activeDetail ? printReportAsPdf : undefined}

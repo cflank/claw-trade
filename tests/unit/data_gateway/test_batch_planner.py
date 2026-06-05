@@ -74,6 +74,9 @@ def _group(
     *,
     provider_id: str = "official_feed",
     endpoint_id: str = "daily",
+    universe_ref: str | None = None,
+    start: date = date(2026, 5, 1),
+    end: date = date(2026, 5, 31),
 ) -> MergeGroup:
     return MergeGroup(
         provider_id=provider_id,
@@ -85,8 +88,9 @@ def _group(
         priority_rank=10,
         request_ids=tuple(item.request_id for item in items),
         symbol_ids=symbol_ids,
-        date_range_start=date(2026, 5, 1),
-        date_range_end=date(2026, 5, 31),
+        universe_ref=universe_ref,
+        date_range_start=start,
+        date_range_end=end,
         exchange="NYSE",
         currency="USD",
         timezone="America/New_York",
@@ -226,6 +230,41 @@ def test_batch_planner_uses_provider_source_rate_limit_key_not_endpoint_key() ->
     )
 
     assert getattr(batches[0], "rate_limit_key") == "ratelimit:coinglass"
+
+
+def test_batch_planner_preserves_universe_ref_for_date_batch() -> None:
+    planner = ProviderBatchPlanner()
+    snapshot = CapabilitySnapshot.from_capabilities(
+        (
+            _capability(
+                BatchPolicy(
+                    supports_batch=True,
+                    batch_by="date",
+                    max_days_per_call=1,
+                    mergeable_fields=("close", "volume"),
+                )
+            ),
+        )
+    )
+    item = MergeItem(
+        request_id="req-universe",
+        symbol_ids=(),
+        universe_ref="all_a_shares",
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 1),
+        fields=("close",),
+        required_level="required",
+    )
+
+    batches = planner.build_batches(
+        (_group((), (item,), universe_ref="all_a_shares", start=date(2026, 5, 1), end=date(2026, 5, 1)),),
+        snapshot,
+    )
+
+    assert len(batches) == 1
+    assert getattr(batches[0], "symbol_ids") == ()
+    assert getattr(batches[0], "universe_ref") == "all_a_shares"
+    assert getattr(batches[0], "request_ids") == ("req-universe",)
 
 
 def test_batch_planner_fails_closed_on_unexecutable_policy() -> None:

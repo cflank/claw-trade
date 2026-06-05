@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.data_job import SelectionDataJob, SelectionProviderBatchResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
 from claw_trade.selection.models import (
     SelectionBatchScope,
+    SelectionDataRun,
+    SelectionDataRunStatus,
     SelectionMarket,
     SelectionProfile,
     SelectionProviderBatchPlan,
@@ -16,6 +21,7 @@ from claw_trade.selection.models import (
     SelectionTriggerSource,
 )
 from claw_trade.selection.store import (
+    SelectionDataRunRecord,
     SelectionRunStore,
     SelectUnavailableCode,
     resolve_latest_completed_selection_run,
@@ -92,12 +98,43 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
                 "source_ref": ref,
             }
         )
-    return SelectionProviderBatchResult(
+    result = SelectionProviderBatchResult(
         provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
         attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
         normalized_refs=tuple(normalized_refs),
         rows=tuple(rows),
         warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/success",
+    )
+    root = Path(os.environ.get("CLAW_TRADE_SELECTION_COLUMNAR_ROOT", "") or ".runtime/test-selection-columnar")
+    writer = SelectionColumnarWarehouse(root=root).begin_write(plan=plan)
+    writer.add_daily_rows(
+        (
+            {
+                "ticker": str(row.get("ticker") or ""),
+                "date": plan.trade_date,
+                "close": row.get("close"),
+                "amount": row.get("amount"),
+                "source_ref": str(row.get("source_ref") or ""),
+            }
+            for row in rows
+        )
+    )
+    writer.add_feature_rows(
+        (
+            {
+                **dict(row),
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+            }
+            for row in rows
+        )
+    )
+    manifest = writer.commit(provider_attempt_refs=result.attempt_refs, normalized_refs=result.normalized_refs)
+    return replace(
+        result,
+        warehouse_check_ref=manifest.warehouse_check_ref,
+        columnar_manifest_ref=manifest.manifest_ref,
+        columnar_manifest_sha256=SelectionColumnarWarehouse(root=root).manifest_sha256(manifest.manifest_ref),
     )
 
 
@@ -149,6 +186,7 @@ def _complete_strategy_fields(*, idx: int, open_price: float, close_price: float
 
 def _run_successful_data_job(*, tmp_path: Path, persisted: bool) -> str:
     plan = _plan()
+    os.environ["CLAW_TRADE_SELECTION_COLUMNAR_ROOT"] = str(tmp_path / "columnar")
     store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs") if persisted else SelectionRunStore()
     job = SelectionDataJob(
         store=store,
@@ -199,6 +237,131 @@ def test_restore_selection_store_from_persisted_record_roundtrip(tmp_path: Path)
 
 
 @pytest.mark.integration
+def test_restore_detects_missing_candidate_pack_body_file(tmp_path: Path) -> None:
+    selection_run_id = _run_successful_data_job(tmp_path=tmp_path, persisted=True)
+    persisted_path = tmp_path / "store" / "data-runs" / f"{selection_run_id}.json"
+    payload = json.loads(persisted_path.read_text(encoding="utf-8"))
+    body_path = _selection_artifact_path(
+        tmp_path / "artifacts",
+        payload["data_run"]["candidate_pack_ref"]["l1_uri"],
+    )
+    body_path.unlink()
+
+    restored = restore_selection_run_store(selection_runs_root=tmp_path)
+    result = resolve_latest_completed_selection_run(
+        store=restored,
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date=None,
+        now_fn=lambda: datetime(2026, 5, 26, 10, 0, tzinfo=UTC),
+    )
+
+    assert result.is_available is False
+    assert result.unavailable_code == SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+
+
+@pytest.mark.integration
+def test_restore_detects_candidate_pack_body_hash_mismatch(tmp_path: Path) -> None:
+    selection_run_id = _run_successful_data_job(tmp_path=tmp_path, persisted=True)
+    persisted_path = tmp_path / "store" / "data-runs" / f"{selection_run_id}.json"
+    payload = json.loads(persisted_path.read_text(encoding="utf-8"))
+    body_path = _selection_artifact_path(
+        tmp_path / "artifacts",
+        payload["data_run"]["candidate_pack_ref"]["l1_uri"],
+    )
+    body_path.write_text(f"{body_path.read_text(encoding='utf-8')}\n# corrupt\n", encoding="utf-8")
+
+    restored = restore_selection_run_store(selection_runs_root=tmp_path)
+    result = resolve_latest_completed_selection_run(
+        store=restored,
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date=None,
+        now_fn=lambda: datetime(2026, 5, 26, 10, 0, tzinfo=UTC),
+    )
+
+    assert result.is_available is False
+    assert result.unavailable_code == SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+
+
+@pytest.mark.integration
+def test_restore_keeps_persisted_active_data_run_read_only_by_default(tmp_path: Path) -> None:
+    plan = _plan()
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=plan,
+            data_run=SelectionDataRun(
+                selection_run_id=plan.selection_run_id,
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                lease_id="lease://sel-run-12-restore",
+                started_at="2026-05-26T09:00:00Z",
+                progress_label="补齐全市场日线数据",
+                progress_completed=64,
+                progress_total=256,
+            ),
+            manifest=None,
+        )
+    )
+
+    restored = restore_selection_run_store(selection_runs_root=tmp_path)
+
+    active = restored.load_active_data_run_record(
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+    )
+    assert active is not None
+    assert active.data_run.status == SelectionDataRunStatus.FETCHING_DATA
+    assert active.data_run.progress_completed == 64
+    persisted_path = tmp_path / "store" / "data-runs" / f"{plan.selection_run_id}.json"
+    payload = json.loads(persisted_path.read_text(encoding="utf-8"))
+    assert payload["data_run"]["status"] == "fetching_data"
+    assert payload["data_run"]["progress_completed"] == 64
+
+
+@pytest.mark.integration
+def test_restore_marks_persisted_active_data_run_failed_when_owner_restarts(tmp_path: Path) -> None:
+    plan = _plan()
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=plan,
+            data_run=SelectionDataRun(
+                selection_run_id=plan.selection_run_id,
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                lease_id="lease://sel-run-12-restore",
+                started_at="2026-05-26T09:00:00Z",
+                progress_label="补齐全市场日线数据",
+                progress_completed=64,
+                progress_total=256,
+            ),
+            manifest=None,
+        )
+    )
+
+    restored = restore_selection_run_store(selection_runs_root=tmp_path, fail_interrupted_active=True)
+
+    assert (
+        restored.load_active_data_run_record(
+            market=SelectionMarket.CN_A,
+            profile=SelectionProfile.CN_A,
+            trade_date="2026-05-26",
+        )
+        is None
+    )
+    latest = restored.load_latest_data_run_record(
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+    )
+    assert latest is not None
+    assert latest.data_run.status == SelectionDataRunStatus.FAILED
+    assert latest.data_run.failure_code == "selection_data_run_interrupted"
+    assert "上一次进程已中断" in (latest.data_run.failure_reason or "")
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("mutator", "expected_code"),
     [
@@ -246,3 +409,9 @@ def test_restore_selection_store_fail_closed_for_integrity_violations(
 
     assert result.is_available is False
     assert result.unavailable_code == expected_code
+
+
+def _selection_artifact_path(artifact_root: Path, uri: str) -> Path:
+    prefix = "local://selection/"
+    assert uri.startswith(prefix)
+    return artifact_root / uri[len(prefix) :].strip("/")

@@ -90,6 +90,19 @@ def test_start_research_ui_script_uses_non_5173_default_ports() -> None:
     assert "默认不使用 5173（保留给 Vite）" in text
 
 
+def test_start_research_ui_script_exposes_ui_for_windows_browser_by_default() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'RESEARCH_UI_HOST="${RESEARCH_UI_HOST:-0.0.0.0}"' in text
+    assert '--host "${RESEARCH_UI_HOST}"' in text
+    assert "browser_hosts_for_research_ui() {" in text
+    assert 'printf \'%s\\n\' "127.0.0.1"' in text
+    assert "hostname -I" in text
+    assert "浏览器访问地址：" in text
+    assert 'http://${host}:${RESEARCH_UI_PORT}/' in text
+    assert "服务绑定地址：http://${RESEARCH_UI_HOST}:${RESEARCH_UI_PORT}/" in text
+
+
 def test_start_research_ui_script_cleans_stale_project_backend_before_port_fallback() -> None:
     text = _script_path().read_text(encoding="utf-8")
 

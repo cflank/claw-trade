@@ -5,9 +5,11 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
     CandidatePackManifest,
     CandidatePackReadbackStatus,
@@ -96,12 +98,28 @@ class SelectionReportHandoffRecord:
     deduped: bool
 
 
+_ACTIVE_DATA_RUN_STATUSES = frozenset(
+    {
+        SelectionDataRunStatus.PLANNED,
+        SelectionDataRunStatus.LEASE_PENDING,
+        SelectionDataRunStatus.RUNNING,
+        SelectionDataRunStatus.FETCHING_DATA,
+        SelectionDataRunStatus.NORMALIZING_INPUTS,
+        SelectionDataRunStatus.BUILDING_FEATURES,
+        SelectionDataRunStatus.FILTERING_AND_SCORING,
+        SelectionDataRunStatus.BUILDING_CANDIDATE_PACK,
+        SelectionDataRunStatus.APPROVING_CANDIDATE_PACK,
+    }
+)
+
+
 class SelectionRunStore:
-    def __init__(self, *, persisted_runs_dir: Path | None = None) -> None:
+    def __init__(self, *, persisted_runs_dir: Path | None = None, artifact_root: Path | None = None) -> None:
         self._runs: dict[str, SelectionDataRunRecord] = {}
         self._confirmations_by_idempotency_key: dict[str, SelectionReportHandoffRecord] = {}
         self._handoff_by_dedupe_key: dict[str, SelectionReportHandoffRecord] = {}
         self._persisted_runs_dir = persisted_runs_dir
+        self._artifact_root = artifact_root
 
     def save_data_run_record(self, record: SelectionDataRunRecord) -> None:
         existing = self._runs.get(record.run_plan.selection_run_id)
@@ -143,7 +161,7 @@ class SelectionRunStore:
         )
         if latest.data_run.status == SelectionDataRunStatus.NO_CANDIDATE:
             return LatestCompletedSelectionRunResult.unavailable(SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN)
-        code = _validate_record_for_select(latest, now=now)
+        code = _validate_record_for_select(latest, now=now, artifact_root=self._candidate_pack_artifact_root())
         if code is not None:
             return LatestCompletedSelectionRunResult.unavailable(code)
         assert latest.manifest is not None
@@ -173,6 +191,35 @@ class SelectionRunStore:
     def load_data_run_record(self, selection_run_id: str) -> SelectionDataRunRecord | None:
         return self._runs.get(selection_run_id)
 
+    def load_latest_data_run_record(
+        self,
+        *,
+        market: SelectionMarket,
+        profile: SelectionProfile,
+        trade_date: str,
+    ) -> SelectionDataRunRecord | None:
+        candidates = [
+            item
+            for item in self._runs.values()
+            if item.run_plan.market == market
+            and item.run_plan.profile == profile
+            and item.run_plan.trade_date == trade_date
+        ]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda item: (
+                _parse_iso_timestamp(
+                    item.data_run.started_at
+                    or item.data_run.completed_at
+                    or item.data_run.failed_at
+                    or item.run_plan.trade_date + "T00:00:00+00:00"
+                ),
+                item.run_plan.selection_run_id,
+            ),
+        )
+
     def load_active_data_run_record(
         self,
         *,
@@ -186,18 +233,7 @@ class SelectionRunStore:
             if item.run_plan.market == market
             and item.run_plan.profile == profile
             and item.run_plan.trade_date == trade_date
-            and item.data_run.status
-            in {
-                SelectionDataRunStatus.PLANNED,
-                SelectionDataRunStatus.LEASE_PENDING,
-                SelectionDataRunStatus.RUNNING,
-                SelectionDataRunStatus.FETCHING_DATA,
-                SelectionDataRunStatus.NORMALIZING_INPUTS,
-                SelectionDataRunStatus.BUILDING_FEATURES,
-                SelectionDataRunStatus.FILTERING_AND_SCORING,
-                SelectionDataRunStatus.BUILDING_CANDIDATE_PACK,
-                SelectionDataRunStatus.APPROVING_CANDIDATE_PACK,
-            }
+            and item.data_run.status in _ACTIVE_DATA_RUN_STATUSES
         ]
         if not active:
             return None
@@ -208,6 +244,38 @@ class SelectionRunStore:
                 item.run_plan.selection_run_id,
             ),
         )
+
+    def load_latest_active_data_run_record(
+        self,
+        *,
+        market: SelectionMarket,
+        profile: SelectionProfile,
+    ) -> SelectionDataRunRecord | None:
+        active = [
+            item
+            for item in self._runs.values()
+            if item.run_plan.market == market
+            and item.run_plan.profile == profile
+            and item.data_run.status in _ACTIVE_DATA_RUN_STATUSES
+        ]
+        if not active:
+            return None
+        return max(active, key=_data_run_record_sort_key)
+
+    def load_latest_any_data_run_record(
+        self,
+        *,
+        market: SelectionMarket,
+        profile: SelectionProfile,
+    ) -> SelectionDataRunRecord | None:
+        candidates = [
+            item
+            for item in self._runs.values()
+            if item.run_plan.market == market and item.run_plan.profile == profile
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=_data_run_record_sort_key)
 
     def has_active_data_run(
         self,
@@ -252,8 +320,19 @@ class SelectionRunStore:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(output)
 
+    def _candidate_pack_artifact_root(self) -> Path:
+        if self._artifact_root is not None:
+            return self._artifact_root
+        if self._persisted_runs_dir is not None:
+            return self._persisted_runs_dir.parent.parent / "artifacts"
+        return Path("runs/selection/artifacts")
 
-def restore_selection_run_store(*, selection_runs_root: Path | None = None) -> SelectionRunStore:
+
+def restore_selection_run_store(
+    *,
+    selection_runs_root: Path | None = None,
+    fail_interrupted_active: bool = False,
+) -> SelectionRunStore:
     root = selection_runs_root or Path("runs/selection")
     persisted_runs_dir = root / "store" / "data-runs"
     store = SelectionRunStore(persisted_runs_dir=persisted_runs_dir)
@@ -261,6 +340,8 @@ def restore_selection_run_store(*, selection_runs_root: Path | None = None) -> S
     for record in _iter_records_from_persisted_store_dir(persisted_runs_dir):
         if record.run_plan.selection_run_id in restored_run_ids:
             continue
+        if fail_interrupted_active:
+            record = _fail_interrupted_active_record(record)
         store.save_data_run_record(record)
         restored_run_ids.add(record.run_plan.selection_run_id)
     for record in _iter_records_from_data_job_evidence(root):
@@ -269,6 +350,39 @@ def restore_selection_run_store(*, selection_runs_root: Path | None = None) -> S
         store.save_data_run_record(record)
         restored_run_ids.add(record.run_plan.selection_run_id)
     return store
+
+
+def _fail_interrupted_active_record(record: SelectionDataRunRecord) -> SelectionDataRunRecord:
+    if record.data_run.status not in _ACTIVE_DATA_RUN_STATUSES:
+        return record
+    failed_at = _isoformat(_utc_now())
+    data_run = SelectionDataRun(
+        selection_run_id=record.data_run.selection_run_id,
+        status=SelectionDataRunStatus.FAILED,
+        lease_id=record.data_run.lease_id,
+        universe_snapshot_ref=record.data_run.universe_snapshot_ref,
+        normalized_refs=record.data_run.normalized_refs,
+        provider_attempt_refs=record.data_run.provider_attempt_refs,
+        select_data_plan_ref=record.data_run.select_data_plan_ref,
+        warehouse_check_ref=record.data_run.warehouse_check_ref,
+        columnar_manifest_ref=record.data_run.columnar_manifest_ref,
+        columnar_manifest_sha256=record.data_run.columnar_manifest_sha256,
+        feature_snapshot_ref=record.data_run.feature_snapshot_ref,
+        data_gaps=record.data_run.data_gaps,
+        started_at=record.data_run.started_at,
+        failed_at=failed_at,
+        failure_code="selection_data_run_interrupted",
+        failure_reason=(
+            "服务启动时发现该补数据任务仍处于运行态；上一次进程已中断，"
+            "原任务按 fail closed 标记失败。请重新发送 /select 启动新的补数据。"
+        ),
+    )
+    return SelectionDataRunRecord(
+        run_plan=record.run_plan,
+        data_run=data_run,
+        manifest=None,
+        integrity=record.integrity,
+    )
 
 
 def resolve_latest_terminal_selection_run(
@@ -305,10 +419,12 @@ def resolve_latest_completed_selection_run(
     )
 
 
-def _validate_record_for_select(record: SelectionDataRunRecord, *, now: datetime) -> SelectUnavailableCode | None:
-    warehouse_code = _validate_warehouse_evidence_for_select(record)
-    if warehouse_code is not None:
-        return warehouse_code
+def _validate_record_for_select(
+    record: SelectionDataRunRecord,
+    *,
+    now: datetime,
+    artifact_root: Path,
+) -> SelectUnavailableCode | None:
     if not record.integrity.pack_approved:
         return SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED
     if record.data_run.candidate_pack_ref is None:
@@ -329,7 +445,101 @@ def _validate_record_for_select(record: SelectionDataRunRecord, *, now: datetime
         return SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE
     if not record.manifest.source_lineage_refs:
         return SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE
+    file_code = _validate_candidate_pack_files_for_select(record, artifact_root=artifact_root)
+    if file_code is not None:
+        return file_code
+    warehouse_code = _validate_warehouse_evidence_for_select(record)
+    if warehouse_code is not None:
+        return warehouse_code
     return None
+
+
+def _validate_candidate_pack_files_for_select(
+    record: SelectionDataRunRecord,
+    *,
+    artifact_root: Path,
+) -> SelectUnavailableCode | None:
+    candidate_pack_ref = record.data_run.candidate_pack_ref
+    if candidate_pack_ref is None:
+        return SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED
+
+    body_path = _resolve_selection_artifact_path(candidate_pack_ref.l1_uri, artifact_root=artifact_root)
+    manifest_path = _resolve_selection_artifact_path(candidate_pack_ref.manifest_ref, artifact_root=artifact_root)
+    summary_path = _resolve_selection_artifact_path(candidate_pack_ref.pack_summary_ref, artifact_root=artifact_root)
+    if body_path is None or manifest_path is None or summary_path is None:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+
+    try:
+        body_bytes = body_path.read_bytes()
+    except OSError:
+        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+    if sha256(body_bytes).hexdigest() != candidate_pack_ref.content_sha256:
+        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+
+    manifest_payload = _read_json_object(manifest_path)
+    if manifest_payload is None:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    try:
+        manifest = _candidate_pack_manifest_from_payload(manifest_payload)
+    except (TypeError, ValueError):
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    if manifest is None:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    if manifest.pack_body_sha256 != candidate_pack_ref.content_sha256:
+        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+    if manifest.selection_run_id != record.run_plan.selection_run_id:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    if manifest.trade_date != record.run_plan.trade_date:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    if manifest.readback_status != CandidatePackReadbackStatus.VERIFIED:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+
+    if not _readback_verify_log_matches(
+        body_path,
+        expected_sha256=candidate_pack_ref.content_sha256,
+    ):
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    try:
+        manifest_sha256 = sha256(manifest_path.read_bytes()).hexdigest()
+    except OSError:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    if not _readback_verify_log_matches(manifest_path, expected_sha256=manifest_sha256):
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    try:
+        if not summary_path.read_text(encoding="utf-8").strip():
+            return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    except OSError:
+        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+    return None
+
+
+def _resolve_selection_artifact_path(ref: str, *, artifact_root: Path) -> Path | None:
+    prefix = "local://selection/"
+    if ref.startswith(prefix):
+        relative = ref[len(prefix) :].strip("/")
+        segments = [part for part in relative.split("/") if part]
+        if not segments or ".." in segments:
+            return None
+        return artifact_root / Path(*segments)
+    return Path(ref)
+
+
+def _readback_verify_log_matches(path: Path, *, expected_sha256: str) -> bool:
+    payload = _read_json_object(_readback_verify_path(path))
+    if payload is None:
+        return False
+    return (
+        _optional_text(payload.get("status")) == "verified"
+        and _optional_text(payload.get("expected_sha256")) == expected_sha256
+        and _optional_text(payload.get("readback_sha256")) == expected_sha256
+    )
+
+
+def _readback_verify_path(path: Path) -> Path:
+    suffix = path.suffix
+    if suffix:
+        return path.with_suffix(f"{suffix}.readback-verify.json")
+    return path.with_name(f"{path.name}.readback-verify.json")
 
 
 def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> SelectUnavailableCode | None:
@@ -341,6 +551,15 @@ def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> S
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     data_run = record.data_run
     if not data_run.select_data_plan_ref or not data_run.warehouse_check_ref:
+        return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
+    if not data_run.columnar_manifest_ref:
+        return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
+    if not data_run.columnar_manifest_sha256:
+        return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
+    if not SelectionColumnarWarehouse.default().validate_manifest_ref(
+        data_run.columnar_manifest_ref,
+        expected_sha256=data_run.columnar_manifest_sha256,
+    ):
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     if not data_run.provider_attempt_refs:
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
@@ -362,10 +581,29 @@ def _parse_iso_timestamp(value: str | None) -> datetime:
     return _to_utc(datetime.fromisoformat(normalized))
 
 
+def _data_run_record_sort_key(record: SelectionDataRunRecord) -> tuple[datetime, str, str]:
+    data_run = record.data_run
+    timestamp = (
+        data_run.started_at
+        or data_run.completed_at
+        or data_run.failed_at
+        or f"{record.run_plan.trade_date}T00:00:00+00:00"
+    )
+    return (
+        _parse_iso_timestamp(timestamp),
+        record.run_plan.trade_date,
+        record.run_plan.selection_run_id,
+    )
+
+
 def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
+
+
+def _isoformat(value: datetime) -> str:
+    return _to_utc(value).isoformat().replace("+00:00", "Z")
 
 
 def _utc_now() -> datetime:
@@ -432,6 +670,8 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
             provider_attempt_refs=tuple(_read_text_list(data_run_payload, "provider_attempt_refs")),
             select_data_plan_ref=_optional_text(data_run_payload.get("select_data_plan_ref")),
             warehouse_check_ref=_optional_text(data_run_payload.get("warehouse_check_ref")),
+            columnar_manifest_ref=_optional_text(data_run_payload.get("columnar_manifest_ref")),
+            columnar_manifest_sha256=_optional_text(data_run_payload.get("columnar_manifest_sha256")),
             feature_snapshot_ref=_optional_text(data_run_payload.get("feature_snapshot_ref")),
             candidate_pack_ref=candidate_pack_ref,
             started_at=_optional_text(data_run_payload.get("started_at")),
@@ -439,6 +679,9 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
             failed_at=_optional_text(data_run_payload.get("failed_at")),
             failure_code=_optional_text(data_run_payload.get("failure_code")),
             failure_reason=_optional_text(data_run_payload.get("failure_reason")),
+            progress_label=_optional_text(data_run_payload.get("progress_label")),
+            progress_completed=_optional_int(data_run_payload.get("progress_completed")),
+            progress_total=_optional_int(data_run_payload.get("progress_total")),
         )
         manifest_payload = _read_mapping(payload, "manifest", optional=True)
         manifest = _candidate_pack_manifest_from_payload(manifest_payload)
@@ -522,6 +765,8 @@ def _record_from_legacy_data_job_payload(
             provider_attempt_refs=tuple(_read_text_list(payload, "provider_attempt_refs")),
             select_data_plan_ref=_optional_text(payload.get("select_data_plan_ref")),
             warehouse_check_ref=_optional_text(payload.get("warehouse_check_ref")),
+            columnar_manifest_ref=_optional_text(payload.get("columnar_manifest_ref")),
+            columnar_manifest_sha256=_optional_text(payload.get("columnar_manifest_sha256")),
             feature_snapshot_ref=_optional_text(payload.get("feature_snapshot_ref")),
             candidate_pack_ref=candidate_pack_ref,
             completed_at=completed_at,
@@ -588,6 +833,8 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
             "provider_attempt_refs": list(data_run.provider_attempt_refs),
             "select_data_plan_ref": data_run.select_data_plan_ref,
             "warehouse_check_ref": data_run.warehouse_check_ref,
+            "columnar_manifest_ref": data_run.columnar_manifest_ref,
+            "columnar_manifest_sha256": data_run.columnar_manifest_sha256,
             "feature_snapshot_ref": data_run.feature_snapshot_ref,
             "candidate_pack_ref": (
                 {
@@ -608,6 +855,9 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
             "failed_at": data_run.failed_at,
             "failure_code": data_run.failure_code,
             "failure_reason": data_run.failure_reason,
+            "progress_label": data_run.progress_label,
+            "progress_completed": data_run.progress_completed,
+            "progress_total": data_run.progress_total,
         },
         "manifest": (
             {
@@ -723,6 +973,12 @@ def _optional_text(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _read_text_list(payload: Mapping[str, Any], field: str) -> tuple[str, ...]:

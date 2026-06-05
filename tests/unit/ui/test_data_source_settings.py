@@ -11,6 +11,7 @@ from claw_trade.ui_backend.data_source_settings import (
     InMemorySecretStore,
     ProviderDisplayDecision,
     ProviderDisplayStatus,
+    SUPPORTED_DATA_SOURCE_TYPES,
     allowed_data_source_env_keys,
 )
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
@@ -376,26 +377,26 @@ def test_default_health_tester_does_not_fake_validated() -> None:
     assert exc.value.code in {"DATASOURCE_TEST_FAILED", "INVALID_INPUT"}
 
 
-def test_default_display_policy_exposes_tushare_factory_row_only() -> None:
+def test_default_display_policy_exposes_probe_backed_api_source_rows() -> None:
     service = DataSourceSettingsService()
 
     listed = service.list_data_sources()
 
-    assert listed["supportedTypes"] == ("tushare",)
-    assert len(listed["instances"]) == 1
+    assert listed["supportedTypes"] == SUPPORTED_DATA_SOURCE_TYPES
+    assert len(listed["instances"]) == len(SUPPORTED_DATA_SOURCE_TYPES)
     assert listed["instances"][0]["supportedType"] == "tushare"
     assert listed["instances"][0]["enabled"] is False
     assert listed["instances"][0]["state"] == "draft"
 
 
-def test_save_rejects_provider_without_main_chain_display_evidence() -> None:
+def test_save_rejects_provider_without_settings_probe() -> None:
     service = DataSourceSettingsService()
 
     with pytest.raises(UiBoundaryError) as exc:
         service.save_data_source_instance(
             {
-                "supportedType": "alpha_vantage",
-                "displayName": "Alpha Vantage",
+                "supportedType": "not_registered_vendor",
+                "displayName": "Not Registered Vendor",
                 "enabled": False,
                 "apiKeyReplacement": "secret-token-abc",
             },
@@ -403,4 +404,22 @@ def test_save_rejects_provider_without_main_chain_display_evidence() -> None:
         )
 
     assert exc.value.code == "INVALID_INPUT"
-    assert "/report 或 /select 主链路" in exc.value.user_message
+    assert "设置页连接测试" in exc.value.user_message
+
+
+def test_save_rejects_registered_source_without_settings_probe() -> None:
+    service = DataSourceSettingsService()
+
+    with pytest.raises(UiBoundaryError) as exc:
+        service.save_data_source_instance(
+            {
+                "supportedType": "wind",
+                "displayName": "Wind",
+                "enabled": False,
+                "apiKeyReplacement": "secret-token-abc",
+            },
+            request_id="req-wind-without-probe-save",
+        )
+
+    assert exc.value.code == "INVALID_INPUT"
+    assert "设置页连接测试" in exc.value.user_message

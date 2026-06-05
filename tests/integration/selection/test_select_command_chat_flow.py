@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.confirmation import (
     SelectionConfirmationController,
     SelectionConfirmRequest,
@@ -34,21 +36,72 @@ from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 
 _READER_FORBIDDEN_CANDIDATE_FACT_TERMS = (
-    "liquidity_tradability_score",
-    "amount=",
-    '"amount":',
-    "close=",
-    '"close":',
-    "strategy_hit_count",
-    "data_gap_penalty_score",
-    "risk_penalty_score",
+    "manifest",
+    "lineage",
+    "OpenViking",
+    "approved_",
+    "_l1",
+    "L1",
+    "Selection",
+    "Review",
+    "review",
+    "Top 8",
+    "high tight flag",
+    "platform_deviation_pct",
+    "post_limit_up_window_days",
+    "post_limit_up_",
+    "(U5)",
+    "（U5）",
+    "策略配置版本",
+    "权重版本",
+    "命中字段",
+    "分项得分",
+    "排序 tie-break 字段",
+    "策略命中明细",
+    "slope_10d",
+    "ma30_slope_10d",
+    "ma30",
+    "score",
+    "watchlist",
+    "sequoia 系列",
+    "30日均线_",
+    "相关指标",
+    "low_atr",
+    "myhhub_",
+    "sequoia_",
+    "selection_",
+    "cn_a.selection",
+    "PE_TTM",
+    "PE_ttm",
+    "PE TTM",
+    "市盈率 TTM",
+    "PE(TTM)",
+    "PS_TTM",
+    "PS_ttm",
+    "limit_up_streak",
+    "内部指标",
+    "Skeptic",
+    "Strategist",
+    "30日均线_",
+    "pe/",
+    "pb",
+    "peak",
 )
 _READER_REQUIRED_CANDIDATE_FACT_TERMS = (
-    "成交额",
-    "收盘价",
-    "数据缺口扣分",
-    "流动性/可交易性",
+    "策略命中与分析过程",
+    "命中的策略条件",
+    "逐只策略核对",
+    "分析过程",
+    "数据范围与质量",
+    "候选数量",
+    "数据质量",
+    "来源摘要",
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_selection_columnar_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_COLUMNAR_ROOT", str(tmp_path / "columnar"))
 
 
 def _assert_candidate_fact_body_is_reader_chinese(text: str) -> None:
@@ -176,15 +229,15 @@ class _FakeSelectionOpenClawRunner:
 
 def _worker_output(worker_id: str) -> str:
     if worker_id == "selection_strategist":
-        return "策略评审：优先关注 600519.SH 与 000858.SZ。"
+        return "策略评审：优先关注 600519.SH 与 000858.SZ。Strategist 依据 slope_10d、low_atr、ma30_growth_30d、return_120d、limit_up_count_20d、industry_theme_score 和 cn_a.selection_strategy.v1。"
     if worker_id == "selection_skeptic":
-        return "反方评审：300750.SZ 风险暴露偏高。"
+        return "Selection 反方审查员 Review：300750.SZ 风险暴露偏高。Skeptic review 认为 PE_TTM、PE_ttm、PE TTM、市盈率 TTM、PE(TTM)、PS_TTM、PS_ttm、MA30_10日斜率、pe/roe、pb、Top 8、high tight flag、platform_deviation_pct、post_limit_up_window_days、single_day_min_return_60d、peak 与 limit_up_streak_2d 需翻译后展示。"
     if worker_id == "selection_manager":
-        return "综合判断：优先进入组合评审、继续观察、暂不继续。"
+        return "综合判断：优先进入组合评审、继续观察、暂不继续。输出 `selection_ranked_watchlist`，审查基础为 approved_selection_strategy_review_l1 和 L1 评审报告，缺失项标为（U5）。"
     return "\n".join(
         [
             "进入 /report:",
-            "- 600519.SH | 贵州茅台 | 经营质量与现金流稳定，值得进入深度报告验证。",
+            "- 600519.SH | 贵州茅台 | 策略信号一致性最强（命中6/8）；经营质量与现金流稳定，值得进入深度报告验证。",
             "观察:",
             "- 000858.SZ | 五粮液 | 还需后续财报与景气数据确认。",
             "放弃:",
@@ -236,6 +289,117 @@ def _build_controller(
         selection_controller=resolved_selection_controller,
     )
     return controller, transport, workflow_runner
+
+
+def _candidate_pack_manifest_payload(*, run_id: str, body_sha: str) -> dict[str, object]:
+    return {
+        "schema_version": "sel-04-candidate-pack-v1",
+        "selection_run_id": run_id,
+        "market": "CN_A",
+        "profile": "CN_A",
+        "trade_date": "2026-05-26",
+        "candidate_count": 3,
+        "source_lineage_refs": ["lineage://a"],
+        "pack_body_sha256": body_sha,
+        "strategy_config_ref": "config://approved",
+        "strategy_config_version": "cn_a.selection_strategy.v1",
+        "weight_version": "cn_a.selection_weights.v1",
+        "candidate_scores_ref": "scores://sel-run-08",
+        "stable_top20_rule": {"score_field": "score", "tie_break_fields": ["amount"], "missing_policy": "fail"},
+        "readback_status": "verified",
+        "stage": "approving_candidate_pack",
+        "target": "candidate_pack",
+    }
+
+
+def _write_columnar_manifest(plan: SelectionRunPlan):
+    writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
+    writer.add_daily_rows(
+        (
+            {
+                "market": "CN_A",
+                "profile": "CN_A",
+                "selection_trade_date": plan.trade_date,
+                "ticker": "600519.SH",
+                "date": plan.trade_date,
+                "close": 1612.0,
+                "amount": 3000000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+            {
+                "market": "CN_A",
+                "profile": "CN_A",
+                "selection_trade_date": plan.trade_date,
+                "ticker": "000858.SZ",
+                "date": plan.trade_date,
+                "close": 132.0,
+                "amount": 900000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+            {
+                "market": "CN_A",
+                "profile": "CN_A",
+                "selection_trade_date": plan.trade_date,
+                "ticker": "300750.SZ",
+                "date": plan.trade_date,
+                "close": 240.0,
+                "amount": 500000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+        )
+    )
+    writer.add_feature_rows(
+        (
+            {
+                "ticker": "600519.SH",
+                "company_name": "贵州茅台",
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+                "close": 1612.0,
+                "amount": 3000000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+            {
+                "ticker": "000858.SZ",
+                "company_name": "五粮液",
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+                "close": 132.0,
+                "amount": 900000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+            {
+                "ticker": "300750.SZ",
+                "company_name": "宁德时代",
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+                "close": 240.0,
+                "amount": 500000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+        )
+    )
+    return writer.commit(
+        provider_attempt_refs=(f"attempt://{plan.selection_run_id}",),
+        normalized_refs=(f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",),
+    )
+
+
+def _write_readback_log(path: Path, *, expected_sha256: str) -> None:
+    suffix = path.suffix
+    verify_path = path.with_suffix(f"{suffix}.readback-verify.json") if suffix else path.with_name(f"{path.name}.readback-verify.json")
+    verify_path.write_text(
+        json.dumps(
+            {
+                "status": "verified",
+                "expected_sha256": expected_sha256,
+                "readback_sha256": expected_sha256,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _selection_controller_with_completed_run(
@@ -485,36 +649,57 @@ def _selection_controller_with_completed_run(
             encoding="utf-8",
         )
     run_id = "sel-run-08"
+    plan = SelectionRunPlan(
+        selection_run_id=run_id,
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        provider_batch_plan_ref="plan://sel-run-08",
+        approved_strategy_config_ref="config://approved",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    body_path = tmp_path / "candidate-pack.md"
+    body_text = "\n".join(
+        [
+            "# A股候选事实包",
+            "",
+            summary_path.read_text(encoding="utf-8"),
+        ]
+    )
+    body_path.write_text(body_text, encoding="utf-8")
+    body_sha = sha256(body_text.encode("utf-8")).hexdigest()
+    manifest_path = tmp_path / "candidate-pack-manifest.json"
+    manifest_payload = _candidate_pack_manifest_payload(run_id=run_id, body_sha=body_sha)
+    manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    _write_readback_log(body_path, expected_sha256=body_sha)
+    _write_readback_log(manifest_path, expected_sha256=sha256(manifest_path.read_bytes()).hexdigest())
+    columnar_manifest = _write_columnar_manifest(plan)
     candidate_pack_ref = CandidatePackRef(
         selection_run_id=run_id,
         material_id="mat-sel-run-08",
-        l1_uri=str(tmp_path / "candidate-pack.md"),
-        content_sha256="a" * 64,
-        manifest_ref=str(tmp_path / "candidate-pack-manifest.json"),
+        l1_uri=str(body_path),
+        content_sha256=body_sha,
+        manifest_ref=str(manifest_path),
         approved_at="2026-05-26T09:00:00+00:00",
         expires_at="2026-05-27T09:00:00+00:00",
         pack_summary_ref=str(summary_path),
     )
     store.save_data_run_record(
         SelectionDataRunRecord(
-            run_plan=SelectionRunPlan(
-                selection_run_id=run_id,
-                market=SelectionMarket.CN_A,
-                profile=SelectionProfile.CN_A,
-                trade_date="2026-05-26",
-                lookback_trading_days=260,
-                universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://sel-run-08",
-                approved_strategy_config_ref="config://approved",
-                trigger_source=SelectionTriggerSource.SCHEDULED,
-            ),
+            run_plan=plan,
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
                 normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
                 provider_attempt_refs=(f"attempt://{run_id}",),
                 select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
-                warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",
+                warehouse_check_ref=columnar_manifest.warehouse_check_ref,
+                columnar_manifest_ref=columnar_manifest.manifest_ref,
+                columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(
+                    columnar_manifest.manifest_ref
+                ),
                 candidate_pack_ref=candidate_pack_ref,
                 completed_at="2026-05-26T09:01:00+00:00",
             ),
@@ -524,9 +709,9 @@ def _selection_controller_with_completed_run(
                 market=SelectionMarket.CN_A,
                 profile=SelectionProfile.CN_A,
                 trade_date="2026-05-26",
-                candidate_count=20,
+                candidate_count=3,
                 source_lineage_refs=("lineage://a",),
-                pack_body_sha256="a" * 64,
+                pack_body_sha256=body_sha,
                 strategy_config_ref="config://approved",
                 readback_status=CandidatePackReadbackStatus.VERIFIED,
                 stage="approving_candidate_pack",
@@ -607,6 +792,49 @@ def test_select_command_no_completed_run_requests_background_data_refresh(tmp_pa
 
 
 @pytest.mark.integration
+def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_completed_run(tmp_path: Path) -> None:
+    refresh_calls: list[dict[str, object]] = []
+
+    def _refresh(**kwargs: object) -> SelectionDataRefreshResult:
+        refresh_calls.append(dict(kwargs))
+        return SelectionDataRefreshResult(
+            status="started",
+            selection_run_id="sel-refresh-20260604",
+            trade_date="2026-06-04",
+            reason="no_completed_selection_run",
+        )
+
+    selection_store = SelectionRunStore()
+    old_selection_controller, _ = _selection_controller_with_completed_run(tmp_path)
+    old_store = old_selection_controller._store  # noqa: SLF001
+    for record in old_store._runs.values():  # noqa: SLF001
+        selection_store.save_data_run_record(record)
+    selection_controller = SelectionController(
+        store=selection_store,
+        now_fn=lambda: datetime.fromisoformat("2026-06-04T17:30:00+00:00").astimezone(UTC),
+        scheduler_enqueue=_refresh,
+        default_trade_date_resolver=lambda value: value or "2026-06-04",
+        workflow_evidence_root=tmp_path / "selection-workflows-current-date",
+    )
+    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+
+    result = controller.send_chat_message(request_id="sel-08-current-date-refresh", context_id="ctx-refresh-current", text="/select")
+
+    assert "error" not in result
+    assert result["selection"]["code"] == "data_refresh_requested"
+    assert result["selection"]["unavailableCode"] == "no_completed_selection_run"
+    assert result["selection"]["dataRefresh"]["tradeDate"] == "2026-06-04"
+    assert len(refresh_calls) == 1
+    request = refresh_calls[0]["request"]
+    assert isinstance(request, object)
+    assert getattr(request, "trade_date") == "2026-06-04"
+    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
+    assert evidence_payload["trade_date"] == "2026-06-04"
+    assert chat_transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+@pytest.mark.integration
 def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categories(tmp_path: Path) -> None:
     selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
     controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
@@ -635,22 +863,45 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
         "selection_portfolio_manager",
     ]
     message = result["messages"][-1]["text"]
+    report_markdown = result["selection"]["readerReportMarkdown"]
     assert "进入 `/report`" in message
     assert "观察：" in message
     assert "放弃：" in message
-    assert "候选事实包：" in message
-    assert "总分" in message
-    assert "分项得分" in message
-    assert "策略来源" in message
-    assert "策略变体" in message
-    assert "命中字段" in message
-    assert "实际指标值" in message
-    assert "风险扣分" in message
-    assert "数据缺口扣分" in message
-    assert "排序 tie-break 字段" in message
-    assert "策略配置版本：cn_a.selection_strategy.v1" in message
-    assert "权重版本：cn_a.selection_weights.v1" in message
-    _assert_candidate_fact_body_is_reader_chinese(message)
+    assert "命中6/8" in message
+    assert "候选事实包：" not in message
+    assert "# A股选股报告" in report_markdown
+    assert "## 一、候选分组结论" in report_markdown
+    assert "## 二、正方策略观点" in report_markdown
+    assert "策略评审：优先关注 600519.SH 与 000858.SZ。" in report_markdown
+    assert "## 三、反方审查意见" in report_markdown
+    assert "反方审查：300750.SZ 风险暴露偏高。" in report_markdown
+    assert "## 四、综合取舍" in report_markdown
+    assert "综合判断：优先进入组合评审、继续观察、暂不继续。" in report_markdown
+    assert "## 五、最终分流决策" in report_markdown
+    assert "进入 /report:" in report_markdown
+    assert "## 六、策略命中与分析过程" in report_markdown
+    assert "放量上涨" in report_markdown
+    assert "量价放量" in report_markdown
+    assert "| 600519.SH 贵州茅台 | 放量上涨 |" in report_markdown
+    assert "| 000858.SZ 五粮液 | 量价放量 |" in report_markdown
+    assert "先看每只股票命中的策略条件数量" in report_markdown
+    assert "具体条件以本节逐只核对为准" in report_markdown
+    assert "myhhub_volume_rise" not in report_markdown
+    assert "sequoia_ma_volume" not in report_markdown
+    assert "## 七、数据范围与质量" in report_markdown
+    assert "总分" in report_markdown
+    assert "实际指标值" in report_markdown
+    assert "策略配置版本" not in report_markdown
+    assert "权重版本" not in report_markdown
+    assert "命中字段" not in report_markdown
+    assert "tie-break" not in report_markdown
+    assert "slope_10d" not in report_markdown
+    assert "low_atr" not in report_markdown
+    assert "滚动市盈率" in report_markdown
+    assert "滚动市销率" in report_markdown
+    assert "已批准的正向策略评审" in report_markdown
+    assert "## 八、进入 `/report` 的验证重点" in report_markdown
+    _assert_candidate_fact_body_is_reader_chinese(report_markdown)
     assert "买入" not in message
     assert "卖出" not in message
     assert "持有" not in message
@@ -693,22 +944,19 @@ def test_select_command_rebuilds_legacy_candidate_pack_summary_fields(tmp_path: 
     assert "error" not in result
     assert result["selection"]["code"] == "completed"
     message = result["messages"][-1]["text"]
-    assert "候选事实包：" in message
-    assert "总分" in message
-    assert "分项得分" in message
-    assert "策略来源" in message
-    assert "策略变体" in message
-    assert "命中字段" in message
-    assert "实际指标值" in message
-    assert "风险扣分" in message
-    assert "数据缺口扣分" in message
-    assert "排序 tie-break 字段" in message
-    assert "策略配置版本：cn_a.selection_strategy.v1" in message
-    assert "权重版本：cn_a.selection_weights.v1" in message
-    _assert_candidate_fact_body_is_reader_chinese(message)
-    assert "manifest" not in message.lower()
-    assert "lineage" not in message.lower()
-    assert "OpenViking" not in message
+    report_markdown = result["selection"]["readerReportMarkdown"]
+    assert "候选事实包：" not in message
+    assert "## 六、策略命中与分析过程" in report_markdown
+    assert "放量上涨" in report_markdown
+    assert "量价放量" in report_markdown
+    assert "## 七、数据范围与质量" in report_markdown
+    assert "总分" in report_markdown
+    assert "实际指标值" in report_markdown
+    assert "策略配置版本" not in report_markdown
+    assert "权重版本" not in report_markdown
+    assert "命中字段" not in report_markdown
+    assert "策略变体" not in report_markdown
+    _assert_candidate_fact_body_is_reader_chinese(report_markdown)
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 
@@ -723,9 +971,16 @@ def test_select_command_rebuilds_candidate_pack_summary_with_raw_reader_field_na
     assert "error" not in result
     assert result["selection"]["code"] == "completed"
     message = result["messages"][-1]["text"]
-    assert "候选事实包：" in message
-    _assert_candidate_fact_body_is_reader_chinese(message)
-    assert "hit_volume_breakout" not in message
+    report_markdown = result["selection"]["readerReportMarkdown"]
+    assert "候选事实包：" not in message
+    _assert_candidate_fact_body_is_reader_chinese(report_markdown)
+    assert "策略配置版本" not in report_markdown
+    assert "命中字段" not in report_markdown
+    assert "策略变体" not in report_markdown
+    assert "## 六、策略命中与分析过程" in report_markdown
+    assert "放量上涨" in report_markdown
+    assert "## 七、数据范围与质量" in report_markdown
+    assert "hit_volume_breakout" not in report_markdown
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 

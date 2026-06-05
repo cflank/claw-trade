@@ -99,13 +99,14 @@ class CandidateScoreRow:
     score: float
     strategy_hits: tuple[str, ...]
     feature_values: Mapping[str, float]
+    source_ref: str = ""
 
 
 @dataclass(frozen=True)
 class ScoringResult:
     score_ref: str
-    all_scores: tuple[CandidateScoreRow, ...]
     top20: tuple[CandidateScoreRow, ...]
+    all_scores: tuple[CandidateScoreRow, ...] = ()
 
 
 def run_hard_filters(
@@ -115,7 +116,6 @@ def run_hard_filters(
     strategy: ApprovedSelectionStrategy,
 ) -> FilteredUniverse:
     passed_rows: list[FeatureRow] = []
-    decisions: list[FilterDecision] = []
     for row in snapshot.rows:
         failed_rules: list[str] = []
         for rule in strategy.hard_filters:
@@ -126,7 +126,6 @@ def run_hard_filters(
             if not _compare(raw_value, rule.operator, rule.value):
                 failed_rules.append(rule.name)
         is_passed = not failed_rules
-        decisions.append(FilterDecision(ticker=row.ticker, passed=is_passed, failed_rules=tuple(failed_rules)))
         if is_passed:
             passed_rows.append(row)
     if not passed_rows:
@@ -142,7 +141,7 @@ def run_hard_filters(
                 ),
             ),
         )
-    return FilteredUniverse(rows=tuple(passed_rows), decisions=tuple(decisions))
+    return FilteredUniverse(rows=tuple(passed_rows), decisions=())
 
 
 def score_candidates(
@@ -171,7 +170,8 @@ def score_candidates(
         )
     _validate_v1_weights(plan=plan, strategy=strategy)
     required_strategy_fields = _strategy_required_fields(strategy.strategy_set)
-    rows: list[CandidateScoreRow] = []
+    top_rows: list[CandidateScoreRow] = []
+    scored_count = 0
     for item in filtered.rows:
         strategy_hits = _resolve_strategy_hits(item, strategy.strategy_set)
         feature_values = dict(item.feature_values)
@@ -193,17 +193,28 @@ def score_candidates(
         )
         score = positive_score - feature_values["risk_penalty_score"] - feature_values["data_gap_penalty_score"]
         feature_values[strategy.stable_top20_rule.score_field] = score
-        rows.append(
-            CandidateScoreRow(
-                ticker=item.ticker,
-                company_name=item.company_name,
-                industry=item.industry,
-                score=score,
-                strategy_hits=strategy_hits,
-                feature_values=feature_values,
-            )
+        scored_count += 1
+        candidate = CandidateScoreRow(
+            ticker=item.ticker,
+            company_name=item.company_name,
+            industry=item.industry,
+            score=score,
+            strategy_hits=strategy_hits,
+            feature_values=feature_values,
+            source_ref=item.source_ref,
         )
-    if not rows:
+        top_rows.append(candidate)
+        if len(top_rows) > 20:
+            top_rows.sort(
+                key=lambda row: _stable_sort_key(
+                    row,
+                    score_field=strategy.stable_top20_rule.score_field,
+                    tie_break_fields=strategy.stable_top20_rule.tie_break_fields,
+                    missing_policy=strategy.stable_top20_rule.missing_policy,
+                )
+            )
+            top_rows.pop()
+    if scored_count == 0:
         raise SelectionEngineError(
             "selection_inputs_insufficient",
             "无可评分候选",
@@ -218,18 +229,17 @@ def score_candidates(
         )
     top20 = tuple(
         sorted(
-            rows,
+            top_rows,
             key=lambda row: _stable_sort_key(
                 row,
                 score_field=strategy.stable_top20_rule.score_field,
                 tie_break_fields=strategy.stable_top20_rule.tie_break_fields,
                 missing_policy=strategy.stable_top20_rule.missing_policy,
             ),
-        )[:20]
+        )
     )
     return ScoringResult(
         score_ref=f"score://{plan.selection_run_id}",
-        all_scores=tuple(rows),
         top20=top20,
     )
 

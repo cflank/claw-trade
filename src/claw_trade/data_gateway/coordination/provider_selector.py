@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Sequence
+from typing import Any, Protocol, Sequence
 
 from claw_trade.data_gateway.models import ProviderCandidate
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
@@ -48,8 +48,9 @@ def _as_string(value: Any) -> str:
 
 
 class ProviderSelector:
-    def __init__(self, registry: ProviderRegistry) -> None:
+    def __init__(self, registry: ProviderRegistry, *, credential_resolver: CredentialResolverLike | None = None) -> None:
         self.registry = registry
+        self.credential_resolver = credential_resolver
 
     def select_candidates(self, gaps: Sequence[Any], plan: Any) -> tuple[ProviderCandidate, ...]:
         selected: list[ProviderCandidate] = []
@@ -85,6 +86,8 @@ class ProviderSelector:
             if not required_fields.issubset(set(cap.coverage_fields)):
                 continue
             if required_role_value is not None and cap.source_role != required_role_value:
+                continue
+            if not self._credential_available(cap):
                 continue
             matches.append(
                 ProviderCandidate(
@@ -128,3 +131,17 @@ class ProviderSelector:
             ),
         )
         return tuple(ordered)
+
+    def _credential_available(self, cap: ProviderCapabilityView) -> bool:
+        if not bool(_read_attr(cap, "credential_required", False)):
+            return True
+        if self.credential_resolver is None:
+            return True
+        names = tuple(str(name).strip() for name in _as_tuple(_read_attr(cap, "credential_names", ())) if str(name).strip())
+        if not names:
+            return False
+        return any(bool(self.credential_resolver.get_credential(name)) for name in names)
+
+
+class CredentialResolverLike(Protocol):
+    def get_credential(self, name: str) -> str | None: ...

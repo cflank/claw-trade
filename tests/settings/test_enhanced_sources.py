@@ -16,9 +16,14 @@ from claw_trade.ui_backend.settings_service import UiBoundaryError
 PROBE_BACKED_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
     "alpha_vantage",
+    "fmp",
+    "polygon",
     "finnhub",
     "fred",
+    "tiingo",
+    "nasdaq_data_link",
     "coingecko_pro",
+    "coinmarketcap",
     "coinglass",
 )
 
@@ -46,7 +51,7 @@ def _service_with_tushare(**kwargs) -> DataSourceSettingsService:
     )
 
 
-def test_settings_enhanced_sources_exposes_fixed_built_in_list_and_filters_unapproved_provider() -> None:
+def test_settings_enhanced_sources_exposes_provider_backed_api_sources_and_filters_unapproved_provider() -> None:
     store = InMemoryDataSourceStore()
     store.upsert(
         {
@@ -75,10 +80,10 @@ def test_settings_enhanced_sources_exposes_fixed_built_in_list_and_filters_unapp
     listed = service.list_data_sources()
 
     assert SUPPORTED_DATA_SOURCE_TYPES
-    assert tuple(listed["supportedTypes"]) == ("tushare",)
+    assert tuple(listed["supportedTypes"]) == SUPPORTED_DATA_SOURCE_TYPES
     listed_types = [item["supportedType"] for item in listed["instances"]]
-    assert len(listed["instances"]) == 1
-    assert listed_types == ["tushare"]
+    assert len(listed["instances"]) == len(SUPPORTED_DATA_SOURCE_TYPES)
+    assert listed_types == list(SUPPORTED_DATA_SOURCE_TYPES)
     assert all(item["displayName"] != "Custom Vendor" for item in listed["instances"])
     for default_or_internal in (
         "akshare",
@@ -90,8 +95,16 @@ def test_settings_enhanced_sources_exposes_fixed_built_in_list_and_filters_unapp
         "ccxt",
         "sec_edgar",
         "yahoo_finance",
-        "alpha_vantage",
-        "coinglass",
+        "fmp",
+        "polygon",
+        "tiingo",
+        "nasdaq_data_link",
+        "coinmarketcap",
+        "wind",
+        "csmar",
+        "newsapi",
+        "x",
+        "reddit",
         "lunarcrush",
     ):
         assert default_or_internal not in listed_types
@@ -216,7 +229,7 @@ def test_settings_enhanced_sources_rejects_unapproved_provider_types() -> None:
         )
 
     assert exc.value.code == "INVALID_INPUT"
-    assert "/report 或 /select 主链路" in exc.value.user_message
+    assert "设置页连接测试" in exc.value.user_message
 
 
 @pytest.mark.parametrize(
@@ -254,9 +267,14 @@ def test_data_source_health_tester_dispatches_all_fixed_sources(monkeypatch: pyt
 
     monkeypatch.setattr(ui_runtime_checks, "_probe_tushare", _record("tushare"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_alpha_vantage", _record("alpha_vantage"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_fmp", _record("fmp"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_polygon", _record("polygon"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_finnhub", _record("finnhub"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_fred", _record("fred"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_tiingo", _record("tiingo"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_nasdaq_data_link", _record("nasdaq_data_link"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coingecko_pro", _record("coingecko_pro"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_coinmarketcap", _record("coinmarketcap"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coinglass", _record("coinglass"))
 
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
@@ -272,9 +290,14 @@ def test_data_source_health_tester_dispatches_all_fixed_sources(monkeypatch: pyt
     (
         ("tushare", {"supportedType": "tushare"}, {}),
         ("alpha_vantage", {"supportedType": "alpha_vantage"}, {}),
+        ("fmp", {"supportedType": "fmp"}, {}),
+        ("polygon", {"supportedType": "polygon"}, {}),
         ("finnhub", {"supportedType": "finnhub"}, {}),
         ("fred", {"supportedType": "fred"}, {}),
+        ("tiingo", {"supportedType": "tiingo"}, {}),
+        ("nasdaq_data_link", {"supportedType": "nasdaq_data_link"}, {}),
         ("coingecko_pro", {"supportedType": "coingecko_pro"}, {}),
+        ("coinmarketcap", {"supportedType": "coinmarketcap"}, {}),
         ("coinglass", {"supportedType": "coinglass"}, {}),
     ),
 )
@@ -349,9 +372,14 @@ class _HttpProbeResponse:
     ("source_type", "credential", "payload"),
     (
         ("alpha_vantage", "k", {"Error Message": "bad key"}),
+        ("fmp", "k", {"error": "bad key"}),
+        ("polygon", "k", {"status": "ERROR", "error": "bad key"}),
         ("finnhub", "k", {"error": "invalid token"}),
         ("fred", "k", {"error_message": "bad key"}),
+        ("tiingo", "k", {"detail": "bad key"}),
+        ("nasdaq_data_link", "k", {"quandl_error": {"code": "QEAx01"}}),
         ("coingecko_pro", "k", {"error": "throttled"}),
+        ("coinmarketcap", "k", {"status": {"error_code": 1001, "error_message": "bad key"}}),
         ("coinglass", "k", {"message": "bad key"}),
     ),
 )

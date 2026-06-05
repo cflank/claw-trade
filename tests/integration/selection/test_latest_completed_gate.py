@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
 
 import pytest
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.controller import SelectionController
 from claw_trade.selection.models import (
     CandidatePackManifest,
@@ -21,6 +26,12 @@ from claw_trade.selection.store import (
     SelectionRunIntegrity,
     SelectionRunStore,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_selection_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_COLUMNAR_ROOT", str(tmp_path / "columnar"))
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_GATE_ARTIFACT_ROOT", str(tmp_path / "candidate-artifacts"))
 
 
 class _Spy:
@@ -91,23 +102,38 @@ def _completed_record(
     *,
     completed_at: str,
     expires_at: str = "2026-05-27T09:00:00+00:00",
-    pack_sha: str = "a" * 64,
-    manifest_sha: str = "a" * 64,
+    pack_sha: str | None = None,
+    manifest_sha: str | None = None,
     integrity: SelectionRunIntegrity = SelectionRunIntegrity(),
     manifest: CandidatePackManifest | None = None,
 ) -> SelectionDataRunRecord:
-    pack_ref = _pack_ref(run_id, expires_at=expires_at, sha=pack_sha)
+    body_path, summary_path, manifest_path, body_sha = _write_candidate_pack_files(run_id, trade_date)
+    resolved_pack_sha = pack_sha or body_sha
+    resolved_manifest_sha = manifest_sha or resolved_pack_sha
+    columnar_manifest = _write_columnar_manifest(_plan(run_id, trade_date))
+    pack_ref = CandidatePackRef(
+        selection_run_id=run_id,
+        material_id=f"mat-{run_id}",
+        l1_uri=str(body_path),
+        content_sha256=resolved_pack_sha,
+        manifest_ref=str(manifest_path),
+        approved_at="2026-05-26T08:00:00+00:00",
+        expires_at=expires_at,
+        pack_summary_ref=str(summary_path),
+    )
     data_run = SelectionDataRun(
         selection_run_id=run_id,
         status=SelectionDataRunStatus.COMPLETED,
         normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
         provider_attempt_refs=(f"attempt://{run_id}",),
         select_data_plan_ref=f"select-data-plan://selection/{run_id}/{trade_date}",
-        warehouse_check_ref=f"warehouse-check://selection/{run_id}/{trade_date}/ok",
+        warehouse_check_ref=columnar_manifest.warehouse_check_ref,
+        columnar_manifest_ref=columnar_manifest.manifest_ref,
+        columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(columnar_manifest.manifest_ref),
         candidate_pack_ref=pack_ref,
         completed_at=completed_at,
     )
-    final_manifest = manifest if manifest is not None else _manifest(run_id, trade_date, sha=manifest_sha)
+    final_manifest = manifest if manifest is not None else _manifest(run_id, trade_date, sha=resolved_manifest_sha)
     return SelectionDataRunRecord(
         run_plan=_plan(run_id, trade_date),
         data_run=data_run,
@@ -150,6 +176,110 @@ def _assert_side_effect_dependencies_not_called(provider_spy: _Spy, scheduler_sp
     assert provider_spy.calls == 0
     assert scheduler_spy.calls == 0
     assert data_job_spy.calls == 0
+
+
+def _write_candidate_pack_files(run_id: str, trade_date: str) -> tuple[Path, Path, Path, str]:
+    root = Path(os.environ["CLAW_TRADE_SELECTION_GATE_ARTIFACT_ROOT"]) / run_id
+    root.mkdir(parents=True, exist_ok=True)
+    body_path = root / "candidate-pack.md"
+    summary_path = root / "candidate-pack-summary.md"
+    manifest_path = root / "candidate-pack-manifest.json"
+    body_text = "\n".join(
+        [
+            "# A股候选事实包",
+            "",
+            "| 排名 | 股票代码 | 股票名称 |",
+            "| --- | --- | --- |",
+            "| 1 | 600000.SH | 浦发银行 |",
+        ]
+    )
+    summary_text = "\n".join(
+        [
+            "# A股候选事实包",
+            "",
+            "## 本轮范围",
+            f"- 交易日：{trade_date}",
+            "- 市场：CN_A",
+            "- 候选数量：1",
+        ]
+    )
+    body_path.write_text(body_text, encoding="utf-8")
+    summary_path.write_text(summary_text, encoding="utf-8")
+    body_sha = sha256(body_text.encode("utf-8")).hexdigest()
+    manifest_payload = {
+        "schema_version": "v1",
+        "selection_run_id": run_id,
+        "market": "CN_A",
+        "profile": "CN_A",
+        "trade_date": trade_date,
+        "candidate_count": 1,
+        "source_lineage_refs": ["lineage://provider-attempts", "lineage://feature-snapshot"],
+        "pack_body_sha256": body_sha,
+        "strategy_config_ref": "config://approved",
+        "strategy_config_version": "cn_a.selection_strategy.v1",
+        "weight_version": "cn_a.selection_weights.v1",
+        "candidate_scores_ref": f"scores://{run_id}",
+        "stable_top20_rule": {"score_field": "score", "tie_break_fields": ["amount"], "missing_policy": "fail"},
+        "readback_status": "verified",
+        "stage": "approving_candidate_pack",
+        "target": "candidate_pack",
+    }
+    manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    _write_readback_log(body_path, expected_sha256=body_sha)
+    _write_readback_log(manifest_path, expected_sha256=sha256(manifest_path.read_bytes()).hexdigest())
+    return body_path, summary_path, manifest_path, body_sha
+
+
+def _write_columnar_manifest(plan: SelectionRunPlan):
+    writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
+    writer.add_daily_rows(
+        (
+            {
+                "market": "CN_A",
+                "profile": "CN_A",
+                "selection_trade_date": plan.trade_date,
+                "ticker": "600000.SH",
+                "date": plan.trade_date,
+                "close": 10.0,
+                "amount": 1000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+        )
+    )
+    writer.add_feature_rows(
+        (
+            {
+                "ticker": "600000.SH",
+                "company_name": "浦发银行",
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+                "close": 10.0,
+                "amount": 1000000.0,
+                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+            },
+        )
+    )
+    return writer.commit(
+        provider_attempt_refs=(f"attempt://{plan.selection_run_id}",),
+        normalized_refs=(f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",),
+    )
+
+
+def _write_readback_log(path: Path, *, expected_sha256: str) -> None:
+    suffix = path.suffix
+    verify_path = path.with_suffix(f"{suffix}.readback-verify.json") if suffix else path.with_name(f"{path.name}.readback-verify.json")
+    verify_path.write_text(
+        json.dumps(
+            {
+                "status": "verified",
+                "expected_sha256": expected_sha256,
+                "readback_sha256": expected_sha256,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.integration

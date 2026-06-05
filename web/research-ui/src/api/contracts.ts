@@ -24,6 +24,7 @@ export type ChatMessageKind =
   | 'report_completed'
   | 'report_failed'
   | 'selection_result'
+  | 'selection_refreshing'
   | 'selection_unavailable'
   | 'price_alert'
   | 'file_send_failed';
@@ -74,6 +75,41 @@ export interface SelectionMessageMetadata {
   evidencePath?: string | null;
   unavailableCode?: string | null;
   failureReason?: string | null;
+  readerReportMarkdown?: string | null;
+  dataRefresh?: {
+    status: string;
+    selectionRunId?: string | null;
+    tradeDate?: string | null;
+    reason?: string | null;
+    errorCode?: string | null;
+  } | null;
+}
+
+export interface SelectionReportForUser {
+  id: string;
+  title: string;
+  generatedAt: string;
+  summarySnippet: string;
+  markdown: string;
+}
+
+export interface SelectionProgressForUser {
+  status: 'running' | 'completed' | 'failed';
+  statusLabel: string;
+  command: string;
+  stageLabel: string;
+  currentAction: string;
+  percent: number;
+  workerStatusLabels: string[];
+  completedRoleLabels?: string[];
+  waitingRoleLabels?: string[];
+  startedAt: string;
+  finishedAt?: string | null;
+  workflowRunId?: string | null;
+}
+
+export interface SelectionRefreshSnapshotForUser {
+  selectionProgress?: SelectionProgressForUser | null;
 }
 
 export interface ConfirmationCard {

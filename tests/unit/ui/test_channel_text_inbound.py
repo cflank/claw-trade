@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.selection.controller import SelectCommandCode, SelectCommandResult
 from claw_trade.ui_backend.channel_text_inbound import (
     ChannelReplyTarget,
     ChannelTextInboundController,
@@ -47,7 +48,28 @@ class _FakeChatTransport:
         return {"text": f"echo:{text}"}
 
 
-def _controller() -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
+@dataclass
+class _FakeSelectionController:
+    calls: int = 0
+
+    def handle_select_command(self, *, raw_text: str, request_id: str, user_id: str | None = None) -> SelectCommandResult:
+        self.calls += 1
+        return SelectCommandResult(
+            code=SelectCommandCode.COMPLETED,
+            chat_text="`/select` 微信测试结果",
+            select_workflow_run_id="select-wechat-test-run",
+            evidence_path=Path("runs/selection/workflows/select-wechat-test-run/evidence.json"),
+            reader_report_markdown="# 选股结果报告\n\n## 候选事实表\n\n| 股票代码 | 股票名称 |\n| --- | --- |\n| 600519.SH | 贵州茅台 |",
+        )
+
+
+def _controller(
+    *,
+    selection_controller: _FakeSelectionController | None = None,
+    background_submitter=None,  # type: ignore[no-untyped-def]
+    send_channel_text=None,  # type: ignore[no-untyped-def]
+    request_selection_report_file=None,  # type: ignore[no-untyped-def]
+) -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
     runner = _FakeRunner()
     chat_transport = _FakeChatTransport()
     queue = ReportTaskQueue(ReportWorkflowBridge(runner))
@@ -57,8 +79,18 @@ def _controller() -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatT
         confirmation=ConfirmationController(queue),
         queue=queue,
         settings=ReportWorkflowSettings(),
+        selection_controller=selection_controller,
     )
-    return ChannelTextInboundController(chat_controller), runner, chat_transport
+    return (
+        ChannelTextInboundController(
+            chat_controller,
+            background_submitter=background_submitter,
+            send_channel_text=send_channel_text,
+            request_selection_report_file=request_selection_report_file,
+        ),
+        runner,
+        chat_transport,
+    )
 
 
 def _message(request_id: str, text: str, *, sender_id: str = "sender-1") -> ChannelTextMessage:
@@ -88,6 +120,92 @@ def test_ordinary_wechat_text_uses_normal_chat_without_report_workflow() -> None
             "requestId": "r-1",
         }
     ]
+
+
+def test_select_command_runs_in_background_and_updates_ui_snapshot_without_openclaw_chat() -> None:
+    selection = _FakeSelectionController()
+    background_jobs = []
+    controller, runner, chat_transport = _controller(
+        selection_controller=selection,
+        background_submitter=background_jobs.append,
+    )
+
+    result = controller.handle_message(_message("r-select", "/select"))
+
+    assert result == {
+        "handled": True,
+        "replyText": "收到，正在执行 /select 选股；完成后会显示在工作台。",
+        "state": "selection_processing",
+    }
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["kind"] for item in snapshot["messages"]] == ["plain", "selection_refreshing"]
+    assert [item["text"] for item in snapshot["messages"]] == [
+        "/select",
+        "已收到 `/select`，正在执行选股；完成后会显示在这里。",
+    ]
+    assert selection.calls == 0
+    assert len(background_jobs) == 1
+
+    background_jobs[0]()
+
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["kind"] for item in snapshot["messages"]] == ["plain", "selection_refreshing", "selection_result"]
+    assert snapshot["messages"][-1]["text"] == "`/select` 微信测试结果"
+    assert snapshot["messages"][-1]["selection"]["workflowRunId"] == "select-wechat-test-run"
+    assert "候选事实表" in snapshot["messages"][-1]["selection"]["readerReportMarkdown"]
+    assert selection.calls == 1
+    assert runner.calls == 0
+    assert chat_transport.calls == []
+
+
+def test_select_command_pushes_wechat_summary_and_sends_selection_pdf_on_request() -> None:
+    selection = _FakeSelectionController()
+    background_jobs = []
+    sent_texts = []
+    sent_files = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
+
+    def _send_selection_file(workflow_run_id, markdown, request_id, target):  # type: ignore[no-untyped-def]
+        sent_files.append(
+            {
+                "workflowRunId": workflow_run_id,
+                "markdown": markdown,
+                "requestId": request_id,
+                "target": target,
+            }
+        )
+        return {"sent": True, "userMessage": "完整选股报告已发送。"}
+
+    controller, runner, chat_transport = _controller(
+        selection_controller=selection,
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+        request_selection_report_file=_send_selection_file,
+    )
+
+    result = controller.handle_message(_message("r-select-summary", "/select"))
+    assert result["state"] == "selection_processing"
+    assert sent_texts == []
+
+    background_jobs[0]()
+
+    assert len(sent_texts) == 1
+    assert "`/select` 微信测试结果" in sent_texts[0]["text"]
+    assert "回复“发送完整报告”" in sent_texts[0]["text"]
+    assert sent_texts[0]["target"].sender_id == "sender-1"
+
+    file_result = controller.handle_message(_message("r-select-file", "发送完整报告"))
+
+    assert file_result == {"handled": True, "replyText": "完整选股报告已发送。", "state": "sent"}
+    assert len(sent_files) == 1
+    assert sent_files[0]["workflowRunId"] == "select-wechat-test-run"
+    assert "候选事实表" in sent_files[0]["markdown"]
+    assert sent_files[0]["target"].sender_id == "sender-1"
+    assert runner.calls == 0
+    assert chat_transport.calls == []
 
 
 def test_report_message_returns_confirmation_without_starting_workflow() -> None:

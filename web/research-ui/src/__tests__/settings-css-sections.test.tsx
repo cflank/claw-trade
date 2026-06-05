@@ -66,6 +66,8 @@ const fixedSources = [
   { instanceId: 'ds-nasdaq', supportedType: 'nasdaq_data_link', group: 'global_data', displayName: 'Nasdaq Data Link' },
   { instanceId: 'ds-coingecko-pro', supportedType: 'coingecko_pro', group: 'crypto_data', displayName: 'CoinGecko Pro' },
   { instanceId: 'ds-cmc', supportedType: 'coinmarketcap', group: 'crypto_data', displayName: 'CoinMarketCap' },
+  { instanceId: 'ds-coinglass', supportedType: 'coinglass', group: 'crypto_data', displayName: 'Coinglass' },
+  { instanceId: 'ds-future-api', supportedType: 'future_api_source', group: 'global_data', displayName: 'Future API Source' },
 ] as const;
 
 const stylesPath = resolve(dirname(fileURLToPath(import.meta.url)), '../styles.css');
@@ -160,6 +162,17 @@ describe('settings-css-sections', () => {
     expect(stylesText).toMatch(/\.ct-source-category-card\.is-active\s*{[^}]*box-shadow:\s*inset 3px 0 0 var\(--ct-primary\);/s);
     expect(stylesText).not.toContain('.ct-source-list');
     expect(stylesText).not.toContain('.ct-source-row');
+
+    fireEvent.click(screen.getByRole('tab', { name: '全球市场/宏观' }));
+    expect(within(sourceSection).queryByText('其它 API 源')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('Future API Source')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('FMP')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('Polygon')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('Tiingo')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('Nasdaq Data Link')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('NewsAPI')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('X.com')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByText('Reddit')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
     expect(screen.getByRole('tab', { name: '通用' })).toHaveAttribute('aria-selected', 'true');

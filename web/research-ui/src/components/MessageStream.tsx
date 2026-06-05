@@ -22,9 +22,13 @@ const KIND_LABEL: Record<ChatMessageForUser['kind'], string> = {
   file_send_failed: '发送失败',
 };
 
+const INTERNAL_RUNTIME_NAME_PATTERNS = [
+  new RegExp(`\\b${'open'}${'viking'}\\b`, 'i'),
+  new RegExp(`\\b${'open'}${'claw'}\\b`, 'i'),
+];
+
 const SELECTION_PROTOCOL_LINE_PATTERNS = [
-  /\bopenviking\b/i,
-  /\bopenclaw\b/i,
+  ...INTERNAL_RUNTIME_NAME_PATTERNS,
   /\bmongo\b/i,
   /\bprovider\b/i,
   /\braw payload\b/i,
@@ -41,15 +45,31 @@ const SELECTION_PROTOCOL_LINE_PATTERNS = [
   /\blineage\b/i,
   /\breceipt\b/i,
   /local:\/\/|\/runs\//i,
+  /\btotal\s+score\b/i,
+  /\bsubscore\b/i,
+  /\bstrategy\s+(source|variant)\b/i,
+  /\bhit\s+fields\b/i,
+  /\bmetric\s+values\b/i,
+  /\brisk\/data-gap\b/i,
+  /\btie-break\b/i,
+  /\bconfig\/weight\b/i,
+  /cn_a\.selection/i,
+  /策略配置版本|权重版本|策略变体|排序\s*tie-break\s*字段/i,
+  /\d+\s*策略命中|策略命中|总分\s*\d|\bRPS\d*\b|\bMa\d+\b/i,
 ];
 
 function selectionDisplayText(text: string) {
   const safeLines = text
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
-    .filter((line) => !SELECTION_PROTOCOL_LINE_PATTERNS.some((pattern) => pattern.test(line)));
+    .filter((line) => isSelectionCandidateLine(line) || !SELECTION_PROTOCOL_LINE_PATTERNS.some((pattern) => pattern.test(line)));
   const safeText = safeLines.join('\n').trim();
   return safeText || '`/select` 结果暂不可展示，请稍后重试。';
+}
+
+function isSelectionCandidateLine(line: string) {
+  const cleaned = line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
+  return /^[A-Z0-9]{2,8}\.(?:SH|SZ|BJ|HK|US)\b/.test(cleaned);
 }
 
 function parseConfirmableSelectionTickers(text: string) {
@@ -84,13 +104,16 @@ function SelectionResultCard({
   item,
   selectionSubmittingKey,
   onConfirmSelectionCandidate,
+  onOpenSelectionReport,
 }: {
   item: ChatMessageForUser;
   selectionSubmittingKey?: string | null;
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
+  onOpenSelectionReport?: (item: ChatMessageForUser) => void;
 }) {
   const safeText = selectionDisplayText(item.text);
   const workflowRunId = item.selection?.workflowRunId?.trim();
+  const hasReport = Boolean(item.selection?.readerReportMarkdown?.trim());
   const confirmable = item.kind === 'selection_result' && workflowRunId ? parseConfirmableSelectionTickers(safeText) : [];
   return (
     <section className={`ct-selection-card ${item.kind === 'selection_unavailable' ? 'is-unavailable' : ''}`}>
@@ -99,6 +122,13 @@ function SelectionResultCard({
       </div>
       {item.kind === 'selection_result' ? (
         <p className="ct-selection-note">不会自动启动 /report。需要你确认候选标的后才会进入正式报告。</p>
+      ) : null}
+      {hasReport ? (
+        <div className="ct-selection-actions ct-button-row">
+          <button type="button" className="ct-button ct-button-secondary" onClick={() => onOpenSelectionReport?.(item)}>
+            查看完整选股报告
+          </button>
+        </div>
       ) : null}
       {confirmable.length ? (
         <div className="ct-selection-actions ct-button-row">
@@ -139,6 +169,7 @@ function MessageBody({
   onOpenReport,
   selectionSubmittingKey,
   onConfirmSelectionCandidate,
+  onOpenSelectionReport,
 }: {
   item: ChatMessageForUser;
   card?: ConfirmationCard;
@@ -151,6 +182,7 @@ function MessageBody({
   onCardMarketChange?: (card: ConfirmationCard, market: 'CN_A' | 'US' | 'HK' | 'CRYPTO') => Promise<void> | void;
   onOpenReport?: (reportId: string) => void;
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
+  onOpenSelectionReport?: (item: ChatMessageForUser) => void;
 }) {
   if (item.kind === 'confirmation_card' && card) {
     const isBusy = cardSubmittingId === card.id;
@@ -239,6 +271,7 @@ function MessageBody({
         item={item}
         selectionSubmittingKey={selectionSubmittingKey}
         onConfirmSelectionCandidate={onConfirmSelectionCandidate}
+        onOpenSelectionReport={onOpenSelectionReport}
       />
     );
   }
@@ -257,6 +290,7 @@ export function MessageStream({
   onOpenReport,
   selectionSubmittingKey,
   onConfirmSelectionCandidate,
+  onOpenSelectionReport,
 }: {
   items: ChatMessageForUser[];
   confirmationCards?: Record<string, ConfirmationCard>;
@@ -269,6 +303,7 @@ export function MessageStream({
   onCardMarketChange?: (card: ConfirmationCard, market: 'CN_A' | 'US' | 'HK' | 'CRYPTO') => Promise<void> | void;
   onOpenReport?: (reportId: string) => void;
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
+  onOpenSelectionReport?: (item: ChatMessageForUser) => void;
 }) {
   if (!items.length) {
     return (
@@ -303,6 +338,7 @@ export function MessageStream({
             onOpenReport={onOpenReport}
             selectionSubmittingKey={selectionSubmittingKey}
             onConfirmSelectionCandidate={onConfirmSelectionCandidate}
+            onOpenSelectionReport={onOpenSelectionReport}
           />
         </article>
       ))}

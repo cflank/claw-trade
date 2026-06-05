@@ -183,12 +183,13 @@ class ConfirmationController:
             return draft
         raw = asdict(draft)
         market_value = draft.market
+        market_overridden = "market" in overrides and str(overrides["market"]).strip()
         if "market" in overrides and str(overrides["market"]).strip():
             market_value = MarketProfile(str(overrides["market"]).strip().upper())
             raw["market"] = market_value
         if "instrumentCode" in overrides and str(overrides["instrumentCode"]).strip():
             code = str(overrides["instrumentCode"]).strip().upper()
-            identity = resolve_instrument_identity(code, market_hint=market_value.value)
+            identity = resolve_instrument_identity(code, market_hint=market_value.value if market_overridden else None)
             market_value = MarketProfile(identity.profile)
             raw["instrument_code"] = identity.ticker
             raw["instrument_name"] = report_display_name(identity.ticker, identity.profile)

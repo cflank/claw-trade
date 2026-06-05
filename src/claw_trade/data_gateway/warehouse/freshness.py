@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .repository import DatasetRecord
+from .trading_calendar import is_expected_daily_date
 
 
 Gap = dict[str, Any]
@@ -80,7 +81,13 @@ class FreshnessChecker:
         expected_end = self._last_expected_daily_datetime(request, request_start, request_end)
         start_missing = expected_start is not None and actual_start > expected_start
         end_missing = expected_end is not None and actual_end < expected_end
-        continuity_gap = self._check_continuity(request=request, records=records, granularity=str(self._value(request, "granularity")))
+        continuity_gap = self._check_continuity(
+            request=request,
+            records=records,
+            granularity=str(self._value(request, "granularity")),
+            coverage_start=expected_start.date() if expected_start else None,
+            coverage_end=expected_end.date() if expected_end else None,
+        )
         if start_missing or end_missing or continuity_gap:
             return self._gap(
                 "date_range_missing",
@@ -92,7 +99,15 @@ class FreshnessChecker:
             )
         return None
 
-    def _check_continuity(self, *, request: Any, records: Sequence[DatasetRecord], granularity: str) -> tuple[dict[str, str], ...]:
+    def _check_continuity(
+        self,
+        *,
+        request: Any,
+        records: Sequence[DatasetRecord],
+        granularity: str,
+        coverage_start: date | None = None,
+        coverage_end: date | None = None,
+    ) -> tuple[dict[str, str], ...]:
         if granularity != "daily":
             return ()
         ranges = sorted(
@@ -106,12 +121,43 @@ class FreshnessChecker:
             ),
             key=lambda item: item[0],
         )
-        if len(ranges) < 2:
+        if not ranges:
             return ()
         calendar = str(self._value(request, "calendar", ""))
-        expected_dates = self._expected_daily_dates(ranges[0][0], ranges[-1][1], calendar)
-        missing_dates = tuple(day for day in expected_dates if not any(start <= day <= end for start, end in ranges))
+        expected_start = coverage_start or ranges[0][0]
+        expected_end = coverage_end or ranges[-1][1]
+        expected_dates = self._expected_daily_dates(expected_start, expected_end, calendar)
+        merged_ranges = self._merge_daily_ranges(ranges, expected_start, expected_end)
+        missing_dates = self._missing_daily_dates(expected_dates, merged_ranges)
         return self._compress_missing_dates(missing_dates, calendar)
+
+    @staticmethod
+    def _merge_daily_ranges(ranges: Sequence[tuple[date, date]], start: date, end: date) -> tuple[tuple[date, date], ...]:
+        merged: list[tuple[date, date]] = []
+        for range_start, range_end in ranges:
+            if range_end < start or range_start > end:
+                continue
+            clipped_start = max(range_start, start)
+            clipped_end = min(range_end, end)
+            if not merged or clipped_start > merged[-1][1] + timedelta(days=1):
+                merged.append((clipped_start, clipped_end))
+                continue
+            merged[-1] = (merged[-1][0], max(merged[-1][1], clipped_end))
+        return tuple(merged)
+
+    @staticmethod
+    def _missing_daily_dates(
+        expected_dates: Sequence[date],
+        merged_ranges: Sequence[tuple[date, date]],
+    ) -> tuple[date, ...]:
+        missing: list[date] = []
+        range_index = 0
+        for day in expected_dates:
+            while range_index < len(merged_ranges) and merged_ranges[range_index][1] < day:
+                range_index += 1
+            if range_index >= len(merged_ranges) or merged_ranges[range_index][0] > day:
+                missing.append(day)
+        return tuple(missing)
 
     def _check_source_role(self, *, request: Any, records: Sequence[DatasetRecord]) -> Gap | None:
         required_source_role = self._value(request, "source_role_required")
@@ -144,6 +190,8 @@ class FreshnessChecker:
             return self._gap("warehouse_stale", policy=policy, stale_reason="invalid_as_of")
 
         if policy == "immutable_seed":
+            return None
+        if policy == "warehouse_only":
             return None
         if policy == "trading_day":
             if record_as_of.date() >= as_of.date():
@@ -244,9 +292,7 @@ class FreshnessChecker:
 
     @staticmethod
     def _is_expected_daily_date(day: date, calendar: str) -> bool:
-        if calendar == "CRYPTO_24_7":
-            return True
-        return day.weekday() < 5
+        return is_expected_daily_date(day, calendar)
 
     def _compress_missing_dates(self, missing_dates: Sequence[date], calendar: str) -> tuple[dict[str, str], ...]:
         if not missing_dates:

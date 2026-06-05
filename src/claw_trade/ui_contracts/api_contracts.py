@@ -19,6 +19,7 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
     UiApiContract("enqueueReportTask", "ReportTaskForUser + ReportQueueSnapshotForUser", ("runId", "profile", "priority", "dedupeKey")),
     UiApiContract("cancelReportTask", "ReportTaskForUser + ReportQueueSnapshotForUser", ("runId", "lockedWorkflowRunId")),
     UiApiContract("getReportQueueSnapshot", "ReportQueueSnapshotForUser", ("failedTasks",)),
+    UiApiContract("getSelectionRefreshSnapshot", "{ selectionProgress: SelectionProgressForUser | null }", ("providerAttempt", "rawPayload", "path", "hash")),
     UiApiContract("listSavedReports", "{ items: SavedReportForUser[], nextCursor? }", ("runId", "artifact", "path", "hash", "receipt")),
     UiApiContract("getReportDetail", "ReportDetailForUser", ("ReportArtifact", "path", "hash", "receipt")),
     UiApiContract("deleteSavedReport", "{ deleted: true, reportId }", ("runId", "artifact", "path", "hash", "receipt")),

@@ -138,6 +138,7 @@ class ProviderBatchPlanner:
         policy = _read_attr(cap, "batch_policy")
         batch_by = _read_attr(policy, "batch_by", "none")
         symbols = tuple(dict.fromkeys(_as_tuple(_read_attr(group, "symbol_ids", ()))))
+        universe_ref = _read_attr(group, "universe_ref", None)
         request_ids = tuple(dict.fromkeys(_as_tuple(_read_attr(group, "request_ids", ()))))
         fields_union = tuple(dict.fromkeys(_as_tuple(_read_attr(group, "fields_union", ()))))
         start = _read_attr(group, "date_range_start")
@@ -157,6 +158,7 @@ class ProviderBatchPlanner:
                         sequence=sequence,
                         request_ids=request_ids,
                         symbol_ids=symbol_chunk,
+                        universe_ref=universe_ref,
                         date_range_start=start,
                         date_range_end=end,
                         fields_union=fields_union,
@@ -180,6 +182,7 @@ class ProviderBatchPlanner:
                         sequence=sequence,
                         request_ids=request_ids,
                         symbol_ids=symbols,
+                        universe_ref=universe_ref,
                         date_range_start=range_start,
                         date_range_end=range_end,
                         fields_union=fields_union,
@@ -207,6 +210,7 @@ class ProviderBatchPlanner:
                             sequence=sequence,
                             request_ids=request_ids,
                             symbol_ids=symbol_chunk,
+                            universe_ref=universe_ref,
                             date_range_start=range_start,
                             date_range_end=range_end,
                             fields_union=fields_union,
@@ -230,6 +234,7 @@ class ProviderBatchPlanner:
                         sequence=sequence,
                         request_ids=request_ids,
                         symbol_ids=symbols,
+                        universe_ref=universe_ref,
                         date_range_start=start,
                         date_range_end=end,
                         fields_union=mergeable_fields,
@@ -245,6 +250,7 @@ class ProviderBatchPlanner:
                         sequence=sequence,
                         request_ids=request_ids,
                         symbol_ids=symbols,
+                        universe_ref=universe_ref,
                         date_range_start=start,
                         date_range_end=end,
                         fields_union=(field,),
@@ -262,6 +268,7 @@ class ProviderBatchPlanner:
             sequence=sequence,
             request_ids=(str(_read_attr(item, "request_id")),),
             symbol_ids=_as_tuple(_read_attr(item, "symbol_ids", ())),
+            universe_ref=_read_attr(item, "universe_ref", _read_attr(group, "universe_ref", None)),
             date_range_start=_read_attr(item, "date_range_start", None),
             date_range_end=_read_attr(item, "date_range_end", None),
             fields_union=_as_tuple(_read_attr(item, "fields", ())),
@@ -276,6 +283,7 @@ class ProviderBatchPlanner:
         sequence: int,
         request_ids: tuple[str, ...],
         symbol_ids: tuple[str, ...],
+        universe_ref: Any,
         date_range_start: Any,
         date_range_end: Any,
         fields_union: tuple[str, ...],
@@ -298,6 +306,7 @@ class ProviderBatchPlanner:
             "granularity": granularity,
             "request_ids": request_ids,
             "symbol_ids": symbol_ids,
+            "universe_ref": str(universe_ref) if universe_ref else None,
             "date_range_start": str(date_range_start) if date_range_start is not None else None,
             "date_range_end": str(date_range_end) if date_range_end is not None else None,
             "fields_union": fields_union,
@@ -317,6 +326,7 @@ class ProviderBatchPlanner:
             "granularity": granularity,
             "request_ids": tuple(request_ids),
             "symbol_ids": tuple(symbol_ids),
+            "universe_ref": str(universe_ref) if universe_ref else None,
             "date_range_start": date_range_start,
             "date_range_end": date_range_end,
             "exchange": _read_attr(group, "exchange", None),

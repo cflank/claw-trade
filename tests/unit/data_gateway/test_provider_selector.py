@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from datetime import date
 from types import SimpleNamespace
 
+from claw_trade.data_gateway import selection_batch as selection_batch_bridge
 from claw_trade.data_gateway.providers import build_minimal_provider_registry
 from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
+from claw_trade.reports import data_pack_bridge as report_data_pack_bridge
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,339 @@ class FakeQueryPlan:
         return self._request
 
 
-def _plugin(provider_id: str, source_role: str, priority_rank: int) -> FakePlugin:
+class FakeCredentialResolver:
+    def __init__(self, values: dict[str, str]) -> None:
+        self._values = values
+
+    def get_credential(self, name: str) -> str | None:
+        return self._values.get(name)
+
+
+def test_cn_a_daily_bar_prefers_tushare_when_token_is_configured() -> None:
+    selector = ProviderSelector(
+        build_minimal_provider_registry(),
+        credential_resolver=FakeCredentialResolver({"data_source:tushare": "ts-token"}),
+    )
+    candidates = selector.select_candidates(
+        (SimpleNamespace(request_id="gap-cn-a-daily"),),
+        FakeQueryPlan(_cn_a_daily_bar_request()),
+    )
+
+    ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
+    assert ordered[:2] == [
+        ("cn_a_primary", "daily_bar"),
+        ("cn_a_primary", "daily_bar_by_trade_date"),
+    ]
+    assert ordered[2:5] == [
+        ("cn_a_akshare_social_news", "stock_zh_a_hist"),
+        ("cn_a_baostock_market", "daily_bar"),
+        ("cn_a_eastmoney_market_data", "daily_bar"),
+    ]
+
+
+def test_cn_a_daily_bar_falls_back_to_public_sources_when_tushare_token_missing() -> None:
+    selector = ProviderSelector(
+        build_minimal_provider_registry(),
+        credential_resolver=FakeCredentialResolver({}),
+    )
+    candidates = selector.select_candidates(
+        (SimpleNamespace(request_id="gap-cn-a-daily"),),
+        FakeQueryPlan(_cn_a_daily_bar_request()),
+    )
+
+    ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
+    assert ("cn_a_primary", "daily_bar") not in ordered
+    assert ordered[:3] == [
+        ("cn_a_akshare_social_news", "stock_zh_a_hist"),
+        ("cn_a_baostock_market", "daily_bar"),
+        ("cn_a_eastmoney_market_data", "daily_bar"),
+    ]
+
+
+def _cn_a_daily_bar_request() -> SimpleNamespace:
+    return SimpleNamespace(
+        market="CN_A",
+        data_type="daily_bar",
+        granularity="daily",
+        fields=("date", "open", "high", "low", "close", "volume", "amount"),
+        symbol_id="600519.SH",
+    )
+
+
+_IMPORTANT_FIELD_FILTER_SOURCE_ROLES = frozenset({"official", "paid_data"})
+_SYMBOL_BY_MARKET = {
+    "CN_A": "600519.SH",
+    "US": "AAPL",
+    "HK": "00700.HK",
+    "CRYPTO": "BTCUSDT",
+}
+
+_INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS = {
+    (
+        "report",
+        "US",
+        "market",
+        "quote_snapshot",
+        "realtime",
+        ("price", "change", "change_pct", "volume", "timestamp", "symbol_id"),
+        "us_finnhub_data",
+        "quote",
+        ("volume",),
+    ): "Finnhub quote does not expose volume in the normalized quote row.",
+    (
+        "report",
+        "US",
+        "fundamental",
+        "financial_metric",
+        "quarterly",
+        ("roe", "gross_margin", "profit_margin", "eps", "revenue_growth"),
+        "us_finnhub_data",
+        "stock_metric_financial",
+        ("gross_margin", "revenue_growth"),
+    ): "Finnhub stock metric exposes ROE/ROA/profit margin/EPS, not gross margin or revenue growth.",
+    (
+        "report",
+        "US",
+        "fundamental",
+        "financial_metric",
+        "quarterly",
+        ("roe", "roa", "profit_margin", "eps"),
+        "us_alpha_vantage_data",
+        "overview_financial_metric",
+        ("roa",),
+    ): "Alpha Vantage overview exposes gross margin/revenue growth, not ROA.",
+    (
+        "report",
+        "HK",
+        "fundamental",
+        "financial_metric",
+        "quarterly",
+        ("roe", "gross_margin", "eps"),
+        "hk_finnhub_data",
+        "stock_metric_financial",
+        ("gross_margin",),
+    ): "Finnhub stock metric does not expose gross margin.",
+    (
+        "report",
+        "HK",
+        "fundamental",
+        "financial_metric",
+        "quarterly",
+        ("roe", "gross_margin", "eps"),
+        "hk_tushare",
+        "hk_fina_indicator",
+        ("gross_margin",),
+    ): "HK Tushare indicator exposes gross profit, not gross margin.",
+    (
+        "report",
+        "HK",
+        "fundamental",
+        "financial_metric",
+        "quarterly",
+        ("roe", "eps", "gross_profit"),
+        "hk_finnhub_data",
+        "stock_metric_financial",
+        ("gross_profit",),
+    ): "Finnhub stock metric does not expose gross profit.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "realtime",
+        ("open_interest", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_coin_netflow",
+        ("open_interest",),
+    ): "Coinglass netflow and open-interest are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("funding_rate", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_long_short_ratio",
+        ("funding_rate",),
+    ): "Coinglass funding rate and long/short ratio are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("funding_rate", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_liquidation",
+        ("funding_rate",),
+    ): "Coinglass funding rate and liquidation are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("funding_rate", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_taker_buy_sell",
+        ("funding_rate",),
+    ): "Coinglass funding rate and taker buy/sell are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("long_short_ratio", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_funding_rate",
+        ("long_short_ratio",),
+    ): "Coinglass long/short ratio and funding rate are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("long_short_ratio", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_liquidation",
+        ("long_short_ratio",),
+    ): "Coinglass long/short ratio and liquidation are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("long_short_ratio", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_taker_buy_sell",
+        ("long_short_ratio",),
+    ): "Coinglass long/short ratio and taker buy/sell are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_funding_rate",
+        ("taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"),
+    ): "Coinglass taker buy/sell and funding rate are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_long_short_ratio",
+        ("taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"),
+    ): "Coinglass taker buy/sell and long/short ratio are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_liquidation",
+        ("taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"),
+    ): "Coinglass taker buy/sell and liquidation are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_funding_rate",
+        ("liquidation_value", "long_liquidation", "short_liquidation"),
+    ): "Coinglass liquidation and funding rate are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_long_short_ratio",
+        ("liquidation_value", "long_liquidation", "short_liquidation"),
+    ): "Coinglass liquidation and long/short ratio are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "1h",
+        ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_taker_buy_sell",
+        ("liquidation_value", "long_liquidation", "short_liquidation"),
+    ): "Coinglass liquidation and taker buy/sell are separate endpoints.",
+    (
+        "report",
+        "CRYPTO",
+        "market",
+        "crypto_derivative_metric",
+        "realtime",
+        ("net_inflow", "timestamp", "symbol_id"),
+        "crypto_coinglass_derivatives",
+        "futures_open_interest",
+        ("net_inflow",),
+    ): "Coinglass netflow and open-interest are separate endpoints.",
+}
+
+
+def _product_request_specs() -> tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...]:
+    specs: list[tuple[str, str, str, str, str, tuple[str, ...]]] = []
+    for market, domain_specs in (
+        ("CN_A", report_data_pack_bridge._CN_A_DOMAIN_DATASETS),
+        ("US", report_data_pack_bridge._US_DOMAIN_DATASETS),
+        ("HK", report_data_pack_bridge._HK_DOMAIN_DATASETS),
+        ("CRYPTO", report_data_pack_bridge._CRYPTO_DOMAIN_DATASETS),
+    ):
+        for domain, datasets in domain_specs.items():
+            for data_type, granularity, fields in datasets:
+                specs.append(("report", market, domain, data_type, granularity, fields))
+    for data_type, granularity, fields in selection_batch_bridge._SELECTION_REQUESTS:
+        specs.append(("select", "CN_A", "selection", data_type, granularity, fields))
+    return tuple(specs)
+
+
+def _request(*, market: str, data_type: str, granularity: str, fields: tuple[str, ...]) -> SimpleNamespace:
+    return SimpleNamespace(
+        market=market,
+        data_type=data_type,
+        granularity=granularity,
+        fields=fields,
+        source_role_required=None,
+        symbol_id=_SYMBOL_BY_MARKET[market],
+        universe_ref=None,
+        exchange=None,
+        currency=None,
+        timezone=None,
+        calendar=None,
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+    )
+
+
+def _plugin(
+    provider_id: str,
+    source_role: str,
+    priority_rank: int,
+    *,
+    credential_required: bool = False,
+    credential_names: tuple[str, ...] = (),
+) -> FakePlugin:
     caps = ProviderCapabilities(
         provider_id=provider_id,
         plugin_version="1.0.0",
@@ -116,9 +450,9 @@ def _plugin(provider_id: str, source_role: str, priority_rank: int) -> FakePlugi
             ),
         ),
         credentials=CredentialPolicy(
-            credential_required=False,
-            credential_names=(),
-            credential_scope=None,
+            credential_required=credential_required,
+            credential_names=credential_names,
+            credential_scope="user" if credential_required else None,
             missing_behavior="credential_missing",
         ),
         license_policy=LicensePolicy(
@@ -186,6 +520,48 @@ def test_selector_filters_by_required_source_role_and_fields() -> None:
     assert [getattr(candidate, "provider_id") for candidate in candidates] == ["sentiment_feed"]
 
 
+def test_selector_skips_credential_required_provider_without_configured_api() -> None:
+    registry = ProviderRegistry()
+    registry.register(
+        _plugin(
+            "paid_feed",
+            "paid_data",
+            1,
+            credential_required=True,
+            credential_names=("data_source:tushare",),
+        )
+    )
+    registry.register(_plugin("public_feed", "built_in_public", 10))
+    request = SimpleNamespace(
+        market="US",
+        data_type="daily_bar",
+        granularity="daily",
+        fields=("close", "volume"),
+        source_role_required=None,
+        symbol_id="AAPL",
+        universe_ref=None,
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+    )
+    gap = SimpleNamespace(request_id="req-credential", symbol_id="AAPL", required_level="required")
+
+    missing_selector = ProviderSelector(registry, credential_resolver=FakeCredentialResolver({}))
+    missing_candidates = missing_selector.select_candidates((gap,), FakeQueryPlan(request))
+
+    assert [getattr(candidate, "provider_id") for candidate in missing_candidates] == ["public_feed"]
+
+    configured_selector = ProviderSelector(
+        registry,
+        credential_resolver=FakeCredentialResolver({"data_source:tushare": "token"}),
+    )
+    configured_candidates = configured_selector.select_candidates((gap,), FakeQueryPlan(request))
+
+    assert [getattr(candidate, "provider_id") for candidate in configured_candidates] == [
+        "paid_feed",
+        "public_feed",
+    ]
+
+
 def test_selector_with_minimal_plugins_respects_market_boundary() -> None:
     registry = build_minimal_provider_registry()
     request = SimpleNamespace(
@@ -205,6 +581,82 @@ def test_selector_with_minimal_plugins_respects_market_boundary() -> None:
     candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
 
     assert [getattr(candidate, "provider_id") for candidate in candidates] == ["us_primary", "us_yahoo_finance"]
+
+
+def test_selector_with_cn_a_selection_daily_fields_keeps_tushare_first() -> None:
+    registry = build_minimal_provider_registry()
+    request = SimpleNamespace(
+        market="CN_A",
+        data_type="daily_bar",
+        granularity="daily",
+        fields=("date", "open", "high", "low", "close", "volume", "amount"),
+        source_role_required=None,
+        symbol_id="600519.SH",
+        universe_ref=None,
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+    )
+    gap = SimpleNamespace(request_id="req-cn-a-selection-daily", symbol_id="600519.SH", required_level="required")
+
+    selector = ProviderSelector(registry)
+    candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
+
+    assert [getattr(candidate, "provider_id") for candidate in candidates][0] == "cn_a_primary"
+
+
+def test_selector_with_cn_a_selection_daily_uses_public_order_when_tushare_api_missing() -> None:
+    registry = build_minimal_provider_registry()
+    request = SimpleNamespace(
+        market="CN_A",
+        data_type="daily_bar",
+        granularity="daily",
+        fields=("date", "open", "high", "low", "close", "volume", "amount"),
+        source_role_required=None,
+        symbol_id="600519.SH",
+        universe_ref=None,
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+    )
+    gap = SimpleNamespace(request_id="req-cn-a-selection-daily", symbol_id="600519.SH", required_level="required")
+
+    selector = ProviderSelector(registry, credential_resolver=FakeCredentialResolver({}))
+    candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
+    provider_ids = [getattr(candidate, "provider_id") for candidate in candidates]
+
+    assert "cn_a_primary" not in provider_ids
+    assert provider_ids[:4] == [
+        "cn_a_akshare_social_news",
+        "cn_a_baostock_market",
+        "cn_a_eastmoney_market_data",
+        "cn_a_mootdx_market",
+    ]
+
+
+def test_selector_with_cn_a_selection_daily_keeps_tushare_first_when_api_configured() -> None:
+    registry = build_minimal_provider_registry()
+    request = SimpleNamespace(
+        market="CN_A",
+        data_type="daily_bar",
+        granularity="daily",
+        fields=("date", "open", "high", "low", "close", "volume", "amount"),
+        source_role_required=None,
+        symbol_id="600519.SH",
+        universe_ref=None,
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+    )
+    gap = SimpleNamespace(request_id="req-cn-a-selection-daily", symbol_id="600519.SH", required_level="required")
+
+    selector = ProviderSelector(
+        registry,
+        credential_resolver=FakeCredentialResolver({"data_source:tushare": "token"}),
+    )
+    candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
+
+    assert (getattr(candidates[0], "provider_id"), getattr(candidates[0], "endpoint_id")) == (
+        "cn_a_primary",
+        "daily_bar",
+    )
 
 
 def test_selector_with_migrated_cn_a_matrix_picks_domain_providers() -> None:
@@ -279,7 +731,7 @@ def test_selector_with_migrated_cn_a_matrix_picks_domain_providers() -> None:
                 date_range_start=None,
                 date_range_end=None,
             ),
-            "cn_a_eastmoney_market_data",
+            ("cn_a_tushare_fundamental", "cn_a_akshare_social_news", "cn_a_eastmoney_market_data"),
         ),
         (
             SimpleNamespace(
@@ -398,3 +850,50 @@ def test_selector_with_migrated_us_hk_crypto_matrices_picks_domain_providers() -
         gap = SimpleNamespace(request_id=f"req-{expected_provider_ids[0]}", symbol_id=request.symbol_id, required_level="required")
         candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
         assert [getattr(candidate, "provider_id") for candidate in candidates] == list(expected_provider_ids)
+
+
+def test_product_request_field_filters_have_explicit_provider_exclusions() -> None:
+    registry = build_minimal_provider_registry()
+    selector = ProviderSelector(registry)
+    gap = SimpleNamespace(request_id="product-request-field-filter", symbol_id="product", required_level="required")
+    actual: dict[tuple[object, ...], tuple[str, ...]] = {}
+
+    for origin, market, domain, data_type, granularity, fields in _product_request_specs():
+        request = _request(market=market, data_type=data_type, granularity=granularity, fields=fields)
+        selected = {
+            (candidate.provider_id, candidate.endpoint_id)
+            for candidate in selector.select_candidates((gap,), FakeQueryPlan(request))
+        }
+        assert selected, (origin, market, domain, data_type, granularity, fields)
+
+        loose_request = _request(market=market, data_type=data_type, granularity=granularity, fields=())
+        loose_candidates = selector.select_candidates((gap,), FakeQueryPlan(loose_request))
+        capability_by_endpoint = {
+            (cap.provider_id, cap.endpoint_id): cap
+            for cap in registry.list_capabilities(market=market, data_type=data_type)
+        }
+        for candidate in loose_candidates:
+            endpoint_key = (candidate.provider_id, candidate.endpoint_id)
+            if endpoint_key in selected:
+                continue
+            capability = capability_by_endpoint[endpoint_key]
+            if capability.source_role not in _IMPORTANT_FIELD_FILTER_SOURCE_ROLES:
+                continue
+            missing = tuple(sorted(set(fields) - set(capability.coverage_fields)))
+            if not missing:
+                continue
+            key = (
+                origin,
+                market,
+                domain,
+                data_type,
+                granularity,
+                fields,
+                candidate.provider_id,
+                candidate.endpoint_id,
+                missing,
+            )
+            actual[key] = capability.coverage_fields
+
+    assert set(actual) == set(_INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS), actual
+    assert all(reason for reason in _INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS.values())

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from claw_trade.selection.data_job import SelectionDataJob, SelectionProviderBatchResult, build_selection_data_plan
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.selection.data_job import (
+    SelectionDataFetchProgress,
+    SelectionDataJob,
+    SelectionProviderBatchResult,
+    build_selection_data_plan,
+)
 from claw_trade.selection.engine import ApprovedSelectionStrategy, StableTop20Rule
 from claw_trade.selection.models import (
     SelectionBatchScope,
@@ -120,7 +128,7 @@ def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: P
     assert payload["data_gaps"][0]["gap_code"] == "mongo_missing"
 
 
-def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchResult:
+def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> SelectionProviderBatchResult:
     rows = []
     normalized_refs: list[str] = []
     for idx in range(20):
@@ -152,12 +160,58 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
                 "source_ref": ref,
             }
         )
-    return SelectionProviderBatchResult(
+    return _with_columnar_manifest(
+        plan,
+        SelectionProviderBatchResult(
         provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
         attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
         normalized_refs=tuple(normalized_refs),
         rows=tuple(rows),
         warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/success",
+        ),
+        root=columnar_root,
+    )
+
+
+def _with_columnar_manifest(
+    plan: SelectionRunPlan,
+    result: SelectionProviderBatchResult,
+    *,
+    root: Path,
+) -> SelectionProviderBatchResult:
+    os.environ["CLAW_TRADE_SELECTION_COLUMNAR_ROOT"] = str(root)
+    writer = SelectionColumnarWarehouse(root=root).begin_write(plan=plan)
+    writer.add_daily_rows(
+        (
+            {
+                "ticker": str(row.get("ticker") or ""),
+                "date": plan.trade_date,
+                "close": row.get("close"),
+                "amount": row.get("amount"),
+                "source_ref": str(row.get("source_ref") or ""),
+            }
+            for row in result.rows
+        )
+    )
+    writer.add_feature_rows(
+        (
+            {
+                **dict(row),
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+            }
+            for row in result.rows
+        )
+    )
+    manifest = writer.commit(
+        provider_attempt_refs=result.attempt_refs,
+        normalized_refs=result.normalized_refs,
+    )
+    return replace(
+        result,
+        warehouse_check_ref=manifest.warehouse_check_ref,
+        columnar_manifest_ref=manifest.manifest_ref,
+        columnar_manifest_sha256=SelectionColumnarWarehouse(root=root).manifest_sha256(manifest.manifest_ref),
     )
 
 
@@ -170,7 +224,7 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     def provider_fetch(run_plan: SelectionRunPlan) -> SelectionProviderBatchResult:
         provider_calls["count"] += 1
         assert run_plan.selection_run_id == plan.selection_run_id
-        return _provider_result_success(run_plan)
+        return _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
 
     job = SelectionDataJob(
         store=store,
@@ -224,7 +278,8 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     assert payload["candidate_pack_manifest"]["candidate_scores_ref"] == "score://sel-run-03-success"
     assert payload["candidate_pack_manifest"]["stable_top20_rule"]["primary"] == "score_desc"
     assert payload["normalized_refs"] == [f"normalized://mongo/normalized_datasets/row-{idx}" for idx in range(1, 21)]
-    assert payload["warehouse_check_ref"] == "warehouse-check://selection/sel-run-03-success/2026-05-26/success"
+    assert payload["warehouse_check_ref"] == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
+    assert payload["columnar_manifest_ref"].startswith("columnar://selection/")
     assert payload["select_data_plan"]["schema_version"] == "selection_data_plan.v1"
     assert payload["select_data_plan"]["select_data_plan"]["support_status"] == "supported"
     assert payload["select_data_plan"]["requirement_batch"]["request_kind"] == "select"
@@ -273,6 +328,39 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
 
 
 @pytest.mark.integration
+def test_data_job_pipeline_records_provider_fetch_progress(tmp_path: Path) -> None:
+    plan = _plan()
+    store = SelectionRunStore()
+
+    def provider_fetch(
+        run_plan: SelectionRunPlan,
+        *,
+        progress_callback,
+    ) -> SelectionProviderBatchResult:
+        progress_callback(SelectionDataFetchProgress(label="补齐全市场日线数据", completed=64, total=256))
+        active = store.load_data_run_record(run_plan.selection_run_id)
+        assert active is not None
+        assert active.data_run.status == SelectionDataRunStatus.FETCHING_DATA
+        assert active.data_run.progress_label == "补齐全市场日线数据"
+        assert active.data_run.progress_completed == 64
+        assert active.data_run.progress_total == 256
+        return _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
+
+    job = SelectionDataJob(
+        store=store,
+        provider_fetch_batch=provider_fetch,
+        strategy_config_loader=lambda config_ref: _approved_strategy() if config_ref == plan.approved_strategy_config_ref else None,
+        now_fn=lambda: datetime(2026, 5, 26, 9, 0, tzinfo=UTC),
+        evidence_root=tmp_path,
+    )
+
+    result = job.run(plan)
+
+    assert result.record.data_run.status == SelectionDataRunStatus.COMPLETED
+    assert result.record.data_run.started_at == "2026-05-26T09:00:00Z"
+
+
+@pytest.mark.integration
 def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields_missing(tmp_path: Path) -> None:
     plan = _plan()
     store = SelectionRunStore()
@@ -304,12 +392,16 @@ def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields
                     "source_ref": ref,
                 }
             )
-        return SelectionProviderBatchResult(
-            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
-            attempt_refs=("attempt://akshare-1",),
-            normalized_refs=tuple(normalized_refs),
-            rows=tuple(rows),
-            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/private-missing",
+        return _with_columnar_manifest(
+            plan,
+            SelectionProviderBatchResult(
+                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+                attempt_refs=("attempt://akshare-1",),
+                normalized_refs=tuple(normalized_refs),
+                rows=tuple(rows),
+                warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/private-missing",
+            ),
+            root=tmp_path / "columnar",
         )
 
     job = SelectionDataJob(
@@ -414,7 +506,7 @@ def test_data_job_pipeline_missing_approved_strategy_config_fails_closed(tmp_pat
 
     def provider_fetch(run_plan: SelectionRunPlan) -> SelectionProviderBatchResult:
         provider_calls["count"] += 1
-        return _provider_result_success(run_plan)
+        return _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
 
     job = SelectionDataJob(
         store=store,
@@ -463,12 +555,16 @@ def test_data_job_pipeline_accepts_candidate_count_less_than_20(tmp_path: Path) 
                     "source_ref": ref,
                 }
             )
-        return SelectionProviderBatchResult(
-            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
-            attempt_refs=("attempt://akshare-1",),
-            normalized_refs=tuple(refs),
-            rows=tuple(rows),
-            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/less-than-20",
+        return _with_columnar_manifest(
+            plan,
+            SelectionProviderBatchResult(
+                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+                attempt_refs=("attempt://akshare-1",),
+                normalized_refs=tuple(refs),
+                rows=tuple(rows),
+                warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/less-than-20",
+            ),
+            root=tmp_path / "columnar",
         )
 
     job = SelectionDataJob(
@@ -520,12 +616,16 @@ def test_data_job_pipeline_marks_no_candidate_without_approved_pack(tmp_path: Pa
                     "source_ref": ref,
                 }
             )
-        return SelectionProviderBatchResult(
-            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
-            attempt_refs=("attempt://akshare-1",),
-            normalized_refs=tuple(refs),
-            rows=tuple(rows),
-            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/no-candidate",
+        return _with_columnar_manifest(
+            plan,
+            SelectionProviderBatchResult(
+                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+                attempt_refs=("attempt://akshare-1",),
+                normalized_refs=tuple(refs),
+                rows=tuple(rows),
+                warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/no-candidate",
+            ),
+            root=tmp_path / "columnar",
         )
 
     job = SelectionDataJob(
@@ -569,7 +669,7 @@ def test_data_job_pipeline_fails_when_stable_top20_tie_break_missing(tmp_path: P
 
     job = SelectionDataJob(
         store=store,
-        provider_fetch_batch=_provider_result_success,
+        provider_fetch_batch=lambda run_plan: _provider_result_success(run_plan, columnar_root=tmp_path / "columnar"),
         strategy_config_loader=invalid_strategy_loader,
         now_fn=lambda: datetime(2026, 5, 26, 9, 0, tzinfo=UTC),
         evidence_root=tmp_path,
@@ -590,25 +690,29 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
     store = SelectionRunStore()
 
     def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
-        return SelectionProviderBatchResult(
-            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
-            attempt_refs=("attempt://current-only",),
-            normalized_refs=("normalized://mongo/normalized_datasets/current-only-1",),
-            rows=(
-                {
-                    "ticker": "600999.SH",
-                    "company_name": "当前快照样本",
-                    "industry": "样本行业",
-                    "open": 10.0,
-                    "close": 10.3,
-                    "high": 10.5,
-                    "low": 9.9,
-                    "amount": 300000000.0,
-                    "vol_ratio": 2.5,
-                    "source_ref": "normalized://mongo/normalized_datasets/current-only-1",
-                },
+        return _with_columnar_manifest(
+            plan,
+            SelectionProviderBatchResult(
+                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+                attempt_refs=("attempt://current-only",),
+                normalized_refs=("normalized://mongo/normalized_datasets/current-only-1",),
+                rows=(
+                    {
+                        "ticker": "600999.SH",
+                        "company_name": "当前快照样本",
+                        "industry": "样本行业",
+                        "open": 10.0,
+                        "close": 10.3,
+                        "high": 10.5,
+                        "low": 9.9,
+                        "amount": 300000000.0,
+                        "vol_ratio": 2.5,
+                        "source_ref": "normalized://mongo/normalized_datasets/current-only-1",
+                    },
+                ),
+                warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/strategy-fields-missing",
             ),
-            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/strategy-fields-missing",
+            root=tmp_path / "columnar",
         )
 
     job = SelectionDataJob(
@@ -642,38 +746,42 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
     store = SelectionRunStore()
 
     def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
-        return SelectionProviderBatchResult(
-            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
-            attempt_refs=("attempt://duplicate",),
-            normalized_refs=(
-                "normalized://mongo/normalized_datasets/duplicate-1",
-                "normalized://mongo/normalized_datasets/duplicate-2",
+        return _with_columnar_manifest(
+            plan,
+            SelectionProviderBatchResult(
+                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+                attempt_refs=("attempt://duplicate",),
+                normalized_refs=(
+                    "normalized://mongo/normalized_datasets/duplicate-1",
+                    "normalized://mongo/normalized_datasets/duplicate-2",
+                ),
+                rows=(
+                    {
+                        "ticker": "600998.SH",
+                        "company_name": "重复样本A",
+                        "industry": "样本行业",
+                        "open": 10.0,
+                        "close": 10.3,
+                        "high": 10.5,
+                        "low": 9.9,
+                        "amount": 300000000.0,
+                        "source_ref": "normalized://mongo/normalized_datasets/duplicate-1",
+                    },
+                    {
+                        "ticker": "600998.SH",
+                        "company_name": "重复样本B",
+                        "industry": "样本行业",
+                        "open": 10.0,
+                        "close": 10.3,
+                        "high": 10.5,
+                        "low": 9.9,
+                        "amount": 300000000.0,
+                        "source_ref": "normalized://mongo/normalized_datasets/duplicate-2",
+                    },
+                ),
+                warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/duplicate",
             ),
-            rows=(
-                {
-                    "ticker": "600998.SH",
-                    "company_name": "重复样本A",
-                    "industry": "样本行业",
-                    "open": 10.0,
-                    "close": 10.3,
-                    "high": 10.5,
-                    "low": 9.9,
-                    "amount": 300000000.0,
-                    "source_ref": "normalized://mongo/normalized_datasets/duplicate-1",
-                },
-                {
-                    "ticker": "600998.SH",
-                    "company_name": "重复样本B",
-                    "industry": "样本行业",
-                    "open": 10.0,
-                    "close": 10.3,
-                    "high": 10.5,
-                    "low": 9.9,
-                    "amount": 300000000.0,
-                    "source_ref": "normalized://mongo/normalized_datasets/duplicate-2",
-                },
-            ),
-            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/duplicate",
+            root=tmp_path / "columnar",
         )
 
     job = SelectionDataJob(

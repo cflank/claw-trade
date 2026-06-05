@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from threading import Lock
+from threading import Thread
 from typing import Any, Callable
 
 from claw_trade.ui_backend.chat_controller import ChatController
@@ -31,16 +33,29 @@ class _PendingDraft:
     draft_id: str
 
 
+@dataclass(frozen=True)
+class _PendingSelectionReport:
+    workflow_run_id: str
+    markdown: str
+
+
 class ChannelTextInboundController:
     def __init__(
         self,
         chat_controller: ChatController,
         *,
         request_full_report_file: Callable[[str, str, ChannelReplyTarget], dict[str, object]] | None = None,
+        background_submitter: Callable[[Callable[[], None]], None] | None = None,
+        send_channel_text: Callable[[str, str, ChannelReplyTarget], dict[str, object]] | None = None,
+        request_selection_report_file: Callable[[str, str, str, ChannelReplyTarget], dict[str, object]] | None = None,
     ) -> None:
         self._chat_controller = chat_controller
         self._request_full_report_file = request_full_report_file
+        self._background_submitter = background_submitter or _submit_background_job
+        self._send_channel_text = send_channel_text
+        self._request_selection_report_file = request_selection_report_file
         self._pending: dict[str, _PendingDraft] = {}
+        self._selection_reports: dict[str, _PendingSelectionReport] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
         self._latest_conversation_key: str | None = None
         self._lock = Lock()
@@ -79,6 +94,13 @@ class ChannelTextInboundController:
 
         if _looks_like_full_report_request(text):
             return self._handle_full_report_request(
+                message=message,
+                conversation_key=conversation_key,
+                text=text,
+            )
+
+        if _looks_like_select_command(text):
+            return self._handle_select_command(
                 message=message,
                 conversation_key=conversation_key,
                 text=text,
@@ -151,6 +173,40 @@ class ChannelTextInboundController:
             {"handled": True, "replyText": _format_confirmed_reply(result), "state": "confirmed"},
         )
 
+    def _handle_select_command(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+    ) -> dict[str, Any]:
+        self._chat_controller.begin_channel_select_command(
+            context_id=conversation_key,
+            text=text,
+        )
+
+        def run_select() -> None:
+            result = self._chat_controller.finish_channel_select_command(
+                request_id=message.request_id,
+                context_id=conversation_key,
+                text=text,
+            )
+            self._push_select_result_to_channel(
+                message=message,
+                conversation_key=conversation_key,
+                result=result,
+            )
+
+        self._background_submitter(run_select)
+        return self._remember(
+            message.request_id,
+            {
+                "handled": True,
+                "replyText": "收到，正在执行 /select 选股；完成后会显示在工作台。",
+                "state": "selection_processing",
+            },
+        )
+
     def _handle_full_report_request(
         self,
         *,
@@ -168,17 +224,38 @@ class ChannelTextInboundController:
         report_id = ""
         if isinstance(context, dict):
             report_id = str(context.get("activeReportId") or "").strip()
-        if not report_id:
-            reply_text = "没有找到可发送的完整报告。请先等待报告完成。"
-            self._chat_controller.append_channel_plain_message(
-                context_id=conversation_key,
-                actor="system",
-                text=reply_text,
+        if report_id:
+            return self._send_full_report_file(
+                message=message,
+                report_id=report_id,
             )
-            return self._remember(
-                message.request_id,
-                {"handled": True, "replyText": reply_text, "state": "failed"},
+
+        with self._lock:
+            selection_report = self._selection_reports.get(conversation_key)
+        if selection_report is not None:
+            return self._send_selection_report_file(
+                message=message,
+                selection_report=selection_report,
             )
+
+        reply_text = "没有找到可发送的完整报告。请先等待报告完成。"
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="system",
+            text=reply_text,
+        )
+        return self._remember(
+            message.request_id,
+            {"handled": True, "replyText": reply_text, "state": "failed"},
+        )
+
+    def _send_full_report_file(
+        self,
+        *,
+        message: ChannelTextMessage,
+        report_id: str,
+    ) -> dict[str, Any]:
+        conversation_key = self._conversation_key(message)
         if self._request_full_report_file is None:
             reply_text = "完整报告发送暂不可用，请在设备界面查看。"
             self._chat_controller.append_channel_plain_message(
@@ -214,6 +291,86 @@ class ChannelTextInboundController:
             {"handled": True, "replyText": reply_text, "state": "sent" if result.get("sent") else "failed"},
         )
 
+    def _send_selection_report_file(
+        self,
+        *,
+        message: ChannelTextMessage,
+        selection_report: _PendingSelectionReport,
+    ) -> dict[str, Any]:
+        conversation_key = self._conversation_key(message)
+        if self._request_selection_report_file is None:
+            reply_text = "完整选股报告发送暂不可用，请在设备界面查看。"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=reply_text,
+            )
+            return self._remember(
+                message.request_id,
+                {"handled": True, "replyText": reply_text, "state": "failed"},
+            )
+
+        target = ChannelReplyTarget(
+            channel_kind=message.channel_kind,
+            account_id=message.account_id,
+            sender_id=message.sender_id,
+        )
+        result = self._request_selection_report_file(
+            selection_report.workflow_run_id,
+            selection_report.markdown,
+            f"channel-selection-report:{message.request_id}",
+            target,
+        )
+        reply_text = str(result.get("userMessage") or "").strip() or (
+            "完整选股报告已发送。" if result.get("sent") else "完整选股报告文件暂不可发送，请在设备界面查看。"
+        )
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="system",
+            text=reply_text,
+        )
+        return self._remember(
+            message.request_id,
+            {"handled": True, "replyText": reply_text, "state": "sent" if result.get("sent") else "failed"},
+        )
+
+    def _push_select_result_to_channel(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        result: dict[str, Any],
+    ) -> None:
+        selection = result.get("selection")
+        reply_text = _latest_selection_reply_text(result) or _extract_error(result)
+        if not reply_text:
+            return
+        if isinstance(selection, dict):
+            workflow_run_id = str(selection.get("workflowRunId") or "").strip()
+            markdown = str(selection.get("readerReportMarkdown") or "").strip()
+            if workflow_run_id and markdown:
+                with self._lock:
+                    self._selection_reports[conversation_key] = _PendingSelectionReport(
+                        workflow_run_id=workflow_run_id,
+                        markdown=markdown,
+                    )
+                reply_text = _format_select_completion_reply(reply_text)
+        if self._send_channel_text is None:
+            return
+        target = ChannelReplyTarget(
+            channel_kind=message.channel_kind,
+            account_id=message.account_id,
+            sender_id=message.sender_id,
+        )
+        try:
+            self._send_channel_text(
+                reply_text,
+                f"channel-select-summary:{message.request_id}",
+                target,
+            )
+        except Exception:
+            return
+
     def _handle_normal_chat(
         self,
         *,
@@ -231,6 +388,13 @@ class ChannelTextInboundController:
             return self._remember(
                 message.request_id,
                 {"handled": True, "replyText": error, "state": "failed"},
+            )
+        selection = result.get("selection")
+        if isinstance(selection, dict):
+            reply_text = _latest_selection_reply_text(result) or "已收到 /select，但暂时没有返回选股结果。"
+            return self._remember(
+                message.request_id,
+                {"handled": True, "replyText": reply_text, "state": _selection_reply_state(selection)},
             )
         reply_text = str(result.get("assistantReply") or "").strip()
         if not reply_text:
@@ -286,12 +450,47 @@ def _looks_like_full_report_request(text: str) -> bool:
     }
 
 
+def _looks_like_select_command(text: str) -> bool:
+    normalized = text.strip().lower()
+    return normalized == "/select" or re.match(r"^/select\s+\d{4}-\d{2}-\d{2}$", normalized) is not None
+
+
 def _extract_error(result: dict[str, Any]) -> str | None:
     error = result.get("error")
     if not isinstance(error, dict):
         return None
     message = str(error.get("message") or "").strip()
     return message or "暂时无法处理这条指令，请稍后重试。"
+
+
+def _latest_selection_reply_text(result: dict[str, Any]) -> str | None:
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return None
+    for item in reversed(messages):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "") not in {"selection_result", "selection_refreshing", "selection_unavailable"}:
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _selection_reply_state(selection: dict[str, Any]) -> str:
+    code = str(selection.get("code") or "").strip()
+    if code == "completed":
+        return "selection_completed"
+    if code == "data_refresh_requested":
+        return "selection_refreshing"
+    if code == "failed":
+        return "selection_failed"
+    return "selection_unavailable"
+
+
+def _format_select_completion_reply(text: str) -> str:
+    return f"{text}\n\n如需完整选股报告 PDF，回复“发送完整报告”。"
 
 
 def _format_confirmation_reply(card: dict[str, Any]) -> str:
@@ -321,3 +520,7 @@ def _format_confirmed_reply(result: dict[str, Any]) -> str:
     if "priceAlert" in result:
         return "已确认，价格提醒已创建。"
     return "已确认，已提交。"
+
+
+def _submit_background_job(job: Callable[[], None]) -> None:
+    Thread(target=job, daemon=True).start()

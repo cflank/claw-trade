@@ -119,6 +119,18 @@ class _Warehouse:
         )
 
 
+class _MetadataWarehouse(_Warehouse):
+    def check_coverage(self, checks, coverage) -> WarehouseResult:
+        del checks, coverage
+        self._events.append("warehouse.check_coverage")
+        return WarehouseResult(
+            satisfied=True,
+            rows=(),
+            dataset_refs=("dataset:metadata-only",),
+            freshness={"policy": "warehouse_only"},
+        )
+
+
 class _MultiSymbolWarehouse:
     def check(self, checks, coverage) -> WarehouseResult:
         del coverage
@@ -304,6 +316,30 @@ class _IngestWithSupersededGap(_Ingest):
         )
 
 
+class _IngestWithoutDatasetRefs(_Ingest):
+    def ingest(self, result, batch):
+        self._events.append("ingest.ingest")
+        return IngestResult(
+            ingest_id="ingest-no-dataset",
+            batch_id=batch.batch_id,
+            status="failed",
+            raw_refs=("raw:failed",),
+            attempt_refs=("attempt:failed",),
+            gaps=(
+                DataGap.by_reason(
+                    "empty_result",
+                    request_id=batch.request_ids[0],
+                    market=batch.market,
+                    data_type=batch.data_type,
+                    granularity=batch.granularity,
+                    symbol_id=batch.symbol_ids[0],
+                ),
+            ),
+            remote_success=False,
+            created_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+
 class _Planner(QueryPlanner):
     def __init__(self, events: list[str]) -> None:
         super().__init__()
@@ -389,6 +425,85 @@ def test_data_service_follows_fixed_ten_step_order_when_warehouse_missing() -> N
     ]
 
 
+def test_data_service_warehouse_only_does_not_fetch_remote_when_missing() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_Warehouse(events, satisfied_on_check=False),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+    request = _request("req-warehouse-only").model_copy(update={"freshness_policy": "warehouse_only"})
+
+    result = service.get_data(request)
+
+    assert result.status == DataResultStatus.MISSING
+    assert result.dataset_refs == ()
+    assert [gap.reason for gap in result.gaps] == [GapReason.WAREHOUSE_MISSING]
+    assert events == ["query_planner.validate_and_normalize", "warehouse.check"]
+
+
+def test_data_service_warehouse_only_uses_metadata_coverage_without_rows() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_MetadataWarehouse(events, satisfied_on_check=True),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+    request = _request("req-warehouse-only-ready").model_copy(
+        update={"freshness_policy": "warehouse_only", "consumer": "select", "consumer_id": "select-run:coverage_check"}
+    )
+
+    result = service.get_data(request)
+
+    assert result.status == DataResultStatus.READY
+    assert result.rows == ()
+    assert result.dataset_refs == ("dataset:metadata-only",)
+    assert events == ["query_planner.validate_and_normalize", "warehouse.check_coverage"]
+
+
+def test_data_service_select_universe_refresh_skips_pre_refresh_warehouse_check() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_Warehouse(events, satisfied_on_check=False),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+    payload = _request("sel-unit:selection:universe_refresh:1:all_a_shares:daily_bar").model_dump()
+    payload.update({"symbol_id": None, "universe_ref": "all_a_shares", "consumer": "select", "consumer_id": "sel-unit"})
+
+    result = service.get_data(DataRequest.model_validate(payload))
+
+    assert result.status == DataResultStatus.READY
+    assert "warehouse.check" not in events
+    assert events == [
+        "query_planner.validate_and_normalize",
+        "provider_selector.select_candidates",
+        "provider_selector.read_capabilities",
+        "coalescer.coalesce",
+        "batch_planner.build_batches",
+        "execution_gate.enter",
+        "fetch_engine.fetch",
+        "ingest.ingest",
+        "execution_gate.publish_shared_result",
+        "warehouse.recheck",
+    ]
+
+
 def test_data_service_ready_result_drops_superseded_ingest_gaps() -> None:
     events: list[str] = []
     service = DataService(
@@ -409,6 +524,28 @@ def test_data_service_ready_result_drops_superseded_ingest_gaps() -> None:
     assert result.raw_refs == ("raw:backup",)
     assert result.attempt_refs == ("attempt:backup",)
     assert result.gaps == ()
+
+
+def test_data_service_skips_recheck_when_remote_attempt_writes_no_dataset_refs() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_Warehouse(events, satisfied_on_check=False),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_IngestWithoutDatasetRefs(events),
+    )
+
+    result = service.get_data(_request("req-no-dataset"))
+
+    assert result.status == DataResultStatus.MISSING
+    assert result.dataset_refs == ()
+    assert result.raw_refs == ("raw:failed",)
+    assert result.attempt_refs == ("attempt:failed",)
+    assert "warehouse.recheck" not in events
 
 
 def test_data_service_dedupes_identical_gaps() -> None:
@@ -566,3 +703,136 @@ def test_data_service_batch_ready_request_not_downgraded_by_other_request_gap() 
     assert results[0].gaps == ()
     assert results[1].status == DataResultStatus.MISSING
     assert results[1].gaps[0].request_id == "req-b"
+
+
+def test_data_service_rechecks_between_provider_priority_waves_and_skips_slow_fallback() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_WaveWarehouse(events),
+        provider_selector=_FallbackSelector(events),
+        coalescer=_PassThroughCoalescer(events),
+        batch_planner=_CandidateBatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_ProviderTrackingFetchEngine(events),
+        ingest=_Ingest(events),
+    )
+
+    [result] = service.get_data_batch((_request("req-wave"),))
+
+    assert result.status == DataResultStatus.READY
+    assert result.dataset_refs == ("dataset:wave",)
+    assert "fetch:provider-fast" in events
+    assert "fetch:provider-slow" not in events
+
+
+class _WaveWarehouse:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def check(self, checks, coverage) -> WarehouseResult:
+        del coverage
+        self._events.append("warehouse.check")
+        return WarehouseResult(satisfied=False, gaps=(_gap(checks[0].request_id),))
+
+    def recheck(self, checks, coverage) -> WarehouseResult:
+        del checks, coverage
+        self._events.append("warehouse.recheck")
+        if "fetch:provider-fast" not in self._events:
+            return WarehouseResult(satisfied=False, gaps=(_gap("req-wave"),))
+        return WarehouseResult(
+            satisfied=True,
+            rows=({"close": 9.0},),
+            dataset_refs=("dataset:wave",),
+            freshness={"policy": "trading_day"},
+        )
+
+
+class _FallbackSelector:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def select_candidates(self, gaps, plan):
+        del plan
+        self._events.append("provider_selector.select_candidates")
+        request_id = gaps[0].request_id
+        return (
+            {
+                "request_id": request_id,
+                "provider_id": "provider-fast",
+                "endpoint_id": "daily",
+                "market": Market.CN_A,
+                "data_type": "daily_bar",
+                "granularity": "daily",
+                "source_role": "built_in_public",
+                "priority_rank": 1,
+                "symbol_id": "600519.SH",
+                "fields": ("close",),
+            },
+            {
+                "request_id": request_id,
+                "provider_id": "provider-slow",
+                "endpoint_id": "daily",
+                "market": Market.CN_A,
+                "data_type": "daily_bar",
+                "granularity": "daily",
+                "source_role": "built_in_public",
+                "priority_rank": 9,
+                "symbol_id": "600519.SH",
+                "fields": ("close",),
+            },
+        )
+
+    def read_capabilities(self, candidates):
+        self._events.append("provider_selector.read_capabilities")
+        return {"count": len(candidates)}
+
+
+class _PassThroughCoalescer:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def coalesce(self, gaps, candidates, capabilities):
+        del gaps, capabilities
+        self._events.append("coalescer.coalesce")
+        return tuple(candidates)
+
+
+class _CandidateBatchPlanner:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def build_batches(self, groups, capabilities):
+        del capabilities
+        self._events.append("batch_planner.build_batches")
+        return tuple(
+            _batch_plan(group["request_id"]).model_copy(
+                update={
+                    "batch_id": f"batch:{group['provider_id']}",
+                    "provider_id": group["provider_id"],
+                    "endpoint_id": group["endpoint_id"],
+                    "priority_rank": group["priority_rank"],
+                }
+            )
+            for group in groups
+        )
+
+
+class _ProviderTrackingFetchEngine:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def fetch(self, batch):
+        self._events.append(f"fetch:{batch.provider_id}")
+        return FetchResult(
+            fetch_id=f"fetch:{batch.provider_id}",
+            batch_id=batch.batch_id,
+            provider_id=batch.provider_id,
+            endpoint_id=batch.endpoint_id,
+            market=batch.market,
+            symbol_ids=batch.symbol_ids,
+            status=FetchStatus.SUCCESS,
+            payload={"rows": [{"close": 9.0}]},
+            row_count=1,
+            fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )

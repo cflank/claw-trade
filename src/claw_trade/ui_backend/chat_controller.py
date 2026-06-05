@@ -8,7 +8,7 @@ from typing import Any
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.selection.controller import SelectCommandCode, SelectionController
-from claw_trade.selection.store import restore_selection_run_store
+from claw_trade.selection.store import SelectionRunStore
 from claw_trade.ui_backend.chat_context import (
     ChatContext,
     create_normal_chat_context,
@@ -34,6 +34,7 @@ class ChatMessage:
     card_id: str | None = None
     report_id: str | None = None
     task_id: str | None = None
+    selection: dict[str, Any] | None = None
 
 
 class ChatController:
@@ -54,7 +55,7 @@ class ChatController:
         self._queue = queue
         self._settings = settings
         self._report_model_ready_checker = report_model_ready_checker
-        self._selection_controller = selection_controller or SelectionController(store=restore_selection_run_store())
+        self._selection_controller = selection_controller or SelectionController(store=SelectionRunStore())
         self._contexts: dict[str, ChatContext] = {}
         self._messages: dict[str, list[ChatMessage]] = {}
         self._confirmation_cards: dict[str, dict[str, dict[str, Any]]] = {}
@@ -232,6 +233,60 @@ class ChatController:
         )
         return self._chat_result(context)
 
+    def begin_channel_select_command(self, *, context_id: str, text: str) -> dict[str, Any]:
+        content = text.strip()
+        if not self._is_explicit_select_command(content):
+            raise QueueError("INVALID_INPUT", "invalid_input", "请输入完整的 /select 指令。")
+        context = self._get_or_create_context(context_id)
+        self._append_message(
+            context_id=context.id,
+            context_kind=context.kind,
+            actor="user",
+            kind="plain",
+            text=content,
+        )
+        self._append_message(
+            context_id=context.id,
+            context_kind=context.kind,
+            actor="system",
+            kind="selection_refreshing",
+            text="已收到 `/select`，正在执行选股；完成后会显示在这里。",
+        )
+        return self._chat_result(context)
+
+    def finish_channel_select_command(self, *, request_id: str, context_id: str, text: str) -> dict[str, Any]:
+        if request_id in self._idempotency:
+            return self._idempotency[request_id]
+        context = self._get_or_create_context(context_id)
+        content = text.strip()
+        try:
+            payload = self._handle_explicit_select_command(
+                context=context,
+                request_id=request_id,
+                content=content,
+            )
+        except QueueError as exc:
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="plain",
+                text=exc.user_message,
+            )
+            payload = {"error": {"code": exc.code, "message": exc.user_message}, **self._chat_result(context)}
+        except Exception as exc:
+            failure = translate_internal_error_for_user(exc)
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="plain",
+                text=failure.user_message,
+            )
+            payload = {"error": {"code": failure.code, "message": failure.user_message}, **self._chat_result(context)}
+        self._idempotency[request_id] = payload
+        return payload
+
     def switch_chat_context(
         self,
         *,
@@ -307,41 +362,7 @@ class ChatController:
                     )
                     return self._chat_result(context, queue_snapshot=snapshot)
         if self._is_explicit_select_command(content):
-            select_result = self._selection_controller.handle_select_command(
-                raw_text=content,
-                request_id=request_id,
-                user_id=context.id,
-            )
-            if select_result.code == SelectCommandCode.COMPLETED:
-                message_kind = "selection_result"
-            elif select_result.code == SelectCommandCode.DATA_REFRESH_REQUESTED:
-                message_kind = "selection_refreshing"
-            else:
-                message_kind = "selection_unavailable"
-            self._append_message(
-                context_id=context.id,
-                context_kind=context.kind,
-                actor="system",
-                kind=message_kind,
-                text=select_result.chat_text,
-            )
-            payload = self._chat_result(context)
-            payload["selection"] = {
-                "code": select_result.code.value,
-                "workflowRunId": select_result.select_workflow_run_id,
-                "evidencePath": str(select_result.evidence_path),
-                "unavailableCode": select_result.unavailable_code.value if select_result.unavailable_code else None,
-                "failureReason": select_result.failure_reason,
-            }
-            if select_result.data_refresh is not None:
-                payload["selection"]["dataRefresh"] = {
-                    "status": select_result.data_refresh.status,
-                    "selectionRunId": select_result.data_refresh.selection_run_id,
-                    "tradeDate": select_result.data_refresh.trade_date,
-                    "reason": select_result.data_refresh.reason,
-                    "errorCode": select_result.data_refresh.error_code,
-                }
-            return payload
+            return self._handle_explicit_select_command(context=context, request_id=request_id, content=content)
         if self._recognizer.looks_like_report_intent(content):
             try:
                 draft = self._recognizer.classify_user_intent(
@@ -375,6 +396,52 @@ class ChatController:
             text=reply.text,
         )
         return self._chat_result(context, assistant_reply=reply.text)
+
+    def _handle_explicit_select_command(
+        self,
+        *,
+        context: ChatContext,
+        request_id: str,
+        content: str,
+    ) -> dict[str, Any]:
+        select_result = self._selection_controller.handle_select_command(
+            raw_text=content,
+            request_id=request_id,
+            user_id=context.id,
+        )
+        if select_result.code == SelectCommandCode.COMPLETED:
+            message_kind = "selection_result"
+        elif select_result.code == SelectCommandCode.DATA_REFRESH_REQUESTED:
+            message_kind = "selection_refreshing"
+        else:
+            message_kind = "selection_unavailable"
+        selection_payload = {
+            "code": select_result.code.value,
+            "workflowRunId": select_result.select_workflow_run_id,
+            "evidencePath": str(select_result.evidence_path),
+            "unavailableCode": select_result.unavailable_code.value if select_result.unavailable_code else None,
+            "failureReason": select_result.failure_reason,
+            "readerReportMarkdown": select_result.reader_report_markdown,
+        }
+        if select_result.data_refresh is not None:
+            selection_payload["dataRefresh"] = {
+                "status": select_result.data_refresh.status,
+                "selectionRunId": select_result.data_refresh.selection_run_id,
+                "tradeDate": select_result.data_refresh.trade_date,
+                "reason": select_result.data_refresh.reason,
+                "errorCode": select_result.data_refresh.error_code,
+            }
+        self._append_message(
+            context_id=context.id,
+            context_kind=context.kind,
+            actor="system",
+            kind=message_kind,
+            text=select_result.chat_text,
+            selection=selection_payload,
+        )
+        payload = self._chat_result(context)
+        payload["selection"] = selection_payload
+        return payload
 
     def _chat_result(
         self,
@@ -449,6 +516,7 @@ class ChatController:
         card_id: str | None = None,
         report_id: str | None = None,
         task_id: str | None = None,
+        selection: dict[str, Any] | None = None,
     ) -> None:
         self._message_seq += 1
         item = ChatMessage(
@@ -461,6 +529,7 @@ class ChatController:
             card_id=card_id,
             report_id=report_id,
             task_id=task_id,
+            selection=selection,
         )
         self._messages.setdefault(context_id, []).append(item)
 
@@ -480,6 +549,8 @@ class ChatController:
             payload["reportId"] = message.report_id
         if message.task_id:
             payload["taskId"] = message.task_id
+        if message.selection:
+            payload["selection"] = dict(message.selection)
         return payload
 
     @staticmethod

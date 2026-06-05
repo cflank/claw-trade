@@ -29,6 +29,7 @@ class Normalizer:
             next_row = _map_field_aliases(row)
             next_row["market"] = _enum_value(getattr(batch, "market", next_row.get("market")))
             next_row["dataset"] = _first_text(getattr(batch, "data_type", None), next_row.get("dataset"))
+            _copy_optional_text_field(next_row, batch, "universe_ref")
 
             row_granularity = _normalize_granularity(next_row.get("granularity"))
             if row_granularity and batch_granularity and row_granularity != batch_granularity:
@@ -122,6 +123,10 @@ def _map_field_aliases(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _copy_market_field(row: dict[str, Any], batch: Any, key: str) -> None:
+    _copy_optional_text_field(row, batch, key)
+
+
+def _copy_optional_text_field(row: dict[str, Any], batch: Any, key: str) -> None:
     if _non_empty_str(row.get(key)):
         return
     value = getattr(batch, key, None)

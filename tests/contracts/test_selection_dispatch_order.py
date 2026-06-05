@@ -255,6 +255,61 @@ def test_selection_manager_pm_command_include_model_visible_upstream_material_re
     assert pm_dispatch.model_visible_materials[3] in pm_prompt_context
 
 
+def test_selection_manager_pm_prompt_context_prepends_candidate_checklist(tmp_path: Path) -> None:
+    runner = _FakeOpenClawRunner()
+    openclaw = OpenClawClient(runner=runner)
+    dispatches = build_fixed_selection_dispatches(
+        request=SelectRequest(
+            request_id="sel-07-checklist-request",
+            market=SelectionMarket.CN_A,
+            profile=SelectionProfile.CN_A,
+            trade_date="2026-05-26",
+            user_id="u-1",
+            created_at="2026-05-26T10:00:00+00:00",
+            entry_point=WorkflowEntryPoint.SELECT_COMMAND,
+            system_context_policy=SelectionSystemContextPolicy.SINGLE_WORKER_MINIMAL,
+        ),
+        select_workflow_run_id="sel-wf-checklist",
+        selection_run_id="sel-run-checklist",
+        evidence_root=tmp_path / "evidence",
+        candidate_pack_summary_md="\n".join(
+            [
+                "## 候选事实表",
+                "| 排名 | 股票代码 | 股票名称 | 行业 | 总分 |",
+                "| --- | --- | --- | --- | ---: |",
+                "| 1 | 003036.SZ | 泰坦股份 | - | 60.55 |",
+                "| 6 | 600545.SH | 卓郎智能 | - | 60.20 |",
+                "| 20 | 688260.SH | 昀冢科技 | - | 56.83 |",
+            ]
+        ),
+        approved_l1_materials={
+            SelectionWorkerId.STRATEGIST: "approved strategist l1",
+            SelectionWorkerId.SKEPTIC: "approved skeptic l1",
+            SelectionWorkerId.MANAGER: "approved manager l1",
+        },
+    )
+    executions = execute_selection_dispatches(
+        openclaw=openclaw,
+        dispatches=dispatches,
+        candidate_pack_ref=_candidate_pack_ref(),
+        profile="CN_A",
+        selection_artifact_root=tmp_path / "selection-artifacts",
+    )
+    by_worker_execution = {item.dispatch.worker_id: item for item in executions}
+    manager_snapshot = json.loads(
+        by_worker_execution[SelectionWorkerId.MANAGER].command_snapshot_path.read_text(encoding="utf-8")
+    )
+    pm_snapshot = json.loads(
+        by_worker_execution[SelectionWorkerId.PORTFOLIO_MANAGER].command_snapshot_path.read_text(encoding="utf-8")
+    )
+
+    for snapshot in (manager_snapshot, pm_snapshot):
+        prompt_context = snapshot["runtime_vars"]["select_workflow_run_id"]
+        assert "[候选池完整核对清单]" in prompt_context
+        assert "- 6 | 600545.SH | 卓郎智能" in prompt_context
+        assert prompt_context.index("[候选池完整核对清单]") < prompt_context.index("[模型可见已批准材料]")
+
+
 def test_selection_dispatch_validation_failure_blocks_following_workers(tmp_path: Path) -> None:
     runner = _CorruptingOpenClawRunner(corrupt_after_call_count=1)
     openclaw = OpenClawClient(runner=runner)

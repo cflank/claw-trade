@@ -14,26 +14,41 @@ function selectionMessage(text: string): ChatMessageForUser {
       code: 'completed',
       workflowRunId: 'select-workflow-1',
       evidencePath: 'runs/selection/workflows/select-workflow-1/selection-workflow-evidence.json',
+      readerReportMarkdown: '# 选股结果报告\n\n## 候选事实表\n\n| 排名 | 股票代码 | 股票名称 | 总分 |\n| --- | --- | --- | ---: |\n| 1 | 600519.SH | 贵州茅台 | 91 |',
     },
     createdAt: '2026-05-28T10:00:00.000Z',
   };
 }
 
 describe('selection result card', () => {
-  it('renders selection classes and candidate-pack labels while hiding protocol lines', () => {
+  it('renders a brief selection card while hiding protocol and internal scoring lines', () => {
     render(
       <MessageStream
         items={[
           selectionMessage(`\`/select\` 已完成，本轮仅进入等待确认，不会自动启动 \`/report\`。
 
+简报：
+- 进入 \`/report\`：600519.SH 贵州茅台
+- 观察：000001.SZ 平安银行
+- 放弃：300750.SZ 宁德时代
+
 进入 \`/report\`：
-- 600519.SH 贵州茅台：total score 91；subscore 质量 30；strategy source/variant cn_a.value/v1；hit fields ROE, revenue_growth；metric values ROE=31%, revenue_growth=12%；risk/data-gap penalties 2；tie-break liquidity；config/weight version cn_a.selection_weights.v1
+- 600519.SH 贵州茅台：经营质量与现金流稳定，值得进入深度报告验证。
 
 观察：
-- 000001.SZ 平安银行：total score 75；subscore 估值 20
+- 000001.SZ 平安银行：还需后续财报与景气数据确认。
 
 放弃：
-- 300750.SZ 宁德时代：risk/data-gap penalties 8
+- 300750.SZ 宁德时代：当前证据链分歧较大且不够完整。
+
+total score 91 hidden
+subscore 质量 30 hidden
+strategy source/variant cn_a.value/v1 hidden
+hit fields ROE, revenue_growth hidden
+metric values ROE=31%, revenue_growth=12% hidden
+risk/data-gap penalties 2 hidden
+tie-break liquidity hidden
+config/weight version cn_a.selection_weights.v1 hidden
 
 provider attempt: hidden
 Mongo protocol: hidden
@@ -49,17 +64,19 @@ raw payload: hidden`),
     expect(screen.getByText('观察：')).toBeInTheDocument();
     expect(screen.getByText('放弃：')).toBeInTheDocument();
     expect(screen.getAllByText(/600519\.SH 贵州茅台/)[0]).toBeInTheDocument();
-    expect(screen.getByText(/total score 91/)).toBeInTheDocument();
-    expect(screen.getByText(/subscore 质量 30/)).toBeInTheDocument();
-    expect(screen.getByText(/strategy source\/variant cn_a\.value\/v1/)).toBeInTheDocument();
-    expect(screen.getByText(/hit fields ROE, revenue_growth/)).toBeInTheDocument();
-    expect(screen.getByText(/metric values ROE=31%, revenue_growth=12%/)).toBeInTheDocument();
-    expect(screen.getAllByText(/risk\/data-gap penalties/)).toHaveLength(2);
-    expect(screen.getByText(/tie-break liquidity/)).toBeInTheDocument();
-    expect(screen.getByText(/config\/weight version cn_a\.selection_weights\.v1/)).toBeInTheDocument();
     expect(screen.getByText('不会自动启动 /report。需要你确认候选标的后才会进入正式报告。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看完整选股报告' })).toBeInTheDocument();
 
     const bodyText = document.body.textContent ?? '';
+    expect(bodyText).not.toContain('total score');
+    expect(bodyText).not.toContain('subscore');
+    expect(bodyText).not.toContain('strategy source');
+    expect(bodyText).not.toContain('hit fields');
+    expect(bodyText).not.toContain('metric values');
+    expect(bodyText).not.toContain('risk/data-gap');
+    expect(bodyText).not.toContain('tie-break');
+    expect(bodyText).not.toContain('config/weight');
+    expect(bodyText).not.toContain('cn_a.selection');
     expect(bodyText).not.toContain('provider attempt');
     expect(bodyText).not.toContain('Mongo protocol');
     expect(bodyText).not.toContain('OpenViking');

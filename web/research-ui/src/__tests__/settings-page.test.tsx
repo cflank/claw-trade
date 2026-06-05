@@ -380,13 +380,14 @@ describe('settings-wechat settings page', () => {
     expect(within(embeddingSection).getByText('未启用')).toBeInTheDocument();
   });
 
-  it('refreshes the displayed WeChat QR code from the settings action', async () => {
+  it('loads WeChat QR when opening general settings and still supports manual refresh', async () => {
     const seenUrls: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
       if (url.includes('/api/ui/get-channel-status')) {
         const refreshed = url.includes('refreshQr=true');
+        const includesQr = url.includes('includeQr=true');
         return json({
           channelKind: 'wechat_clawbot',
           onboardingState: 'completed',
@@ -395,8 +396,12 @@ describe('settings-wechat settings page', () => {
           accountLabel: null,
           canSendText: false,
           canSendFile: false,
-          qrCodeImageDataUrl: refreshed ? 'data:image/png;base64,settings-qr-next' : null,
-          qrCodeRefreshRequired: !refreshed,
+          qrCodeImageDataUrl: refreshed
+            ? 'data:image/png;base64,settings-qr-next'
+            : includesQr
+              ? 'data:image/png;base64,settings-qr-auto'
+              : null,
+          qrCodeRefreshRequired: !refreshed && !includesQr,
         });
       }
       if (url.includes('/api/ui/load-llm-settings')) {
@@ -426,7 +431,14 @@ describe('settings-wechat settings page', () => {
     await screen.findByRole('heading', { name: '报告模型' });
     expect(seenUrls.filter((url) => url.includes('includeQr=true'))).toHaveLength(0);
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
-    expect(screen.queryByAltText('微信登录二维码')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByAltText('微信登录二维码')).toHaveAttribute(
+        'src',
+        'data:image/png;base64,settings-qr-auto',
+      );
+    });
+    expect(seenUrls.some((url) => url.includes('includeQr=true') && !url.includes('refreshQr=true'))).toBe(true);
+    expect(seenUrls.some((url) => url.includes('refreshQr=true'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: '刷新二维码' }));
 
     await waitFor(() => {
@@ -435,7 +447,6 @@ describe('settings-wechat settings page', () => {
         'data:image/png;base64,settings-qr-next',
       );
     });
-    expect(seenUrls.some((url) => url.includes('includeQr=true'))).toBe(true);
     expect(seenUrls.some((url) => url.includes('refreshQr=true'))).toBe(true);
   });
 

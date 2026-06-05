@@ -38,9 +38,10 @@ describe('settings-css-onboarding', () => {
     expect(css).toContain('.ct-page-title');
     expect(css).toContain('.ct-page-subtitle');
 
-    expect(homePage).toContain('className="ct-onboarding-wrap"');
-    expect(homePage).toContain('className="ct-onboarding ct-onboarding-single"');
-    expect(homePage).toContain('className="ct-onboarding-panel"');
+    expect(homePage).toContain('data-testid="workspace-layout"');
+    expect(homePage).not.toContain('className="ct-onboarding-wrap"');
+    expect(homePage).not.toContain('className="ct-onboarding ct-onboarding-single"');
+    expect(homePage).not.toContain('className="ct-onboarding-panel"');
     expect(settingsPage).toContain('className="ct-settings-wrap"');
     expect(settingsPage).toContain('className="ct-page-head"');
   });

@@ -21,6 +21,7 @@ CN_A_MONGODB_PORT="${CN_A_MONGODB_PORT:-27017}"
 CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"
 CN_A_MONGODB_DATABASE="${CN_A_MONGODB_DATABASE:-claw_trade}"
 CN_A_MONGODB_CACHE_COLLECTION="${CN_A_MONGODB_CACHE_COLLECTION:-cn_a_fundamental_cache}"
+CLAW_TRADE_MONGODB_CACHE_SIZE_GB="${CLAW_TRADE_MONGODB_CACHE_SIZE_GB:-1.0}"
 
 PID_FILE="${RUN_DIR}/mongod.pid"
 LOG_FILE="${LOG_DIR}/mongod.log"
@@ -36,6 +37,46 @@ log_error() {
 pid_is_alive() {
   local pid="$1"
   [[ "${pid}" =~ ^[0-9]+$ ]] && kill -0 "${pid}" 2>/dev/null
+}
+
+system_memory_quarter_gb() {
+  awk '
+    /MemTotal/ {
+      gb = $2 / 1024 / 1024 / 4
+      if (gb < 0.25) {
+        gb = 0.25
+      }
+      printf "%.2f", gb
+      found = 1
+    }
+    END {
+      if (!found) {
+        printf "1.00"
+      }
+    }
+  ' /proc/meminfo 2>/dev/null || printf '1.00'
+}
+
+mongodb_cache_size_gb() {
+  local requested="$1"
+  local quarter
+  quarter="$(system_memory_quarter_gb)"
+  awk -v requested="${requested}" -v quarter="${quarter}" '
+    BEGIN {
+      value = requested + 0
+      cap = quarter + 0
+      if (value <= 0) {
+        value = 1.0
+      }
+      if (value > cap) {
+        value = cap
+      }
+      if (value < 0.25) {
+        value = 0.25
+      }
+      printf "%.2f", value
+    }
+  '
 }
 
 ensure_mongodb_binary() {
@@ -71,13 +112,18 @@ main() {
     fi
   fi
 
+  local cache_size_gb
+  cache_size_gb="$(mongodb_cache_size_gb "${CLAW_TRADE_MONGODB_CACHE_SIZE_GB}")"
+
   log_info "Starting MongoDB on ${CN_A_MONGODB_URI}"
+  log_info "MongoDB WiredTiger cache limit: ${cache_size_gb}GB"
   "${MONGOD_BIN}" \
     --dbpath "${DATA_DIR}" \
     --logpath "${LOG_FILE}" \
     --pidfilepath "${PID_FILE}" \
     --bind_ip "${CN_A_MONGODB_BIND_IP}" \
     --port "${CN_A_MONGODB_PORT}" \
+    --wiredTigerCacheSizeGB "${cache_size_gb}" \
     --fork
 
   log_info "MongoDB started"
@@ -85,6 +131,7 @@ main() {
   printf 'export CN_A_MONGODB_URI=%q\n' "${CN_A_MONGODB_URI}"
   printf 'export CN_A_MONGODB_DATABASE=%q\n' "${CN_A_MONGODB_DATABASE}"
   printf 'export CN_A_MONGODB_CACHE_COLLECTION=%q\n' "${CN_A_MONGODB_CACHE_COLLECTION}"
+  printf 'export CLAW_TRADE_MONGODB_CACHE_SIZE_GB=%q\n' "${cache_size_gb}"
 }
 
 main "$@"

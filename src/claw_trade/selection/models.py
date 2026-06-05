@@ -608,9 +608,14 @@ class SelectionDataRun:
     provider_attempt_refs: tuple[str, ...] = ()
     select_data_plan_ref: str | None = None
     warehouse_check_ref: str | None = None
+    columnar_manifest_ref: str | None = None
+    columnar_manifest_sha256: str | None = None
     feature_snapshot_ref: str | None = None
     candidate_pack_ref: CandidatePackRef | None = None
     data_gaps: tuple[DataGapRef, ...] = ()
+    progress_label: str | None = None
+    progress_completed: int | None = None
+    progress_total: int | None = None
     started_at: str | None = None
     completed_at: str | None = None
     failed_at: str | None = None
@@ -626,6 +631,18 @@ class SelectionDataRun:
             _require_iso_timestamp("completed_at", self.completed_at)
         if self.failed_at is not None:
             _require_iso_timestamp("failed_at", self.failed_at)
+        if self.columnar_manifest_sha256 is not None:
+            _require_sha256("columnar_manifest_sha256", self.columnar_manifest_sha256)
+        if self.progress_completed is not None and self.progress_completed < 0:
+            raise ValueError("progress_completed must be non-negative")
+        if self.progress_total is not None and self.progress_total < 0:
+            raise ValueError("progress_total must be non-negative")
+        if (
+            self.progress_completed is not None
+            and self.progress_total is not None
+            and self.progress_completed > self.progress_total
+        ):
+            raise ValueError("progress_completed cannot exceed progress_total")
         if self.status == SelectionDataRunStatus.RUNNING and self.lease_id is None:
             raise ValueError("lease_id is required when status is running")
         if self.status == SelectionDataRunStatus.COMPLETED:

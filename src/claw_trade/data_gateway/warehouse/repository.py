@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from hashlib import sha256
 from threading import RLock
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 from uuid import uuid4
@@ -83,14 +85,25 @@ _COLLECTION_INDEXES: dict[str, tuple[tuple[str, ...], ...]] = {
     "normalized_datasets": (
         ("dataset_ref",),
         ("dataset", "market", "symbol_id", "universe_ref"),
+        ("dataset", "market", "symbol_id", "period_start", "period_end"),
+        ("dataset", "market", "universe_ref", "period_start", "period_end"),
     ),
     "raw_payloads": (("raw_ref",),),
-    "provider_attempts": (("attempt_ref",),),
+    "provider_attempts": (("attempt_ref",), ("dataset_refs",)),
     "provider_rate_limits": (("rate_limit_ref",), ("rate_key_hash",)),
     "single_flight_calls": (("call_key_hash",),),
     "provider_result_cache": (("cache_key_hash",),),
     "dataset_manifests": (("manifest_ref",),),
     "maintenance_jobs": (("job_id",),),
+}
+
+_DATASET_CHECKSUM_ALGORITHM = "sha256:canonical-json-v1"
+_DATASET_CHECKSUM_SCOPE = "normalized-batch-v1"
+_DATASET_CHECKSUM_FIELDS = {
+    "dataset_checksum",
+    "dataset_checksum_algorithm",
+    "dataset_checksum_scope",
+    "dataset_row_count",
 }
 
 
@@ -108,7 +121,35 @@ class DatasetRecord:
     as_of: datetime | None
     fresh_until: datetime | None
     source_roles: tuple[str, ...]
+    dataset_checksum: str | None
+    dataset_checksum_algorithm: str | None
+    dataset_checksum_scope: str | None
     row: Mapping[str, Any]
+    dataset_row_count: int | None = None
+
+
+@dataclass(frozen=True)
+class DatasetChecksumCoverage:
+    checksum: str
+    actual_count: int
+    expected_min: int | None
+    expected_max: int | None
+    min_start: Any | None
+    max_end: Any | None
+
+
+@dataclass(frozen=True)
+class DatasetCoverageSummary:
+    record_count: int
+    dataset_refs: tuple[str, ...]
+    ranges: tuple[tuple[Any, Any], ...]
+    starts: tuple[Any, ...]
+    ends: tuple[Any, ...]
+    field_sets: tuple[tuple[str, ...], ...]
+    source_role_sets: tuple[tuple[str, ...], ...]
+    freshest_as_of: datetime | None
+    freshest_until: datetime | None
+    checksum_counts: tuple[DatasetChecksumCoverage, ...]
 
 
 def is_provider_style_dataset_name(name: str) -> bool:
@@ -184,19 +225,114 @@ class _CollectionAdapter:
         for key, payload in payloads:
             self.set(key, payload)
 
-    def find(self, criteria: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    def find(self, criteria: Mapping[str, Any], *, include_row: bool = True) -> tuple[dict[str, Any], ...]:
         criteria_dict = dict(criteria)
         if isinstance(self.backend, MutableMapping):
+            def _copy(item: Mapping[str, Any]) -> dict[str, Any]:
+                copied = dict(item)
+                if not include_row:
+                    copied.pop("row", None)
+                return copied
+
             return tuple(
-                dict(item)
+                _copy(item)
                 for item in self.backend.values()
-                if all(item.get(key) == value for key, value in criteria_dict.items())
+                if _matches_criteria(item, criteria_dict)
             )
         finder = getattr(self.backend, "find", None)
         if callable(finder):
-            rows = finder(criteria_dict)
+            if include_row:
+                rows = finder(criteria_dict)
+            else:
+                try:
+                    rows = finder(criteria_dict, {"row": 0})
+                except TypeError:
+                    rows = finder(criteria_dict)
             return tuple(dict(item) for item in rows)
         return ()
+
+    def find_limited(
+        self,
+        criteria: Mapping[str, Any],
+        *,
+        include_row: bool = True,
+        limit: int,
+    ) -> tuple[dict[str, Any], ...]:
+        criteria_dict = dict(criteria)
+        if limit <= 0:
+            return ()
+        if isinstance(self.backend, MutableMapping):
+            matches: list[dict[str, Any]] = []
+            for item in self.backend.values():
+                if not _matches_criteria(item, criteria_dict):
+                    continue
+                copied = dict(item)
+                if not include_row:
+                    copied.pop("row", None)
+                matches.append(copied)
+                if len(matches) >= limit:
+                    break
+            return tuple(matches)
+        finder = getattr(self.backend, "find", None)
+        if callable(finder):
+            if include_row:
+                rows = finder(criteria_dict)
+            else:
+                try:
+                    rows = finder(criteria_dict, {"row": 0})
+                except TypeError:
+                    rows = finder(criteria_dict)
+            limiter = getattr(rows, "limit", None)
+            if callable(limiter):
+                rows = limiter(limit)
+                return tuple(dict(item) for item in rows)
+            limited: list[dict[str, Any]] = []
+            for item in rows:
+                limited.append(dict(item))
+                if len(limited) >= limit:
+                    break
+            return tuple(limited)
+        return ()
+
+    def iter_find(self, criteria: Mapping[str, Any], *, include_row: bool = True) -> Iterable[dict[str, Any]]:
+        criteria_dict = dict(criteria)
+        if isinstance(self.backend, MutableMapping):
+            for item in self.backend.values():
+                if not _matches_criteria(item, criteria_dict):
+                    continue
+                copied = dict(item)
+                if not include_row:
+                    copied.pop("row", None)
+                yield copied
+            return
+        finder = getattr(self.backend, "find", None)
+        if callable(finder):
+            if include_row:
+                rows = finder(criteria_dict)
+            else:
+                try:
+                    rows = finder(criteria_dict, {"row": 0})
+                except TypeError:
+                    rows = finder(criteria_dict)
+            for item in rows:
+                yield dict(item)
+
+    def aggregate(self, pipeline: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...] | None:
+        if isinstance(self.backend, MutableMapping):
+            return None
+        aggregator = getattr(self.backend, "aggregate", None)
+        if not callable(aggregator):
+            return None
+        return tuple(dict(item) for item in aggregator([dict(stage) for stage in pipeline]))
+
+    def count(self, criteria: Mapping[str, Any]) -> int:
+        criteria_dict = dict(criteria)
+        if isinstance(self.backend, MutableMapping):
+            return sum(1 for item in self.backend.values() if _matches_criteria(item, criteria_dict))
+        counter = getattr(self.backend, "count_documents", None)
+        if callable(counter):
+            return int(counter(criteria_dict))
+        return sum(1 for _row in self.iter_find(criteria_dict, include_row=False))
 
     def ensure_indexes(self, index_specs: Sequence[tuple[str, ...]]) -> None:
         if isinstance(self.backend, MutableMapping):
@@ -290,8 +426,71 @@ def _mongo_safe_document(value: Any) -> Any:
     return value
 
 
+def _date_query_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:10]
+
+
 def _matches_criteria(item: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
-    return all(_lookup_dotted(item, str(key)) == value for key, value in criteria.items())
+    return all(_matches_value(_lookup_dotted(item, str(key)), value) for key, value in criteria.items())
+
+
+def _matches_value(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, Mapping) and any(str(key).startswith("$") for key in expected):
+        actual_value = _comparable_value(actual)
+        for operator, raw_value in expected.items():
+            expected_value = _comparable_value(raw_value)
+            if operator == "$lte":
+                if actual_value is None or actual_value > expected_value:
+                    return False
+                continue
+            if operator == "$gte":
+                if actual_value is None or actual_value < expected_value:
+                    return False
+                continue
+            if operator == "$gt":
+                if actual_value is None or actual_value <= expected_value:
+                    return False
+                continue
+            if operator == "$ne":
+                if actual_value == expected_value:
+                    return False
+                continue
+            if operator == "$exists":
+                exists = actual is not None
+                if bool(raw_value) != exists:
+                    return False
+                continue
+            if operator == "$in":
+                raw_values = raw_value if isinstance(raw_value, (tuple, list, set)) else (raw_value,)
+                expected_values = tuple(_comparable_value(item) for item in raw_values if item is not None)
+                if isinstance(actual_value, (tuple, list, set)):
+                    actual_values = tuple(_comparable_value(item) for item in actual_value)
+                    if not any(item in expected_values for item in actual_values):
+                        return False
+                    continue
+                if actual_value not in expected_values:
+                    return False
+                continue
+            return False
+        return True
+    return actual == expected
+
+
+def _comparable_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def _lookup_dotted(item: Mapping[str, Any], key: str) -> Any:
@@ -334,6 +533,7 @@ class DatasetRepository:
         self._validate_multi_market_fields(record_dict)
         dataset_ref = str(record_dict.get("dataset_ref") or self._build_dataset_ref(record_dict))
         record_dict["dataset_ref"] = dataset_ref
+        record_dict = self._ensure_dataset_checksum((record_dict,))[0]
         with self._lock:
             self._collection("normalized_datasets").set(dataset_ref, record_dict)
 
@@ -343,6 +543,7 @@ class DatasetRepository:
         self._validate_multi_market_fields(record_dict)
         dataset_ref = str(record_dict.get("dataset_ref") or self._build_dataset_ref(record_dict))
         record_dict["dataset_ref"] = dataset_ref
+        record_dict = self._ensure_dataset_checksum((record_dict,))[0]
         with self._lock:
             self._collection("normalized_datasets").set(dataset_ref, record_dict)
         return dataset_ref
@@ -358,9 +559,12 @@ class DatasetRepository:
             record_dict["dataset_ref"] = dataset_ref
             refs.append(dataset_ref)
             items.append((dataset_ref, record_dict))
+        checked_records = self._ensure_dataset_checksum(tuple(record for _ref, record in items))
         if items:
             with self._lock:
-                self._collection("normalized_datasets").set_many(items)
+                self._collection("normalized_datasets").set_many(
+                    tuple((ref, record) for (ref, _old), record in zip(items, checked_records, strict=True))
+                )
         return tuple(dict.fromkeys(refs))
 
     def query_normalized(
@@ -370,16 +574,25 @@ class DatasetRepository:
         market: str,
         symbol_id: str | None,
         universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+        include_row: bool = True,
     ) -> tuple[DatasetRecord, ...]:
         matched: list[DatasetRecord] = []
-        criteria: dict[str, Any] = {"dataset": dataset, "market": market}
-        if symbol_id:
-            criteria["symbol_id"] = symbol_id
-        if universe_ref:
-            criteria["universe_ref"] = universe_ref
+        criteria = self._normalized_query_criteria(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            date_range_start=date_range_start,
+            date_range_end=date_range_end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
         with self._lock:
-            records = self._collection("normalized_datasets").find(criteria)
+            records = self._collection("normalized_datasets").find(criteria, include_row=include_row)
         for record in records:
+            row = record.get("row")
             matched.append(
                 DatasetRecord(
                     dataset_ref=str(record.get("dataset_ref")),
@@ -394,10 +607,253 @@ class DatasetRepository:
                     as_of=record.get("as_of"),
                     fresh_until=record.get("fresh_until"),
                     source_roles=tuple(record.get("source_roles", ())),
-                    row=record.get("row", record),
+                    dataset_checksum=record.get("dataset_checksum"),
+                    dataset_checksum_algorithm=record.get("dataset_checksum_algorithm"),
+                    dataset_checksum_scope=record.get("dataset_checksum_scope"),
+                    row=row if isinstance(row, Mapping) else {},
+                    dataset_row_count=self._optional_int(record.get("dataset_row_count")),
                 )
             )
         return tuple(matched)
+
+    @staticmethod
+    def _normalized_query_criteria(
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+    ) -> dict[str, Any]:
+        criteria: dict[str, Any] = {"dataset": dataset, "market": market}
+        if symbol_id:
+            criteria["symbol_id"] = symbol_id
+        if universe_ref:
+            criteria["universe_ref"] = universe_ref
+        start = _date_query_text(date_range_start)
+        end = _date_query_text(date_range_end)
+        if end:
+            criteria["period_start"] = {"$lte": end}
+        if start:
+            criteria["period_end"] = {"$gte": start}
+        if require_integrity_metadata:
+            criteria["dataset_checksum"] = {"$exists": True, "$ne": None}
+            criteria["dataset_checksum_algorithm"] = _DATASET_CHECKSUM_ALGORITHM
+            criteria["dataset_checksum_scope"] = _DATASET_CHECKSUM_SCOPE
+            criteria["dataset_row_count"] = {"$gt": 0}
+        return criteria
+
+    def iter_normalized(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+        include_row: bool = True,
+    ) -> Iterable[DatasetRecord]:
+        criteria = self._normalized_query_criteria(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            date_range_start=date_range_start,
+            date_range_end=date_range_end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
+        with self._lock:
+            records = self._collection("normalized_datasets").iter_find(criteria, include_row=include_row)
+            for record in records:
+                row = record.get("row")
+                yield DatasetRecord(
+                    dataset_ref=str(record.get("dataset_ref")),
+                    dataset=dataset,
+                    market=market,
+                    symbol_id=record.get("symbol_id"),
+                    universe_ref=record.get("universe_ref"),
+                    granularity=str(record.get("granularity", "")),
+                    period_start=record.get("period_start"),
+                    period_end=record.get("period_end"),
+                    field_set=tuple(record.get("field_set", ())),
+                    as_of=record.get("as_of"),
+                    fresh_until=record.get("fresh_until"),
+                    source_roles=tuple(record.get("source_roles", ())),
+                    dataset_checksum=record.get("dataset_checksum"),
+                    dataset_checksum_algorithm=record.get("dataset_checksum_algorithm"),
+                    dataset_checksum_scope=record.get("dataset_checksum_scope"),
+                    row=row if isinstance(row, Mapping) else {},
+                    dataset_row_count=self._optional_int(record.get("dataset_row_count")),
+                )
+
+    def aggregate_normalized_coverage(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+        sample_limit: int = 50,
+    ) -> DatasetCoverageSummary | None:
+        criteria = self._normalized_query_criteria(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            date_range_start=date_range_start,
+            date_range_end=date_range_end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
+        summary_pipeline: tuple[Mapping[str, Any], ...] = (
+            {"$match": criteria},
+            {
+                "$group": {
+                    "_id": None,
+                    "record_count": {"$sum": 1},
+                    "ranges": {"$addToSet": {"start": "$period_start", "end": "$period_end"}},
+                    "starts": {"$addToSet": "$period_start"},
+                    "ends": {"$addToSet": "$period_end"},
+                    "field_sets": {"$addToSet": "$field_set"},
+                    "source_role_sets": {"$addToSet": "$source_roles"},
+                    "freshest_as_of": {"$max": "$as_of"},
+                    "freshest_until": {"$max": "$fresh_until"},
+                }
+            },
+        )
+        checksum_pipeline: tuple[Mapping[str, Any], ...] = (
+            {"$match": criteria},
+            {
+                "$group": {
+                    "_id": "$dataset_checksum",
+                    "actual_count": {"$sum": 1},
+                    "expected_min": {"$min": "$dataset_row_count"},
+                    "expected_max": {"$max": "$dataset_row_count"},
+                    "min_start": {"$min": "$period_start"},
+                    "max_end": {"$max": "$period_end"},
+                }
+            },
+        )
+        with self._lock:
+            summary_rows = self._collection("normalized_datasets").aggregate(summary_pipeline)
+            checksum_rows = self._collection("normalized_datasets").aggregate(checksum_pipeline)
+            if summary_rows is None or checksum_rows is None:
+                return None
+            sample_rows = self._collection("normalized_datasets").find_limited(
+                criteria,
+                include_row=False,
+                limit=sample_limit,
+            )
+        summary = summary_rows[0] if summary_rows else {}
+        return DatasetCoverageSummary(
+            record_count=self._optional_int(summary.get("record_count")) or 0,
+            dataset_refs=tuple(
+                str(row.get("dataset_ref"))
+                for row in sample_rows
+                if row.get("dataset_ref") is not None
+            ),
+            ranges=self._range_values(summary.get("ranges")),
+            starts=self._tuple_values(summary.get("starts")),
+            ends=self._tuple_values(summary.get("ends")),
+            field_sets=tuple(self._tuple_values(item) for item in self._tuple_values(summary.get("field_sets"))),
+            source_role_sets=tuple(self._tuple_values(item) for item in self._tuple_values(summary.get("source_role_sets"))),
+            freshest_as_of=summary.get("freshest_as_of") if isinstance(summary.get("freshest_as_of"), datetime) else None,
+            freshest_until=summary.get("freshest_until") if isinstance(summary.get("freshest_until"), datetime) else None,
+            checksum_counts=tuple(
+                DatasetChecksumCoverage(
+                    checksum=str(row.get("_id") or ""),
+                    actual_count=self._optional_int(row.get("actual_count")) or 0,
+                    expected_min=self._optional_int(row.get("expected_min")),
+                    expected_max=self._optional_int(row.get("expected_max")),
+                    min_start=row.get("min_start"),
+                    max_end=row.get("max_end"),
+                )
+                for row in checksum_rows
+                if row.get("_id")
+            ),
+        )
+
+    def count_normalized(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+    ) -> int:
+        criteria = self._normalized_query_criteria(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            date_range_start=date_range_start,
+            date_range_end=date_range_end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
+        with self._lock:
+            return self._collection("normalized_datasets").count(criteria)
+
+    def find_company_names_by_symbol_ids(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_ids: Sequence[str],
+    ) -> Mapping[str, str]:
+        symbols = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbol_ids if str(symbol).strip()))
+        if not symbols:
+            return {}
+        criteria: dict[str, Any] = {
+            "dataset": dataset,
+            "market": market,
+            "symbol_id": {"$in": symbols},
+            "row.company_name": {"$exists": True, "$ne": None},
+        }
+        pipeline: tuple[Mapping[str, Any], ...] = (
+            {"$match": criteria},
+            {"$sort": {"period_end": -1, "period_start": -1}},
+            {"$group": {"_id": "$symbol_id", "company_name": {"$first": "$row.company_name"}}},
+        )
+        with self._lock:
+            rows = self._collection("normalized_datasets").aggregate(pipeline)
+            if rows is None:
+                records = self._collection("normalized_datasets").find(criteria, include_row=True)
+            else:
+                return {
+                    str(row.get("_id")): text
+                    for row in rows
+                    if (text := str(row.get("company_name") or "").strip())
+                }
+
+        sorted_records = sorted(
+            records,
+            key=lambda record: (
+                _date_query_text(record.get("period_end")) or "",
+                _date_query_text(record.get("period_start")) or "",
+            ),
+            reverse=True,
+        )
+        names: dict[str, str] = {}
+        for record in sorted_records:
+            symbol = str(record.get("symbol_id") or "").strip()
+            if not symbol or symbol in names:
+                continue
+            row = record.get("row")
+            if not isinstance(row, Mapping):
+                continue
+            company_name = str(row.get("company_name") or "").strip()
+            if company_name:
+                names[symbol] = company_name
+        return names
 
     def insert_raw_payload(self, record: Mapping[str, Any]) -> str:
         record_dict = dict(record)
@@ -431,12 +887,13 @@ class DatasetRepository:
         self,
         dataset_refs: Sequence[str],
     ) -> dict[str, tuple[str, ...]]:
-        wanted = {str(ref) for ref in dataset_refs if str(ref).strip()}
+        wanted_refs = tuple(dict.fromkeys(str(ref) for ref in dataset_refs if str(ref).strip()))
+        wanted = set(wanted_refs)
         if not wanted:
             return {}
         found: dict[str, list[str]] = {ref: [] for ref in wanted}
         with self._lock:
-            attempts = self._collection("provider_attempts").values()
+            attempts = self._collection("provider_attempts").find({"dataset_refs": {"$in": wanted_refs}})
         for attempt in attempts:
             attempt_ref = str(attempt.get("attempt_ref") or "").strip()
             if not attempt_ref:
@@ -789,6 +1246,40 @@ class DatasetRepository:
         return normalized
 
     @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _tuple_values(value: Any) -> tuple[Any, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, list):
+            return tuple(value)
+        return (value,)
+
+    @classmethod
+    def _range_values(cls, value: Any) -> tuple[tuple[Any, Any], ...]:
+        ranges: list[tuple[Any, Any]] = []
+        for item in cls._tuple_values(value):
+            if isinstance(item, Mapping):
+                start = item.get("start")
+                end = item.get("end")
+            elif isinstance(item, (tuple, list)) and len(item) >= 2:
+                start = item[0]
+                end = item[1]
+            else:
+                continue
+            ranges.append((start, end))
+        return tuple(ranges)
+
+    @staticmethod
     def _floor_to_window(now: datetime, window_seconds: int) -> datetime:
         epoch = int(now.timestamp())
         floored = epoch - (epoch % window_seconds)
@@ -840,6 +1331,49 @@ class DatasetRepository:
         if "granularity" in record_dict and record_dict["granularity"] is not None:
             record_dict["granularity"] = str(record_dict["granularity"]).strip().lower()
         return record_dict
+
+    @classmethod
+    def _ensure_dataset_checksum(cls, records: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
+        normalized = tuple(dict(record) for record in records)
+        if not normalized:
+            return ()
+        if all(cls._has_dataset_checksum(record) for record in normalized):
+            return normalized
+        checksum = cls.dataset_checksum(normalized)
+        row_count = len(normalized)
+        checked: list[dict[str, Any]] = []
+        for record in normalized:
+            item = dict(record)
+            item["dataset_checksum"] = checksum
+            item["dataset_checksum_algorithm"] = _DATASET_CHECKSUM_ALGORITHM
+            item["dataset_checksum_scope"] = _DATASET_CHECKSUM_SCOPE
+            item["dataset_row_count"] = row_count
+            checked.append(item)
+        return tuple(checked)
+
+    @staticmethod
+    def _has_dataset_checksum(record: Mapping[str, Any]) -> bool:
+        return (
+            bool(record.get("dataset_checksum"))
+            and record.get("dataset_checksum_algorithm") == _DATASET_CHECKSUM_ALGORITHM
+            and record.get("dataset_checksum_scope") == _DATASET_CHECKSUM_SCOPE
+            and DatasetRepository._optional_int(record.get("dataset_row_count")) is not None
+            and int(record.get("dataset_row_count") or 0) > 0
+        )
+
+    @staticmethod
+    def dataset_checksum(records: Sequence[Mapping[str, Any]]) -> str:
+        payload = json.dumps(
+            tuple(
+                {key: value for key, value in record.items() if key not in _DATASET_CHECKSUM_FIELDS}
+                for record in records
+            ),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return f"sha256:{sha256(payload.encode('utf-8')).hexdigest()}"
 
     @staticmethod
     def _required_text(record: Mapping[str, Any], key: str) -> str:

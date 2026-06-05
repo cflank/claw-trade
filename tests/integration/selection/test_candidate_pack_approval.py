@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.artifacts import SelectionFileArtifactBackend
 from claw_trade.selection.candidate_pack import approve_candidate_pack, build_candidate_pack
 from claw_trade.selection.engine import (
@@ -198,7 +200,35 @@ def test_candidate_pack_approval_uses_real_write_readback_hash_manifest_lineage(
         payload = json.loads(log_path.read_text(encoding="utf-8"))
         assert payload["status"] == "verified"
 
-    store = SelectionRunStore()
+    os.environ["CLAW_TRADE_SELECTION_COLUMNAR_ROOT"] = str(tmp_path / "columnar")
+    columnar_writer = SelectionColumnarWarehouse(root=tmp_path / "columnar").begin_write(plan=plan)
+    columnar_writer.add_daily_rows(
+        (
+                {
+                    "ticker": inputs.rows[0].ticker,
+                    "date": plan.trade_date,
+                    "close": inputs.rows[0].numeric_fields.get("close", 10.0),
+                    "source_ref": inputs.rows[0].source_ref,
+                },
+        )
+    )
+    columnar_writer.add_feature_rows(
+        (
+            {
+                "ticker": inputs.rows[0].ticker,
+                "company_name": inputs.rows[0].company_name,
+                "source_ref": inputs.rows[0].source_ref,
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+                "amount": inputs.rows[0].numeric_fields["amount"],
+            },
+        )
+    )
+    columnar_manifest = columnar_writer.commit(
+        provider_attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
+        normalized_refs=inputs.normalized_refs,
+    )
+    store = SelectionRunStore(artifact_root=tmp_path / "artifacts")
     store.save_data_run_record(
         SelectionDataRunRecord(
             run_plan=plan,
@@ -209,6 +239,10 @@ def test_candidate_pack_approval_uses_real_write_readback_hash_manifest_lineage(
                 provider_attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
                 select_data_plan_ref=f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",
                 warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/ok",
+                columnar_manifest_ref=columnar_manifest.manifest_ref,
+                columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(
+                    columnar_manifest.manifest_ref
+                ),
                 candidate_pack_ref=ref,
                 completed_at="2026-05-26T09:00:00+00:00",
             ),

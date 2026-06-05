@@ -210,16 +210,22 @@ const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
   { id: 'data', title: '数据源' },
 ];
 
+const CN_A_API_SOURCE_TYPES = ['tushare'];
+const HK_API_SOURCE_TYPES = ['tushare', 'finnhub'];
+const GLOBAL_EQUITY_API_SOURCE_TYPES = ['alpha_vantage', 'finnhub'];
+const GLOBAL_EQUITY_FUNDAMENTAL_API_SOURCE_TYPES = ['alpha_vantage', 'finnhub'];
+const GLOBAL_MACRO_API_SOURCE_TYPES = ['fred'];
+
 const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
   {
     id: 'cn-a',
     title: 'A股',
     categories: [
-      { id: 'quotes', title: '行情', types: ['tushare'] },
+      { id: 'quotes', title: '行情', types: CN_A_API_SOURCE_TYPES },
       {
         id: 'fundamental',
         title: '基本面',
-        types: ['tushare'],
+        types: CN_A_API_SOURCE_TYPES,
       },
       { id: 'news', title: '新闻公告', types: ['tushare'] },
     ],
@@ -231,14 +237,14 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '行情',
-        types: ['finnhub'],
+        types: HK_API_SOURCE_TYPES,
       },
       {
         id: 'fundamental',
         title: '基本面',
-        types: ['finnhub'],
+        types: HK_API_SOURCE_TYPES,
       },
-      { id: 'news', title: '新闻公告', types: ['finnhub'] },
+      { id: 'news', title: '新闻公告', types: HK_API_SOURCE_TYPES },
     ],
   },
   {
@@ -248,12 +254,12 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '行情',
-        types: ['alpha_vantage', 'finnhub'],
+        types: GLOBAL_EQUITY_API_SOURCE_TYPES,
       },
       {
         id: 'fundamental',
         title: '基本面',
-        types: ['alpha_vantage', 'finnhub'],
+        types: GLOBAL_EQUITY_FUNDAMENTAL_API_SOURCE_TYPES,
       },
       { id: 'filings', title: '公告披露', types: ['finnhub'] },
       { id: 'news', title: '新闻', types: ['alpha_vantage', 'finnhub'] },
@@ -266,17 +272,17 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
       {
         id: 'quotes',
         title: '跨市场行情',
-        types: ['alpha_vantage', 'finnhub'],
+        types: GLOBAL_EQUITY_API_SOURCE_TYPES,
       },
       {
         id: 'fundamental',
         title: '跨市场基本面',
-        types: ['finnhub'],
+        types: GLOBAL_EQUITY_FUNDAMENTAL_API_SOURCE_TYPES,
       },
       {
         id: 'macro',
         title: '宏观经济',
-        types: ['fred'],
+        types: GLOBAL_MACRO_API_SOURCE_TYPES,
       },
       { id: 'news', title: '全球新闻', types: ['finnhub'] },
     ],
@@ -287,21 +293,27 @@ const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
     categories: [
       {
         id: 'quotes',
-        title: '行情交易所',
+        title: '行情与估值',
         types: ['coingecko_pro'],
       },
       {
         id: 'fundamental',
         title: '链上与基本面',
-        types: [
-          'coinglass',
-          'coingecko_pro',
-        ],
+        types: ['coingecko_pro', 'coinglass'],
       },
       { id: 'derivatives', title: '衍生品与资金', types: ['coinglass'] },
     ],
   },
 ];
+
+type VisibleSourceCategory = MarketSourceTab['categories'][number] & {
+  sources: DataSourceInstanceForUser[];
+  selected: DataSourceInstanceForUser | null;
+};
+
+type VisibleSourceMarket = Omit<MarketSourceTab, 'categories'> & {
+  categories: VisibleSourceCategory[];
+};
 
 function dataSourceByType(dataSources: DataSourceInstanceForUser[]) {
   return new Map(dataSources.map((item) => [item.supportedType, item]));
@@ -320,6 +332,24 @@ function selectedSourceForCategory(
   }
   const enabled = category.types.map((type) => sourceMap.get(type)).find((item) => item?.enabled);
   return enabled ?? category.types.map((type) => sourceMap.get(type)).find(Boolean) ?? null;
+}
+
+function buildVisibleSourceMarkets(
+  dataSources: DataSourceInstanceForUser[],
+  sourceMap: Map<string, DataSourceInstanceForUser>,
+  dataSourceDraft: DataSourceInstanceDraftInput,
+): VisibleSourceMarket[] {
+  return DATA_SOURCE_MARKETS.map((market) => ({
+    ...market,
+    categories: market.categories.map((category) => {
+      const sources = category.types.map((type) => sourceMap.get(type)).filter(Boolean) as DataSourceInstanceForUser[];
+      return {
+        ...category,
+        sources,
+        selected: selectedSourceForCategory(category, sourceMap, dataSourceDraft),
+      };
+    }).filter((category) => category.sources.length > 0),
+  })).filter((market) => market.categories.length > 0);
 }
 
 export function SettingsSections({
@@ -343,6 +373,7 @@ export function SettingsSections({
   onDisconnectChannel,
   onSkipWechatSetup,
   onRefreshChannel,
+  onSettingsTabChange,
   onLlmChange,
   onSaveLlm,
   onTestLlm,
@@ -374,6 +405,7 @@ export function SettingsSections({
   onDisconnectChannel: () => void;
   onSkipWechatSetup: () => void;
   onRefreshChannel: () => void;
+  onSettingsTabChange?: (tab: SettingsMainTab) => void;
   onLlmChange: (patch: Partial<LlmConfigDraft>) => void;
   onSaveLlm: () => void;
   onTestLlm: () => void;
@@ -393,18 +425,15 @@ export function SettingsSections({
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsMainTab>('model');
   const [activeSourceMarket, setActiveSourceMarket] = useState(DATA_SOURCE_MARKETS[0].id);
   const sourceMap = dataSourceByType(dataSources);
-  const visibleMarkets = DATA_SOURCE_MARKETS.map((market) => ({
-    ...market,
-    categories: market.categories.map((category) => ({
-      ...category,
-      sources: category.types.map((type) => sourceMap.get(type)).filter(Boolean) as DataSourceInstanceForUser[],
-      selected: selectedSourceForCategory(category, sourceMap, dataSourceDraft),
-    })).filter((category) => category.sources.length > 0),
-  })).filter((market) => market.categories.length > 0);
+  const visibleMarkets = buildVisibleSourceMarkets(dataSources, sourceMap, dataSourceDraft);
   const activeMarket = visibleMarkets.find((item) => item.id === activeSourceMarket) ?? visibleMarkets[0] ?? null;
   const sourceCategories = activeMarket?.categories ?? [];
   const hasDataSources = dataSources.length > 0;
   const canEditDataSource = hasDataSources && Boolean(dataSourceDraft.supportedType);
+  const selectSettingsTab = (tabId: SettingsMainTab) => {
+    setActiveSettingsTab(tabId);
+    onSettingsTabChange?.(tabId);
+  };
   const selectSourceMarket = (marketId: string) => {
     setActiveSourceMarket(marketId);
     const market = visibleMarkets.find((item) => item.id === marketId);
@@ -431,7 +460,7 @@ export function SettingsSections({
             aria-controls={`settings-panel-${tab.id}`}
             className={`ct-settings-tab${activeSettingsTab === tab.id ? ' is-active' : ''}`}
             key={tab.id}
-            onClick={() => setActiveSettingsTab(tab.id)}
+            onClick={() => selectSettingsTab(tab.id)}
           >
             {tab.title}
           </button>
@@ -605,8 +634,11 @@ export function SettingsSections({
       <section className="ct-settings-section" data-testid="settings-section-data-sources">
         <div className="ct-section-head">
           <h2>增强数据源</h2>
+          <span className="ct-status-pill ct-status-pending">
+            {hasDataSources ? `${dataSources.length} 个 API 源` : '暂无源'}
+          </span>
         </div>
-        <p className="ct-section-desc">这里只配置需要填写密钥的外部增强源；系统默认源和内部接入层不在这里显示。</p>
+        <p className="ct-section-desc">这里按市场列出当前已接入数据网关、可测试连接的 API 增强源；暂不能接入报告数据路径的源不在这里显示。</p>
         {hasDataSources ? (
         <div className="ct-source-market-tabs" role="tablist" aria-label="数据源市场">
           {visibleMarkets.map((market) => (

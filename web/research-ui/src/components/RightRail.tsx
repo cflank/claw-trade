@@ -4,6 +4,7 @@ import type {
   ReportDetailForUser,
   ReportQueueSnapshotForUser,
   SavedReportForUser,
+  SelectionProgressForUser,
 } from '../api/contracts';
 
 function statusClass(value: string) {
@@ -49,6 +50,40 @@ function channelStateLabel(state?: string | null) {
     default:
       return '检查中';
   }
+}
+
+function SelectionTaskBlock({ progress }: { progress?: SelectionProgressForUser | null }) {
+  if (!progress) {
+    return null;
+  }
+  const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
+  return (
+    <section className="ct-right-section" data-testid="right-rail-selection-section">
+      <h2>选股任务进度</h2>
+      <article className="ct-task-item">
+        <div className="ct-task-head">
+          <strong>{progress.command}</strong>
+          <span className={statusClass(progress.status === 'failed' ? 'failed' : progress.status === 'completed' ? 'ready' : 'info')}>
+            {progress.statusLabel}
+          </span>
+        </div>
+        <div className="ct-task-meta">
+          <span>{progress.stageLabel}</span>
+          <span>{formatDate(progress.startedAt)}</span>
+        </div>
+        <div className="ct-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+          <div className="ct-progress-fill" style={{ width: `${percent}%` }} />
+        </div>
+        <p className="ct-task-action">{progress.currentAction}</p>
+        <ul className="ct-task-status-list">
+          {progress.workerStatusLabels.map((item) => (
+            <li key={`${progress.startedAt}-${item}`}>{item}</li>
+          ))}
+        </ul>
+        {progress.workflowRunId ? <div className="ct-small">工作流：{progress.workflowRunId}</div> : null}
+      </article>
+    </section>
+  );
 }
 
 function TaskBlock({ queue }: { queue: ReportQueueSnapshotForUser }) {
@@ -196,12 +231,14 @@ function ChatSummaryBlock({
 export function RightRail({
   queue,
   detail,
+  selectionProgress,
   channel,
   latestReport,
   onPrintReport,
 }: {
   queue: ReportQueueSnapshotForUser;
   detail: ReportDetailForUser | null;
+  selectionProgress?: SelectionProgressForUser | null;
   channel: ChannelStatusForUser | null;
   latestReport: SavedReportForUser | null;
   onPrintReport?: () => void;
@@ -209,7 +246,14 @@ export function RightRail({
   return (
     <aside className="ct-panel ct-right" data-testid="right-rail">
       <div className="ct-panel-title">{detail ? '报告详情' : '任务概览'}</div>
-      {detail ? <ReportBlock detail={detail} onPrintReport={onPrintReport} /> : <TaskBlock queue={queue} />}
+      {detail ? (
+        <ReportBlock detail={detail} onPrintReport={onPrintReport} />
+      ) : (
+        <>
+          <TaskBlock queue={queue} />
+          <SelectionTaskBlock progress={selectionProgress} />
+        </>
+      )}
       {!detail ? <ChatSummaryBlock channel={channel} latestReport={latestReport} /> : null}
     </aside>
   );

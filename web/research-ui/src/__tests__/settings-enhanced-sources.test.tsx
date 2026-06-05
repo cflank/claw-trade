@@ -25,7 +25,7 @@ describe('settings-enhanced-sources', () => {
     vi.useRealTimers();
   });
 
-  it('renders only approved enhanced source and hides forbidden controls', async () => {
+  it('renders provider-backed enhanced sources by market and hides probe-only placeholders', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/api/ui/get-channel-status')) {
@@ -64,11 +64,25 @@ describe('settings-enhanced-sources', () => {
         });
         const instances = [
           source('tushare', 'Tushare', 'cn_a_data'),
+          source('csmar', 'CSMAR', 'cn_a_data'),
+          source('wind', 'Wind', 'cn_a_data'),
+          source('iex_cloud', 'IEX Cloud'),
           source('alpha_vantage', 'Alpha Vantage'),
+          source('fmp', 'FMP'),
+          source('polygon', 'Polygon'),
           source('finnhub', 'Finnhub'),
+          source('tiingo', 'Tiingo'),
+          source('nasdaq_data_link', 'Nasdaq Data Link'),
           source('fred', 'FRED', 'global_macro'),
+          source('bea', 'BEA', 'global_macro'),
+          source('eia', 'EIA', 'global_macro'),
+          source('newsapi', 'NewsAPI', 'global_news'),
+          source('x', 'X.com', 'global_social'),
+          source('reddit', 'Reddit', 'global_social'),
           source('coingecko_pro', 'CoinGecko Pro', 'crypto_data'),
+          source('coinmarketcap', 'CoinMarketCap', 'crypto_data'),
           source('coinglass', 'Coinglass', 'crypto_data'),
+          source('lunarcrush', 'LunarCrush', 'crypto_social'),
         ];
         return json({
           supportedTypes: instances.map((item) => item.supportedType),
@@ -119,7 +133,7 @@ describe('settings-enhanced-sources', () => {
     for (const approved of ['Tushare']) {
       expect(scoped.getAllByText(approved).length).toBeGreaterThanOrEqual(1);
     }
-    for (const hidden of ['OpenBB', 'AKShare', '东方财富', 'SEC EDGAR', 'CoinGecko', 'Binance', 'OKX', 'CCXT', 'LongPort', 'Wind']) {
+    for (const hidden of ['CSMAR', 'Wind', 'OpenBB', 'AKShare', '东方财富', 'SEC EDGAR', 'CoinGecko', 'Binance', 'OKX', 'CCXT', 'LongPort']) {
       expect(scoped.queryByText(hidden)).not.toBeInTheDocument();
     }
     expect((section as HTMLElement).querySelectorAll('.ct-source-category-card')).toHaveLength(3);
@@ -130,22 +144,27 @@ describe('settings-enhanced-sources', () => {
     fireEvent.click(scoped.getByRole('tab', { name: '美股' }));
     expect(scoped.getAllByText('Alpha Vantage').length).toBeGreaterThanOrEqual(1);
     expect(scoped.getAllByText('Finnhub').length).toBeGreaterThanOrEqual(1);
-    expect(scoped.queryByText('Polygon')).not.toBeInTheDocument();
     expect(scoped.queryByText('FMP')).not.toBeInTheDocument();
-    expect(scoped.queryByText('Bloomberg')).not.toBeInTheDocument();
+    expect(scoped.queryByText('Polygon')).not.toBeInTheDocument();
+    expect(scoped.queryByText('Tiingo')).not.toBeInTheDocument();
+    expect(scoped.queryByText('Nasdaq Data Link')).not.toBeInTheDocument();
+    expect(scoped.queryByText('IEX Cloud')).not.toBeInTheDocument();
 
     fireEvent.click(scoped.getByRole('tab', { name: '全球市场/宏观' }));
     expect(scoped.getAllByText('FRED').length).toBeGreaterThanOrEqual(1);
     expect(scoped.queryByText('BEA')).not.toBeInTheDocument();
     expect(scoped.queryByText('EIA')).not.toBeInTheDocument();
+    expect(scoped.queryByText('NewsAPI')).not.toBeInTheDocument();
+    expect(scoped.queryByText('X.com')).not.toBeInTheDocument();
+    expect(scoped.queryByText('Reddit')).not.toBeInTheDocument();
     expect(scoped.queryByTestId('data-source-category-social')).not.toBeInTheDocument();
 
     fireEvent.click(scoped.getByRole('tab', { name: '加密货币' }));
     expect(scoped.getAllByText('CoinGecko Pro').length).toBeGreaterThanOrEqual(1);
     expect(scoped.getByText('配置详情：CoinGecko Pro')).toBeInTheDocument();
+    expect(scoped.queryByText('CoinMarketCap')).not.toBeInTheDocument();
     expect(scoped.getAllByText('Coinglass').length).toBeGreaterThanOrEqual(1);
-    expect(scoped.queryByText('Coin Metrics')).not.toBeInTheDocument();
-    expect(scoped.queryByText('Dune')).not.toBeInTheDocument();
+    expect(scoped.queryByText('LunarCrush')).not.toBeInTheDocument();
 
     fireEvent.click(scoped.getByRole('tab', { name: 'A股' }));
     const cnCard = scoped.getByTestId('data-source-category-fundamental');
@@ -157,6 +176,8 @@ describe('settings-enhanced-sources', () => {
     expect(within(cnCard).getByText('启用开关：未启用')).toBeInTheDocument();
 
     fireEvent.click(scoped.getByRole('tab', { name: '港股' }));
+    expect(scoped.getAllByText('Tushare').length).toBeGreaterThanOrEqual(1);
+    expect(scoped.getAllByText('Finnhub').length).toBeGreaterThanOrEqual(1);
     expect(scoped.queryByTestId('data-source-category-social')).not.toBeInTheDocument();
 
     fireEvent.click(scoped.getByRole('tab', { name: '全球市场/宏观' }));

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_PATH="${ROOT_DIR}/scripts/start-research-ui.sh"
 CONTROL_RUNTIME_SCRIPT="${ROOT_DIR}/scripts/start-control-runtime.sh"
 
-RESEARCH_UI_HOST="${RESEARCH_UI_HOST:-127.0.0.1}"
+RESEARCH_UI_HOST="${RESEARCH_UI_HOST:-0.0.0.0}"
 RESEARCH_UI_PORT="${RESEARCH_UI_PORT:-}"
 RESEARCH_UI_BUILD_FRONTEND="${RESEARCH_UI_BUILD_FRONTEND:-0}"
 RESEARCH_UI_FRONTEND_DIR="${RESEARCH_UI_FRONTEND_DIR:-${ROOT_DIR}/web/research-ui}"
@@ -66,6 +66,34 @@ listener_pids_for_port() {
     ' || true
     return 0
   fi
+}
+
+browser_hosts_for_research_ui() {
+  if [[ "${RESEARCH_UI_HOST}" == "0.0.0.0" || "${RESEARCH_UI_HOST}" == "::" ]]; then
+    printf '%s\n' "127.0.0.1"
+    if command -v hostname >/dev/null 2>&1; then
+      hostname -I 2>/dev/null | tr ' ' '\n' | awk '
+        /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $0 != "127.0.0.1" { print }
+      ' || true
+    fi
+    return 0
+  fi
+  if [[ "${RESEARCH_UI_HOST}" == "localhost" ]]; then
+    printf '%s\n' "127.0.0.1"
+    return 0
+  fi
+  printf '%s\n' "${RESEARCH_UI_HOST}"
+}
+
+log_research_ui_browser_urls() {
+  local host
+  log_info "浏览器访问地址："
+  while IFS= read -r host; do
+    if [[ -n "${host}" ]]; then
+      log_info "  http://${host}:${RESEARCH_UI_PORT}/"
+    fi
+  done < <(browser_hosts_for_research_ui | awk '!seen[$0]++')
+  log_info "服务绑定地址：http://${RESEARCH_UI_HOST}:${RESEARCH_UI_PORT}/"
 }
 
 pid_command_line() {
@@ -254,7 +282,6 @@ cleanup_backend_on_exit() {
 
 run_backend_inside_runtime() {
   mkdir -p "${RESEARCH_UI_LOG_DIR}"
-  local ui_url="http://${RESEARCH_UI_HOST}:${RESEARCH_UI_PORT}/"
   local ready_url="http://${RESEARCH_UI_HOST}:${RESEARCH_UI_PORT}${RESEARCH_UI_READY_ENDPOINT}"
 
   trap cleanup_backend_on_exit EXIT INT TERM
@@ -274,7 +301,7 @@ run_backend_inside_runtime() {
   started_backend_pid="$!"
 
   log_info "UI 后端已启动，等待可用：pid=${started_backend_pid}"
-  log_info "UI URL: ${ui_url}"
+  log_research_ui_browser_urls
   log_info "后端日志: ${RESEARCH_UI_BACKEND_LOG}"
 
   if ! wait_backend_ready "${ready_url}" "${RESEARCH_UI_READY_TIMEOUT_SECONDS}"; then
@@ -282,7 +309,8 @@ run_backend_inside_runtime() {
     exit 1
   fi
 
-  log_info "Research UI 已就绪：${ui_url}"
+  log_info "Research UI 已就绪。"
+  log_research_ui_browser_urls
   wait "${started_backend_pid}"
 }
 

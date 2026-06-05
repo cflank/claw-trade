@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from claw_trade.selection.controller import (
+    _extract_allowed_ticker_companies_from_summary,
     _parse_and_validate_selection_decision,
     _render_selection_reader_chat_message,
 )
@@ -92,6 +93,50 @@ def test_parse_selection_decision_rejects_ticker_company_mismatch() -> None:
     )
     assert result.decision is None
     assert result.invalid_reason == "ticker_company_mismatch:600519.SH:expected=贵州茅台:actual=五粮液"
+
+
+def test_candidate_summary_allowed_tickers_include_bj_market() -> None:
+    summary_md = "\n".join(
+        [
+            "| 排名 | 股票代码 | 股票名称 | 行业 | 总分 |",
+            "| --- | --- | --- | --- | ---: |",
+            "| 1 | 603045.SH | 福达合金 | - | 60.55 |",
+            "| 2 | 920438.BJ | 戈碧迦 | - | 58.00 |",
+        ]
+    )
+
+    allowed = _extract_allowed_ticker_companies_from_summary(summary_md)
+
+    assert allowed["603045.SH"] == "福达合金"
+    assert allowed["920438.BJ"] == "戈碧迦"
+
+
+def test_parse_selection_decision_accepts_bj_candidate_from_allowed_set() -> None:
+    decision_text = "\n".join(
+        [
+            "进入 /report:",
+            "- 603045.SH | 福达合金 | 趋势强度较高。",
+            "观察:",
+            "- 920438.BJ | 戈碧迦 | 北交所标的，先观察流动性和数据覆盖。",
+            "放弃:",
+            "- 600367.SH | 红星发展 | 短期涨幅过大。",
+        ]
+    )
+    result = _parse_and_validate_selection_decision(
+        pm_raw_text=decision_text,
+        workflow_run_id="wf-bj",
+        allowed_tickers=frozenset({"603045.SH", "920438.BJ", "600367.SH"}),
+        allowed_ticker_companies={
+            "603045.SH": "福达合金",
+            "920438.BJ": "戈碧迦",
+            "600367.SH": "红星发展",
+        },
+        approved_material_id="selection-pm-decision-wf-bj",
+    )
+
+    assert result.invalid_reason is None
+    assert result.decision is not None
+    assert [item.ticker for item in result.decision.watch] == ["920438.BJ"]
 
 
 def test_parse_selection_decision_allows_plain_language_hold_context_without_trade_advice_template() -> None:

@@ -6,12 +6,16 @@ recovery path: `/select` still reads only completed warehouse-marked selection r
 
 from __future__ import annotations
 
+import ctypes
+import gc
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from time import monotonic
+from typing import Any, Callable, Mapping, Sequence
 
 from claw_trade.data_gateway.api import DataAPI
 from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
@@ -34,9 +38,12 @@ from claw_trade.data_gateway.models import DataGap, DataRequest, DataResult, Dat
 from claw_trade.data_gateway.providers import build_minimal_provider_registry
 from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
 from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
-from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
-from claw_trade.selection.data_job import SelectionProviderBatchResult
+from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
+from claw_trade.data_gateway.warehouse import DatasetRecord, DatasetRepository, Warehouse
+from claw_trade.selection.columnar_warehouse import SelectionColumnarManifest, SelectionColumnarWarehouse
+from claw_trade.selection.data_job import SelectionDataFetchProgress, SelectionProviderBatchResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
+from claw_trade.selection.features import SelectionFeatureError, build_feature_snapshot, normalize_selection_inputs
 from claw_trade.selection.models import (
     DataGapRef,
     DataGapSeverity,
@@ -59,6 +66,8 @@ _CN_A_SELECTION_TIMEZONE = "Asia/Shanghai"
 _CN_A_SELECTION_CALENDAR = "CN_A_SSE_SZSE"
 _DEFAULT_LOOKBACK_TRADING_DAYS = 260
 _MIN_HISTORY_DAYS = 250
+_UNIVERSE_REFRESH_CHUNK_SIZE = 5
+_LOCAL_FEATURE_REF_SAMPLE_LIMIT = 200
 
 _SELECTION_DAILY_REQUEST: tuple[str, str, tuple[str, ...]] = (
     "daily_bar",
@@ -141,11 +150,13 @@ _OPTIONAL_SELECTION_STRATEGY_SOURCE_FIELDS = frozenset(
     }
 )
 _OPTIONAL_SELECTION_SUPPLEMENTAL_DATA_TYPES = frozenset({"corporate_action", "valuation_metric"})
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
 class _SelectionGatewayContext:
     data_api: DataAPI
+    repository: DatasetRepository
     provider_candidates: tuple[str, ...]
 
 
@@ -156,6 +167,16 @@ class _HistoryShortfall:
     first_date: date | None
     list_date: date | None
     classification: str
+
+
+@dataclass(frozen=True)
+class _LocalFeatureRowsResult:
+    rows: tuple[Mapping[str, object], ...]
+    normalized_refs: tuple[str, ...]
+    attempt_refs: tuple[str, ...]
+    data_gaps: tuple[DataGapRef, ...]
+    columnar_manifest_ref: str | None = None
+    columnar_manifest_sha256: str | None = None
 
 
 def build_selection_provider_batch_plan(
@@ -187,6 +208,7 @@ def fetch_selection_batch_from_data_gateway(
     plan: SelectionRunPlan,
     *,
     evidence_root: Path | None = None,
+    progress_callback: Callable[[SelectionDataFetchProgress], None] | None = None,
 ) -> SelectionProviderBatchResult:
     provider_plan = build_selection_provider_batch_plan(
         market=plan.market,
@@ -194,6 +216,24 @@ def fetch_selection_batch_from_data_gateway(
         trade_date=plan.trade_date,
         plan_id=plan.provider_batch_plan_ref,
     )
+    columnar_warehouse = SelectionColumnarWarehouse.default()
+    columnar_manifest = columnar_warehouse.load_valid_manifest(plan=plan)
+    if columnar_manifest is not None:
+        _notify_fetch_progress(
+            progress_callback,
+            label="读取列式选股仓库",
+            completed=1,
+            total=1,
+        )
+        rows = columnar_warehouse.read_feature_rows(manifest=columnar_manifest)
+        result = _provider_result_from_columnar_manifest(
+            provider_plan=provider_plan,
+            manifest=columnar_manifest,
+            rows=rows,
+        )
+        _write_evidence(evidence_root=evidence_root, plan=plan, requests=(), results=(), provider_result=result)
+        return result
+
     try:
         gateway = _build_selection_gateway_context()
     except Exception as exc:  # noqa: BLE001
@@ -209,9 +249,21 @@ def fetch_selection_batch_from_data_gateway(
         _write_evidence(evidence_root=evidence_root, plan=plan, requests=(), results=(), provider_result=result)
         return result
 
-    requests = _selection_data_requests(plan, specs=(_SELECTION_DAILY_REQUEST,))
+    requests = _selection_data_requests(
+        plan,
+        specs=(_SELECTION_DAILY_REQUEST,),
+        freshness_policy="warehouse_only",
+        consumer="select",
+        consumer_id=f"{plan.selection_run_id}:coverage_check",
+    )
+    _notify_fetch_progress(
+        progress_callback,
+        label="检查本地全市场日线缓存",
+        completed=0,
+        total=len(requests),
+    )
     try:
-        results = tuple(gateway.data_api.get_data_batch(requests))
+        raw_results = tuple(gateway.data_api.get_data_batch(requests))
     except Exception as exc:  # noqa: BLE001
         result = _failed_provider_result(
             plan=plan,
@@ -221,67 +273,293 @@ def fetch_selection_batch_from_data_gateway(
         )
         _write_evidence(evidence_root=evidence_root, plan=plan, requests=requests, results=(), provider_result=result)
         return result
-
-    initial_result = _provider_result_from_data_results(
-        plan=plan,
-        provider_plan=provider_plan,
-        results=results,
+    raw_row_count = sum(len(result.rows) for result in raw_results)
+    results = tuple(_data_result_without_rows(result) for result in raw_results)
+    del raw_results
+    _release_fetch_batch_memory()
+    _LOGGER.info(
+        "selection local daily cache check returned run_id=%s results=%s rows=%s dataset_refs=%s attempts=%s gaps=%s",
+        plan.selection_run_id,
+        len(results),
+        raw_row_count,
+        sum(len(result.dataset_refs) for result in results),
+        sum(len(result.attempt_refs) for result in results),
+        sum(len(result.gaps) for result in results),
     )
-    history_backfill_requests = _selection_history_backfill_requests(plan=plan, results=results)
-    if history_backfill_requests:
+    _notify_fetch_progress(
+        progress_callback,
+        label="本地全市场日线检查完成",
+        completed=len(requests),
+        total=len(requests),
+    )
+    _LOGGER.info("selection local daily cache progress saved run_id=%s", plan.selection_run_id)
+
+    universe_refresh_requests = _selection_universe_refresh_requests(plan=plan, results=results)
+    _LOGGER.info(
+        "selection universe refresh requests planned run_id=%s request_count=%s",
+        plan.selection_run_id,
+        len(universe_refresh_requests),
+    )
+    if universe_refresh_requests:
+        universe_refresh_results: list[DataResult] = []
+        completed_refresh_requests = 0
+        total_refresh_requests = len(universe_refresh_requests)
+        _notify_fetch_progress(
+            progress_callback,
+            label="补齐全市场日线数据",
+            completed=completed_refresh_requests,
+            total=total_refresh_requests,
+        )
         try:
-            history_backfill_results = tuple(gateway.data_api.get_data_batch(history_backfill_requests))
+            for refresh_chunk in _refresh_request_chunks(universe_refresh_requests, _UNIVERSE_REFRESH_CHUNK_SIZE):
+                chunk_started = monotonic()
+                first_request = refresh_chunk[0]
+                _LOGGER.info(
+                    "selection universe refresh chunk start run_id=%s completed=%s total=%s request_id=%s start=%s end=%s",
+                    plan.selection_run_id,
+                    completed_refresh_requests,
+                    total_refresh_requests,
+                    first_request.request_id,
+                    first_request.date_range_start,
+                    first_request.date_range_end,
+                )
+                chunk_results = tuple(gateway.data_api.get_data_batch(refresh_chunk))
+                _LOGGER.info(
+                    "selection universe refresh chunk data_api_returned run_id=%s request_id=%s elapsed_ms=%s rows=%s attempts=%s gaps=%s",
+                    plan.selection_run_id,
+                    first_request.request_id,
+                    int((monotonic() - chunk_started) * 1000),
+                    sum(len(result.rows) for result in chunk_results),
+                    sum(len(result.attempt_refs) for result in chunk_results),
+                    sum(len(result.gaps) for result in chunk_results),
+                )
+                universe_refresh_results.extend(_data_result_without_rows(result) for result in chunk_results)
+                del chunk_results
+                _release_fetch_batch_memory()
+                _LOGGER.info(
+                    "selection universe refresh chunk memory_released run_id=%s request_id=%s elapsed_ms=%s",
+                    plan.selection_run_id,
+                    first_request.request_id,
+                    int((monotonic() - chunk_started) * 1000),
+                )
+                completed_refresh_requests += len(refresh_chunk)
+                _notify_fetch_progress(
+                    progress_callback,
+                    label="补齐全市场日线数据",
+                    completed=completed_refresh_requests,
+                    total=total_refresh_requests,
+                )
         except Exception as exc:  # noqa: BLE001
-            initial_result = _append_data_gap(
-                initial_result,
-                _warn_gap(
-                    gap_id=f"{plan.selection_run_id}-selection-batch-history-backfill-failed",
-                    gap_code="selection_batch_history_backfill_failed",
-                    attempt_refs=(provider_plan.lineage_root_ref,),
-                    reader_message=(
-                        "部分老股票历史日线不足，统一数据层已尝试单票回补但调用失败，"
-                        f"本轮继续剔除这些股票：{type(exc).__name__}: {exc}"
-                    ),
-                    source_metadata={
-                        "request_ids": tuple(request.request_id for request in history_backfill_requests),
-                        "tickers": tuple(request.symbol_id for request in history_backfill_requests if request.symbol_id),
-                    },
-                ),
-            )
-        else:
-            requests = (*requests, *history_backfill_requests)
-            results = (*results, *history_backfill_results)
-            initial_result = _provider_result_from_data_results(
+            initial_result = _provider_result_from_check_results(
                 plan=plan,
                 provider_plan=provider_plan,
                 results=results,
             )
-    if _should_return_initial_daily_result(results=results, provider_result=initial_result):
-        _write_evidence(evidence_root=evidence_root, plan=plan, requests=requests, results=results, provider_result=initial_result)
-        return initial_result
+            result = _append_data_gap(
+                initial_result,
+                _blocker_gap(
+                    gap_id=f"{plan.selection_run_id}-selection-batch-universe-refresh-failed",
+                    gap_code="selection_batch_universe_refresh_failed",
+                    attempt_refs=initial_result.attempt_refs or (provider_plan.lineage_root_ref,),
+                    reader_message=(
+                        "selection batch 全市场日线补数已展开为单票请求，但统一数据层调用失败，"
+                        f"任务按 fail closed 失败：{type(exc).__name__}: {exc}"
+                    ),
+                    source_metadata={
+                        "request_count": len(universe_refresh_requests),
+                        "completed_request_count": completed_refresh_requests,
+                        "tickers_sample": tuple(request.symbol_id for request in universe_refresh_requests[:20] if request.symbol_id),
+                        "trade_dates_sample": tuple(
+                            str(request.date_range_start)
+                            for request in universe_refresh_requests[:20]
+                            if request.universe_ref
+                        ),
+                    },
+                ),
+            )
+            _write_evidence(
+                evidence_root=evidence_root,
+                plan=plan,
+                requests=(*requests, *universe_refresh_requests),
+                results=(*results, *universe_refresh_results),
+                provider_result=result,
+            )
+            return result
+        recheck_requests = _selection_data_requests(
+            plan,
+            specs=(_SELECTION_DAILY_REQUEST,),
+            freshness_policy="warehouse_only",
+            consumer="select",
+            consumer_id=f"{plan.selection_run_id}:coverage_check",
+        )
+        _notify_fetch_progress(
+            progress_callback,
+            label="重新读取本地全市场日线缓存",
+            completed=0,
+            total=len(recheck_requests),
+        )
+        try:
+            raw_recheck_results = tuple(gateway.data_api.get_data_batch(recheck_requests))
+        except Exception as exc:  # noqa: BLE001
+            initial_result = _provider_result_from_check_results(
+                plan=plan,
+                provider_plan=provider_plan,
+                results=(*results, *universe_refresh_results),
+            )
+            result = _append_data_gap(
+                initial_result,
+                _blocker_gap(
+                    gap_id=f"{plan.selection_run_id}-selection-batch-universe-refresh-recheck-failed",
+                    gap_code="selection_batch_universe_refresh_recheck_failed",
+                    attempt_refs=initial_result.attempt_refs or (provider_plan.lineage_root_ref,),
+                    reader_message=(
+                        "selection batch 全市场日线补数已完成，但重新读取本地缓存失败，"
+                        f"任务按 fail closed 失败：{type(exc).__name__}: {exc}"
+                    ),
+                    source_metadata={"request_count": len(recheck_requests)},
+                ),
+            )
+            _write_evidence(
+                evidence_root=evidence_root,
+                plan=plan,
+                requests=(*requests, *universe_refresh_requests, *recheck_requests),
+                results=(*results, *universe_refresh_results),
+                provider_result=result,
+            )
+            return result
+        recheck_results = tuple(_data_result_without_rows(result) for result in raw_recheck_results)
+        del raw_recheck_results
+        _release_fetch_batch_memory()
+        _notify_fetch_progress(
+            progress_callback,
+            label="重新读取本地全市场日线缓存",
+            completed=len(recheck_requests),
+            total=len(recheck_requests),
+        )
+        requests = (*requests, *universe_refresh_requests, *recheck_requests)
+        results = (*results, *universe_refresh_results, *recheck_results)
 
-    supplemental_requests = _selection_data_requests(plan, specs=_SELECTION_SUPPLEMENTAL_REQUESTS, start_index=2)
+    _notify_fetch_progress(
+        progress_callback,
+        label="流式计算本地选股特征",
+        completed=0,
+        total=1,
+    )
+    stream_started = monotonic()
     try:
-        supplemental_results = tuple(gateway.data_api.get_data_batch(supplemental_requests))
+        local_feature_rows = _selection_feature_rows_from_repository(
+            plan=plan,
+            repository=gateway.repository,
+            progress_callback=progress_callback,
+        )
     except Exception as exc:  # noqa: BLE001
-        result = _failed_provider_result(
+        initial_result = _provider_result_from_check_results(
             plan=plan,
             provider_plan=provider_plan,
-            gap_code="selection_data_api_failed",
-            message=f"selection batch 调用统一 DataAPI 补充数据失败，任务按 fail closed 失败：{type(exc).__name__}: {exc}",
+            results=results,
         )
-        _write_evidence(evidence_root=evidence_root, plan=plan, requests=(*requests, *supplemental_requests), results=results, provider_result=result)
+        result = _append_data_gap(
+            initial_result,
+            _blocker_gap(
+                gap_id=f"{plan.selection_run_id}-selection-batch-local-row-read-failed",
+                gap_code="selection_batch_local_row_read_failed",
+                attempt_refs=initial_result.attempt_refs or (provider_plan.lineage_root_ref,),
+                reader_message=(
+                    "selection batch 本地覆盖检查已完成，但流式读取本地标准化行失败，"
+                    f"任务按 fail closed 失败：{type(exc).__name__}: {exc}"
+                ),
+                source_metadata={"read_mode": "stream_by_symbol"},
+            ),
+        )
+        _write_evidence(
+            evidence_root=evidence_root,
+            plan=plan,
+            requests=requests,
+            results=results,
+            provider_result=result,
+        )
         return result
-
-    all_requests = (*requests, *supplemental_requests)
-    results = (*results, *supplemental_results)
-    result = _provider_result_from_data_results(
+    _notify_fetch_progress(
+        progress_callback,
+        label="流式计算本地选股特征",
+        completed=1,
+        total=1,
+    )
+    _LOGGER.info(
+        "selection local feature rows built run_id=%s elapsed_ms=%s rows=%s normalized_refs=%s attempts=%s gaps=%s",
+        plan.selection_run_id,
+        int((monotonic() - stream_started) * 1000),
+        len(local_feature_rows.rows),
+        len(local_feature_rows.normalized_refs),
+        len(local_feature_rows.attempt_refs),
+        len(local_feature_rows.data_gaps),
+    )
+    result = _provider_result_from_local_feature_rows(
         plan=plan,
         provider_plan=provider_plan,
         results=results,
+        local_feature_rows=local_feature_rows,
     )
-    _write_evidence(evidence_root=evidence_root, plan=plan, requests=all_requests, results=results, provider_result=result)
+    _write_evidence(evidence_root=evidence_root, plan=plan, requests=requests, results=results, provider_result=result)
     return result
+
+
+def _chunks(items: Sequence[DataRequest], size: int) -> tuple[tuple[DataRequest, ...], ...]:
+    if size <= 0:
+        raise ValueError("chunk size must be positive")
+    return tuple(tuple(items[index : index + size]) for index in range(0, len(items), size))
+
+
+def _refresh_request_chunks(items: Sequence[DataRequest], size: int) -> tuple[tuple[DataRequest, ...], ...]:
+    if size <= 0:
+        raise ValueError("chunk size must be positive")
+    chunks: list[tuple[DataRequest, ...]] = []
+    current: list[DataRequest] = []
+    previous_date: date | None = None
+    for item in items:
+        item_date = _parse_date(item.date_range_start)
+        should_split = (
+            len(current) >= size
+            or (previous_date is not None and item_date is not None and item_date != previous_date + timedelta(days=1))
+            or (previous_date is not None and item_date is None)
+        )
+        if should_split and current:
+            chunks.append(tuple(current))
+            current = []
+        current.append(item)
+        previous_date = item_date
+    if current:
+        chunks.append(tuple(current))
+    return tuple(chunks)
+
+
+def _notify_fetch_progress(
+    callback: Callable[[SelectionDataFetchProgress], None] | None,
+    *,
+    label: str,
+    completed: int,
+    total: int,
+) -> None:
+    if callback is None:
+        return
+    callback(SelectionDataFetchProgress(label=label, completed=completed, total=total))
+
+
+def _data_result_without_rows(result: DataResult) -> DataResult:
+    return result.model_copy(update={"rows": ()})
+
+
+def _release_fetch_batch_memory() -> None:
+    gc.collect()
+    if os.name != "posix":
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        trim = getattr(libc, "malloc_trim", None)
+        if callable(trim):
+            trim(0)
+    except Exception:
+        return
 
 
 def _provider_result_from_data_results(
@@ -290,21 +568,71 @@ def _provider_result_from_data_results(
     provider_plan: SelectionProviderBatchPlan,
     results: tuple[DataResult, ...],
 ) -> SelectionProviderBatchResult:
+    del plan, provider_plan, results
+    raise RuntimeError("selection_data_result_rows_direct_path_disabled")
+
+
+def _provider_result_from_check_results(
+    *,
+    plan: SelectionRunPlan,
+    provider_plan: SelectionProviderBatchPlan,
+    results: tuple[DataResult, ...],
+) -> SelectionProviderBatchResult:
     attempt_refs = _dedupe(ref for item in results for ref in item.attempt_refs)
     dataset_refs = _dedupe(ref for item in results for ref in item.dataset_refs)
     normalized_refs = tuple(_normalized_ref(ref) for ref in dataset_refs)
-    rows, row_gaps = _selection_rows_from_results(plan=plan, results=results, attempt_refs=attempt_refs)
-    repaired_history_tickers = _repaired_history_backfill_tickers(plan=plan, rows=rows, results=results)
+    data_gaps = tuple(
+        _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (provider_plan.lineage_root_ref,))
+        for item in results
+        for gap in item.gaps
+    )
+    return SelectionProviderBatchResult(
+        provider_batch_plan=provider_plan,
+        attempt_refs=attempt_refs,
+        normalized_refs=normalized_refs,
+        rows=(),
+        data_gaps=data_gaps,
+        warehouse_check_ref=(
+            f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/coverage-check"
+            if normalized_refs
+            else None
+        ),
+    )
+
+
+def _provider_result_from_local_feature_rows(
+    *,
+    plan: SelectionRunPlan,
+    provider_plan: SelectionProviderBatchPlan,
+    results: tuple[DataResult, ...],
+    local_feature_rows: _LocalFeatureRowsResult,
+) -> SelectionProviderBatchResult:
+    attempt_refs = _dedupe(
+        (
+            *(ref for item in results for ref in item.attempt_refs),
+            *local_feature_rows.attempt_refs,
+        )
+    )
+    normalized_refs = local_feature_rows.normalized_refs
+    raw_data_gaps = tuple(
+        gap
+        for item in results
+        for gap in item.gaps
+        if not _is_repaired_universe_refresh_gap(
+            plan=plan,
+            gap=gap,
+            rows=local_feature_rows.rows,
+            results=results,
+        )
+    )
     data_gaps = [
         *(
             _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (provider_plan.lineage_root_ref,))
-            for item in results
-            for gap in item.gaps
-            if not _is_repaired_history_backfill_gap(gap=gap, repaired_history_tickers=repaired_history_tickers)
+            for gap in raw_data_gaps
         ),
-        *row_gaps,
+        *local_feature_rows.data_gaps,
     ]
-    missing_strategy_fields = _selection_missing_strategy_required_fields(plan=plan, rows=rows)
+    missing_strategy_fields = _selection_missing_strategy_required_fields(plan=plan, rows=local_feature_rows.rows)
     if missing_strategy_fields:
         data_gaps.append(
             _blocker_gap(
@@ -318,20 +646,102 @@ def _provider_result_from_data_results(
                 source_metadata={"missing_fields": missing_strategy_fields},
             )
         )
-
-    result = SelectionProviderBatchResult(
+    return SelectionProviderBatchResult(
         provider_batch_plan=provider_plan,
         attempt_refs=attempt_refs,
         normalized_refs=normalized_refs,
-        rows=rows,
+        rows=local_feature_rows.rows,
         data_gaps=tuple(data_gaps),
         warehouse_check_ref=(
-            f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/data-api"
+            f"warehouse-check://selection-columnar/{plan.market.value}/{plan.profile.value}/{plan.trade_date}"
             if normalized_refs
             else None
         ),
+        columnar_manifest_ref=local_feature_rows.columnar_manifest_ref,
+        columnar_manifest_sha256=local_feature_rows.columnar_manifest_sha256,
     )
-    return result
+
+
+def _provider_result_from_columnar_manifest(
+    *,
+    provider_plan: SelectionProviderBatchPlan,
+    manifest: SelectionColumnarManifest,
+    rows: tuple[Mapping[str, object], ...],
+) -> SelectionProviderBatchResult:
+    normalized_refs = manifest.normalized_refs or tuple(
+        str(row.get("source_ref") or "").strip()
+        for row in rows
+        if str(row.get("source_ref") or "").strip()
+    )
+    return SelectionProviderBatchResult(
+        provider_batch_plan=provider_plan,
+        attempt_refs=manifest.provider_attempt_refs,
+        normalized_refs=tuple(dict.fromkeys(normalized_refs)),
+        rows=rows,
+        data_gaps=(),
+        warehouse_check_ref=manifest.warehouse_check_ref,
+        columnar_manifest_ref=manifest.manifest_ref,
+        columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(manifest.manifest_ref),
+    )
+
+
+def _provider_result_with_columnar_manifest(
+    *,
+    plan: SelectionRunPlan,
+    provider_result: SelectionProviderBatchResult,
+) -> SelectionProviderBatchResult:
+    if provider_result.columnar_manifest_ref or not provider_result.rows:
+        return provider_result
+    try:
+        inputs = normalize_selection_inputs(
+            plan=plan,
+            raw_rows=provider_result.rows,
+            normalized_refs=provider_result.normalized_refs,
+            attempt_refs=provider_result.attempt_refs,
+            upstream_gaps=provider_result.data_gaps,
+        )
+        snapshot = build_feature_snapshot(plan=plan, inputs=inputs)
+    except SelectionFeatureError:
+        return provider_result
+
+    writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
+    writer.add_daily_rows(
+        row
+        for raw_row in provider_result.rows
+        for row in _direct_daily_bar_columnar_rows(plan=plan, raw_row=raw_row)
+    )
+    writer.add_feature_rows(
+        {
+            "ticker": row.ticker,
+            "company_name": row.company_name,
+            "industry": row.industry,
+            "source_ref": row.source_ref,
+            "trade_date": plan.trade_date,
+            "selection_features_materialized": True,
+            **dict(row.feature_values),
+        }
+        for row in snapshot.rows
+    )
+    manifest = writer.commit(
+        provider_attempt_refs=provider_result.attempt_refs,
+        normalized_refs=provider_result.normalized_refs,
+        coverage_status=(
+            "incomplete"
+            if any(gap.severity == DataGapSeverity.BLOCKER for gap in provider_result.data_gaps)
+            else "verified"
+        ),
+        coverage_gap_codes=tuple(gap.gap_code for gap in provider_result.data_gaps),
+    )
+    return SelectionProviderBatchResult(
+        provider_batch_plan=provider_result.provider_batch_plan,
+        attempt_refs=provider_result.attempt_refs,
+        normalized_refs=provider_result.normalized_refs,
+        rows=provider_result.rows,
+        data_gaps=provider_result.data_gaps,
+        warehouse_check_ref=manifest.warehouse_check_ref,
+        columnar_manifest_ref=manifest.manifest_ref,
+        columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(manifest.manifest_ref),
+    )
 
 
 def _append_data_gap(result: SelectionProviderBatchResult, gap: DataGapRef) -> SelectionProviderBatchResult:
@@ -342,6 +752,8 @@ def _append_data_gap(result: SelectionProviderBatchResult, gap: DataGapRef) -> S
         rows=result.rows,
         data_gaps=(*result.data_gaps, gap),
         warehouse_check_ref=result.warehouse_check_ref,
+        columnar_manifest_ref=result.columnar_manifest_ref,
+        columnar_manifest_sha256=result.columnar_manifest_sha256,
     )
 
 
@@ -428,7 +840,7 @@ def _build_selection_gateway_context() -> _SelectionGatewayContext:
     service = DataService(
         query_planner=QueryPlanner(),
         warehouse=Warehouse(repository),
-        provider_selector=ProviderSelector(registry),
+        provider_selector=ProviderSelector(registry, credential_resolver=credential_resolver),
         coalescer=RequestCoalescer(),
         batch_planner=ProviderBatchPlanner(
             rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
@@ -441,7 +853,344 @@ def _build_selection_gateway_context() -> _SelectionGatewayContext:
         fetch_engine=FetchEngine(registry, credential_resolver=credential_resolver),
         ingest=ingest,
     )
-    return _SelectionGatewayContext(data_api=DataAPI(service), provider_candidates=_cn_a_provider_candidates())
+    return _SelectionGatewayContext(
+        data_api=DataAPI(service),
+        repository=repository,
+        provider_candidates=_cn_a_provider_candidates(),
+    )
+
+
+def _should_build_local_feature_rows(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> bool:
+    if _universe_refresh_attempted(results=results):
+        return True
+    if _main_daily_result_needs_universe_refresh(plan=plan, results=results):
+        return False
+    if _main_daily_result_has_rows(plan=plan, results=results):
+        return False
+    return not _main_direct_selection_rows(plan=plan, results=results)
+
+
+def _main_daily_result_has_rows(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> bool:
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    return any(result.request_id == main_request_id and bool(result.rows) for result in results)
+
+
+def _selection_feature_rows_from_repository(
+    *,
+    plan: SelectionRunPlan,
+    repository: DatasetRepository,
+    progress_callback: Callable[[SelectionDataFetchProgress], None] | None = None,
+) -> _LocalFeatureRowsResult:
+    trade_day = date.fromisoformat(plan.trade_date)
+    history_start = _selection_history_start_date(plan=plan)
+    required_history_days = max(_MIN_HISTORY_DAYS, int(plan.lookback_trading_days or 0))
+    columnar_writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
+    latest_records = _query_daily_records(
+        repository=repository,
+        plan=plan,
+        symbol_id=None,
+        universe_ref=plan.universe_scope,
+        start=trade_day,
+        end=trade_day,
+    )
+    if not latest_records and plan.universe_scope:
+        latest_records = _query_daily_records(
+            repository=repository,
+            plan=plan,
+            symbol_id=None,
+            universe_ref=None,
+            start=trade_day,
+            end=trade_day,
+        )
+    latest_rows_by_ticker: dict[str, Mapping[str, Any]] = {}
+    latest_dataset_refs_by_ticker: dict[str, str] = {}
+    for record in latest_records:
+        row = _row_from_dataset_record(record)
+        ticker = _ticker_from_row(row)
+        if ticker is None:
+            continue
+        latest_rows_by_ticker[ticker] = row
+        latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
+    tickers = tuple(sorted(latest_rows_by_ticker))
+    company_names_by_ticker = repository.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market=Market.CN_A.value,
+        symbol_ids=tickers,
+    )
+    _notify_fetch_progress(
+        progress_callback,
+        label="流式计算本地选股特征",
+        completed=0,
+        total=max(1, len(tickers)),
+    )
+
+    rows: list[Mapping[str, object]] = []
+    dropped: list[str] = []
+    feature_errors: list[str] = []
+    lineage_dataset_refs: list[str] = []
+    for index, ticker in enumerate(tickers, start=1):
+        history_records = _query_daily_records(
+            repository=repository,
+            plan=plan,
+            symbol_id=ticker,
+            universe_ref=plan.universe_scope,
+            start=history_start,
+            end=trade_day,
+        )
+        if not history_records and plan.universe_scope:
+            history_records = _query_daily_records(
+                repository=repository,
+                plan=plan,
+                symbol_id=ticker,
+                universe_ref=None,
+                start=history_start,
+                end=trade_day,
+            )
+        history_source = tuple(
+            sorted(
+                (_row_from_dataset_record(record) for record in history_records),
+                key=lambda item: str(_row_date(item) or ""),
+            )
+        )
+        columnar_writer.add_daily_rows(_daily_bar_columnar_rows(plan=plan, ticker=ticker, rows=history_source))
+        history = tuple(
+            mapped
+            for mapped in (_history_row(row) for row in history_source)
+            if mapped is not None and (_parse_date(mapped.get("date")) or trade_day) <= trade_day
+        )
+        if len(history) < required_history_days:
+            dropped.append(ticker)
+            continue
+        latest_history_date = _parse_date(history[-1].get("date"))
+        if latest_history_date is None or latest_history_date < trade_day:
+            dropped.append(ticker)
+            continue
+        company_name = _company_name_from_rows((*history_source, latest_rows_by_ticker[ticker])) or company_names_by_ticker.get(ticker)
+        if company_name is None:
+            dropped.append(ticker)
+            continue
+        source_ref = _row_source_ref(history_source[-1] if history_source else latest_rows_by_ticker[ticker])
+        raw_row: dict[str, object] = {
+            "ticker": ticker,
+            "company_name": company_name,
+            "industry": _industry_from_rows((*history_source, latest_rows_by_ticker[ticker])),
+            "history": history,
+            "source_ref": source_ref,
+        }
+        try:
+            feature_row = _materialized_feature_row(plan=plan, raw_row=raw_row, source_ref=source_ref)
+        except SelectionFeatureError:
+            feature_errors.append(ticker)
+            continue
+        rows.append(feature_row)
+        columnar_writer.add_feature_rows((feature_row,))
+        lineage_dataset_refs.append(latest_dataset_refs_by_ticker.get(ticker, ""))
+        if index % 200 == 0 or index == len(tickers):
+            _notify_fetch_progress(
+                progress_callback,
+                label="流式计算本地选股特征",
+                completed=index,
+                total=max(1, len(tickers)),
+            )
+
+    sampled_dataset_refs = tuple(
+        ref
+        for ref in _dedupe(lineage_dataset_refs)
+        if ref
+    )[:_LOCAL_FEATURE_REF_SAMPLE_LIMIT]
+    attempt_refs = tuple(
+        ref
+        for refs in repository.find_provider_attempt_refs_by_dataset_ref(sampled_dataset_refs).values()
+        for ref in refs
+    )
+    normalized_refs = tuple(_normalized_ref(ref) for ref in sampled_dataset_refs)
+    gaps: list[DataGapRef] = []
+    if dropped:
+        gaps.append(
+            _warn_gap(
+                gap_id=f"{plan.selection_run_id}-selection-batch-stream-rows-dropped",
+                gap_code="selection_batch_rows_dropped",
+                attempt_refs=attempt_refs or (f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",),
+                reader_message=(
+                    "selection batch 流式计算中部分股票缺少公司名、交易日日线或足够历史日线，已剔除。"
+                    f" count={len(dropped)}。"
+                ),
+                source_metadata={
+                    "read_mode": "stream_by_symbol",
+                    "tickers_sample": tuple(dropped[:20]),
+                    "required_history_days": required_history_days,
+                },
+            )
+        )
+    if feature_errors:
+        gaps.append(
+            _warn_gap(
+                gap_id=f"{plan.selection_run_id}-selection-batch-stream-feature-errors",
+                gap_code="selection_batch_feature_rows_dropped",
+                attempt_refs=attempt_refs or (f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",),
+                reader_message=(
+                    "selection batch 流式特征计算中部分股票无法生成特征，已剔除。"
+                    f" count={len(feature_errors)}。"
+                ),
+                source_metadata={
+                    "tickers_sample": tuple(feature_errors[:20]),
+                },
+            )
+        )
+    if not rows:
+        gaps.append(
+            _blocker_gap(
+                gap_id=f"{plan.selection_run_id}-selection-batch-stream-rows-empty",
+                gap_code="selection_batch_rows_empty",
+                attempt_refs=attempt_refs or (f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",),
+                reader_message="本地日线覆盖检查通过，但流式特征计算没有产出可用股票行。",
+                source_metadata={
+                    "read_mode": "stream_by_symbol",
+                    "latest_record_count": len(latest_records),
+                    "ticker_count": len(tickers),
+                    "required_history_days": required_history_days,
+                },
+            )
+        )
+    columnar_manifest_ref: str | None = None
+    columnar_manifest_sha256: str | None = None
+    if rows:
+        coverage_gap_codes = tuple(gap.gap_code for gap in gaps)
+        coverage_status = "incomplete" if any(gap.severity == DataGapSeverity.BLOCKER for gap in gaps) else "verified"
+        manifest = columnar_writer.commit(
+            provider_attempt_refs=_dedupe(attempt_refs),
+            normalized_refs=normalized_refs,
+            coverage_status=coverage_status,
+            coverage_gap_codes=coverage_gap_codes,
+        )
+        columnar_manifest_ref = manifest.manifest_ref
+        columnar_manifest_sha256 = SelectionColumnarWarehouse.default().manifest_sha256(manifest.manifest_ref)
+    return _LocalFeatureRowsResult(
+        rows=tuple(rows),
+        normalized_refs=normalized_refs,
+        attempt_refs=_dedupe(attempt_refs),
+        data_gaps=tuple(gaps),
+        columnar_manifest_ref=columnar_manifest_ref,
+        columnar_manifest_sha256=columnar_manifest_sha256,
+    )
+
+
+def _selection_history_start_date(*, plan: SelectionRunPlan) -> date:
+    trade_day = date.fromisoformat(plan.trade_date)
+    lookback_days = max(_DEFAULT_LOOKBACK_TRADING_DAYS, int(plan.lookback_trading_days or 0))
+    return trade_day - timedelta(days=lookback_days * 2)
+
+
+def _query_daily_records(
+    *,
+    repository: DatasetRepository,
+    plan: SelectionRunPlan,
+    symbol_id: str | None,
+    universe_ref: str | None,
+    start: date,
+    end: date,
+) -> tuple[DatasetRecord, ...]:
+    return repository.query_normalized(
+        dataset="daily_bar",
+        market=Market.CN_A.value,
+        symbol_id=symbol_id,
+        universe_ref=universe_ref,
+        date_range_start=start,
+        date_range_end=end,
+        require_integrity_metadata=True,
+        include_row=True,
+    )
+
+
+def _row_from_dataset_record(record: DatasetRecord) -> Mapping[str, Any]:
+    row = dict(record.row)
+    row.setdefault("dataset_ref", record.dataset_ref)
+    row.setdefault("symbol_id", record.symbol_id)
+    row.setdefault("universe_ref", record.universe_ref)
+    row.setdefault("period_start", record.period_start)
+    row.setdefault("period_end", record.period_end)
+    row.setdefault("source_roles", record.source_roles)
+    return row
+
+
+def _daily_bar_columnar_rows(
+    *,
+    plan: SelectionRunPlan,
+    ticker: str,
+    rows: tuple[Mapping[str, Any], ...],
+) -> tuple[Mapping[str, object], ...]:
+    output: list[Mapping[str, object]] = []
+    for row in rows:
+        day = _row_date(row)
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day or "")
+        output.append(
+            {
+                "market": plan.market.value,
+                "profile": plan.profile.value,
+                "selection_trade_date": plan.trade_date,
+                "ticker": ticker,
+                "date": day_text,
+                "open": _numeric_or_none(row.get("open")),
+                "high": _numeric_or_none(row.get("high")),
+                "low": _numeric_or_none(row.get("low")),
+                "close": _numeric_or_none(row.get("close")),
+                "volume": _numeric_or_none(row.get("volume")),
+                "amount": _numeric_or_none(row.get("amount")),
+                "p_change_pct": _numeric_or_none(row.get("p_change_pct") or row.get("pct_chg")),
+                "dataset_ref": str(row.get("dataset_ref") or ""),
+                "source_ref": _row_source_ref(row),
+            }
+        )
+    return tuple(output)
+
+
+def _direct_daily_bar_columnar_rows(
+    *,
+    plan: SelectionRunPlan,
+    raw_row: Mapping[str, object],
+) -> tuple[Mapping[str, object], ...]:
+    ticker = str(raw_row.get("ticker") or raw_row.get("symbol_id") or "").strip()
+    history = raw_row.get("history")
+    if isinstance(history, Sequence) and not isinstance(history, (str, bytes, bytearray)):
+        rows = tuple(item for item in history if isinstance(item, Mapping))
+        return _daily_bar_columnar_rows(plan=plan, ticker=ticker, rows=rows)
+    return _daily_bar_columnar_rows(plan=plan, ticker=ticker, rows=(raw_row,))
+
+
+def _numeric_or_none(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    try:
+        return float(str(value))
+    except ValueError:
+        return None
+
+
+def _materialized_feature_row(
+    *,
+    plan: SelectionRunPlan,
+    raw_row: Mapping[str, object],
+    source_ref: str,
+) -> Mapping[str, object]:
+    inputs = normalize_selection_inputs(
+        plan=plan,
+        raw_rows=(raw_row,),
+        normalized_refs=(source_ref,),
+        attempt_refs=(source_ref,),
+    )
+    snapshot = build_feature_snapshot(plan=plan, inputs=inputs)
+    feature_row = snapshot.rows[0]
+    return {
+        "ticker": feature_row.ticker,
+        "company_name": feature_row.company_name,
+        "industry": feature_row.industry,
+        "source_ref": feature_row.source_ref,
+        "trade_date": plan.trade_date,
+        "selection_features_materialized": True,
+        **dict(feature_row.feature_values),
+    }
 
 
 def _selection_data_requests(
@@ -449,6 +1198,9 @@ def _selection_data_requests(
     *,
     specs: tuple[tuple[str, str, tuple[str, ...]], ...] = _SELECTION_REQUESTS,
     start_index: int = 1,
+    freshness_policy: str | None = None,
+    consumer: str = "select",
+    consumer_id: str | None = None,
 ) -> tuple[DataRequest, ...]:
     as_of = datetime.now(tz=UTC)
     trade_date = date.fromisoformat(plan.trade_date)
@@ -467,9 +1219,9 @@ def _selection_data_requests(
             fields=fields,
             date_range_start=start if granularity == "daily" else None,
             date_range_end=trade_date if granularity == "daily" else None,
-            freshness_policy="trading_day" if granularity == "daily" else "event_time",
-            consumer="select",
-            consumer_id=plan.selection_run_id,
+            freshness_policy=freshness_policy or ("trading_day" if granularity == "daily" else "event_time"),
+            consumer=consumer,
+            consumer_id=consumer_id or plan.selection_run_id,
             as_of=as_of,
         )
         for index, (data_type, granularity, fields) in enumerate(specs, start=start_index)
@@ -503,6 +1255,216 @@ def _selection_history_backfill_requests(*, plan: SelectionRunPlan, results: tup
             as_of=as_of,
         )
         for index, ticker in enumerate(tickers, start=1)
+    )
+
+
+def _selection_universe_refresh_requests(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[DataRequest, ...]:
+    if not _main_daily_result_needs_universe_refresh(plan=plan, results=results):
+        return ()
+    as_of = datetime.now(tz=UTC)
+    trade_date = date.fromisoformat(plan.trade_date)
+    start_fallback = trade_date - timedelta(days=max(plan.lookback_trading_days, _DEFAULT_LOOKBACK_TRADING_DAYS) * 2)
+    refresh_dates = _selection_universe_refresh_dates(plan=plan, results=results)
+    if not refresh_dates and _main_daily_result_has_integrity_gap_without_usable_rows(plan=plan, results=results):
+        refresh_dates = (trade_date,)
+    if not refresh_dates and _main_daily_result_needs_universe_refresh(plan=plan, results=results):
+        refresh_dates = (trade_date,)
+    if refresh_dates:
+        return tuple(
+            DataRequest(
+                request_id=f"{plan.selection_run_id}:selection:universe_refresh:{index}:all_a_shares:daily_bar",
+                market=Market.CN_A,
+                universe_ref=plan.universe_scope,
+                timezone=_CN_A_SELECTION_TIMEZONE,
+                calendar=_CN_A_SELECTION_CALENDAR,
+                data_type="daily_bar",
+                granularity="daily",
+                fields=_SELECTION_DAILY_REQUEST[2],
+                date_range_start=refresh_date,
+                date_range_end=refresh_date,
+                freshness_policy="trading_day",
+                consumer="select",
+                consumer_id=plan.selection_run_id,
+                as_of=as_of,
+            )
+            for index, refresh_date in enumerate(refresh_dates, start=1)
+        )
+
+    requests: list[DataRequest] = []
+    seen: set[str] = set()
+    for row in _main_direct_selection_rows(plan=plan, results=results):
+        ticker = _ticker_from_row(row)
+        if ticker is None or ticker in seen:
+            continue
+        latest = _latest_history_date(row)
+        if latest is not None and latest >= trade_date:
+            continue
+        seen.add(ticker)
+        start = start_fallback if latest is None else min(latest + timedelta(days=1), trade_date)
+        requests.append(
+            DataRequest(
+                request_id=f"{plan.selection_run_id}:selection:universe_refresh:{len(requests) + 1}:{ticker}:daily_bar",
+                market=Market.CN_A,
+                symbol_id=ticker,
+                timezone=_CN_A_SELECTION_TIMEZONE,
+                calendar=_CN_A_SELECTION_CALENDAR,
+                data_type="daily_bar",
+                granularity="daily",
+                fields=_SELECTION_DAILY_REQUEST[2],
+                date_range_start=start,
+                date_range_end=trade_date,
+                freshness_policy="trading_day",
+                consumer="select",
+                consumer_id=plan.selection_run_id,
+                as_of=as_of,
+            )
+        )
+    return tuple(requests)
+
+
+def _selection_universe_refresh_dates(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[date, ...]:
+    trade_date = date.fromisoformat(plan.trade_date)
+    metadata_refresh_dates = _selection_universe_refresh_dates_from_metadata(plan=plan, results=results)
+    if metadata_refresh_dates:
+        return metadata_refresh_dates
+    latest_dates = tuple(
+        latest
+        for row in _main_direct_selection_rows(plan=plan, results=results)
+        if (latest := _latest_history_date(row)) is not None
+    )
+    if not latest_dates:
+        return ()
+    latest_available = max(latest_dates)
+    if latest_available >= trade_date:
+        return ()
+    refresh_dates: list[date] = []
+    current = latest_available + timedelta(days=1)
+    while current <= trade_date:
+        refresh_dates.append(current)
+        current += timedelta(days=1)
+    return tuple(refresh_dates)
+
+
+def _main_daily_result_needs_universe_refresh(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> bool:
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    for result in results:
+        if result.request_id != main_request_id:
+            continue
+        return any(_is_universe_refresh_trigger_gap(gap) for gap in result.gaps)
+    return False
+
+
+def _main_daily_result_has_integrity_gap_without_usable_rows(
+    *,
+    plan: SelectionRunPlan,
+    results: tuple[DataResult, ...],
+) -> bool:
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    for result in results:
+        if result.request_id != main_request_id:
+            continue
+        if not any(getattr(gap.reason, "value", str(gap.reason)) == "data_integrity_failed" for gap in result.gaps):
+            return False
+        return not _main_direct_selection_rows(plan=plan, results=(result,))
+    return False
+
+
+def _selection_universe_refresh_dates_from_metadata(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[date, ...]:
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    trade_date = date.fromisoformat(plan.trade_date)
+    for result in results:
+        if result.request_id != main_request_id:
+            continue
+        coverage = _freshness_coverage_for_request(result.freshness, request_id=main_request_id)
+        if coverage is None:
+            return ()
+        integrity_ranges = _metadata_integrity_mismatch_ranges(coverage)
+        missing_ranges = _metadata_missing_ranges(coverage)
+        if integrity_ranges or missing_ranges:
+            return tuple(
+                day
+                for start, end in (*integrity_ranges, *missing_ranges)
+                for day in _daily_dates_between(start, min(end, trade_date))
+                if day <= trade_date
+            )
+        actual_end = _parse_date(coverage.get("actual_end"))
+        expected_end = _parse_date(coverage.get("expected_end")) or trade_date
+        expected_end = min(expected_end, trade_date)
+        if actual_end is None or actual_end >= expected_end:
+            return ()
+        return _daily_dates_between(actual_end + timedelta(days=1), expected_end)
+    return ()
+
+
+def _freshness_coverage_for_request(freshness: Mapping[str, Any], *, request_id: str) -> Mapping[str, Any] | None:
+    coverage_items = freshness.get("coverage_by_request")
+    if not isinstance(coverage_items, Sequence) or isinstance(coverage_items, (str, bytes, bytearray)):
+        return None
+    for item in coverage_items:
+        if isinstance(item, Mapping) and str(item.get("request_id") or "") == request_id:
+            return item
+    return None
+
+
+def _metadata_missing_ranges(coverage: Mapping[str, Any]) -> tuple[tuple[date, date], ...]:
+    raw_ranges = coverage.get("missing_ranges")
+    if not isinstance(raw_ranges, Sequence) or isinstance(raw_ranges, (str, bytes, bytearray)):
+        return ()
+    ranges: list[tuple[date, date]] = []
+    for raw in raw_ranges:
+        if not isinstance(raw, Mapping):
+            continue
+        start = _parse_date(raw.get("start"))
+        end = _parse_date(raw.get("end"))
+        if start is None:
+            continue
+        ranges.append((start, end or start))
+    return tuple(ranges)
+
+
+def _metadata_integrity_mismatch_ranges(coverage: Mapping[str, Any]) -> tuple[tuple[date, date], ...]:
+    raw_ranges = coverage.get("integrity_mismatch_ranges")
+    if not isinstance(raw_ranges, Sequence) or isinstance(raw_ranges, (str, bytes, bytearray)):
+        return ()
+    ranges: list[tuple[date, date]] = []
+    for raw in raw_ranges:
+        if not isinstance(raw, Mapping):
+            continue
+        start = _parse_date(raw.get("start"))
+        end = _parse_date(raw.get("end"))
+        if start is None:
+            continue
+        ranges.append((start, end or start))
+    return tuple(ranges)
+
+
+def _daily_dates_between(start: date, end: date) -> tuple[date, ...]:
+    if start > end:
+        return ()
+    dates: list[date] = []
+    current = start
+    while current <= end:
+        if is_expected_daily_date(current, _CN_A_SELECTION_CALENDAR):
+            dates.append(current)
+        current += timedelta(days=1)
+    return tuple(dates)
+
+
+def _is_universe_refresh_trigger_gap(gap: DataGap) -> bool:
+    reason = getattr(gap.reason, "value", str(gap.reason))
+    if reason in {"date_range_missing", "warehouse_stale", "data_integrity_failed"}:
+        return True
+    return reason == "provider_error" and str(gap.human_readable).strip() == "symbol_required"
+
+
+def _main_direct_selection_rows(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[Mapping[str, Any], ...]:
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    return tuple(
+        row
+        for result in results
+        if result.request_id == main_request_id
+        for row in result.rows
+        if _row_has_direct_history(row)
     )
 
 
@@ -726,17 +1688,24 @@ def _direct_selection_rows_from_results(
             if mapped is None:
                 continue
             ticker = str(mapped.get("ticker") or "").strip()
-            if ticker and ticker not in mapped_rows_by_ticker:
+            if ticker:
                 mapped_rows_by_ticker[ticker] = mapped
     daily_history_by_ticker = _individual_daily_history_by_ticker(results)
     shortfalls = _direct_history_shortfalls(plan=plan, results=results)
     shortfall_by_ticker = {item.ticker: item for item in shortfalls}
+    universe_refresh_attempted = _universe_refresh_attempted(results=results)
     rows: list[Mapping[str, object]] = []
     dropped: list[str] = []
     repaired: list[str] = []
+    stale_after_universe_refresh: list[str] = []
     for row in mapped_rows_by_ticker.values():
         ticker = str(row.get("ticker") or "").strip()
         merged_row = _merge_repaired_history(row=row, repaired_history=daily_history_by_ticker.get(ticker, ()))
+        if universe_refresh_attempted and not _row_covers_trade_date(row=merged_row, plan=plan):
+            if ticker:
+                dropped.append(ticker)
+                stale_after_universe_refresh.append(ticker)
+            continue
         if _row_has_required_history(row=merged_row, plan=plan):
             if ticker in shortfall_by_ticker:
                 repaired.append(ticker)
@@ -759,7 +1728,7 @@ def _direct_selection_rows_from_results(
                 gap_code="selection_batch_rows_dropped",
                 attempt_refs=attempt_refs or (f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",),
                 reader_message=(
-                    "selection batch 中部分本地预打包股票缺少足够历史日线，已剔除。"
+                    "selection batch 中部分本地预打包股票缺少足够历史日线或交易日日线，已剔除。"
                     f" count={len(dropped)}。"
                 ),
                 source_metadata={
@@ -778,6 +1747,7 @@ def _direct_selection_rows_from_results(
                         if item.classification == "listed_old_history_missing_should_backfill"
                         and item.ticker in dropped_set
                     )[:20],
+                    "stale_after_universe_refresh_tickers": tuple(stale_after_universe_refresh[:20]),
                 },
             )
         )
@@ -961,7 +1931,9 @@ def _selection_missing_strategy_required_fields(
         for field in required_fields
         if field not in _OPTIONAL_SELECTION_STRATEGY_SOURCE_FIELDS
         if not all(
-            _row_has_required_history(row=row, plan=plan) if field == "history" else row.get(field) is not None
+            _row_has_required_history(row=row, plan=plan)
+            if field == "history"
+            else row.get(field) is not None
             for row in rows
         )
     )
@@ -1010,6 +1982,8 @@ def _strategy_source_dependencies(
 
 
 def _row_has_required_history(*, row: Mapping[str, object], plan: SelectionRunPlan) -> bool:
+    if row.get("selection_features_materialized") is True:
+        return True
     history = row.get("history")
     if not isinstance(history, Sequence) or isinstance(history, (str, bytes, bytearray)):
         return False
@@ -1021,6 +1995,31 @@ def _row_has_required_history(*, row: Mapping[str, object], plan: SelectionRunPl
         if all(item.get(field) is not None for field in ("open", "high", "low", "close", "volume")):
             valid += 1
     return valid >= required
+
+
+def _row_covers_trade_date(*, row: Mapping[str, object], plan: SelectionRunPlan) -> bool:
+    if row.get("selection_features_materialized") is True:
+        row_trade_date = _parse_date(row.get("trade_date") or row.get("date"))
+        return row_trade_date is not None and row_trade_date >= date.fromisoformat(plan.trade_date)
+    latest = _latest_history_date(row)
+    if latest is None:
+        return False
+    return latest >= date.fromisoformat(plan.trade_date)
+
+
+def _latest_history_date(row: Mapping[str, object]) -> date | None:
+    history = row.get("history")
+    if not isinstance(history, Sequence) or isinstance(history, (str, bytes, bytearray)):
+        return None
+    dates = tuple(
+        parsed
+        for item in history
+        if isinstance(item, Mapping)
+        if (parsed := _parse_date(item.get("date") or item.get("trade_date"))) is not None
+    )
+    if not dates:
+        return None
+    return max(dates)
 
 
 def _failed_provider_result(
@@ -1056,9 +2055,10 @@ def _gap_from_data_gap(
     reason = getattr(gap.reason, "value", str(gap.reason))
     data_type = str(gap.data_type)
     is_history_backfill = ":history_backfill:" in str(gap.request_id)
+    is_universe_refresh = ":universe_refresh:" in str(gap.request_id)
     severity = (
         DataGapSeverity.WARN
-        if is_history_backfill or data_type in _OPTIONAL_SELECTION_SUPPLEMENTAL_DATA_TYPES
+        if is_history_backfill or is_universe_refresh or data_type in _OPTIONAL_SELECTION_SUPPLEMENTAL_DATA_TYPES
         else DataGapSeverity.BLOCKER
         if getattr(gap.severity, "value", str(gap.severity)) == "blocker"
         else DataGapSeverity.WARN
@@ -1078,6 +2078,26 @@ def _gap_from_data_gap(
             "provider_ids_tried": tuple(gap.provider_ids_tried),
         },
     )
+
+
+def _is_repaired_universe_refresh_gap(
+    *,
+    plan: SelectionRunPlan,
+    gap: DataGap,
+    rows: tuple[Mapping[str, object], ...],
+    results: tuple[DataResult, ...],
+) -> bool:
+    if not _universe_refresh_attempted(results=results):
+        return False
+    if str(gap.request_id) != f"{plan.selection_run_id}:selection:1:daily_bar":
+        return False
+    if not rows or not all(_row_covers_trade_date(row=row, plan=plan) for row in rows):
+        return False
+    return _is_universe_refresh_trigger_gap(gap)
+
+
+def _universe_refresh_attempted(*, results: tuple[DataResult, ...]) -> bool:
+    return any(":selection:universe_refresh:" in result.request_id for result in results)
 
 
 def _blocker_gap(
@@ -1312,8 +2332,32 @@ def _history_row(row: Mapping[str, Any]) -> Mapping[str, float | str] | None:
     }.items():
         value = _first_float(row, keys)
         if value is not None:
+            if target == "amount":
+                value = _normalized_amount_value(row=row, value=value)
             mapped[target] = value
     return mapped
+
+
+def _normalized_amount_value(*, row: Mapping[str, Any], value: float) -> float:
+    amount_unit = str(row.get("amount_unit") or "").strip().upper()
+    if amount_unit in {"CNY", "RMB", "YUAN"}:
+        return value
+    if amount_unit in {"CNY_1000", "RMB_1000", "THOUSAND_CNY"}:
+        return value * 1000.0
+    if _is_legacy_tushare_cn_a_daily_row(row):
+        return value * 1000.0
+    return value
+
+
+def _is_legacy_tushare_cn_a_daily_row(row: Mapping[str, Any]) -> bool:
+    if str(row.get("market") or "").strip().upper() not in {"", "CN_A"}:
+        return False
+    lineage = row.get("provider_lineage")
+    if not isinstance(lineage, Mapping):
+        return False
+    provider_id = str(lineage.get("provider_id") or lineage.get("provider") or "").strip()
+    endpoint_id = str(lineage.get("endpoint_id") or lineage.get("endpoint") or "").strip()
+    return provider_id in {"cn_a_primary", "tushare"} and endpoint_id in {"daily_bar", "daily_bar_by_trade_date", "daily"}
 
 
 def _row_date(row: Mapping[str, Any]) -> str | None:

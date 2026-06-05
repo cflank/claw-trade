@@ -6,13 +6,19 @@ from typing import Any
 import pytest
 from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
 from claw_trade.ui_backend.data_source_settings import DataSourceSettingsService
+from claw_trade.ui_backend.data_source_settings import SUPPORTED_DATA_SOURCE_TYPES
 
 PROBE_BACKED_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
     "alpha_vantage",
+    "fmp",
+    "polygon",
     "finnhub",
     "fred",
+    "tiingo",
+    "nasdaq_data_link",
     "coingecko_pro",
+    "coinmarketcap",
     "coinglass",
 )
 
@@ -41,9 +47,14 @@ def test_data_source_health_tester_fixed_sources_do_not_hit_probe_not_supported(
 
     monkeypatch.setattr(ui_runtime_checks, "_probe_tushare", _record("tushare"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_alpha_vantage", _record("alpha_vantage"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_fmp", _record("fmp"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_polygon", _record("polygon"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_finnhub", _record("finnhub"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_fred", _record("fred"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_tiingo", _record("tiingo"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_nasdaq_data_link", _record("nasdaq_data_link"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coingecko_pro", _record("coingecko_pro"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_coinmarketcap", _record("coinmarketcap"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coinglass", _record("coinglass"))
 
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
@@ -53,7 +64,7 @@ def test_data_source_health_tester_fixed_sources_do_not_hit_probe_not_supported(
     assert called == list(PROBE_BACKED_SOURCE_TYPES)
 
 
-def test_successful_probe_does_not_expand_settings_beyond_factory_tushare(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_successful_probe_does_not_change_keyed_settings_source_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ui_runtime_checks, "_probe_tushare", lambda **_: None)
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
 
@@ -68,7 +79,7 @@ def test_successful_probe_does_not_expand_settings_beyond_factory_tushare(monkey
         "mainChainEvidence": False,
         "remoteSuccess": False,
     }
-    assert DataSourceSettingsService(health_tester=tester).list_data_sources()["supportedTypes"] == ("tushare",)
+    assert DataSourceSettingsService(health_tester=tester).list_data_sources()["supportedTypes"] == SUPPORTED_DATA_SOURCE_TYPES
 
 
 def test_data_source_health_tester_unknown_type_uses_probe_not_supported_error() -> None:
@@ -163,9 +174,14 @@ def test_probe_tushare_rejects_empty_result(monkeypatch: pytest.MonkeyPatch) -> 
     ("source_type", "credential", "payload"),
     (
         ("alpha_vantage", "k", {"Global Quote": {"05. price": "1.0"}}),
+        ("fmp", "k", [{"symbol": "AAPL"}]),
+        ("polygon", "k", {"status": "OK", "results": {"ticker": "AAPL"}}),
         ("finnhub", "k", {"c": 1.0}),
         ("fred", "k", {"observations": [{"value": "4.1"}]}),
+        ("tiingo", "k", {"ticker": "AAPL"}),
+        ("nasdaq_data_link", "k", {"datasets": [{"database_code": "FRED"}]}),
         ("coingecko_pro", "k", {"gecko_says": "(V3) To the Moon!"}),
+        ("coinmarketcap", "k", {"data": {"plan": {"credit_limit_daily": 1}}}),
         ("coinglass", "k", {"code": "0", "data": [{"exchange": "Binance"}]}),
     ),
 )
@@ -191,9 +207,14 @@ def test_requests_based_probes_accept_success_payloads(
     ("source_type", "credential", "payload"),
     (
         ("alpha_vantage", "k", {"Error Message": "bad key"}),
+        ("fmp", "k", {"error": "bad key"}),
+        ("polygon", "k", {"status": "ERROR", "error": "bad key"}),
         ("finnhub", "k", {"error": "invalid token"}),
         ("fred", "k", {"error_message": "bad key"}),
+        ("tiingo", "k", {"detail": "bad key"}),
+        ("nasdaq_data_link", "k", {"quandl_error": {"code": "QEAx01"}}),
         ("coingecko_pro", "k", {"error": "throttled"}),
+        ("coinmarketcap", "k", {"status": {"error_code": 1001, "error_message": "bad key"}}),
         ("coinglass", "k", {"message": "bad key"}),
     ),
 )
@@ -231,9 +252,14 @@ def test_probe_binance_http_failure_is_not_validated(monkeypatch: pytest.MonkeyP
     (
         "tushare",
         "alpha_vantage",
+        "fmp",
+        "polygon",
         "finnhub",
         "fred",
+        "tiingo",
+        "nasdaq_data_link",
         "coingecko_pro",
+        "coinmarketcap",
         "coinglass",
     ),
 )

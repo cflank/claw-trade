@@ -15,6 +15,8 @@ function mockWorkspaceFetch(
     confirmImmediateFailure?: boolean;
     confirmWithoutMessages?: boolean;
     channelChatSnapshot?: unknown | (() => unknown);
+    selectionRefreshSnapshot?: unknown | (() => unknown);
+    selectSendResponse?: Promise<Response>;
   } = {},
 ) {
   const originalFetch = globalThis.fetch;
@@ -116,6 +118,14 @@ function mockWorkspaceFetch(
       });
     }
 
+    if (url.includes('/api/ui/get-selection-refresh-snapshot')) {
+      const snapshot =
+        typeof options.selectionRefreshSnapshot === 'function'
+          ? options.selectionRefreshSnapshot()
+          : options.selectionRefreshSnapshot;
+      return json(snapshot ?? { selectionProgress: null });
+    }
+
     if (url.includes('/api/ui/get-report-detail')) {
       return json({
         report: {
@@ -181,6 +191,9 @@ function mockWorkspaceFetch(
 
     if (url.includes('/api/ui/send-chat-message') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as { contextId: string; text: string };
+      if (body.text.trim().toLowerCase().startsWith('/select') && options.selectSendResponse) {
+        return options.selectSendResponse;
+      }
       if (body.text.includes('/report BTC')) {
         return json({
           context: {
@@ -452,6 +465,41 @@ describe('home page', () => {
 
     expect(await screen.findByTestId('reading-report-body')).toBeInTheDocument();
     expect(screen.queryByText(hint.textContent ?? '')).not.toBeInTheDocument();
+  });
+
+  it('shows backend selection data refresh progress in the right rail', async () => {
+    const mocked = mockWorkspaceFetch({
+      selectionRefreshSnapshot: {
+        selectionProgress: {
+          status: 'running',
+          statusLabel: '补数据中',
+          command: '/select 补数据 2026-06-04',
+          stageLabel: '拉取/补齐行情数据',
+          currentAction: '正在读取本地仓库并补齐缺失行情。',
+          percent: 35,
+          workerStatusLabels: ['拉取/补齐行情数据：补数据中'],
+          completedRoleLabels: ['排队准备', '申请执行锁', '数据作业启动'],
+          waitingRoleLabels: ['标准化输入', '构建特征'],
+          startedAt: '2026-06-04T10:00:00Z',
+          finishedAt: null,
+          workflowRunId: 'sel-refresh-active-1',
+        },
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('选股任务进度')).toBeInTheDocument();
+    expect(screen.getByText('/select 补数据 2026-06-04')).toBeInTheDocument();
+    expect(screen.getByText('拉取/补齐行情数据')).toBeInTheDocument();
+    expect(screen.getByText('正在读取本地仓库并补齐缺失行情。')).toBeInTheDocument();
+    expect(screen.getByText('拉取/补齐行情数据：补数据中')).toBeInTheDocument();
+    expect(screen.getByText('工作流：sel-refresh-active-1')).toBeInTheDocument();
   });
 
   it('keeps workspace visible and shows a model warning without onboarding dialogs', async () => {
@@ -1095,6 +1143,92 @@ describe('home page', () => {
 
     expect(await screen.findByText('收到，正在分析。')).toBeInTheDocument();
     expect(screen.getByText('帮我看下茅台')).toBeInTheDocument();
+  });
+
+  it('shows local progress while a select command is still running', async () => {
+    let resolveSelect!: (response: Response) => void;
+    const selectSendResponse = new Promise<Response>((resolve) => {
+      resolveSelect = resolve;
+    });
+    const mocked = mockWorkspaceFetch({ selectSendResponse });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/select' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(screen.getAllByText('/select').length).toBeGreaterThan(0));
+    expect(await screen.findByText(/正在运行选股工作流/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选股中' })).toBeDisabled();
+    expect(screen.getByText('选股任务进度')).toBeInTheDocument();
+    expect(screen.getByText('选股工作流执行中')).toBeInTheDocument();
+    expect(screen.getByText('策略评审：已纳入本轮选股流程')).toBeInTheDocument();
+    expect(screen.getByText('组合经理：已纳入本轮选股流程')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSelect(
+        json({
+          context: {
+            contextId: 'normal-chat',
+            kind: 'normal_chat',
+            title: '普通聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: [
+            {
+              messageId: 'msg-select-user',
+              contextKind: 'normal_chat',
+              actor: 'user',
+              kind: 'plain',
+              text: '/select',
+              createdAt: '2026-05-19T10:08:00.000Z',
+            },
+            {
+              messageId: 'msg-select-result',
+              contextKind: 'normal_chat',
+              actor: 'system',
+              kind: 'selection_result',
+              text:
+                '`/select` 已完成，本轮仅进入等待确认，不会自动启动 `/report`。\n\n简报：\n- 进入 `/report`：600519.SH 贵州茅台\n- 观察：000858.SZ 五粮液\n- 放弃：300750.SZ 宁德时代\n\n进入 `/report`：\n- 600519.SH 贵州茅台：经营质量与现金流稳定，值得进入深度报告验证。\n\n观察：\n- 000858.SZ 五粮液：还需后续财报与景气数据确认。\n\n放弃：\n- 300750.SZ 宁德时代：当前证据链分歧较大且不够完整。',
+              createdAt: '2026-05-19T10:09:00.000Z',
+            },
+          ],
+          selection: {
+            code: 'completed',
+            workflowRunId: 'select-test-run',
+            evidencePath: 'runs/selection/workflows/select-test-run/selection-workflow-evidence.json',
+            unavailableCode: null,
+            failureReason: null,
+            readerReportMarkdown:
+              '# 选股结果报告\n\n## 执行结论\n本轮 `/select` 已完成。\n\n## 候选事实表\n| 排名 | 股票代码 | 股票名称 | 总分 | 实际指标值 |\n| --- | --- | --- | ---: | --- |\n| 1 | 600519.SH | 贵州茅台 | 91 | ROE 31%，成交额 12 亿元，收盘价 1680 元 |\n\n## 数据质量摘要\n数据覆盖可读。',
+          },
+        }),
+      );
+      await selectSendResponse;
+    });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送' })).toBeDisabled());
+    expect(screen.getByLabelText('输入消息')).toBeEnabled();
+    expect(screen.getByText(/已完成，本轮仅进入等待确认/)).toBeInTheDocument();
+    expect(screen.queryByText('选股完成')).not.toBeInTheDocument();
+    expect(screen.queryByText('等待确认候选')).not.toBeInTheDocument();
+    expect(screen.queryByText('选股任务进度')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看完整选股报告' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /选股结果报告/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '查看完整选股报告' }));
+    const selectionReport = await screen.findByTestId('reading-selection-report-body');
+    expect(selectionReport).toHaveTextContent('候选事实表');
+    expect(selectionReport).toHaveTextContent('600519.SH');
+    expect(selectionReport).not.toHaveTextContent('策略配置版本');
+    expect(selectionReport).not.toHaveTextContent('权重版本');
   });
 
   it('renders confirmation card and supports confirm/cancel actions', async () => {

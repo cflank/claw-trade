@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { SettingsSections } from '../components/SettingsSections';
@@ -188,6 +188,7 @@ export function SettingsPage() {
   const [dataSourceActionMessage, setDataSourceActionMessage] = useState('');
   const [resetActionBusy, setResetActionBusy] = useState(false);
   const [resetActionMessage, setResetActionMessage] = useState('');
+  const autoQrRequestedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -212,7 +213,9 @@ export function SettingsPage() {
       )
         .then((result) => {
           if (active) {
-            setChannel(result);
+            setChannel((current) =>
+              current?.qrCodeImageDataUrl && !result.qrCodeImageDataUrl ? current : result,
+            );
           }
         })
         .catch((loadError) => {
@@ -317,6 +320,36 @@ export function SettingsPage() {
       }));
     } finally {
       setChannelActionBusy(false);
+    }
+  }
+
+  async function loadChannelQrOnGeneralTab() {
+    if (autoQrRequestedRef.current || channel?.state === 'connected' || channel?.qrCodeImageDataUrl) {
+      return;
+    }
+    autoQrRequestedRef.current = true;
+    setChannelActionMessage('');
+    setSectionErrors((current) => ({ ...current, channel: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        getChannelStatus({ includeQr: true }),
+        '微信通道暂不可用，请稍后重试。',
+        CHANNEL_STATUS_TIMEOUT_MS,
+      );
+      setChannel((current) =>
+        current?.qrCodeImageDataUrl && !result.qrCodeImageDataUrl ? current : result,
+      );
+    } catch (loadError) {
+      setSectionErrors((current) => ({
+        ...current,
+        channel: (loadError as Error).message,
+      }));
+    }
+  }
+
+  function handleSettingsTabChange(tab: 'model' | 'general' | 'data') {
+    if (tab === 'general') {
+      void loadChannelQrOnGeneralTab();
     }
   }
 
@@ -558,6 +591,7 @@ export function SettingsPage() {
       );
       setLlm(DEFAULT_LLM_DRAFT);
       setLlmSettingsVersion(result.llm.settingsVersion ?? '');
+      autoQrRequestedRef.current = false;
       setChannel(result.channel);
       setDataSources(result.dataSources.instances);
       setDataSourceDraft(createDataSourceDraft(result.dataSources.instances[0]));
@@ -605,6 +639,7 @@ export function SettingsPage() {
           onDisconnectChannel={disconnectChannel}
           onSkipWechatSetup={skipWechatSetup}
           onRefreshChannel={refreshChannel}
+          onSettingsTabChange={handleSettingsTabChange}
           onLlmChange={(patch) =>
             setLlm((current) => ({
               ...(current ?? DEFAULT_LLM_DRAFT),

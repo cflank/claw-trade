@@ -27,6 +27,7 @@ class _Batch:
     calendar: str | None = "CN_A_SSE_SZSE"
     base_asset: str | None = None
     quote_asset: str | None = None
+    universe_ref: str | None = None
     raw_storage_mode: str = "store_full"
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
@@ -53,6 +54,64 @@ def test_ingest_pipeline_success_writes_raw_normalized_attempt_refs() -> None:
     assert ingest.raw_refs
     assert ingest.dataset_refs
     assert ingest.attempt_refs
+
+
+def test_normalized_store_writes_one_checksum_for_batch() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    store = NormalizedStore(repository=repo)
+
+    refs = store.upsert(
+        (
+            {
+                "dataset": "daily_bar",
+                "market": "CN_A",
+                "symbol_id": "000001.SZ",
+                "granularity": "daily",
+                "period_start": date(2026, 5, 31),
+                "period_end": date(2026, 5, 31),
+                "close": 10.2,
+                "exchange": "SZSE",
+                "currency": "CNY",
+                "timezone": "Asia/Shanghai",
+                "calendar": "CN_A_SSE_SZSE",
+                "base_asset": None,
+                "quote_asset": None,
+                "provider_lineage": {"provider_id": "test", "endpoint_id": "daily"},
+                "schema_id": "daily_bar.v1",
+                "quality_flags": (),
+            },
+            {
+                "dataset": "daily_bar",
+                "market": "CN_A",
+                "symbol_id": "600519.SH",
+                "granularity": "daily",
+                "period_start": date(2026, 5, 31),
+                "period_end": date(2026, 5, 31),
+                "close": 1530.25,
+                "exchange": "SSE",
+                "currency": "CNY",
+                "timezone": "Asia/Shanghai",
+                "calendar": "CN_A_SSE_SZSE",
+                "base_asset": None,
+                "quote_asset": None,
+                "provider_lineage": {"provider_id": "test", "endpoint_id": "daily"},
+                "schema_id": "daily_bar.v1",
+                "quality_flags": (),
+            },
+        )
+    )
+
+    documents = tuple(repo.get_normalized_document(ref) for ref in refs)
+    assert len(documents) == 2
+    checksums = {str(document["dataset_checksum"]) for document in documents if document is not None}
+    assert len(checksums) == 1
+    assert all(document is not None and document["dataset_row_count"] == 2 for document in documents)
+    assert all(
+        document is not None and document["dataset_checksum_scope"] == "normalized-batch-v1"
+        for document in documents
+    )
 
 
 def test_ingest_pipeline_normalizes_trade_date_and_returns_auditable_dataset_ref() -> None:
@@ -101,6 +160,60 @@ def test_ingest_pipeline_normalizes_trade_date_and_returns_auditable_dataset_ref
     )
     assert warehouse_result.status == "ready"
     assert warehouse_result.dataset_refs == ingest.dataset_refs
+
+
+def test_ingest_pipeline_preserves_universe_ref_for_warehouse_recheck() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        universe_ref="all_a_shares",
+        date_range_start=date(2026, 6, 4),
+        date_range_end=date(2026, 6, 4),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[
+            {"dataset": "daily_bar", "symbol_id": "000001.SZ", "trade_date": "20260604", "close": 10.2},
+            {"dataset": "daily_bar", "symbol_id": "430047.BJ", "trade_date": "20260604", "close": 15.3},
+        ],
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert len(ingest.dataset_refs) == 2
+    stored_documents = tuple(repo.get_normalized_document(ref) for ref in ingest.dataset_refs)
+    assert all(document is not None and document["universe_ref"] == "all_a_shares" for document in stored_documents)
+    assert all(
+        document is not None and document["row"]["universe_ref"] == "all_a_shares"
+        for document in stored_documents
+    )
+
+    warehouse_result = Warehouse(repo).query(
+        {
+            "request_id": "req-universe",
+            "dataset": "daily_bar",
+            "market": "CN_A",
+            "universe_ref": "all_a_shares",
+            "granularity": "daily",
+            "fields": ("close",),
+            "date_range_start": date(2026, 6, 4),
+            "date_range_end": date(2026, 6, 4),
+            "freshness_policy": "warehouse_only",
+            "timezone": "Asia/Shanghai",
+            "calendar": "CN_A_SSE_SZSE",
+            "as_of": datetime(2026, 6, 4, 18, 0, tzinfo=UTC),
+        }
+    )
+
+    assert warehouse_result.status == "ready"
+    assert set(warehouse_result.dataset_refs) == set(ingest.dataset_refs)
 
 
 def test_ingest_pipeline_requested_date_range_without_date_field_produces_datagap() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
@@ -21,9 +22,24 @@ def build_research_ui_app(
     settings: ResearchUiServerSettings,
     services: UiHttpServices | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="claw-trade research ui")
+    owns_services = services is None
+    selection_auto_refresh_enabled = owns_services and _selection_auto_refresh_enabled()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if app.state.selection_auto_refresh_enabled:
+            app.state.ui_services.selection_refresh_service.start_automatic_refresh_scheduler()
+        try:
+            yield
+        finally:
+            if app.state.selection_auto_refresh_enabled:
+                app.state.ui_services.selection_refresh_service.stop_automatic_refresh_scheduler()
+
+    app = FastAPI(title="claw-trade research ui", lifespan=lifespan)
     app.state.research_ui_settings = settings
     app.state.ui_services = services or build_ui_http_services(settings)
+    app.state.owns_ui_services = owns_services
+    app.state.selection_auto_refresh_enabled = selection_auto_refresh_enabled
 
     @app.exception_handler(RequestValidationError)
     async def ui_validation_error_handler(request: Request, exc: RequestValidationError):
@@ -73,6 +89,13 @@ def build_research_ui_app(
         return FileResponse(index_path, headers=no_cache_headers)
 
     return app
+
+
+def _selection_auto_refresh_enabled() -> bool:
+    value = os.environ.get("CLAW_TRADE_SELECTION_AUTO_REFRESH")
+    if value is None:
+        return True
+    return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

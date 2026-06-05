@@ -13,6 +13,7 @@ import json
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from claw_trade.data_gateway.selection_batch import (
@@ -21,6 +22,7 @@ from claw_trade.data_gateway.selection_batch import (
 from claw_trade.data_gateway.selection_batch import (
     fetch_selection_batch_from_data_gateway as _fetch_selection_batch_from_data_gateway,
 )
+from claw_trade.selection.data_job import SelectionDataFetchProgress
 from claw_trade.selection.models import (
     DataGapRef,
     SelectionMarket,
@@ -65,8 +67,13 @@ def fetch_selection_batch_from_data_gateway(
     plan: SelectionRunPlan,
     *,
     evidence_root: Path | None = None,
+    progress_callback: Callable[[SelectionDataFetchProgress], None] | None = None,
 ):
-    return _fetch_selection_batch_from_data_gateway(plan, evidence_root=evidence_root)
+    return _fetch_selection_batch_from_data_gateway(
+        plan,
+        evidence_root=evidence_root,
+        progress_callback=progress_callback,
+    )
 
 
 def _serialize_data_gap(gap: DataGapRef) -> dict[str, object]:

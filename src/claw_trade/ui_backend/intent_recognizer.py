@@ -169,7 +169,19 @@ class IntentRecognizer:
 
 
 def _looks_like_report_intent(lowered: str) -> bool:
-    return "/report" in lowered or "报告" in lowered or "生成" in lowered and "报" in lowered
+    return lowered.startswith("/report") or (_looks_like_schedule_marker(lowered) and ("报告" in lowered or "report" in lowered))
+
+
+def _looks_like_schedule_marker(lowered: str) -> bool:
+    return (
+        "每天" in lowered
+        or "每周" in lowered
+        or "每小时" in lowered
+        or "daily" in lowered
+        or "weekly" in lowered
+        or "hourly" in lowered
+        or "every hour" in lowered
+    )
 
 
 def _looks_like_hourly(lowered: str) -> bool:

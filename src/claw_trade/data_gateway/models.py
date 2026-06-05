@@ -38,6 +38,7 @@ class GapReason(str, Enum):
     WAREHOUSE_STALE = "warehouse_stale"
     FIELD_MISSING = "field_missing"
     DATE_RANGE_MISSING = "date_range_missing"
+    DATA_INTEGRITY_FAILED = "data_integrity_failed"
     GRANULARITY_MISMATCH = "granularity_mismatch"
     LICENSE_BLOCKED = "license_blocked"
     EVIDENCE_WRITE_FAILED = "evidence_write_failed"
@@ -344,6 +345,7 @@ class ProviderCapability(BaseModel):
     coverage_fields: tuple[str, ...]
     priority_rank: int
     credential_required: bool
+    credential_names: tuple[str, ...] = ()
     credential_scope: str | None = None
     http_visibility: HttpVisibility
     can_be_formal_fact_source: bool
@@ -355,6 +357,8 @@ class ProviderCapability(BaseModel):
     def validate_capability(self) -> "ProviderCapability":
         if self.priority_rank < 0:
             raise ValueError("priority_rank 必须 >= 0")
+        if self.credential_required and not self.credential_names:
+            raise ValueError("credential_required=True 时必须声明 credential_names")
         if (
             self.source_role in {SourceRole.DISCOVERY, SourceRole.EVENT_EXPECTATION}
             and self.can_be_formal_fact_source
@@ -389,6 +393,7 @@ class ProviderCandidate(BaseModel):
 class MergeItem(BaseModel):
     request_id: str
     symbol_ids: tuple[str, ...]
+    universe_ref: str | None = None
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
     fields: tuple[str, ...]
@@ -411,6 +416,7 @@ class MergeGroup(BaseModel):
     priority_rank: int
     request_ids: tuple[str, ...]
     symbol_ids: tuple[str, ...]
+    universe_ref: str | None = None
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
     exchange: str | None = None
@@ -435,6 +441,7 @@ class ProviderBatchPlan(BaseModel):
     granularity: str
     request_ids: tuple[str, ...]
     symbol_ids: tuple[str, ...]
+    universe_ref: str | None = None
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
     exchange: str | None = None

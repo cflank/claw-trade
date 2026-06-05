@@ -452,9 +452,50 @@ def test_cn_a_plugin_uses_settings_credential_and_endpoint_through_managed_http(
     assert client.requests[0].host == "http://tushare.example:8020"
     row = result.payload["rows"][0]
     assert row["symbol_id"] == "600519.SH"
+    assert row["date"].isoformat() == "2026-05-29"
     assert row["exchange"] == "XSHG"
     assert row["currency"] == "CNY"
-    assert row["amount"] == 1605000.0
+    assert row["amount"] == 1605000000.0
+    assert row["amount_unit"] == "CNY"
+
+
+def test_cn_a_tushare_daily_bar_supports_trade_date_universe_fetch() -> None:
+    plugin = build_cn_a_provider_plugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text='{"code":0,"msg":"","data":{"fields":["ts_code","trade_date","open","high","low","close","vol","amount"],"items":[["600519.SH","20260604",1600,1610,1590,1605,1000,1605000],["000001.SZ","20260604",10,11,9,10.5,2000,21000],["430047.BJ","20260604",5,6,4,5.5,3000,16500]]}}',
+        )
+    )
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "ts-token" if name == "data_source:tushare" else None,
+        get_endpoint_url=lambda name: "http://tushare.example:8020" if name == "data_source:tushare" else None,
+    )
+    task = FetchTask(
+        batch_id="batch:cn-a-universe",
+        provider_id="cn_a_primary",
+        endpoint_id="daily_bar_by_trade_date",
+        market="CN_A",
+        data_type="daily_bar",
+        granularity="daily",
+        symbol_ids=(),
+        date_range_start=date(2026, 6, 4),
+        date_range_end=date(2026, 6, 4),
+        fields=("date", "open", "high", "low", "close", "volume", "amount"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client), credential_resolver=resolver))
+
+    assert result.status.value == "success"
+    request_body = json.loads(client.requests[0].body)
+    assert request_body["params"] == {"trade_date": "20260604"}
+    assert result.row_count == 3
+    assert {row["symbol_id"] for row in result.payload["rows"]} == {"600519.SH", "000001.SZ", "430047.BJ"}
+    assert {row["date"].isoformat() for row in result.payload["rows"]} == {"2026-06-04"}
+    assert {row["exchange"] for row in result.payload["rows"]} == {"XSHG", "XSHE", "BJSE"}
 
 
 def test_hk_finnhub_daily_bar_uses_settings_credential_and_documented_stock_candle_path() -> None:
@@ -528,15 +569,18 @@ def test_cn_a_migrated_provider_matrix_declares_business_dataset_capabilities() 
         ), data_type
         for cap in capabilities:
             assert cap.fields
-            assert getattr(cap.batch_policy, "batch_by") in {"none", "symbol"}
+            assert getattr(cap.batch_policy, "batch_by") in {"none", "symbol", "date"}
             assert getattr(cap.license_policy, "raw_storage_mode") in {"store_full", "metadata_only", "no_store"}
 
     discovery = next(cap for cap in registry.list_capabilities("CN_A", "company_news") if cap.provider_id == "cn_a_google_news")
     assert discovery.can_be_formal_fact_source is False
     valuation = registry.list_capabilities("CN_A", "valuation_metric")[0]
     assert "ev_ebitda" not in valuation.fields
-    cn_a_daily = registry.list_capabilities("CN_A", "daily_bar")[0]
+    cn_a_daily_capabilities = registry.list_capabilities("CN_A", "daily_bar")
+    cn_a_daily = cn_a_daily_capabilities[0]
+    assert "date" in cn_a_daily.fields
     assert "amount" in cn_a_daily.fields
+    assert any(cap.endpoint_id == "daily_bar_by_trade_date" for cap in cn_a_daily_capabilities)
     crypto_daily = registry.list_capabilities("CRYPTO", "daily_bar")[0]
     assert "amount" in crypto_daily.fields
 

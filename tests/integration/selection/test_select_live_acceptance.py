@@ -18,6 +18,7 @@ from claw_trade.selection.confirmation import (
     SelectionConfirmationController,
     SelectionConfirmRequest,
 )
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.controller import SelectCommandCode, SelectionController
 from claw_trade.selection.models import (
     CandidatePackManifest,
@@ -361,26 +362,60 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
         expires_at=expires_at,
         pack_summary_ref=str(summary_path),
     )
+    run_plan = SelectionRunPlan(
+        selection_run_id=run_id,
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        provider_batch_plan_ref="plan://sel-11-live",
+        approved_strategy_config_ref="config://approved",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    columnar_writer = SelectionColumnarWarehouse.default().begin_write(plan=run_plan)
+    columnar_writer.add_daily_rows(
+        (
+            {
+                "ticker": "600519.SH",
+                "date": "2026-05-26",
+                "close": 1612.0,
+                "amount": 3000000000.0,
+                "source_ref": "normalized://mongo/normalized_datasets/sel-11-live",
+            },
+        )
+    )
+    columnar_writer.add_feature_rows(
+        (
+            {
+                "ticker": "600519.SH",
+                "company_name": "贵州茅台",
+                "trade_date": "2026-05-26",
+                "selection_features_materialized": True,
+                "close": 1612.0,
+                "amount": 3000000000.0,
+                "source_ref": "normalized://mongo/normalized_datasets/sel-11-live",
+            },
+        )
+    )
+    columnar_manifest = columnar_writer.commit(
+        provider_attempt_refs=("attempt://sel-11-live",),
+        normalized_refs=("normalized://mongo/normalized_datasets/sel-11-live",),
+    )
     store.save_data_run_record(
         SelectionDataRunRecord(
-            run_plan=SelectionRunPlan(
-                selection_run_id=run_id,
-                market=SelectionMarket.CN_A,
-                profile=SelectionProfile.CN_A,
-                trade_date="2026-05-26",
-                lookback_trading_days=260,
-                universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://sel-11-live",
-                approved_strategy_config_ref="config://approved",
-                trigger_source=SelectionTriggerSource.SCHEDULED,
-            ),
+            run_plan=run_plan,
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
                 normalized_refs=("normalized://mongo/normalized_datasets/sel-11-live",),
                 provider_attempt_refs=("attempt://sel-11-live",),
                 select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
-                warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",
+                warehouse_check_ref=columnar_manifest.warehouse_check_ref,
+                columnar_manifest_ref=columnar_manifest.manifest_ref,
+                columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(
+                    columnar_manifest.manifest_ref
+                ),
                 candidate_pack_ref=candidate_pack_ref,
                 completed_at=approved_at,
             ),
@@ -662,7 +697,7 @@ def test_select_live_acceptance_provider_payload_and_handoff() -> None:
     zero_enter_report_branch = len(enter_report) == 0
 
     reader_artifact_path = artifact_root / f"{result.select_workflow_run_id}-select-reader-artifact.md"
-    reader_text = result.chat_text
+    reader_text = result.reader_report_markdown or result.chat_text
     _assert_candidate_fact_body_is_reader_chinese(reader_text)
     reader_artifact_path.write_text(reader_text.strip() + "\n", encoding="utf-8")
     assert reader_artifact_path.is_file()

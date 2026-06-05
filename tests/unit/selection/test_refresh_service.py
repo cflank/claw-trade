@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
 
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
+    CandidatePackManifest,
+    CandidatePackReadbackStatus,
+    CandidatePackRef,
     SelectionBatchScope,
+    SelectionDataRun,
+    SelectionDataRunStatus,
     SelectionMarket,
     SelectionProfile,
     SelectionProviderBatchPlan,
+    SelectionRunPlan,
+    SelectionTriggerSource,
     SelectRequest,
 )
-from claw_trade.selection.refresh import SelectionDataRefreshService
+from claw_trade.selection.store import SelectionDataRunRecord
+from claw_trade.selection.refresh import SelectionDataRefreshService, _seconds_until_next_daily_refresh
 from claw_trade.selection.store import SelectionRunStore
 
 
@@ -43,14 +56,386 @@ def test_selection_refresh_service_starts_background_job_and_dedupes_active_run(
     assert second.selection_run_id == "sel-refresh-1"
 
 
-def _request() -> SelectRequest:
+def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> None:
+    store = SelectionRunStore()
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-active-1",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-active-1",
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                lease_id="lease://sel-refresh-active-1",
+                started_at="2026-06-04T10:00:00+00:00",
+                progress_label="补齐全市场日线数据",
+                progress_completed=128,
+                progress_total=512,
+            ),
+            manifest=None,
+        )
+    )
+
+    snapshot = service.latest_progress_for_user()
+
+    progress = snapshot["selectionProgress"]
+    assert isinstance(progress, dict)
+    assert progress["status"] == "running"
+    assert progress["statusLabel"] == "补数据中"
+    assert progress["command"] == "/select 补数据 2026-06-04"
+    assert progress["stageLabel"] == "拉取/补齐行情数据"
+    assert progress["currentAction"] == "补齐全市场日线数据：已完成 128/512。"
+    assert progress["percent"] == 38
+    assert progress["workerStatusLabels"] == ["拉取/补齐行情数据：补数据中（128/512）"]
+    assert progress["workflowRunId"] == "sel-refresh-active-1"
+
+
+def test_selection_refresh_service_right_rail_prefers_latest_active_task_across_dates() -> None:
+    store = SelectionRunStore()
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-05",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 5, 10, tzinfo=UTC),
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-failed-current",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-05",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-05/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-failed-current",
+                status=SelectionDataRunStatus.FAILED,
+                lease_id="lease://sel-refresh-failed-current",
+                started_at="2026-06-05T08:00:00+00:00",
+                failed_at="2026-06-05T08:01:00+00:00",
+                failure_code="selection_data_run_interrupted",
+                failure_reason="上一次进程已中断。",
+            ),
+            manifest=None,
+        )
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-active-previous",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-active-previous",
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                lease_id="lease://sel-refresh-active-previous",
+                started_at="2026-06-05T08:02:00+00:00",
+                progress_label="检查本地全市场日线缓存",
+                progress_completed=0,
+                progress_total=1,
+            ),
+            manifest=None,
+        )
+    )
+
+    progress = service.latest_progress_for_user()["selectionProgress"]
+
+    assert isinstance(progress, dict)
+    assert progress["command"] == "/select 补数据 2026-06-04"
+    assert progress["status"] == "running"
+    assert progress["workflowRunId"] == "sel-refresh-active-previous"
+
+
+def test_selection_refresh_service_exposes_latest_terminal_failure_for_right_rail() -> None:
+    store = SelectionRunStore()
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-failed-1",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-failed-1",
+                status=SelectionDataRunStatus.FAILED,
+                lease_id="lease://sel-refresh-failed-1",
+                started_at="2026-06-04T09:00:00+00:00",
+                failed_at="2026-06-04T09:05:00+00:00",
+                failure_code="selection_data_run_interrupted",
+                failure_reason="上一次进程已中断。",
+            ),
+            manifest=None,
+        )
+    )
+
+    snapshot = service.latest_progress_for_user()
+
+    progress = snapshot["selectionProgress"]
+    assert isinstance(progress, dict)
+    assert progress["status"] == "failed"
+    assert progress["statusLabel"] == "补数据失败"
+    assert progress["stageLabel"] == "补数据失败"
+    assert progress["currentAction"] == "选股数据刷新失败，请查看失败原因。"
+    assert progress["workerStatusLabels"] == ["补数据失败：补数据失败", "失败原因：上一次进程已中断。"]
+    assert progress["workflowRunId"] == "sel-refresh-failed-1"
+
+
+def test_selection_refresh_service_humanizes_provider_evidence_failure_for_right_rail() -> None:
+    store = SelectionRunStore()
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-provider-failed-1",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-provider-failed-1",
+                status=SelectionDataRunStatus.FAILED,
+                lease_id="lease://sel-refresh-provider-failed-1",
+                started_at="2026-06-04T09:00:00+00:00",
+                failed_at="2026-06-04T09:05:00+00:00",
+                failure_code="provider_evidence_failed",
+                failure_reason="provider attempts 缺失",
+            ),
+            manifest=None,
+        )
+    )
+
+    progress = service.latest_progress_for_user()["selectionProgress"]
+
+    assert isinstance(progress, dict)
+    assert progress["workerStatusLabels"] == [
+        "补数据失败：补数据失败",
+        "失败原因：缺少数据源调用证据（provider attempts 缺失）",
+    ]
+
+
+def test_selection_refresh_service_startup_check_runs_data_job_and_dedupes_select_refresh() -> None:
+    store = SelectionRunStore()
+    job_calls: list[str] = []
+
+    def run_job(plan: SelectionRunPlan) -> None:
+        active = store.load_active_data_run_record(
+            market=plan.market,
+            profile=plan.profile,
+            trade_date=plan.trade_date,
+        )
+        assert active is not None
+        assert active.run_plan.selection_run_id == plan.selection_run_id
+        refresh = service.request_refresh(
+            request=_request(trade_date=plan.trade_date),
+            unavailable_code="no_completed_selection_run",
+            select_workflow_run_id="select-during-auto",
+        )
+        assert refresh.status == "already_running"
+        assert refresh.selection_run_id == plan.selection_run_id
+        job_calls.append(plan.selection_run_id)
+        store.save_data_run_record(
+            SelectionDataRunRecord(
+                run_plan=plan,
+                data_run=SelectionDataRun(
+                    selection_run_id=plan.selection_run_id,
+                    status=SelectionDataRunStatus.NO_CANDIDATE,
+                    lease_id=f"lease://{plan.selection_run_id}",
+                    started_at="2026-06-04T08:00:00+00:00",
+                    completed_at="2026-06-04T08:01:00+00:00",
+                ),
+                manifest=None,
+            )
+        )
+
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=run_job,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 8, tzinfo=UTC),
+        run_id_factory=lambda: "sel-auto-check-1",
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup_data_check")
+
+    assert result.status == "completed"
+    assert result.selection_run_id == "sel-auto-check-1"
+    assert result.trade_date == "2026-06-04"
+    assert job_calls == ["sel-auto-check-1"]
+
+
+def test_selection_refresh_service_startup_check_reuses_valid_candidate_pack(tmp_path: Path) -> None:
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    _save_completed_candidate_pack_record(
+        store=store,
+        artifact_root=tmp_path / "artifacts",
+        selection_run_id="sel-existing-pack-1",
+        trade_date="2026-06-04",
+    )
+    check_calls: list[SelectionRunPlan] = []
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        run_data_check=lambda plan: check_calls.append(plan),
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+        run_id_factory=lambda: "sel-auto-check-should-not-run",
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup_data_check")
+
+    assert result.status == "completed"
+    assert result.selection_run_id == "sel-existing-pack-1"
+    assert result.reason == "startup_data_check:candidate_pack_valid"
+    assert check_calls == []
+
+
+def test_selection_refresh_service_request_refresh_reuses_valid_candidate_pack(tmp_path: Path) -> None:
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    _save_completed_candidate_pack_record(
+        store=store,
+        artifact_root=tmp_path / "artifacts",
+        selection_run_id="sel-existing-pack-2",
+        trade_date="2026-06-04",
+    )
+    run_calls: list[SelectionRunPlan] = []
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda plan: run_calls.append(plan),  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+        run_id_factory=lambda: "sel-refresh-should-not-run",
+    )
+
+    result = service.request_refresh(
+        request=_request(trade_date="2026-06-04"),
+        unavailable_code="no_completed_selection_run",
+        select_workflow_run_id="select-wf-valid-pack",
+    )
+
+    assert result.status == "completed"
+    assert result.selection_run_id == "sel-existing-pack-2"
+    assert result.reason == "no_completed_selection_run:candidate_pack_valid"
+    assert run_calls == []
+
+
+def test_selection_refresh_service_auto_check_does_not_run_when_data_job_is_active() -> None:
+    store = SelectionRunStore()
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-active",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-active",
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                lease_id="lease://sel-active",
+                started_at="2026-06-04T08:00:00+00:00",
+            ),
+            manifest=None,
+        )
+    )
+    check_calls: list[SelectionRunPlan] = []
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        run_data_check=lambda plan: check_calls.append(plan),
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup_data_check")
+
+    assert result.status == "already_running"
+    assert result.trade_date == "2026-06-04"
+    assert check_calls == []
+
+
+def test_selection_auto_refresh_daily_delay_uses_1600_shanghai_cutoff() -> None:
+    before_cutoff_utc = datetime(2026, 6, 4, 7, 0, tzinfo=UTC)
+    after_cutoff_utc = datetime(2026, 6, 4, 8, 1, tzinfo=UTC)
+
+    assert _seconds_until_next_daily_refresh(before_cutoff_utc) == 3600.0
+    assert _seconds_until_next_daily_refresh(after_cutoff_utc) == 23 * 3600 + 59 * 60
+
+
+def _request(*, trade_date: str = "2026-05-26") -> SelectRequest:
     return SelectRequest(
         request_id="req-refresh",
         market=SelectionMarket.CN_A,
         profile=SelectionProfile.CN_A,
-        trade_date="2026-05-26",
+        trade_date=trade_date,
         user_id="u",
-        created_at="2026-05-26T10:00:00+00:00",
+        created_at=f"{trade_date}T10:00:00+00:00",
     )
 
 
@@ -67,4 +452,169 @@ def _provider_batch_plan(*, market: SelectionMarket, profile: SelectionProfile, 
         provider_candidates=("cn_a_primary",),
         ttl_policy_ref="ttl://selection/cn_a",
         lineage_root_ref=f"lineage://selection/cn_a/{trade_date}",
+    )
+
+
+def _save_completed_candidate_pack_record(
+    *,
+    store: SelectionRunStore,
+    artifact_root: Path,
+    selection_run_id: str,
+    trade_date: str,
+) -> None:
+    body_uri = f"local://selection/{selection_run_id}/candidate-pack/approved/body.md"
+    manifest_uri = f"local://selection/{selection_run_id}/candidate-pack/approved/manifest.json"
+    summary_uri = f"local://selection/{selection_run_id}/candidate-pack/approved/summary.md"
+    body_path = _selection_artifact_path(artifact_root, body_uri)
+    manifest_path = _selection_artifact_path(artifact_root, manifest_uri)
+    summary_path = _selection_artifact_path(artifact_root, summary_uri)
+    body_path.parent.mkdir(parents=True, exist_ok=True)
+    body_text = "# 候选池\n\n| rank | ticker | company |\n| --- | --- | --- |\n| 1 | 600000.SH | 浦发银行 |\n"
+    body_sha = sha256(body_text.encode("utf-8")).hexdigest()
+    body_path.write_text(body_text, encoding="utf-8")
+    summary_path.write_text(body_text, encoding="utf-8")
+    manifest_payload = {
+        "schema_version": "selection-candidate-pack-manifest-v1",
+        "selection_run_id": selection_run_id,
+        "market": SelectionMarket.CN_A.value,
+        "profile": SelectionProfile.CN_A.value,
+        "trade_date": trade_date,
+        "candidate_count": 1,
+        "source_lineage_refs": ["normalized://mongo/normalized_datasets/600000"],
+        "pack_body_sha256": body_sha,
+        "strategy_config_ref": "config://cn-a-selection-v1",
+        "strategy_config_version": "cn_a.selection_strategy.v1",
+        "weight_version": "cn_a.selection_weights.v1",
+        "candidate_scores_ref": "score://selection/top20",
+        "stable_top20_rule": {},
+        "readback_status": CandidatePackReadbackStatus.VERIFIED.value,
+        "stage": "approving_candidate_pack",
+        "target": "candidate_pack",
+    }
+    manifest_text = f"{json.dumps(manifest_payload, ensure_ascii=False, indent=2)}\n"
+    manifest_sha = sha256(manifest_text.encode("utf-8")).hexdigest()
+    manifest_path.write_text(manifest_text, encoding="utf-8")
+    _write_readback_log(body_path, expected_sha256=body_sha)
+    _write_readback_log(manifest_path, expected_sha256=manifest_sha)
+
+    plan = SelectionRunPlan(
+        selection_run_id=selection_run_id,
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date=trade_date,
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        provider_batch_plan_ref=f"plan://selection/cn_a/{trade_date}/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    candidate_pack_ref = CandidatePackRef(
+        selection_run_id=selection_run_id,
+        material_id=f"selection-candidate-pack-{selection_run_id}",
+        l1_uri=body_uri,
+        content_sha256=body_sha,
+        manifest_ref=manifest_uri,
+        approved_at="2026-06-04T08:00:00Z",
+        expires_at="2026-06-06T08:00:00Z",
+        pack_summary_ref=summary_uri,
+    )
+    columnar_manifest_ref, columnar_manifest_sha256 = _write_columnar_manifest(
+        root=artifact_root.parent / "columnar",
+        plan=plan,
+        normalized_refs=("normalized://mongo/normalized_datasets/600000",),
+        provider_attempt_refs=("attempt://akshare-1",),
+    )
+    manifest = CandidatePackManifest(
+        schema_version="selection-candidate-pack-manifest-v1",
+        selection_run_id=selection_run_id,
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date=trade_date,
+        candidate_count=1,
+        source_lineage_refs=("normalized://mongo/normalized_datasets/600000",),
+        pack_body_sha256=body_sha,
+        strategy_config_ref="config://cn-a-selection-v1",
+        strategy_config_version="cn_a.selection_strategy.v1",
+        weight_version="cn_a.selection_weights.v1",
+        candidate_scores_ref="score://selection/top20",
+        stable_top20_rule={},
+        readback_status=CandidatePackReadbackStatus.VERIFIED,
+        stage="approving_candidate_pack",
+        target="candidate_pack",
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=plan,
+            data_run=SelectionDataRun(
+                selection_run_id=selection_run_id,
+                status=SelectionDataRunStatus.COMPLETED,
+                lease_id=f"lease://{selection_run_id}",
+                normalized_refs=("normalized://mongo/normalized_datasets/600000",),
+                provider_attempt_refs=("attempt://akshare-1",),
+                select_data_plan_ref=f"selection-data-plan://{selection_run_id}",
+                warehouse_check_ref=f"warehouse-check://selection/{selection_run_id}/{trade_date}/success",
+                columnar_manifest_ref=columnar_manifest_ref,
+                columnar_manifest_sha256=columnar_manifest_sha256,
+                feature_snapshot_ref=f"feature://selection/{selection_run_id}",
+                candidate_pack_ref=candidate_pack_ref,
+                started_at="2026-06-04T08:00:00Z",
+                completed_at="2026-06-04T08:01:00Z",
+            ),
+            manifest=manifest,
+        )
+    )
+
+
+def _write_columnar_manifest(
+    *,
+    root: Path,
+    plan: SelectionRunPlan,
+    normalized_refs: tuple[str, ...],
+    provider_attempt_refs: tuple[str, ...],
+) -> tuple[str, str]:
+    os.environ["CLAW_TRADE_SELECTION_COLUMNAR_ROOT"] = str(root)
+    writer = SelectionColumnarWarehouse(root=root).begin_write(plan=plan)
+    writer.add_daily_rows(
+        (
+            {
+                "ticker": "600000.SH",
+                "date": plan.trade_date,
+                "close": 10.0,
+                "source_ref": normalized_refs[0],
+            },
+        )
+    )
+    writer.add_feature_rows(
+        (
+            {
+                "ticker": "600000.SH",
+                "company_name": "浦发银行",
+                "source_ref": normalized_refs[0],
+                "trade_date": plan.trade_date,
+                "selection_features_materialized": True,
+                "amount": 200000000.0,
+            },
+        )
+    )
+    manifest = writer.commit(provider_attempt_refs=provider_attempt_refs, normalized_refs=normalized_refs)
+    manifest_sha256 = SelectionColumnarWarehouse(root=root).manifest_sha256(manifest.manifest_ref)
+    assert manifest_sha256 is not None
+    return manifest.manifest_ref, manifest_sha256
+
+
+def _selection_artifact_path(artifact_root: Path, uri: str) -> Path:
+    prefix = "local://selection/"
+    assert uri.startswith(prefix)
+    return artifact_root / uri[len(prefix) :].strip("/")
+
+
+def _write_readback_log(path: Path, *, expected_sha256: str) -> None:
+    suffix = path.suffix
+    if suffix:
+        verify_path = path.with_suffix(f"{suffix}.readback-verify.json")
+    else:
+        verify_path = path.with_name(f"{path.name}.readback-verify.json")
+    verify_path.write_text(
+        f"{json.dumps({'status': 'verified', 'expected_sha256': expected_sha256, 'readback_sha256': expected_sha256}, ensure_ascii=False, indent=2)}\n",
+        encoding="utf-8",
     )

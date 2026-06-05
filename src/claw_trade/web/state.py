@@ -27,7 +27,7 @@ from claw_trade.selection.provider_batch import (
 from claw_trade.selection.refresh import SelectionDataRefreshService
 from claw_trade.selection.store import restore_selection_run_store
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
-from claw_trade.ui_backend.channel_text_inbound import ChannelTextInboundController
+from claw_trade.ui_backend.channel_text_inbound import ChannelReplyTarget, ChannelTextInboundController
 from claw_trade.ui_backend.chart_evidence import get_report_chart_evidence
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
@@ -55,6 +55,9 @@ from claw_trade.ui_backend.mongo_settings_store import (
 )
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
+from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
+from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_capabilities
+from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
@@ -201,6 +204,7 @@ class UiHttpServices:
     price_alert_service: PriceAlertService
     settings_service: SettingsService
     selection_confirmation: SelectionConfirmationController
+    selection_refresh_service: SelectionDataRefreshService
 
 
 def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices:
@@ -231,8 +235,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     workflow_runner = _ControlWorkflowRunner(run_dir=run_root)
     queue = ReportTaskQueue(
         ReportWorkflowBridge(workflow_runner),
-        completed_report_writer=lambda task, workflow_state: _save_completed_workflow_report(
+        completed_report_writer=lambda task, workflow_state: _handle_completed_workflow_report(
             repository,
+            report_notification_service,
+            chat_controller,
             task=task,
             workflow_state=workflow_state,
         ),
@@ -255,7 +261,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         price_alert_service=price_alert_service,
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
     )
-    selection_store = restore_selection_run_store()
+    selection_store = restore_selection_run_store(fail_interrupted_active=True)
     selection_data_job = SelectionDataJob(
         store=selection_store,
         provider_fetch_batch=fetch_selection_batch_from_data_gateway,
@@ -264,6 +270,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     selection_refresh_service = SelectionDataRefreshService(
         store=selection_store,
         run_data_job=selection_data_job.run,
+        run_data_check=selection_data_job.run,
         resolve_closed_trade_date=resolve_cn_a_closed_trade_date_for_scheduler,
         load_approved_strategy_config_ref=load_cn_a_selection_v1_strategy_config_ref,
         build_provider_batch_plan=build_selection_provider_batch_plan,
@@ -279,6 +286,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             store=selection_store,
             openclaw=workflow_runner.selection_openclaw_client(),
             scheduler_enqueue=selection_refresh_service.request_refresh,
+            default_trade_date_resolver=resolve_cn_a_closed_trade_date_for_scheduler,
         ),
     )
     selection_confirmation = SelectionConfirmationController(
@@ -305,12 +313,35 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         health_tester=build_data_source_health_tester(),
     )
     channel_bridge = ChannelBridge(rpc_client)
-    channel_text_inbound = ChannelTextInboundController(chat_controller)
     report_notification_service = ReportNotificationService(
         repository,
         summary_builder,
         pdf_export_service,
         channel_bridge,
+    )
+    channel_text_inbound = ChannelTextInboundController(
+        chat_controller,
+        request_full_report_file=lambda report_id, request_id, target: report_notification_service.request_full_report_file(
+            report_id,
+            request_id,
+            channel_kind=target.channel_kind,
+            target=target.sender_id,
+            account_id=target.account_id,
+        ),
+        send_channel_text=lambda text, dedupe_key, target: channel_bridge.send_text(
+            channel_kind=target.channel_kind,
+            text=text,
+            dedupe_key=dedupe_key,
+            target=target.sender_id,
+            account_id=target.account_id,
+        ),
+        request_selection_report_file=lambda workflow_run_id, markdown, request_id, target: _send_selection_report_file(
+            channel_bridge=channel_bridge,
+            workflow_run_id=workflow_run_id,
+            markdown=markdown,
+            request_id=request_id,
+            target=target,
+        ),
     )
     settings_service = SettingsService(env_writer=None)
     return UiHttpServices(
@@ -330,6 +361,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         price_alert_service=price_alert_service,
         settings_service=settings_service,
         selection_confirmation=selection_confirmation,
+        selection_refresh_service=selection_refresh_service,
     )
 
 
@@ -338,7 +370,7 @@ def _save_completed_workflow_report(
     *,
     task: object,
     workflow_state: object,
-) -> None:
+) -> str:
     run_dir = Path(getattr(workflow_state, "run_dir"))
     report_path = run_dir / "reports" / "final-report.md"
     markdown = report_path.read_text(encoding="utf-8")
@@ -359,6 +391,126 @@ def _save_completed_workflow_report(
         summary_snippet="完整报告已生成。",
         asset_dir=run_dir / "reports" / "assets",
     )
+    return report_id
+
+
+def _handle_completed_workflow_report(
+    repository: ReportRepository,
+    notification_service: object,
+    chat_controller: object,
+    *,
+    task: object,
+    workflow_state: object,
+) -> None:
+    report_id = _save_completed_workflow_report(
+        repository,
+        task=task,
+        workflow_state=workflow_state,
+    )
+    target = _reply_target_from_origin_context(getattr(task, "origin_context_id", None))
+    notify_kwargs: dict[str, object] = {}
+    if target is not None:
+        notify_kwargs = {
+            "channel_kind": target.channel_kind,
+            "target": target.sender_id,
+            "account_id": target.account_id,
+        }
+    result = notification_service.notify_report_completion(report_id, **notify_kwargs)  # type: ignore[attr-defined]
+    origin_context_id = str(getattr(task, "origin_context_id", "") or "").strip()
+    if not origin_context_id:
+        return
+    text = "报告已完成，可查看完整内容。"
+    if isinstance(result, dict):
+        result_text = str(result.get("text") or "").strip()
+        if result_text:
+            text = result_text
+    append = getattr(chat_controller, "append_report_completed_message", None)
+    if not callable(append):
+        return
+    task_id = str(getattr(task, "task_id", "") or "").strip() or None
+    append(
+        context_id=origin_context_id,
+        report_id=report_id,
+        task_id=task_id,
+        text=text,
+    )
+
+
+def _reply_target_from_origin_context(origin_context_id: object) -> ChannelReplyTarget | None:
+    text = str(origin_context_id or "").strip()
+    if not text:
+        return None
+    parts = text.split(":", 2)
+    if len(parts) != 3:
+        return None
+    channel_kind, account_id, sender_id = (part.strip() for part in parts)
+    if not channel_kind or not sender_id:
+        return None
+    return ChannelReplyTarget(
+        channel_kind=channel_kind,
+        account_id=account_id or None,
+        sender_id=sender_id,
+    )
+
+
+def _send_selection_report_file(
+    *,
+    channel_bridge: ChannelBridge,
+    workflow_run_id: str,
+    markdown: str,
+    request_id: str,
+    target: ChannelReplyTarget,
+) -> dict[str, object]:
+    safe_workflow_run_id = workflow_run_id.strip()
+    safe_markdown = markdown.strip()
+    if not safe_workflow_run_id or not safe_markdown:
+        return {
+            "sent": False,
+            "code": "REPORT_NOT_READY",
+            "userMessage": "完整选股报告文件暂不可发送，请在设备界面查看。",
+        }
+    try:
+        capabilities = detect_pdf_runtime_capabilities()
+        if not capabilities.primary_ready:
+            return {
+                "sent": False,
+                "code": "FILE_SEND_UNSUPPORTED",
+                "userMessage": "完整选股报告文件暂不可发送，请在设备界面查看。",
+            }
+        pdf_bytes = PdfKitWithPandocFallbackRenderer().render(safe_markdown, report_asset_dir=None)
+        validation = validate_pdf_bytes(pdf_bytes, required_keywords=("选股",))
+        if not validation.valid:
+            return {
+                "sent": False,
+                "code": "FILE_SEND_UNSUPPORTED",
+                "userMessage": "完整选股报告文件暂不可发送，请在设备界面查看。",
+            }
+        result = channel_bridge.send_report_file_via_channel(
+            request_id=request_id,
+            report_id=safe_workflow_run_id,
+            channel_kind=target.channel_kind,
+            file_name=f"{safe_workflow_run_id}_selection.pdf",
+            payload=pdf_bytes,
+            target=target.sender_id,
+            account_id=target.account_id,
+        )
+    except Exception:
+        return {
+            "sent": False,
+            "code": "FILE_SEND_UNSUPPORTED",
+            "userMessage": "完整选股报告文件暂不可发送，请在设备界面查看。",
+        }
+    if not isinstance(result, dict) or not bool(result.get("sent")):
+        return {
+            "sent": False,
+            "code": "FILE_SEND_UNSUPPORTED",
+            "userMessage": "完整选股报告文件暂不可发送，请在设备界面查看。",
+        }
+    return {
+        "sent": True,
+        "messageId": result.get("messageId") or result.get("message_id"),
+        "userMessage": "完整选股报告已发送。",
+    }
 
 
 def restore_completed_workflow_reports(repository: ReportRepository, run_root: Path) -> int:

@@ -642,7 +642,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
 _SUPPORTED_SOURCE_BY_TYPE: dict[str, _SupportedSourceProfile] = {
     item.supported_type: item for item in _SUPPORTED_SOURCE_PROFILES
 }
-_API_SETTINGS_SOURCE_TYPES: tuple[str, ...] = (
+_PROVIDER_BACKED_API_SETTINGS_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
     "alpha_vantage",
     "finnhub",
@@ -651,7 +651,9 @@ _API_SETTINGS_SOURCE_TYPES: tuple[str, ...] = (
     "coinglass",
 )
 _SETTINGS_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = tuple(
-    item for item in _SUPPORTED_SOURCE_PROFILES if item.requires_key and item.supported_type in _API_SETTINGS_SOURCE_TYPES
+    item
+    for item in _SUPPORTED_SOURCE_PROFILES
+    if item.requires_key and item.supported_type in _PROVIDER_BACKED_API_SETTINGS_SOURCE_TYPES
 )
 _SETTINGS_SOURCE_BY_TYPE: dict[str, _SupportedSourceProfile] = {
     item.supported_type: item for item in _SETTINGS_SOURCE_PROFILES
@@ -883,7 +885,7 @@ class DataSourceSettingsService:
         visible_profiles = self._visible_settings_profiles()
         profile = visible_profiles.get(supported_type)
         if profile is None:
-            raise UiBoundaryError("INVALID_INPUT", f"当前数据源未进入 /report 或 /select 主链路，设置页暂不支持配置：{supported_type}。")
+            raise UiBoundaryError("INVALID_INPUT", f"当前数据源还没有数据网关接入和设置页连接测试，暂不支持配置：{supported_type}。")
         if data.get("customJsonMapping") or data.get("custom_json_mapping") or data.get("customScript"):
             raise UiBoundaryError("INVALID_INPUT", "当前不支持自定义数据映射或脚本。")
         return {
@@ -1015,10 +1017,7 @@ class DataSourceSettingsService:
 
     def _visible_settings_profiles(self) -> dict[str, _SupportedSourceProfile]:
         decisions = self._display_decision_source()
-        visible: dict[str, _SupportedSourceProfile] = {}
-        tushare = _SETTINGS_SOURCE_BY_TYPE.get("tushare")
-        if tushare is not None:
-            visible[tushare.supported_type] = tushare
+        visible: dict[str, _SupportedSourceProfile] = dict(_SETTINGS_SOURCE_BY_TYPE)
         for decision in decisions:
             if decision.display_status != ProviderDisplayStatus.SHOW or not decision.requires_user_credential:
                 continue

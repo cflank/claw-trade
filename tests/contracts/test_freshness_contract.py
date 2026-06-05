@@ -19,6 +19,9 @@ def _record(**overrides: object) -> DatasetRecord:
         "as_of": datetime(2026, 5, 31, 20, 0, tzinfo=UTC),
         "fresh_until": datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
         "source_roles": ("official",),
+        "dataset_checksum": "unit-checksum",
+        "dataset_checksum_algorithm": "sha256:canonical-json-v1",
+        "dataset_checksum_scope": "normalized-batch-v1",
         "row": {"date": "2026-05-31", "close": 200.0},
     }
     payload.update(overrides)
@@ -114,6 +117,43 @@ def test_freshness_checker_uses_market_calendar_for_weekend_boundaries_and_open_
     assert not any(gap["reason"] == "date_range_missing" for gap in verdict.gaps)
 
 
+def test_freshness_checker_skips_cn_a_exchange_holidays() -> None:
+    checker = FreshnessChecker()
+    as_of = datetime(2025, 2, 5, 9, 0, tzinfo=UTC)
+    verdict = checker.evaluate(
+        request=_request(
+            date_range_start=date(2025, 1, 27),
+            date_range_end=date(2025, 2, 5),
+            timezone="Asia/Shanghai",
+            calendar="CN_A_SSE_SZSE",
+            as_of=as_of,
+        ),
+        records=[
+            _record(
+                market="CN_A",
+                symbol_id="600519.SH",
+                period_start=date(2025, 1, 27),
+                period_end=date(2025, 1, 27),
+                as_of=as_of,
+                fresh_until=as_of,
+                row={"date": "2025-01-27", "close": 1500.0},
+            ),
+            _record(
+                market="CN_A",
+                symbol_id="600519.SH",
+                period_start=date(2025, 2, 5),
+                period_end=date(2025, 2, 5),
+                as_of=as_of,
+                fresh_until=as_of,
+                row={"date": "2025-02-05", "close": 1501.0},
+            ),
+        ],
+    )
+
+    assert verdict.satisfied is True
+    assert not any(gap["reason"] == "date_range_missing" for gap in verdict.gaps)
+
+
 def test_freshness_checker_keeps_crypto_calendar_24_7() -> None:
     checker = FreshnessChecker()
     verdict = checker.evaluate(
@@ -148,6 +188,18 @@ def test_freshness_checker_reports_middle_date_gap_not_just_min_max_coverage() -
     assert verdict.satisfied is False
     gap = next(gap for gap in verdict.gaps if gap["reason"] == "date_range_missing")
     assert gap["details"]["missing_ranges"] == ({"start": "2026-05-11", "end": "2026-05-19"},)
+
+
+def test_freshness_checker_reports_tail_gap_ranges() -> None:
+    checker = FreshnessChecker()
+    verdict = checker.evaluate(
+        request=_request(date_range_start=date(2026, 5, 1), date_range_end=date(2026, 5, 8)),
+        records=[_record(period_start=date(2026, 5, 1), period_end=date(2026, 5, 4))],
+    )
+
+    assert verdict.satisfied is False
+    gap = next(gap for gap in verdict.gaps if gap["reason"] == "date_range_missing")
+    assert gap["details"]["missing_ranges"] == ({"start": "2026-05-05", "end": "2026-05-08"},)
 
 
 def test_freshness_checker_reports_stale_gap() -> None:

@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from claw_trade.data_gateway.models import DataResult, DataResultStatus
-from claw_trade.data_gateway.selection_batch import fetch_selection_batch_from_data_gateway
+from claw_trade.data_gateway.selection_batch import _LocalFeatureRowsResult, fetch_selection_batch_from_data_gateway
+from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
     SelectionBatchScope,
     SelectionMarket,
@@ -28,11 +29,13 @@ class _FakeDataAPI:
 class _FakeGateway:
     def __init__(self, api: _FakeDataAPI) -> None:
         self.data_api = api
+        self.repository = object()
         self.provider_candidates = ("cn_a_primary",)
 
 
 @pytest.mark.integration
-def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_COLUMNAR_ROOT", str(tmp_path / "columnar"))
     plan = _selection_run_plan()
     fake_api = _FakeDataAPI(
         (
@@ -60,6 +63,28 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
         "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
+    monkeypatch.setattr(
+        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        lambda **_kwargs: _columnar_feature_result(
+            plan,
+            rows=(
+                {
+                    "ticker": "600204.SH",
+                    "company_name": "统一数据层样本",
+                    "industry": "样本行业",
+                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:sel13",
+                    "trade_date": "2026-05-26",
+                    "selection_features_materialized": True,
+                    "open": 10.0,
+                    "high": 11.0,
+                    "low": 9.0,
+                    "close": 17.77,
+                    "volume": 1000000.0,
+                    "amount": 300000000.0,
+                },
+            ),
+        ),
+    )
 
     result = fetch_selection_batch_from_data_gateway(plan)
 
@@ -67,7 +92,9 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
     assert result.provider_batch_plan.plan_id == plan.provider_batch_plan_ref
     assert result.attempt_refs == ("attempt:cn_a_primary:daily_bar:sel13",)
     assert result.normalized_refs == ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:sel13",)
-    assert result.warehouse_check_ref == "warehouse-check://selection/sel13-current-glue/2026-05-26/data-api"
+    assert result.warehouse_check_ref == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
+    assert result.columnar_manifest_ref is not None
+    assert result.columnar_manifest_sha256 is not None
     assert len(result.rows) == 1
     assert result.rows[0]["ticker"] == "600204.SH"
     assert result.data_gaps == ()
@@ -86,6 +113,36 @@ def _selection_run_plan() -> SelectionRunPlan:
         provider_batch_plan_ref="plan://selection/cn_a/2026-05-26/batch-v1",
         approved_strategy_config_ref="config://cn-a-selection-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+
+
+def _columnar_feature_result(
+    plan: SelectionRunPlan,
+    *,
+    rows: tuple[dict[str, object], ...],
+) -> _LocalFeatureRowsResult:
+    normalized_refs = ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:sel13",)
+    attempt_refs = ("attempt:cn_a_primary:daily_bar:sel13",)
+    writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
+    writer.add_daily_rows(
+        {
+            "ticker": str(row.get("ticker")),
+            "date": plan.trade_date,
+            "close": float(row.get("close") or 10.0),
+            "amount": float(row.get("amount") or 1000000.0),
+            "source_ref": str(row.get("source_ref") or normalized_refs[0]),
+        }
+        for row in rows
+    )
+    writer.add_feature_rows(rows)
+    manifest = writer.commit(provider_attempt_refs=attempt_refs, normalized_refs=normalized_refs)
+    return _LocalFeatureRowsResult(
+        rows=rows,
+        normalized_refs=normalized_refs,
+        attempt_refs=attempt_refs,
+        data_gaps=(),
+        columnar_manifest_ref=manifest.manifest_ref,
+        columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(manifest.manifest_ref),
     )
 
 

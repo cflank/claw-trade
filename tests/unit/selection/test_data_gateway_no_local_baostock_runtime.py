@@ -16,6 +16,7 @@ def test_data_gateway_selection_batch_ignores_local_baostock_runtime_root(
     tmp_path,
 ) -> None:
     monkeypatch.setenv("CLAW_TRADE_SELECTION_LOCAL_BAOSTOCK_ROOT", str(tmp_path / "baostock"))
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_COLUMNAR_ROOT", str(tmp_path / "columnar"))
     plan = SelectionRunPlan(
         selection_run_id="sel-no-local-baostock-runtime",
         market=SelectionMarket.CN_A,

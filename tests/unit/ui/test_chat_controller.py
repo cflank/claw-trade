@@ -92,13 +92,14 @@ def test_report_intent_only_builds_confirmation_card() -> None:
     assert workflow_runner.calls == 0
 
 
-def test_natural_language_report_intent_still_builds_confirmation_card() -> None:
+def test_natural_language_report_intent_stays_normal_chat_without_report_command() -> None:
     controller, transport, workflow_runner = _build_controller()
     result = controller.send_chat_message(request_id="req-2b", context_id="ctx-2b", text="请给我 BTC 报告")
     assert "error" not in result
-    assert "confirmationCard" in result
-    assert result["context"]["kind"] == "intent_confirming"
-    assert transport.calls == 0
+    assert "confirmationCard" not in result
+    assert result["assistantReply"] == "echo:请给我 BTC 报告"
+    assert result["context"]["kind"] == "normal_chat"
+    assert transport.calls == 1
     assert workflow_runner.calls == 0
 
 

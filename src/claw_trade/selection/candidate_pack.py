@@ -153,11 +153,13 @@ def build_candidate_pack(
             f"candidate pack has blocker data gaps: {codes}",
         )
 
-    source_by_ticker: dict[str, str] = {row.ticker: row.source_ref for row in inputs.rows}
+    source_by_ticker: dict[str, str] = {}
+    if any(not getattr(row, "source_ref", "") for row in scoring.top20):
+        source_by_ticker = {row.ticker: row.source_ref for row in inputs.rows}
     tie_break_field_names = _stable_top20_tie_break_field_names(stable_top20_rule)
     candidates: list[CandidateFactRow] = []
     for rank, score_row in enumerate(scoring.top20, start=1):
-        source_ref = source_by_ticker.get(score_row.ticker, "")
+        source_ref = getattr(score_row, "source_ref", "") or source_by_ticker.get(score_row.ticker, "")
         if not source_ref:
             raise CandidatePackError(
                 "candidate_pack_lineage_incomplete",
@@ -195,7 +197,7 @@ def build_candidate_pack(
     data_quality_summary = _build_data_quality_summary(data_gaps=data_gaps)
     source_summary = (
         "来源摘要：交易日全市场标准化快照、特征快照与确定性评分结果。"
-        f"本批次数据源调用 {len(provider_attempt_refs)} 次，标准化股票 {len(inputs.rows)} 行。"
+        f"本批次数据源调用 {len(provider_attempt_refs)} 次，标准化股票 {len(inputs.normalized_refs)} 行。"
     )
     summary_md = _render_summary_md(
         plan=plan,
