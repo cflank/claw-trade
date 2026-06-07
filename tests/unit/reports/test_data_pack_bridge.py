@@ -512,6 +512,45 @@ def test_hk_social_model_visible_text_reports_missing_discussion_signal_as_gap()
     assert "完整社交情绪" not in text
 
 
+def test_hk_social_model_visible_text_shows_latest_rows_even_when_provider_rows_are_unsorted() -> None:
+    as_of = datetime(2026, 6, 7, tzinfo=UTC)
+    results = (
+        DataResult(
+            request_id="run:call:social:1:social_signal",
+            status=DataResultStatus.PARTIAL,
+            rows=(
+                {"timestamp": "2026-06-02 04:00:00+00:00", "source": "Google News", "title": "June two"},
+                {"timestamp": "2026-06-03 05:02:00+00:00", "source": "Google News", "title": "June three"},
+                {"timestamp": "2026-06-01 09:58:30+00:00", "source": "Google News", "title": "June one"},
+                {"timestamp": "2026-05-30 05:26:33+00:00", "source": "Google News", "title": "May thirty"},
+                {"timestamp": "2026-06-05 10:25:00+00:00", "source": "Google News", "title": "June five"},
+                {"timestamp": "2026-03-26 07:00:00+00:00", "source": "Google News", "title": "March old"},
+                {"timestamp": "2026-05-13 07:00:00+00:00", "source": "Google News", "title": "May earnings"},
+                {"timestamp": "2026-01-14 08:00:00+00:00", "source": "Google News", "title": "January stale"},
+            ),
+            dataset_refs=("dataset:social_signal:HK:fixture",),
+            attempt_refs=("attempt:hk_google_news:social_signal_news_heat:fixture",),
+            as_of=as_of,
+        ),
+    )
+
+    text = _model_visible_text(
+        tool_input={"ticker": "00700", "market": "HK"},
+        runtime_context={"tool_name": "claw_get_social_pack"},
+        market=Market.HK,
+        domain="social",
+        status="partial",
+        results=results,
+    )
+
+    assert "时间覆盖 2026-01-14 至 2026-06-05" in text
+    assert "标题 June five" in text
+    assert "标题 June three" in text
+    assert "标题 January stale" not in text
+    assert "标题 May earnings" not in text
+    assert text.index("标题 June five") < text.index("标题 May thirty")
+
+
 def test_crypto_frontline_requests_use_crypto_datasets_instead_of_stock_fundamentals() -> None:
     requests = _build_requests(
         tool_input={

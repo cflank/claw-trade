@@ -676,7 +676,10 @@ def _model_visible_text(
                 f"- {_dataset_label(_result_dataset(result.request_id) or result.request_id.split(':')[-1], market=market)}："
                 f"{len(result.rows)} 行，字段覆盖 {', '.join(_row_fields(result.rows)) or '未声明'}。"
             )
-            for row in result.rows[-5:]:
+            date_range = _row_date_range(result.rows)
+            if date_range:
+                lines.append(f"  - 时间覆盖 {date_range[0]} 至 {date_range[1]}，下列摘要优先展示最新记录。")
+            for row in _recent_rows(result.rows):
                 summary = _row_summary(row, domain=domain)
                 if summary:
                     lines.append(f"  - {summary}")
@@ -868,6 +871,33 @@ def _row_fields(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
             if key not in fields and key not in _ROW_FIELD_EXCLUDE:
                 fields.append(str(key))
     return tuple(_field_label(field) for field in fields[:12])
+
+
+def _recent_rows(rows: Sequence[Mapping[str, Any]], *, limit: int = 5) -> tuple[Mapping[str, Any], ...]:
+    dated_rows = [(sort_text, row) for row in rows if (sort_text := _row_date_sort_text(row))]
+    if not dated_rows:
+        return tuple(rows[-limit:])
+    return tuple(row for _, row in sorted(dated_rows, key=lambda item: item[0], reverse=True)[:limit])
+
+
+def _row_date_range(rows: Sequence[Mapping[str, Any]]) -> tuple[str, str] | None:
+    dates = [_row_date_sort_text(row) for row in rows]
+    dates = [item for item in dates if item]
+    if not dates:
+        return None
+    return (min(dates)[:10], max(dates)[:10])
+
+
+def _row_date_sort_text(row: Mapping[str, Any]) -> str:
+    for key in ("timestamp", "published_at", "period_start", "date", "event_date", "period"):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, date):
+                return value.isoformat()
+            return str(value).strip()
+    return ""
 
 
 def _row_summary(row: Mapping[str, Any], *, domain: str) -> str:
