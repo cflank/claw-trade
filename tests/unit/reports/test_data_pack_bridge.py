@@ -142,6 +142,7 @@ def test_report_data_prefetch_includes_hk_social_domain(monkeypatch, tmp_path) -
     payload = run_report_data_prefetch(request, run_id="run-hk-prefetch", evidence_root=tmp_path)
 
     assert payload["ok"] is True
+    assert payload["domains"] == ("market", "fundamental", "news", "social")
     assert "social" in payload["domains"]
     assert len(calls) == 1
     requests = calls[0]

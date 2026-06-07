@@ -1,8 +1,10 @@
-# HK 数据层修改方案
+# HK 数据层修改方案（已实施）
 
 ## 结论
 
-当前默认 `/report` 路径里，只有 HK 的 `social` 数据域存在同类缺口。
+修复前，默认 `/report` 路径里只有 HK 的 `social` 数据域存在同类缺口。
+
+当前 `main` 已修复 HK `social` 数据层路径：HK 默认 prefetch 会生成 `social_signal/event` 请求，provider selector 能选到 `hk_google_news/social_signal_news_heat`，live HK `/report` 已不再因为 `social` domain 缺失失败。
 
 默认 frontline worker 只包括：
 
@@ -18,16 +20,16 @@
 - `news`
 - `social`
 
-其中 HK 目前是：
+当前代码中的默认请求数量是：
 
 | 市场 | market | fundamental | news | social |
 | --- | ---: | ---: | ---: | ---: |
 | CN_A | 6 | 4 | 3 | 6 |
 | US | 2 | 4 | 4 | 1 |
-| HK | 1 | 5 | 3 | 0 |
+| HK | 1 | 5 | 3 | 1 |
 | CRYPTO | 14 | 4 | 2 | 1 |
 
-HK 报告失败的直接原因是：HK `social_analyst` 会调用 `claw_get_social_pack`，但 HK `social` 没有任何数据请求，`report-prefetch.json` 不包含 `social` domain，工具调用时失败为 `manifest does not contain domain: social`。
+修复前 HK 报告失败的直接原因是：HK `social_analyst` 会调用 `claw_get_social_pack`，但 HK `social` 没有任何数据请求，`report-prefetch.json` 不包含 `social` domain，工具调用时失败为 `manifest does not contain domain: social`。
 
 ## 明确不做
 
@@ -62,9 +64,9 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 - `agents/news_analyst/skills/manifest.yaml`
 - `agents/social_analyst/skills/manifest.yaml`
 
-把 HK profile 的工具 intent 从 CN_A intent 改为 HK 专属 intent：
+已把 HK profile 的工具 intent 从 CN_A intent 改为 HK 专属 intent：
 
-| worker | 当前 HK intent | 修改为 |
+| worker | 修复前 HK intent | 当前 HK intent |
 | --- | --- | --- |
 | `market_analyst` | `cn_a_market_data` | `hk_market_data` |
 | `fundamental_analyst` | `cn_a_fundamentals_data` | `hk_fundamentals_data` |
@@ -73,7 +75,7 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 
 注意：这是 stage/profile 配置边界，不改变模型可见工具名。模型仍只看到 `claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`。
 
-同时补齐 HK skill mount：
+同时已补齐 HK skill mount：
 
 | worker | 新增或启用 skill | 暴露工具 |
 | --- | --- | --- |
@@ -92,7 +94,7 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 
 - `src/claw_trade/config/tool_names.py`
 
-新增映射：
+已新增映射：
 
 ```python
 "hk_market_data": ("claw_get_market_pack",),
@@ -109,13 +111,13 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 
 - `src/claw_trade/reports/data_pack_bridge.py`
 
-把 HK social 从空请求：
+已把 HK social 从空请求：
 
 ```python
 "social": (),
 ```
 
-改为：
+改为当前实现：
 
 ```python
 "social": (
@@ -134,7 +136,7 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 
 - `src/claw_trade/data_gateway/providers/plugins/hk/__init__.py`
 
-推荐最小实现：扩展现有 `HKGoogleNewsDiscoveryPlugin`，增加一个 `social_signal` endpoint。
+当前实现：扩展现有 `HKGoogleNewsDiscoveryPlugin`，增加一个 `social_signal` endpoint。
 
 新增 capability：
 
@@ -169,7 +171,7 @@ fetch 逻辑：
 
 ### 5. 修正 HK social model-visible 文案
 
-只改数据包可见文案，不改 worker prompt。
+已只改数据包可见文案，未改 worker prompt。
 
 修改位置：
 
@@ -178,8 +180,8 @@ fetch 逻辑：
 实现路径：
 
 - 在 `_model_visible_text()` 中增加一个窄分支：`market == Market.HK and domain == "social"`。
-- 当 `status` 不是 `ready` 或 `ready_results` 为空时，追加明确说明：`HK 社交资料包未取得可用公开讨论/热度线索；只能把社交证据视为缺口，不能补写情绪方向、讨论量或平台观点。`
-- 当有 `social_signal` row 时，说明这些 row 是 `Google News/公开搜索发现线索`，不是正式事实源，也不是完整社交情绪样本。
+- 当有 `social_signal` row 时，说明这些 row 是 `Google News/公开搜索发现线索`，不是正式事实源，也不是完整社交情绪样本；如果状态是 `partial`，具体缺口继续由资料包的“数据缺口”段呈现。
+- 当 `ready_results` 为空时，追加明确说明：`HK 社交资料包未取得可用公开讨论/热度线索；只能把社交证据视为缺口，不能补写情绪方向、讨论量或平台观点。`
 - 不修改 `agents/social_analyst/prompts/HK.md`，避免把数据缺口策略写进 prompt 风格层。
 
 目标：
@@ -280,6 +282,26 @@ scripts/start-control-runtime.sh -- uv run python scripts/run_claw_trade_fresh_r
 - `social_analyst` 的 `tool-calls.json` 不再出现 `manifest does not contain domain: social`。
 - social 报告不编造 HK 社交平台情绪、讨论量、热度排名或情绪分数。
 - final report 能如实呈现 HK 社交数据限制。
+
+已验证结果：
+
+- live run id：`run-20260607-052437-e10fd015`
+- export result：`passed`
+- 证据目录：`docs/evidence/trading_claw_trade_hk_fresh_live_run-20260607-052437-e10fd015_md/`
+- `report-prefetch.json` domains：`market,fundamental,news,social`
+- HK social request：`run-20260607-052437-e10fd015:report-prefetch:social:1:social_signal`
+- HK social status：`partial`
+- HK social rows：`20`
+- provider attempt：`attempt:hk_google_news:social_signal_news_heat:b901ebc3678e`
+- columnar path：`.runtime/dev-services/data-gateway/normalized/market=HK/dataset=social_signal/granularity=event/partition-a9a259b7cb8a42b0.parquet`
+- DuckDB readback：`source_roles_json=["discovery"]`，`quality_flags=["not_formal_fact_source"]`，provider lineage `hk_google_news/social_signal_news_heat`
+- `social_analyst` 可见工具只包含 `claw_get_social_pack`
+- `social_analyst` tool call `claw_get_social_pack` 为 `success`
+- run/evidence 中未再出现 `manifest does not contain domain: social`
+
+剩余问题：
+
+- 数据层已返回 HK `social_signal` 行，且列式 Parquet 可读；但 live 报告文本仍把社交资料覆盖期概括为“2026 年 1 月至 5 月”，而 worker 可见的 20 行中实际包含 2026-06-01、2026-06-02、2026-06-03、2026-06-05 的 Google News 线索。这个问题属于报告解读/摘要口径，不是 HK social 数据层缺失。
 
 ## 成功标准
 
