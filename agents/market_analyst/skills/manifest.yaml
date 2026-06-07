@@ -14,6 +14,13 @@ skills:
       - market_analyst
     tool_exports:
       - claw_get_market_pack
+  - path: hk-market-data/SKILL.md
+    skill_id: hk-market-data
+    skill_version: 0.1.0
+    workers:
+      - market_analyst
+    tool_exports:
+      - claw_get_market_pack
   - path: crypto-trading-analysis/SKILL.md
     skill_id: crypto-trading-analysis
     skill_version: 0.1.0

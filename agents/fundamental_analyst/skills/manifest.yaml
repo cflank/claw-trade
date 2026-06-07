@@ -14,6 +14,13 @@ skills:
       - fundamental_analyst
     tool_exports:
       - claw_get_fundamental_pack
+  - path: hk-fundamental-data/SKILL.md
+    skill_id: hk-fundamental-data
+    skill_version: 0.1.0
+    workers:
+      - fundamental_analyst
+    tool_exports:
+      - claw_get_fundamental_pack
   - path: crypto-fundamental-data/SKILL.md
     skill_id: crypto-fundamental-data
     skill_version: 0.1.0

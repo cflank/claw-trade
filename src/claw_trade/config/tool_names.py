@@ -32,15 +32,19 @@ def load_tool_registry() -> ToolRegistryResult:
             # no-sidecar 路径：禁止使用 openvikingArtifact__* 触发 1944 MCP sidecar。
             "cn_a_market_data": ("claw_get_market_pack",),
             "us_market_data": ("claw_get_market_pack",),
+            "hk_market_data": ("claw_get_market_pack",),
             "crypto_market_data": ("claw_get_market_pack",),
             "cn_a_fundamentals_data": ("claw_get_fundamental_pack",),
             "us_fundamentals_data": ("claw_get_fundamental_pack",),
+            "hk_fundamentals_data": ("claw_get_fundamental_pack",),
             "crypto_fundamentals_data": ("claw_get_fundamental_pack",),
             "cn_a_news_data": ("claw_get_news_pack",),
             "us_news_data": ("claw_get_news_pack",),
+            "hk_news_data": ("claw_get_news_pack",),
             "crypto_news_data": ("claw_get_news_pack",),
             "cn_a_social_sentiment": ("claw_get_social_pack",),
             "us_social_sentiment": ("claw_get_social_pack",),
+            "hk_social_sentiment": ("claw_get_social_pack",),
             "crypto_social_sentiment": ("claw_get_social_pack",),
             "claw_get_policy_pack": ("claw_get_policy_pack",),
             "claw_get_hot_money_pack": ("claw_get_hot_money_pack",),
@@ -105,7 +109,7 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
 
 def require_global_news_capability_for_news(registry: ToolRegistry) -> GuardResult:
     has_news_pack = bool(
-        {"cn_a_news_data", "us_news_data"}.intersection(registry.intent_to_tools)
+        {"cn_a_news_data", "us_news_data", "hk_news_data"}.intersection(registry.intent_to_tools)
     )
     if has_news_pack:
         return guard_passed("news_capability")

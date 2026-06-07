@@ -21,7 +21,7 @@ profiles:
     approved: true
     prompt: prompts/HK.md
     tools:
-      - cn_a_news_data
+      - hk_news_data
     openviking_access: none
   CRYPTO:
     approved: true
@@ -34,6 +34,7 @@ skills:
     - claw-trade-stage
     - us-news-data
     - cn-a-news-data
+    - hk-news-data
     - crypto-news-data
 tool_policy:
   owner: stage_profile

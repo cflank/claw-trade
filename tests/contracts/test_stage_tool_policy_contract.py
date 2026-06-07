@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from claw_trade.config.profiles import ConfigError
 from claw_trade.config.stage_policy import StagePolicy, load_stage_policy
 from claw_trade.config.tool_names import ToolRegistry, load_tool_registry, resolve_tools
@@ -101,6 +102,24 @@ def test_crypto_frontline_tool_policy_matches_current_real_tool_boundary(agents_
     }
     for worker_id, (expected_intents, expected_tools) in expected.items():
         policy_result = load_stage_policy(agents_root, worker_id, "CRYPTO")
+        assert policy_result.ok is True and policy_result.policy is not None
+        policy = policy_result.policy
+        assert policy.tool_intents == expected_intents
+        assert resolve_tools(policy, registry) == expected_tools
+
+
+def test_hk_frontline_tool_policy_matches_current_real_tool_boundary(agents_root: Path) -> None:
+    registry = load_tool_registry().registry
+    assert registry is not None
+
+    expected = {
+        "market_analyst": (("hk_market_data",), ("claw_get_market_pack",)),
+        "fundamental_analyst": (("hk_fundamentals_data",), ("claw_get_fundamental_pack",)),
+        "news_analyst": (("hk_news_data",), ("claw_get_news_pack",)),
+        "social_analyst": (("hk_social_sentiment",), ("claw_get_social_pack",)),
+    }
+    for worker_id, (expected_intents, expected_tools) in expected.items():
+        policy_result = load_stage_policy(agents_root, worker_id, "HK")
         assert policy_result.ok is True and policy_result.policy is not None
         policy = policy_result.policy
         assert policy.tool_intents == expected_intents
@@ -220,8 +239,9 @@ def test_social_visible_tools_validator_fails_for_unapproved_extra_tool() -> Non
 
 
 def _profile_is_approved(worker_id: str, profile: str) -> bool:
-    _ = worker_id
-    return profile in {"US", "CN_A"}
+    parsed = yaml.safe_load((Path("agents") / worker_id / "STAGES.yaml").read_text(encoding="utf-8"))
+    profile_config = parsed.get("profiles", {}).get(profile)
+    return isinstance(profile_config, dict) and profile_config.get("approved") is True
 
 
 def _load_social_policy_module():

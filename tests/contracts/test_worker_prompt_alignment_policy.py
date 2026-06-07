@@ -218,7 +218,13 @@ HK_FRONTLINE_TOOLS = {
     "news_analyst": "claw_get_news_pack",
     "social_analyst": "claw_get_social_pack",
 }
-HK_SPECIFIC_TOOL_TOKENS = ("hk_market_data", "hk_fundamental_data", "hk_news_data", "hk_social_sentiment")
+HK_SPECIFIC_TOOL_TOKENS = (
+    "hk_market_data",
+    "hk_fundamental_data",
+    "hk_fundamentals_data",
+    "hk_news_data",
+    "hk_social_sentiment",
+)
 
 DOWNSTREAM_DECISION_WORKERS: tuple[str, ...] = (
     "bull_researcher",

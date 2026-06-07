@@ -24,15 +24,19 @@ def test_load_tool_registry_defaults_to_canonical_data_pack_intents(monkeypatch:
     assert "market_data" not in intents
     assert intents["cn_a_market_data"] == ("claw_get_market_pack",)
     assert intents["us_market_data"] == ("claw_get_market_pack",)
+    assert intents["hk_market_data"] == ("claw_get_market_pack",)
     assert intents["crypto_market_data"] == ("claw_get_market_pack",)
     assert intents["cn_a_fundamentals_data"] == ("claw_get_fundamental_pack",)
     assert intents["us_fundamentals_data"] == ("claw_get_fundamental_pack",)
+    assert intents["hk_fundamentals_data"] == ("claw_get_fundamental_pack",)
     assert intents["crypto_fundamentals_data"] == ("claw_get_fundamental_pack",)
     assert intents["cn_a_news_data"] == ("claw_get_news_pack",)
     assert intents["us_news_data"] == ("claw_get_news_pack",)
+    assert intents["hk_news_data"] == ("claw_get_news_pack",)
     assert intents["crypto_news_data"] == ("claw_get_news_pack",)
     assert intents["cn_a_social_sentiment"] == ("claw_get_social_pack",)
     assert intents["us_social_sentiment"] == ("claw_get_social_pack",)
+    assert intents["hk_social_sentiment"] == ("claw_get_social_pack",)
     assert intents["crypto_social_sentiment"] == ("claw_get_social_pack",)
     assert "openviking_write" in intents
     assert intents["openviking_read"] == ("openviking_read_with_capability",)
@@ -48,26 +52,30 @@ def test_legacy_rollback_flag_no_longer_changes_tool_registry(monkeypatch: pytes
     intents = load_tool_registry().registry.intent_to_tools
     assert intents["cn_a_market_data"] == ("claw_get_market_pack",)
     assert intents["us_market_data"] == ("claw_get_market_pack",)
+    assert intents["hk_market_data"] == ("claw_get_market_pack",)
     assert intents["crypto_market_data"] == ("claw_get_market_pack",)
     assert intents["cn_a_fundamentals_data"] == ("claw_get_fundamental_pack",)
     assert intents["us_fundamentals_data"] == ("claw_get_fundamental_pack",)
+    assert intents["hk_fundamentals_data"] == ("claw_get_fundamental_pack",)
     assert intents["crypto_fundamentals_data"] == ("claw_get_fundamental_pack",)
     assert intents["cn_a_news_data"] == ("claw_get_news_pack",)
     assert intents["us_news_data"] == ("claw_get_news_pack",)
+    assert intents["hk_news_data"] == ("claw_get_news_pack",)
     assert intents["crypto_news_data"] == ("claw_get_news_pack",)
     assert intents["cn_a_social_sentiment"] == ("claw_get_social_pack",)
     assert intents["us_social_sentiment"] == ("claw_get_social_pack",)
+    assert intents["hk_social_sentiment"] == ("claw_get_social_pack",)
     assert intents["crypto_social_sentiment"] == ("claw_get_social_pack",)
 
 
 def test_hk_frontline_stage_policy_declares_approved_pack_tools() -> None:
-    expected_tools = {
-        "market_analyst": ["cn_a_market_data"],
-        "fundamental_analyst": ["cn_a_fundamentals_data"],
-        "news_analyst": ["cn_a_news_data"],
-        "social_analyst": ["cn_a_social_sentiment"],
+    expected_tools_and_skills = {
+        "market_analyst": (["hk_market_data"], "hk-market-data"),
+        "fundamental_analyst": (["hk_fundamentals_data"], "hk-fundamental-data"),
+        "news_analyst": (["hk_news_data"], "hk-news-data"),
+        "social_analyst": (["hk_social_sentiment"], "hk-social-data"),
     }
-    for worker_id, tool_intents in expected_tools.items():
+    for worker_id, (tool_intents, skill_name) in expected_tools_and_skills.items():
         stage_path = Path("agents") / worker_id / "STAGES.yaml"
         parsed = yaml.safe_load(stage_path.read_text(encoding="utf-8"))
         hk_profile = parsed["profiles"]["HK"]
@@ -76,12 +84,17 @@ def test_hk_frontline_stage_policy_declares_approved_pack_tools() -> None:
         assert hk_profile["tools"] == tool_intents
         assert hk_profile["openviking_access"] == "none"
         assert "failure" not in hk_profile
+        assert skill_name in parsed["skills"]["mounted"]
+        assert (Path("agents") / worker_id / "skills" / skill_name / "SKILL.md").exists()
+        manifest = yaml.safe_load((Path("agents") / worker_id / "skills" / "manifest.yaml").read_text(encoding="utf-8"))
+        assert any(entry.get("path") == f"{skill_name}/SKILL.md" for entry in manifest["skills"] if isinstance(entry, dict))
 
 
 def test_hk_frontline_reuses_existing_pack_tool_contracts_without_hk_specific_visible_tools() -> None:
     hk_specific_tools = {
         "hk_market_data",
         "hk_fundamental_data",
+        "hk_fundamentals_data",
         "hk_news_data",
         "hk_social_sentiment",
     }
@@ -99,7 +112,8 @@ def test_hk_frontline_reuses_existing_pack_tool_contracts_without_hk_specific_vi
         "claw_get_social_pack",
     }.issubset(registered_tools)
     assert registered_tools.isdisjoint(hk_specific_tools)
-    assert set(registry.intent_to_tools).isdisjoint(hk_specific_tools)
+    for hk_intent in ("hk_market_data", "hk_fundamentals_data", "hk_news_data", "hk_social_sentiment"):
+        assert registry.intent_to_tools[hk_intent][0].startswith("claw_get_")
 
 
 def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_files() -> None:

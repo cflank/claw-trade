@@ -876,6 +876,20 @@ def test_selector_with_migrated_us_hk_crypto_matrices_picks_domain_providers() -
         ),
         (
             SimpleNamespace(
+                market="HK",
+                data_type="social_signal",
+                granularity="event",
+                fields=("source", "timestamp", "title", "url", "symbol_id"),
+                source_role_required=None,
+                symbol_id="00700.HK",
+                universe_ref=None,
+                date_range_start=None,
+                date_range_end=None,
+            ),
+            ("hk_google_news",),
+        ),
+        (
+            SimpleNamespace(
                 market="CRYPTO",
                 data_type="quote_snapshot",
                 granularity="realtime",

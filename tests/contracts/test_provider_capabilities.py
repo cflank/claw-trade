@@ -43,6 +43,7 @@ from claw_trade.data_gateway.providers.plugins.hk import (
     HKAkShareFundamentalPlugin,
     HKEXNewsProviderPlugin,
     HKFinnhubDataPlugin,
+    HKGoogleNewsDiscoveryPlugin,
     HKSinaDailyBarPlugin,
     HKTushareFundamentalPlugin,
     HKYahooFinancePlugin,
@@ -660,6 +661,7 @@ def test_us_hk_crypto_provider_matrices_declare_source_backed_interfaces_without
         HKTushareFundamentalPlugin(),
         HKAkShareFundamentalPlugin(),
         HKSinaDailyBarPlugin(),
+        HKGoogleNewsDiscoveryPlugin(),
         BinanceSpotMarketPlugin(),
         CoinGeckoCryptoPlugin(),
         DefiLlamaCryptoPlugin(),
@@ -681,6 +683,7 @@ def test_us_hk_crypto_provider_matrices_declare_source_backed_interfaces_without
         ("HK", "financial_metric"): ("hk_tushare", "hk_fina_indicator", "paid_data", "managed_http"),
         ("HK", "financial_statement"): ("hk_akshare_fundamental", "stock_financial_hk_report_em_income", "built_in_public", "managed_http"),
         ("HK", "daily_bar"): ("hk_tushare", "hk_daily_adj", "paid_data", "managed_http"),
+        ("HK", "social_signal"): ("hk_google_news", "social_signal_news_heat", "discovery", "managed_http"),
         ("CRYPTO", "quote_snapshot"): ("crypto_binance_spot_market", "ticker_24hr", "official", "managed_http"),
         ("CRYPTO", "valuation_metric"): ("crypto_coingecko_market", "coins_markets", "built_in_public", "managed_http"),
         ("CRYPTO", "defi_metric"): ("crypto_defillama_defi", "protocol", "built_in_public", "managed_http"),
@@ -698,7 +701,12 @@ def test_us_hk_crypto_provider_matrices_declare_source_backed_interfaces_without
             for cap in capabilities
         ), (market, data_type)
 
-    for cap in registry.list_capabilities("US", "company_news") + registry.list_capabilities("HK", "company_news") + registry.list_capabilities("CRYPTO", "company_news"):
+    for cap in (
+        registry.list_capabilities("US", "company_news")
+        + registry.list_capabilities("HK", "company_news")
+        + registry.list_capabilities("HK", "social_signal")
+        + registry.list_capabilities("CRYPTO", "company_news")
+    ):
         if cap.source_role == "discovery":
             assert cap.can_be_formal_fact_source is False
 
@@ -1168,6 +1176,51 @@ def test_hk_hkexnews_does_not_assign_unmatched_market_rss_to_symbol() -> None:
 
     assert result.status.value == "empty"
     assert result.http_observations
+
+
+def test_hk_google_news_social_signal_fetches_discovery_rows_without_formal_fact_claim() -> None:
+    plugin = HKGoogleNewsDiscoveryPlugin()
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in plugin.capabilities().endpoints}
+
+    assert endpoints["social_signal_news_heat"].data_type == "social_signal"
+    assert endpoints["social_signal_news_heat"].source_role == "discovery"
+    assert endpoints["social_signal_news_heat"].can_be_formal_fact_source is False
+
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text="<rss><channel><item><title>Tencent investor discussion</title><link>https://example.test/social</link><pubDate>Fri, 29 May 2026 00:00:00 GMT</pubDate><description>discussion summary</description></item></channel></rss>",
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:hk-social",
+        provider_id="hk_google_news",
+        endpoint_id="social_signal_news_heat",
+        market="HK",
+        data_type="social_signal",
+        granularity="event",
+        symbol_ids=("00700.HK",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("source", "timestamp", "title", "url", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.host == "https://news.google.com"
+    assert request.query["q"] == "00700.HK Hong Kong stock investor discussion"
+    row = result.payload["rows"][0]
+    assert row["dataset"] == "social_signal"
+    assert row["granularity"] == "event"
+    assert row["source"] == "Google News"
+    assert row["source_roles"] == ("discovery",)
+    assert row["quality_flags"] == ("not_formal_fact_source",)
+    assert row["timestamp"].isoformat() == "2026-05-29T00:00:00+00:00"
 
 
 def test_hk_akshare_financial_metric_fetches_eastmoney_through_managed_http() -> None:

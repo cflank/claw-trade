@@ -846,6 +846,16 @@ class HKGoogleNewsDiscoveryPlugin:
                     priority_rank=50,
                     can_be_formal_fact_source=False,
                 ),
+                endpoint_capability(
+                    endpoint_id="social_signal_news_heat",
+                    market="HK",
+                    data_type="social_signal",
+                    source_role="discovery",
+                    granularity=("event",),
+                    fields=("source", "timestamp", "title", "url", "symbol_id"),
+                    priority_rank=50,
+                    can_be_formal_fact_source=False,
+                ),
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
@@ -861,7 +871,13 @@ class HKGoogleNewsDiscoveryPlugin:
 
     def fetch(self, task: Any, ctx: Any) -> FetchResult:
         symbol = first_symbol(task) or "HK"
-        query = f"{symbol} Hong Kong stock news" if str(getattr(task, "endpoint_id", "")) == "company_news" else "Hong Kong market economy news"
+        endpoint_id = str(getattr(task, "endpoint_id", ""))
+        if endpoint_id == "company_news":
+            query = f"{symbol} Hong Kong stock news"
+        elif endpoint_id == "social_signal_news_heat":
+            query = f"{symbol} Hong Kong stock investor discussion"
+        else:
+            query = "Hong Kong market economy news"
         http = managed_http(ctx)
         if http is None:
             return FetchResult.from_error(task, status="error", error=RuntimeError("managed_http_required"))
@@ -885,13 +901,13 @@ class HKGoogleNewsDiscoveryPlugin:
             dataset=str(getattr(task, "data_type", "company_news")),
             symbol=symbol,
             provider_id=self.plugin_id,
-            endpoint_id=str(getattr(task, "endpoint_id", "company_news")),
+            endpoint_id=endpoint_id or "company_news",
             source_role="discovery",
             source="Google News",
             region="HK",
         )
         if not rows:
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
 
 
@@ -1418,6 +1434,8 @@ def _rss_rows(
         if dataset == "event_calendar":
             row["event_date"] = period
             row["event_type"] = "regulatory_announcement"
+        if dataset == "social_signal":
+            row["timestamp"] = published or datetime(period.year, period.month, period.day, tzinfo=UTC)
         if region:
             row["region"] = region
         if source_role == "discovery":
@@ -1449,7 +1467,7 @@ def _base_row(
     day = parse_date(period) if period is not None else datetime.now(tz=UTC).date()
     if dataset in {"financial_statement", "financial_metric"}:
         granularity = "quarterly"
-    elif dataset in {"official_filing", "event_calendar", "company_news", "macro_news"}:
+    elif dataset in {"official_filing", "event_calendar", "company_news", "macro_news", "social_signal"}:
         granularity = "event"
     elif dataset == "valuation_metric":
         granularity = "realtime"

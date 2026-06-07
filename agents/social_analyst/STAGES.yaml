@@ -21,7 +21,7 @@ profiles:
     approved: true
     prompt: prompts/HK.md
     tools:
-      - cn_a_social_sentiment
+      - hk_social_sentiment
     openviking_access: none
   CRYPTO:
     approved: true
@@ -34,6 +34,7 @@ skills:
     - claw-trade-stage
     - us-social-data
     - cn-a-social-data
+    - hk-social-data
     - crypto-social-sentiment
 tool_policy:
   owner: stage_profile

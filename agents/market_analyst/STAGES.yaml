@@ -21,7 +21,7 @@ profiles:
     approved: true
     prompt: prompts/HK.md
     tools:
-      - cn_a_market_data
+      - hk_market_data
     openviking_access: none
   CRYPTO:
     approved: true
@@ -33,6 +33,7 @@ skills:
   mounted:
     - claw-trade-stage
     - us-market-data
+    - hk-market-data
     - crypto-trading-analysis
 tool_policy:
   owner: stage_profile

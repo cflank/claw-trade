@@ -53,6 +53,14 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 - `agents/fundamental_analyst/STAGES.yaml`
 - `agents/news_analyst/STAGES.yaml`
 - `agents/social_analyst/STAGES.yaml`
+- `agents/market_analyst/skills/hk-market-data/SKILL.md`
+- `agents/fundamental_analyst/skills/hk-fundamental-data/SKILL.md`
+- `agents/news_analyst/skills/hk-news-data/SKILL.md`
+- `agents/social_analyst/skills/hk-social-data/SKILL.md`
+- `agents/market_analyst/skills/manifest.yaml`
+- `agents/fundamental_analyst/skills/manifest.yaml`
+- `agents/news_analyst/skills/manifest.yaml`
+- `agents/social_analyst/skills/manifest.yaml`
 
 把 HK profile 的工具 intent 从 CN_A intent 改为 HK 专属 intent：
 
@@ -64,6 +72,19 @@ US/HK/CRYPTO 不补 `policy`、`hot_money`、`lockup`。
 | `social_analyst` | `cn_a_social_sentiment` | `hk_social_sentiment` |
 
 注意：这是 stage/profile 配置边界，不改变模型可见工具名。模型仍只看到 `claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`。
+
+同时补齐 HK skill mount：
+
+| worker | 新增或启用 skill | 暴露工具 |
+| --- | --- | --- |
+| `market_analyst` | `hk-market-data` | `claw_get_market_pack` |
+| `fundamental_analyst` | `hk-fundamental-data` | `claw_get_fundamental_pack` |
+| `news_analyst` | `hk-news-data` | `claw_get_news_pack` |
+| `social_analyst` | `hk-social-data` | `claw_get_social_pack` |
+
+这些 HK skill 是很薄的 wrapper，只声明对应统一资料包工具和 HK 使用边界；不写报告正文，不做投资判断，不调用 provider，不放 CN_A 平台说明。
+
+如果 `hk-fundamental-data` 目录已存在但没有 `SKILL.md`，补 `SKILL.md`，并把它加入 `agents/fundamental_analyst/STAGES.yaml` 的 `skills.mounted` 和 `agents/fundamental_analyst/skills/manifest.yaml`。
 
 ### 2. 增加 HK intent 到统一工具的映射
 
@@ -122,7 +143,7 @@ endpoint_capability(
     endpoint_id="social_signal_news_heat",
     market="HK",
     data_type="social_signal",
-    source_role="sentiment",
+    source_role="discovery",
     granularity=("event",),
     fields=("source", "timestamp", "title", "url", "symbol_id"),
     priority_rank=50,
@@ -133,29 +154,45 @@ endpoint_capability(
 fetch 逻辑：
 
 - 对 `social_signal_news_heat` 使用 Google News RSS 查询。
-- 查询词可先用：`"{symbol} Hong Kong stock discussion sentiment"`。
+- 查询词先用保守表达，避免暗示真实社交平台覆盖：`"{symbol} Hong Kong stock investor discussion"`；实现时保留 query 到 provider attempt，便于复盘噪音和空结果。
 - 复用现有 RSS 解析逻辑，但生成 `social_signal` row。
 - `published_at` 映射为 `timestamp`。
-- row 必须包含 `dataset="social_signal"`、`market="HK"`、`symbol_id`、`provider_lineage`、`source_roles=("sentiment",)`。
+- row 必须包含 `dataset="social_signal"`、`market="HK"`、`symbol_id`、`provider_lineage`、`source_roles=("discovery",)`。
 - `quality_flags` 应包含 `not_formal_fact_source`，避免后续把搜索线索升级为正式事实源。
 
 语义边界：
 
-- 这不是完整 HK 社交平台情绪。
+- 这不是完整 HK 社交平台情绪，也不是 sentiment provider。
 - 这是“有限舆情/新闻热度线索”。
 - 如果来源返回空，数据层应返回可审计 empty/missing，而不是让 prefetch manifest 缺 `social` domain。
+- 报告里只能说“公开新闻/搜索线索显示的讨论线索有限或存在若干相关报道”，不能说“社交情绪升温/转弱/一致乐观”等没有社交平台证据的结论。
 
 ### 5. 修正 HK social model-visible 文案
 
-必要时只做很小修改，位置：
+只改数据包可见文案，不改 worker prompt。
+
+修改位置：
 
 - `src/claw_trade/reports/data_pack_bridge.py`
+
+实现路径：
+
+- 在 `_model_visible_text()` 中增加一个窄分支：`market == Market.HK and domain == "social"`。
+- 当 `status` 不是 `ready` 或 `ready_results` 为空时，追加明确说明：`HK 社交资料包未取得可用公开讨论/热度线索；只能把社交证据视为缺口，不能补写情绪方向、讨论量或平台观点。`
+- 当有 `social_signal` row 时，说明这些 row 是 `Google News/公开搜索发现线索`，不是正式事实源，也不是完整社交情绪样本。
+- 不修改 `agents/social_analyst/prompts/HK.md`，避免把数据缺口策略写进 prompt 风格层。
 
 目标：
 
 - `social` 包有数据时，worker 能看到来源、时间、标题、链接。
 - `social` 包为空时，worker 看到“HK 社交/讨论热度来源返回空或未配置”的明确缺口。
 - 不允许输出“已获得完整社交情绪”“讨论热度显著升温”这类无证据结论。
+
+## 已知风险
+
+- Google News RSS 对港股小票可能返回空、噪音或非目标公司内容。这不是 blocker；实现必须保留 provider attempt、query、HTTP 观察和 empty/missing gap。
+- `social_signal_news_heat` 只是让 HK social domain 有可审计路径，不能替代雪球、富途、X、Reddit 等真实社交平台。
+- provider selector 能否路由到该 endpoint 需要测试证明，不能只靠 capability 注册推断。
 
 ## 测试计划
 
@@ -177,11 +214,49 @@ uv run pytest \
 
 - HK 四个 frontline profile 使用 HK intent，不再使用 CN_A intent。
 - HK intent 映射到统一 `claw_get_*_pack` 工具。
-- 模型可见工具仍是统一工具，不出现 `hk_market_data`、`hk_fundamental_data`、`hk_news_data`、`hk_social_sentiment`。
+- 模型可见工具仍是统一工具，不出现 `hk_market_data`、`hk_fundamental_data`、`hk_fundamentals_data`、`hk_news_data`、`hk_social_sentiment`。
 - HK `social` 会生成 `social_signal` request。
 - provider registry 有 HK `social_signal` capability。
 - HK 默认 frontline 四域 `market/fundamental/news/social` 都进入 prefetch manifest。
 - 测试不检查 US/HK/CRYPTO 的 `policy/hot_money/lockup`，因为它们是 A 股专用域。
+
+### 具体测试修改清单
+
+`tests/contracts/test_tool_registry_contract.py`
+
+- 在 `test_load_tool_registry_defaults_to_canonical_data_pack_intents` 增加：
+  - `hk_market_data -> claw_get_market_pack`
+  - `hk_fundamentals_data -> claw_get_fundamental_pack`
+  - `hk_news_data -> claw_get_news_pack`
+  - `hk_social_sentiment -> claw_get_social_pack`
+- 在 `test_legacy_rollback_flag_no_longer_changes_tool_registry` 增加同样 HK intent 断言。
+- 把 `test_hk_frontline_stage_policy_declares_approved_pack_tools` 的期望从 `cn_a_*` 改成 `hk_*`。
+- 同一个测试还要断言 HK skill 已进入 `STAGES.yaml` 的 `skills.mounted`，对应 `SKILL.md` 文件存在，并进入对应 worker 的 `skills/manifest.yaml`。
+- 修改 `test_hk_frontline_reuses_existing_pack_tool_contracts_without_hk_specific_visible_tools`：仍断言 OpenClaw plugin manifest 不注册 `hk_*` 可见工具，但不能再断言 `registry.intent_to_tools` 不包含 `hk_*` intent。
+
+`tests/contracts/test_stage_tool_policy_contract.py`
+
+- 增加或修改 HK frontline policy 断言：HK 四个 worker 的 `tool_intents` 是 `hk_*`，`resolve_tools()` 结果仍是统一 `claw_get_*_pack`。
+
+`tests/contracts/test_worker_prompt_alignment_policy.py`
+
+- 保留 HK prompt 不出现 `hk_*` token 的断言，因为 `hk_*` 只是 stage intent，不是 prompt 或模型可见工具。
+
+`tests/contracts/test_provider_capabilities.py`
+
+- 在 multi-market provider capability 断言中增加 `("HK", "social_signal")`。
+- 断言 provider 是 `hk_google_news`，endpoint 是 `social_signal_news_heat`，`source_role == "discovery"`，`can_be_formal_fact_source is False`。
+- 增加 fetch fixture：`HKGoogleNewsDiscoveryPlugin.fetch()` 在 `endpoint_id="social_signal_news_heat"` 时能把 RSS item 转成 `dataset="social_signal"`、`source_roles=("discovery",)`、`quality_flags` 包含 `not_formal_fact_source` 的 row。
+
+`tests/unit/data_gateway/test_provider_selector.py`
+
+- 在 `test_selector_with_migrated_us_hk_crypto_matrices_picks_domain_providers` 加 HK `social_signal` case，证明 provider selector 能选到 `hk_google_news/social_signal_news_heat`。
+
+`tests/unit/reports/test_data_pack_bridge.py`
+
+- 把现有 `assert hk_social == ()` 改成断言 HK social 生成 1 个 `social_signal` request。
+- 增加 HK prefetch test：`run_report_data_prefetch()` 对 HK request 写出的 `domains` 包含 `social`。
+- 增加 HK social empty 文案 test：调用 `_model_visible_text(market=Market.HK, domain="social", status="missing", results=[missing result])`，断言输出包含“HK 社交资料包”“社交证据视为缺口”，且不包含“完整社交情绪”等成功暗示。
 
 ## Live 验收
 

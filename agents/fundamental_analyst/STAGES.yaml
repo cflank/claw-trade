@@ -21,7 +21,7 @@ profiles:
     approved: true
     prompt: prompts/HK.md
     tools:
-      - cn_a_fundamentals_data
+      - hk_fundamentals_data
     openviking_access: none
   CRYPTO:
     approved: true
@@ -34,6 +34,7 @@ skills:
     - claw-trade-stage
     - us-fundamental-data
     - cn-a-fundamental-data
+    - hk-fundamental-data
     - crypto-fundamental-data
 tool_policy:
   owner: stage_profile

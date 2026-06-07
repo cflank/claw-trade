@@ -108,6 +108,47 @@ def test_report_data_prefetch_batches_all_frontline_domains_once(monkeypatch, tm
     assert (tmp_path / "data-layer" / "report-prefetch.json").exists()
 
 
+def test_report_data_prefetch_includes_hk_social_domain(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    calls: list[tuple[object, ...]] = []
+
+    class _Api:
+        def get_data_batch(self, requests):
+            calls.append(tuple(requests))
+            return [
+                DataResult(
+                    request_id=request.request_id,
+                    status=DataResultStatus.READY,
+                    dataset_refs=(f"dataset:{request.data_type}:HK:{request.request_id}",),
+                    attempt_refs=(f"attempt:{request.request_id}",),
+                    as_of=datetime(2026, 6, 2, tzinfo=UTC),
+                )
+                for request in requests
+            ]
+
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge.build_data_api_from_env", lambda: _Api())
+    request = RunRequest(
+        ticker="00700",
+        company_name="Tencent",
+        market="HK",
+        profile="HK",
+        currency="HKD",
+        currency_symbol="HK$",
+        current_date="2026-06-02",
+        start_date="2025-06-02",
+        end_date="2026-06-02",
+        entry_point=WorkflowEntryPoint.REPORT_COMMAND,
+    )
+
+    payload = run_report_data_prefetch(request, run_id="run-hk-prefetch", evidence_root=tmp_path)
+
+    assert payload["ok"] is True
+    assert "social" in payload["domains"]
+    assert len(calls) == 1
+    requests = calls[0]
+    assert any(request.data_type == "social_signal" for request in requests)
+    assert any(":social:" in request.request_id for request in requests)
+
+
 def test_frontline_data_pack_uses_report_prefetch_manifest_without_data_api(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     as_of = datetime(2026, 6, 2, tzinfo=UTC)
     manifest_path = tmp_path / "data-layer" / "report-prefetch.json"
@@ -435,6 +476,41 @@ def test_model_visible_text_treats_news_titles_as_discovery_lines_not_facts() ->
     assert "Institutional product flow" not in text
 
 
+def test_hk_social_model_visible_text_reports_missing_discussion_signal_as_gap() -> None:
+    as_of = datetime(2026, 6, 1, tzinfo=UTC)
+    results = (
+        DataResult(
+            request_id="run:call:social:1:social_signal",
+            status=DataResultStatus.MISSING,
+            gaps=(
+                DataGap.by_reason(
+                    "provider_error",
+                    request_id="run:call:social:1:social_signal",
+                    market=Market.HK,
+                    data_type="social_signal",
+                    granularity="event",
+                    message="empty_result",
+                    as_of=as_of,
+                ),
+            ),
+            as_of=as_of,
+        ),
+    )
+
+    text = _model_visible_text(
+        tool_input={"ticker": "00700", "market": "HK"},
+        runtime_context={"tool_name": "claw_get_social_pack"},
+        market=Market.HK,
+        domain="social",
+        status="missing",
+        results=results,
+    )
+
+    assert "HK 社交资料包" in text
+    assert "社交证据视为缺口" in text
+    assert "完整社交情绪" not in text
+
+
 def test_crypto_frontline_requests_use_crypto_datasets_instead_of_stock_fundamentals() -> None:
     requests = _build_requests(
         tool_input={
@@ -531,7 +607,9 @@ def test_non_crypto_pack_requests_match_market_specific_provider_capabilities() 
         domain="social",
     )
     assert us_hot_money == ()
-    assert hk_social == ()
+    assert len(hk_social) == 1
+    assert hk_social[0].data_type == "social_signal"
+    assert hk_social[0].fields == ("source", "timestamp", "title", "url", "symbol_id")
 
 
 def test_us_macro_series_prefetch_uses_real_fred_series_ids_not_equity_symbol() -> None:

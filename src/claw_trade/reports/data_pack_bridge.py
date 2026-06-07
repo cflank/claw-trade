@@ -88,7 +88,7 @@ _HK_DOMAIN_DATASETS: dict[str, tuple[_DatasetSpec, ...]] = {
         ("macro_news", "event", ("title", "published_at", "source", "summary", "url", "region")),
         ("official_filing", "event", ("title", "published_at", "source", "url", "symbol_id")),
     ),
-    "social": (),
+    "social": (("social_signal", "event", ("source", "timestamp", "title", "url", "symbol_id")),),
     "policy": (
         ("event_calendar", "event", ("event_date", "event_type", "title", "source", "url", "symbol_id")),
         ("official_filing", "event", ("title", "published_at", "source", "url", "symbol_id")),
@@ -687,6 +687,18 @@ def _model_visible_text(
             "其中涉及机构资金、宏观、链上或事件的说法，未经官方、交易所、监管或原始数据交叉验证前，不能升级为报告事实或投资结论。"
         )
 
+    if domain == "social" and market == Market.HK:
+        if ready_results:
+            lines.append(
+                "HK 社交资料包只包含 Google News/公开搜索发现线索；这些线索不是正式事实源，"
+                "也不是完整社交情绪样本，不能升级为情绪方向、讨论量或平台观点。"
+            )
+        else:
+            lines.append(
+                "HK 社交资料包未取得可用公开讨论/热度线索；只能把社交证据视为缺口，"
+                "不能补写情绪方向、讨论量或平台观点。"
+            )
+
     if domain == "market":
         lines.extend(_chart_brief_lines(chart_payload or {}))
 
@@ -868,6 +880,15 @@ def _row_summary(row: Mapping[str, Any], *, domain: str) -> str:
         parts.append("媒体/搜索线索已返回")
         if source is not None:
             parts.append(f"来源 {source}")
+        return "，".join(parts[:4])
+    if domain == "social":
+        source = row.get("source")
+        title = row.get("title")
+        parts.append("公开搜索线索已返回")
+        if source is not None:
+            parts.append(f"来源 {source}")
+        if title is not None:
+            parts.append(f"标题 {title}")
         return "，".join(parts[:4])
     for key in (
         "open",
