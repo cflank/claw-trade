@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -13,46 +14,49 @@ from claw_trade.config.report_workflow_settings import (
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
 )
-from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
-from claw_trade.selection.confirmation import SelectionConfirmationController
-from claw_trade.selection.controller import SelectionController
-from claw_trade.selection.data_job import SelectionDataJob
-from claw_trade.selection.provider_batch import (
+from claw_trade.data_gateway.selection_api import (
     build_selection_provider_batch_plan,
     fetch_selection_batch_from_data_gateway,
     load_cn_a_selection_v1_strategy,
     load_cn_a_selection_v1_strategy_config_ref,
-    resolve_cn_a_closed_trade_date_for_scheduler,
 )
+from claw_trade.data_gateway.selection_api import (
+    resolve_cn_a_selection_trade_date_for_scheduler as resolve_cn_a_closed_trade_date_for_scheduler,
+)
+from claw_trade.data_gateway.runtime import build_data_api_from_env
+from claw_trade.data_gateway.settings_store import (
+    UI_EMBEDDING_SETTINGS_COLLECTION,
+    UI_REPORT_MODEL_CONFIG_COLLECTION,
+    UI_REPORT_MODEL_STATUS_COLLECTION,
+    MongoEmbeddingConfigStore,
+    MongoReportModelConfigStore,
+    MongoReportModelStatusStore,
+    build_data_source_settings_stores,
+    open_ui_settings_database_from_env,
+)
+from claw_trade.data_gateway.source_probe import (
+    build_data_source_health_tester,
+    build_price_alert_quote_provider,
+)
+from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
+from claw_trade.selection.confirmation import SelectionConfirmationController
+from claw_trade.selection.controller import SelectionController
+from claw_trade.selection.data_job import SelectionDataJob
 from claw_trade.selection.refresh import SelectionDataRefreshService
 from claw_trade.selection.store import restore_selection_run_store
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
-from claw_trade.ui_backend.channel_text_inbound import ChannelReplyTarget, ChannelTextInboundController
+from claw_trade.ui_backend.channel_text_inbound import (
+    ChannelReplyTarget,
+    ChannelTextInboundController,
+)
 from claw_trade.ui_backend.chart_evidence import get_report_chart_evidence
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.data_source_settings import (
     DataSourceSettingsService,
 )
-from claw_trade.ui_backend.data_source_runtime_checks import (
-    build_data_source_health_tester,
-    build_price_alert_quote_provider,
-)
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
-from claw_trade.ui_backend.mongo_settings_store import (
-    MongoDataSourceStore,
-    MongoEmbeddingConfigStore,
-    MongoReportModelConfigStore,
-    MongoReportModelStatusStore,
-    MongoSecretStore,
-    UI_DATA_SOURCE_SETTINGS_COLLECTION,
-    UI_EMBEDDING_SETTINGS_COLLECTION,
-    UI_REPORT_MODEL_CONFIG_COLLECTION,
-    UI_REPORT_MODEL_STATUS_COLLECTION,
-    UI_SECRET_SETTINGS_COLLECTION,
-    open_ui_settings_database_from_env,
-)
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
 from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
@@ -66,7 +70,7 @@ from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.scheduler_service import SchedulerService
 from claw_trade.ui_backend.settings_service import SettingsService
-from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
+from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder, render_completion_summary_text
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 from claw_trade.web.settings import ResearchUiServerSettings
@@ -217,6 +221,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     )
     report_settings = _load_report_settings()
     ui_settings_db = open_ui_settings_database_from_env()
+    data_source_settings_stores = build_data_source_settings_stores(ui_settings_db)
     llm_bridge = LlmSettingsBridge(
         rpc_client,
         embedding_config_store=MongoEmbeddingConfigStore(ui_settings_db[UI_EMBEDDING_SETTINGS_COLLECTION])
@@ -234,7 +239,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     restore_completed_workflow_reports(repository, run_root)
     workflow_runner = _ControlWorkflowRunner(run_dir=run_root)
     queue = ReportTaskQueue(
-        ReportWorkflowBridge(workflow_runner),
+        ReportWorkflowBridge(workflow_runner, company_name_resolver=_resolve_company_names_from_data_layer),
         completed_report_writer=lambda task, workflow_state: _handle_completed_workflow_report(
             repository,
             report_notification_service,
@@ -260,6 +265,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
+        company_name_resolver=_resolve_company_names_from_data_layer,
     )
     selection_store = restore_selection_run_store(fail_interrupted_active=True)
     selection_data_job = SelectionDataJob(
@@ -303,12 +309,8 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         context_retriever=ReportContextRetriever(run_root=run_root),
     )
     data_source_settings = DataSourceSettingsService(
-        data_source_store=MongoDataSourceStore(ui_settings_db[UI_DATA_SOURCE_SETTINGS_COLLECTION])
-        if ui_settings_db is not None
-        else None,
-        secret_store=MongoSecretStore(ui_settings_db[UI_SECRET_SETTINGS_COLLECTION])
-        if ui_settings_db is not None
-        else None,
+        data_source_store=data_source_settings_stores.data_source_store,
+        secret_store=data_source_settings_stores.secret_store,
         env_writer=None,
         health_tester=build_data_source_health_tester(),
     )
@@ -365,6 +367,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     )
 
 
+def _resolve_company_names_from_data_layer(*, market: str, symbol_ids: Sequence[str]) -> Mapping[str, str]:
+    return build_data_api_from_env().resolve_company_names(market=market, symbol_ids=symbol_ids)
+
+
 def _save_completed_workflow_report(
     repository: ReportRepository,
     *,
@@ -388,7 +394,6 @@ def _save_completed_workflow_report(
         title=f"{getattr(task, 'instrument_code')} 报告",
         markdown=markdown,
         generated_at=generated_at or None,
-        summary_snippet="完整报告已生成。",
         asset_dir=run_dir / "reports" / "assets",
     )
     return report_id
@@ -419,7 +424,7 @@ def _handle_completed_workflow_report(
     origin_context_id = str(getattr(task, "origin_context_id", "") or "").strip()
     if not origin_context_id:
         return
-    text = "报告已完成，可查看完整内容。"
+    text = _render_saved_completion_summary_text(repository, report_id)
     if isinstance(result, dict):
         result_text = str(result.get("text") or "").strip()
         if result_text:
@@ -434,6 +439,14 @@ def _handle_completed_workflow_report(
         task_id=task_id,
         text=text,
     )
+
+
+def _render_saved_completion_summary_text(repository: ReportRepository, report_id: str) -> str:
+    try:
+        summary = CompletionSummaryBuilder(repository).build_completion_summary_from_saved_report(report_id)
+    except UiProductError:
+        return "报告已完成，但完成简报暂未生成；请查看完整报告。"
+    return render_completion_summary_text(summary)
 
 
 def _reply_target_from_origin_context(origin_context_id: object) -> ChannelReplyTarget | None:
@@ -540,7 +553,6 @@ def restore_completed_workflow_reports(repository: ReportRepository, run_root: P
             title=f"{ticker} 报告",
             markdown=markdown,
             generated_at=_optional_text(state.get("updated_at") or state.get("created_at")),
-            summary_snippet="完整报告已生成。",
             asset_dir=run_dir / "reports" / "assets",
         )
         restored += 1

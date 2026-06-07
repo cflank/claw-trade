@@ -216,7 +216,7 @@ class ReportTaskQueue:
                         "market": task.market,
                         "title": f"{task.instrument_code} 报告",
                         "generatedAt": task.finished_at or task.created_at,
-                        "summarySnippet": "完整报告已生成。",
+                        "summarySnippet": "完整结论请查看报告正文。",
                     }
                 )
         return reports

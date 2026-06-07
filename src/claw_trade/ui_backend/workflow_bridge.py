@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.instruments.resolver import InstrumentResolveError, resolve_instrument_identity
 from claw_trade.workflow.models import RunRequest, RunStatus, WorkflowEntryPoint
 from claw_trade.workflow.report_request_factory import build_report_run_request
+
+_LOGGER = logging.getLogger("uvicorn.error")
+_UNRESOLVED_COMPANY_NAME = "名称未查到"
 
 
 @dataclass(frozen=True)
@@ -22,17 +28,24 @@ class WorkflowRunnerPort(Protocol):
     def load_state(self, run_id: str) -> Any: ...
 
 
+class CompanyNameResolver(Protocol):
+    def __call__(self, *, market: str, symbol_ids: Sequence[str]) -> Mapping[str, str]: ...
+
+
 class ReportWorkflowBridge:
-    def __init__(self, runner: WorkflowRunnerPort) -> None:
+    def __init__(self, runner: WorkflowRunnerPort, *, company_name_resolver: CompanyNameResolver | None = None) -> None:
         self._runner = runner
+        self._company_name_resolver = company_name_resolver
         self._runs: dict[str, WorkflowRunRecord] = {}
 
     def build_run_request(self, task: dict[str, Any]) -> RunRequest:
         settings = task["workflowSettings"]
+        ticker = str(task["instrumentCode"])
+        market = str(task["market"])
         return build_report_run_request(
-            ticker=str(task["instrumentCode"]),
-            company_name=str(task.get("companyName") or task.get("instrumentName") or ""),
-            market=str(task["market"]),
+            ticker=ticker,
+            company_name=self._company_name_for_task(task=task, ticker=ticker, market=market),
+            market=market,
             profile=str(settings.get("defaultProfile") or task["market"]),
             currency=str(settings.get("defaultCurrency") or ""),
             currency_symbol=str(settings.get("defaultCurrencySymbol") or ""),
@@ -66,6 +79,29 @@ class ReportWorkflowBridge:
 
     def load_workflow_state(self, run_id: str) -> Any:
         return self._runner.load_state(run_id)
+
+    def _company_name_for_task(self, *, task: dict[str, Any], ticker: str, market: str) -> str:
+        fallback = str(task.get("companyName") or task.get("instrumentName") or "").strip()
+        safe_fallback = fallback if fallback and fallback.upper() != ticker.upper() else _UNRESOLVED_COMPANY_NAME
+        resolver = self._company_name_resolver
+        if resolver is None:
+            return safe_fallback
+        try:
+            identity = resolve_instrument_identity(ticker, market_hint=market)
+            names = resolver(market=identity.profile, symbol_ids=(identity.ticker,))
+        except (InstrumentResolveError, RuntimeError, ValueError):
+            return safe_fallback
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "company name resolver failed market=%s ticker=%s error=%s",
+                market,
+                ticker,
+                exc,
+                exc_info=True,
+            )
+            return safe_fallback
+        name = str(names.get(identity.ticker) or "").strip()
+        return name if name and name.upper() != identity.ticker.upper() else safe_fallback
 
 
 def _now_iso() -> str:

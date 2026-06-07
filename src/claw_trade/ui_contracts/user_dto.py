@@ -5,7 +5,12 @@ from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from typing import Any
 
-from claw_trade.ui_contracts.enums import ChatContextKind, IntentKind, MarketProfile, ReportTaskStatus
+from claw_trade.ui_contracts.enums import (
+    ChatContextKind,
+    IntentKind,
+    MarketProfile,
+    ReportTaskStatus,
+)
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))

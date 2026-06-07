@@ -1,9 +1,9 @@
-"""Archived selection batch facade.
+"""Selection provider-batch CLI helpers.
 
-T13 cutover note: this module is kept only for explicit data-job/fetcher
-callers and tests. The `/select` read entry must resolve approved warehouse
-runs from `SelectionRunStore`; it must not call this module to recover
-availability.
+Runtime Web wiring imports provider fetch/build functions from
+`claw_trade.data_gateway.selection_api`. This module is kept for explicit CLI
+smoke runs and strategy/date helpers; `/select` reads only approved warehouse
+runs from `SelectionRunStore`.
 """
 
 from __future__ import annotations
@@ -11,16 +11,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from zoneinfo import ZoneInfo
 
-from claw_trade.data_gateway.selection_batch import (
+from claw_trade.data_gateway.selection_api import (
     build_selection_provider_batch_plan as build_selection_provider_batch_plan,
 )
-from claw_trade.data_gateway.selection_batch import (
+from claw_trade.data_gateway.selection_api import (
     fetch_selection_batch_from_data_gateway as _fetch_selection_batch_from_data_gateway,
+)
+from claw_trade.data_gateway.selection_api import (
+    resolve_cn_a_selection_closed_trade_date,
+)
+from claw_trade.data_gateway.selection_api import (
+    resolve_cn_a_selection_trade_date_for_scheduler as _resolve_cn_a_selection_trade_date_for_scheduler,
 )
 from claw_trade.selection.data_job import SelectionDataFetchProgress
 from claw_trade.selection.models import (
@@ -34,7 +39,7 @@ from claw_trade.selection.strategy_config import (
     CN_A_SELECTION_STRATEGY_CONFIG_REF as _CN_A_SELECTION_STRATEGY_CONFIG_REF,
 )
 from claw_trade.selection.strategy_config import (
-    load_cn_a_selection_v1_strategy,
+    load_cn_a_selection_v1_strategy as load_cn_a_selection_v1_strategy,
 )
 from claw_trade.selection.strategy_config import (
     load_cn_a_selection_v1_strategy_config_ref as _load_cn_a_selection_v1_strategy_config_ref,
@@ -42,12 +47,7 @@ from claw_trade.selection.strategy_config import (
 
 
 def resolve_cn_a_closed_trade_date(now: datetime) -> str:
-    value = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
-    shanghai_now = value.astimezone(ZoneInfo("Asia/Shanghai"))
-    close_cutoff = shanghai_now.replace(hour=16, minute=0, second=0, microsecond=0)
-    if shanghai_now >= close_cutoff:
-        return shanghai_now.date().isoformat()
-    return (shanghai_now.date() - timedelta(days=1)).isoformat()
+    return resolve_cn_a_selection_closed_trade_date(now)
 
 
 def load_cn_a_selection_v1_strategy_config_ref(
@@ -58,9 +58,7 @@ def load_cn_a_selection_v1_strategy_config_ref(
 
 
 def resolve_cn_a_closed_trade_date_for_scheduler(trade_date: str | None, *, now: datetime | None = None) -> str:
-    if trade_date is not None and trade_date.strip():
-        return trade_date.strip()
-    return resolve_cn_a_closed_trade_date(now or datetime.now(tz=UTC))
+    return _resolve_cn_a_selection_trade_date_for_scheduler(trade_date, now=now)
 
 
 def fetch_selection_batch_from_data_gateway(

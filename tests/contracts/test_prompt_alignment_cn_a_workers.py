@@ -5,12 +5,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from claw_trade.config.stage_policy import load_stage_policy
 from claw_trade.config.workspace import validate_worker_workspace_for_control
 from claw_trade.workflow.models import Stage
 from claw_trade.workflow.workers import worker_by_id
-
 
 NEW_CN_A_WORKERS: tuple[str, ...] = (
     "policy_analyst",

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.refs import is_normalized_dataset_ref
+from claw_trade.data_gateway.selection_integrity import validate_selection_columnar_manifest_ref
 from claw_trade.selection.models import (
     CandidatePackManifest,
     CandidatePackReadbackStatus,
@@ -344,11 +344,6 @@ def restore_selection_run_store(
             record = _fail_interrupted_active_record(record)
         store.save_data_run_record(record)
         restored_run_ids.add(record.run_plan.selection_run_id)
-    for record in _iter_records_from_data_job_evidence(root):
-        if record.run_plan.selection_run_id in restored_run_ids:
-            continue
-        store.save_data_run_record(record)
-        restored_run_ids.add(record.run_plan.selection_run_id)
     return store
 
 
@@ -556,7 +551,7 @@ def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> S
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     if not data_run.columnar_manifest_sha256:
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
-    if not SelectionColumnarWarehouse.default().validate_manifest_ref(
+    if not validate_selection_columnar_manifest_ref(
         data_run.columnar_manifest_ref,
         expected_sha256=data_run.columnar_manifest_sha256,
     ):
@@ -571,7 +566,7 @@ def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> S
 
 
 def _is_unified_normalized_ref(ref: str) -> bool:
-    return ref.startswith("normalized://mongo/normalized_datasets/") or ref.startswith("mongo://normalized_datasets/")
+    return is_normalized_dataset_ref(ref)
 
 
 def _parse_iso_timestamp(value: str | None) -> datetime:
@@ -621,25 +616,6 @@ def _iter_records_from_persisted_store_dir(persisted_runs_dir: Path) -> tuple[Se
         record = _record_from_persisted_payload(payload)
         if record is not None:
             records.append(record)
-    return tuple(records)
-
-
-def _iter_records_from_data_job_evidence(selection_runs_root: Path) -> tuple[SelectionDataRunRecord, ...]:
-    if not selection_runs_root.exists():
-        return ()
-    records: list[SelectionDataRunRecord] = []
-    for day_dir in sorted(selection_runs_root.iterdir()):
-        if not day_dir.is_dir():
-            continue
-        if not _looks_like_trade_date_dir(day_dir.name):
-            continue
-        for path in sorted(day_dir.glob("*.json")):
-            payload = _read_json_object(path)
-            if payload is None:
-                continue
-            record = _record_from_legacy_data_job_payload(payload, selection_runs_root=selection_runs_root)
-            if record is not None:
-                records.append(record)
     return tuple(records)
 
 
@@ -700,109 +676,6 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
         )
     except (ValueError, TypeError):
         return None
-
-
-def _record_from_legacy_data_job_payload(
-    payload: Mapping[str, Any],
-    *,
-    selection_runs_root: Path,
-) -> SelectionDataRunRecord | None:
-    try:
-        if _read_text(payload, "status") != SelectionDataRunStatus.COMPLETED.value:
-            return None
-        selection_run_id = _read_text(payload, "selection_run_id")
-        candidate_pack_payload = _read_mapping(payload, "candidate_pack_ref")
-        manifest_payload = _read_mapping(payload, "candidate_pack_manifest")
-        market_text = _optional_text(payload.get("market"))
-        profile_text = _optional_text(payload.get("profile"))
-        trade_date_text = _optional_text(payload.get("trade_date"))
-        manifest = _candidate_pack_manifest_from_payload(
-            manifest_payload,
-            fallback_market=market_text,
-            fallback_profile=profile_text,
-            fallback_trade_date=trade_date_text,
-        )
-        if manifest is None:
-            return None
-        approved_at = _optional_text(candidate_pack_payload.get("approved_at"))
-        expires_at = _optional_text(candidate_pack_payload.get("expires_at"))
-        if approved_at is None or expires_at is None:
-            approved_at, expires_at = _legacy_candidate_pack_times(
-                candidate_pack_payload=candidate_pack_payload,
-                selection_runs_root=selection_runs_root,
-            )
-        candidate_pack_ref = CandidatePackRef(
-            selection_run_id=selection_run_id,
-            material_id=_read_text(candidate_pack_payload, "material_id"),
-            l1_uri=_read_text(candidate_pack_payload, "l1_uri"),
-            content_sha256=_read_text(candidate_pack_payload, "content_sha256"),
-            manifest_ref=_read_text(candidate_pack_payload, "manifest_ref"),
-            approved_at=approved_at,
-            expires_at=expires_at,
-            pack_summary_ref=_read_text(candidate_pack_payload, "pack_summary_ref"),
-        )
-        completed_at = _optional_text(payload.get("completed_at")) or approved_at
-        run_plan = SelectionRunPlan(
-            selection_run_id=selection_run_id,
-            market=manifest.market,
-            profile=manifest.profile,
-            trade_date=_optional_text(payload.get("trade_date")) or manifest.trade_date,
-            lookback_trading_days=int(payload.get("lookback_trading_days", 1)),
-            universe_scope=_optional_text(payload.get("universe_scope")) or "restored_from_data_job_evidence",
-            provider_batch_plan_ref=(
-                _optional_text(payload.get("provider_batch_plan_ref")) or f"restored://{selection_run_id}"
-            ),
-            approved_strategy_config_ref=manifest.strategy_config_ref,
-            trigger_source=SelectionTriggerSource(
-                _optional_text(payload.get("trigger_source")) or SelectionTriggerSource.SCHEDULED.value
-            ),
-            supersedes_run_id=_optional_text(payload.get("supersedes_run_id")),
-        )
-        data_run = SelectionDataRun(
-            selection_run_id=selection_run_id,
-            status=SelectionDataRunStatus.COMPLETED,
-            normalized_refs=tuple(_read_text_list(payload, "normalized_refs")),
-            provider_attempt_refs=tuple(_read_text_list(payload, "provider_attempt_refs")),
-            select_data_plan_ref=_optional_text(payload.get("select_data_plan_ref")),
-            warehouse_check_ref=_optional_text(payload.get("warehouse_check_ref")),
-            columnar_manifest_ref=_optional_text(payload.get("columnar_manifest_ref")),
-            columnar_manifest_sha256=_optional_text(payload.get("columnar_manifest_sha256")),
-            feature_snapshot_ref=_optional_text(payload.get("feature_snapshot_ref")),
-            candidate_pack_ref=candidate_pack_ref,
-            completed_at=completed_at,
-        )
-        return SelectionDataRunRecord(
-            run_plan=run_plan,
-            data_run=data_run,
-            manifest=manifest,
-        )
-    except (ValueError, TypeError):
-        return None
-
-
-def _legacy_candidate_pack_times(
-    *,
-    candidate_pack_payload: Mapping[str, Any],
-    selection_runs_root: Path,
-) -> tuple[str, str]:
-    manifest_ref = _read_text(candidate_pack_payload, "manifest_ref")
-    if not manifest_ref.startswith("local://selection/"):
-        raise ValueError("unsupported manifest_ref uri")
-    relative = manifest_ref[len("local://selection/") :]
-    manifest_path = selection_runs_root / "artifacts" / relative
-    if manifest_path.suffix:
-        verify_path = manifest_path.with_suffix(f"{manifest_path.suffix}.readback-verify.json")
-    else:
-        verify_path = manifest_path.with_name(f"{manifest_path.name}.readback-verify.json")
-    verify_payload = _read_json_object(verify_path)
-    if verify_payload is None:
-        raise ValueError("candidate pack verification log missing")
-    verified_at = _read_text(verify_payload, "verified_at")
-    approved_at_ts = _parse_iso_timestamp(verified_at)
-    expires_at_ts = approved_at_ts.replace(microsecond=0) + _ONE_DAY
-    approved_at = approved_at_ts.isoformat().replace("+00:00", "Z")
-    expires_at = expires_at_ts.isoformat().replace("+00:00", "Z")
-    return approved_at, expires_at
 
 
 def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]:
@@ -996,10 +869,3 @@ def _read_text_list(payload: Mapping[str, Any], field: str) -> tuple[str, ...]:
             raise ValueError(f"list item must be non-empty: {field}")
         out.append(text)
     return tuple(out)
-
-
-def _looks_like_trade_date_dir(name: str) -> bool:
-    return re.match(r"^\d{4}-\d{2}-\d{2}$", name) is not None
-
-
-_ONE_DAY = timedelta(days=1)

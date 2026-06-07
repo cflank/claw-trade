@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
-from tests.settings.s16_test_helpers import PROJECT_ROOT, SETTINGS_S16_ARTIFACT_DIR, ensure_s16_dirs, read_text, write_json
-
+from tests.settings.s16_test_helpers import (
+    PROJECT_ROOT,
+    SETTINGS_S16_ARTIFACT_DIR,
+    ensure_s16_dirs,
+    read_text,
+    write_json,
+)
 
 _TEXT_SUFFIX_ALLOWLIST = {
     ".py",

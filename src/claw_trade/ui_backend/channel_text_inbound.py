@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from threading import Lock
-from threading import Thread
+from dataclasses import dataclass
+from threading import Lock, Thread
 from typing import Any, Callable
 
 from claw_trade.ui_backend.chat_controller import ChatController

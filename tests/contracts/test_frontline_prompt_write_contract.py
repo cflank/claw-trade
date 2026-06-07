@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 CN_A_FRONTLINE_TOOLS = {
     "market_analyst": "claw_get_market_pack",
     "fundamental_analyst": "claw_get_fundamental_pack",

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
-
+from dataclasses import dataclass, field
 
 _CN_A_HINTS = {"CN_A", "SH", "SZ", "BJ"}
 _CRYPTO_HINTS = {"CRYPTO", "BINANCE", "OKX", "COINBASE"}

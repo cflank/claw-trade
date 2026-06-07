@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _STAGE_MAP: dict[str, tuple[str, int]] = {
     "frontline_running": ("前线信息采集中", 18),
     "investment_debate_running": ("投资辩论中", 38),
@@ -20,6 +19,9 @@ _ROLE_LABELS = {
     "fundamental_analyst": "基本面分析师",
     "news_analyst": "新闻分析师",
     "social_analyst": "社交分析师",
+    "policy_analyst": "政策分析师",
+    "hot_money_tracker": "游资资金跟踪员",
+    "lockup_watcher": "限售筹码观察员",
     "bull_researcher": "多头研究员",
     "bear_researcher": "空头研究员",
     "research_manager": "研究经理",

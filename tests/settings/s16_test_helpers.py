@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_S16_ARTIFACT_DIR = PROJECT_ROOT / ".runtime" / "test-artifacts" / "settings-s16"
 SETTINGS_UI_TEXT_DIR = PROJECT_ROOT / ".runtime" / "test-artifacts" / "settings-ui-text"

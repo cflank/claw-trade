@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from claw_trade.ui_backend.chat_context import create_normal_chat_context, switch_chat_context, to_chat_context_for_user_payload
+from claw_trade.ui_backend.chat_context import (
+    create_normal_chat_context,
+    switch_chat_context,
+    to_chat_context_for_user_payload,
+)
 from claw_trade.ui_contracts.enums import ChatContextKind
 
 

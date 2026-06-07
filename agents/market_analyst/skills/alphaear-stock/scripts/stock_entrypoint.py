@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 from typing import Optional
 
@@ -22,26 +21,14 @@ def emit_error(error_type: str, message: str) -> int:
     return 1
 
 
-def _default_db_path() -> str:
-    return str((Path(__file__).resolve().parent.parent / "data" / "signal_flux.db").resolve())
-
-
-def load_stock_deps():
-    from .database_manager import DatabaseManager
+def get_stock_tools(*, auto_update: bool = True):
     from .stock_tools import StockTools
 
-    return DatabaseManager, StockTools
-
-
-def get_stock_tools(db_path: str, *, auto_update: bool = True):
-    DatabaseManager, StockTools = load_stock_deps()
-    db = DatabaseManager(db_path=db_path)
-    return StockTools(db=db, auto_update=auto_update)
+    return StockTools(auto_update=auto_update)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = JsonArgumentParser(description="AlphaEar stock entrypoint")
-    parser.add_argument("--db-path", default=_default_db_path())
     parser.add_argument("--skip-auto-update", action="store_true")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -100,155 +87,17 @@ def _records(df, limit: int) -> list[dict]:
 
 
 def build_cn_a_news_pack(ticker: str, start_date: str | None, end_date: str | None) -> dict:
-    import akshare as ak
+    from claw_trade.data_gateway.agent_tools import load_cn_a_news_pack
 
-    clean = _clean_cn_ticker(ticker)
-    cctv_date = _date_to_yyyymmdd(end_date)
-    limitations: list[dict] = []
-    company_news: list[dict] = []
-    macro_news: list[dict] = []
-
-    try:
-        company_news = _records(ak.stock_news_em(symbol=clean), 15)
-        if not company_news:
-            limitations.append(
-                {
-                    "type": "company_news_empty",
-                    "provider": "akshare.stock_news_em",
-                    "message": f"stock_news_em returned no rows for {clean}",
-                }
-            )
-    except Exception as exc:
-        limitations.append(
-            {
-                "type": "company_news_unavailable",
-                "provider": "akshare.stock_news_em",
-                "message": str(exc),
-            }
-        )
-
-    try:
-        macro_news = _records(ak.news_cctv(date=cctv_date), 10)
-        if not macro_news:
-            limitations.append(
-                {
-                    "type": "macro_news_empty",
-                    "provider": "akshare.news_cctv",
-                    "message": f"news_cctv returned no rows for {cctv_date}",
-                }
-            )
-    except Exception as exc:
-        limitations.append(
-            {
-                "type": "macro_news_unavailable",
-                "provider": "akshare.news_cctv",
-                "message": str(exc),
-            }
-        )
-
-    has_company = bool(company_news)
-    has_macro = bool(macro_news)
-    status = "ok" if has_company and has_macro else "partial" if has_company or has_macro else "failed"
-    return {
-        "ok": has_company or has_macro,
-        "ticker": clean,
-        "start_date": start_date,
-        "end_date": end_date,
-        "data": {
-            "company_news": company_news,
-            "macro_news": macro_news,
-            "limitations": limitations,
-        },
-        "quality": {
-            "status": status,
-            "is_partial": status == "partial",
-            "warnings": limitations,
-            "source_used": "akshare.stock_news_em+akshare.news_cctv",
-        },
-    }
+    _clean_cn_ticker(ticker)
+    return load_cn_a_news_pack(ticker=ticker, start_date=start_date, end_date=end_date)
 
 
 def build_cn_a_social_pack(ticker: str) -> dict:
-    import akshare as ak
+    from claw_trade.data_gateway.agent_tools import load_cn_a_social_pack
 
-    clean = _clean_cn_ticker(ticker)
-    symbol = _eastmoney_symbol(clean)
-    limitations: list[dict] = [
-        {
-            "type": "heat_not_text_sentiment",
-            "provider": "akshare.eastmoney_hot_rank",
-            "message": "CN_A route returns market heat/keyword evidence, not post-level bullish/bearish text sentiment.",
-        }
-    ]
-    latest: dict = {}
-    keywords: list[dict] = []
-    related: list[dict] = []
-    top_rank_match: list[dict] = []
-
-    try:
-        latest_rows = _records(ak.stock_hot_rank_latest_em(symbol=symbol), 20)
-        latest = {str(row.get("item")): row.get("value") for row in latest_rows if row.get("item")}
-    except Exception as exc:
-        limitations.append(
-            {
-                "type": "hot_rank_latest_unavailable",
-                "provider": "akshare.stock_hot_rank_latest_em",
-                "message": str(exc),
-            }
-        )
-
-    try:
-        keywords = _records(ak.stock_hot_keyword_em(symbol=symbol), 20)
-    except Exception as exc:
-        limitations.append(
-            {
-                "type": "hot_keyword_unavailable",
-                "provider": "akshare.stock_hot_keyword_em",
-                "message": str(exc),
-            }
-        )
-
-    try:
-        related = _records(ak.stock_hot_rank_relate_em(symbol=symbol), 20)
-    except Exception as exc:
-        limitations.append(
-            {
-                "type": "hot_related_unavailable",
-                "provider": "akshare.stock_hot_rank_relate_em",
-                "message": str(exc),
-            }
-        )
-
-    try:
-        rank_rows = _records(ak.stock_hot_rank_em(), 100)
-        top_rank_match = [row for row in rank_rows if str(row.get("代码", "")).endswith(clean)]
-    except Exception as exc:
-        limitations.append(
-            {
-                "type": "hot_rank_unavailable",
-                "provider": "akshare.stock_hot_rank_em",
-                "message": str(exc),
-            }
-        )
-
-    has_heat = bool(latest or keywords or related or top_rank_match)
-    return {
-        "ok": has_heat,
-        "ticker": clean,
-        "data": {
-            "heat_snapshot": latest,
-            "hot_keywords": keywords,
-            "related_hot_stocks": related,
-            "top_rank_match": top_rank_match,
-            "limitations": limitations,
-        },
-        "quality": {
-            "status": "partial" if has_heat else "failed",
-            "is_partial": True,
-            "warnings": limitations,
-            "source_used": "akshare.eastmoney_hot_rank",
-        },
-    }
+    _clean_cn_ticker(ticker)
+    return load_cn_a_social_pack(ticker=ticker)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -269,7 +118,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         auto_update = not args.skip_auto_update and args.command not in {"search", "price", "fundamentals"}
         # 中文注释：formal session 首条命令不能先卡在全市场列表刷新，按需取证命令不做全量列表刷新。
-        tools = get_stock_tools(args.db_path, auto_update=auto_update)
+        tools = get_stock_tools(auto_update=auto_update)
         if args.command == "search":
             emit_json({"ok": True, "results": tools.search_ticker(args.query, limit=args.limit)})
             return 0

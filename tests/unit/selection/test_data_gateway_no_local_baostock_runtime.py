@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import pytest
-
-from claw_trade.data_gateway import selection_batch as selection_batch_module
+from claw_trade.data_gateway import _selection_batch as selection_batch_module
 from claw_trade.selection.models import (
     SelectionMarket,
     SelectionProfile,

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 
 

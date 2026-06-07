@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-
 TRADINGAGENTS_CN_ROOT = Path("/home/frank/src/TradingAgents-CN")
 CLAW_TRADE_ROOT = Path("/home/frank/src/claw-trade")
 

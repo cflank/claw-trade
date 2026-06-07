@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from . import DataGap, NON_REMOTE_ATTEMPT_STATUSES
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
+
+from . import NON_REMOTE_ATTEMPT_STATUSES, DataGap
 
 
 @dataclass(frozen=True)

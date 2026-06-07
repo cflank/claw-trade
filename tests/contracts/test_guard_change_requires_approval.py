@@ -7,7 +7,6 @@ from pathlib import Path
 from claw_trade.guards.common import EARLY_STOP_CATEGORIES, should_early_stop
 from claw_trade.workflow.models import FailureRecord, Stage
 
-
 APPROVED_RUNTIME_GUARD_FILES = frozenset(
     {
         "__init__.py",

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import asynccontextmanager
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-import uvicorn
 
 from claw_trade.web.routes_ui import router as ui_router
 from claw_trade.web.settings import ResearchUiServerSettings

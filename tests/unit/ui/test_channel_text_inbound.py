@@ -269,7 +269,7 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
             context_id=task.origin_context_id,
             report_id=workflow_state.run_id,
             task_id=task.task_id,
-            text="报告已完成，可查看完整内容。",
+            text="报告已完成。\n最终结论：维持观察，等待突破确认。\n核心理由：日线趋势改善\n主要风险：估值波动",
         )
 
     queue = ReportTaskQueue(
@@ -305,7 +305,7 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
     completed = snapshot["messages"][-1]
     assert completed["kind"] == "report_completed"
     assert completed["reportId"] == "run-1"
-    assert completed["text"] == "报告已完成，可查看完整内容。"
+    assert "最终结论：维持观察" in completed["text"]
 
     full = controller.handle_message(_message("r-9", "发送完整报告"))
     assert full == {"handled": True, "replyText": "完整报告已发送。", "state": "sent"}

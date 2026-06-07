@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sys
-from types import SimpleNamespace
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 from claw_trade.data_gateway.a_share_prepackaged_importer import (

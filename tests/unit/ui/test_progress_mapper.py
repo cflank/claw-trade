@@ -47,3 +47,27 @@ def test_worker_status_labels_are_reader_facing() -> None:
     assert "市场分析师：已完成" in mapped["workerStatusLabels"]
     assert "报告整理员：执行中" in mapped["workerStatusLabels"]
     assert "market_analyst" not in str(mapped)
+
+
+def test_cn_a_extended_frontline_workers_are_visible_in_progress_labels() -> None:
+    mapped = map_workflow_progress_to_ui_state(
+        {"status": "frontline_running"},
+        {
+            "activeWorkerId": "policy_analyst",
+            "completedWorkers": ["hot_money_tracker"],
+            "workerStatuses": {
+                "policy_analyst": "running",
+                "hot_money_tracker": "succeeded",
+                "lockup_watcher": "pending",
+            },
+            "visibleWorkerIds": ["policy_analyst", "hot_money_tracker", "lockup_watcher"],
+        },
+    )
+
+    assert mapped["roleLabel"] == "政策分析师"
+    assert mapped["currentAction"] == "政策分析师：前线信息采集中"
+    assert "游资资金跟踪员" in mapped["completedRoleLabels"]
+    assert "限售筹码观察员" in mapped["waitingRoleLabels"]
+    assert "政策分析师：执行中" in mapped["workerStatusLabels"]
+    assert "游资资金跟踪员：已完成" in mapped["workerStatusLabels"]
+    assert "lockup_watcher" not in str(mapped)

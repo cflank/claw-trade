@@ -1,0 +1,775 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from hashlib import sha256
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
+from uuid import uuid4
+
+_ROW_EXCLUDE_FIELDS = {
+    "dataset_ref",
+    "dataset",
+    "market",
+    "symbol_id",
+    "universe_ref",
+    "granularity",
+    "period_start",
+    "period_end",
+    "field_set",
+    "as_of",
+    "fresh_until",
+    "source_roles",
+    "dataset_checksum",
+    "dataset_checksum_algorithm",
+    "dataset_checksum_scope",
+    "dataset_row_count",
+}
+
+
+@dataclass(frozen=True)
+class NormalizedColumnarWriteResult:
+    dataset_refs: tuple[str, ...]
+    manifest: dict[str, Any]
+
+
+class NormalizedColumnarWarehouse:
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    @classmethod
+    def from_env(cls, *, root: str | Path | None = None) -> "NormalizedColumnarWarehouse":
+        if root is None:
+            import os
+
+            raw = os.environ.get("DATA_GATEWAY_COLUMNAR_ROOT", "").strip()
+            if raw:
+                root = raw
+            else:
+                root = Path(".runtime/dev-services/data-gateway/normalized")
+        return cls(Path(root))
+
+    def write_records(self, records: Sequence[Mapping[str, Any]]) -> NormalizedColumnarWriteResult:
+        if not records:
+            return NormalizedColumnarWriteResult(dataset_refs=(), manifest={})
+        first = records[0]
+        dataset = str(first.get("dataset") or "unknown_dataset")
+        market = str(first.get("market") or "unknown_market")
+        granularity = str(first.get("granularity") or "unknown")
+        partition_id = uuid4().hex[:16]
+        partition_dir = self.root / f"market={_safe_token(market)}" / f"dataset={_safe_token(dataset)}" / f"granularity={_safe_token(granularity)}"
+        partition_dir.mkdir(parents=True, exist_ok=True)
+        partition_path = partition_dir / f"partition-{partition_id}.parquet"
+
+        rows = [_parquet_row(record) for record in records]
+        self._write_parquet(partition_path, rows)
+        file_sha256 = _file_sha256(partition_path)
+        dataset_refs = tuple(dict.fromkeys(str(record.get("dataset_ref")) for record in records if record.get("dataset_ref")))
+        manifest = {
+            "manifest_ref": f"manifest:normalized:{market}:{dataset}:{granularity}:{partition_id}",
+            "status": "active",
+            "storage": "parquet",
+            "market": market,
+            "dataset": dataset,
+            "granularity": granularity,
+            "partition_id": partition_id,
+            "path": str(partition_path),
+            "row_count": len(rows),
+            "dataset_refs": dataset_refs,
+            "symbol_ids": tuple(dict.fromkeys(str(record.get("symbol_id")) for record in records if record.get("symbol_id"))),
+            "universe_refs": tuple(dict.fromkeys(str(record.get("universe_ref")) for record in records if record.get("universe_ref"))),
+            "field_set": tuple(sorted({field for record in records for field in tuple(record.get("field_set", ()) or ())})),
+            "period_start_min": min((_date_text(record.get("period_start")) or "") for record in records),
+            "period_end_max": max((_date_text(record.get("period_end")) or "") for record in records),
+            "sha256": file_sha256,
+            "hash_algorithm": "sha256",
+            "created_at": datetime.now(tz=UTC).isoformat(),
+        }
+        return NormalizedColumnarWriteResult(dataset_refs=dataset_refs, manifest=manifest)
+
+    def query_documents(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+        include_row: bool = True,
+        fields: Sequence[str] = (),
+        manifests: Sequence[Mapping[str, Any]] = (),
+    ) -> tuple[dict[str, Any], ...]:
+        selected_manifests = self._selected_manifests(
+            manifests,
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            start=_date_text(date_range_start),
+            end=_date_text(date_range_end),
+        )
+        if not selected_manifests:
+            return ()
+        start = _date_text(date_range_start)
+        end = _date_text(date_range_end)
+        rows = tuple(
+            self.iter_documents(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=start,
+                date_range_end=end,
+                require_integrity_metadata=require_integrity_metadata,
+                include_row=include_row,
+                fields=fields,
+                manifests=selected_manifests,
+                _already_selected=True,
+            )
+        )
+        return rows
+
+    def iter_documents(self, **kwargs: Any) -> Iterable[dict[str, Any]]:
+        already_selected = bool(kwargs.pop("_already_selected", False))
+        manifests = tuple(kwargs.pop("manifests", ()) or ())
+        dataset = str(kwargs["dataset"])
+        market = str(kwargs["market"])
+        symbol_id = kwargs.get("symbol_id")
+        universe_ref = kwargs.get("universe_ref")
+        start = _date_text(kwargs.get("date_range_start"))
+        end = _date_text(kwargs.get("date_range_end"))
+        require_integrity_metadata = bool(kwargs.get("require_integrity_metadata", False))
+        include_row = bool(kwargs.get("include_row", True))
+        fields = _projected_fields(kwargs.get("fields"))
+        selected_manifests = (
+            manifests
+            if already_selected
+            else self._selected_manifests(
+                manifests,
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                start=start,
+                end=end,
+            )
+        )
+        seen_refs: set[str] = set()
+        for manifest in selected_manifests:
+            invalid = self._invalid_manifest_document(manifest)
+            if invalid is not None:
+                ref = str(invalid["dataset_ref"])
+                if ref not in seen_refs:
+                    seen_refs.add(ref)
+                    yield invalid
+                continue
+            try:
+                rows = self._iter_partition_rows(
+                    Path(str(manifest.get("path"))),
+                    dataset=dataset,
+                    market=market,
+                    symbol_id=symbol_id,
+                    universe_ref=universe_ref,
+                    start=start,
+                    end=end,
+                    require_integrity_metadata=require_integrity_metadata,
+                    include_row=include_row,
+                    fields=fields,
+                )
+                for row in rows:
+                    ref = str(row.get("dataset_ref"))
+                    if ref in seen_refs:
+                        continue
+                    seen_refs.add(ref)
+                    yield row
+            except Exception:
+                invalid = _invalid_manifest_document(manifest, "read_failed")
+                ref = str(invalid["dataset_ref"])
+                if ref not in seen_refs:
+                    seen_refs.add(ref)
+                    yield invalid
+
+    def count_documents(self, **kwargs: Any) -> int:
+        manifests = tuple(kwargs.pop("manifests", ()) or ())
+        selected_manifests = self._selected_manifests(
+            manifests,
+            dataset=str(kwargs["dataset"]),
+            market=str(kwargs["market"]),
+            symbol_id=kwargs.get("symbol_id"),
+            universe_ref=kwargs.get("universe_ref"),
+            start=_date_text(kwargs.get("date_range_start")),
+            end=_date_text(kwargs.get("date_range_end")),
+        )
+        total = 0
+        for manifest in selected_manifests:
+            if self._invalid_manifest_document(manifest) is not None:
+                continue
+            total += self._count_partition_rows(
+                Path(str(manifest.get("path"))),
+                dataset=str(kwargs["dataset"]),
+                market=str(kwargs["market"]),
+                symbol_id=kwargs.get("symbol_id"),
+                universe_ref=kwargs.get("universe_ref"),
+                start=_date_text(kwargs.get("date_range_start")),
+                end=_date_text(kwargs.get("date_range_end")),
+                require_integrity_metadata=bool(kwargs.get("require_integrity_metadata", False)),
+            )
+        return total
+
+    def aggregate_coverage(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None = None,
+        date_range_end: Any | None = None,
+        require_integrity_metadata: bool = False,
+        manifests: Sequence[Mapping[str, Any]] = (),
+        sample_limit: int = 50,
+    ) -> dict[str, Any] | None:
+        start = _date_text(date_range_start)
+        end = _date_text(date_range_end)
+        selected_manifests = self._selected_manifests(
+            manifests,
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            start=start,
+            end=end,
+        )
+        if not selected_manifests or any(self._invalid_manifest_document(manifest) is not None for manifest in selected_manifests):
+            return None
+        record_count = 0
+        dataset_refs: list[str] = []
+        ranges: set[tuple[Any, Any]] = set()
+        starts: set[Any] = set()
+        ends: set[Any] = set()
+        field_sets: set[tuple[Any, ...]] = set()
+        source_role_sets: set[tuple[Any, ...]] = set()
+        freshest_as_of: Any | None = None
+        freshest_until: Any | None = None
+        checksum_counts: dict[str, dict[str, Any]] = {}
+        for manifest in selected_manifests:
+            try:
+                summary = self._partition_summary(
+                    Path(str(manifest.get("path"))),
+                    dataset=dataset,
+                    market=market,
+                    symbol_id=symbol_id,
+                    universe_ref=universe_ref,
+                    start=start,
+                    end=end,
+                    require_integrity_metadata=require_integrity_metadata,
+                    sample_limit=max(0, sample_limit - len(dataset_refs)),
+                )
+            except Exception:
+                return None
+            record_count += int(summary["record_count"])
+            dataset_refs.extend(str(ref) for ref in summary["dataset_refs"])
+            ranges.update(tuple(item) for item in summary["ranges"])
+            starts.update(summary["starts"])
+            ends.update(summary["ends"])
+            field_sets.update(tuple(item) for item in summary["field_sets"])
+            source_role_sets.update(tuple(item) for item in summary["source_role_sets"])
+            freshest_as_of = _max_non_empty(freshest_as_of, summary["freshest_as_of"])
+            freshest_until = _max_non_empty(freshest_until, summary["freshest_until"])
+            for checksum_row in summary["checksum_counts"]:
+                checksum = str(checksum_row["checksum"])
+                current = checksum_counts.setdefault(
+                    checksum,
+                    {
+                        "checksum": checksum,
+                        "actual_count": 0,
+                        "expected_min": checksum_row["expected_min"],
+                        "expected_max": checksum_row["expected_max"],
+                        "min_start": checksum_row["min_start"],
+                        "max_end": checksum_row["max_end"],
+                    },
+                )
+                current["actual_count"] += int(checksum_row["actual_count"])
+                current["expected_min"] = _min_non_empty(current["expected_min"], checksum_row["expected_min"])
+                current["expected_max"] = _max_non_empty(current["expected_max"], checksum_row["expected_max"])
+                current["min_start"] = _min_non_empty(current["min_start"], checksum_row["min_start"])
+                current["max_end"] = _max_non_empty(current["max_end"], checksum_row["max_end"])
+        return {
+            "record_count": record_count,
+            "dataset_refs": tuple(dataset_refs[:sample_limit]),
+            "ranges": tuple(sorted(ranges)),
+            "starts": tuple(sorted(starts)),
+            "ends": tuple(sorted(ends)),
+            "field_sets": tuple(sorted(field_sets)),
+            "source_role_sets": tuple(sorted(source_role_sets)),
+            "freshest_as_of": freshest_as_of,
+            "freshest_until": freshest_until,
+            "checksum_counts": tuple(checksum_counts.values()),
+        }
+
+    @staticmethod
+    def _write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
+        import duckdb
+        import pandas as pd
+
+        frame = pd.DataFrame(rows)
+        with duckdb.connect(":memory:") as conn:
+            conn.register("normalized_rows", frame)
+            conn.execute("COPY normalized_rows TO ? (FORMAT PARQUET)", [str(path)])
+
+    @staticmethod
+    def _iter_partition_rows(
+        path: Path,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        start: str | None,
+        end: str | None,
+        require_integrity_metadata: bool,
+        include_row: bool,
+        fields: Sequence[str],
+    ) -> Iterable[dict[str, Any]]:
+        import duckdb
+
+        where, params = _where_clause(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            start=start,
+            end=end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
+        columns = [
+            "dataset_ref",
+            "dataset",
+            "market",
+            "symbol_id",
+            "universe_ref",
+            "granularity",
+            "period_start",
+            "period_end",
+            "field_set_json",
+            "as_of",
+            "fresh_until",
+            "source_roles_json",
+            "dataset_checksum",
+            "dataset_checksum_algorithm",
+            "dataset_checksum_scope",
+            "dataset_row_count",
+        ]
+        projected_fields = _projected_fields(fields)
+        row_extract_columns: list[str] = []
+        row_extract_aliases: list[str] = []
+        if include_row and projected_fields:
+            for index, _field in enumerate(projected_fields):
+                alias = f"row_field_{index}"
+                row_extract_columns.append(f"json_extract(row_json, ?) AS {alias}")
+                row_extract_aliases.append(alias)
+        elif include_row:
+            columns.append("row_json")
+        select_expressions = (*columns, *row_extract_columns)
+        result_columns = (*columns, *row_extract_aliases)
+        query = f"SELECT {', '.join(select_expressions)} FROM read_parquet(?) WHERE {where}"
+        json_path_params = tuple(_json_path_for_field(field) for field in projected_fields) if row_extract_columns else ()
+        with duckdb.connect(":memory:") as conn:
+            relation = conn.execute(query, [*json_path_params, str(path), *params])
+            while True:
+                rows = relation.fetchmany(1000)
+                if not rows:
+                    break
+                for row in rows:
+                    yield _document_from_parquet_row(
+                        dict(zip(result_columns, row, strict=True)),
+                        include_row=include_row,
+                        fields=projected_fields,
+                    )
+
+    @staticmethod
+    def _count_partition_rows(
+        path: Path,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        start: str | None,
+        end: str | None,
+        require_integrity_metadata: bool,
+    ) -> int:
+        import duckdb
+
+        where, params = _where_clause(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            start=start,
+            end=end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
+        with duckdb.connect(":memory:") as conn:
+            return int(conn.execute(f"SELECT COUNT(*) FROM read_parquet(?) WHERE {where}", [str(path), *params]).fetchone()[0])
+
+    @staticmethod
+    def _partition_summary(
+        path: Path,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        start: str | None,
+        end: str | None,
+        require_integrity_metadata: bool,
+        sample_limit: int,
+    ) -> dict[str, Any]:
+        import duckdb
+
+        where, params = _where_clause(
+            dataset=dataset,
+            market=market,
+            symbol_id=symbol_id,
+            universe_ref=universe_ref,
+            start=start,
+            end=end,
+            require_integrity_metadata=require_integrity_metadata,
+        )
+        with duckdb.connect(":memory:") as conn:
+            record_count, min_start, max_end, freshest_as_of, freshest_until = conn.execute(
+                f"SELECT COUNT(*), MIN(period_start), MAX(period_end), MAX(as_of), MAX(fresh_until) FROM read_parquet(?) WHERE {where}",
+                [str(path), *params],
+            ).fetchone()
+            dataset_refs = tuple(
+                str(row[0])
+                for row in conn.execute(
+                    f"SELECT dataset_ref FROM read_parquet(?) WHERE {where} LIMIT ?",
+                    [str(path), *params, sample_limit],
+                ).fetchall()
+            )
+            field_sets = tuple(
+                tuple(json.loads(str(row[0] or "[]")))
+                for row in conn.execute(
+                    f"SELECT DISTINCT field_set_json FROM read_parquet(?) WHERE {where}",
+                    [str(path), *params],
+                ).fetchall()
+            )
+            source_role_sets = tuple(
+                tuple(json.loads(str(row[0] or "[]")))
+                for row in conn.execute(
+                    f"SELECT DISTINCT source_roles_json FROM read_parquet(?) WHERE {where}",
+                    [str(path), *params],
+                ).fetchall()
+            )
+            checksum_counts = tuple(
+                {
+                    "checksum": str(row[0]),
+                    "actual_count": int(row[1]),
+                    "expected_min": row[2],
+                    "expected_max": row[3],
+                    "min_start": row[4],
+                    "max_end": row[5],
+                }
+                for row in conn.execute(
+                    f"""
+                    SELECT dataset_checksum, COUNT(*), MIN(dataset_row_count), MAX(dataset_row_count), MIN(period_start), MAX(period_end)
+                    FROM read_parquet(?)
+                    WHERE {where}
+                    GROUP BY dataset_checksum
+                    """,
+                    [str(path), *params],
+                ).fetchall()
+                if row[0]
+            )
+        return {
+            "record_count": int(record_count or 0),
+            "dataset_refs": dataset_refs,
+            "ranges": ((min_start, max_end),) if min_start and max_end else (),
+            "starts": (min_start,) if min_start else (),
+            "ends": (max_end,) if max_end else (),
+            "field_sets": field_sets,
+            "source_role_sets": source_role_sets,
+            "freshest_as_of": freshest_as_of,
+            "freshest_until": freshest_until,
+            "checksum_counts": checksum_counts,
+        }
+
+    def _selected_manifests(
+        self,
+        manifests: Sequence[Mapping[str, Any]],
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        start: str | None,
+        end: str | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        return tuple(
+            manifest
+            for manifest in manifests
+            if self._manifest_matches(
+                manifest,
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                start=start,
+                end=end,
+            )
+        )
+
+    @staticmethod
+    def _manifest_matches(
+        manifest: Mapping[str, Any],
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        start: str | None,
+        end: str | None,
+    ) -> bool:
+        if manifest.get("storage") != "parquet" or manifest.get("status", "active") != "active":
+            return False
+        if str(manifest.get("dataset") or "") != dataset or str(manifest.get("market") or "") != market:
+            return False
+        symbol_ids = tuple(str(item) for item in tuple(manifest.get("symbol_ids", ()) or ()))
+        if symbol_id and symbol_ids and symbol_id not in symbol_ids:
+            return False
+        universe_refs = tuple(str(item) for item in tuple(manifest.get("universe_refs", ()) or ()))
+        if universe_ref and universe_refs and universe_ref not in universe_refs:
+            return False
+        manifest_start = _date_text(manifest.get("period_start_min"))
+        manifest_end = _date_text(manifest.get("period_end_max"))
+        if end and manifest_start and manifest_start > end:
+            return False
+        if start and manifest_end and manifest_end < start:
+            return False
+        return True
+
+    def _invalid_manifest_document(self, manifest: Mapping[str, Any]) -> dict[str, Any] | None:
+        path = Path(str(manifest.get("path") or ""))
+        expected_hash = str(manifest.get("sha256") or "").strip()
+        if not path.exists():
+            return _invalid_manifest_document(manifest, "missing_file")
+        if expected_hash and _file_sha256(path) != expected_hash:
+            return _invalid_manifest_document(manifest, "sha256_mismatch")
+        return None
+
+
+def _parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
+    row = record.get("row")
+    row_payload = row if isinstance(row, Mapping) and row else _row_from_record(record)
+    field_set = tuple(record.get("field_set", ()) or ()) or tuple(sorted(row_payload))
+    return {
+        "dataset_ref": str(record.get("dataset_ref") or ""),
+        "dataset": str(record.get("dataset") or ""),
+        "market": str(record.get("market") or ""),
+        "symbol_id": _optional_text(record.get("symbol_id")),
+        "universe_ref": _optional_text(record.get("universe_ref")),
+        "granularity": str(record.get("granularity") or ""),
+        "period_start": _date_text(record.get("period_start")),
+        "period_end": _date_text(record.get("period_end")),
+        "field_set_json": json.dumps(field_set, ensure_ascii=False, default=str),
+        "as_of": _datetime_text(record.get("as_of")),
+        "fresh_until": _datetime_text(record.get("fresh_until")),
+        "source_roles_json": json.dumps(tuple(record.get("source_roles", ()) or ()), ensure_ascii=False, default=str),
+        "dataset_checksum": _optional_text(record.get("dataset_checksum")),
+        "dataset_checksum_algorithm": _optional_text(record.get("dataset_checksum_algorithm")),
+        "dataset_checksum_scope": _optional_text(record.get("dataset_checksum_scope")),
+        "dataset_row_count": int(record.get("dataset_row_count") or 0),
+        "row_json": json.dumps(row_payload, ensure_ascii=False, default=str, sort_keys=True),
+    }
+
+
+def _document_from_parquet_row(row: Mapping[str, Any], *, include_row: bool, fields: Sequence[str] = ()) -> dict[str, Any]:
+    document = {
+        "dataset_ref": row.get("dataset_ref"),
+        "dataset": row.get("dataset"),
+        "market": row.get("market"),
+        "symbol_id": row.get("symbol_id"),
+        "universe_ref": row.get("universe_ref"),
+        "granularity": row.get("granularity"),
+        "period_start": row.get("period_start"),
+        "period_end": row.get("period_end"),
+        "field_set": tuple(json.loads(str(row.get("field_set_json") or "[]"))),
+        "as_of": row.get("as_of"),
+        "fresh_until": row.get("fresh_until"),
+        "source_roles": tuple(json.loads(str(row.get("source_roles_json") or "[]"))),
+        "dataset_checksum": row.get("dataset_checksum"),
+        "dataset_checksum_algorithm": row.get("dataset_checksum_algorithm"),
+        "dataset_checksum_scope": row.get("dataset_checksum_scope"),
+        "dataset_row_count": int(row.get("dataset_row_count") or 0),
+    }
+    projected_fields = _projected_fields(fields)
+    if include_row and projected_fields:
+        projected_row: dict[str, Any] = {}
+        for index, field in enumerate(projected_fields):
+            value = _json_extract_value(row.get(f"row_field_{index}"))
+            if value is not _MISSING_JSON_FIELD:
+                projected_row[field] = value
+        document["row"] = projected_row
+    elif include_row:
+        document["row"] = json.loads(str(row.get("row_json") or "{}"))
+    return document
+
+
+def _invalid_manifest_document(manifest: Mapping[str, Any], reason: str) -> dict[str, Any]:
+    manifest_ref = str(manifest.get("manifest_ref") or manifest.get("path") or "manifest:unknown")
+    dataset_refs = tuple(str(item) for item in tuple(manifest.get("dataset_refs", ()) or ()) if str(item).strip())
+    return {
+        "dataset_ref": dataset_refs[0] if dataset_refs else manifest_ref,
+        "dataset": str(manifest.get("dataset") or ""),
+        "market": str(manifest.get("market") or ""),
+        "symbol_id": None,
+        "universe_ref": None,
+        "granularity": str(manifest.get("granularity") or ""),
+        "period_start": _date_text(manifest.get("period_start_min")),
+        "period_end": _date_text(manifest.get("period_end_max")),
+        "field_set": tuple(manifest.get("field_set", ()) or ()),
+        "as_of": None,
+        "fresh_until": None,
+        "source_roles": (),
+        "dataset_checksum": f"integrity_failed:{manifest_ref}:{reason}",
+        "dataset_checksum_algorithm": "sha256:invalid",
+        "dataset_checksum_scope": "normalized-batch-v1",
+        "dataset_row_count": 0,
+        "row": {},
+    }
+
+
+def _safe_token(value: str) -> str:
+    safe = "".join(char if char.isalnum() or char in "._-" else "_" for char in value.strip())
+    return safe or "unknown"
+
+
+def _row_from_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): value
+        for key, value in record.items()
+        if key not in _ROW_EXCLUDE_FIELDS and value is not None
+    }
+
+
+_MISSING_JSON_FIELD = object()
+
+
+def _projected_fields(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        candidates = (value,)
+    elif isinstance(value, Sequence):
+        candidates = tuple(value)
+    else:
+        return ()
+    return tuple(dict.fromkeys(str(field).strip() for field in candidates if str(field).strip()))
+
+
+def _json_path_for_field(field: str) -> str:
+    return f'$.{json.dumps(field, ensure_ascii=False)}'
+
+
+def _json_extract_value(value: Any) -> Any:
+    if value is None:
+        return _MISSING_JSON_FIELD
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    text = str(value)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return value
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _date_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    return text[:10] if text else None
+
+
+def _datetime_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = str(value).strip()
+    return text or None
+
+
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _where_clause(
+    *,
+    dataset: str,
+    market: str,
+    symbol_id: str | None,
+    universe_ref: str | None,
+    start: str | None,
+    end: str | None,
+    require_integrity_metadata: bool = False,
+) -> tuple[str, list[Any]]:
+    where = ["dataset = ?", "market = ?"]
+    params: list[Any] = [dataset, market]
+    if symbol_id:
+        where.append("symbol_id = ?")
+        params.append(symbol_id)
+    if universe_ref:
+        where.append("universe_ref = ?")
+        params.append(universe_ref)
+    if end:
+        where.append("period_start <= ?")
+        params.append(end)
+    if start:
+        where.append("period_end >= ?")
+        params.append(start)
+    if require_integrity_metadata:
+        where.extend(
+            (
+                "dataset_checksum IS NOT NULL",
+                "dataset_checksum_algorithm = 'sha256:canonical-json-v1'",
+                "dataset_checksum_scope = 'normalized-batch-v1'",
+                "dataset_row_count > 0",
+            )
+        )
+    return " AND ".join(where), params
+
+
+def _min_non_empty(left: Any, right: Any) -> Any:
+    if left in (None, ""):
+        return right
+    if right in (None, ""):
+        return left
+    return left if left <= right else right
+
+
+def _max_non_empty(left: Any, right: Any) -> Any:
+    if left in (None, ""):
+        return right
+    if right in (None, ""):
+        return left
+    return left if left >= right else right

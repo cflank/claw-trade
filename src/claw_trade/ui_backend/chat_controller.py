@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-import re
-from typing import Callable
-from typing import Any
+from typing import Any, Callable
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.selection.controller import SelectCommandCode, SelectionController
@@ -422,6 +421,7 @@ class ChatController:
             "unavailableCode": select_result.unavailable_code.value if select_result.unavailable_code else None,
             "failureReason": select_result.failure_reason,
             "readerReportMarkdown": select_result.reader_report_markdown,
+            "readerReportPath": str(select_result.reader_report_path) if select_result.reader_report_path else None,
         }
         if select_result.data_refresh is not None:
             selection_payload["dataRefresh"] = {

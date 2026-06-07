@@ -49,7 +49,7 @@ def _normalized_inputs(count: int = 20) -> SelectionNormalizedInputs:
     refs = []
     for idx in range(count):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://row-{idx + 1}"
+        ref = f"dataset://normalized/CN_A/daily/row-{idx + 1}"
         refs.append(ref)
         rows.append(
             SelectionNormalizedRow(
@@ -178,15 +178,15 @@ def test_build_candidate_pack_contract_produces_fact_only_model_visible_pack() -
     assert "sha256" not in draft.summary.summary_md.lower()
     assert "lineage" not in draft.summary.summary_md.lower()
     assert any(ref.startswith("attempt://") for ref in draft.source_lineage_refs)
-    assert any(ref.startswith("normalized://") for ref in draft.source_lineage_refs)
+    assert any(ref.startswith("dataset://normalized/") for ref in draft.source_lineage_refs)
     assert any(ref.startswith("feature://") for ref in draft.source_lineage_refs)
     assert any(ref.startswith("score://") for ref in draft.source_lineage_refs)
 
 
-def test_build_candidate_pack_accepts_mongo_normalized_datasets_refs() -> None:
+def test_build_candidate_pack_accepts_storage_neutral_normalized_dataset_refs() -> None:
     plan = _plan()
     inputs = _normalized_inputs(count=1)
-    mongo_ref = "mongo://normalized_datasets/sha256:abc123"
+    mongo_ref = "dataset://normalized/CN_A/daily/sha256:abc123"
     mongo_inputs = replace(
         inputs,
         normalized_refs=(mongo_ref,),
@@ -226,7 +226,7 @@ def test_build_candidate_pack_canonicalizes_mongo_attempt_refs() -> None:
         score_ref="score://sel04-contract-run",
     )
 
-    assert "attempt://mongo/provider_attempts/attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:abc123" in draft.source_lineage_refs
+    assert "attempt://data-provider/attempt:local_a_share_prepackaged:a_share_prepackaged_selection_import:abc123" in draft.source_lineage_refs
 
 
 def test_build_candidate_pack_rejects_blocker_data_gap() -> None:

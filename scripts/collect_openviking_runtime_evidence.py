@@ -40,9 +40,9 @@ def main() -> int:
     relations_non_empty = any(_relation_count(item) > 0 for item in relations_by_uri.values())
     export_receipt = client.export_run_pack(run_id=args.run_id, output_dir=str(output_dir / "ovpack"))
     import_receipt = None
-    if export_receipt.portability_status != "blocked" and Path(export_receipt.bundle_path).exists():
+    if _export_receipt_is_importable(export_receipt):
         import_receipt = client.import_run_pack(
-            bundle_path=export_receipt.bundle_path,
+            bundle_path=str(_receipt_field(export_receipt, "bundle_path")),
             target_run_id=f"import-check-{args.run_id}",
         )
 
@@ -84,6 +84,19 @@ def _safe_client_call(call: object) -> object:
             "status": "blocked",
             "root_cause": f"runtime query blocked: {exc.category}:{exc}",
         }
+
+
+def _export_receipt_is_importable(receipt: object) -> bool:
+    if _receipt_field(receipt, "portability_status") == "blocked":
+        return False
+    bundle_path = _receipt_field(receipt, "bundle_path")
+    return isinstance(bundle_path, str) and Path(bundle_path).exists()
+
+
+def _receipt_field(receipt: object, field: str) -> object:
+    if isinstance(receipt, dict):
+        return receipt.get(field)
+    return getattr(receipt, field, None)
 
 
 def _relation_query_uris(run_id: str, run_root_uri: str, *, runs_dir: Path = Path("runs")) -> list[str]:

@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
 
-
 CODE = "600519"
 SYMBOLS = ("SH600519", "100.600519")
 TIMEOUT_SECONDS = 15

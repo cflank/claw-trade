@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Callable, Mapping
 
+from claw_trade.data_gateway.refs import is_normalized_dataset_ref, normalize_provider_attempt_ref
 from claw_trade.selection.artifacts import SelectionFileArtifactBackend
 from claw_trade.selection.engine import FilteredUniverse, ScoringResult
 from claw_trade.selection.features import SelectionNormalizedInputs
@@ -269,6 +270,7 @@ def validate_candidate_pack_payload_strategy_field_completeness(payload: Mapping
                 "candidate pack candidate must be an object",
             )
         ticker = str(candidate.get("ticker") or "-").strip() or "-"
+        _validate_candidate_payload_summary_fields(ticker=ticker, candidate=candidate)
         values = _candidate_payload_feature_values(candidate)
         _validate_strategy_field_counts(ticker=ticker, feature_values=values)
 
@@ -508,15 +510,15 @@ def _validate_lineage_refs(*, plan: SelectionRunPlan, source_lineage_refs: tuple
 
 
 def _is_normalized_lineage_ref(ref: str) -> bool:
-    return ref.startswith("normalized://") or ref.startswith("mongo://normalized_datasets/")
+    return is_normalized_dataset_ref(ref)
 
 
 def _canonical_lineage_ref(ref: str) -> str:
     text = ref.strip()
-    if text.startswith("attempt://"):
-        return text
     if text.startswith("attempt:"):
-        return f"attempt://mongo/provider_attempts/{text}"
+        return normalize_provider_attempt_ref(text)
+    if text.startswith("attempt://"):
+        return normalize_provider_attempt_ref(text)
     return text
 
 
@@ -533,6 +535,15 @@ def _candidate_payload_feature_values(candidate: Mapping[str, object]) -> Mappin
     if isinstance(actual_values, Mapping):
         return actual_values
     return {}
+
+
+def _validate_candidate_payload_summary_fields(*, ticker: str, candidate: Mapping[str, object]) -> None:
+    for field in ("component_scores", "actual_metric_values", "hit_fields", "tie_break_fields"):
+        if not isinstance(candidate.get(field), Mapping):
+            raise CandidatePackError(
+                "candidate_pack_summary_fields_missing",
+                f"ticker={ticker} missing {field}",
+            )
 
 
 def _validate_strategy_field_counts(*, ticker: str, feature_values: Mapping[str, object]) -> None:

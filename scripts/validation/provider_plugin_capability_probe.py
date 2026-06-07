@@ -14,12 +14,11 @@ from claw_trade.data_gateway.execution.managed_http import ManagedHttp, UrllibHt
 from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
 from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
 from claw_trade.ui_backend.mongo_settings_store import (
-    MongoDataSourceStore,
-    MongoSecretStore,
     UI_DATA_SOURCE_SETTINGS_COLLECTION,
     UI_SECRET_SETTINGS_COLLECTION,
+    MongoDataSourceStore,
+    MongoSecretStore,
 )
-
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ENV = ROOT / ".runtime" / "dev-services" / "runtime.env"

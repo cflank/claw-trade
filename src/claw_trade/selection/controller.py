@@ -60,6 +60,7 @@ class SelectCommandResult:
     decision: SelectionDecision | None = None
     data_refresh: SelectionDataRefreshResult | None = None
     reader_report_markdown: str | None = None
+    reader_report_path: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -98,6 +99,11 @@ class _DecisionParseResult:
 
 _PM_DECISION_MATERIAL_TARGET = "selection_portfolio_decision"
 _PM_DECISION_MATERIAL_TYPE = "pm_decision"
+_EXPLICIT_TICKER_CORRECTION_RE = re.compile(
+    r"(?:股票代码|代码|ticker)?\s*(?:应为|正确为|正确代码为|更正为)\s*[:：]?\s*"
+    r"(?P<ticker>\d{6}\.(?:SH|SZ|BJ))",
+    re.IGNORECASE,
+)
 _CANDIDATE_PACK_REQUIRED_SUMMARY_LABELS = (
     "总分",
     "分项得分",
@@ -618,6 +624,7 @@ class SelectionController:
         pm_decision_material_id = _build_pm_decision_material_id(workflow_run_id=workflow_run_id)
         decision_parse = _parse_and_validate_selection_decision(
             pm_raw_text=pm_raw_text,
+            supplemental_decision_texts=(approved_l1.get(SelectionWorkerId.MANAGER, ""),),
             workflow_run_id=workflow_run_id,
             allowed_tickers=allowed_tickers,
             allowed_ticker_companies=allowed_ticker_companies,
@@ -661,6 +668,8 @@ class SelectionController:
             portfolio_manager_report=pm_raw_text,
             candidate_pack_summary_md=summary_md,
         )
+        reader_report_path = evidence_dir / "select-reader-report.md"
+        reader_report_path.write_text(f"{reader_report_markdown.strip()}\n", encoding="utf-8")
         payload = _base_workflow_evidence_payload(
             request=request,
             workflow_run_id=workflow_run_id,
@@ -683,6 +692,7 @@ class SelectionController:
             "material_type": _PM_DECISION_MATERIAL_TYPE,
         }
         payload["pm_output_path"] = str(evidence_dir / "pm-selection-decision.md")
+        payload["reader_report_path"] = str(reader_report_path)
         (evidence_dir / "pm-selection-decision.md").write_text(pm_raw_text, encoding="utf-8")
         evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
         return SelectCommandResult(
@@ -692,6 +702,7 @@ class SelectionController:
             evidence_path=evidence_path,
             decision=decision,
             reader_report_markdown=reader_report_markdown,
+            reader_report_path=reader_report_path,
         )
 
     def _request_data_refresh_if_needed(
@@ -935,10 +946,10 @@ def _candidate_pack_sidecar_payload(candidate_pack_ref: CandidatePackRef) -> dic
 def _candidate_row_summary(candidate: Mapping[str, object]) -> dict[str, str]:
     features = _mapping(candidate.get("feature_values"))
     strategy_hits = _string_tuple(candidate.get("strategy_hits"))
-    component_scores = _mapping(candidate.get("component_scores")) or _legacy_component_scores(features)
-    actual_metric_values = _mapping(candidate.get("actual_metric_values")) or features
-    hit_fields = _mapping(candidate.get("hit_fields")) or _legacy_hit_fields(features)
-    tie_break_fields = _mapping(candidate.get("tie_break_fields")) or _legacy_tie_break_fields(features)
+    component_scores = _mapping(candidate.get("component_scores"))
+    actual_metric_values = _mapping(candidate.get("actual_metric_values"))
+    hit_fields = _mapping(candidate.get("hit_fields"))
+    tie_break_fields = _mapping(candidate.get("tie_break_fields"))
     return {
         "rank": _first_text(candidate.get("rank"), "-"),
         "ticker": _first_text(candidate.get("ticker"), "-"),
@@ -958,36 +969,6 @@ def _candidate_row_summary(candidate: Mapping[str, object]) -> dict[str, str]:
         "data_quality": _first_text(candidate.get("data_quality"), "-"),
         "source_summary": _first_text(candidate.get("source_summary"), "-"),
     }
-
-
-def _legacy_component_scores(values: Mapping[str, object]) -> dict[str, object]:
-    keys = {
-        "strategy_hit_coverage_score",
-        "strategy_coverage_score",
-        "strategy_strength_score",
-        "strategy_inner_strength_score",
-        "rps_trend_score",
-        "liquidity_score",
-        "liquidity_tradability_score",
-        "tradability_score",
-        "industry_theme_strength_score",
-        "industry_theme_score",
-        "evidence_completeness_score",
-    }
-    return {key: value for key, value in values.items() if key in keys or key.endswith("_subscore")}
-
-
-def _legacy_hit_fields(values: Mapping[str, object]) -> dict[str, object]:
-    return {
-        key: value
-        for key, value in values.items()
-        if key.startswith("hit_") or key.startswith("strategy_hit_") or key.endswith("_hit")
-    }
-
-
-def _legacy_tie_break_fields(values: Mapping[str, object]) -> dict[str, object]:
-    candidates = ("score", "amount", "volume", "vol_ratio", "data_gap_penalty_score", "risk_penalty_score")
-    return {key: values[key] for key in candidates if key in values}
 
 
 def _strategy_hit_lines(candidates: list[object]) -> tuple[str, ...]:
@@ -1163,6 +1144,7 @@ def _read_worker_output_text(result: Any) -> str:
 def _parse_and_validate_selection_decision(
     *,
     pm_raw_text: str,
+    supplemental_decision_texts: tuple[str, ...] = (),
     workflow_run_id: str,
     allowed_tickers: frozenset[str],
     allowed_ticker_companies: Mapping[str, str] | None = None,
@@ -1182,6 +1164,12 @@ def _parse_and_validate_selection_decision(
                 blocked_reason=f"ambiguous_{key}_section_requires_human_review",
             )
         parsed[key] = rows
+    if allowed_ticker_companies:
+        parsed = _canonicalize_explicit_ticker_corrections(
+            parsed=parsed,
+            allowed_tickers=allowed_tickers,
+            allowed_ticker_companies=allowed_ticker_companies,
+        )
 
     all_tickers = [item.ticker for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])]
     if len(all_tickers) != len(set(all_tickers)):
@@ -1198,6 +1186,15 @@ def _parse_and_validate_selection_decision(
                     invalid_reason=f"ticker_company_mismatch:{row.ticker}:expected={expected_company}:actual={row.company_name}",
                 )
     missing_tickers = sorted(allowed_tickers.difference(ticker.upper() for ticker in all_tickers))
+    if missing_tickers:
+        parsed = _supplement_missing_decision_rows_from_group_table(
+            text="\n".join((text, *supplemental_decision_texts)),
+            parsed=parsed,
+            missing_tickers=tuple(missing_tickers),
+            allowed_ticker_companies=allowed_ticker_companies or {},
+        )
+        all_tickers = [item.ticker for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])]
+        missing_tickers = sorted(allowed_tickers.difference(ticker.upper() for ticker in all_tickers))
     if missing_tickers:
         return _DecisionParseResult(
             decision=None,
@@ -1216,6 +1213,134 @@ def _parse_and_validate_selection_decision(
     except ValueError as exc:
         return _DecisionParseResult(decision=None, invalid_reason=str(exc))
     return _DecisionParseResult(decision=decision)
+
+
+def _supplement_missing_decision_rows_from_group_table(
+    *,
+    text: str,
+    parsed: Mapping[str, tuple[DecisionTicker, ...]],
+    missing_tickers: tuple[str, ...],
+    allowed_ticker_companies: Mapping[str, str],
+) -> dict[str, tuple[DecisionTicker, ...]]:
+    table_rows = _extract_group_table_decision_rows(text)
+    if not table_rows:
+        return {key: tuple(value) for key, value in parsed.items()}
+
+    existing = {item.ticker.upper() for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])}
+    additions: dict[str, list[DecisionTicker]] = {"enter_report": [], "watch": [], "reject": []}
+    for ticker in missing_tickers:
+        normalized = ticker.upper()
+        if normalized in existing:
+            continue
+        candidates = table_rows.get(normalized, ())
+        if len(candidates) != 1:
+            continue
+        section, row = candidates[0]
+        expected_company = allowed_ticker_companies.get(normalized)
+        if expected_company is not None and row.company_name != expected_company:
+            continue
+        additions[section].append(row)
+
+    return {
+        key: (*tuple(parsed.get(key, ())), *tuple(additions[key]))
+        for key in ("enter_report", "watch", "reject")
+    }
+
+
+def _extract_group_table_decision_rows(text: str) -> dict[str, tuple[tuple[str, DecisionTicker], ...]]:
+    section_by_label = {
+        "优先进入组合评审": "enter_report",
+        "进入组合评审": "enter_report",
+        "进入/report": "enter_report",
+        "继续观察": "watch",
+        "观察": "watch",
+        "暂不继续": "reject",
+        "放弃": "reject",
+    }
+    current_section: str | None = None
+    rows_by_ticker: dict[str, list[tuple[str, DecisionTicker]]] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or "---" in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 4:
+            continue
+        section_cell = _strip_markdown_inline(cells[0])
+        if section_cell:
+            normalized_label = _normalize_heading(section_cell)
+            current_section = section_by_label.get(normalized_label)
+        if current_section is None:
+            continue
+        ticker = _strip_markdown_inline(cells[1]).upper()
+        if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", ticker, re.IGNORECASE):
+            continue
+        company_name = _strip_markdown_inline(cells[2])
+        reason = _strip_markdown_inline(cells[3])
+        if not company_name or company_name in {"名称", "股票名称", "公司"}:
+            continue
+        rows_by_ticker.setdefault(ticker, []).append(
+            (
+                current_section,
+                DecisionTicker(ticker=ticker, company_name=company_name, rationale_excerpt=reason),
+            )
+        )
+    return {ticker: tuple(rows) for ticker, rows in rows_by_ticker.items()}
+
+
+def _strip_markdown_inline(value: str) -> str:
+    out = value.replace("`", "")
+    out = re.sub(r"<br\s*/?>", " ", out, flags=re.IGNORECASE)
+    out = re.sub(r"\*\*(.*?)\*\*", r"\1", out)
+    return out.strip()
+
+
+def _canonicalize_explicit_ticker_corrections(
+    *,
+    parsed: Mapping[str, tuple[DecisionTicker, ...]],
+    allowed_tickers: frozenset[str],
+    allowed_ticker_companies: Mapping[str, str],
+) -> dict[str, tuple[DecisionTicker, ...]]:
+    canonicalized: dict[str, tuple[DecisionTicker, ...]] = {}
+    for section, rows in parsed.items():
+        canonicalized[section] = tuple(
+            _canonicalize_explicit_ticker_correction(
+                row=row,
+                allowed_tickers=allowed_tickers,
+                allowed_ticker_companies=allowed_ticker_companies,
+            )
+            for row in rows
+        )
+    return canonicalized
+
+
+def _canonicalize_explicit_ticker_correction(
+    *,
+    row: DecisionTicker,
+    allowed_tickers: frozenset[str],
+    allowed_ticker_companies: Mapping[str, str],
+) -> DecisionTicker:
+    if row.ticker.upper() in allowed_tickers:
+        return row
+    corrected_ticker = _extract_explicit_corrected_ticker(row.rationale_excerpt, allowed_tickers=allowed_tickers)
+    if corrected_ticker is None:
+        return row
+    expected_company = allowed_ticker_companies.get(corrected_ticker)
+    if expected_company != row.company_name:
+        return row
+    return replace(row, ticker=corrected_ticker)
+
+
+def _extract_explicit_corrected_ticker(text: str, *, allowed_tickers: frozenset[str]) -> str | None:
+    matches = tuple(
+        match.group("ticker").upper()
+        for match in _EXPLICIT_TICKER_CORRECTION_RE.finditer(text)
+        if match.group("ticker").upper() in allowed_tickers
+    )
+    unique_matches = frozenset(matches)
+    if len(unique_matches) != 1:
+        return None
+    return next(iter(unique_matches))
 
 
 def _extract_three_sections(text: str) -> dict[str, tuple[str, ...]] | None:
@@ -1724,7 +1849,7 @@ def _unavailable_chat_text(code: SelectUnavailableCode) -> str:
         SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH: "`/select` 当前不可用：候选池完整性校验失败（hash 不一致）。",
         SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED: "`/select` 当前不可用：候选池完整性校验失败。",
         SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE: "`/select` 当前不可用：候选池 lineage 不完整。",
-        SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING: "`/select` 当前不可用：最新选股批次缺少 Mongo 仓库检查证据。",
+        SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING: "`/select` 当前不可用：最新选股批次缺少列式仓库 manifest、hash 或 provider 证据。",
         SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED: "`/select` 当前暂不支持该市场。",
         SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING: "`/select` 当前不可用：Crypto 历史仓库尚未完成下载和入库。",
     }

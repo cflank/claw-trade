@@ -513,10 +513,10 @@ def _candidate_pack_json_path(candidate_pack_ref: CandidatePackRef, *, artifact_
 def _candidate_row_summary(candidate: Mapping[str, object]) -> dict[str, str]:
     features = _loose_mapping(candidate.get("feature_values"))
     strategy_hits = _loose_string_tuple(candidate.get("strategy_hits"))
-    component_scores = _loose_mapping(candidate.get("component_scores")) or _legacy_component_scores(features)
-    actual_metric_values = _loose_mapping(candidate.get("actual_metric_values")) or features
-    hit_fields = _loose_mapping(candidate.get("hit_fields")) or _legacy_hit_fields(features)
-    tie_break_fields = _loose_mapping(candidate.get("tie_break_fields")) or _legacy_tie_break_fields(features)
+    component_scores = _loose_mapping(candidate.get("component_scores"))
+    actual_metric_values = _loose_mapping(candidate.get("actual_metric_values"))
+    hit_fields = _loose_mapping(candidate.get("hit_fields"))
+    tie_break_fields = _loose_mapping(candidate.get("tie_break_fields"))
     return {
         "rank": _first_text(candidate.get("rank"), "-"),
         "ticker": _first_text(candidate.get("ticker"), "-"),
@@ -542,36 +542,6 @@ def _candidate_row_summary(candidate: Mapping[str, object]) -> dict[str, str]:
         "data_quality": _first_text(candidate.get("data_quality"), "-"),
         "source_summary": _first_text(candidate.get("source_summary"), "-"),
     }
-
-
-def _legacy_component_scores(values: Mapping[str, object]) -> dict[str, object]:
-    keys = {
-        "strategy_hit_coverage_score",
-        "strategy_coverage_score",
-        "strategy_strength_score",
-        "strategy_inner_strength_score",
-        "rps_trend_score",
-        "liquidity_score",
-        "liquidity_tradability_score",
-        "tradability_score",
-        "industry_theme_strength_score",
-        "industry_theme_score",
-        "evidence_completeness_score",
-    }
-    return {key: value for key, value in values.items() if key in keys or key.endswith("_subscore")}
-
-
-def _legacy_hit_fields(values: Mapping[str, object]) -> dict[str, object]:
-    return {
-        key: value
-        for key, value in values.items()
-        if key.startswith("hit_") or key.startswith("strategy_hit_") or key.endswith("_hit")
-    }
-
-
-def _legacy_tie_break_fields(values: Mapping[str, object]) -> dict[str, object]:
-    candidates = ("score", "amount", "volume", "vol_ratio", "data_gap_penalty_score", "risk_penalty_score")
-    return {key: values[key] for key in candidates if key in values}
 
 
 def _strategy_hit_lines(candidates: list[object]) -> tuple[str, ...]:

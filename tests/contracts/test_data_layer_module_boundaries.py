@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from claw_trade.data_gateway import models
-from claw_trade.data_gateway import execution
-
+from claw_trade.data_gateway import execution, models
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_LAYER_ROOT = REPO_ROOT / "src/claw_trade/data_gateway"

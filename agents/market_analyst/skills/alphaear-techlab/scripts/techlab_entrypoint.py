@@ -10,14 +10,22 @@ SKILL_SCRIPTS_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = SKILL_SCRIPTS_DIR.parents[2]
 
 try:
-    from .chart_engine import ChartInputInsufficientHistoryError, ChartRuntimeUnavailableError, render_market_charts
+    from .chart_engine import (
+        ChartInputInsufficientHistoryError,
+        ChartRuntimeUnavailableError,
+        render_market_charts,
+    )
     from .indicator_engine import IndicatorRuntimeUnavailableError, analyze_market_frame
-    from .market_data_provider import NoMarketDataError, load_price_frame
+    from .market_data_provider import NoMarketDataError, load_market_price_frame
 except ImportError:
     # 中文注释：OpenClaw 按包加载，单测按脚本目录直接加载；这里只兼容导入方式，不改变运行数据来源。
-    from chart_engine import ChartInputInsufficientHistoryError, ChartRuntimeUnavailableError, render_market_charts
+    from chart_engine import (
+        ChartInputInsufficientHistoryError,
+        ChartRuntimeUnavailableError,
+        render_market_charts,
+    )
     from indicator_engine import IndicatorRuntimeUnavailableError, analyze_market_frame
-    from market_data_provider import NoMarketDataError, load_price_frame
+    from market_data_provider import NoMarketDataError, load_market_price_frame
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -123,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "market-pack"
             else args.start_date
         )
-        frame = load_price_frame(ticker=args.ticker, start_date=load_start_date, end_date=args.end_date)
+        frame = load_market_price_frame(ticker=args.ticker, start_date=load_start_date, end_date=args.end_date)
         if frame.empty:
             return emit_error("no_market_data", f"no price rows available for {args.ticker}")
         bundle = analyze_market_frame(frame, ticker=args.ticker)

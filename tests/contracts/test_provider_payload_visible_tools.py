@@ -4,13 +4,11 @@ import json
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.manifest import ApprovedManifest, ArtifactFlowError
 from claw_trade.config.stage_policy import load_stage_policy
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 from claw_trade.workflow.models import Stage
 from claw_trade.workflow.workers import all_worker_ids
-
 
 _CN_A_FRONTLINE_EXPECTED = {
     "market_analyst": ("claw_get_market_pack",),

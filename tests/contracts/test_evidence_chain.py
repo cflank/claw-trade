@@ -4,11 +4,16 @@ from dataclasses import dataclass
 
 from claw_trade.data_gateway.execution.fetch_engine import FetchResult
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
-from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
+from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.pipeline import IngestPipeline
 from claw_trade.data_gateway.ingest.raw_store import RawStore
-from claw_trade.data_gateway.warehouse import ALLOWED_MONGO_COLLECTIONS, DatasetRepository, Warehouse
+from claw_trade.data_gateway.warehouse import (
+    ALLOWED_MONGO_COLLECTIONS,
+    DatasetRepository,
+    Warehouse,
+)
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
 
 @dataclass(frozen=True)
@@ -141,10 +146,17 @@ class _MongoLikeDatabase:
         return self._collections[name]
 
 
-def test_ingest_store_writes_are_visible_across_repository_instances_with_shared_collection_adapter() -> None:
+def test_ingest_store_writes_are_visible_across_repository_instances_with_shared_collection_adapter(tmp_path) -> None:
     db = _MongoLikeDatabase()
-    writer_repo = DatasetRepository.from_database(db)
-    reader_repo = DatasetRepository.from_database(db)
+    columnar_root = tmp_path / "normalized"
+    writer_repo = DatasetRepository.from_database(
+        db,
+        normalized_columnar=NormalizedColumnarWarehouse(columnar_root),
+    )
+    reader_repo = DatasetRepository.from_database(
+        db,
+        normalized_columnar=NormalizedColumnarWarehouse(columnar_root),
+    )
     pipeline = IngestPipeline(
         raw_store=RawStore(repository=writer_repo),
         normalizer=Normalizer(),

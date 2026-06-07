@@ -8,7 +8,6 @@ from typing import Any
 
 from openviking_cli.utils.config import OPENVIKING_CONFIG_ENV
 
-
 _DISABLED_MESSAGE = (
     "OpenViking vectorization is unavailable because no embedding LLM is configured."
 )

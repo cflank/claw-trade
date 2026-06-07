@@ -3,15 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from claw_trade.data_gateway.models import Market
 from claw_trade.ui_backend.data_source_settings import (
+    SUPPORTED_DATA_SOURCE_TYPES,
     DataSourceSettingsService,
     InMemoryDataSourceStore,
     InMemorySecretStore,
     ProviderDisplayDecision,
     ProviderDisplayStatus,
-    SUPPORTED_DATA_SOURCE_TYPES,
     allowed_data_source_env_keys,
 )
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError

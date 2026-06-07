@@ -10,7 +10,6 @@ from claw_trade.data_gateway.models import FetchResult
 
 from .common import BatchPolicy, CredentialPolicy, EndpointCapability, LicensePolicy
 
-
 METADATA_ONLY_LICENSE = LicensePolicy(
     raw_storage_mode="metadata_only",
     normalized_storage_allowed=True,

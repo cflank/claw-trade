@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Iterable
 
 SECTION_NUMERALS: tuple[str, ...] = ("一", "二", "三", "四", "五", "六", "七", "八")

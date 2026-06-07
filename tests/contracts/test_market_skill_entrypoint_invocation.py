@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-
 
 PYTHON_ENTRYPOINT_RUNNER = """
 import importlib.util
@@ -89,47 +87,11 @@ def _parse_last_json_line(stdout: str) -> dict[str, object]:
     return json.loads(lines[-1])
 
 
-def _prepare_stock_db(db_path: Path) -> None:
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS stock_prices (
-                ticker TEXT,
-                date TEXT,
-                open REAL,
-                close REAL,
-                high REAL,
-                low REAL,
-                volume REAL,
-                change_pct REAL,
-                PRIMARY KEY (ticker, date)
-            )
-            """
-        )
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO stock_prices
-            (ticker, date, open, close, high, low, volume, change_pct)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            ("AAPL", "2026-05-03", 180.0, 182.0, 183.0, 179.5, 1000000.0, 1.1),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def test_stock_entrypoint_runs_via_importlib_wrapper(tmp_path: Path) -> None:
-    db_path = tmp_path / "signal_flux.db"
-    _prepare_stock_db(db_path)
-
+def test_stock_entrypoint_runs_via_importlib_wrapper() -> None:
     entrypoint = _worker_root() / "skills" / "alphaear-stock" / "scripts" / "stock_entrypoint.py"
     completed = _run_entrypoint(
         entrypoint,
         [
-            "--db-path",
-            str(db_path),
             "--skip-auto-update",
             "price",
             "--ticker",
@@ -151,8 +113,21 @@ def test_stock_entrypoint_runs_via_importlib_wrapper(tmp_path: Path) -> None:
         error = payload.get("error")
         assert isinstance(error, dict)
         message = str(error.get("message") or "")
-        assert "No module named" in message
+        assert "DATA_GATEWAY_MONGODB_URI" in message or "data_gateway" in message
     assert "attempted relative import with no known parent package" not in completed.stderr
+
+
+def test_stock_entrypoint_has_no_legacy_database_argument() -> None:
+    skill_root = _worker_root() / "skills" / "alphaear-stock"
+    entrypoint = skill_root / "scripts" / "stock_entrypoint.py"
+    stock_tools = skill_root / "scripts" / "stock_tools.py"
+
+    assert not (skill_root / "scripts" / "database_manager.py").exists()
+    for path in (entrypoint, stock_tools):
+        text = path.read_text(encoding="utf-8")
+        assert "--db-path" not in text
+        assert "database_manager" not in text
+        assert "DatabaseManager" not in text
 
 
 def test_techlab_entrypoint_runs_via_importlib_wrapper_without_relative_import_error() -> None:

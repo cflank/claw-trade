@@ -66,3 +66,27 @@ scripts/mcp-chrome.sh --start
 3. ready 后只通过 `playwright-win-chrome` MCP 做页面打开、点击、输入、读取和截图。
 4. 如果当前会话没有暴露页面动作工具，只能补 MCP client 连接同一个 `playwright-win-chrome` 服务。
 5. 固定路径不可用时报告 blocker，不切换到其它浏览器自动化方式。
+
+## 9222 被代理占用时
+
+如果 `scripts/mcp-chrome.sh --check` 显示 9222 ready，但 MCP 页面工具报：
+
+```text
+Unexpected status 404 ... /json/version/
+Browser webContents not found
+```
+
+先查 9222 监听进程。若监听者不是固定脚本启动的 Chrome，例如 `wmux.exe`，不要杀用户现有浏览器或代理进程。改用仓库脚本支持的临时端口：
+
+```bash
+scripts/mcp-chrome.sh --endpoint http://127.0.0.1:9223 --check
+```
+
+如果 9223 上是真实 Win11 Chrome，并且 `--check` 打印了 `WebSocket: ws://...`，兜底 MCP client 可以用这个 WebSocket endpoint 启动同一个 `playwright-win-chrome` MCP server：
+
+```bash
+PLAYWRIGHT_WIN_CHROME_CDP_ENDPOINT='ws://127.0.0.1:9223/devtools/browser/<id>' \
+  scripts/playwright-win-chrome-mcp-call.mjs call browser_snapshot '{"depth":4}'
+```
+
+这仍然是 `playwright-win-chrome` MCP 路径，不是 raw CDP 脚本。禁止用临时 PowerShell/Node CDP helper 代替 MCP 页面工具。

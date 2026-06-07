@@ -7,10 +7,12 @@ from datetime import date
 from types import SimpleNamespace
 
 import pytest
-
 from claw_trade.data_gateway.execution.fetch_engine import FetchTask
 from claw_trade.data_gateway.execution.managed_http import HttpRequestSpec, ManagedHttp
-from claw_trade.data_gateway.providers.base import CapabilityError, ensure_remote_success_is_auditable
+from claw_trade.data_gateway.providers.base import (
+    CapabilityError,
+    ensure_remote_success_is_auditable,
+)
 from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
 from claw_trade.data_gateway.providers.plugins import (
     build_cn_a_provider_plugin,
@@ -20,8 +22,8 @@ from claw_trade.data_gateway.providers.plugins import (
     iter_minimal_market_plugins,
 )
 from claw_trade.data_gateway.providers.plugins.cn_a import (
-    AStockSignalSocialPlugin,
     AkShareSocialNewsPlugin,
+    AStockSignalSocialPlugin,
     BaostockCNProviderPlugin,
     EastMoneyCNEventsPlugin,
     EastMoneyCNMarketDataPlugin,

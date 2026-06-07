@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import DataGap, IngestResult, NON_REMOTE_ATTEMPT_STATUSES
+from . import NON_REMOTE_ATTEMPT_STATUSES, DataGap, IngestResult
 from .attempt_log import AttemptLog
-from .normalizer import Normalizer
 from .normalized_store import NormalizedStore
+from .normalizer import Normalizer
 from .raw_store import RawStore
 
 

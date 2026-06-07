@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-
 from claw_trade.data_gateway.models import (
     DataGap,
     DataRequest,

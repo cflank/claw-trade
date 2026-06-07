@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from claw_trade.artifacts.manifest import ApprovedManifest

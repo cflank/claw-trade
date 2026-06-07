@@ -6,7 +6,10 @@ from typing import Any, Callable
 
 from claw_trade.instruments.resolver import resolve_instrument_identity
 from claw_trade.ui_contracts.enums import MarketProfile
-from claw_trade.ui_contracts.scope_guard import FirstVersionScopeError, assert_schedule_frequency_supported
+from claw_trade.ui_contracts.scope_guard import (
+    FirstVersionScopeError,
+    assert_schedule_frequency_supported,
+)
 from claw_trade.ui_contracts.user_dto import (
     ReportQueueSnapshotForUser,
     ReportTaskForUser,
@@ -372,7 +375,7 @@ class SchedulerService:
         return {
             "maxDebateRounds": int(source.get("maxDebateRounds", 1)),
             "maxRiskDiscussRounds": int(source.get("maxRiskDiscussRounds", 1)),
-            "frontlineExecutionMode": str(source.get("frontlineExecutionMode", "parallel")),
+            "frontlineExecutionMode": str(source.get("frontlineExecutionMode", "serial")),
             "defaultProfile": str(source.get("defaultProfile", profile)),
             "defaultMarket": str(source.get("defaultMarket", market.value)),
             "defaultCurrency": str(source.get("defaultCurrency", currency)),

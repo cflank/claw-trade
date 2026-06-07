@@ -58,6 +58,12 @@ class _Service:
         self.calls.append("execute_plan")
         return [self.get_data(item) for item in plan]
 
+    def resolve_company_names(self, *, market: Market | str, symbol_ids: list[str] | tuple[str, ...], dataset: str = "daily_bar"):
+        self.calls.append("resolve_company_names")
+        assert market == Market.CN_A or market == "CN_A"
+        assert dataset == "daily_bar"
+        return {"600519.SH": "贵州茅台"}
+
 
 def _request_payload(request_id: str) -> dict[str, object]:
     return {
@@ -128,3 +134,13 @@ def test_get_data_ready_requires_dataset_refs_and_missing_requires_gap() -> None
     assert ready.gaps == ()
     assert missing.dataset_refs == ()
     assert missing.gaps[0].market == Market.CN_A
+
+
+def test_resolve_company_names_delegates_to_data_service() -> None:
+    service = _Service()
+    api = DataAPI(service)
+
+    names = api.resolve_company_names(market="CN_A", symbol_ids=("600519.SH",))
+
+    assert names == {"600519.SH": "贵州茅台"}
+    assert service.calls == ["resolve_company_names"]

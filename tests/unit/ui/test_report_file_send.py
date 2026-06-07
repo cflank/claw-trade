@@ -4,7 +4,10 @@ from pathlib import Path
 
 from claw_trade.ui_backend import pdf_validation
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
-from claw_trade.ui_backend.pdf_runtime_capabilities import PdfRuntimeCapabilities, PdfRuntimeCapability
+from claw_trade.ui_backend.pdf_runtime_capabilities import (
+    PdfRuntimeCapabilities,
+    PdfRuntimeCapability,
+)
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder

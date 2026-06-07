@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
@@ -67,6 +66,32 @@ def test_single_flight_expired_owner_can_be_taken_over() -> None:
     sf = SingleFlight(now_fn=clock)
     owner1 = sf.acquire("key", lease_ttl_seconds=1)
     assert owner1.kind == "owner"
+    clock.tick(2)
+    owner2 = sf.acquire("key", lease_ttl_seconds=5)
+    assert owner2.kind == "owner"
+    assert owner2.owner_token != owner1.owner_token
+
+
+def test_single_flight_published_error_can_be_retried_after_lease_expiry() -> None:
+    clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
+    sf = SingleFlight(now_fn=clock)
+    owner1 = sf.acquire("key", lease_ttl_seconds=1)
+    assert owner1.kind == "owner"
+    assert sf.publish(
+        "key",
+        owner1.owner_token or "",
+        _Ingest(
+            status="failed",
+            dataset_refs=(),
+            raw_refs=("raw:failed",),
+            attempt_refs=("attempt:failed",),
+            gaps=(),
+        ),
+    )
+
+    immediate = sf.acquire("key", lease_ttl_seconds=1)
+    assert immediate.kind == "shared"
+
     clock.tick(2)
     owner2 = sf.acquire("key", lease_ttl_seconds=5)
     assert owner2.kind == "owner"

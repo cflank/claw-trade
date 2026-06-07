@@ -642,8 +642,19 @@ function toolResult(payload, isError = false) {
         text: modelFacingToolText(payload, isError),
       },
     ],
-    details: payload,
+    details: toolResultDetails(payload, isError),
   };
+}
+
+function toolResultDetails(payload, isError = false) {
+  if (!isError && isRecord(payload) && typeof payload.status === "string") {
+    const { status, ...rest } = payload;
+    return {
+      ...rest,
+      data_pack_status: status,
+    };
+  }
+  return payload;
 }
 
 function modelFacingToolText(payload, isError = false) {

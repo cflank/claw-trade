@@ -31,6 +31,19 @@ class Warehouse:
     def check_coverage(self, checks: Sequence[WarehouseCheck], coverage: CoverageRequirement | None = None) -> WarehouseResult:
         return self._check(checks, coverage, include_rows=False)
 
+    def resolve_company_names(
+        self,
+        *,
+        market: Market | str,
+        symbol_ids: Sequence[str],
+        dataset: str = "daily_bar",
+    ) -> Mapping[str, str]:
+        return self._repository.find_company_names_by_symbol_ids(
+            dataset=dataset,
+            market=self._enum_value(market),
+            symbol_ids=symbol_ids,
+        )
+
     def _check(
         self,
         checks: Sequence[WarehouseCheck],
@@ -68,6 +81,7 @@ class Warehouse:
                 date_range_end=check.date_range_end,
                 require_integrity_metadata=True,
                 include_row=include_rows,
+                fields=check.fields if include_rows else (),
             )
             if not records:
                 records = self._repository.query_normalized(
@@ -78,9 +92,14 @@ class Warehouse:
                     date_range_start=check.date_range_start,
                     date_range_end=check.date_range_end,
                     include_row=include_rows,
+                    fields=check.fields if include_rows else (),
                 )
             if not records:
                 gaps.append(self._warehouse_missing_gap(check))
+                coverage_by_request.append(self._coverage_summary(check, (), ()))
+                if "policy" not in freshness:
+                    freshness["policy"] = check.freshness_policy
+                freshness.setdefault("checked_requests", []).append(check.request_id)
                 continue
             records_for_check = self._records_for_check(records, check)
             valid_records, integrity_gaps = self._records_passing_integrity_check(
@@ -92,11 +111,24 @@ class Warehouse:
             records_for_check = valid_records
             if not records_for_check:
                 coverage_by_request.append(self._coverage_summary(check, (), ()))
+                if "policy" not in freshness:
+                    freshness["policy"] = check.freshness_policy
+                freshness.setdefault("checked_requests", []).append(check.request_id)
                 continue
             batch_count_gaps = self._batch_count_integrity_gaps(check, records_for_check)
             if batch_count_gaps:
                 gaps.extend(batch_count_gaps)
-                coverage_by_request.append(self._coverage_summary(check, records_for_check, ()))
+                coverage_by_request.append(
+                    self._coverage_summary(
+                        check,
+                        records_for_check,
+                        (),
+                        dataset_ref_limit=None if include_rows else _METADATA_REF_SAMPLE_LIMIT,
+                    )
+                )
+                if "policy" not in freshness:
+                    freshness["policy"] = check.freshness_policy
+                freshness.setdefault("checked_requests", []).append(check.request_id)
                 continue
 
             verdict = self._freshness_checker.evaluate(request=check, records=records_for_check)
@@ -108,7 +140,14 @@ class Warehouse:
             else:
                 dataset_refs.extend(record_refs[:_METADATA_REF_SAMPLE_LIMIT])
             gaps.extend(self._normalize_gaps(check, verdict.gaps))
-            coverage_by_request.append(self._coverage_summary(check, records_for_check, verdict.gaps))
+            coverage_by_request.append(
+                self._coverage_summary(
+                    check,
+                    records_for_check,
+                    verdict.gaps,
+                    dataset_ref_limit=None if include_rows else _METADATA_REF_SAMPLE_LIMIT,
+                )
+            )
 
             if "policy" not in freshness:
                 freshness["policy"] = check.freshness_policy
@@ -514,7 +553,24 @@ class Warehouse:
 
     @staticmethod
     def _materialize_rows(records: Sequence[DatasetRecord]) -> tuple[dict[str, Any], ...]:
-        return tuple(dict(record.row) for record in records)
+        rows: list[dict[str, Any]] = []
+        for record in records:
+            row = dict(record.row)
+            row.setdefault("dataset", record.dataset)
+            row.setdefault("market", record.market)
+            if record.symbol_id:
+                row.setdefault("symbol_id", record.symbol_id)
+            if record.universe_ref:
+                row.setdefault("universe_ref", record.universe_ref)
+            row.setdefault("granularity", record.granularity)
+            if record.period_start is not None:
+                row.setdefault("period_start", record.period_start)
+                if record.dataset == "daily_bar":
+                    row.setdefault("date", record.period_start)
+            if record.period_end is not None:
+                row.setdefault("period_end", record.period_end)
+            rows.append(row)
+        return tuple(rows)
 
     @staticmethod
     def _dataset_ref(record: DatasetRecord) -> str:
@@ -525,9 +581,12 @@ class Warehouse:
         check: WarehouseCheck,
         records: Sequence[DatasetRecord],
         raw_gaps: Sequence[dict[str, Any]],
+        *,
+        dataset_ref_limit: int | None = _METADATA_REF_SAMPLE_LIMIT,
     ) -> dict[str, Any]:
         starts = tuple(self._to_date(record.period_start) for record in records if record.period_start)
         ends = tuple(self._to_date(record.period_end) for record in records if record.period_end)
+        ref_records = records if dataset_ref_limit is None else records[:dataset_ref_limit]
         date_gap_details: Mapping[str, Any] = {}
         for gap in raw_gaps:
             if self._value(gap, "reason") != GapReason.DATE_RANGE_MISSING.value:
@@ -544,7 +603,7 @@ class Warehouse:
             "symbol_id": check.symbol_id,
             "universe_ref": check.universe_ref,
             "record_count": len(records),
-            "dataset_refs": tuple(self._dataset_ref(record) for record in records[:_METADATA_REF_SAMPLE_LIMIT]),
+            "dataset_refs": tuple(self._dataset_ref(record) for record in ref_records),
             "dataset_ref_count": len(records),
             "actual_start": date_gap_details.get("actual_start")
             or (min(starts).isoformat() if starts else None),
@@ -559,8 +618,22 @@ class Warehouse:
         scoped = granularity_matches if granularity_matches else tuple(records)
         if not granularity_matches:
             return scoped
+        field_matches = self._records_with_requested_fields(scoped, check)
+        if field_matches:
+            scoped = field_matches
         overlap_matches = tuple(record for record in scoped if self._record_overlaps_request(record, check))
         return overlap_matches or scoped
+
+    @staticmethod
+    def _records_with_requested_fields(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
+        requested = tuple(str(field).strip() for field in check.fields if str(field).strip())
+        if not requested:
+            return tuple(records)
+        return tuple(
+            record
+            for record in records
+            if all(field in record.field_set or field in record.row for field in requested)
+        )
 
     def _records_passing_integrity_check(
         self,

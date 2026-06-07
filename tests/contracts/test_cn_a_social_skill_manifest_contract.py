@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-
 from claw_trade.config.stage_policy import load_stage_policy
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 

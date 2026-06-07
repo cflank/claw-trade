@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import pytest
-
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
@@ -77,6 +76,66 @@ def test_confirmation_card_uses_id_field_contract() -> None:
     assert card["id"] == f"card-{draft.draft_id}"
     assert card["draftId"] == draft.draft_id
     assert "cardId" not in card
+
+
+def test_confirmation_card_and_task_use_data_layer_company_name() -> None:
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        assert market == "CN_A"
+        assert symbol_ids == ("688017.SH",)
+        return {"688017.SH": "绿的谐波"}
+
+    controller = ConfirmationController(queue, company_name_resolver=_resolver)
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="/report 688017.SH",
+        source_message_id="m-name",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    card = controller.build_confirmation_card(draft)
+    result = controller.confirm_intent_draft(request_id="c-name", draft_id=draft.draft_id, decision="confirm")
+    queued = queue.get_task_for_testing(result["task"]["taskId"])
+
+    assert card["instrumentName"] == "绿的谐波"
+    assert "名称：绿的谐波" in card["summaryLines"]
+    assert queued is not None
+    assert queued.company_name == "绿的谐波"
+    assert queued.instrument_name == "绿的谐波"
+
+
+def test_confirmation_card_and_task_show_unresolved_name_when_data_layer_has_no_name() -> None:
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        assert market == "CN_A"
+        assert symbol_ids == ("688017.SH",)
+        return {}
+
+    controller = ConfirmationController(queue, company_name_resolver=_resolver)
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="/report 688017.SH",
+        source_message_id="m-name-missing",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    card = controller.build_confirmation_card(draft)
+    result = controller.confirm_intent_draft(request_id="c-name-missing", draft_id=draft.draft_id, decision="confirm")
+    queued = queue.get_task_for_testing(result["task"]["taskId"])
+
+    assert card["instrumentName"] == "名称未查到"
+    assert "名称：名称未查到" in card["summaryLines"]
+    assert queued is not None
+    assert queued.company_name == "名称未查到"
+    assert queued.instrument_name == "名称未查到"
 
 
 def test_confirm_scheduled_and_price_alert_return_for_user_dto() -> None:

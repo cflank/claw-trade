@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.manifest import ApprovedManifest, ArtifactFlowError
 from claw_trade.artifacts.refs import (
     ApprovedMaterial,

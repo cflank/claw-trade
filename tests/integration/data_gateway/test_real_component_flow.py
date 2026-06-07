@@ -10,8 +10,8 @@ from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
 from claw_trade.data_gateway.coordination.service import DataService
 from claw_trade.data_gateway.execution.fetch_engine import FetchResult
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
-from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
+from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.pipeline import IngestPipeline
 from claw_trade.data_gateway.ingest.raw_store import RawStore
 from claw_trade.data_gateway.models import (

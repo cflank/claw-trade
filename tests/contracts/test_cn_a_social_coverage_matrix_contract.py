@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 DOCS_ROOT = Path("docs")
 LEGACY_ROOT = DOCS_ROOT / "reference" / "legacy"
 CANONICAL_DOCS = {

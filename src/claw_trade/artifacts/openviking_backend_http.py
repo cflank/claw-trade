@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
 import hashlib
 import io
 import json
 import os
+import uuid
+import zipfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
-import uuid
-import zipfile
 
 from claw_trade.artifacts.openviking_client import OpenVikingAccessError, OpenVikingStat
 from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialReceipt, MaterialReceiptVerification

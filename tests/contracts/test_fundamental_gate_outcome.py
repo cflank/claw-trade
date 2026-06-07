@@ -4,6 +4,10 @@ from pathlib import Path
 
 from claw_trade.guards.common import guard_passed
 from claw_trade.guards.fundamental_claim_gate import FundamentalReportClaim, UnsupportedClaim
+from claw_trade.guards.fundamental_claim_rules import (
+    CLAIM_DICTIONARY_REVISION_ID,
+    CLAIM_RULES_VERSION,
+)
 from claw_trade.guards.fundamental_gate_inputs import ClaimGateInput, MaterialGateInput
 from claw_trade.guards.fundamental_gate_outcome import (
     FABRICATION_OR_UNTRUSTED_FACTS,
@@ -15,7 +19,6 @@ from claw_trade.guards.fundamental_gate_outcome import (
     RetryBudgetState,
     decide_gate_outcome,
 )
-from claw_trade.guards.fundamental_claim_rules import CLAIM_DICTIONARY_REVISION_ID, CLAIM_RULES_VERSION
 
 
 def test_decide_gate_outcome_terminates_when_runtime_evidence_invalid(tmp_path: Path) -> None:

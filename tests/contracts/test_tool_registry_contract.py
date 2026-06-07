@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from claw_trade.config.profiles import ConfigError
 from claw_trade.config.stage_policy import StagePolicy
 from claw_trade.config.tool_names import (

@@ -23,6 +23,17 @@ function loadServerConfig() {
   if (!server?.command || !Array.isArray(server.args)) {
     throw new Error("Missing mcpServers.playwright-win-chrome in ~/.mcp.json");
   }
+  const cdpEndpoint = process.env.PLAYWRIGHT_WIN_CHROME_CDP_ENDPOINT;
+  if (cdpEndpoint) {
+    return {
+      ...server,
+      args: server.args.map((arg) =>
+        typeof arg === "string" && arg.includes("--cdp-endpoint ")
+          ? arg.replace(/--cdp-endpoint\s+\S+/, `--cdp-endpoint ${cdpEndpoint}`)
+          : arg
+      ),
+    };
+  }
   return server;
 }
 

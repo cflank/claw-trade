@@ -6,7 +6,6 @@ from pathlib import Path
 from claw_trade.guards.common import GuardResult, guard_failed, guard_passed
 from claw_trade.workflow.models import Stage, WorkerSpec
 
-
 _ALLOWED_OPENVIKING_ACCESS = {"none", "read", "write", "read_write"}
 
 

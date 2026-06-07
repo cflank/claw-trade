@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.manifest import ApprovedManifest
 from claw_trade.artifacts.refs import MaterialReadRef, OpenVikingReadCapability
 from claw_trade.runtime import request_builder

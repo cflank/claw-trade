@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 from uuid import uuid4
 
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
 ALLOWED_MONGO_COLLECTIONS: tuple[str, ...] = (
     "normalized_datasets",
@@ -93,7 +94,11 @@ _COLLECTION_INDEXES: dict[str, tuple[tuple[str, ...], ...]] = {
     "provider_rate_limits": (("rate_limit_ref",), ("rate_key_hash",)),
     "single_flight_calls": (("call_key_hash",),),
     "provider_result_cache": (("cache_key_hash",),),
-    "dataset_manifests": (("manifest_ref",),),
+    "dataset_manifests": (
+        ("manifest_ref",),
+        ("storage", "status", "dataset", "market"),
+        ("storage", "status", "dataset", "market", "period_start_min", "period_end_max"),
+    ),
     "maintenance_jobs": (("job_id",),),
 }
 
@@ -105,6 +110,7 @@ _DATASET_CHECKSUM_FIELDS = {
     "dataset_checksum_scope",
     "dataset_row_count",
 }
+_COMPANY_NAME_ROW_FIELDS = ("company_name", "name", "stock_name", "code_name", "security_name")
 
 
 @dataclass(frozen=True)
@@ -157,6 +163,14 @@ def is_provider_style_dataset_name(name: str) -> bool:
     if "." in lowered:
         return True
     return any(lowered.startswith(f"{prefix}_") for prefix in _PROVIDER_NAME_PREFIXES)
+
+
+def _company_name_from_row(row: Mapping[str, Any]) -> str | None:
+    for field in _COMPANY_NAME_ROW_FIELDS:
+        text = str(row.get(field) or "").strip()
+        if text:
+            return text
+    return None
 
 
 class _CollectionAdapter:
@@ -440,7 +454,15 @@ def _date_query_text(value: Any) -> str | None:
 
 
 def _matches_criteria(item: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
-    return all(_matches_value(_lookup_dotted(item, str(key)), value) for key, value in criteria.items())
+    for key, value in criteria.items():
+        if key == "$or":
+            branches = value if isinstance(value, (tuple, list)) else ()
+            if not any(isinstance(branch, Mapping) and _matches_criteria(item, branch) for branch in branches):
+                return False
+            continue
+        if not _matches_value(_lookup_dotted(item, str(key)), value):
+            return False
+    return True
 
 
 def _matches_value(actual: Any, expected: Any) -> bool:
@@ -509,8 +531,16 @@ class DatasetRepository:
         *,
         database: Any | None = None,
         collections: Mapping[str, Any] | None = None,
+        normalized_columnar: NormalizedColumnarWarehouse | None = None,
+        allow_normalized_mongo_fallback: bool = False,
+        allow_normalized_mongo_read: bool | None = None,
     ) -> None:
         self._lock = RLock()
+        self._normalized_columnar = normalized_columnar
+        self._allow_normalized_mongo_fallback = allow_normalized_mongo_fallback
+        self._allow_normalized_mongo_read = (
+            database is None if allow_normalized_mongo_read is None else allow_normalized_mongo_read
+        )
         self._collections: dict[str, _CollectionAdapter] = self._build_collection_adapters(
             database=database,
             collections=collections,
@@ -520,8 +550,20 @@ class DatasetRepository:
             self.insert_normalized(record)
 
     @classmethod
-    def from_database(cls, database: Any) -> "DatasetRepository":
-        return cls(database=database)
+    def from_database(
+        cls,
+        database: Any,
+        *,
+        normalized_columnar: NormalizedColumnarWarehouse | None = None,
+        allow_normalized_mongo_fallback: bool = False,
+        allow_normalized_mongo_read: bool = False,
+    ) -> "DatasetRepository":
+        return cls(
+            database=database,
+            normalized_columnar=normalized_columnar,
+            allow_normalized_mongo_fallback=allow_normalized_mongo_fallback,
+            allow_normalized_mongo_read=allow_normalized_mongo_read,
+        )
 
     @staticmethod
     def collection_names() -> tuple[str, ...]:
@@ -534,8 +576,7 @@ class DatasetRepository:
         dataset_ref = str(record_dict.get("dataset_ref") or self._build_dataset_ref(record_dict))
         record_dict["dataset_ref"] = dataset_ref
         record_dict = self._ensure_dataset_checksum((record_dict,))[0]
-        with self._lock:
-            self._collection("normalized_datasets").set(dataset_ref, record_dict)
+        self._persist_normalized_records(((dataset_ref, record_dict),))
 
     def upsert_normalized_document(self, record: Mapping[str, Any]) -> str:
         record_dict = self._normalize_record(record)
@@ -544,8 +585,7 @@ class DatasetRepository:
         dataset_ref = str(record_dict.get("dataset_ref") or self._build_dataset_ref(record_dict))
         record_dict["dataset_ref"] = dataset_ref
         record_dict = self._ensure_dataset_checksum((record_dict,))[0]
-        with self._lock:
-            self._collection("normalized_datasets").set(dataset_ref, record_dict)
+        self._persist_normalized_records(((dataset_ref, record_dict),))
         return dataset_ref
 
     def upsert_normalized_documents(self, records: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
@@ -561,11 +601,188 @@ class DatasetRepository:
             items.append((dataset_ref, record_dict))
         checked_records = self._ensure_dataset_checksum(tuple(record for _ref, record in items))
         if items:
-            with self._lock:
-                self._collection("normalized_datasets").set_many(
-                    tuple((ref, record) for (ref, _old), record in zip(items, checked_records, strict=True))
-                )
+            self._persist_normalized_records(
+                tuple((ref, record) for (ref, _old), record in zip(items, checked_records, strict=True))
+            )
         return tuple(dict.fromkeys(refs))
+
+    def _persist_normalized_records(self, items: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
+        if not items:
+            return
+        if self._normalized_columnar is not None:
+            for group in self._columnar_record_groups(tuple(record for _ref, record in items)):
+                result = self._normalized_columnar.write_records(group)
+                if result.manifest:
+                    self._write_columnar_manifest_with_supersession(result.manifest, result.dataset_refs)
+            return
+        with self._lock:
+            self._collection("normalized_datasets").set_many(tuple((ref, dict(record)) for ref, record in items))
+
+    @staticmethod
+    def _columnar_record_groups(records: Sequence[Mapping[str, Any]]) -> tuple[tuple[Mapping[str, Any], ...], ...]:
+        groups: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
+        for record in records:
+            key = (
+                str(record.get("dataset") or "unknown_dataset"),
+                str(record.get("market") or "unknown_market"),
+                str(record.get("granularity") or "unknown"),
+            )
+            groups.setdefault(key, []).append(record)
+        return tuple(tuple(group) for group in groups.values())
+
+    def _write_columnar_manifest_with_supersession(
+        self,
+        manifest: Mapping[str, Any],
+        dataset_refs: Sequence[str],
+    ) -> None:
+        incoming_refs = {str(ref) for ref in dataset_refs if str(ref).strip()}
+        new_manifest = dict(manifest)
+        manifest_ref = str(new_manifest.get("manifest_ref") or f"manifest:{uuid4().hex[:12]}")
+        new_manifest["manifest_ref"] = manifest_ref
+        superseded_refs: list[str] = []
+        now = datetime.now(tz=UTC)
+        criteria = self._columnar_manifest_base_criteria(
+            dataset=str(new_manifest.get("dataset") or ""),
+            market=str(new_manifest.get("market") or ""),
+        )
+        with self._lock:
+            collection = self._collection("dataset_manifests")
+            for existing in collection.find(criteria):
+                existing_ref = str(existing.get("manifest_ref") or "").strip()
+                if not existing_ref or existing_ref == manifest_ref:
+                    continue
+                existing_dataset_refs = {str(ref) for ref in tuple(existing.get("dataset_refs", ()) or ())}
+                if not incoming_refs.intersection(existing_dataset_refs):
+                    continue
+                updated = dict(existing)
+                updated["status"] = "superseded"
+                updated["superseded_at"] = now
+                updated["superseded_by_manifest_ref"] = manifest_ref
+                updated["superseded_by_dataset_refs"] = tuple(sorted(incoming_refs))
+                collection.set(existing_ref, updated)
+                superseded_refs.append(existing_ref)
+            if superseded_refs:
+                new_manifest["supersedes_manifest_refs"] = tuple(superseded_refs)
+            collection.set(manifest_ref, new_manifest)
+
+    def _normalized_columnar_manifests(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        date_range_start: Any | None,
+        date_range_end: Any | None,
+    ) -> tuple[dict[str, Any], ...]:
+        start = _date_query_text(date_range_start)
+        end = _date_query_text(date_range_end)
+        criteria = self._columnar_manifest_query_criteria(
+            dataset=dataset,
+            market=market,
+            start=start,
+            end=end,
+        )
+        with self._lock:
+            manifests = self._collection("dataset_manifests").find(criteria)
+        return tuple(
+            manifest
+            for manifest in manifests
+            if self._columnar_manifest_matches(
+                manifest,
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                start=start,
+                end=end,
+            )
+        )
+
+    @staticmethod
+    def _columnar_manifest_base_criteria(*, dataset: str, market: str) -> dict[str, Any]:
+        criteria: dict[str, Any] = {"storage": "parquet", "status": "active"}
+        if dataset:
+            criteria["dataset"] = dataset
+        if market:
+            criteria["market"] = market
+        return criteria
+
+    @classmethod
+    def _columnar_manifest_query_criteria(
+        cls,
+        *,
+        dataset: str,
+        market: str,
+        start: str | None,
+        end: str | None,
+    ) -> dict[str, Any]:
+        criteria = cls._columnar_manifest_base_criteria(dataset=dataset, market=market)
+        if end:
+            criteria["period_start_min"] = {"$lte": end}
+        if start:
+            criteria["period_end_max"] = {"$gte": start}
+        return criteria
+
+    @staticmethod
+    def _columnar_manifest_matches(
+        manifest: Mapping[str, Any],
+        *,
+        dataset: str,
+        market: str,
+        symbol_id: str | None,
+        universe_ref: str | None,
+        start: str | None,
+        end: str | None,
+    ) -> bool:
+        if manifest.get("storage") != "parquet" or manifest.get("status", "active") != "active":
+            return False
+        if str(manifest.get("dataset") or "") != dataset or str(manifest.get("market") or "") != market:
+            return False
+        symbol_ids = tuple(str(item) for item in tuple(manifest.get("symbol_ids", ()) or ()))
+        if symbol_id and symbol_ids and symbol_id not in symbol_ids:
+            return False
+        universe_refs = tuple(str(item) for item in tuple(manifest.get("universe_refs", ()) or ()))
+        if universe_ref and universe_refs and universe_ref not in universe_refs:
+            return False
+        manifest_start = _date_query_text(manifest.get("period_start_min"))
+        manifest_end = _date_query_text(manifest.get("period_end_max"))
+        if end and manifest_start and manifest_start > end:
+            return False
+        if start and manifest_end and manifest_end < start:
+            return False
+        return True
+
+    def _coverage_summary_from_columnar(self, summary: Mapping[str, Any]) -> DatasetCoverageSummary:
+        return DatasetCoverageSummary(
+            record_count=self._optional_int(summary.get("record_count")) or 0,
+            dataset_refs=tuple(str(ref) for ref in self._tuple_values(summary.get("dataset_refs")) if str(ref).strip()),
+            ranges=self._range_values(summary.get("ranges")),
+            starts=self._tuple_values(summary.get("starts")),
+            ends=self._tuple_values(summary.get("ends")),
+            field_sets=tuple(
+                tuple(str(field) for field in self._tuple_values(item))
+                for item in self._tuple_values(summary.get("field_sets"))
+            ),
+            source_role_sets=tuple(
+                tuple(str(role) for role in self._tuple_values(item))
+                for item in self._tuple_values(summary.get("source_role_sets"))
+            ),
+            freshest_as_of=self._optional_datetime(summary.get("freshest_as_of")),
+            freshest_until=self._optional_datetime(summary.get("freshest_until")),
+            checksum_counts=tuple(
+                DatasetChecksumCoverage(
+                    checksum=str(row.get("checksum") or ""),
+                    actual_count=self._optional_int(row.get("actual_count")) or 0,
+                    expected_min=self._optional_int(row.get("expected_min")),
+                    expected_max=self._optional_int(row.get("expected_max")),
+                    min_start=row.get("min_start"),
+                    max_end=row.get("max_end"),
+                )
+                for row in self._tuple_values(summary.get("checksum_counts"))
+                if isinstance(row, Mapping) and row.get("checksum")
+            ),
+        )
 
     def query_normalized(
         self,
@@ -578,8 +795,39 @@ class DatasetRepository:
         date_range_end: Any | None = None,
         require_integrity_metadata: bool = False,
         include_row: bool = True,
+        fields: Sequence[str] = (),
     ) -> tuple[DatasetRecord, ...]:
         matched: list[DatasetRecord] = []
+        if self._normalized_columnar is not None:
+            manifests = self._normalized_columnar_manifests(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+            )
+            columnar_records = self._normalized_columnar.query_documents(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+                require_integrity_metadata=require_integrity_metadata,
+                include_row=include_row,
+                fields=fields,
+                manifests=manifests,
+            )
+            if columnar_records:
+                return tuple(
+                    self._dataset_record_from_document(record, dataset=dataset, market=market, fields=fields)
+                    for record in columnar_records
+                )
+            if not self._allow_normalized_mongo_fallback:
+                return ()
+        if not self._allow_normalized_mongo_read:
+            return ()
         criteria = self._normalized_query_criteria(
             dataset=dataset,
             market=market,
@@ -592,28 +840,7 @@ class DatasetRepository:
         with self._lock:
             records = self._collection("normalized_datasets").find(criteria, include_row=include_row)
         for record in records:
-            row = record.get("row")
-            matched.append(
-                DatasetRecord(
-                    dataset_ref=str(record.get("dataset_ref")),
-                    dataset=dataset,
-                    market=market,
-                    symbol_id=record.get("symbol_id"),
-                    universe_ref=record.get("universe_ref"),
-                    granularity=str(record.get("granularity", "")),
-                    period_start=record.get("period_start"),
-                    period_end=record.get("period_end"),
-                    field_set=tuple(record.get("field_set", ())),
-                    as_of=record.get("as_of"),
-                    fresh_until=record.get("fresh_until"),
-                    source_roles=tuple(record.get("source_roles", ())),
-                    dataset_checksum=record.get("dataset_checksum"),
-                    dataset_checksum_algorithm=record.get("dataset_checksum_algorithm"),
-                    dataset_checksum_scope=record.get("dataset_checksum_scope"),
-                    row=row if isinstance(row, Mapping) else {},
-                    dataset_row_count=self._optional_int(record.get("dataset_row_count")),
-                )
-            )
+            matched.append(self._dataset_record_from_document(record, dataset=dataset, market=market, fields=fields))
         return tuple(matched)
 
     @staticmethod
@@ -645,6 +872,39 @@ class DatasetRepository:
             criteria["dataset_row_count"] = {"$gt": 0}
         return criteria
 
+    def _dataset_record_from_document(
+        self,
+        record: Mapping[str, Any],
+        *,
+        dataset: str,
+        market: str,
+        fields: Sequence[str] = (),
+    ) -> DatasetRecord:
+        row = record.get("row")
+        row_payload = row if isinstance(row, Mapping) else {}
+        requested_fields = tuple(dict.fromkeys(str(field).strip() for field in fields if str(field).strip()))
+        if requested_fields:
+            row_payload = {field: row_payload[field] for field in requested_fields if field in row_payload}
+        return DatasetRecord(
+            dataset_ref=str(record.get("dataset_ref")),
+            dataset=dataset,
+            market=market,
+            symbol_id=record.get("symbol_id"),
+            universe_ref=record.get("universe_ref"),
+            granularity=str(record.get("granularity", "")),
+            period_start=record.get("period_start"),
+            period_end=record.get("period_end"),
+            field_set=tuple(record.get("field_set", ())),
+            as_of=record.get("as_of"),
+            fresh_until=record.get("fresh_until"),
+            source_roles=tuple(record.get("source_roles", ())),
+            dataset_checksum=record.get("dataset_checksum"),
+            dataset_checksum_algorithm=record.get("dataset_checksum_algorithm"),
+            dataset_checksum_scope=record.get("dataset_checksum_scope"),
+            row=row_payload,
+            dataset_row_count=self._optional_int(record.get("dataset_row_count")),
+        )
+
     def iter_normalized(
         self,
         *,
@@ -657,6 +917,36 @@ class DatasetRepository:
         require_integrity_metadata: bool = False,
         include_row: bool = True,
     ) -> Iterable[DatasetRecord]:
+        if self._normalized_columnar is not None:
+            manifests = self._normalized_columnar_manifests(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+            )
+            columnar_records = self._normalized_columnar.iter_documents(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+                require_integrity_metadata=require_integrity_metadata,
+                include_row=include_row,
+                manifests=manifests,
+            )
+            yielded = False
+            for record in columnar_records:
+                yielded = True
+                yield self._dataset_record_from_document(record, dataset=dataset, market=market)
+            if yielded:
+                return
+            if not self._allow_normalized_mongo_fallback:
+                return
+        if not self._allow_normalized_mongo_read:
+            return
         criteria = self._normalized_query_criteria(
             dataset=dataset,
             market=market,
@@ -669,26 +959,7 @@ class DatasetRepository:
         with self._lock:
             records = self._collection("normalized_datasets").iter_find(criteria, include_row=include_row)
             for record in records:
-                row = record.get("row")
-                yield DatasetRecord(
-                    dataset_ref=str(record.get("dataset_ref")),
-                    dataset=dataset,
-                    market=market,
-                    symbol_id=record.get("symbol_id"),
-                    universe_ref=record.get("universe_ref"),
-                    granularity=str(record.get("granularity", "")),
-                    period_start=record.get("period_start"),
-                    period_end=record.get("period_end"),
-                    field_set=tuple(record.get("field_set", ())),
-                    as_of=record.get("as_of"),
-                    fresh_until=record.get("fresh_until"),
-                    source_roles=tuple(record.get("source_roles", ())),
-                    dataset_checksum=record.get("dataset_checksum"),
-                    dataset_checksum_algorithm=record.get("dataset_checksum_algorithm"),
-                    dataset_checksum_scope=record.get("dataset_checksum_scope"),
-                    row=row if isinstance(row, Mapping) else {},
-                    dataset_row_count=self._optional_int(record.get("dataset_row_count")),
-                )
+                yield self._dataset_record_from_document(record, dataset=dataset, market=market)
 
     def aggregate_normalized_coverage(
         self,
@@ -702,6 +973,32 @@ class DatasetRepository:
         require_integrity_metadata: bool = False,
         sample_limit: int = 50,
     ) -> DatasetCoverageSummary | None:
+        if self._normalized_columnar is not None:
+            manifests = self._normalized_columnar_manifests(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+            )
+            columnar_summary = self._normalized_columnar.aggregate_coverage(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+                require_integrity_metadata=require_integrity_metadata,
+                manifests=manifests,
+                sample_limit=sample_limit,
+            )
+            if columnar_summary is not None:
+                return self._coverage_summary_from_columnar(columnar_summary)
+            if not self._allow_normalized_mongo_fallback:
+                return None
+        if not self._allow_normalized_mongo_read:
+            return None
         criteria = self._normalized_query_criteria(
             dataset=dataset,
             market=market,
@@ -790,6 +1087,31 @@ class DatasetRepository:
         date_range_end: Any | None = None,
         require_integrity_metadata: bool = False,
     ) -> int:
+        if self._normalized_columnar is not None:
+            manifests = self._normalized_columnar_manifests(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+            )
+            count = self._normalized_columnar.count_documents(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+                require_integrity_metadata=require_integrity_metadata,
+                manifests=manifests,
+            )
+            if count:
+                return count
+            if not self._allow_normalized_mongo_fallback:
+                return 0
+        if not self._allow_normalized_mongo_read:
+            return 0
         criteria = self._normalized_query_criteria(
             dataset=dataset,
             market=market,
@@ -812,16 +1134,43 @@ class DatasetRepository:
         symbols = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbol_ids if str(symbol).strip()))
         if not symbols:
             return {}
+        names = self._find_company_names_from_normalized_query(dataset=dataset, market=market, symbols=symbols)
+        if len(names) == len(symbols):
+            return names
+        if not self._allow_normalized_mongo_read:
+            return names
         criteria: dict[str, Any] = {
             "dataset": dataset,
             "market": market,
-            "symbol_id": {"$in": symbols},
-            "row.company_name": {"$exists": True, "$ne": None},
+            "symbol_id": {"$in": tuple(symbol for symbol in symbols if symbol not in names)},
+            "$or": tuple({f"row.{field}": {"$exists": True, "$ne": None}} for field in _COMPANY_NAME_ROW_FIELDS),
         }
         pipeline: tuple[Mapping[str, Any], ...] = (
             {"$match": criteria},
             {"$sort": {"period_end": -1, "period_start": -1}},
-            {"$group": {"_id": "$symbol_id", "company_name": {"$first": "$row.company_name"}}},
+            {
+                "$group": {
+                    "_id": "$symbol_id",
+                    "company_name": {
+                        "$first": {
+                            "$ifNull": [
+                                "$row.company_name",
+                                {
+                                    "$ifNull": [
+                                        "$row.name",
+                                        {
+                                            "$ifNull": [
+                                                "$row.stock_name",
+                                                {"$ifNull": ["$row.code_name", "$row.security_name"]},
+                                            ]
+                                        },
+                                    ]
+                                },
+                            ]
+                        }
+                    },
+                }
+            },
         )
         with self._lock:
             rows = self._collection("normalized_datasets").aggregate(pipeline)
@@ -831,8 +1180,9 @@ class DatasetRepository:
                 return {
                     str(row.get("_id")): text
                     for row in rows
+                    if str(row.get("_id")) not in names
                     if (text := str(row.get("company_name") or "").strip())
-                }
+                } | names
 
         sorted_records = sorted(
             records,
@@ -842,7 +1192,6 @@ class DatasetRepository:
             ),
             reverse=True,
         )
-        names: dict[str, str] = {}
         for record in sorted_records:
             symbol = str(record.get("symbol_id") or "").strip()
             if not symbol or symbol in names:
@@ -850,9 +1199,42 @@ class DatasetRepository:
             row = record.get("row")
             if not isinstance(row, Mapping):
                 continue
-            company_name = str(row.get("company_name") or "").strip()
+            company_name = _company_name_from_row(row)
             if company_name:
                 names[symbol] = company_name
+        return names
+
+    def _find_company_names_from_normalized_query(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbols: Sequence[str],
+    ) -> dict[str, str]:
+        names: dict[str, str] = {}
+        for symbol in symbols:
+            records = self.query_normalized(
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol,
+                universe_ref=None,
+                require_integrity_metadata=True,
+                include_row=True,
+                fields=_COMPANY_NAME_ROW_FIELDS,
+            )
+            sorted_records = sorted(
+                records,
+                key=lambda record: (
+                    _date_query_text(record.period_end) or "",
+                    _date_query_text(record.period_start) or "",
+                ),
+                reverse=True,
+            )
+            for record in sorted_records:
+                company_name = _company_name_from_row(record.row)
+                if company_name:
+                    names[symbol] = company_name
+                    break
         return names
 
     def insert_raw_payload(self, record: Mapping[str, Any]) -> str:
@@ -867,9 +1249,13 @@ class DatasetRepository:
         with self._lock:
             return self._collection("raw_payloads").get(raw_ref)
 
-    def get_normalized_document(self, dataset_ref: str) -> dict[str, Any] | None:
+    def get_normalized_document_for_maintenance(self, dataset_ref: str) -> dict[str, Any] | None:
         with self._lock:
             return self._collection("normalized_datasets").get(dataset_ref)
+
+    def count_normalized_documents_for_maintenance(self, criteria: Mapping[str, Any]) -> int:
+        with self._lock:
+            return self._collection("normalized_datasets").count(criteria)
 
     def insert_provider_attempt(self, record: Mapping[str, Any]) -> str:
         record_dict = dict(record)
@@ -972,7 +1358,7 @@ class DatasetRepository:
         with self._lock:
             self._collection("provider_result_cache").pop(cache_key)
 
-    def delete_normalized_documents(self, criteria: Mapping[str, Any]) -> int:
+    def delete_normalized_documents_for_maintenance(self, criteria: Mapping[str, Any]) -> int:
         with self._lock:
             return self._collection("normalized_datasets").delete_many(criteria)
 
@@ -1253,6 +1639,20 @@ class DatasetRepository:
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _optional_datetime(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return datetime.fromisoformat(text)
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def _tuple_values(value: Any) -> tuple[Any, ...]:

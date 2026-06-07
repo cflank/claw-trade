@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.manifest import ApprovedManifest, ArtifactFlowError, ManifestStore
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index
 from claw_trade.workflow.models import Stage

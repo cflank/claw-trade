@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.ui_backend.pdf_markdown_cleaner import PdfMarkdownCleaner
 from claw_trade.ui_backend.report_repository import ReportRepository
 

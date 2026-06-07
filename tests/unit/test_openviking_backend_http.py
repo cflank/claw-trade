@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import hashlib
 import io
 import json
-from pathlib import Path
 import threading
-from urllib import parse
 import zipfile
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from urllib import parse
 
 import pytest
-
 from claw_trade.artifacts.openviking_backend_http import (
     OpenVikingHttpBackend,
     create_default_backend,

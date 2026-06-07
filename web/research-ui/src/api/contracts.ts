@@ -76,6 +76,7 @@ export interface SelectionMessageMetadata {
   unavailableCode?: string | null;
   failureReason?: string | null;
   readerReportMarkdown?: string | null;
+  readerReportPath?: string | null;
   dataRefresh?: {
     status: string;
     selectionRunId?: string | null;
@@ -94,6 +95,7 @@ export interface SelectionReportForUser {
 }
 
 export interface SelectionProgressForUser {
+  kind?: 'selection_workflow' | 'data_refresh';
   status: 'running' | 'completed' | 'failed';
   statusLabel: string;
   command: string;

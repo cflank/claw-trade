@@ -7,8 +7,8 @@ from claw_trade.data_gateway.execution import GateDecision, ResultRefs
 from claw_trade.data_gateway.execution.fetch_engine import FetchResult
 from claw_trade.data_gateway.ingest import IngestResult
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
-from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
+from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.pipeline import IngestPipeline
 from claw_trade.data_gateway.ingest.raw_store import RawStore
 
@@ -103,7 +103,7 @@ def test_normalized_store_writes_one_checksum_for_batch() -> None:
         )
     )
 
-    documents = tuple(repo.get_normalized_document(ref) for ref in refs)
+    documents = tuple(repo.get_normalized_document_for_maintenance(ref) for ref in refs)
     assert len(documents) == 2
     checksums = {str(document["dataset_checksum"]) for document in documents if document is not None}
     assert len(checksums) == 1
@@ -136,7 +136,7 @@ def test_ingest_pipeline_normalizes_trade_date_and_returns_auditable_dataset_ref
     ingest = pipeline.ingest(result, batch)
 
     assert ingest.dataset_refs
-    stored = repo.get_normalized_document(ingest.dataset_refs[0])
+    stored = repo.get_normalized_document_for_maintenance(ingest.dataset_refs[0])
     assert stored is not None
     assert stored["period_start"] == date(2026, 5, 31)
     assert stored["period_end"] == date(2026, 5, 31)
@@ -188,7 +188,7 @@ def test_ingest_pipeline_preserves_universe_ref_for_warehouse_recheck() -> None:
     ingest = pipeline.ingest(result, batch)
 
     assert len(ingest.dataset_refs) == 2
-    stored_documents = tuple(repo.get_normalized_document(ref) for ref in ingest.dataset_refs)
+    stored_documents = tuple(repo.get_normalized_document_for_maintenance(ref) for ref in ingest.dataset_refs)
     assert all(document is not None and document["universe_ref"] == "all_a_shares" for document in stored_documents)
     assert all(
         document is not None and document["row"]["universe_ref"] == "all_a_shares"
@@ -312,8 +312,8 @@ def test_normalized_store_keeps_same_period_different_field_sets_separate() -> N
     )
 
     assert open_interest_refs != netflow_refs
-    assert repo.get_normalized_document(open_interest_refs[0])["row"]["open_interest"] == 100.0
-    assert repo.get_normalized_document(netflow_refs[0])["row"]["net_inflow"] == 25.0
+    assert repo.get_normalized_document_for_maintenance(open_interest_refs[0])["row"]["open_interest"] == 100.0
+    assert repo.get_normalized_document_for_maintenance(netflow_refs[0])["row"]["net_inflow"] == 25.0
 
     result = Warehouse(repo).check(
         (
@@ -371,7 +371,7 @@ def test_normalized_store_field_set_excludes_empty_values() -> None:
         )
     )
 
-    stored = repo.get_normalized_document(refs[0])
+    stored = repo.get_normalized_document_for_maintenance(refs[0])
     assert "tvl" not in stored["field_set"]
 
     result = Warehouse(repo).check(

@@ -5,23 +5,30 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from claw_trade.data_gateway.models import DataGap, DataRequest, DataResult, DataResultStatus, Market
-from claw_trade.data_gateway.warehouse import DatasetRepository
-from claw_trade.data_gateway.selection_batch import (
-    _LocalFeatureRowsResult,
+from claw_trade.data_gateway._selection_batch import (
     _daily_dates_between,
     _history_row,
-    _latest_history_date,
+    _LocalFeatureRowsResult,
     _refresh_request_chunks,
     _selection_feature_rows_from_repository,
     _selection_missing_strategy_required_fields,
     _selection_strategy_required_source_fields,
 )
-from claw_trade.data_gateway.selection_batch import (
+from claw_trade.data_gateway._selection_batch import (
     fetch_selection_batch_from_data_gateway as fetch_gateway_selection_batch,
+)
+from claw_trade.data_gateway._selection_batch import (
     load_cn_a_selection_v1_strategy as load_gateway_strategy,
 )
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.models import (
+    DataGap,
+    DataRequest,
+    DataResult,
+    DataResultStatus,
+    Market,
+)
+from claw_trade.data_gateway.warehouse import DatasetRepository
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.data_job import SelectionProviderBatchResult
 from claw_trade.selection.engine import FilteredUniverse, score_candidates
 from claw_trade.selection.features import (
@@ -40,10 +47,13 @@ from claw_trade.selection.models import (
 from claw_trade.selection.provider_batch import (
     _smoke_cli_run,
     build_selection_provider_batch_plan,
-    fetch_selection_batch_from_data_gateway as fetch_selection_batch_facade,
     load_cn_a_selection_v1_strategy,
     load_cn_a_selection_v1_strategy_config_ref,
     resolve_cn_a_closed_trade_date,
+    resolve_cn_a_closed_trade_date_for_scheduler,
+)
+from claw_trade.selection.provider_batch import (
+    fetch_selection_batch_from_data_gateway as fetch_selection_batch_facade,
 )
 from claw_trade.selection.strategy_config import (
     CN_A_SELECTION_V1_WEIGHTS,
@@ -64,6 +74,15 @@ def test_resolve_cn_a_closed_trade_date_uses_same_day_after_1600_bjt() -> None:
 def test_resolve_cn_a_closed_trade_date_uses_previous_natural_day_before_1600_bjt() -> None:
     now = datetime.fromisoformat("2026-05-26T07:59:59+00:00")  # 15:59:59 BJT
     assert resolve_cn_a_closed_trade_date(now) == "2026-05-25"
+
+
+def test_resolve_cn_a_closed_trade_date_skips_weekend_after_cutoff() -> None:
+    now = datetime.fromisoformat("2026-06-06T08:00:00+00:00")  # Saturday 16:00 BJT
+    assert resolve_cn_a_closed_trade_date(now) == "2026-06-05"
+
+
+def test_resolve_cn_a_closed_trade_date_for_scheduler_normalizes_explicit_weekend() -> None:
+    assert resolve_cn_a_closed_trade_date_for_scheduler("2026-06-06") == "2026-06-05"
 
 
 def test_load_cn_a_selection_v1_strategy_supports_approved_refs() -> None:
@@ -105,7 +124,7 @@ def test_selection_batch_facade_forwards_progress_callback(monkeypatch: pytest.M
         return SelectionProviderBatchResult(
             provider_batch_plan=provider_plan,
             attempt_refs=("attempt://progress-facade",),
-            normalized_refs=("normalized://mongo/normalized_datasets/progress-facade",),
+            normalized_refs=("dataset://normalized/CN_A/daily/progress-facade",),
             rows=({"ticker": "600519.SH"},),
             warehouse_check_ref="warehouse-check://progress-facade",
         )
@@ -492,11 +511,11 @@ def test_selection_gateway_fetch_uses_data_api_select_requests(monkeypatch: pyte
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -504,14 +523,14 @@ def test_selection_gateway_fetch_uses_data_api_select_requests(monkeypatch: pyte
                     "ticker": "600204.SH",
                     "company_name": "完整历史样本",
                     "industry": "样本行业",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 17.77,
                     "amount": 300000000.0,
                 },
             ),
-            normalized_refs=("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",),
+            normalized_refs=("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",),
             attempt_refs=("attempt:cn_a_primary:daily_bar:unit",),
         ),
     )
@@ -520,7 +539,7 @@ def test_selection_gateway_fetch_uses_data_api_select_requests(monkeypatch: pyte
 
     assert result.provider_batch_plan.plan_id == plan.provider_batch_plan_ref
     assert result.attempt_refs == ("attempt:cn_a_primary:daily_bar:unit",)
-    assert result.normalized_refs == ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",)
+    assert result.normalized_refs == ("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",)
     assert result.warehouse_check_ref == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
     assert result.columnar_manifest_ref is not None
     assert len(result.rows) == 1
@@ -555,22 +574,22 @@ def test_selection_gateway_never_materializes_data_api_rows_for_select(monkeypat
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_rows_from_results",
+        "claw_trade.data_gateway._selection_batch._selection_rows_from_results",
         lambda **_kwargs: pytest.fail("select must not build rows from DataAPI result rows"),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
                 {
                     "ticker": "600204.SH",
                     "company_name": "列式仓库样本",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 17.77,
@@ -609,15 +628,15 @@ def test_selection_gateway_does_not_fetch_supplemental_when_prepackaged_direct_r
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(),
-            normalized_refs=("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:prepackaged-incomplete",),
+            normalized_refs=("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:prepackaged-incomplete",),
             attempt_refs=("attempt:cn_a_primary:daily_bar:prepackaged-incomplete",),
             data_gaps=(
                 DataGapRef(
@@ -722,15 +741,15 @@ def test_selection_gateway_backfills_old_direct_rows_with_short_history(
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._listing_dates_for_tickers",
+        "claw_trade.data_gateway._selection_batch._listing_dates_for_tickers",
         lambda tickers: {"688981.SH": date(2020, 7, 16)},
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -738,7 +757,7 @@ def test_selection_gateway_backfills_old_direct_rows_with_short_history(
                     "ticker": "600204.SH",
                     "company_name": "完整历史样本",
                     "industry": "样本行业",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:600204",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:600204",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 17.77,
@@ -748,14 +767,14 @@ def test_selection_gateway_backfills_old_direct_rows_with_short_history(
                     "ticker": "688981.SH",
                     "company_name": "中芯国际",
                     "industry": "半导体",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:688981",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:688981",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 20.0,
                     "amount": 300000000.0,
                 },
             ),
-            normalized_refs=("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:prepackaged",),
+            normalized_refs=("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:prepackaged",),
             attempt_refs=("attempt:local_a_share_prepackaged:daily_bar:prepackaged",),
         ),
     )
@@ -864,11 +883,11 @@ def test_selection_gateway_expands_stale_all_share_batch_to_trade_date_universe_
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -876,7 +895,7 @@ def test_selection_gateway_expands_stale_all_share_batch_to_trade_date_universe_
                     "ticker": "600204.SH",
                     "company_name": "上海电力",
                     "industry": "电力",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:600204:20260604",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:600204:20260604",
                     "trade_date": "2026-06-04",
                     "selection_features_materialized": True,
                     "open": 20.0,
@@ -892,7 +911,7 @@ def test_selection_gateway_expands_stale_all_share_batch_to_trade_date_universe_
                     "ticker": "688981.SH",
                     "company_name": "中芯国际",
                     "industry": "半导体",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:688981:20260604",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:688981:20260604",
                     "trade_date": "2026-06-04",
                     "selection_features_materialized": True,
                     "open": 55.0,
@@ -906,8 +925,8 @@ def test_selection_gateway_expands_stale_all_share_batch_to_trade_date_universe_
                 },
             ),
             normalized_refs=(
-                "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:600204:20260604",
-                "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:688981:20260604",
+                "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:600204:20260604",
+                "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:688981:20260604",
             ),
             attempt_refs=("attempt:cn_a_primary:daily_bar_by_trade_date:20260604",),
             data_gaps=(),
@@ -984,7 +1003,7 @@ def test_selection_gateway_expands_metadata_only_coverage_gap_to_universe_refres
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
 
@@ -1059,7 +1078,7 @@ def test_selection_gateway_refreshes_full_request_when_metadata_integrity_fails_
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
 
@@ -1134,7 +1153,7 @@ def test_selection_gateway_refreshes_only_metadata_integrity_mismatch_dates(
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
 
@@ -1193,6 +1212,96 @@ def test_selection_local_feature_rows_use_company_name_identity_index() -> None:
     assert not any(gap.severity == DataGapSeverity.BLOCKER for gap in result.data_gaps)
     assert progress_events[-1].completed == 1
     assert progress_events[-1].total == 1
+
+
+def test_selection_local_feature_rows_normalize_legacy_mongo_source_refs() -> None:
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-legacy-ref",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        provider_batch_plan_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    collections = {name: {} for name in DatasetRepository.collection_names()}
+    repository = DatasetRepository(collections=collections)
+    ticker = "600204.SH"
+    trade_day = date.fromisoformat(plan.trade_date)
+    for idx, row in enumerate(_history_rows_from(start=trade_day - timedelta(days=259), count=260, ticker=ticker)):
+        record = _selection_daily_dataset_record(ticker=ticker, row=row)
+        record["dataset_ref"] = f"normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:legacy-{idx}"
+        repository.insert_normalized(record)
+    collections["normalized_datasets"]["identity:600204"] = {
+        "dataset": "daily_bar",
+        "market": "CN_A",
+        "symbol_id": ticker,
+        "universe_ref": "all_a_shares",
+        "granularity": "daily",
+        "period_start": "2024-01-01",
+        "period_end": "2024-01-01",
+        "row": {"company_name": "上海电力"},
+    }
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["source_ref"].startswith("dataset://normalized/")
+    assert "normalized://mongo" not in str(result.rows[0]["source_ref"])
+    assert all(ref.startswith("dataset://normalized/") for ref in result.normalized_refs)
+    manifest = SelectionColumnarWarehouse.default().load_valid_manifest(plan=plan)
+    assert manifest is not None
+    stored_feature_rows = SelectionColumnarWarehouse.default().read_feature_rows(
+        manifest=manifest,
+        columns=("ticker", "source_ref"),
+        row_limit=10,
+    )
+    assert stored_feature_rows
+    assert all(str(row["source_ref"]).startswith("dataset://normalized/") for row in stored_feature_rows)
+    assert not any("normalized://mongo" in str(row["source_ref"]) for row in stored_feature_rows)
+
+
+def test_selection_local_feature_rows_stop_at_explicit_row_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._SELECTION_FEATURE_ROW_LIMIT", 1)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-row-limit",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        provider_batch_plan_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    collections = {name: {} for name in DatasetRepository.collection_names()}
+    repository = DatasetRepository(collections=collections)
+    trade_day = date.fromisoformat(plan.trade_date)
+    for ticker, company_name in (("600204.SH", "上海电力"), ("600205.SH", "山东铝业")):
+        for row in _history_rows_from(start=trade_day - timedelta(days=259), count=260, ticker=ticker):
+            repository.insert_normalized(_selection_daily_dataset_record(ticker=ticker, row=row))
+        collections["normalized_datasets"][f"identity:{ticker}"] = {
+            "dataset": "daily_bar",
+            "market": "CN_A",
+            "symbol_id": ticker,
+            "universe_ref": "all_a_shares",
+            "granularity": "daily",
+            "period_start": "2024-01-01",
+            "period_end": "2024-01-01",
+            "row": {"company_name": company_name},
+        }
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 1
+    assert any(gap.gap_code == "selection_batch_feature_row_limit_exceeded" for gap in result.data_gaps)
+    limit_gap = next(gap for gap in result.data_gaps if gap.gap_code == "selection_batch_feature_row_limit_exceeded")
+    assert limit_gap.severity == DataGapSeverity.BLOCKER
+    assert limit_gap.source_metadata is not None
+    assert limit_gap.source_metadata["row_limit"] == 1
+    assert limit_gap.source_metadata["rows_returned"] == 1
 
 
 def test_selection_history_row_scales_legacy_tushare_amount_to_cny() -> None:
@@ -1271,15 +1380,15 @@ def test_selection_gateway_records_history_backfill_failure_without_fake_rows(
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._listing_dates_for_tickers",
+        "claw_trade.data_gateway._selection_batch._listing_dates_for_tickers",
         lambda tickers: {"688981.SH": date(2020, 7, 16)},
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -1287,14 +1396,14 @@ def test_selection_gateway_records_history_backfill_failure_without_fake_rows(
                     "ticker": "600204.SH",
                     "company_name": "完整历史样本",
                     "industry": "样本行业",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:600204",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:600204",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 17.77,
                     "amount": 300000000.0,
                 },
             ),
-            normalized_refs=("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:prepackaged",),
+            normalized_refs=("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:prepackaged",),
             attempt_refs=("attempt:local_a_share_prepackaged:daily_bar:prepackaged",),
         ),
     )
@@ -1358,11 +1467,11 @@ def test_selection_gateway_joins_valuation_metric_rows_into_selection_rows(
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -1370,7 +1479,7 @@ def test_selection_gateway_joins_valuation_metric_rows_into_selection_rows(
                     "ticker": "600204.SH",
                     "company_name": "估值样本",
                     "industry": "样本行业",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 17.77,
@@ -1379,12 +1488,12 @@ def test_selection_gateway_joins_valuation_metric_rows_into_selection_rows(
                     "pb": 1.4,
                     "ps": 2.5,
                     "market_cap": 123456.0,
-                    "valuation_source_ref": "normalized://mongo/normalized_datasets/dataset:valuation_metric:CN_A:unit",
+                    "valuation_source_ref": "dataset://normalized/CN_A/daily/dataset:valuation_metric:CN_A:unit",
                 },
             ),
             normalized_refs=(
-                "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",
-                "normalized://mongo/normalized_datasets/dataset:valuation_metric:CN_A:unit",
+                "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",
+                "dataset://normalized/CN_A/daily/dataset:valuation_metric:CN_A:unit",
             ),
             attempt_refs=(
                 "attempt:cn_a_primary:daily_bar:unit",
@@ -1400,7 +1509,7 @@ def test_selection_gateway_joins_valuation_metric_rows_into_selection_rows(
     assert result.rows[0]["pb"] == 1.4
     assert result.rows[0]["ps"] == 2.5
     assert result.rows[0]["market_cap"] == 123456.0
-    assert result.rows[0]["valuation_source_ref"] == "normalized://mongo/normalized_datasets/dataset:valuation_metric:CN_A:unit"
+    assert result.rows[0]["valuation_source_ref"] == "dataset://normalized/CN_A/daily/dataset:valuation_metric:CN_A:unit"
 
 
 def test_selection_gateway_fetch_returns_data_api_gap_without_fake_rows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1428,7 +1537,7 @@ def test_selection_gateway_fetch_returns_data_api_gap_without_fake_rows(monkeypa
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
 
@@ -1466,11 +1575,11 @@ def test_selection_gateway_private_placement_missing_is_warn_not_blocker(monkeyp
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -1478,14 +1587,14 @@ def test_selection_gateway_private_placement_missing_is_warn_not_blocker(monkeyp
                     "ticker": "600204.SH",
                     "company_name": "定增缺口样本",
                     "industry": "样本行业",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:private-missing",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:private-missing",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "close": 17.77,
                     "amount": 300000000.0,
                 },
             ),
-            normalized_refs=("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:private-missing",),
+            normalized_refs=("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:private-missing",),
             attempt_refs=("attempt:cn_a_primary:daily_bar:private-missing",),
             data_gaps=(
                 DataGapRef(
@@ -1595,8 +1704,8 @@ def _smoke_result(*, rows: int, gaps: tuple[DataGapRef, ...]) -> SelectionProvid
     mapped_rows = tuple({"ticker": f"60051{idx}.SH"} for idx in range(rows))
     return SelectionProviderBatchResult(
         provider_batch_plan=plan,
-        attempt_refs=("attempt://mongo/provider_attempts/test",),
-        normalized_refs=("normalized://mongo/normalized_datasets/test",),
+        attempt_refs=("attempt://data-provider/test",),
+        normalized_refs=("dataset://normalized/CN_A/daily/test",),
         rows=mapped_rows,
         data_gaps=gaps,
     )
@@ -1608,7 +1717,7 @@ def _gap(*, gap_code: str, severity: DataGapSeverity) -> DataGapRef:
         domain="selection",
         gap_code=gap_code,
         severity=severity,
-        attempt_refs=("attempt://mongo/provider_attempts/test",),
+        attempt_refs=("attempt://data-provider/test",),
         reader_message="test",
     )
 
@@ -1649,7 +1758,7 @@ def test_smoke_cli_output_includes_structured_gap_metadata(
         domain="selection",
         gap_code="selection_batch_empty",
         severity=DataGapSeverity.WARN,
-        attempt_refs=("attempt://mongo/provider_attempts/test",),
+        attempt_refs=("attempt://data-provider/test",),
         reader_message="structured gap test",
         source_metadata={
             "selection_candidate_type": "partial_batch_candidate",
@@ -1737,7 +1846,7 @@ def _columnar_feature_result(
     plan: SelectionRunPlan,
     *,
     rows: tuple[dict[str, object], ...],
-    normalized_refs: tuple[str, ...] = ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:unit",),
+    normalized_refs: tuple[str, ...] = ("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:unit",),
     attempt_refs: tuple[str, ...] = ("attempt:cn_a_primary:daily_bar:unit",),
     data_gaps: tuple[DataGapRef, ...] = (),
 ) -> _LocalFeatureRowsResult:

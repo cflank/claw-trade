@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from claw_trade.data_gateway.execution import ProviderResultCache, ResultRefs
 from claw_trade.data_gateway.execution.gate import ExecutionGate
-from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy, RateLimiter
+from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimitPolicy
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
 from claw_trade.data_gateway.ingest import DataGap, IngestResult
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
@@ -71,6 +71,26 @@ def test_cache_unknown_status_is_not_treated_as_remote_success() -> None:
     cache = ProviderResultCache(repository=repository)
     lookup = cache.get("cache:key", now=now)
     assert lookup.state == "miss"
+
+
+def test_cache_accepts_naive_cached_datetime_when_now_is_aware() -> None:
+    repository = DatasetRepository()
+    repository.write_provider_result_cache(
+        cache_key="cache:key",
+        status="remote_success",
+        dataset_refs=("dataset:ok",),
+        raw_refs=(),
+        attempt_refs=("attempt:ok",),
+        fresh_until=datetime(2026, 6, 1, 12, 5),
+        stale_until=datetime(2026, 6, 1, 12, 30),
+    )
+    cache = ProviderResultCache(repository=repository)
+
+    lookup = cache.get("cache:key", now=datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
+
+    assert lookup.state == "fresh_success"
+    assert lookup.entry is not None
+    assert lookup.entry.refs.dataset_refs == ("dataset:ok",)
 
 
 def test_gate_returns_rate_limited_when_quota_blocked() -> None:

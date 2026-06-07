@@ -6,12 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import urlopen
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 from claw_trade.web.routes_ui import router as ui_router
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 def _rpc_client() -> OpenClawGatewayRpcClient:

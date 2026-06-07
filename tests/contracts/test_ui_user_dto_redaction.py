@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from claw_trade.ui_contracts.user_dto import (
+    to_user_payload,
     toChatContextForUser,
     toChatMessageForUser,
     toIntentDraftForUser,
@@ -8,7 +9,6 @@ from claw_trade.ui_contracts.user_dto import (
     toReportQueueSnapshotForUser,
     toReportTaskForUser,
     toScheduledReportForUser,
-    to_user_payload,
 )
 
 

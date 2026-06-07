@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-import os
-from pathlib import Path
 import re
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
-from claw_trade.artifacts.openviking_backend_http import OpenVikingHttpBackend, create_default_backend
+from claw_trade.artifacts.openviking_backend_http import (
+    OpenVikingHttpBackend,
+    create_default_backend,
+)
 from claw_trade.artifacts.openviking_client import OpenVikingAccessError
-
+from claw_trade.data_gateway.report_evidence import summarize_data_refs
 
 _DEFAULT_CONTEXT_CHARS = 24_000
 _SNIPPET_CHARS = 3_000
@@ -160,49 +162,18 @@ class ReportContextRetriever:
                     refs.append(value)
             if len(refs) >= _MAX_MONGO_REFS:
                 break
-        summaries = self._mongo_summaries(refs)
+        summaries = summarize_data_refs(
+            refs,
+            mongo_uri=self._mongo_uri,
+            mongo_database=self._mongo_database,
+            limit=_MAX_MONGO_REFS,
+        )
         if not summaries:
             summaries = refs[:_MAX_MONGO_REFS]
         if not summaries:
             return None
         rendered = "\n".join(f"- {item}" for item in summaries)
-        return f"### Mongo/证据引用\n{rendered}"
-
-    def _mongo_summaries(self, refs: list[str]) -> list[str]:
-        uri = (self._mongo_uri or os.environ.get("DATA_GATEWAY_MONGODB_URI") or os.environ.get("CN_A_MONGODB_URI") or "").strip()
-        database = (
-            self._mongo_database
-            or os.environ.get("DATA_GATEWAY_MONGODB_DATABASE")
-            or os.environ.get("CN_A_MONGODB_DATABASE")
-            or "claw_trade"
-        ).strip()
-        if not uri or not refs:
-            return []
-        try:
-            from pymongo import MongoClient
-        except Exception:
-            return []
-        summaries: list[str] = []
-        try:
-            client: MongoClient[Any] = MongoClient(uri, serverSelectionTimeoutMS=500)
-            db = client[database]
-            for ref in refs[:_MAX_MONGO_REFS]:
-                collection, document_id = _parse_mongo_ref(ref)
-                if collection not in {
-                    "provider_attempts",
-                    "raw_payloads",
-                    "normalized_datasets",
-                    "dataset_manifests",
-                }:
-                    continue
-                doc = db[collection].find_one({"_id": document_id})
-                if not isinstance(doc, dict):
-                    summaries.append(ref)
-                    continue
-                summaries.append(_summarize_mongo_doc(collection, document_id, doc))
-        except Exception:
-            return []
-        return summaries
+        return f"### 数据层/证据引用\n{rendered}"
 
 
 def _manifest_materials(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -305,26 +276,6 @@ def _read_text(path: Path) -> str | None:
         return path.read_text(encoding="utf-8")
     except OSError:
         return None
-
-
-def _parse_mongo_ref(ref: str) -> tuple[str, str]:
-    body = ref.removeprefix("mongo://")
-    collection, _, document_id = body.partition("/")
-    return collection, document_id
-
-
-def _summarize_mongo_doc(collection: str, document_id: str, doc: dict[str, Any]) -> str:
-    if collection == "provider_attempts":
-        provider = str(doc.get("provider") or "")
-        endpoint = str(doc.get("endpoint") or "")
-        status = str(doc.get("status") or "")
-        return f"{collection}/{document_id}: provider={provider} endpoint={endpoint} status={status}"
-    if collection == "normalized_datasets":
-        provider = str(doc.get("provider") or "")
-        dataset = str(doc.get("dataset") or "")
-        schema = str(doc.get("schema_id") or "")
-        return f"{collection}/{document_id}: provider={provider} dataset={dataset} schema={schema}"
-    return f"{collection}/{document_id}: raw payload stored in Mongo"
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

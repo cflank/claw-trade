@@ -13,9 +13,9 @@ WORKSPACE_ROOT = SKILL_ROOT.parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from indicator_engine import AnalysisBundle
 import market_data_provider
 import techlab_entrypoint
+from indicator_engine import AnalysisBundle
 
 
 def test_techlab_entrypoint_analyze_returns_indicator_payload(monkeypatch, capsys, tmp_path: Path) -> None:
@@ -27,7 +27,7 @@ def test_techlab_entrypoint_analyze_returns_indicator_payload(monkeypatch, capsy
     )
     calls: list[tuple[str, dict[str, str]]] = []
 
-    def fake_load_price_frame(*, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    def fake_load_market_price_frame(*, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
         calls.append(("provider", {"ticker": ticker, "start_date": start_date, "end_date": end_date}))
         return frame
 
@@ -57,7 +57,7 @@ def test_techlab_entrypoint_analyze_returns_indicator_payload(monkeypatch, capsy
         )
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", fake_load_price_frame)
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", fake_load_market_price_frame)
     monkeypatch.setattr(techlab_entrypoint, "analyze_market_frame", fake_analyze_market_frame)
     monkeypatch.setattr(techlab_entrypoint, "render_market_charts", fake_render_market_charts)
 
@@ -131,7 +131,7 @@ def test_techlab_entrypoint_market_pack_returns_price_rows_and_technical_payload
     )
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: frame)
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", lambda **_: frame)
     monkeypatch.setattr(
         techlab_entrypoint,
         "analyze_market_frame",
@@ -207,7 +207,7 @@ def test_entrypoint_fails_when_chart_runtime_dependencies_missing(monkeypatch, c
         ]
     )
 
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: frame)
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", lambda **_: frame)
     monkeypatch.setattr(
         techlab_entrypoint,
         "analyze_market_frame",
@@ -269,7 +269,7 @@ def test_entrypoint_fails_when_chart_render_fails(monkeypatch, capsys) -> None:
         ]
     )
 
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: frame)
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", lambda **_: frame)
     monkeypatch.setattr(
         techlab_entrypoint,
         "analyze_market_frame",
@@ -331,7 +331,7 @@ def test_entrypoint_reports_insufficient_chart_history_without_backend_crash(mon
         ]
     )
 
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: frame)
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", lambda **_: frame)
     monkeypatch.setattr(
         techlab_entrypoint,
         "analyze_market_frame",
@@ -393,7 +393,7 @@ def test_entrypoint_fails_when_indicator_backend_is_unavailable(monkeypatch, cap
         ]
     )
 
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: frame)
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", lambda **_: frame)
 
     def raise_indicator_error(input_frame: pd.DataFrame, *, ticker: str):
         assert input_frame.equals(frame)
@@ -430,7 +430,7 @@ def test_entrypoint_fails_when_indicator_backend_is_unavailable(monkeypatch, cap
 
 
 def test_entrypoint_returns_no_market_data_error_when_provider_returns_empty(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(techlab_entrypoint, "load_price_frame", lambda **_: pd.DataFrame())
+    monkeypatch.setattr(techlab_entrypoint, "load_market_price_frame", lambda **_: pd.DataFrame())
 
     exit_code = techlab_entrypoint.main(
         [
@@ -554,26 +554,21 @@ def test_techlab_entrypoint_rejects_missing_required_arguments(capsys) -> None:
 
 
 def test_market_data_provider_uses_normal_import_seam_and_normalizes_rows(monkeypatch) -> None:
-    class FakeTools:
-        def get_stock_price(self, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-            assert ticker == "600015"
-            assert start_date == "2026-01-01"
-            assert end_date == "2026-01-31"
-            return pd.DataFrame(
-                [
-                    {"DATE": "2026-01-03", "OPEN": "10.5", "HIGH": "10.8", "LOW": "10.1", "CLOSE": "10.6", "VOLUME": "1500"},
-                    {"DATE": "bad-date", "OPEN": "10.0", "HIGH": "10.3", "LOW": "9.8", "CLOSE": "10.1", "VOLUME": "1200"},
-                    {"DATE": "2026-01-02", "OPEN": "10.1", "HIGH": "10.6", "LOW": "9.9", "CLOSE": "10.4", "VOLUME": "1400"},
-                ]
-            )
+    def fake_load_data_layer_price_frame(*, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        assert ticker == "600015"
+        assert start_date == "2026-01-01"
+        assert end_date == "2026-01-31"
+        return pd.DataFrame(
+            [
+                {"DATE": "2026-01-03", "OPEN": "10.5", "HIGH": "10.8", "LOW": "10.1", "CLOSE": "10.6", "VOLUME": "1500"},
+                {"DATE": "bad-date", "OPEN": "10.0", "HIGH": "10.3", "LOW": "9.8", "CLOSE": "10.1", "VOLUME": "1200"},
+                {"DATE": "2026-01-02", "OPEN": "10.1", "HIGH": "10.6", "LOW": "9.9", "CLOSE": "10.4", "VOLUME": "1400"},
+            ]
+        )
 
-    monkeypatch.setattr(
-        market_data_provider,
-        "_stock_entrypoint_deps",
-        lambda: (lambda: "/tmp/test-signal-flux.db", lambda db_path, auto_update=False: FakeTools()),
-    )
+    monkeypatch.setattr(market_data_provider, "_load_data_layer_price_frame", fake_load_data_layer_price_frame)
 
-    frame = market_data_provider.load_price_frame(
+    frame = market_data_provider.load_market_price_frame(
         ticker="600015",
         start_date="2026-01-01",
         end_date="2026-01-31",
@@ -601,26 +596,12 @@ def test_market_data_provider_uses_normal_import_seam_and_normalizes_rows(monkey
     ]
 
 
-def test_market_data_provider_loads_stock_skill_when_scripts_namespace_is_occupied(
-    monkeypatch,
-    tmp_path,
-) -> None:
-    for module_name in (
-        "stock_entrypoint",
-        "stock_tools",
-        "database_manager",
-        "scripts.database_manager",
-        "scripts.stock_tools",
-        "scripts.stock_entrypoint",
-    ):
-        monkeypatch.delitem(sys.modules, module_name, raising=False)
+def test_market_data_provider_raises_no_market_data_when_data_layer_has_no_rows(monkeypatch) -> None:
+    monkeypatch.setattr(market_data_provider, "_load_data_layer_price_frame", lambda **_: pd.DataFrame())
 
-    conflicting_scripts_package = type(sys)("scripts")
-    conflicting_scripts_package.__path__ = [str(SCRIPTS_DIR)]
-    monkeypatch.setitem(sys.modules, "scripts", conflicting_scripts_package)
-
-    _default_db_path, get_stock_tools = market_data_provider._stock_entrypoint_deps()
-    tools = get_stock_tools(str(tmp_path / "signal_flux.db"), auto_update=False)
-
-    assert _default_db_path().endswith("agents/market_analyst/skills/alphaear-stock/data/signal_flux.db")
-    assert tools.__class__.__name__ == "StockTools"
+    with pytest.raises(market_data_provider.NoMarketDataError):
+        market_data_provider.load_market_price_frame(
+            ticker="600015",
+            start_date="2026-01-01",
+            end_date="2026-01-31",
+        )

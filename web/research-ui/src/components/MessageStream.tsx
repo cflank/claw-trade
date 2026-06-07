@@ -126,7 +126,7 @@ function SelectionResultCard({
       {hasReport ? (
         <div className="ct-selection-actions ct-button-row">
           <button type="button" className="ct-button ct-button-secondary" onClick={() => onOpenSelectionReport?.(item)}>
-            查看完整选股报告
+            查看完整选股报告（含策略分析）
           </button>
         </div>
       ) : null}

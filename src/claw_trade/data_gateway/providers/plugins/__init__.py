@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
-from claw_trade.data_gateway.providers.plugins.cn_a import build_cn_a_provider_plugin, build_cn_a_provider_plugins
-from claw_trade.data_gateway.providers.plugins.crypto import build_crypto_provider_plugin, build_crypto_provider_plugins
-from claw_trade.data_gateway.providers.plugins.hk import build_hk_provider_plugin, build_hk_provider_plugins
-from claw_trade.data_gateway.providers.plugins.us import build_us_provider_plugin, build_us_provider_plugins
+from claw_trade.data_gateway.providers.plugins.cn_a import (
+    build_cn_a_provider_plugin,
+    build_cn_a_provider_plugins,
+)
+from claw_trade.data_gateway.providers.plugins.crypto import (
+    build_crypto_provider_plugin,
+    build_crypto_provider_plugins,
+)
+from claw_trade.data_gateway.providers.plugins.hk import (
+    build_hk_provider_plugin,
+    build_hk_provider_plugins,
+)
+from claw_trade.data_gateway.providers.plugins.us import (
+    build_us_provider_plugin,
+    build_us_provider_plugins,
+)
 
 
 def iter_minimal_market_plugins() -> tuple[object, ...]:

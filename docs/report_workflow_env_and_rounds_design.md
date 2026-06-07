@@ -186,7 +186,7 @@ ReportWorkflowSettings
 CLAW_TRADE_REPORT_MAX_DEBATE_ROUNDS=1
 CLAW_TRADE_REPORT_MAX_RISK_DISCUSS_ROUNDS=1
 CLAW_TRADE_REPORT_MAX_ROUNDS_HARD_LIMIT=3
-CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE=parallel
+CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE=serial
 CLAW_TRADE_REPORT_RUN_DIR=runs
 
 # optional CLI defaults, not product authority
@@ -201,7 +201,7 @@ CLAW_TRADE_REPORT_DEFAULT_CURRENCY_SYMBOL=¥
 - `CLAW_TRADE_REPORT_MAX_DEBATE_ROUNDS`：投资辩论轮数。默认 1。
 - `CLAW_TRADE_REPORT_MAX_RISK_DISCUSS_ROUNDS`：风险辩论轮数。默认 1。
 - `CLAW_TRADE_REPORT_MAX_ROUNDS_HARD_LIMIT`：本地安全上限，默认 3；env 只能收紧到 1/2/3，不能提高到 4 或 5。
-- `CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE`：当前只允许 `parallel`。
+- `CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE`：允许 `serial` 或 `parallel`；默认 `serial`，避免一次性拉起多个 OpenClaw worker/gateway 进程导致内存放大。`parallel` 只能作为人工显式提速选项。
 - `CLAW_TRADE_REPORT_RUN_DIR`：默认运行目录。
 - `CLAW_TRADE_REPORT_DEFAULT_*`：只是 CLI 默认值；ticker、company、日期仍建议由每次请求传入。
 
@@ -226,15 +226,14 @@ end_date
 ```text
 max_debate_rounds: int = 1
 max_risk_discuss_rounds: int = 1
-frontline_execution_mode: str = "parallel"
+frontline_execution_mode: str = "serial"
 ```
 
 其中：
 
 - `max_debate_rounds` 只影响 investment debate 的 turn 数。
 - `max_risk_discuss_rounds` 只影响 risk debate 的 turn 数。
-- `frontline_execution_mode` 当前固定为 `parallel`，是预留审计字段；第一版不增加
-  serial/parallel 分支，不参与当前调度决策。
+- `frontline_execution_mode` 控制前线四个 worker 的调度方式。默认 `serial`，逐个叫醒 worker；`parallel` 会并发叫醒前线 worker，速度更快但会明显增加内存。
 
 controller 不读 `.env.local`，只读 `state.request`。
 
@@ -305,7 +304,8 @@ completed_turns >= total_turns
 
 ### 并发边界
 
-frontline 仍然并行。
+frontline 默认串行，避免同时拉起多个 OpenClaw gateway 进程造成内存放大。`parallel`
+只作为人工显式提速选项。
 
 debate/risk debate 不并行，因为后一个发言必须看到前一个发言，第二轮必须看到第一轮
 完整历史。

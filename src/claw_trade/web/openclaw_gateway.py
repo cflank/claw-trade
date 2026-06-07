@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any, Mapping
 
 _DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789"

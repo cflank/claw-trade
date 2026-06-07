@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
 import hashlib
 import json
 import os
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -623,7 +623,7 @@ def _allowed_probe_stat_sizes(receipt: MaterialReceipt) -> set[int]:
     return allowed
 
 
-def _identity_from_uri(uri: VikingUri) -> tuple[str, "Stage", str, str]:
+def _identity_from_uri(uri: VikingUri):
     from claw_trade.workflow.models import Stage
 
     prefix = "viking://resources/workflow/"

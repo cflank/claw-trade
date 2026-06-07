@@ -95,6 +95,134 @@ def test_parse_selection_decision_rejects_ticker_company_mismatch() -> None:
     assert result.invalid_reason == "ticker_company_mismatch:600519.SH:expected=贵州茅台:actual=五粮液"
 
 
+def test_parse_selection_decision_canonicalizes_explicit_ticker_correction() -> None:
+    corrected_output = "\n".join(
+        [
+            "进入 /report:",
+            "- 无",
+            "观察:",
+            "- 600519.SH | 贵州茅台 | 继续观察。",
+            "放弃:",
+            "- 603645.SH | 金安国纪 | 注：股票代码应为002636.SZ。波动较大，暂不继续。",
+        ]
+    )
+    result = _parse_and_validate_selection_decision(
+        pm_raw_text=corrected_output,
+        workflow_run_id="wf-explicit-correction",
+        allowed_tickers=frozenset({"600519.SH", "002636.SZ"}),
+        allowed_ticker_companies={
+            "600519.SH": "贵州茅台",
+            "002636.SZ": "金安国纪",
+        },
+        approved_material_id="selection-pm-decision-wf-explicit-correction",
+    )
+
+    assert result.invalid_reason is None
+    assert result.decision is not None
+    assert [item.ticker for item in result.decision.reject] == ["002636.SZ"]
+
+
+def test_parse_selection_decision_still_rejects_uncorrected_out_of_set_ticker() -> None:
+    uncorrected_output = "\n".join(
+        [
+            "进入 /report:",
+            "- 无",
+            "观察:",
+            "- 600519.SH | 贵州茅台 | 继续观察。",
+            "放弃:",
+            "- 603645.SH | 金安国纪 | 波动较大，暂不继续。",
+        ]
+    )
+    result = _parse_and_validate_selection_decision(
+        pm_raw_text=uncorrected_output,
+        workflow_run_id="wf-uncorrected-out-of-set",
+        allowed_tickers=frozenset({"600519.SH", "002636.SZ"}),
+        allowed_ticker_companies={
+            "600519.SH": "贵州茅台",
+            "002636.SZ": "金安国纪",
+        },
+        approved_material_id="selection-pm-decision-wf-uncorrected-out-of-set",
+    )
+
+    assert result.decision is None
+    assert result.invalid_reason == "ticker_not_in_allowed_set:603645.SH"
+
+
+def test_parse_selection_decision_supplements_missing_final_row_from_group_table() -> None:
+    manager_output = "\n".join(
+        [
+            "### 分组与优先级",
+            "",
+            "| 分组语义 | 代码 | 名称 | 核心理由 |",
+            "|:---|:---|:---|:---|",
+            "| **优先进入组合评审** | 600519.SH | 贵州茅台 | 经营质量与现金流稳定。 |",
+            "| **继续观察** | 000858.SZ | 五粮液 | 还需后续财报确认。 |",
+            "| | 301458.SZ | 钧崴电子 | 需要观察其断板后的承接力度和量价行为。 |",
+            "| **暂不继续** | 300750.SZ | 宁德时代 | 当前证据链分歧较大。 |",
+            "",
+            "进入 /report:",
+            "- 600519.SH | 贵州茅台 | 经营质量与现金流稳定。",
+            "观察:",
+            "- 000858.SZ | 五粮液 | 还需后续财报确认。",
+            "放弃:",
+            "- 300750.SZ | 宁德时代 | 当前证据链分歧较大。",
+        ]
+    )
+    result = _parse_and_validate_selection_decision(
+        pm_raw_text=manager_output,
+        workflow_run_id="wf-table-supplement",
+        allowed_tickers=frozenset({"600519.SH", "000858.SZ", "301458.SZ", "300750.SZ"}),
+        allowed_ticker_companies={
+            "600519.SH": "贵州茅台",
+            "000858.SZ": "五粮液",
+            "301458.SZ": "钧崴电子",
+            "300750.SZ": "宁德时代",
+        },
+        approved_material_id="selection-pm-decision-wf-table-supplement",
+    )
+
+    assert result.invalid_reason is None
+    assert result.decision is not None
+    assert [item.ticker for item in result.decision.watch] == ["000858.SZ", "301458.SZ"]
+
+
+def test_parse_selection_decision_supplements_from_approved_manager_material() -> None:
+    pm_final_output = "\n".join(
+        [
+            "进入 /report:",
+            "- 600519.SH | 贵州茅台 | 经营质量与现金流稳定。",
+            "观察:",
+            "- 000858.SZ | 五粮液 | 还需后续财报确认。",
+            "放弃:",
+            "- 300750.SZ | 宁德时代 | 当前证据链分歧较大。",
+        ]
+    )
+    approved_manager_material = "\n".join(
+        [
+            "| 分组语义 | 代码 | 名称 | 核心理由 |",
+            "|:---|:---|:---|:---|",
+            "| **继续观察** | 301458.SZ | 钧崴电子 | 需要观察其断板后的承接力度和量价行为。 |",
+        ]
+    )
+    result = _parse_and_validate_selection_decision(
+        pm_raw_text=pm_final_output,
+        supplemental_decision_texts=(approved_manager_material,),
+        workflow_run_id="wf-manager-supplement",
+        allowed_tickers=frozenset({"600519.SH", "000858.SZ", "301458.SZ", "300750.SZ"}),
+        allowed_ticker_companies={
+            "600519.SH": "贵州茅台",
+            "000858.SZ": "五粮液",
+            "301458.SZ": "钧崴电子",
+            "300750.SZ": "宁德时代",
+        },
+        approved_material_id="selection-pm-decision-wf-manager-supplement",
+    )
+
+    assert result.invalid_reason is None
+    assert result.decision is not None
+    assert [item.ticker for item in result.decision.watch] == ["000858.SZ", "301458.SZ"]
+
+
 def test_candidate_summary_allowed_tickers_include_bj_market() -> None:
     summary_md = "\n".join(
         [

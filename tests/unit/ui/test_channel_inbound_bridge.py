@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from claw_trade.ui_backend.channel_inbound_bridge import ChannelInboundBridge, OpenClawChannelInboundEvent
+from claw_trade.ui_backend.channel_inbound_bridge import (
+    ChannelInboundBridge,
+    OpenClawChannelInboundEvent,
+)
 
 
 def test_inbound_bridge_processes_forwarded_request_full_report() -> None:

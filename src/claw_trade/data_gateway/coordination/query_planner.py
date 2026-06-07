@@ -3,7 +3,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from claw_trade.data_gateway.models import CoverageRequirement, DataRequest, Market, QueryPlan, WarehouseCheck
+from claw_trade.data_gateway.models import (
+    CoverageRequirement,
+    DataRequest,
+    Market,
+    QueryPlan,
+    WarehouseCheck,
+)
 
 
 class QueryPlanner:

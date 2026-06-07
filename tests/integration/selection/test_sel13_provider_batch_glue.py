@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
+from claw_trade.data_gateway._selection_batch import (
+    _LocalFeatureRowsResult,
+    fetch_selection_batch_from_data_gateway,
+)
 from claw_trade.data_gateway.models import DataResult, DataResultStatus
-from claw_trade.data_gateway.selection_batch import _LocalFeatureRowsResult, fetch_selection_batch_from_data_gateway
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
     SelectionBatchScope,
     SelectionMarket,
@@ -50,7 +52,7 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
                         "history": _history_rows(),
                         "private_placement_event_date": "none",
                         "private_placement_days_since": 9999.0,
-                        "source_ref": "normalized://mongo/normalized_datasets/sel13-sample",
+                        "source_ref": "dataset://normalized/CN_A/daily/sel13-sample",
                     },
                 ),
                 dataset_refs=("dataset:daily_bar:CN_A:sel13",),
@@ -60,11 +62,11 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
         )
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._build_selection_gateway_context",
+        "claw_trade.data_gateway._selection_batch._build_selection_gateway_context",
         lambda: _FakeGateway(fake_api),
     )
     monkeypatch.setattr(
-        "claw_trade.data_gateway.selection_batch._selection_feature_rows_from_repository",
+        "claw_trade.data_gateway._selection_batch._selection_feature_rows_from_repository",
         lambda **_kwargs: _columnar_feature_result(
             plan,
             rows=(
@@ -72,7 +74,7 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
                     "ticker": "600204.SH",
                     "company_name": "统一数据层样本",
                     "industry": "样本行业",
-                    "source_ref": "normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:sel13",
+                    "source_ref": "dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:sel13",
                     "trade_date": "2026-05-26",
                     "selection_features_materialized": True,
                     "open": 10.0,
@@ -91,7 +93,7 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
     assert result.provider_batch_plan.scope == SelectionBatchScope.SELECTION_BATCH
     assert result.provider_batch_plan.plan_id == plan.provider_batch_plan_ref
     assert result.attempt_refs == ("attempt:cn_a_primary:daily_bar:sel13",)
-    assert result.normalized_refs == ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:sel13",)
+    assert result.normalized_refs == ("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:sel13",)
     assert result.warehouse_check_ref == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
     assert result.columnar_manifest_ref is not None
     assert result.columnar_manifest_sha256 is not None
@@ -121,7 +123,7 @@ def _columnar_feature_result(
     *,
     rows: tuple[dict[str, object], ...],
 ) -> _LocalFeatureRowsResult:
-    normalized_refs = ("normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:sel13",)
+    normalized_refs = ("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:sel13",)
     attempt_refs = ("attempt:cn_a_primary:daily_bar:sel13",)
     writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
     writer.add_daily_rows(

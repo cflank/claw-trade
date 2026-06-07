@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestionService
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError

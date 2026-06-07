@@ -4,9 +4,8 @@ import threading
 from pathlib import Path
 
 import pytest
-
 from claw_trade.ui_backend import channel_bridge as channel_bridge_module
-from claw_trade.ui_backend.channel_bridge import ChannelBridge, USER_CHANNEL_KIND
+from claw_trade.ui_backend.channel_bridge import USER_CHANNEL_KIND, ChannelBridge
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 
 

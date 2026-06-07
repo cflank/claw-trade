@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.config.report_workflow_settings import (
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
@@ -32,6 +31,12 @@ def test_load_report_workflow_settings_reads_env_values() -> None:
     assert settings.default_currency_symbol == "¥"
 
 
+def test_load_report_workflow_settings_defaults_frontline_mode_to_serial() -> None:
+    settings = load_report_workflow_settings({})
+
+    assert settings.frontline_execution_mode == "serial"
+
+
 def test_load_report_workflow_settings_rejects_rounds_above_hard_limit() -> None:
     with pytest.raises(ReportWorkflowSettingsError, match="不能超过"):
         load_report_workflow_settings(
@@ -47,6 +52,6 @@ def test_load_report_workflow_settings_rejects_hard_limit_above_product_cap() ->
         load_report_workflow_settings({"CLAW_TRADE_REPORT_MAX_ROUNDS_HARD_LIMIT": "4"})
 
 
-def test_load_report_workflow_settings_rejects_non_parallel_frontline_mode() -> None:
-    with pytest.raises(ReportWorkflowSettingsError, match="只允许 parallel"):
-        load_report_workflow_settings({"CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE": "serial"})
+def test_load_report_workflow_settings_rejects_invalid_frontline_mode() -> None:
+    with pytest.raises(ReportWorkflowSettingsError, match="只允许 serial 或 parallel"):
+        load_report_workflow_settings({"CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE": "burst"})

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.manifest import ManifestStore
 from claw_trade.cli.run_control import _build_runner, main, parse_args
 from claw_trade.guards.common import BootResult

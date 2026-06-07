@@ -8,9 +8,16 @@ from typing import Callable, Protocol
 from uuid import uuid4
 
 from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
-from claw_trade.ui_backend.pdf_runtime_capabilities import PdfRuntimeCapabilities, detect_pdf_runtime_capabilities
+from claw_trade.ui_backend.pdf_runtime_capabilities import (
+    PdfRuntimeCapabilities,
+    detect_pdf_runtime_capabilities,
+)
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
-from claw_trade.ui_backend.report_repository import PdfArtifactRecord, ReportRepository, UiProductError
+from claw_trade.ui_backend.report_repository import (
+    PdfArtifactRecord,
+    ReportRepository,
+    UiProductError,
+)
 
 
 def _now_iso() -> str:

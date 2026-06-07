@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy, RateLimiter
+from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimitPolicy
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
 

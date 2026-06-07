@@ -10,7 +10,6 @@ from datetime import date
 from pathlib import Path
 from typing import Mapping
 
-
 QFQ_ADJUSTFLAG = "2"
 STOCK_FIELDS = (
     "date",

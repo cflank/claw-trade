@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.data_gateway.warehouse import (
-    DatasetRepository,
     SUPPORTED_UNIFIED_DATASETS,
+    DatasetRepository,
     is_provider_style_dataset_name,
 )
 

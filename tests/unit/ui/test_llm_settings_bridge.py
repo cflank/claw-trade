@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 

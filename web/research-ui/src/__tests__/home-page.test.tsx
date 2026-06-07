@@ -259,7 +259,7 @@ function mockWorkspaceFetch(
               contextKind: 'task_following',
               actor: 'system',
               kind: 'report_completed',
-              text: '报告已完成，可查看完整内容。',
+              text: '报告已完成。\n最终结论：维持观察，等待突破确认。\n核心理由：日线趋势改善\n主要风险：估值波动',
               reportId: 'report-1',
               createdAt: '2026-05-19T10:10:00.000Z',
             },
@@ -471,9 +471,10 @@ describe('home page', () => {
     const mocked = mockWorkspaceFetch({
       selectionRefreshSnapshot: {
         selectionProgress: {
+          kind: 'data_refresh',
           status: 'running',
           statusLabel: '补数据中',
-          command: '/select 补数据 2026-06-04',
+          command: '/select 2026-06-04',
           stageLabel: '拉取/补齐行情数据',
           currentAction: '正在读取本地仓库并补齐缺失行情。',
           percent: 35,
@@ -494,8 +495,8 @@ describe('home page', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('选股任务进度')).toBeInTheDocument();
-    expect(screen.getByText('/select 补数据 2026-06-04')).toBeInTheDocument();
+    expect(await screen.findByText('选股数据刷新')).toBeInTheDocument();
+    expect(screen.getByText('/select 2026-06-04')).toBeInTheDocument();
     expect(screen.getByText('拉取/补齐行情数据')).toBeInTheDocument();
     expect(screen.getByText('正在读取本地仓库并补齐缺失行情。')).toBeInTheDocument();
     expect(screen.getByText('拉取/补齐行情数据：补数据中')).toBeInTheDocument();
@@ -1220,10 +1221,10 @@ describe('home page', () => {
     expect(screen.queryByText('选股完成')).not.toBeInTheDocument();
     expect(screen.queryByText('等待确认候选')).not.toBeInTheDocument();
     expect(screen.queryByText('选股任务进度')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看完整选股报告' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看完整选股报告（含策略分析）' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /选股结果报告/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '查看完整选股报告' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看完整选股报告（含策略分析）' }));
     const selectionReport = await screen.findByTestId('reading-selection-report-body');
     expect(selectionReport).toHaveTextContent('候选事实表');
     expect(selectionReport).toHaveTextContent('600519.SH');
@@ -1323,7 +1324,7 @@ describe('home page', () => {
     fireEvent.change(input, { target: { value: '展示完成卡' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('报告已完成，可查看完整内容。')).toBeInTheDocument();
+    expect(await screen.findByText(/最终结论：维持观察/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看完整报告' }));
     expect(await screen.findByTestId('reading-report-body')).toBeInTheDocument();
     expect(screen.queryByTestId('report-detail-page')).not.toBeInTheDocument();

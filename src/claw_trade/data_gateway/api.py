@@ -18,6 +18,14 @@ class DataServiceLike(Protocol):
 
     def execute_plan(self, plan: Any) -> list[DataResult]: ...
 
+    def resolve_company_names(
+        self,
+        *,
+        market: Market | str,
+        symbol_ids: Sequence[str],
+        dataset: str = "daily_bar",
+    ) -> Mapping[str, str]: ...
+
 
 class DataAPI:
     def __init__(self, data_service: DataServiceLike) -> None:
@@ -54,6 +62,18 @@ class DataAPI:
             ordered.append(valid_results[valid_cursor])
             valid_cursor += 1
         return ordered
+
+    def resolve_company_names(
+        self,
+        *,
+        market: Market | str,
+        symbol_ids: Sequence[str],
+        dataset: str = "daily_bar",
+    ) -> Mapping[str, str]:
+        resolver = getattr(self._data_service, "resolve_company_names", None)
+        if not callable(resolver):
+            return {}
+        return resolver(market=market, symbol_ids=symbol_ids, dataset=dataset)
 
     def _validate_request(self, raw: DataRequest | Mapping[str, Any]) -> DataRequest | DataResult:
         payload: Mapping[str, Any] | None

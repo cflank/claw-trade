@@ -17,7 +17,11 @@ from claw_trade.selection.models import (
     SelectionTriggerSource,
     SelectRequest,
 )
-from claw_trade.selection.scheduler import SelectionScheduleContext, SelectionSchedulingError, schedule_selection_job
+from claw_trade.selection.scheduler import (
+    SelectionScheduleContext,
+    SelectionSchedulingError,
+    schedule_selection_job,
+)
 from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
 
 
@@ -310,10 +314,23 @@ class SelectionDataRefreshService:
                 record = self._store.load_latest_any_data_run_record(market=market, profile=profile)
             if record is None:
                 return {"selectionProgress": None}
+            display_trade_date = self._canonical_trade_date_for_record(record)
+            if (
+                record.data_run.status == SelectionDataRunStatus.FAILED
+                and display_trade_date != record.run_plan.trade_date
+                and self._has_valid_completed_run_for_trade_date(
+                    market=record.run_plan.market,
+                    profile=record.run_plan.profile,
+                    trade_date=display_trade_date,
+                )
+            ):
+                return {"selectionProgress": None}
+            if self._has_valid_completed_run_for_record(record):
+                return {"selectionProgress": None}
             return {
                 "selectionProgress": _data_run_progress_for_user(
                     record.data_run,
-                    trade_date=record.run_plan.trade_date,
+                    trade_date=display_trade_date,
                 )
             }
         try:
@@ -333,7 +350,39 @@ class SelectionDataRefreshService:
             )
         if record is None:
             return {"selectionProgress": None}
+        if self._has_valid_completed_run_for_record(record):
+            return {"selectionProgress": None}
         return {"selectionProgress": _data_run_progress_for_user(record.data_run, trade_date=resolved_trade_date)}
+
+    def _has_valid_completed_run_for_record(self, record: SelectionDataRunRecord) -> bool:
+        if record.data_run.status != SelectionDataRunStatus.FAILED:
+            return False
+        return self._has_valid_completed_run_for_trade_date(
+            market=record.run_plan.market,
+            profile=record.run_plan.profile,
+            trade_date=record.run_plan.trade_date,
+        )
+
+    def _has_valid_completed_run_for_trade_date(
+        self,
+        *,
+        market: SelectionMarket,
+        profile: SelectionProfile,
+        trade_date: str,
+    ) -> bool:
+        completed = self._store.load_latest_completed_selection_run(
+            market=market,
+            profile=profile,
+            trade_date=trade_date,
+            now=self._now_fn(),
+        )
+        return completed.is_available and completed.run is not None
+
+    def _canonical_trade_date_for_record(self, record: SelectionDataRunRecord) -> str:
+        try:
+            return self._resolve_closed_trade_date(record.run_plan.trade_date)
+        except Exception:  # noqa: BLE001
+            return record.run_plan.trade_date
 
     def _run_job_and_record_failure(self, plan: SelectionRunPlan) -> None:
         try:
@@ -392,7 +441,7 @@ _DATA_RUN_STAGE_UI: dict[SelectionDataRunStatus, tuple[str, str, int]] = {
     SelectionDataRunStatus.APPROVING_CANDIDATE_PACK: ("审批候选包", "正在校验候选包证据和读回完整性。", 95),
     SelectionDataRunStatus.NO_CANDIDATE: ("未产出候选", "本轮补数据完成，但没有可进入选股的候选。", 100),
     SelectionDataRunStatus.COMPLETED: ("数据已准备", "当前交易日选股数据和候选包已准备完成。", 100),
-    SelectionDataRunStatus.FAILED: ("补数据失败", "选股数据刷新失败，请查看失败原因。", 100),
+    SelectionDataRunStatus.FAILED: ("数据刷新失败", "选股数据刷新失败，请查看失败原因。", 100),
 }
 
 _DATA_RUN_ORDER = tuple(_DATA_RUN_STAGE_UI.keys())
@@ -436,16 +485,19 @@ def _data_run_progress_for_user(data_run: SelectionDataRun, *, trade_date: str) 
     else:
         status = "running"
         status_label = "补数据中"
-    if has_progress:
+    if data_run.failure_reason:
+        worker_status_labels = [f"失败原因：{_failure_reason_for_user(data_run)}"]
+    elif data_run.status == SelectionDataRunStatus.FAILED:
+        worker_status_labels = ["失败原因：未记录，查看任务证据。"]
+    elif has_progress:
         worker_status_labels = [f"{stage_label}：{status_label}（{progress_completed}/{progress_total}）"]
     else:
         worker_status_labels = [f"{stage_label}：{status_label}"]
-    if data_run.failure_reason:
-        worker_status_labels.append(f"失败原因：{_failure_reason_for_user(data_run)}")
     return {
+        "kind": "data_refresh",
         "status": status,
         "statusLabel": status_label,
-        "command": f"/select 补数据 {trade_date}",
+        "command": f"/select {trade_date}",
         "stageLabel": stage_label,
         "currentAction": current_action,
         "percent": percent,

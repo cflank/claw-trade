@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from claw_trade.data_gateway.warehouse import ALLOWED_MONGO_COLLECTIONS, DatasetRepository
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from claw_trade.data_gateway.execution import ProviderResultCache, ResultRefs
-from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy, RateLimiter
+from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimitPolicy
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
-from claw_trade.data_gateway.maintenance.jobs import CollectionMaintenanceJobRepository, MaintenanceJob
+from claw_trade.data_gateway.maintenance.jobs import (
+    CollectionMaintenanceJobRepository,
+    MaintenanceJob,
+)
+from claw_trade.data_gateway.warehouse import ALLOWED_MONGO_COLLECTIONS, DatasetRepository
 
 
 class _MongoLikeCollection:
@@ -236,9 +240,9 @@ def test_repository_bulk_upserts_normalized_documents_for_mongo_backend() -> Non
     assert normalized.find({}) and len(normalized.find({})) == 2
 
 
-def test_query_normalized_uses_mongo_criteria_instead_of_full_collection_scan() -> None:
+def test_legacy_query_normalized_uses_mongo_criteria_instead_of_full_collection_scan() -> None:
     mongo_like = _MongoLikeDatabase()
-    repo = DatasetRepository.from_database(mongo_like)
+    repo = DatasetRepository.from_database(mongo_like, allow_normalized_mongo_read=True)
     repo.upsert_normalized_documents(
         (
             _normalized_record(symbol_id="600519.SH", close=1.0),
@@ -259,6 +263,43 @@ def test_query_normalized_uses_mongo_criteria_instead_of_full_collection_scan() 
     assert normalized.find_calls == [
         {"dataset": "daily_bar", "market": "CN_A", "symbol_id": "600519.SH"}
     ]
+
+
+def test_database_backed_repository_does_not_read_mongo_normalized_rows_by_default() -> None:
+    mongo_like = _MongoLikeDatabase()
+    repo = DatasetRepository.from_database(mongo_like)
+    repo.upsert_normalized_documents((_normalized_record(symbol_id="600519.SH", close=1.0),))
+
+    rows = repo.query_normalized(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_id="600519.SH",
+        universe_ref=None,
+    )
+
+    assert rows == ()
+
+
+def test_database_backed_direct_normalized_row_helpers_are_maintenance_only() -> None:
+    from claw_trade.data_gateway.maintenance.normalized_rows import discard_normalized_mongo_rows
+
+    mongo_like = _MongoLikeDatabase()
+    repo = DatasetRepository.from_database(mongo_like)
+    refs = repo.upsert_normalized_documents((_normalized_record(symbol_id="600519.SH", close=1.0),))
+
+    assert not hasattr(repo, "get_normalized_document")
+    assert not hasattr(repo, "delete_normalized_documents")
+
+    assert repo.get_normalized_document_for_maintenance(refs[0]) is not None
+    with pytest.raises(RuntimeError, match="normalized_mongo_discard_requires_explicit_confirmation"):
+        discard_normalized_mongo_rows(repo, {"dataset": "daily_bar"})
+    dry_run = discard_normalized_mongo_rows(repo, {"dataset": "daily_bar"}, dry_run=True)
+    assert dry_run.matched_count == 1
+    assert dry_run.deleted_count == 0
+    assert repo.get_normalized_document_for_maintenance(refs[0]) is not None
+    result = discard_normalized_mongo_rows(repo, {"dataset": "daily_bar"}, confirmed=True)
+    assert result.deleted_count == 1
+    assert repo.get_normalized_document_for_maintenance(refs[0]) is None
 
 
 def _normalized_record(*, symbol_id: str, close: float) -> dict[str, object]:

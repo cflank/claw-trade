@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.artifacts.openviking_client import OpenVikingAccessError, OpenVikingClient
 from claw_trade.artifacts.refs import OpenVikingReadCapability, make_material_target
 from claw_trade.workflow.models import Stage
+
 from tests.fakes.openviking_store import FakeOpenVikingStore
 
 

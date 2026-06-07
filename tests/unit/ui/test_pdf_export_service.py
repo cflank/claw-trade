@@ -6,7 +6,10 @@ from types import SimpleNamespace
 
 from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
 from claw_trade.ui_backend.pdf_renderer import PdfKitRenderer
-from claw_trade.ui_backend.pdf_runtime_capabilities import PdfRuntimeCapabilities, PdfRuntimeCapability
+from claw_trade.ui_backend.pdf_runtime_capabilities import (
+    PdfRuntimeCapabilities,
+    PdfRuntimeCapability,
+)
 from claw_trade.ui_backend.pdf_validation import PdfValidationEvidence, PdfValidationResult
 from claw_trade.ui_backend.report_repository import ReportRepository
 

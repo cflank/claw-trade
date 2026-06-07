@@ -10,9 +10,16 @@ from claw_trade.artifacts.approval import (
 )
 from claw_trade.artifacts.manifest import make_material_id
 from claw_trade.artifacts.openviking_client import OpenVikingClient
-from claw_trade.artifacts.refs import L1Claim, L2Entry, L2Index, MaterialReceipt, make_material_target
+from claw_trade.artifacts.refs import (
+    L1Claim,
+    L2Entry,
+    L2Index,
+    MaterialReceipt,
+    make_material_target,
+)
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall
+
 from tests.fakes.openviking_store import FakeOpenVikingStore
 
 

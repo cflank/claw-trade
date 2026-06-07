@@ -1,6 +1,17 @@
-from claw_trade.ui_contracts.api_contracts import UI_API_CONTRACTS, UiApiContract, get_ui_api_contract, validate_ui_api_response
+from claw_trade.ui_contracts.api_contracts import (
+    UI_API_CONTRACTS,
+    UiApiContract,
+    get_ui_api_contract,
+    validate_ui_api_response,
+)
 from claw_trade.ui_contracts.constants import FIRST_VERSION_NOT_IN_SCOPE, PRODUCT_ERROR_CODES
-from claw_trade.ui_contracts.enums import ChatContextKind, IntentKind, MarketProfile, ReportTaskStatus, UserVisibleSeverity
+from claw_trade.ui_contracts.enums import (
+    ChatContextKind,
+    IntentKind,
+    MarketProfile,
+    ReportTaskStatus,
+    UserVisibleSeverity,
+)
 from claw_trade.ui_contracts.scope_guard import (
     FirstVersionScopeError,
     ScopeDecision,
@@ -22,13 +33,6 @@ from claw_trade.ui_contracts.user_dto import (
     ReportTaskForUser,
     ScheduledReportForUser,
     UserFacingFailureForUser,
-    toChatContextForUser,
-    toChatMessageForUser,
-    toIntentDraftForUser,
-    toPriceAlertForUser,
-    toReportQueueSnapshotForUser,
-    toReportTaskForUser,
-    toScheduledReportForUser,
     to_chat_context_for_user,
     to_chat_message_for_user,
     to_intent_draft_for_user,
@@ -37,6 +41,13 @@ from claw_trade.ui_contracts.user_dto import (
     to_report_task_for_user,
     to_scheduled_report_for_user,
     to_user_payload,
+    toChatContextForUser,
+    toChatMessageForUser,
+    toIntentDraftForUser,
+    toPriceAlertForUser,
+    toReportQueueSnapshotForUser,
+    toReportTaskForUser,
+    toScheduledReportForUser,
 )
 
 __all__ = [

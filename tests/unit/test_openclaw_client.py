@@ -4,8 +4,11 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
-from claw_trade.artifacts.refs import MaterialReadRef, OpenVikingReadCapability, make_material_target
+from claw_trade.artifacts.refs import (
+    MaterialReadRef,
+    OpenVikingReadCapability,
+    make_material_target,
+)
 from claw_trade.runtime.evidence_reader import OpenClawResult
 from claw_trade.runtime.openclaw_client import (
     OpenClawClient,

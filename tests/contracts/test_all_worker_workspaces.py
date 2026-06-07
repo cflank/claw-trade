@@ -1,12 +1,10 @@
 from pathlib import Path
 
 import pytest
-
 from claw_trade.config.stage_policy import load_stage_policy
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 from claw_trade.config.workspace import validate_worker_workspace_for_control
 from claw_trade.workflow.workers import worker_by_id
-
 
 REQUIRED_WORKERS: tuple[str, ...] = (
     "market_analyst",

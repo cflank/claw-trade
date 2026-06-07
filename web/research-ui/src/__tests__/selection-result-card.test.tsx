@@ -65,7 +65,7 @@ raw payload: hidden`),
     expect(screen.getByText('放弃：')).toBeInTheDocument();
     expect(screen.getAllByText(/600519\.SH 贵州茅台/)[0]).toBeInTheDocument();
     expect(screen.getByText('不会自动启动 /report。需要你确认候选标的后才会进入正式报告。')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '查看完整选股报告' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看完整选股报告（含策略分析）' })).toBeInTheDocument();
 
     const bodyText = document.body.textContent ?? '';
     expect(bodyText).not.toContain('total score');

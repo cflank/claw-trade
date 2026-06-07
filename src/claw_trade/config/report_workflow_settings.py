@@ -17,7 +17,7 @@ class ReportWorkflowSettings:
     max_debate_rounds: int = 1
     max_risk_discuss_rounds: int = 1
     max_rounds_hard_limit: int = _PRODUCT_MAX_ROUNDS_HARD_LIMIT
-    frontline_execution_mode: str = "parallel"
+    frontline_execution_mode: str = "serial"
     run_dir: str = "runs"
     default_profile: str = "CN_A"
     default_market: str = "CN_A"
@@ -49,10 +49,10 @@ def load_report_workflow_settings(env: Mapping[str, str] | None = None) -> Repor
         default=1,
         hard_limit=hard_limit,
     )
-    frontline_execution_mode = _plain(values, "CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE", default="parallel").lower()
-    if frontline_execution_mode != "parallel":
+    frontline_execution_mode = _plain(values, "CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE", default="serial").lower()
+    if frontline_execution_mode not in {"serial", "parallel"}:
         raise ReportWorkflowSettingsError(
-            "CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE 当前只允许 parallel"
+            "CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE 只允许 serial 或 parallel"
         )
     run_dir = _plain(values, "CLAW_TRADE_REPORT_RUN_DIR", default="runs")
     if not run_dir:

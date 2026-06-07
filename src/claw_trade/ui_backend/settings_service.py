@@ -7,7 +7,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from claw_trade.config.report_workflow_settings import ReportWorkflowSettings, load_report_workflow_settings
+from claw_trade.config.report_workflow_settings import (
+    ReportWorkflowSettings,
+    load_report_workflow_settings,
+)
 from claw_trade.ui_contracts.constants import PRODUCT_ERROR_CODES
 
 _WORKFLOW_ENV_ALLOWLIST = (
@@ -162,9 +165,9 @@ class SettingsService:
         )
         frontline_execution_mode = str(
             patch.get("frontlineExecutionMode", current.frontline_execution_mode)
-        ).strip() or "parallel"
-        if frontline_execution_mode != "parallel":
-            raise UiBoundaryError("INVALID_INPUT", "frontlineExecutionMode 当前只支持 parallel。")
+        ).strip() or "serial"
+        if frontline_execution_mode not in {"serial", "parallel"}:
+            raise UiBoundaryError("INVALID_INPUT", "frontlineExecutionMode 只支持 serial 或 parallel。")
         snapshot = ReportWorkflowSettingsSnapshot(
             max_debate_rounds=max_debate_rounds,
             max_risk_discuss_rounds=max_risk_discuss_rounds,

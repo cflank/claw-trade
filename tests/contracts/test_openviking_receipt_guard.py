@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 from claw_trade.artifacts.openviking_client import OpenVikingClient
-from claw_trade.artifacts.refs import MaterialReceipt, MaterialReceiptVerification, make_material_target
+from claw_trade.artifacts.refs import (
+    MaterialReceipt,
+    MaterialReceiptVerification,
+    make_material_target,
+)
 from claw_trade.guards.openviking_receipt import validate_openviking_receipt
 from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall
+
 from tests.fakes.openviking_store import FakeOpenVikingStore
 
 

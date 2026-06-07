@@ -7,7 +7,10 @@ from claw_trade.ui_backend.pdf_renderer import (
     PandocFallbackRenderer,
     PdfKitWithPandocFallbackRenderer,
 )
-from claw_trade.ui_backend.pdf_runtime_capabilities import PdfRuntimeCapabilities, PdfRuntimeCapability
+from claw_trade.ui_backend.pdf_runtime_capabilities import (
+    PdfRuntimeCapabilities,
+    PdfRuntimeCapability,
+)
 from claw_trade.ui_backend.pdf_validation import PdfValidationResult
 from claw_trade.ui_backend.report_repository import ReportRepository
 

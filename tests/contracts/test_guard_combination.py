@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from claw_trade.guards.common import (
     EARLY_STOP_CATEGORIES,
     combine_guard_results,
@@ -11,8 +10,10 @@ from claw_trade.guards.common import (
     guard_passed,
     should_early_stop,
 )
+from claw_trade.workflow.controller import (
+    merge_stage_failures as merge_stage_failures_from_controller,
+)
 from claw_trade.workflow.models import FailureRecord, Stage
-from claw_trade.workflow.controller import merge_stage_failures as merge_stage_failures_from_controller
 from claw_trade.workflow.runner import merge_stage_failures
 
 

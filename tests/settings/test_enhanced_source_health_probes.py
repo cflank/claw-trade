@@ -4,9 +4,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
-from claw_trade.ui_backend.data_source_settings import DataSourceSettingsService
-from claw_trade.ui_backend.data_source_settings import SUPPORTED_DATA_SOURCE_TYPES
+from claw_trade.data_gateway import source_probe
+from claw_trade.ui_backend.data_source_settings import (
+    SUPPORTED_DATA_SOURCE_TYPES,
+    DataSourceSettingsService,
+)
+
+ui_runtime_checks = source_probe
 
 PROBE_BACKED_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",

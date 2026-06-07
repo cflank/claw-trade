@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from claw_trade.data_gateway.providers.base import CapabilityError
 from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
 from claw_trade.data_gateway.providers.registry import ProviderRegistry

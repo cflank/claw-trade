@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
 from hashlib import sha256
-import json
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any

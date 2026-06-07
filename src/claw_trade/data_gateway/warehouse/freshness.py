@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-import re
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .repository import DatasetRecord
 from .trading_calendar import is_expected_daily_date
-
 
 Gap = dict[str, Any]
 

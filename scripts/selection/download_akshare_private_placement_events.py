@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-
 EMPTY_EVENT_COLUMNS = ("公告日期", "发行方式")
 
 

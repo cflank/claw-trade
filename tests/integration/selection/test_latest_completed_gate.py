@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.controller import SelectionController
 from claw_trade.selection.models import (
     CandidatePackManifest,
@@ -124,7 +124,7 @@ def _completed_record(
     data_run = SelectionDataRun(
         selection_run_id=run_id,
         status=SelectionDataRunStatus.COMPLETED,
-        normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
+        normalized_refs=(f"dataset://normalized/CN_A/daily/{run_id}",),
         provider_attempt_refs=(f"attempt://{run_id}",),
         select_data_plan_ref=f"select-data-plan://selection/{run_id}/{trade_date}",
         warehouse_check_ref=columnar_manifest.warehouse_check_ref,
@@ -242,7 +242,7 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "date": plan.trade_date,
                 "close": 10.0,
                 "amount": 1000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
         )
     )
@@ -255,13 +255,13 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "selection_features_materialized": True,
                 "close": 10.0,
                 "amount": 1000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
         )
     )
     return writer.commit(
         provider_attempt_refs=(f"attempt://{plan.selection_run_id}",),
-        normalized_refs=(f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",),
+        normalized_refs=(f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",),
     )
 
 
@@ -446,7 +446,7 @@ def test_select_manifest_missing_returns_integrity_failure() -> None:
     data_run = SelectionDataRun(
         selection_run_id=run_id,
         status=SelectionDataRunStatus.COMPLETED,
-        normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
+        normalized_refs=(f"dataset://normalized/CN_A/daily/{run_id}",),
         provider_attempt_refs=(f"attempt://{run_id}",),
         select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
         warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",

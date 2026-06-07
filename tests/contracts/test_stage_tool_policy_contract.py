@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from claw_trade.config.profiles import ConfigError
 from claw_trade.config.stage_policy import StagePolicy, load_stage_policy
 from claw_trade.config.tool_names import ToolRegistry, load_tool_registry, resolve_tools

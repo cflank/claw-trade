@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile
 from typing import Protocol
 
 import markdown as markdown_lib
-
 from claw_trade.ui_backend.pdf_markdown_cleaner import PdfMarkdownCleaner
 
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")

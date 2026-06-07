@@ -6,7 +6,10 @@ from typing import Callable, Protocol
 
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
-from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder, render_completion_summary_text
+from claw_trade.ui_backend.summary_builder import (
+    CompletionSummaryBuilder,
+    render_completion_summary_text,
+)
 
 
 class ChannelUserBridge(Protocol):

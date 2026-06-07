@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.ui_contracts.constants import FIRST_VERSION_NOT_IN_SCOPE
 from claw_trade.ui_contracts.scope_guard import (
     FirstVersionScopeError,

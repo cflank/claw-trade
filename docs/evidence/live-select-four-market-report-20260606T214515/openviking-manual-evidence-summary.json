@@ -1,0 +1,38 @@
+{
+  "CN_A": {
+    "glob_status": "ok",
+    "ovpack_files": [
+      "docs/evidence/live-select-four-market-report-20260606T214515/report-cn_a/openviking/ovpack/run-20260607-015125-f929a61d.ovpack"
+    ],
+    "path": "docs/evidence/live-select-four-market-report-20260606T214515/report-cn_a/openviking/openviking-manual-evidence-run-20260607-015125-f929a61d.json",
+    "run_id": "run-20260607-015125-f929a61d",
+    "tree_status": "ok"
+  },
+  "CRYPTO": {
+    "glob_status": "ok",
+    "ovpack_files": [
+      "docs/evidence/live-select-four-market-report-20260606T214515/report-crypto/openviking/ovpack/run-20260607-021913-3ca93bc2.ovpack"
+    ],
+    "path": "docs/evidence/live-select-four-market-report-20260606T214515/report-crypto/openviking/openviking-manual-evidence-run-20260607-021913-3ca93bc2.json",
+    "run_id": "run-20260607-021913-3ca93bc2",
+    "tree_status": "ok"
+  },
+  "HK": {
+    "glob_status": "ok",
+    "ovpack_files": [
+      "docs/evidence/live-select-four-market-report-20260606T214515/report-hk-openviking/ovpack/run-20260607-021545-08c995e7.ovpack"
+    ],
+    "path": "docs/evidence/live-select-four-market-report-20260606T214515/report-hk-openviking/openviking-manual-evidence-run-20260607-021545-08c995e7.json",
+    "run_id": "run-20260607-021545-08c995e7",
+    "tree_status": "ok"
+  },
+  "US": {
+    "glob_status": "ok",
+    "ovpack_files": [
+      "docs/evidence/live-select-four-market-report-20260606T214515/report-us/openviking/ovpack/run-20260607-020702-488c55ce.ovpack"
+    ],
+    "path": "docs/evidence/live-select-four-market-report-20260606T214515/report-us/openviking/openviking-manual-evidence-run-20260607-020702-488c55ce.json",
+    "run_id": "run-20260607-020702-488c55ce",
+    "tree_status": "ok"
+  }
+}

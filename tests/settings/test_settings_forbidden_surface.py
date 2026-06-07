@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
-from claw_trade.ui_backend.data_source_settings import DataSourceSettingsService
-from claw_trade.ui_backend.data_source_settings import SUPPORTED_DATA_SOURCE_TYPES
+from claw_trade.ui_backend.data_source_settings import (
+    SUPPORTED_DATA_SOURCE_TYPES,
+    DataSourceSettingsService,
+)
 from tests.settings.s16_test_helpers import (
     PROJECT_ROOT,
     SETTINGS_S16_ARTIFACT_DIR,

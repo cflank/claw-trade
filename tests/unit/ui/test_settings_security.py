@@ -3,9 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
-from claw_trade.ui_backend.data_source_settings import DataSourceSettingsService, allowed_data_source_env_keys
+from claw_trade.ui_backend.data_source_settings import (
+    DataSourceSettingsService,
+    allowed_data_source_env_keys,
+)
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
 from claw_trade.ui_contracts.constants import PRODUCT_ERROR_CODES

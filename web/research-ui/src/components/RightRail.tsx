@@ -52,6 +52,13 @@ function channelStateLabel(state?: string | null) {
   }
 }
 
+function selectionProgressTitle(progress: SelectionProgressForUser) {
+  if (progress.kind === 'data_refresh' || progress.statusLabel.includes('补数据') || progress.stageLabel.includes('数据')) {
+    return '选股数据刷新';
+  }
+  return '选股任务进度';
+}
+
 function SelectionTaskBlock({ progress }: { progress?: SelectionProgressForUser | null }) {
   if (!progress) {
     return null;
@@ -59,7 +66,7 @@ function SelectionTaskBlock({ progress }: { progress?: SelectionProgressForUser 
   const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
   return (
     <section className="ct-right-section" data-testid="right-rail-selection-section">
-      <h2>选股任务进度</h2>
+      <h2>{selectionProgressTitle(progress)}</h2>
       <article className="ct-task-item">
         <div className="ct-task-head">
           <strong>{progress.command}</strong>

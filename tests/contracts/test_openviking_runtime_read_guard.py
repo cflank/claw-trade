@@ -5,7 +5,13 @@ import json
 from pathlib import Path
 
 from claw_trade.artifacts.manifest import ApprovedManifest
-from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index, make_material_target
+from claw_trade.artifacts.refs import (
+    ApprovedMaterial,
+    L1Claim,
+    L2Entry,
+    L2Index,
+    make_material_target,
+)
 from claw_trade.guards.openviking_access import validate_openviking_runtime_reads
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall

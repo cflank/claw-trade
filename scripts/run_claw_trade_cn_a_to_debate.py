@@ -16,7 +16,6 @@ from typing import Any
 from claw_trade.cli.run_control import _build_runner
 from claw_trade.workflow.models import RunRequest, RunStatus, StopPoint, WorkflowEntryPoint
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNTIME_ENV = REPO_ROOT / ".runtime/dev-services/runtime.env"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "docs/evidence/invest_debate_prompt_feedback"

@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-from http.client import RemoteDisconnected
 from dataclasses import dataclass
 from hashlib import sha256
+from http.client import RemoteDisconnected
 from time import monotonic
 from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-
 
 SECRET_KEYS = frozenset(
     {

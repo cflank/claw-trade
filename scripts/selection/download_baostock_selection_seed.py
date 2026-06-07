@@ -13,7 +13,6 @@ from datetime import date
 from pathlib import Path
 from typing import Iterable, Mapping
 
-
 STOCK_FIELDS = (
     "date,code,open,high,low,close,preclose,volume,amount,"
     "adjustflag,turn,tradestatus,pctChg,isST"

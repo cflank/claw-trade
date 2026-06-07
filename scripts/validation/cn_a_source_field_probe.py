@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from xml.etree import ElementTree
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ENV = ROOT / ".runtime" / "dev-services" / "runtime.env"
 USER_AGENT = "claw-trade-data-source-field-probe/1.0"

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from enum import Enum
-import json
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from claw_trade.artifacts.openviking_client import OpenVikingAccessRecord
@@ -355,7 +355,7 @@ class WorkflowStore:
                 "max_risk_discuss_rounds",
             ),
             frontline_execution_mode=self._as_str(
-                payload.get("frontline_execution_mode", "parallel"),
+                payload.get("frontline_execution_mode", "serial"),
                 "frontline_execution_mode",
             ),
         )

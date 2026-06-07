@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from datetime import date
 from types import SimpleNamespace
 
-from claw_trade.data_gateway import selection_batch as selection_batch_bridge
-from claw_trade.data_gateway.providers import build_minimal_provider_registry
+from claw_trade.data_gateway import _selection_batch as selection_batch_bridge
 from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
+from claw_trade.data_gateway.providers import build_minimal_provider_registry
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
 from claw_trade.reports import data_pack_bridge as report_data_pack_bridge
 
@@ -113,15 +113,32 @@ def test_cn_a_daily_bar_prefers_tushare_when_token_is_configured() -> None:
     )
 
     ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
-    assert ordered[:2] == [
+    assert ordered[:1] == [
         ("cn_a_primary", "daily_bar"),
-        ("cn_a_primary", "daily_bar_by_trade_date"),
     ]
-    assert ordered[2:5] == [
+    assert ("cn_a_primary", "daily_bar_by_trade_date") not in ordered
+    assert ordered[1:4] == [
         ("cn_a_akshare_social_news", "stock_zh_a_hist"),
         ("cn_a_baostock_market", "daily_bar"),
         ("cn_a_eastmoney_market_data", "daily_bar"),
     ]
+
+
+def test_cn_a_daily_bar_allows_trade_date_endpoint_for_universe_refresh() -> None:
+    selector = ProviderSelector(
+        build_minimal_provider_registry(),
+        credential_resolver=FakeCredentialResolver({"data_source:tushare": "ts-token"}),
+    )
+    request = _cn_a_daily_bar_request()
+    request.universe_ref = "all_a_shares"
+    request.symbol_id = None
+    candidates = selector.select_candidates(
+        (SimpleNamespace(request_id="gap-cn-a-universe-daily"),),
+        FakeQueryPlan(request),
+    )
+
+    ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
+    assert ("cn_a_primary", "daily_bar_by_trade_date") in ordered
 
 
 def test_cn_a_daily_bar_falls_back_to_public_sources_when_tushare_token_missing() -> None:
@@ -143,6 +160,36 @@ def test_cn_a_daily_bar_falls_back_to_public_sources_when_tushare_token_missing(
     ]
 
 
+def test_report_prefetch_skips_mootdx_public_provider() -> None:
+    selector = ProviderSelector(
+        build_minimal_provider_registry(),
+        credential_resolver=FakeCredentialResolver({}),
+    )
+    request = _cn_a_realtime_quote_request(consumer="report")
+    candidates = selector.select_candidates(
+        (SimpleNamespace(request_id="gap-cn-a-quote", required_level="required"),),
+        FakeQueryPlan(request),
+    )
+
+    ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
+    assert ("cn_a_mootdx_market", "quote_snapshot") not in ordered
+
+
+def test_non_report_requests_can_still_use_mootdx_public_provider() -> None:
+    selector = ProviderSelector(
+        build_minimal_provider_registry(),
+        credential_resolver=FakeCredentialResolver({}),
+    )
+    request = _cn_a_realtime_quote_request(consumer="maintenance")
+    candidates = selector.select_candidates(
+        (SimpleNamespace(request_id="gap-cn-a-quote", required_level="required"),),
+        FakeQueryPlan(request),
+    )
+
+    ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
+    assert ("cn_a_mootdx_market", "quote_snapshot") in ordered
+
+
 def _cn_a_daily_bar_request() -> SimpleNamespace:
     return SimpleNamespace(
         market="CN_A",
@@ -150,6 +197,17 @@ def _cn_a_daily_bar_request() -> SimpleNamespace:
         granularity="daily",
         fields=("date", "open", "high", "low", "close", "volume", "amount"),
         symbol_id="600519.SH",
+    )
+
+
+def _cn_a_realtime_quote_request(*, consumer: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        market="CN_A",
+        data_type="quote_snapshot",
+        granularity="realtime",
+        fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+        symbol_id="600519.SH",
+        consumer=consumer,
     )
 
 

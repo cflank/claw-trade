@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import hashlib
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.openviking_client import (
     OPENVIKING_PROBE_NAMESPACE_URI,
     OPENVIKING_PROBE_RECEIPT_PATH,
@@ -13,7 +12,13 @@ from claw_trade.artifacts.openviking_client import (
     OpenVikingAccessError,
     OpenVikingClient,
 )
-from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialReceipt, MaterialReceiptVerification, make_material_target
+from claw_trade.artifacts.refs import (
+    L2Entry,
+    L2Index,
+    MaterialReceipt,
+    MaterialReceiptVerification,
+    make_material_target,
+)
 from claw_trade.workflow.models import Stage
 
 

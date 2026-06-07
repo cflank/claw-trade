@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from claw_trade.runtime.settings_projection import export_runtime_settings_from_mongo
 from claw_trade.runtime import settings_projection
+from claw_trade.runtime.settings_projection import export_runtime_settings_from_mongo
 
 
 class _FakeCollection:

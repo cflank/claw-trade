@@ -172,6 +172,7 @@ function localSelectPendingMessages(text: string): ChatMessageForUser[] {
 
 function runningSelectionProgress(command: string): SelectionProgressForUser {
   return {
+    kind: 'selection_workflow',
     status: 'running',
     statusLabel: '选股中',
     command,

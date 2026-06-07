@@ -66,3 +66,67 @@ def test_create_and_poll_workflow_run() -> None:
     assert status == {"runId": "run-1", "status": "frontline_running"}
     state = bridge.load_workflow_state("run-1")
     assert state.status == "frontline_running"
+
+
+def test_build_run_request_resolves_cn_a_company_name_from_data_layer() -> None:
+    runner = _FakeRunner()
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        assert market == "CN_A"
+        assert symbol_ids == ("688017.SH",)
+        return {"688017.SH": "绿的谐波"}
+
+    bridge = ReportWorkflowBridge(runner, company_name_resolver=_resolver)
+    task = _task()
+    settings = dict(task["workflowSettings"])  # type: ignore[arg-type]
+    settings.update(
+        {
+            "defaultProfile": "CN_A",
+            "defaultMarket": "CN_A",
+            "defaultCurrency": "CNY",
+            "defaultCurrencySymbol": "\u00a5",
+        }
+    )
+    task.update(
+        {
+            "instrumentCode": "688017.SH",
+            "instrumentName": "688017.SH",
+            "market": "CN_A",
+            "companyName": "688017.SH",
+            "workflowSettings": settings,
+        }
+    )
+
+    request = bridge.build_run_request(task)
+
+    assert request.ticker == "688017.SH"
+    assert request.company_name == "绿的谐波"
+
+
+def test_build_run_request_does_not_use_ticker_as_company_name_when_unresolved() -> None:
+    runner = _FakeRunner()
+    bridge = ReportWorkflowBridge(runner)
+    task = _task()
+    settings = dict(task["workflowSettings"])  # type: ignore[arg-type]
+    settings.update(
+        {
+            "defaultProfile": "CN_A",
+            "defaultMarket": "CN_A",
+            "defaultCurrency": "CNY",
+            "defaultCurrencySymbol": "\u00a5",
+        }
+    )
+    task.update(
+        {
+            "instrumentCode": "688017.SH",
+            "instrumentName": "688017.SH",
+            "market": "CN_A",
+            "companyName": "688017.SH",
+            "workflowSettings": settings,
+        }
+    )
+
+    request = bridge.build_run_request(task)
+
+    assert request.ticker == "688017.SH"
+    assert request.company_name == "名称未查到"

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.data_job import (
     SelectionDataFetchProgress,
     SelectionDataJob,
@@ -87,7 +87,7 @@ def test_select_data_plan_crypto_history_missing_has_blocker_gap() -> None:
     assert warehouse_check.should_call_provider is False
     [gap] = warehouse_check.data_gaps
     assert gap.reason == "mongo_missing"
-    assert "历史包尚未批准下载并入 Mongo" in gap.root_cause
+    assert "历史包尚未批准进入标准化数据层" in gap.root_cause
 
 
 def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: Path) -> None:
@@ -133,7 +133,7 @@ def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> 
     normalized_refs: list[str] = []
     for idx in range(20):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://mongo/normalized_datasets/row-{idx + 1}"
+        ref = f"dataset://normalized/CN_A/daily/row-{idx + 1}"
         normalized_refs.append(ref)
         open_price = 10.0 + idx * 0.1
         close_price = open_price + 0.2
@@ -277,7 +277,7 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     assert payload["candidate_pack_manifest"]["weight_version"] == "cn_a.selection_weights.v1"
     assert payload["candidate_pack_manifest"]["candidate_scores_ref"] == "score://sel-run-03-success"
     assert payload["candidate_pack_manifest"]["stable_top20_rule"]["primary"] == "score_desc"
-    assert payload["normalized_refs"] == [f"normalized://mongo/normalized_datasets/row-{idx}" for idx in range(1, 21)]
+    assert payload["normalized_refs"] == [f"dataset://normalized/CN_A/daily/row-{idx}" for idx in range(1, 21)]
     assert payload["warehouse_check_ref"] == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
     assert payload["columnar_manifest_ref"].startswith("columnar://selection/")
     assert payload["select_data_plan"]["schema_version"] == "selection_data_plan.v1"
@@ -328,6 +328,38 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
 
 
 @pytest.mark.integration
+def test_data_job_pipeline_normalizes_legacy_source_refs_in_feature_snapshot_evidence(tmp_path: Path) -> None:
+    plan = replace(_plan(), selection_run_id="sel-run-legacy-source-ref")
+
+    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionProviderBatchResult:
+        result = _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
+        rows = tuple(
+            {
+                **dict(row),
+                "source_ref": f"normalized://mongo/normalized_datasets/dataset:daily_bar:CN_A:legacy-{idx + 1}",
+            }
+            for idx, row in enumerate(result.rows)
+        )
+        return replace(result, rows=rows)
+
+    job = SelectionDataJob(
+        store=SelectionRunStore(),
+        provider_fetch_batch=provider_fetch,
+        strategy_config_loader=lambda config_ref: _approved_strategy() if config_ref == plan.approved_strategy_config_ref else None,
+        now_fn=lambda: datetime(2026, 5, 26, 9, 0, tzinfo=UTC),
+        evidence_root=tmp_path,
+    )
+
+    result = job.run(plan)
+
+    payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    source_refs = [str(row["source_ref"]) for row in payload["feature_snapshot"]]
+    assert source_refs
+    assert all(ref.startswith("dataset://normalized/") for ref in source_refs)
+    assert not any("normalized://mongo" in ref or "mongo://normalized_datasets" in ref for ref in source_refs)
+
+
+@pytest.mark.integration
 def test_data_job_pipeline_records_provider_fetch_progress(tmp_path: Path) -> None:
     plan = _plan()
     store = SelectionRunStore()
@@ -370,7 +402,7 @@ def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields
         normalized_refs: list[str] = []
         for idx in range(20):
             ticker = f"{600100 + idx:06d}.SH"
-            ref = f"normalized://mongo/normalized_datasets/private-missing-{idx + 1}"
+            ref = f"dataset://normalized/CN_A/daily/private-missing-{idx + 1}"
             normalized_refs.append(ref)
             open_price = 10.0 + idx * 0.1
             close_price = open_price + 0.2
@@ -495,7 +527,7 @@ def test_data_job_pipeline_provider_failure_fails_closed_without_fallback(tmp_pa
     assert provider_specs[0]["params"]["lookback_trading_days"] == 260
     assert payload["top20"] == []
     assert payload["normalized_refs"] == []
-    assert payload["data_gaps"][0]["gap_code"] == "provider_attempts_missing"
+    assert payload["data_gaps"][0]["gap_code"] == "provider_attempt_refs_missing"
 
 
 @pytest.mark.integration
@@ -538,7 +570,7 @@ def test_data_job_pipeline_accepts_candidate_count_less_than_20(tmp_path: Path) 
         refs: list[str] = []
         for idx in range(19):
             ticker = f"{300000 + idx:06d}.SZ"
-            ref = f"normalized://mongo/normalized_datasets/insufficient-{idx + 1}"
+            ref = f"dataset://normalized/CN_A/daily/insufficient-{idx + 1}"
             refs.append(ref)
             rows.append(
                 {
@@ -599,7 +631,7 @@ def test_data_job_pipeline_marks_no_candidate_without_approved_pack(tmp_path: Pa
         refs: list[str] = []
         for idx in range(3):
             ticker = f"{300000 + idx:06d}.SZ"
-            ref = f"normalized://mongo/normalized_datasets/no-candidate-{idx + 1}"
+            ref = f"dataset://normalized/CN_A/daily/no-candidate-{idx + 1}"
             refs.append(ref)
             rows.append(
                 {
@@ -695,7 +727,7 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
             SelectionProviderBatchResult(
                 provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
                 attempt_refs=("attempt://current-only",),
-                normalized_refs=("normalized://mongo/normalized_datasets/current-only-1",),
+                normalized_refs=("dataset://normalized/CN_A/daily/current-only-1",),
                 rows=(
                     {
                         "ticker": "600999.SH",
@@ -707,7 +739,7 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
                         "low": 9.9,
                         "amount": 300000000.0,
                         "vol_ratio": 2.5,
-                        "source_ref": "normalized://mongo/normalized_datasets/current-only-1",
+                        "source_ref": "dataset://normalized/CN_A/daily/current-only-1",
                     },
                 ),
                 warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/strategy-fields-missing",
@@ -752,8 +784,8 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
                 provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
                 attempt_refs=("attempt://duplicate",),
                 normalized_refs=(
-                    "normalized://mongo/normalized_datasets/duplicate-1",
-                    "normalized://mongo/normalized_datasets/duplicate-2",
+                    "dataset://normalized/CN_A/daily/duplicate-1",
+                    "dataset://normalized/CN_A/daily/duplicate-2",
                 ),
                 rows=(
                     {
@@ -765,7 +797,7 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
                         "high": 10.5,
                         "low": 9.9,
                         "amount": 300000000.0,
-                        "source_ref": "normalized://mongo/normalized_datasets/duplicate-1",
+                        "source_ref": "dataset://normalized/CN_A/daily/duplicate-1",
                     },
                     {
                         "ticker": "600998.SH",
@@ -776,7 +808,7 @@ def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_pa
                         "high": 10.5,
                         "low": 9.9,
                         "amount": 300000000.0,
-                        "source_ref": "normalized://mongo/normalized_datasets/duplicate-2",
+                        "source_ref": "dataset://normalized/CN_A/daily/duplicate-2",
                     },
                 ),
                 warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/duplicate",

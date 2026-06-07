@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.data_job import SelectionDataJob, SelectionProviderBatchResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
 from claw_trade.selection.models import (
@@ -71,7 +71,7 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
     normalized_refs: list[str] = []
     for idx in range(20):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://mongo/normalized_datasets/row-{idx + 1}"
+        ref = f"dataset://normalized/CN_A/daily/row-{idx + 1}"
         normalized_refs.append(ref)
         open_price = 10.0 + idx * 0.1
         close_price = open_price + 0.2
@@ -201,8 +201,8 @@ def _run_successful_data_job(*, tmp_path: Path, persisted: bool) -> str:
 
 
 @pytest.mark.integration
-def test_restore_selection_store_from_data_job_evidence_roundtrip(tmp_path: Path) -> None:
-    selection_run_id = _run_successful_data_job(tmp_path=tmp_path, persisted=False)
+def test_restore_selection_store_ignores_legacy_data_job_evidence(tmp_path: Path) -> None:
+    _run_successful_data_job(tmp_path=tmp_path, persisted=False)
 
     restored = restore_selection_run_store(selection_runs_root=tmp_path)
     result = resolve_latest_completed_selection_run(
@@ -213,9 +213,8 @@ def test_restore_selection_store_from_data_job_evidence_roundtrip(tmp_path: Path
         now_fn=lambda: datetime(2026, 5, 26, 10, 0, tzinfo=UTC),
     )
 
-    assert result.is_available is True
-    assert result.run is not None
-    assert result.run.run_plan.selection_run_id == selection_run_id
+    assert result.is_available is False
+    assert result.unavailable_code == SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN
 
 
 @pytest.mark.integration

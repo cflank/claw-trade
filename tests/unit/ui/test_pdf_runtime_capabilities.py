@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
-from claw_trade.ui_backend.pdf_runtime_capabilities import RuntimeProbe, detect_pdf_runtime_capabilities
+from claw_trade.ui_backend.pdf_runtime_capabilities import (
+    RuntimeProbe,
+    detect_pdf_runtime_capabilities,
+)
 from claw_trade.ui_backend.report_repository import ReportRepository
 
 

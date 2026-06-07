@@ -7,8 +7,7 @@ import struct
 import subprocess
 import time
 from pathlib import Path
-from urllib.request import urlopen
-from urllib.request import Request
+from urllib.request import Request, urlopen
 
 
 def _find_free_port() -> int:

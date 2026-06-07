@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import os
-from pathlib import Path
 import threading
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Mapping
 
 from claw_trade.ui_backend.settings_service import UiBoundaryError

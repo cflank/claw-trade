@@ -6,7 +6,11 @@ from pathlib import Path
 from uuid import uuid4
 
 from claw_trade.artifacts.manifest import ApprovedManifest, ArtifactFlowError
-from claw_trade.artifacts.refs import MaterialReadRef, OpenVikingReadCapability, make_material_target
+from claw_trade.artifacts.refs import (
+    MaterialReadRef,
+    OpenVikingReadCapability,
+    make_material_target,
+)
 from claw_trade.config.profiles import ConfigError, require_profile
 from claw_trade.config.stage_policy import load_stage_policy, validate_stage_policy_matches_worker
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools

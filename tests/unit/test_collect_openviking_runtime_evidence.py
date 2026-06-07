@@ -78,3 +78,30 @@ def test_relation_count_detects_common_relation_shapes() -> None:
     assert collector._relation_count({"items": [{"to_uri": "a"}, {"to_uri": "b"}]}) == 2
     assert collector._relation_count({"from_uri": "a", "to_uri": "b"}) == 1
     assert collector._relation_count({"status": "blocked"}) == 0
+
+
+def test_dict_export_receipt_can_be_imported_when_bundle_exists(tmp_path: Path) -> None:
+    collector = _collector_module()
+    bundle_path = tmp_path / "run.ovpack"
+    bundle_path.write_bytes(b"ovpack")
+
+    receipt = {
+        "portability_status": "metadata_verified",
+        "bundle_path": str(bundle_path),
+    }
+
+    assert collector._receipt_field(receipt, "portability_status") == "metadata_verified"
+    assert collector._export_receipt_is_importable(receipt) is True
+
+
+def test_blocked_export_receipt_is_not_imported(tmp_path: Path) -> None:
+    collector = _collector_module()
+    bundle_path = tmp_path / "run.ovpack"
+    bundle_path.write_bytes(b"ovpack")
+
+    assert collector._export_receipt_is_importable(
+        {
+            "portability_status": "blocked",
+            "bundle_path": str(bundle_path),
+        }
+    ) is False

@@ -9,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Mapping
 
-
 INDEX_FIELDS = ("date", "code", "open", "high", "low", "close", "preclose", "volume", "amount", "pctChg")
 
 

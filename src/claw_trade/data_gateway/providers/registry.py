@@ -4,7 +4,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .base import CapabilityError, ProviderCapabilityView, ProviderPlugin, validate_provider_capabilities
+from .base import (
+    CapabilityError,
+    ProviderCapabilityView,
+    ProviderPlugin,
+    validate_provider_capabilities,
+)
 
 
 def _read_attr(obj: Any, name: str, default: Any = None) -> Any:

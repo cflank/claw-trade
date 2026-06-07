@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.openviking_client import OpenVikingClient, OpenVikingStat
 from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialTarget, make_material_target
 from claw_trade.guards.l1_l2 import validate_l1_l2_contract, validate_l2_entries

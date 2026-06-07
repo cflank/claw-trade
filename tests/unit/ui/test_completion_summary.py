@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from claw_trade.ui_backend.report_repository import ReportRepository
-from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder, render_completion_summary_text
+from claw_trade.ui_backend.summary_builder import (
+    CompletionSummaryBuilder,
+    render_completion_summary_text,
+)
 
 
 def test_completion_summary_only_extracts_from_saved_report_and_pm_conclusion() -> None:

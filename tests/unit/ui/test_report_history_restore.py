@@ -10,7 +10,10 @@ from claw_trade.web.state import restore_completed_workflow_reports
 def _write_completed_run(run_root: Path, run_id: str) -> Path:
     run_dir = run_root / run_id
     (run_dir / "reports").mkdir(parents=True)
-    (run_dir / "reports" / "final-report.md").write_text("# BTC 报告\n\n完整正文", encoding="utf-8")
+    (run_dir / "reports" / "final-report.md").write_text(
+        "# BTC 报告\n\n## 最终结论\n维持观察，等待突破确认。\n\n完整正文",
+        encoding="utf-8",
+    )
     (run_dir / "state.json").write_text(
         json.dumps(
             {
@@ -42,6 +45,7 @@ def test_restore_completed_workflow_reports_from_run_files(tmp_path: Path) -> No
     items = repo.list_saved_reports()
     assert items[0]["id"] == "run-restore-1"
     assert items[0]["instrumentCode"] == "BTC"
+    assert items[0]["summarySnippet"] == "维持观察，等待突破确认。"
 
 
 def test_deleted_restored_report_stays_hidden_without_removing_run_files(tmp_path: Path) -> None:

@@ -13,7 +13,10 @@ from claw_trade.guards.fundamental_claim_gate import (
     UnsupportedClaim,
     evaluate_fundamental_report_claims_from_paths_v1,
 )
-from claw_trade.guards.fundamental_claim_rules import CLAIM_DICTIONARY_REVISION_ID, CLAIM_RULES_VERSION
+from claw_trade.guards.fundamental_claim_rules import (
+    CLAIM_DICTIONARY_REVISION_ID,
+    CLAIM_RULES_VERSION,
+)
 from claw_trade.guards.openviking_receipt import validate_openviking_receipt
 from claw_trade.guards.visible_tools import validate_visible_tools
 from claw_trade.runtime.evidence_reader import ProviderEvidence

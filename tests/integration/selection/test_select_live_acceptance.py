@@ -12,13 +12,13 @@ from uuid import uuid4
 
 import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.runtime.openclaw_client import OpenClawClient
 from claw_trade.runtime.openclaw_local_runner import create_default_runner
 from claw_trade.selection.confirmation import (
     SelectionConfirmationController,
     SelectionConfirmRequest,
 )
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.controller import SelectCommandCode, SelectionController
 from claw_trade.selection.models import (
     CandidatePackManifest,
@@ -381,7 +381,7 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
                 "date": "2026-05-26",
                 "close": 1612.0,
                 "amount": 3000000000.0,
-                "source_ref": "normalized://mongo/normalized_datasets/sel-11-live",
+                "source_ref": "dataset://normalized/CN_A/daily/sel-11-live",
             },
         )
     )
@@ -394,13 +394,13 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
                 "selection_features_materialized": True,
                 "close": 1612.0,
                 "amount": 3000000000.0,
-                "source_ref": "normalized://mongo/normalized_datasets/sel-11-live",
+                "source_ref": "dataset://normalized/CN_A/daily/sel-11-live",
             },
         )
     )
     columnar_manifest = columnar_writer.commit(
         provider_attempt_refs=("attempt://sel-11-live",),
-        normalized_refs=("normalized://mongo/normalized_datasets/sel-11-live",),
+        normalized_refs=("dataset://normalized/CN_A/daily/sel-11-live",),
     )
     store.save_data_run_record(
         SelectionDataRunRecord(
@@ -408,7 +408,7 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
-                normalized_refs=("normalized://mongo/normalized_datasets/sel-11-live",),
+                normalized_refs=("dataset://normalized/CN_A/daily/sel-11-live",),
                 provider_attempt_refs=("attempt://sel-11-live",),
                 select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
                 warehouse_check_ref=columnar_manifest.warehouse_check_ref,
@@ -699,6 +699,10 @@ def test_select_live_acceptance_provider_payload_and_handoff() -> None:
     reader_artifact_path = artifact_root / f"{result.select_workflow_run_id}-select-reader-artifact.md"
     reader_text = result.reader_report_markdown or result.chat_text
     _assert_candidate_fact_body_is_reader_chinese(reader_text)
+    reader_report_path = Path(str(workflow_payload.get("reader_report_path") or ""))
+    assert reader_report_path.is_file(), "workflow evidence must persist the full /select reader report"
+    assert result.reader_report_path == reader_report_path
+    assert reader_report_path.read_text(encoding="utf-8").strip() == reader_text.strip()
     reader_artifact_path.write_text(reader_text.strip() + "\n", encoding="utf-8")
     assert reader_artifact_path.is_file()
 

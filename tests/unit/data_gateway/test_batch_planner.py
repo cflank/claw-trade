@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import date
 
 import pytest
-
 from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
 from claw_trade.data_gateway.coordination.coalescer import MergeGroup, MergeItem
 from claw_trade.data_gateway.providers.base import CapabilityError

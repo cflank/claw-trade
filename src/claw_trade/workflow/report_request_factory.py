@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
-from claw_trade.instruments.resolver import InstrumentResolveError, crypto_display_name, resolve_instrument_identity
+from claw_trade.instruments.resolver import (
+    InstrumentResolveError,
+    crypto_display_name,
+    resolve_instrument_identity,
+)
 from claw_trade.workflow.models import RunRequest, Stage, StopPoint, WorkflowEntryPoint
 
 DEFAULT_REPORT_LOOKBACK_DAYS = 365

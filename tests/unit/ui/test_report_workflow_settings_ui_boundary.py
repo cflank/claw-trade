@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.ui_backend.settings_service import SettingsService, UiBoundaryError
 

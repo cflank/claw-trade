@@ -1,0 +1,259 @@
+{
+  "schema": "provider-attempt-window-summary-v1",
+  "generated_at": "2026-06-07T02:18:20.921686+00:00",
+  "market": "HK",
+  "run_id": "run-20260607-021545-08c995e7",
+  "report_output_dir": "docs/evidence/live-select-four-market-report-20260606T214515/report-hk",
+  "database": "claw_trade",
+  "skip_count": 20870,
+  "attempt_count": 15,
+  "status_counts": {
+    "empty_result": 3,
+    "provider_error": 3,
+    "success": 9
+  },
+  "remote_success_counts": {
+    "False": 15
+  },
+  "provider_counts": {
+    "hk_akshare_fundamental": 2,
+    "hk_finnhub_data": 3,
+    "hk_google_news": 2,
+    "hk_hkexnews_official": 1,
+    "hk_sina_public": 1,
+    "hk_tushare": 4,
+    "hk_yahoo_finance": 2
+  },
+  "endpoint_status_counts": {
+    "hk_akshare_fundamental::stock_financial_hk_analysis_indicator_em::success": 1,
+    "hk_akshare_fundamental::stock_financial_hk_report_em_income::success": 1,
+    "hk_finnhub_data::company_news::provider_error": 1,
+    "hk_finnhub_data::stock_candle_daily::provider_error": 1,
+    "hk_finnhub_data::stock_metric_valuation::provider_error": 1,
+    "hk_google_news::company_news::success": 1,
+    "hk_google_news::macro_news::success": 1,
+    "hk_hkexnews_official::regulatory_announcements::empty_result": 1,
+    "hk_sina_public::stock_hk_daily::success": 1,
+    "hk_tushare::hk_daily::empty_result": 1,
+    "hk_tushare::hk_daily_adj::success": 1,
+    "hk_tushare::hk_daily_adj_valuation::success": 1,
+    "hk_tushare::hk_fina_indicator::empty_result": 1,
+    "hk_yahoo_finance::chart_daily::success": 1,
+    "hk_yahoo_finance::quote_summary_valuation::success": 1
+  },
+  "attempts": [
+    {
+      "provider": "hk_hkexnews_official",
+      "endpoint": "regulatory_announcements",
+      "status": "empty_result",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 0,
+      "raw_ref_count": 0,
+      "gap_codes": [
+        "empty_result"
+      ],
+      "created_at": "2026-06-07 02:15:47.454000",
+      "attempt_ref": "attempt:hk_hkexnews_official:regulatory_announcements:08c9fb59e0e4"
+    },
+    {
+      "provider": "hk_finnhub_data",
+      "endpoint": "company_news",
+      "status": "provider_error",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 0,
+      "raw_ref_count": 0,
+      "gap_codes": [
+        "provider_error"
+      ],
+      "created_at": "2026-06-07 02:15:47.542000",
+      "attempt_ref": "attempt:hk_finnhub_data:company_news:9ecc6970fde0"
+    },
+    {
+      "provider": "hk_finnhub_data",
+      "endpoint": "stock_candle_daily",
+      "status": "provider_error",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 0,
+      "raw_ref_count": 0,
+      "gap_codes": [
+        "provider_error"
+      ],
+      "created_at": "2026-06-07 02:15:47.719000",
+      "attempt_ref": "attempt:hk_finnhub_data:stock_candle_daily:868deddab93f"
+    },
+    {
+      "provider": "hk_finnhub_data",
+      "endpoint": "stock_metric_valuation",
+      "status": "provider_error",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 0,
+      "raw_ref_count": 0,
+      "gap_codes": [
+        "provider_error"
+      ],
+      "created_at": "2026-06-07 02:15:47.796000",
+      "attempt_ref": "attempt:hk_finnhub_data:stock_metric_valuation:3f4ccd2fb3d5"
+    },
+    {
+      "provider": "hk_tushare",
+      "endpoint": "hk_daily",
+      "status": "empty_result",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 0,
+      "raw_ref_count": 0,
+      "gap_codes": [
+        "empty_result"
+      ],
+      "created_at": "2026-06-07 02:15:48.729000",
+      "attempt_ref": "attempt:hk_tushare:hk_daily:185ed5151b41"
+    },
+    {
+      "provider": "hk_tushare",
+      "endpoint": "hk_daily_adj",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 246,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:15:50.628000",
+      "attempt_ref": "attempt:hk_tushare:hk_daily_adj:c292a7b0f643"
+    },
+    {
+      "provider": "hk_tushare",
+      "endpoint": "hk_daily_adj_valuation",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 246,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "field_missing",
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:15:52.730000",
+      "attempt_ref": "attempt:hk_tushare:hk_daily_adj_valuation:fafa9935f94e"
+    },
+    {
+      "provider": "hk_tushare",
+      "endpoint": "hk_fina_indicator",
+      "status": "empty_result",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 0,
+      "raw_ref_count": 0,
+      "gap_codes": [
+        "empty_result"
+      ],
+      "created_at": "2026-06-07 02:15:53.734000",
+      "attempt_ref": "attempt:hk_tushare:hk_fina_indicator:960d66678009"
+    },
+    {
+      "provider": "hk_yahoo_finance",
+      "endpoint": "quote_summary_valuation",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 1,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:15:54.218000",
+      "attempt_ref": "attempt:hk_yahoo_finance:quote_summary_valuation:1ce9ef5cae2e"
+    },
+    {
+      "provider": "hk_akshare_fundamental",
+      "endpoint": "stock_financial_hk_analysis_indicator_em",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 9,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "field_missing",
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:15:55.154000",
+      "attempt_ref": "attempt:hk_akshare_fundamental:stock_financial_hk_analysis_indicator_em:2bc20827eb17"
+    },
+    {
+      "provider": "hk_akshare_fundamental",
+      "endpoint": "stock_financial_hk_report_em_income",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 9,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "field_missing",
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:15:56.985000",
+      "attempt_ref": "attempt:hk_akshare_fundamental:stock_financial_hk_report_em_income:13fd92b4496c"
+    },
+    {
+      "provider": "hk_sina_public",
+      "endpoint": "stock_hk_daily",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 5403,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:15:59.109000",
+      "attempt_ref": "attempt:hk_sina_public:stock_hk_daily:e6ff3a8af0a4"
+    },
+    {
+      "provider": "hk_yahoo_finance",
+      "endpoint": "chart_daily",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 247,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:16:00.352000",
+      "attempt_ref": "attempt:hk_yahoo_finance:chart_daily:74c576262de5"
+    },
+    {
+      "provider": "hk_google_news",
+      "endpoint": "company_news",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 24,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:16:01.352000",
+      "attempt_ref": "attempt:hk_google_news:company_news:fbd1cbe5c026"
+    },
+    {
+      "provider": "hk_google_news",
+      "endpoint": "macro_news",
+      "status": "success",
+      "remote_attempted": true,
+      "remote_success": false,
+      "dataset_ref_count": 71,
+      "raw_ref_count": 1,
+      "gap_codes": [
+        "date_range_missing"
+      ],
+      "created_at": "2026-06-07 02:16:01.959000",
+      "attempt_ref": "attempt:hk_google_news:macro_news:93a2242f9ab4"
+    }
+  ]
+}

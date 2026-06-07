@@ -1,0 +1,19 @@
+{
+  "company_name": "贵州茅台",
+  "currency": "CNY",
+  "currency_symbol": "¥",
+  "current_date": "2026-06-06",
+  "data_gateway": "data_gateway",
+  "end_date": "2026-06-06",
+  "entry_point": "report_command",
+  "frontline_execution_mode": "serial",
+  "market": "CN_A",
+  "max_debate_rounds": 1,
+  "max_risk_discuss_rounds": 1,
+  "profile": "CN_A",
+  "start_date": "2025-06-06",
+  "stop_point": "none",
+  "target_stage": null,
+  "target_worker_id": null,
+  "ticker": "600519.SH"
+}

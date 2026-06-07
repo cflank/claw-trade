@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.refs import make_material_target
 from claw_trade.runtime.evidence_reader import (
     EvidenceReader,

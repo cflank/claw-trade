@@ -8,6 +8,7 @@ from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugin
 from claw_trade.reports.data_pack_bridge import (
     _build_requests,
     _model_visible_text,
+    _validate_report_data_results,
     run_frontline_data_pack,
     run_report_data_prefetch,
 )
@@ -72,14 +73,14 @@ def test_report_data_prefetch_batches_all_frontline_domains_once(monkeypatch, tm
                 DataResult(
                     request_id=request.request_id,
                     status=DataResultStatus.READY,
-                    dataset_refs=(f"dataset:{request.request_id}",),
+                    dataset_refs=(f"dataset:{request.data_type}:US:{request.request_id}",),
                     attempt_refs=(f"attempt:{request.request_id}",),
                     as_of=datetime(2026, 6, 2, tzinfo=UTC),
                 )
                 for request in requests
             ]
 
-    monkeypatch.setattr("claw_trade.reports.data_pack_bridge._build_data_api", lambda: _Api())
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge.build_data_api_from_env", lambda: _Api())
     request = RunRequest(
         ticker="AAPL",
         company_name="Apple",
@@ -114,8 +115,16 @@ def test_frontline_data_pack_uses_report_prefetch_manifest_without_data_api(monk
     result = DataResult(
         request_id="run-prefetch:report-prefetch:news:1:company_news",
         status=DataResultStatus.READY,
-        rows=({"published_at": "2026-06-02", "source": "provider"},),
-        dataset_refs=("dataset:news",),
+        rows=(
+            {
+                "title": "Company update",
+                "published_at": "2026-06-02",
+                "source": "provider",
+                "summary": "summary",
+                "url": "https://example.com/news",
+            },
+        ),
+        dataset_refs=("dataset:company_news:US:fixture",),
         attempt_refs=("attempt:news",),
         as_of=as_of,
     )
@@ -137,7 +146,7 @@ def test_frontline_data_pack_uses_report_prefetch_manifest_without_data_api(monk
     def _blocked_api():
         raise AssertionError("frontline data pack must consume report prefetch manifest")
 
-    monkeypatch.setattr("claw_trade.reports.data_pack_bridge._build_data_api", _blocked_api)
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge.build_data_api_from_env", _blocked_api)
 
     payload = run_frontline_data_pack(
         {"ticker": "AAPL", "market": "US", "current_date": "2026-06-02"},
@@ -155,11 +164,189 @@ def test_frontline_data_pack_uses_report_prefetch_manifest_without_data_api(monk
     assert payload["data_results"][0]["request_id"] == "run-prefetch:report-prefetch:news:1:company_news"
 
 
+def test_frontline_data_pack_rejects_prefetch_rows_with_wrong_dataset_type(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    manifest_path = tmp_path / "data-layer" / "report-prefetch.json"
+    manifest_path.parent.mkdir(parents=True)
+    result = DataResult(
+        request_id="run-prefetch:report-prefetch:news:1:company_news",
+        status=DataResultStatus.READY,
+        rows=({"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},),
+        dataset_refs=("dataset:daily_bar:CN_A:wrong",),
+        attempt_refs=("attempt:daily",),
+        as_of=as_of,
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "schema_version": "report_data_prefetch.v1",
+                "run_id": "run-prefetch",
+                "market": "CN_A",
+                "domains": ("market", "fundamental", "news", "social"),
+                "data_results": [result.model_dump(mode="json")],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def _blocked_api():
+        raise AssertionError("frontline data pack must consume report prefetch manifest")
+
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge.build_data_api_from_env", _blocked_api)
+
+    payload = run_frontline_data_pack(
+        {"ticker": "688017.SH", "market": "CN_A", "current_date": "2026-06-02"},
+        {
+            "run_id": "run-prefetch",
+            "tool_name": "claw_get_news_pack",
+            "pack_domain": "news",
+            "report_prefetch_required": True,
+            "report_prefetch_manifest_path": str(manifest_path),
+        },
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "error"
+    assert payload["data_results"][0]["status"] == "error"
+    assert payload["data_results"][0]["rows"] == []
+    assert payload["data_results"][0]["dataset_refs"] == []
+    assert payload["data_results"][0]["gaps"][0]["reason"] == "data_integrity_failed"
+    assert "资料包返回的数据类型与请求不一致" in payload["model_visible_text"]
+    assert "已返回的数据摘要" not in payload["model_visible_text"]
+
+
+def test_report_data_validation_rejects_mixed_good_and_bad_rows() -> None:
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    result = DataResult(
+        request_id="run-prefetch:report-prefetch:news:1:company_news",
+        status=DataResultStatus.READY,
+        rows=(
+            {
+                "title": "公司公告",
+                "published_at": "2026-06-02",
+                "source": "provider",
+                "summary": "摘要",
+                "url": "https://example.com/news",
+            },
+            {"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},
+        ),
+        dataset_refs=("dataset:company_news:CN_A:ok", "dataset:company_news:CN_A:bad"),
+        attempt_refs=("attempt:mixed",),
+        as_of=as_of,
+    )
+
+    (validated,) = _validate_report_data_results(results=(result,), market=Market.CN_A, domain="news")
+
+    assert validated.status == DataResultStatus.ERROR
+    assert validated.rows == ()
+    assert validated.dataset_refs == ()
+    assert validated.gaps[-1].reason.value == "data_integrity_failed"
+    assert validated.gaps[-1].human_readable == "report_data_result_field_mismatch"
+
+
+def test_report_data_validation_rejects_partial_schema_row() -> None:
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    result = DataResult(
+        request_id="run-prefetch:report-prefetch:news:1:company_news",
+        status=DataResultStatus.READY,
+        rows=({"title": "公司公告", "published_at": "2026-06-02", "source": "provider"},),
+        dataset_refs=("dataset:company_news:CN_A:partial",),
+        attempt_refs=("attempt:partial",),
+        as_of=as_of,
+    )
+
+    (validated,) = _validate_report_data_results(results=(result,), market=Market.CN_A, domain="news")
+
+    assert validated.status == DataResultStatus.ERROR
+    assert validated.rows == ()
+    assert validated.dataset_refs == ()
+    assert validated.gaps[-1].human_readable == "report_data_result_field_mismatch"
+
+
+def test_report_data_validation_rejects_noncanonical_or_missing_dataset_refs_for_rows() -> None:
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    noncanonical = DataResult(
+        request_id="run-prefetch:report-prefetch:news:1:company_news",
+        status=DataResultStatus.READY,
+        rows=({"title": "公司公告", "published_at": "2026-06-02", "source": "provider"},),
+        dataset_refs=("dataset:news",),
+        attempt_refs=("attempt:noncanonical",),
+        as_of=as_of,
+    )
+    missing_ref = noncanonical.model_copy(update={"dataset_refs": (), "attempt_refs": ("attempt:missing-ref",)})
+
+    validated = _validate_report_data_results(results=(noncanonical, missing_ref), market=Market.CN_A, domain="news")
+
+    assert [item.status for item in validated] == [DataResultStatus.ERROR, DataResultStatus.ERROR]
+    assert [item.rows for item in validated] == [(), ()]
+    assert [item.dataset_refs for item in validated] == [(), ()]
+    assert [item.gaps[-1].human_readable for item in validated] == [
+        "report_data_result_dataset_mismatch",
+        "report_data_result_dataset_mismatch",
+    ]
+
+
+def test_report_data_validation_rejects_unparseable_request_id_with_rows() -> None:
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    result = DataResult(
+        request_id="bad-request-id",
+        status=DataResultStatus.READY,
+        rows=(
+            {
+                "title": "公司公告",
+                "published_at": "2026-06-02",
+                "source": "provider",
+                "summary": "摘要",
+                "url": "https://example.com/news",
+            },
+        ),
+        dataset_refs=("dataset:company_news:CN_A:bad-request",),
+        attempt_refs=("attempt:bad-request",),
+        as_of=as_of,
+    )
+
+    (validated,) = _validate_report_data_results(results=(result,), market=Market.CN_A, domain="news")
+
+    assert validated.status == DataResultStatus.ERROR
+    assert validated.rows == ()
+    assert validated.dataset_refs == ()
+    assert validated.gaps[-1].human_readable == "report_data_result_request_id_mismatch"
+
+
+def test_report_data_validation_rejects_unknown_dataset_with_rows() -> None:
+    as_of = datetime(2026, 6, 2, tzinfo=UTC)
+    result = DataResult(
+        request_id="run-prefetch:report-prefetch:news:1:unknown_news",
+        status=DataResultStatus.READY,
+        rows=(
+            {
+                "title": "公司公告",
+                "published_at": "2026-06-02",
+                "source": "provider",
+                "summary": "摘要",
+                "url": "https://example.com/news",
+            },
+        ),
+        dataset_refs=("dataset:unknown_news:CN_A:bad-dataset",),
+        attempt_refs=("attempt:bad-dataset",),
+        as_of=as_of,
+    )
+
+    (validated,) = _validate_report_data_results(results=(result,), market=Market.CN_A, domain="news")
+
+    assert validated.status == DataResultStatus.ERROR
+    assert validated.rows == ()
+    assert validated.dataset_refs == ()
+    assert validated.gaps[-1].human_readable == "report_data_result_unknown_dataset"
+
+
 def test_frontline_data_pack_fails_when_report_prefetch_manifest_missing(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     def _blocked_api():
         raise AssertionError("missing report manifest must not fall back to DataAPI")
 
-    monkeypatch.setattr("claw_trade.reports.data_pack_bridge._build_data_api", _blocked_api)
+    monkeypatch.setattr("claw_trade.reports.data_pack_bridge.build_data_api_from_env", _blocked_api)
 
     payload = run_frontline_data_pack(
         {"ticker": "AAPL", "market": "US", "current_date": "2026-06-02"},
@@ -307,6 +494,19 @@ def test_crypto_market_pack_requests_coinglass_derivative_and_onchain_capabiliti
         "realtime",
         ("timestamp", "metric", "value", "chain"),
     ) in request_fields
+
+
+def test_cn_a_market_daily_bar_request_includes_date_for_chart_payload() -> None:
+    requests = _build_requests(
+        tool_input={"ticker": "688017.SH", "market": "CN_A", "current_date": "2026-06-06"},
+        runtime_context={"pack_domain": "market", "run_id": "run", "call_id": "call", "worker_id": "market_analyst"},
+        market=Market.CN_A,
+        domain="market",
+    )
+
+    daily_request = next(request for request in requests if request.data_type == "daily_bar")
+
+    assert daily_request.fields == ("date", "open", "high", "low", "close", "volume", "amount")
 
 
 def test_non_crypto_pack_requests_match_market_specific_provider_capabilities() -> None:

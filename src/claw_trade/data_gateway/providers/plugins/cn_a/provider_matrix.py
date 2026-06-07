@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import re
 import socket
-from email.utils import parsedate_to_datetime
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
+from email.utils import parsedate_to_datetime
 from typing import Any, Mapping, Sequence
 from xml.etree import ElementTree
 
@@ -19,7 +19,6 @@ from claw_trade.data_gateway.providers.plugins.common import (
     ProviderCapabilities,
 )
 from claw_trade.data_gateway.providers.plugins.http_daily_bar import TushareDailyBarPlugin
-
 
 _CN_A_LICENSE = LicensePolicy(
     raw_storage_mode="metadata_only",
@@ -643,11 +642,11 @@ class AkShareSocialNewsPlugin:
                     data_type="quote_snapshot",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=18,
                     batch_by="symbol",
                     max_symbols_per_call=100,
-                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
                 ),
                 _endpoint(
                     endpoint_id="stock_individual_info_em",
@@ -1269,11 +1268,11 @@ class EastMoneyCNMarketDataPlugin:
                     data_type="quote_snapshot",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=12,
                     batch_by="symbol",
                     max_symbols_per_call=100,
-                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
                 ),
                 _endpoint(
                     endpoint_id="daily_bar",
@@ -1709,6 +1708,8 @@ class EastMoneyCNMarketDataPlugin:
                     "previous_close": _decimal_or_none(_pick(item, "f60")),
                     "timestamp": timestamp,
                     "symbol_id": symbol,
+                    "name": _text(_pick(item, "f58")),
+                    "company_name": _text(_pick(item, "f58")),
                 }
             )
             rows.append(row)
@@ -2166,12 +2167,12 @@ class MootdxCNProviderPlugin:
                     data_type="quote_snapshot",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=15,
                     http_visibility="no_http",
                     batch_by="symbol",
                     max_symbols_per_call=80,
-                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id"),
+                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
                 ),
                 _endpoint(
                     endpoint_id="order_book_snapshot",
@@ -2298,6 +2299,8 @@ class MootdxCNProviderPlugin:
                         "volume": _decimal_or_none(_pick(item, "vol", "volume")),
                         "amount": _decimal_or_none(_pick(item, "amount")),
                         "symbol_id": symbol,
+                        "name": _text(_pick(item, "name", "stock_name", "security_name", "名称")),
+                        "company_name": _text(_pick(item, "name", "stock_name", "security_name", "名称")),
                     }
                 )
             rows.append(row)

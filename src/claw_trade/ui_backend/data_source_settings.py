@@ -8,8 +8,10 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
-from claw_trade.ui_contracts.scope_guard import FirstVersionScopeError
-from claw_trade.ui_contracts.scope_guard import assert_data_source_type_supported
+from claw_trade.ui_contracts.scope_guard import (
+    FirstVersionScopeError,
+    assert_data_source_type_supported,
+)
 
 
 class ProviderDisplayStatus(str, Enum):

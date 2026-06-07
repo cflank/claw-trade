@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from claw_trade.web.state import _handle_completed_workflow_report
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
+from claw_trade.web.state import _handle_completed_workflow_report
 
 
 class _FailPdfRenderer:
@@ -76,7 +76,16 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
     run_dir = tmp_path / "run-1"
     reports_dir = run_dir / "reports"
     reports_dir.mkdir(parents=True)
-    (reports_dir / "final-report.md").write_text("# BTC 报告\n正文", encoding="utf-8")
+    (reports_dir / "final-report.md").write_text(
+        (
+            "# BTC 报告\n\n"
+            "## 投资建议\n"
+            "维持观察，等待突破确认。\n\n"
+            "核心理由：日线趋势改善\n\n"
+            "主要风险：估值波动\n"
+        ),
+        encoding="utf-8",
+    )
     repository = ReportRepository()
 
     class _NotificationSpy:
@@ -94,7 +103,7 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
         ) -> dict[str, object]:
             self.report_ids.append(report_id)
             self.targets.append((target, account_id, channel_kind))
-            return {"sent": True, "text": "报告已完成，可查看完整内容。"}
+            return {"sent": True}
 
     class _ChatSpy:
         def __init__(self) -> None:
@@ -127,7 +136,9 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
         workflow_state=workflow_state,
     )
 
-    assert [item["id"] for item in repository.list_saved_reports()] == ["run-1"]
+    saved_reports = repository.list_saved_reports()
+    assert [item["id"] for item in saved_reports] == ["run-1"]
+    assert saved_reports[0]["summarySnippet"] == "维持观察，等待突破确认。"
     assert notification.report_ids == ["run-1"]
     assert notification.targets == [("sender-1", "account-1", "wechat_clawbot")]
     assert chat.messages == [
@@ -135,6 +146,13 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
             "context_id": "wechat_clawbot:account-1:sender-1",
             "report_id": "run-1",
             "task_id": "task-1",
-            "text": "报告已完成，可查看完整内容。",
+            "text": (
+                "报告已完成。\n"
+                "最终结论：维持观察，等待突破确认。\n"
+                "核心理由：日线趋势改善\n"
+                "主要风险：估值波动\n"
+                "查看完整报告以获取全部分析细节。\n"
+                "完整报告可在设备界面查看。"
+            ),
         }
     ]

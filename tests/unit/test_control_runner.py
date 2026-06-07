@@ -402,7 +402,7 @@ def test_single_worker_openclaw_failed_does_not_read_evidence(tmp_path: Path) ->
 
 def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
-    state = harness.store.create_run(_request())
+    state = harness.store.create_run(replace(_request(), frontline_execution_mode="parallel"))
     batch = StageBatch(
         run_id=state.run_id,
         stage=Stage.FRONTLINE,
@@ -447,6 +447,47 @@ def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None
     assert set(started) == set(batch.worker_ids)
     assert max_active == len(batch.worker_ids)
     assert result.failures == ()
+
+
+def test_frontline_stage_batch_defaults_to_serial(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request())
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FRONTLINE,
+        worker_ids=("market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=True,
+        stop_point=StopPoint.NONE,
+    )
+    active = 0
+    max_active = 0
+    calls_seen: list[WorkerCall] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        nonlocal active, max_active
+        calls_seen.append(call)
+        active += 1
+        max_active = max(max_active, active)
+        active -= 1
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-{call.worker_id}",
+            failure=None,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert [call.worker_id for call in calls_seen] == list(batch.worker_ids)
+    assert max_active == 1
 
 
 def test_report_frontline_worker_calls_receive_prefetch_manifest_path(tmp_path: Path) -> None:

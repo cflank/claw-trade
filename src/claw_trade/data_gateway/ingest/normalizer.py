@@ -5,8 +5,9 @@ from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import DataGap
 from claw_trade.data_gateway.models import Market
+
+from . import DataGap
 
 
 @dataclass(frozen=True)

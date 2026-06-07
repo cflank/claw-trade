@@ -770,6 +770,39 @@ exit 0
     assert "DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI is not configured" in text
 
 
+def test_data_pack_error_readiness_does_not_become_tool_error_status(tmp_path: Path) -> None:
+    probe_python = tmp_path / "probe_python_pack.sh"
+    payload = {
+        "ok": True,
+        "schema_version": "data_result_pack.v1",
+        "tool_name": "claw_get_social_pack",
+        "status": "error",
+        "readiness": {"status": "error"},
+        "model_visible_text": "舆情资料包结果：错误。数据缺口：来源无权限。",
+    }
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env bash
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+
+    result = _run_tool(
+        tool_name="claw_get_social_pack",
+        ctx=_runtime_ctx(worker_id="social_analyst"),
+        params={"ticker": "00700.HK", "market": "HK"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
+    )
+
+    assert result.get("isError") is False
+    assert result["content"][0]["text"] == payload["model_visible_text"]
+    details = result.get("details")
+    assert isinstance(details, dict)
+    assert "status" not in details
+    assert details["data_pack_status"] == "error"
+    assert details["readiness"] == {"status": "error"}
+
+
 @pytest.mark.parametrize(
     ("status", "ok", "brief_field", "expected_is_error"),
     (

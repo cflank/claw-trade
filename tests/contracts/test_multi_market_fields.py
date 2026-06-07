@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import pytest
-
-from claw_trade.data_gateway.warehouse import DatasetRepository, REQUIRED_MULTI_MARKET_FIELDS
+from claw_trade.data_gateway.warehouse import REQUIRED_MULTI_MARKET_FIELDS, DatasetRepository
 
 
 def _record(market: str, **overrides: object) -> dict[str, object]:

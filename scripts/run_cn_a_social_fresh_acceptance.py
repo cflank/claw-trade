@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
-from datetime import date, timedelta
 import importlib
 import importlib.util
 import json
@@ -11,6 +9,8 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import asdict, dataclass
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -538,7 +538,6 @@ def _validate_existing(args: argparse.Namespace, *, run_id: str, call_id: str | 
             "visible_tools_exact_match": actual_set == expected_set and len(visible_tool_names) == len(EXPECTED_VISIBLE_TOOLS),
             "tool_calls_present": isinstance(tool_calls, list) and bool(tool_calls),
             "social_tool_call_present": social_call is not None,
-            "write_tool_call_present": write_call is not None,
             "receipt_verified": isinstance(verification, dict) and verification.get("verified") is True,
             "pack_schema_guard": pack_guard_dict,
             "report_guard": report_guard_dict,

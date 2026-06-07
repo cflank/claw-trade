@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from typing import Callable
-from typing import Any
+from typing import Any, Callable, Protocol
 
-from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.config.profiles import is_profile_approved
+from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.instruments.resolver import resolve_instrument_identity
 from claw_trade.ui_backend.intent_recognizer import IntentDraft, WorkflowSettingsSnapshot
 from claw_trade.ui_backend.price_alert_service import PriceAlertService, UiServiceError
@@ -13,6 +14,13 @@ from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
 from claw_trade.ui_backend.scheduler_service import SchedulerService
 from claw_trade.ui_contracts.enums import IntentKind, MarketProfile
 from claw_trade.workflow.report_request_factory import build_report_run_request, report_display_name
+
+_LOGGER = logging.getLogger("uvicorn.error")
+_UNRESOLVED_COMPANY_NAME = "名称未查到"
+
+
+class CompanyNameResolver(Protocol):
+    def __call__(self, *, market: str, symbol_ids: Sequence[str]) -> Mapping[str, str]: ...
 
 
 class ConfirmationController:
@@ -24,6 +32,7 @@ class ConfirmationController:
         scheduler_service: SchedulerService | None = None,
         price_alert_service: PriceAlertService | None = None,
         report_model_ready_checker: Callable[[], None] | None = None,
+        company_name_resolver: CompanyNameResolver | None = None,
     ) -> None:
         self._queue = queue
         self._approved_profiles = approved_profiles
@@ -35,6 +44,7 @@ class ConfirmationController:
             quote_provider=_missing_price_alert_quote_provider,
         )
         self._report_model_ready_checker = report_model_ready_checker
+        self._company_name_resolver = company_name_resolver
         self._drafts: dict[str, IntentDraft] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
 
@@ -45,7 +55,7 @@ class ConfirmationController:
         return self._drafts.get(draft_id)
 
     def build_confirmation_card(self, draft: IntentDraft) -> dict[str, Any]:
-        instrument_name = (draft.instrument_name or "").strip() or "未知"
+        instrument_name = self._display_company_name_for_draft(draft)
         lines = [f"标的：{draft.instrument_code}", f"名称：{instrument_name}", f"市场：{draft.market.value}"]
         return {
             "id": f"card-{draft.draft_id}",
@@ -131,9 +141,10 @@ class ConfirmationController:
         raise QueueError("INVALID_INPUT", "invalid_input", "暂不支持的确认类型。")
 
     def _build_report_task_input(self, draft: IntentDraft) -> dict[str, Any]:
+        company_name = self._display_company_name_for_draft(draft)
         request = build_report_run_request(
             ticker=draft.instrument_code,
-            company_name=draft.instrument_name,
+            company_name=company_name,
             market=draft.market.value,
             current_date=draft.expires_at[:10] if draft.expires_at else None,
             settings=_settings_from_snapshot(draft),
@@ -149,6 +160,35 @@ class ConfirmationController:
             "currentDate": request.current_date,
             "workflowSettings": _workflow_settings_from_request(request),
         }
+
+    def _display_company_name_for_draft(self, draft: IntentDraft) -> str:
+        resolved = self._company_name_for_draft(draft)
+        if resolved:
+            return resolved
+        existing = (draft.instrument_name or "").strip()
+        if existing and existing.upper() != draft.instrument_code.upper():
+            return existing
+        return _UNRESOLVED_COMPANY_NAME
+
+    def _company_name_for_draft(self, draft: IntentDraft) -> str | None:
+        resolver = self._company_name_resolver
+        if resolver is None:
+            return None
+        try:
+            names = resolver(market=draft.market.value, symbol_ids=(draft.instrument_code,))
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "company name resolver failed market=%s symbol=%s error=%s",
+                draft.market.value,
+                draft.instrument_code,
+                exc,
+                exc_info=True,
+            )
+            return None
+        name = str(names.get(draft.instrument_code) or "").strip()
+        if name and name.upper() != draft.instrument_code.upper():
+            return name
+        return None
 
     def _assert_profile_strategy_approved(self, draft: IntentDraft) -> None:
         profile = draft.workflow_settings.defaultProfile or draft.market.value

@@ -13,7 +13,6 @@ from claw_trade.data_gateway.execution.rate_limit_policy import (
 )
 from claw_trade.data_gateway.providers.base import CapabilityError, validate_batch_policy
 
-
 _DEFAULT_LEASE_TTL_SECONDS = 30
 _DEFAULT_WAIT_TIMEOUT_SECONDS = 1
 

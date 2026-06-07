@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha1
-import os
 from pathlib import Path
-import re
-import time
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import urlopen
 
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
-
 
 _EMBEDDING_ENV_KEYS = (
     "OPENVIKING_EMBEDDING_PROVIDER",

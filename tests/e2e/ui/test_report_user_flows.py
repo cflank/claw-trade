@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController

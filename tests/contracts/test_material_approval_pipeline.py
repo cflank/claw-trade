@@ -7,11 +7,18 @@ from pathlib import Path
 from claw_trade.artifacts.approval import approve_worker_material
 from claw_trade.artifacts.manifest import ManifestStore, make_material_id
 from claw_trade.artifacts.openviking_client import OpenVikingClient
-from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialReceipt, MaterialReceiptVerification, make_material_target
+from claw_trade.artifacts.refs import (
+    L2Entry,
+    L2Index,
+    MaterialReceipt,
+    MaterialReceiptVerification,
+    make_material_target,
+)
 from claw_trade.guards.common import ApprovalResult
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall
 from claw_trade.workflow.runner import persist_approved_material_after_hard_gate
+
 from tests.fakes.openviking_store import FakeOpenVikingStore
 
 

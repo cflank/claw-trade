@@ -25,7 +25,6 @@ from claw_trade.data_gateway.providers.plugins.market_http import (
     send_json_request,
 )
 
-
 _YAHOO_ENDPOINT = "https://query1.finance.yahoo.com"
 _SINA_HK_ENDPOINT = "https://finance.sina.com.cn"
 _HKEX_ENDPOINT = "https://www.hkex.com.hk"

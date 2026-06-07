@@ -7,7 +7,6 @@ from typing import Literal
 from claw_trade.data_gateway.models import FetchResult, GateDecision, ResultRefs
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
-
 NON_REMOTE_GATE_KINDS = frozenset({"cache_hit", "shared_result", "rate_limited", "cached_empty", "cooldown_skipped"})
 
 
@@ -46,7 +45,9 @@ class ProviderResultCache:
         if not isinstance(fresh_until, datetime) or not isinstance(stale_until, datetime):
             self._repository.delete_provider_result_cache(cache_key)
             return CacheLookup(state="miss")
-        when = now or datetime.now(tz=fresh_until.tzinfo or UTC)
+        fresh_until = _aware_utc(fresh_until)
+        stale_until = _aware_utc(stale_until)
+        when = _aware_utc(now or datetime.now(tz=UTC))
         status = str(row.get("status", ""))
         if status not in {"remote_success", "cached_empty"}:
             self._repository.delete_provider_result_cache(cache_key)
@@ -111,3 +112,9 @@ class ProviderResultCache:
             stale_until=stale_until,
             empty_reason=empty_reason,
         )
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

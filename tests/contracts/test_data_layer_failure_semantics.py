@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from claw_trade.data_gateway.execution import NON_REMOTE_GATE_KINDS, GateDecision, ResultRefs
 from claw_trade.data_gateway.execution.fetch_engine import FetchResult
-from claw_trade.data_gateway.ingest import DataGap, NON_REMOTE_ATTEMPT_STATUSES
+from claw_trade.data_gateway.ingest import NON_REMOTE_ATTEMPT_STATUSES, DataGap
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
 from claw_trade.data_gateway.ingest.pipeline import gaps_from_fetch_result
 

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import replace
 from pathlib import Path
-import tempfile
 
 from claw_trade.artifacts.manifest import ApprovedManifest
-from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Entry, L2Index, make_material_target
+from claw_trade.artifacts.refs import (
+    ApprovedMaterial,
+    L1Claim,
+    L2Entry,
+    L2Index,
+    make_material_target,
+)
 from claw_trade.guards.artifact_flow import validate_artifact_flow
 from claw_trade.runtime.request_builder import WorkerCall, default_read_policy
 from claw_trade.workflow.models import Stage

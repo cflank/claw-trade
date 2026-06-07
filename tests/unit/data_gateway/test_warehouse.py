@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 
 from claw_trade.data_gateway.models import Market, WarehouseCheck
 from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
 
 def _base_record() -> dict[str, object]:
@@ -114,9 +115,39 @@ def test_warehouse_ready_when_dataset_and_freshness_match() -> None:
     assert result.dataset_refs
 
 
+def test_warehouse_materialized_rows_preserve_scope_metadata_for_report_charts() -> None:
+    record = _base_record()
+    record["period_start"] = date(2026, 5, 31)
+    record["period_end"] = date(2026, 5, 31)
+    record["field_set"] = ("open", "high", "low", "close", "volume", "amount")
+    record["row"] = {
+        "open": 10.0,
+        "high": 12.0,
+        "low": 9.0,
+        "close": 11.0,
+        "volume": 1000.0,
+        "amount": 11000.0,
+    }
+    check = _warehouse_check().model_copy(
+        update={
+            "fields": ("open", "high", "low", "close", "volume", "amount"),
+            "date_range_start": date(2026, 5, 31),
+            "date_range_end": date(2026, 5, 31),
+        }
+    )
+
+    result = Warehouse(DatasetRepository(records=[record])).check((check,), None)
+
+    assert result.status == "ready"
+    assert result.rows[0]["date"] == date(2026, 5, 31)
+    assert result.rows[0]["period_start"] == date(2026, 5, 31)
+    assert result.rows[0]["dataset"] == "daily_bar"
+    assert result.rows[0]["granularity"] == "daily"
+
+
 def test_repository_writes_normalized_dataset_checksum() -> None:
     repo = DatasetRepository(records=[_base_record()])
-    document = repo.get_normalized_document("dataset:daily_bar:CN_A:600519.SH:daily:2026-05-01:2026-05-31")
+    document = repo.get_normalized_document_for_maintenance("dataset:daily_bar:CN_A:600519.SH:daily:2026-05-01:2026-05-31")
 
     assert document is not None
     assert str(document["dataset_checksum"]).startswith("sha256:")
@@ -202,6 +233,33 @@ def test_warehouse_coverage_check_queries_metadata_without_row_projection() -> N
     assert result.status == "ready"
     assert result.rows == ()
     assert normalized_collection.projections == [{"row": 0}]
+
+
+def test_warehouse_missing_request_records_empty_coverage_summary() -> None:
+    result = Warehouse(DatasetRepository(records=[])).check((_warehouse_check(),), None)
+
+    assert result.status == "missing"
+    assert result.rows == ()
+    assert result.dataset_refs == ()
+    assert result.freshness["checked_requests"] == ["req-coverage"]
+    assert result.freshness["coverage_by_request"] == (
+        {
+            "request_id": "req-coverage",
+            "data_type": "daily_bar",
+            "granularity": "daily",
+            "market": "CN_A",
+            "symbol_id": "600519.SH",
+            "universe_ref": None,
+            "record_count": 0,
+            "dataset_refs": (),
+            "dataset_ref_count": 0,
+            "actual_start": None,
+            "actual_end": None,
+            "expected_start": "2026-05-01",
+            "expected_end": "2026-05-31",
+            "missing_ranges": (),
+        },
+    )
 
 
 def test_warehouse_query_pushes_date_range_into_repository_criteria() -> None:
@@ -440,6 +498,59 @@ def test_repository_finds_company_names_by_symbol_ids_without_integrity_requirem
     )
 
     assert names == {"600519.SH": "贵州茅台", "000001.SZ": "平安银行"}
+
+
+def test_repository_finds_company_names_from_quote_name_field() -> None:
+    collections = _collections()
+    normalized = collections["normalized_datasets"]
+    normalized["quote:name"] = {
+        "dataset": "quote_snapshot",
+        "market": "CN_A",
+        "symbol_id": "688017.SH",
+        "universe_ref": None,
+        "granularity": "realtime",
+        "period_start": "2026-06-06",
+        "period_end": "2026-06-06",
+        "row": {"name": "绿的谐波"},
+    }
+    repo = DatasetRepository(collections=collections)
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="quote_snapshot",
+        market="CN_A",
+        symbol_ids=("688017.SH",),
+    )
+
+    assert names == {"688017.SH": "绿的谐波"}
+
+
+def test_repository_finds_company_names_from_columnar_quote_snapshot(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    record = _base_record()
+    record.update(
+        {
+            "dataset": "quote_snapshot",
+            "symbol_id": "688017.SH",
+            "granularity": "realtime",
+            "period_start": date(2026, 6, 6),
+            "period_end": date(2026, 6, 6),
+            "field_set": ("symbol_id", "name", "company_name"),
+            "row": {"symbol_id": "688017.SH", "name": "绿的谐波", "company_name": "绿的谐波"},
+        }
+    )
+    repo = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path),
+        allow_normalized_mongo_read=False,
+    )
+    repo.insert_normalized(record)
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="quote_snapshot",
+        market="CN_A",
+        symbol_ids=("688017.SH",),
+    )
+
+    assert names == {"688017.SH": "绿的谐波"}
 
 
 class _NormalizedDatasetProjectionProbe:

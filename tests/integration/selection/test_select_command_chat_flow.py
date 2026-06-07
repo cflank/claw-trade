@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.confirmation import (
     SelectionConfirmationController,
     SelectionConfirmRequest,
@@ -26,8 +26,8 @@ from claw_trade.selection.models import (
     SelectionRunPlan,
     SelectionTriggerSource,
 )
-from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
 from claw_trade.selection.refresh import SelectionDataRefreshResult
+from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
@@ -109,6 +109,25 @@ def _assert_candidate_fact_body_is_reader_chinese(text: str) -> None:
         assert term not in text
     for term in _READER_REQUIRED_CANDIDATE_FACT_TERMS:
         assert term in text
+
+
+def _add_candidate_pack_summary_fields(payload_path: Path) -> None:
+    payload = json.loads(payload_path.read_text(encoding="utf-8"))
+    for candidate in payload["candidates"]:
+        values = dict(candidate["feature_values"])
+        candidate["component_scores"] = {
+            key: value
+            for key, value in values.items()
+            if key.endswith("_score") and key not in {"risk_penalty_score", "data_gap_penalty_score"}
+        }
+        candidate["actual_metric_values"] = dict(values)
+        candidate["hit_fields"] = {
+            key: value
+            for key, value in values.items()
+            if key.startswith("hit_") or key.startswith("strategy_hit_") or key.endswith("_hit")
+        }
+        candidate["tie_break_fields"] = {"amount": values["amount"]}
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
 class _FakeSelectionOpenClawRunner:
@@ -324,7 +343,7 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "date": plan.trade_date,
                 "close": 1612.0,
                 "amount": 3000000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
             {
                 "market": "CN_A",
@@ -334,7 +353,7 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "date": plan.trade_date,
                 "close": 132.0,
                 "amount": 900000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
             {
                 "market": "CN_A",
@@ -344,7 +363,7 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "date": plan.trade_date,
                 "close": 240.0,
                 "amount": 500000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
         )
     )
@@ -357,7 +376,7 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "selection_features_materialized": True,
                 "close": 1612.0,
                 "amount": 3000000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
             {
                 "ticker": "000858.SZ",
@@ -366,7 +385,7 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "selection_features_materialized": True,
                 "close": 132.0,
                 "amount": 900000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
             {
                 "ticker": "300750.SZ",
@@ -375,13 +394,13 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
                 "selection_features_materialized": True,
                 "close": 240.0,
                 "amount": 500000000.0,
-                "source_ref": f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",
+                "source_ref": f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",
             },
         )
     )
     return writer.commit(
         provider_attempt_refs=(f"attempt://{plan.selection_run_id}",),
-        normalized_refs=(f"normalized://mongo/normalized_datasets/{plan.selection_run_id}",),
+        normalized_refs=(f"dataset://normalized/CN_A/daily/{plan.selection_run_id}",),
     )
 
 
@@ -633,6 +652,8 @@ def _selection_controller_with_completed_run(
             ),
             encoding="utf-8",
         )
+    if not legacy_summary:
+        _add_candidate_pack_summary_fields(tmp_path / "candidate-pack.json")
     if not (tmp_path / "candidate-pack-manifest.json").is_file():
         (tmp_path / "candidate-pack-manifest.json").write_text(
             json.dumps(
@@ -692,7 +713,7 @@ def _selection_controller_with_completed_run(
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
-                normalized_refs=(f"normalized://mongo/normalized_datasets/{run_id}",),
+                normalized_refs=(f"dataset://normalized/CN_A/daily/{run_id}",),
                 provider_attempt_refs=(f"attempt://{run_id}",),
                 select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
                 warehouse_check_ref=columnar_manifest.warehouse_check_ref,
@@ -849,6 +870,8 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert evidence_payload["status"] == "completed"
     assert evidence_payload["reason"] == "waiting_report_confirmation"
+    reader_report_path = Path(evidence_payload["reader_report_path"])
+    assert reader_report_path.is_file()
     decision_payload = evidence_payload["decision"]
     assert decision_payload["approved_material_id"] == f"selection-pm-decision-{result['selection']['workflowRunId']}"
     assert decision_payload["approval_status"] == "approved"
@@ -864,6 +887,8 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     ]
     message = result["messages"][-1]["text"]
     report_markdown = result["selection"]["readerReportMarkdown"]
+    assert result["selection"]["readerReportPath"] == str(reader_report_path)
+    assert reader_report_path.read_text(encoding="utf-8").strip() == report_markdown.strip()
     assert "进入 `/report`" in message
     assert "观察：" in message
     assert "放弃：" in message
@@ -935,28 +960,17 @@ def test_select_command_rejects_approved_pack_with_missing_strategy_fields(tmp_p
 
 
 @pytest.mark.integration
-def test_select_command_rebuilds_legacy_candidate_pack_summary_fields(tmp_path: Path) -> None:
+def test_select_command_rejects_legacy_candidate_pack_summary_fields(tmp_path: Path) -> None:
     selection_controller, _ = _selection_controller_with_completed_run(tmp_path, legacy_summary=True)
     controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
 
     result = controller.send_chat_message(request_id="sel-08-legacy-summary", context_id="ctx-legacy", text="/select")
 
     assert "error" not in result
-    assert result["selection"]["code"] == "completed"
-    message = result["messages"][-1]["text"]
-    report_markdown = result["selection"]["readerReportMarkdown"]
-    assert "候选事实包：" not in message
-    assert "## 六、策略命中与分析过程" in report_markdown
-    assert "放量上涨" in report_markdown
-    assert "量价放量" in report_markdown
-    assert "## 七、数据范围与质量" in report_markdown
-    assert "总分" in report_markdown
-    assert "实际指标值" in report_markdown
-    assert "策略配置版本" not in report_markdown
-    assert "权重版本" not in report_markdown
-    assert "命中字段" not in report_markdown
-    assert "策略变体" not in report_markdown
-    _assert_candidate_fact_body_is_reader_chinese(report_markdown)
+    assert result["selection"]["code"] == "unavailable"
+    assert result["selection"]["unavailableCode"] == "candidate_pack_integrity_failed"
+    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
+    assert evidence_payload["reason"] == "candidate_pack_summary_fields_missing: ticker=600519.SH missing component_scores"
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 

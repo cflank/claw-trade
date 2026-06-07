@@ -1,50 +1,12 @@
 from __future__ import annotations
 
-import importlib
-import importlib.util
-import sys
-from pathlib import Path
-
 import pandas as pd
-
-STOCK_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "alphaear-stock" / "scripts"
-STOCK_SKILL_ROOT = STOCK_SCRIPTS_DIR.parent
-STOCK_RUNTIME_PACKAGE = "_alphaear_market_stock_runtime"
+from claw_trade.data_gateway.agent_tools import DataLayerAgentToolError
+from claw_trade.data_gateway.agent_tools import load_price_frame as _load_data_layer_price_frame
 
 
 class NoMarketDataError(RuntimeError):
-    """Raised when the upstream stock skill reports that no rows are available."""
-
-
-def _ensure_stock_runtime_package() -> None:
-    if STOCK_RUNTIME_PACKAGE in sys.modules:
-        return
-    spec = importlib.util.spec_from_file_location(
-        STOCK_RUNTIME_PACKAGE,
-        STOCK_SCRIPTS_DIR / "__init__.py",
-        submodule_search_locations=[str(STOCK_SCRIPTS_DIR)],
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("stock skill runtime package could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[STOCK_RUNTIME_PACKAGE] = module
-    spec.loader.exec_module(module)
-
-
-def _stock_default_db_path() -> str:
-    return str((STOCK_SKILL_ROOT / "data" / "signal_flux.db").resolve())
-
-
-def _stock_entrypoint_deps():
-    _ensure_stock_runtime_package()
-    database_module = importlib.import_module(f"{STOCK_RUNTIME_PACKAGE}.database_manager")
-    stock_tools_module = importlib.import_module(f"{STOCK_RUNTIME_PACKAGE}.stock_tools")
-
-    def get_stock_tools(db_path: str, *, auto_update: bool = True):
-        db = database_module.DatabaseManager(db_path=db_path)
-        return stock_tools_module.StockTools(db=db, auto_update=auto_update)
-
-    return _stock_default_db_path, get_stock_tools
+    """Raised when the data layer reports that no rows are available."""
 
 
 def _normalize_price_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -72,14 +34,17 @@ def _normalize_price_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return normalized[["date", "open", "high", "low", "close", "volume", "change_pct"]]
 
 
-def load_price_frame(*, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    _default_db_path, get_stock_tools = _stock_entrypoint_deps()
-    db_path = _default_db_path()
-    tools = get_stock_tools(db_path, auto_update=False)
-    frame = tools.get_stock_price(ticker, start_date=start_date, end_date=end_date)
+def load_market_price_frame(*, ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    try:
+        frame = _load_data_layer_price_frame(ticker=ticker, start_date=start_date, end_date=end_date)
+    except DataLayerAgentToolError as exc:
+        raise NoMarketDataError(str(exc)) from exc
     if frame is None:
         raise NoMarketDataError(f"no price rows available for {ticker}")
     normalized = _normalize_price_frame(frame)
     if normalized.empty:
-        return normalized
+        raise NoMarketDataError(f"no price rows available for {ticker}")
     return normalized
+
+
+load_price_frame = load_market_price_frame

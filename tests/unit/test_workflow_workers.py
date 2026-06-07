@@ -1,5 +1,4 @@
 import pytest
-
 from claw_trade.workflow.models import Stage
 from claw_trade.workflow.workers import worker_by_id, worker_ids
 

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
     CandidatePackManifest,
     CandidatePackReadbackStatus,
@@ -21,9 +21,11 @@ from claw_trade.selection.models import (
     SelectionTriggerSource,
     SelectRequest,
 )
-from claw_trade.selection.store import SelectionDataRunRecord
-from claw_trade.selection.refresh import SelectionDataRefreshService, _seconds_until_next_daily_refresh
-from claw_trade.selection.store import SelectionRunStore
+from claw_trade.selection.refresh import (
+    SelectionDataRefreshService,
+    _seconds_until_next_daily_refresh,
+)
+from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
 
 
 def test_selection_refresh_service_starts_background_job_and_dedupes_active_run() -> None:
@@ -96,9 +98,10 @@ def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> N
 
     progress = snapshot["selectionProgress"]
     assert isinstance(progress, dict)
+    assert progress["kind"] == "data_refresh"
     assert progress["status"] == "running"
     assert progress["statusLabel"] == "补数据中"
-    assert progress["command"] == "/select 补数据 2026-06-04"
+    assert progress["command"] == "/select 2026-06-04"
     assert progress["stageLabel"] == "拉取/补齐行情数据"
     assert progress["currentAction"] == "补齐全市场日线数据：已完成 128/512。"
     assert progress["percent"] == 38
@@ -170,7 +173,7 @@ def test_selection_refresh_service_right_rail_prefers_latest_active_task_across_
     progress = service.latest_progress_for_user()["selectionProgress"]
 
     assert isinstance(progress, dict)
-    assert progress["command"] == "/select 补数据 2026-06-04"
+    assert progress["command"] == "/select 2026-06-04"
     assert progress["status"] == "running"
     assert progress["workflowRunId"] == "sel-refresh-active-previous"
 
@@ -217,10 +220,104 @@ def test_selection_refresh_service_exposes_latest_terminal_failure_for_right_rai
     assert isinstance(progress, dict)
     assert progress["status"] == "failed"
     assert progress["statusLabel"] == "补数据失败"
-    assert progress["stageLabel"] == "补数据失败"
+    assert progress["stageLabel"] == "数据刷新失败"
     assert progress["currentAction"] == "选股数据刷新失败，请查看失败原因。"
-    assert progress["workerStatusLabels"] == ["补数据失败：补数据失败", "失败原因：上一次进程已中断。"]
+    assert progress["workerStatusLabels"] == ["失败原因：上一次进程已中断。"]
     assert progress["workflowRunId"] == "sel-refresh-failed-1"
+
+
+def test_selection_refresh_service_hides_failed_refresh_when_valid_pack_exists(tmp_path: Path) -> None:
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    _save_completed_candidate_pack_record(
+        store=store,
+        artifact_root=tmp_path / "artifacts",
+        selection_run_id="sel-existing-pack-for-right-rail",
+        trade_date="2026-06-04",
+    )
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-failed-after-valid-pack",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-failed-after-valid-pack",
+                status=SelectionDataRunStatus.FAILED,
+                lease_id="lease://sel-refresh-failed-after-valid-pack",
+                started_at="2026-06-04T09:00:00+00:00",
+                failed_at="2026-06-04T09:05:00+00:00",
+                failure_code="selection_data_run_interrupted",
+                failure_reason="上一次进程已中断。",
+            ),
+            manifest=None,
+        )
+    )
+
+    snapshot = service.latest_progress_for_user()
+
+    assert snapshot == {"selectionProgress": None}
+
+
+def test_selection_refresh_service_hides_non_trading_date_failure_when_canonical_pack_exists(tmp_path: Path) -> None:
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    _save_completed_candidate_pack_record(
+        store=store,
+        artifact_root=tmp_path / "artifacts",
+        selection_run_id="sel-valid-20260605",
+        trade_date="2026-06-05",
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-weekend-failed-20260606",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-06",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                provider_batch_plan_ref="plan://selection/cn_a/2026-06-06/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-weekend-failed-20260606",
+                status=SelectionDataRunStatus.FAILED,
+                lease_id="lease://sel-weekend-failed-20260606",
+                started_at="2026-06-06T16:36:36+00:00",
+                failed_at="2026-06-06T16:36:40+00:00",
+                failure_code="provider_evidence_failed",
+                failure_reason="provider attempts 缺失",
+            ),
+            manifest=None,
+        )
+    )
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: "2026-06-05" if value in {None, "2026-06-06"} else str(value),
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_provider_batch_plan=_provider_batch_plan,
+        now_fn=lambda: datetime(2026, 6, 6, 7, tzinfo=UTC),
+    )
+
+    snapshot = service.latest_progress_for_user()
+
+    assert snapshot == {"selectionProgress": None}
 
 
 def test_selection_refresh_service_humanizes_provider_evidence_failure_for_right_rail() -> None:
@@ -263,7 +360,6 @@ def test_selection_refresh_service_humanizes_provider_evidence_failure_for_right
 
     assert isinstance(progress, dict)
     assert progress["workerStatusLabels"] == [
-        "补数据失败：补数据失败",
         "失败原因：缺少数据源调用证据（provider attempts 缺失）",
     ]
 
@@ -480,7 +576,7 @@ def _save_completed_candidate_pack_record(
         "profile": SelectionProfile.CN_A.value,
         "trade_date": trade_date,
         "candidate_count": 1,
-        "source_lineage_refs": ["normalized://mongo/normalized_datasets/600000"],
+        "source_lineage_refs": ["dataset://normalized/CN_A/daily/600000"],
         "pack_body_sha256": body_sha,
         "strategy_config_ref": "config://cn-a-selection-v1",
         "strategy_config_version": "cn_a.selection_strategy.v1",
@@ -521,7 +617,7 @@ def _save_completed_candidate_pack_record(
     columnar_manifest_ref, columnar_manifest_sha256 = _write_columnar_manifest(
         root=artifact_root.parent / "columnar",
         plan=plan,
-        normalized_refs=("normalized://mongo/normalized_datasets/600000",),
+        normalized_refs=("dataset://normalized/CN_A/daily/600000",),
         provider_attempt_refs=("attempt://akshare-1",),
     )
     manifest = CandidatePackManifest(
@@ -531,7 +627,7 @@ def _save_completed_candidate_pack_record(
         profile=SelectionProfile.CN_A,
         trade_date=trade_date,
         candidate_count=1,
-        source_lineage_refs=("normalized://mongo/normalized_datasets/600000",),
+        source_lineage_refs=("dataset://normalized/CN_A/daily/600000",),
         pack_body_sha256=body_sha,
         strategy_config_ref="config://cn-a-selection-v1",
         strategy_config_version="cn_a.selection_strategy.v1",
@@ -549,7 +645,7 @@ def _save_completed_candidate_pack_record(
                 selection_run_id=selection_run_id,
                 status=SelectionDataRunStatus.COMPLETED,
                 lease_id=f"lease://{selection_run_id}",
-                normalized_refs=("normalized://mongo/normalized_datasets/600000",),
+                normalized_refs=("dataset://normalized/CN_A/daily/600000",),
                 provider_attempt_refs=("attempt://akshare-1",),
                 select_data_plan_ref=f"selection-data-plan://{selection_run_id}",
                 warehouse_check_ref=f"warehouse-check://selection/{selection_run_id}/{trade_date}/success",

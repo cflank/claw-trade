@@ -946,7 +946,7 @@ interface IntentDraftForUser {
 interface ReportWorkflowSettingsSnapshot {
   maxDebateRounds: number;
   maxRiskDiscussRounds: number;
-  frontlineExecutionMode: "parallel";
+  frontlineExecutionMode: "serial" | "parallel";
   defaultProfile: MarketProfile;
   defaultMarket: MarketProfile;
   defaultCurrency: string;

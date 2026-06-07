@@ -2,51 +2,22 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import sys
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse
 
-from claw_trade.data_gateway.api import DataAPI
-from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
-from claw_trade.data_gateway.coordination.coalescer import RequestCoalescer
-from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
-from claw_trade.data_gateway.execution.rate_limit_policy import RateLimitPolicyResolver
-from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
-from claw_trade.data_gateway.coordination.service import DataService
-from claw_trade.data_gateway.execution import ProviderResultCache
-from claw_trade.data_gateway.execution.fetch_engine import FetchEngine
-from claw_trade.data_gateway.execution.gate import ExecutionGate
-from claw_trade.data_gateway.execution.rate_limiter import RateLimiter
-from claw_trade.data_gateway.execution.single_flight import SingleFlight
-from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
-from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
-from claw_trade.data_gateway.ingest.normalizer import Normalizer
-from claw_trade.data_gateway.ingest.pipeline import IngestPipeline
-from claw_trade.data_gateway.ingest.raw_store import RawStore
-from claw_trade.data_gateway.models import DataRequest, DataResult, DataResultStatus, Market
-from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
-from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
-from claw_trade.data_gateway.providers.registry import ProviderRegistry
-from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
-from claw_trade.ui_backend.mongo_settings_store import (
-    MongoDataSourceStore,
-    MongoSecretStore,
-    UI_DATA_SOURCE_SETTINGS_COLLECTION,
-    UI_SECRET_SETTINGS_COLLECTION,
-)
-
+from claw_trade.data_gateway.models import DataGap, DataRequest, DataResult, DataResultStatus, Market
+from claw_trade.data_gateway.runtime import build_data_api_from_env
 
 _DatasetSpec = tuple[str, str, tuple[str, ...]]
 
 
 _CN_A_DOMAIN_DATASETS: dict[str, tuple[_DatasetSpec, ...]] = {
     "market": (
-        ("daily_bar", "daily", ("open", "high", "low", "close", "volume", "amount")),
+        ("daily_bar", "daily", ("date", "open", "high", "low", "close", "volume", "amount")),
         ("intraday_bar", "intraday", ("timestamp", "open", "high", "low", "close", "volume")),
         ("quote_snapshot", "realtime", ("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id")),
         ("order_book_snapshot", "realtime", ("bid_price", "bid_size", "ask_price", "ask_size", "timestamp", "symbol_id")),
@@ -242,11 +213,12 @@ def run_frontline_data_pack(tool_input: Mapping[str, Any], runtime_context: Mapp
     else:
         try:
             with redirect_stdout(sys.stderr):
-                api = _build_data_api()
+                api = build_data_api_from_env()
                 requests = _build_requests(tool_input=tool_input, runtime_context=runtime_context, market=market, domain=domain)
                 results = api.get_data_batch(requests)
         except Exception as exc:
             return _error_payload("data_layer_runtime_blocked", str(exc))
+    results = _validate_report_data_results(results=results, market=market, domain=domain)
 
     status = _aggregate_status(results)
     chart_payload = _market_chart_payload(
@@ -333,7 +305,7 @@ def _load_report_prefetch_results(
         return _PrefetchLoadResult(error=("report_prefetch_manifest_invalid", str(exc)))
     if not results:
         return _PrefetchLoadResult(error=("report_prefetch_manifest_mismatch", f"manifest has no results for domain: {domain}"))
-    return _PrefetchLoadResult(results=results)
+    return _PrefetchLoadResult(results=_validate_report_data_results(results=results, market=market, domain=domain))
 
 
 def _report_prefetch_manifest_path(runtime_context: Mapping[str, Any]) -> Path | None:
@@ -348,6 +320,13 @@ def _result_domain(request_id: str) -> str:
     if len(parts) < 5:
         return ""
     return parts[2]
+
+
+def _result_dataset(request_id: str) -> str:
+    parts = request_id.split(":")
+    if len(parts) < 5:
+        return ""
+    return parts[4]
 
 
 def run_report_data_prefetch(request: Any, *, run_id: str, evidence_root: Path) -> dict[str, Any]:
@@ -383,7 +362,8 @@ def run_report_data_prefetch(request: Any, *, run_id: str, evidence_root: Path) 
                 )
             )
         with redirect_stdout(sys.stderr):
-            results = _build_data_api().get_data_batch(tuple(requests))
+            results = build_data_api_from_env().get_data_batch(tuple(requests))
+        results = _validate_report_data_results(results=results, market=market, domain="*")
         payload = {
             "ok": True,
             "schema_version": "report_data_prefetch.v1",
@@ -410,63 +390,9 @@ def run_report_data_prefetch(request: Any, *, run_id: str, evidence_root: Path) 
     _write_json(evidence_path, payload)
     return payload
 
-
-def _build_data_api() -> DataAPI:
-    database = _open_database()
-    repository = DatasetRepository.from_database(database)
-
-    registry = ProviderRegistry()
-    for plugin in iter_minimal_market_plugins():
-        registry.register(plugin)
-
-    credential_resolver = DataSourceCredentialResolver(
-        data_source_store=MongoDataSourceStore(database[UI_DATA_SOURCE_SETTINGS_COLLECTION]),
-        secret_store=MongoSecretStore(database[UI_SECRET_SETTINGS_COLLECTION]),
-    )
-    ingest = IngestPipeline(
-        raw_store=RawStore(repository=repository),
-        normalizer=Normalizer(),
-        normalized_store=NormalizedStore(repository=repository),
-        attempt_log=AttemptLog(repository=repository),
-    )
-    service = DataService(
-        query_planner=QueryPlanner(),
-        warehouse=Warehouse(repository),
-        provider_selector=ProviderSelector(registry, credential_resolver=credential_resolver),
-        coalescer=RequestCoalescer(),
-        batch_planner=ProviderBatchPlanner(
-            rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
-        ),
-        execution_gate=ExecutionGate(
-            cache=ProviderResultCache(repository),
-            rate_limiter=RateLimiter(repository),
-            single_flight=SingleFlight(repository),
-        ),
-        fetch_engine=FetchEngine(registry, credential_resolver=credential_resolver),
-        ingest=ingest,
-    )
-    return DataAPI(service)
-
-
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-
-
-def _open_database() -> Any:
-    uri = (os.environ.get("DATA_GATEWAY_MONGODB_URI", "").strip() or os.environ.get("CN_A_MONGODB_URI", "").strip())
-    if not uri:
-        raise RuntimeError("DATA_GATEWAY_MONGODB_URI is required for report data layer access")
-    database_name = (
-        os.environ.get("DATA_GATEWAY_MONGODB_DATABASE", "").strip()
-        or os.environ.get("CN_A_MONGODB_DATABASE", "").strip()
-        or _database_name_from_uri(uri)
-    )
-    from pymongo import MongoClient
-
-    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-    return client[database_name]
-
 
 def _build_requests(
     *,
@@ -539,6 +465,124 @@ def _domain_datasets(*, domain: str, market: Market) -> tuple[_DatasetSpec, ...]
         Market.CRYPTO: _CRYPTO_DOMAIN_DATASETS,
     }
     return by_market[market].get(domain, ())
+
+
+def _validate_report_data_results(
+    *,
+    results: Sequence[DataResult],
+    market: Market,
+    domain: str,
+) -> tuple[DataResult, ...]:
+    return tuple(_validate_report_data_result(result=result, market=market, domain=domain) for result in results)
+
+
+def _validate_report_data_result(*, result: DataResult, market: Market, domain: str) -> DataResult:
+    expected_dataset = _result_dataset(result.request_id)
+    if not expected_dataset:
+        if not result.rows and not result.dataset_refs:
+            return result
+        return _data_integrity_error_result(
+            result=result,
+            market=market,
+            data_type="unknown",
+            granularity="unknown",
+            required_fields=(),
+            message="report_data_result_request_id_mismatch",
+        )
+    result_domain = _result_domain(result.request_id)
+    expected_domain = result_domain if domain == "*" else domain
+    specs = _expected_specs_for_result(market=market, domain=expected_domain, dataset=expected_dataset)
+    if not specs:
+        if not result.rows and not result.dataset_refs:
+            return result
+        return _data_integrity_error_result(
+            result=result,
+            market=market,
+            data_type=expected_dataset,
+            granularity="unknown",
+            required_fields=(),
+            message="report_data_result_unknown_dataset",
+        )
+    expected_fields = tuple(dict.fromkeys(field for _dataset, _granularity, fields in specs for field in fields))
+    dataset_mismatch = _dataset_refs_mismatch(
+        result.dataset_refs,
+        expected_dataset=expected_dataset,
+        rows_present=bool(result.rows),
+    )
+    row_mismatch = bool(result.rows) and any(
+        not _row_matches_expected_spec(row, specs=specs) for row in result.rows
+    )
+    if not dataset_mismatch and not row_mismatch:
+        return result
+
+    reason = "report_data_result_dataset_mismatch" if dataset_mismatch else "report_data_result_field_mismatch"
+    return _data_integrity_error_result(
+        result=result,
+        market=market,
+        data_type=expected_dataset,
+        granularity=specs[0][1],
+        required_fields=expected_fields,
+        message=reason,
+    )
+
+
+def _data_integrity_error_result(
+    *,
+    result: DataResult,
+    market: Market,
+    data_type: str,
+    granularity: str,
+    required_fields: Sequence[str],
+    message: str,
+) -> DataResult:
+    gap = DataGap.by_reason(
+        "data_integrity_failed",
+        request_id=result.request_id,
+        market=market,
+        data_type=data_type,
+        granularity=granularity,
+        required_fields=tuple(required_fields),
+        evidence_refs=tuple(result.dataset_refs) + tuple(result.raw_refs) + tuple(result.attempt_refs),
+        message=message,
+        as_of=result.as_of,
+    )
+    return result.model_copy(
+        update={
+            "status": DataResultStatus.ERROR,
+            "rows": (),
+            "dataset_refs": (),
+            "raw_refs": (),
+            "attempt_refs": (),
+            "gaps": tuple(result.gaps) + (gap,),
+        }
+    )
+
+
+def _expected_specs_for_result(*, market: Market, domain: str, dataset: str) -> tuple[_DatasetSpec, ...]:
+    return tuple(spec for spec in _domain_datasets(domain=domain, market=market) if spec[0] == dataset)
+
+
+def _dataset_refs_mismatch(dataset_refs: Sequence[str], *, expected_dataset: str, rows_present: bool = False) -> bool:
+    if rows_present and not dataset_refs:
+        return True
+    for ref in dataset_refs:
+        parts = str(ref).split(":")
+        if len(parts) < 3 or parts[0] != "dataset" or not parts[1]:
+            return True
+        if parts[1] != expected_dataset:
+            return True
+    return False
+
+
+def _row_matches_expected_spec(row: Any, *, specs: Sequence[_DatasetSpec]) -> bool:
+    if not isinstance(row, Mapping):
+        return False
+    fields = {str(key) for key in row if str(key) not in _ROW_FIELD_EXCLUDE}
+    for _dataset, _granularity, expected_fields in specs:
+        required = {str(field) for field in expected_fields if str(field).strip()}
+        if required and required.issubset(fields):
+            return True
+    return False
 
 
 def _normalize_symbol(*, tool_input: Mapping[str, Any], market: Market) -> _SymbolParts:
@@ -629,7 +673,7 @@ def _model_visible_text(
         lines.append("已返回的数据摘要：")
         for result in ready_results[:3]:
             lines.append(
-                f"- {_dataset_label(result.request_id.split(':')[-1], market=market)}："
+                f"- {_dataset_label(_result_dataset(result.request_id) or result.request_id.split(':')[-1], market=market)}："
                 f"{len(result.rows)} 行，字段覆盖 {', '.join(_row_fields(result.rows)) or '未声明'}。"
             )
             for row in result.rows[-5:]:
@@ -791,7 +835,7 @@ def _compact_json(value: object) -> str:
 def _gap_lines(results: Sequence[DataResult], *, market: Market) -> list[str]:
     lines: list[str] = []
     for result in results:
-        dataset = _dataset_label(result.request_id.split(":")[-1], market=market)
+        dataset = _dataset_label(_result_dataset(result.request_id) or result.request_id.split(":")[-1], market=market)
         for gap in result.gaps:
             reason = str(getattr(gap.reason, "value", gap.reason))
             required = "、".join(_field_label(field) for field in gap.required_fields)
@@ -1002,6 +1046,10 @@ def _human_error(value: str | None) -> str:
         "no usable OHLCV rows": "没有可用于画图的开高低收量数据",
         "ohlcv_fields_missing": "画图必需字段缺失",
         "warehouse_recheck_missing_for_request": "取数后仓库仍未形成当前请求的可用记录",
+        "report_data_result_dataset_mismatch": "资料包返回的数据类型与请求不一致",
+        "report_data_result_field_mismatch": "资料包返回字段与请求不一致",
+        "report_data_result_request_id_mismatch": "资料包请求标识无法识别",
+        "report_data_result_unknown_dataset": "资料包请求的数据类型未登记",
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
@@ -1057,15 +1105,6 @@ def _resolve_as_of(value: Any) -> datetime:
     if parsed == now.date():
         return now
     return datetime(parsed.year, parsed.month, parsed.day, 23, 59, 59, tzinfo=UTC)
-
-
-def _database_name_from_uri(uri: str) -> str:
-    parsed = urlparse(uri)
-    path_name = parsed.path.strip("/")
-    if path_name:
-        return path_name.split("/", 1)[0]
-    return "claw_trade"
-
 
 def _dedupe(values: Sequence[str] | Any) -> tuple[str, ...]:
     output: list[str] = []

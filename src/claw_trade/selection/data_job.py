@@ -8,6 +8,11 @@ from inspect import Parameter, signature
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from claw_trade.data_gateway.refs import (
+    is_normalized_dataset_ref,
+    normalize_legacy_normalized_dataset_ref,
+)
+from claw_trade.data_gateway.selection_integrity import validate_selection_columnar_manifest_ref
 from claw_trade.selection.artifacts import SelectionFileArtifactBackend
 from claw_trade.selection.candidate_pack import (
     ApprovedCandidatePack,
@@ -15,13 +20,12 @@ from claw_trade.selection.candidate_pack import (
     approve_candidate_pack,
     build_candidate_pack,
 )
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
 from claw_trade.selection.engine import (
     ApprovedSelectionStrategy,
     FilteredUniverse,
-    StrategyRule,
     ScoringResult,
     SelectionEngineError,
+    StrategyRule,
     run_hard_filters,
     score_candidates,
 )
@@ -480,7 +484,7 @@ class SelectionDataJob:
                     DataGapRef(
                         gap_id=f"{plan.selection_run_id}-provider-attempts-missing",
                         domain="selection",
-                        gap_code="provider_attempts_missing",
+                        gap_code="provider_attempt_refs_missing",
                         severity=DataGapSeverity.BLOCKER,
                         attempt_refs=("attempt://missing",),
                         reader_message="provider 调用缺少 attempts 证据，任务失败且不 fallback。",
@@ -498,7 +502,7 @@ class SelectionDataJob:
                         gap_code="selection_warehouse_normalized_refs_missing",
                         severity=DataGapSeverity.BLOCKER,
                         attempt_refs=provider_result.attempt_refs,
-                        reader_message="选股仓库检查缺少 normalized_datasets 引用，不能生成可用 /select run。",
+                        reader_message="选股仓库检查缺少标准化数据引用，不能生成可用 /select run。",
                     ),
                 ),
             )
@@ -547,7 +551,7 @@ class SelectionDataJob:
                     ),
                 ),
             )
-        if not SelectionColumnarWarehouse.default().validate_manifest_ref(
+        if not validate_selection_columnar_manifest_ref(
             provider_result.columnar_manifest_ref,
             expected_sha256=provider_result.columnar_manifest_sha256,
         ):
@@ -571,7 +575,7 @@ class SelectionDataJob:
         if invalid_normalized_refs:
             raise SelectionDataJobStepError(
                 "selection_warehouse_check_missing",
-                "selection warehouse normalized refs 未指向 normalized_datasets",
+                "selection warehouse normalized refs 不是数据层标准化引用",
                 data_gaps=(
                     DataGapRef(
                         gap_id=f"{plan.selection_run_id}-warehouse-normalized-refs-invalid",
@@ -579,7 +583,7 @@ class SelectionDataJob:
                         gap_code="selection_warehouse_normalized_refs_invalid",
                         severity=DataGapSeverity.BLOCKER,
                         attempt_refs=provider_result.attempt_refs,
-                        reader_message="选股仓库检查发现 normalized refs 未指向 Mongo normalized_datasets，不能用本地/旧快路径结果满足 /select。",
+                        reader_message="选股仓库检查发现 normalized refs 不是数据层标准化引用，不能用本地/旧快路径结果满足 /select。",
                         source_metadata={"invalid_refs": invalid_normalized_refs[:20]},
                     ),
                 ),
@@ -797,13 +801,13 @@ def build_selection_data_plan(
                 "coverage_groups": ("universe", "daily", "fundamental"),
                 "source_role_required": "market_data",
                 "field_set": ("strategy_signal_myhhub_volume_rise", "private_placement_days_since", "amount"),
-                "target_collection": "normalized_datasets",
+                "target_ref_type": "dataset://normalized",
             },
         ),
     }
     store_contract = {
         "no_select_data_plans_collection": True,
-        "normalized_collection": "normalized_datasets",
+        "normalized_ref_type": "dataset://normalized",
     }
     if provider_result is not None:
         gaps = tuple(
@@ -854,7 +858,7 @@ def build_selection_data_plan(
             domain="selection",
             reason="mongo_missing",
             severity=DataGapSeverity.BLOCKER,
-            worker_visible_text="CRYPTO /select 历史包尚未批准下载并入 Mongo normalized_datasets，不能走旧 select plan 或本地文件入口。",
+            worker_visible_text="CRYPTO /select 历史包尚未批准进入标准化数据层，不能走旧 select plan 或本地文件入口。",
             market=plan.market,
             data_type="selection_history",
             field_path=None,
@@ -1178,7 +1182,7 @@ def _candidate_pack_stage(status: SelectionDataRunStatus, manifest: CandidatePac
 
 
 def _is_unified_normalized_ref(ref: str) -> bool:
-    return ref.startswith("normalized://mongo/normalized_datasets/") or ref.startswith("mongo://normalized_datasets/")
+    return is_normalized_dataset_ref(ref)
 
 
 def _top20_feature_snapshot(feature_snapshot: FeatureSnapshot, *, scoring: ScoringResult) -> FeatureSnapshot:
@@ -1200,7 +1204,7 @@ def _feature_snapshot_payload(feature_snapshot: FeatureSnapshot | None) -> list[
             "ticker": row.ticker,
             "company_name": row.company_name,
             "industry": row.industry,
-            "source_ref": row.source_ref,
+            "source_ref": normalize_legacy_normalized_dataset_ref(row.source_ref),
             "feature_values": dict(row.feature_values),
         }
         for row in feature_snapshot.rows

@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from claw_trade.artifacts.openviking_client import (
     OPENVIKING_PROBE_RECEIPT_PATH,
     OPENVIKING_PROBE_STAT_URI,

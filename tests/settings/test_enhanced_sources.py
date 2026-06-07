@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.data_gateway.models import Market
 from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
 from claw_trade.ui_backend.data_source_settings import (
+    SUPPORTED_DATA_SOURCE_TYPES,
     DataSourceSettingsService,
     InMemoryDataSourceStore,
     ProviderDisplayDecision,
     ProviderDisplayStatus,
-    SUPPORTED_DATA_SOURCE_TYPES,
 )
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from claw_trade.data_gateway.selection_batch import (
+from claw_trade.data_gateway.selection_api import (
     build_selection_provider_batch_plan,
     fetch_selection_batch_from_data_gateway,
 )

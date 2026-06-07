@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-
 TEMPLATE_PATH = Path("docs/evidence/cn_a_fundamental/fresh_final_acceptance_template.md")
 MANIFEST_PATH = Path("docs/evidence/cn_a_fundamental/t_fnd_046_five_sample_manifest_2026-05-07.json")
 COMPARE_INDEX_PATH = Path("docs/evidence/cn_a_fundamental/same_ticker_compare_index_600519_2026-05-06.md")

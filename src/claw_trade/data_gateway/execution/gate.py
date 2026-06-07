@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from email.utils import parsedate_to_datetime
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol
 
 from . import GateDecision, ProviderResultCache, ResultRefs

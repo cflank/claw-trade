@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
-
 from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 

@@ -1,6 +1,9 @@
 import pytest
-
-from claw_trade.instruments.resolver import InstrumentResolveError, resolve_hk_identity, resolve_instrument_identity
+from claw_trade.instruments.resolver import (
+    InstrumentResolveError,
+    resolve_hk_identity,
+    resolve_instrument_identity,
+)
 
 
 @pytest.mark.parametrize(

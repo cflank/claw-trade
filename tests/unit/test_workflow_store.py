@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import json
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from claw_trade.artifacts.openviking_client import OpenVikingAccessRecord
 from claw_trade.artifacts.refs import (
-    L1Claim,
     L2Entry,
     L2Index,
     MaterialReceipt,

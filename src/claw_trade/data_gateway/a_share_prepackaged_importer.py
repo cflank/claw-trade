@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
+from claw_trade.data_gateway.maintenance.normalized_rows import discard_normalized_mongo_rows
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
 _CN_A_EXCHANGE_BY_SUFFIX = {
@@ -302,15 +303,18 @@ def import_a_share_prepackaged_to_repository(
 
 
 def _delete_existing_prepackaged_records(repository: DatasetRepository) -> int:
-    return repository.delete_normalized_documents(
+    result = discard_normalized_mongo_rows(
+        repository,
         {
             "dataset": "daily_bar",
             "market": "CN_A",
             "universe_ref": "all_a_shares",
             "provider_lineage.provider_id": "local_a_share_prepackaged",
             "provider_lineage.endpoint_id": "a_share_prepackaged_selection_import",
-        }
+        },
+        confirmed=True,
     )
+    return result.deleted_count
 
 
 def _daily_files(root: Path) -> tuple[Path, ...]:

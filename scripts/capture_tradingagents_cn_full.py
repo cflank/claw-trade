@@ -14,8 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from langchain_core.messages import HumanMessage, ToolMessage
-
 from capture_tradingagents_cn_later8 import (
     CLAW_TRADE_ROOT,
     TRADINGAGENTS_CN_ROOT,
@@ -29,7 +27,7 @@ from capture_tradingagents_cn_later8 import (
     response_content,
     write_json,
 )
-
+from langchain_core.messages import HumanMessage, ToolMessage
 
 OUTPUT_ROOT = CLAW_TRADE_ROOT / "docs" / "evidence"
 

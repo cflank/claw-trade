@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import pytest
-
-from claw_trade.ui_backend.error_translator import _CODE_TO_MESSAGE, public_code_for, translate_internal_error_for_user
+from claw_trade.ui_backend.error_translator import (
+    _CODE_TO_MESSAGE,
+    public_code_for,
+    translate_internal_error_for_user,
+)
 from claw_trade.ui_contracts.constants import PRODUCT_ERROR_CODES
 
 

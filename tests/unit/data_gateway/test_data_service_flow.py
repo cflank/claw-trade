@@ -185,6 +185,123 @@ class _PartialBatchWarehouse:
         )
 
 
+class _MixedCoverageWarehouse:
+    def check(self, checks, coverage) -> WarehouseResult:
+        del coverage
+        return WarehouseResult(
+            satisfied=False,
+            rows=({"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},),
+            dataset_refs=("dataset:daily_bar:CN_A:row-1",),
+            gaps=(
+                DataGap.by_reason(
+                    "warehouse_missing",
+                    request_id="req-news",
+                    market=Market.CN_A,
+                    data_type="company_news",
+                    granularity="event",
+                    required_fields=("title", "published_at", "source", "summary", "url"),
+                    symbol_id="600519.SH",
+                    as_of=datetime(2026, 5, 31, tzinfo=UTC),
+                ),
+            ),
+            freshness={
+                "policy": "warehouse_only",
+                "checked_requests": ("req-market", "req-news"),
+                "coverage_by_request": (
+                    {
+                        "request_id": "req-market",
+                        "data_type": "daily_bar",
+                        "dataset_refs": ("dataset:daily_bar:CN_A:row-1",),
+                    },
+                    {
+                        "request_id": "req-news",
+                        "data_type": "company_news",
+                        "dataset_refs": (),
+                    },
+                ),
+            },
+        )
+
+
+class _MissingCoverageItemWarehouse:
+    def check(self, checks, coverage) -> WarehouseResult:
+        del checks, coverage
+        return WarehouseResult(
+            satisfied=False,
+            rows=({"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},),
+            dataset_refs=("dataset:daily_bar:CN_A:row-1",),
+            gaps=(
+                DataGap.by_reason(
+                    "warehouse_missing",
+                    request_id="req-news",
+                    market=Market.CN_A,
+                    data_type="company_news",
+                    granularity="event",
+                    required_fields=("title", "published_at", "source", "summary", "url"),
+                    symbol_id="600519.SH",
+                    as_of=datetime(2026, 5, 31, tzinfo=UTC),
+                ),
+            ),
+            freshness={
+                "policy": "warehouse_only",
+                "checked_requests": ("req-market", "req-news"),
+                "coverage_by_request": (
+                    {
+                        "request_id": "req-market",
+                        "data_type": "daily_bar",
+                        "dataset_refs": ("dataset:daily_bar:CN_A:row-1",),
+                    },
+                ),
+            },
+        )
+
+
+class _CanonicalRefMixedWarehouse:
+    def check(self, checks, coverage) -> WarehouseResult:
+        del checks, coverage
+        return WarehouseResult(
+            satisfied=True,
+            rows=(
+                {"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},
+                {"pe": 30.0, "pb": 5.0, "ps": 10.0, "market_cap": 1000000.0},
+            ),
+            dataset_refs=(
+                "dataset:daily_bar:CN_A:row-1",
+                "dataset:valuation_metric:CN_A:row-2",
+            ),
+            freshness={"policy": "trading_day"},
+        )
+
+    def recheck(self, checks, coverage) -> WarehouseResult:
+        raise AssertionError("warehouse hit must not fetch or recheck")
+
+
+class _NameLookupWarehouse:
+    def resolve_company_names(self, *, market, symbol_ids, dataset="daily_bar"):
+        del market, symbol_ids, dataset
+        return {}
+
+    def check(self, checks, coverage) -> WarehouseResult:
+        del coverage
+        assert checks[0].data_type == "quote_snapshot"
+        assert checks[0].fields == ("symbol_id", "name", "company_name")
+        return WarehouseResult(
+            satisfied=True,
+            rows=(
+                {
+                    "dataset": "quote_snapshot",
+                    "market": "CN_A",
+                    "symbol_id": "688017.SH",
+                    "granularity": "realtime",
+                    "name": "绿的谐波",
+                    "company_name": "绿的谐波",
+                },
+            ),
+            dataset_refs=("dataset:quote_snapshot:CN_A:688017.SH",),
+            freshness={"policy": "trading_day"},
+        )
+
+
 class _Selector:
     def __init__(self, events: list[str]) -> None:
         self._events = events
@@ -469,6 +586,119 @@ def test_data_service_warehouse_only_uses_metadata_coverage_without_rows() -> No
     assert result.rows == ()
     assert result.dataset_refs == ("dataset:metadata-only",)
     assert events == ["query_planner.validate_and_normalize", "warehouse.check_coverage"]
+
+
+def test_data_service_does_not_slice_daily_rows_into_news_request() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_MixedCoverageWarehouse(),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+    market_request = _request("req-market").model_copy(update={"freshness_policy": "warehouse_only"})
+    news_payload = _request("req-news").model_dump()
+    news_payload.update(
+        {
+            "data_type": "company_news",
+            "granularity": "event",
+            "fields": ("title", "published_at", "source", "summary", "url"),
+            "freshness_policy": "warehouse_only",
+            "consumer_id": "news_analyst",
+        }
+    )
+
+    market_result, news_result = service.get_data_batch((market_request, DataRequest.model_validate(news_payload)))
+
+    assert market_result.status == DataResultStatus.READY
+    assert market_result.rows == ({"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},)
+    assert market_result.dataset_refs == ("dataset:daily_bar:CN_A:row-1",)
+    assert news_result.status == DataResultStatus.MISSING
+    assert news_result.rows == ()
+    assert news_result.dataset_refs == ()
+    assert [gap.reason for gap in news_result.gaps] == [GapReason.WAREHOUSE_MISSING]
+    assert news_result.freshness["coverage_by_request"] == (
+        {
+            "request_id": "req-news",
+            "data_type": "company_news",
+            "dataset_refs": (),
+        },
+    )
+
+
+def test_data_service_missing_coverage_item_is_empty_for_request() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_MissingCoverageItemWarehouse(),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+    market_request = _request("req-market").model_copy(update={"freshness_policy": "warehouse_only"})
+    news_payload = _request("req-news").model_dump()
+    news_payload.update(
+        {
+            "data_type": "company_news",
+            "granularity": "event",
+            "fields": ("title", "published_at", "source", "summary", "url"),
+            "freshness_policy": "warehouse_only",
+            "consumer_id": "news_analyst",
+        }
+    )
+
+    market_result, news_result = service.get_data_batch((market_request, DataRequest.model_validate(news_payload)))
+
+    assert market_result.status == DataResultStatus.READY
+    assert news_result.status == DataResultStatus.MISSING
+    assert news_result.rows == ()
+    assert news_result.dataset_refs == ()
+    assert [gap.reason for gap in news_result.gaps] == [GapReason.WAREHOUSE_MISSING]
+
+
+def test_data_service_slices_by_canonical_dataset_ref_when_rows_lack_scope_metadata() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_CanonicalRefMixedWarehouse(),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+
+    result = service.get_data(_request("req-canonical-ref-slice"))
+
+    assert result.status == DataResultStatus.READY
+    assert result.rows == ({"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0, "volume": 1000},)
+    assert result.dataset_refs == ("dataset:daily_bar:CN_A:row-1",)
+
+
+def test_data_service_company_name_resolver_uses_quote_snapshot_when_local_name_missing() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_NameLookupWarehouse(),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+
+    names = service.resolve_company_names(market="CN_A", symbol_ids=("688017.SH",))
+
+    assert names == {"688017.SH": "绿的谐波"}
 
 
 def test_data_service_select_universe_refresh_skips_pre_refresh_warehouse_check() -> None:

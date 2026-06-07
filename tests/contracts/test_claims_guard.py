@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-
-from claw_trade.artifacts.claims import high_risk_claim_kinds, parse_l1_claim_block, require_l1_claim_block, validate_claims
+from claw_trade.artifacts.claims import (
+    high_risk_claim_kinds,
+    parse_l1_claim_block,
+    require_l1_claim_block,
+    validate_claims,
+)
 from claw_trade.artifacts.refs import L2Entry, L2Index, MaterialTarget, make_material_target
 from claw_trade.workflow.models import Stage
 

@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Any, Protocol
 from uuid import uuid4
 
+from claw_trade.data_gateway.coordination.scheduler import DataRunScheduleContext, DataRunScheduler
 from claw_trade.data_gateway.models import (
     DataGap,
     DataPlan,
@@ -14,14 +15,12 @@ from claw_trade.data_gateway.models import (
     DataResult,
     DataResultStatus,
     GapReason,
-    Market,
     GateDecision,
     IngestResult,
+    Market,
     QueryPlan,
     WarehouseResult,
 )
-from claw_trade.data_gateway.coordination.scheduler import DataRunScheduleContext, DataRunScheduler
-
 
 _LOGGER = logging.getLogger("uvicorn.error")
 
@@ -36,6 +35,14 @@ class WarehouseLike(Protocol):
     def check(self, checks: Sequence[Any], coverage: Any) -> WarehouseResult: ...
 
     def recheck(self, checks: Sequence[Any], coverage: Any) -> WarehouseResult: ...
+
+    def resolve_company_names(
+        self,
+        *,
+        market: Market | str,
+        symbol_ids: Sequence[str],
+        dataset: str = "daily_bar",
+    ) -> Mapping[str, str]: ...
 
 
 class ProviderSelectorLike(Protocol):
@@ -73,6 +80,7 @@ class IngestLike(Protocol):
 
 
 class DataService:
+    _COMPANY_NAME_FIELDS = ("company_name", "name", "stock_name", "code_name", "security_name")
     _SOURCE_ROLE_ORDER = {
         "official": 0,
         "paid_data": 1,
@@ -122,6 +130,67 @@ class DataService:
     def get_data_batch(self, requests: Sequence[DataRequest]) -> list[DataResult]:
         plan = self.plan_batch(requests)
         return self.execute_plan(plan)
+
+    def resolve_company_names(
+        self,
+        *,
+        market: Market | str,
+        symbol_ids: Sequence[str],
+        dataset: str = "daily_bar",
+    ) -> Mapping[str, str]:
+        symbols = tuple(dict.fromkeys(str(symbol).strip().upper() for symbol in symbol_ids if str(symbol).strip()))
+        if not symbols:
+            return {}
+        resolved_market = self._coerce_market(market)
+        resolver = getattr(self.warehouse, "resolve_company_names", None)
+        names: dict[str, str] = {}
+        if callable(resolver):
+            names.update(resolver(market=resolved_market, symbol_ids=symbols, dataset=dataset))
+        missing = tuple(symbol for symbol in symbols if not str(names.get(symbol) or "").strip())
+        if not missing or resolved_market != Market.CN_A:
+            return names
+
+        requests = tuple(
+            DataRequest(
+                request_id=f"company-name:{symbol}:quote_snapshot:{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S%f')}",
+                market=resolved_market,
+                symbol_id=symbol,
+                timezone="Asia/Shanghai",
+                calendar="CN_A_SSE_SZSE",
+                data_type="quote_snapshot",
+                granularity="realtime",
+                fields=("symbol_id", "name", "company_name"),
+                freshness_policy="trading_day",
+                consumer="ui_probe",
+                consumer_id="company_name_resolver",
+                as_of=datetime.now(tz=UTC),
+            )
+            for symbol in missing
+        )
+        results = self.get_data_batch(requests)
+        names.update(self._company_names_from_results(results))
+        return names
+
+    @classmethod
+    def _company_names_from_results(cls, results: Sequence[DataResult]) -> dict[str, str]:
+        names: dict[str, str] = {}
+        for result in results:
+            for row in result.rows:
+                symbol = str(row.get("symbol_id") or "").strip().upper()
+                if not symbol or symbol in names:
+                    continue
+                name = cls._company_name_from_row(row)
+                if name:
+                    names[symbol] = name
+        return names
+
+    @classmethod
+    def _company_name_from_row(cls, row: Mapping[str, Any]) -> str | None:
+        for field in cls._COMPANY_NAME_FIELDS:
+            name = str(row.get(field) or "").strip()
+            if name:
+                return name
+        return None
 
     def plan_batch(self, requests: Sequence[DataRequest]) -> DataPlan:
         query_plan = self.query_planner.validate_and_normalize_many(requests)
@@ -579,10 +648,17 @@ class DataService:
     def _slice_warehouse_result(warehouse_result: WarehouseResult, request: DataRequest) -> WarehouseResult:
         request_id = request.request_id
         request_gaps = tuple(gap for gap in warehouse_result.gaps if getattr(gap, "request_id", None) == request_id)
+        coverage_dataset_refs = DataService._coverage_dataset_refs_for_request(
+            warehouse_result=warehouse_result,
+            request_id=request_id,
+        )
+        coverage_ref_set = set(coverage_dataset_refs) if coverage_dataset_refs is not None else None
         paired_rows = tuple(
             (row, dataset_ref)
             for row, dataset_ref in zip(warehouse_result.rows, warehouse_result.dataset_refs, strict=False)
-            if DataService._row_matches_request(row, request)
+            if (coverage_ref_set is None or dataset_ref in coverage_ref_set)
+            and DataService._dataset_ref_matches_request(dataset_ref, request)
+            and DataService._row_matches_request(row, request)
         )
         if paired_rows:
             rows = tuple(row for row, _dataset_ref in paired_rows)
@@ -604,20 +680,8 @@ class DataService:
                 )
         else:
             rows = warehouse_result.rows
-            coverage_dataset_refs = DataService._coverage_dataset_refs_for_request(
-                warehouse_result=warehouse_result,
-                request_id=request_id,
-            )
             dataset_refs = coverage_dataset_refs if coverage_dataset_refs is not None else warehouse_result.dataset_refs
-        checked_requests = tuple(warehouse_result.freshness.get("checked_requests", ()) or ())
-        if checked_requests:
-            freshness: dict[str, Any] = {k: v for k, v in warehouse_result.freshness.items() if k != "checked_requests"}
-            if request_id in checked_requests:
-                freshness["checked_requests"] = [request_id]
-            else:
-                freshness["checked_requests"] = []
-        else:
-            freshness = dict(warehouse_result.freshness)
+        freshness = DataService._slice_freshness_for_request(warehouse_result=warehouse_result, request_id=request_id)
         dataset_ref_set = set(dataset_refs)
         return WarehouseResult(
             satisfied=not request_gaps and bool(dataset_refs),
@@ -637,6 +701,25 @@ class DataService:
         )
 
     @staticmethod
+    def _slice_freshness_for_request(
+        *,
+        warehouse_result: WarehouseResult,
+        request_id: str,
+    ) -> dict[str, Any]:
+        freshness = dict(warehouse_result.freshness)
+        checked_requests = tuple(freshness.get("checked_requests", ()) or ())
+        if checked_requests:
+            freshness["checked_requests"] = [request_id] if request_id in checked_requests else []
+        coverage_items = freshness.get("coverage_by_request")
+        if isinstance(coverage_items, Sequence) and not isinstance(coverage_items, (str, bytes, bytearray)):
+            freshness["coverage_by_request"] = tuple(
+                item
+                for item in coverage_items
+                if isinstance(item, Mapping) and str(item.get("request_id") or "") == request_id
+            )
+        return freshness
+
+    @staticmethod
     def _coverage_dataset_refs_for_request(
         *,
         warehouse_result: WarehouseResult,
@@ -652,7 +735,7 @@ class DataService:
             if not isinstance(raw_refs, Sequence) or isinstance(raw_refs, (str, bytes, bytearray)):
                 return ()
             return tuple(str(ref) for ref in raw_refs)
-        return None
+        return ()
 
     @staticmethod
     def _warehouse_attempt_refs_for_dataset_refs(
@@ -672,6 +755,16 @@ class DataService:
                 for attempt_ref in refs_by_dataset.get(dataset_ref, ())
             )
         )
+
+    @staticmethod
+    def _dataset_ref_matches_request(dataset_ref: str, request: DataRequest) -> bool:
+        parts = str(dataset_ref).split(":")
+        if len(parts) < 4 or parts[0] != "dataset":
+            return True
+        ref_dataset = parts[1]
+        ref_market = parts[2]
+        request_market = getattr(request.market, "value", request.market)
+        return ref_dataset == request.data_type and ref_market == str(request_market)
 
     @staticmethod
     def _row_matches_request(row: Any, request: DataRequest) -> bool:

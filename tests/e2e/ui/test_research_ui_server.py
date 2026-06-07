@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
-
-from fastapi.testclient import TestClient
 
 from claw_trade.web.app import build_research_ui_app
 from claw_trade.web.settings import ResearchUiServerSettings
 from claw_trade.web.state import build_ui_http_services
+from fastapi.testclient import TestClient
 
 
 def _app(tmp_path: Path):

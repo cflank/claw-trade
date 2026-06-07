@@ -61,7 +61,7 @@ class SingleFlight:
         if lease_ttl_seconds <= 0:
             raise ValueError("lease_ttl_seconds must be > 0")
         token = uuid4().hex
-        now = self._now()
+        now = self._aware_utc(self._now()) or datetime.now(UTC)
         lease_expires_at = now + timedelta(seconds=lease_ttl_seconds)
         if self._repository.try_insert_single_flight_call(
             key=key,
@@ -73,9 +73,12 @@ class SingleFlight:
         if row is None:
             return SingleFlightDecision.waiter(token)
         status = str(row.get("status", "pending"))
-        if status in {"published_success", "published_error"}:
+        lease_until = self._aware_utc(row.get("lease_expires_at"))
+        if status == "published_success":
             return SingleFlightDecision.shared(self._published_from_row(row))
-        if status == "pending" and row.get("lease_expires_at") and row["lease_expires_at"] > now:
+        if status == "published_error" and lease_until is not None and lease_until > now:
+            return SingleFlightDecision.shared(self._published_from_row(row))
+        if status == "pending" and lease_until is not None and lease_until > now:
             return SingleFlightDecision.waiter(str(row.get("owner_id") or ""))
         if self._repository.cas_takeover_expired_single_flight(
             key=key,
@@ -117,6 +120,14 @@ class SingleFlight:
             gap_summary=tuple(self._gap_to_summary(gap) for gap in result.gaps),
             error_summary="failed" if status == "published_error" else None,
         )
+
+    @staticmethod
+    def _aware_utc(value: Any) -> datetime | None:
+        if not isinstance(value, datetime):
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @staticmethod
     def _published_from_row(row: dict[str, Any]) -> PublishedFlightResult:

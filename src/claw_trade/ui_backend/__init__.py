@@ -1,4 +1,8 @@
-from claw_trade.ui_backend.chat_context import ChatContext, create_normal_chat_context, switch_chat_context
+from claw_trade.ui_backend.chat_context import (
+    ChatContext,
+    create_normal_chat_context,
+    switch_chat_context,
+)
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.error_translator import (

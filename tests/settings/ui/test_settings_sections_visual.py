@@ -7,8 +7,7 @@ import struct
 import subprocess
 import time
 from pathlib import Path
-from urllib.request import Request
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from claw_trade.ui_backend.data_source_settings import SUPPORTED_DATA_SOURCE_TYPES
 

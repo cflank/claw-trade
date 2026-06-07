@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_contracts.scope_guard import FirstVersionScopeError

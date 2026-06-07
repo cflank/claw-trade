@@ -34,7 +34,6 @@ from capture_tradingagents_cn_later8 import (
     write_json,
 )
 
-
 WORKER_MAP = {
     "bull_researcher": "TradingAgents-CN Bull Researcher",
     "bear_researcher": "TradingAgents-CN Bear Researcher",

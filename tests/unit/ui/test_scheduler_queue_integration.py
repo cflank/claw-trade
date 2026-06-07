@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-
 from claw_trade.ui_backend.scheduler_service import SchedulerService, UiServiceError
 from claw_trade.ui_contracts.enums import MarketProfile
 

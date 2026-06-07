@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date
 
-
 _CN_A_NON_TRADING_RANGES: tuple[tuple[date, date], ...] = (
     (date(2024, 1, 1), date(2024, 1, 1)),
     (date(2024, 2, 9), date(2024, 2, 17)),

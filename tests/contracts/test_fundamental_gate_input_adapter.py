@@ -5,17 +5,22 @@ import json
 from pathlib import Path
 
 from claw_trade.artifacts.openviking_client import OpenVikingClient
-from claw_trade.artifacts.refs import MaterialReceipt, MaterialReceiptVerification, make_material_target
+from claw_trade.artifacts.refs import (
+    MaterialReceipt,
+    MaterialReceiptVerification,
+    make_material_target,
+)
+from claw_trade.guards.fundamental_claim_gate import CLAIM_INPUT_INVALID, UNSUPPORTED_CLAIM
+from claw_trade.guards.fundamental_claim_rules import CLAIM_DICTIONARY_REVISION_ID
 from claw_trade.guards.fundamental_gate_inputs import (
     OPENVIKING_RECEIPT_INVALID,
     VISIBLE_TOOLS_INVALID,
     build_fundamental_gate_inputs,
     build_material_gate_input,
 )
-from claw_trade.guards.fundamental_claim_gate import CLAIM_INPUT_INVALID, UNSUPPORTED_CLAIM
-from claw_trade.guards.fundamental_claim_rules import CLAIM_DICTIONARY_REVISION_ID
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import ReadPolicy, Stage, WorkerCall
+
 from tests.fakes.openviking_store import FakeOpenVikingStore
 
 

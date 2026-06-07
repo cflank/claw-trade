@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from claw_trade.selection.columnar_warehouse import SelectionColumnarWarehouse
+from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.artifacts import SelectionFileArtifactBackend
 from claw_trade.selection.candidate_pack import approve_candidate_pack, build_candidate_pack
 from claw_trade.selection.engine import (
@@ -57,7 +57,7 @@ def _normalized_inputs() -> SelectionNormalizedInputs:
     refs = []
     for idx in range(20):
         ticker = f"{600000 + idx:06d}.SH"
-        ref = f"normalized://mongo/normalized_datasets/row-{idx + 1}"
+        ref = f"dataset://normalized/CN_A/daily/row-{idx + 1}"
         refs.append(ref)
         rows.append(
             SelectionNormalizedRow(
@@ -178,7 +178,7 @@ def test_candidate_pack_approval_uses_real_write_readback_hash_manifest_lineage(
     assert manifest.stage == "approving_candidate_pack"
     assert manifest.target == "candidate_pack"
     assert any(item.startswith("attempt://") for item in manifest.source_lineage_refs)
-    assert any(item.startswith("normalized://") for item in manifest.source_lineage_refs)
+    assert any(item.startswith("dataset://normalized/") for item in manifest.source_lineage_refs)
     assert any(item.startswith("feature://") for item in manifest.source_lineage_refs)
     assert any(item.startswith("score://") for item in manifest.source_lineage_refs)
 
