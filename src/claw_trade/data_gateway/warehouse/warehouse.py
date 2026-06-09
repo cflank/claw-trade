@@ -618,7 +618,6 @@ class Warehouse:
                 row.get("quote_asset"),
                 row.get("granularity"),
                 Warehouse._identity_value(row.get("period_start")),
-                Warehouse._identity_value(row.get("period_end")),
                 Warehouse._identity_value(row.get("open")),
                 Warehouse._identity_value(row.get("high")),
                 Warehouse._identity_value(row.get("low")),

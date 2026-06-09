@@ -106,7 +106,7 @@ def test_warehouse_dedupes_equivalent_rows_without_collapsing_distinct_hours() -
             "symbol_id": "BTCUSDT",
             "granularity": "1h",
             "period_start": datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
-            "period_end": datetime(2026, 6, 1, 0, 59, 59, tzinfo=UTC),
+            "period_end": datetime(2026, 6, 1, 0, 59, 59, 999999, tzinfo=UTC),
             "open": "100.00000000",
             "close": "101.00000000",
             "quote_asset_volume": "10000",
