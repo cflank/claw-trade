@@ -382,6 +382,10 @@ contract, not a memory preference.
 
 Rules:
 
+- From now on, Codex must not add any new guard, hard gate, early-stop category,
+  report-boundary validator, output validator, claim dictionary, exporter
+  rejection rule, prompt-level lexical ban, or style/expression restriction
+  unless the human explicitly approves that exact new rule in the current task.
 - Do not add, restore, or tighten runtime guard files, hard-gate categories,
   early-stop categories, report-boundary validators, output-semantics validators,
   claim dictionaries, or exporter rejection rules unless the source is proven

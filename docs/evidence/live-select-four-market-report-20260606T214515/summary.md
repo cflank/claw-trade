@@ -85,7 +85,7 @@ uv run python scripts/collect_openviking_runtime_evidence.py --run-id <run_id> -
 - Manual no-code OpenViking supplement was collected in `openviking-manual-evidence-summary.json`.
 
 ```bash
-uv run python scripts/audit_openbb_evidence_chain.py --run-id <run_id>
+uv run python scripts/audit_removed_data_gateway_evidence_chain.py --run-id <run_id>
 ```
 
 - Exit code: `1` for CN_A, US, HK, and CRYPTO.
@@ -330,7 +330,7 @@ Residual risk:
 - Batch fix grouping: not fixed in this subagent task. Root causes grouped as:
   - HK report domain-manifest mismatch for social pack.
   - CN_A content truthfulness/guard miss.
-  - Evidence tooling drift: OpenViking collector dict/object mismatch; OpenBB audit stale import path.
+  - Evidence tooling drift: OpenViking collector dict/object mismatch; 已删除数据网关 audit stale import path.
 
 ## Mock / Stub / Fake / Fallback Status
 

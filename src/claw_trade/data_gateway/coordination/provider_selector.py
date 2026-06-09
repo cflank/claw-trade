@@ -83,8 +83,6 @@ class ProviderSelector:
         for cap in capabilities:
             if self._is_symbol_request_using_universe_endpoint(request=request, cap=cap):
                 continue
-            if self._is_report_request_using_mootdx(request=request, cap=cap):
-                continue
             if required_granularity not in set(cap.supported_granularities):
                 continue
             if not required_fields.issubset(set(cap.coverage_fields)):
@@ -154,12 +152,6 @@ class ProviderSelector:
         if not symbol_id or universe_ref:
             return False
         return endpoint_id == "daily_bar_by_trade_date"
-
-    @staticmethod
-    def _is_report_request_using_mootdx(*, request: Any, cap: ProviderCapabilityView) -> bool:
-        consumer = str(_read_attr(request, "consumer", "") or "").strip()
-        provider_id = str(_read_attr(cap, "provider_id", "") or "").strip()
-        return consumer == "report" and provider_id == "cn_a_mootdx_market"
 
 
 class CredentialResolverLike(Protocol):

@@ -9,7 +9,7 @@
 - 第一版只做 A股 `CN_A`。
 - 选股算法必须按原项目最新代码等价实现，先审计后落地；不得发明新算法、权重、阈值。
 - 默认北京时间 16:00 后台跑；设置里允许用户修改。
-- 数据源沿用 data_gateway/provider registry/Mongo/OpenViking 证据链，不走旧直连路径；OpenBB 本体不是目标运行时依赖。
+- 数据源沿用 data_gateway/provider registry/Mongo/OpenViking 证据链，不走旧直连路径；已删除数据网关 本体不是目标运行时依赖。
 - prompt 按总体/详细设计中的 selection worker 草案落地。
 - `/select` 第一版只在聊天输出结果，不做复杂结果页。
 - 第一版不做手动补跑/backfill/rerun 的用户入口。
@@ -226,7 +226,7 @@
 - 允许修改范围：`src/claw_trade/selection/**`（`provider_batch.py`、`scheduler.py`、`data_job.py` 必要 glue）、`src/claw_trade/data_gateway/**` 最小复用/适配、必要最小 `src/claw_trade/web/state.py` runtime wiring、`tests/unit/selection/**`、`tests/integration/selection/**`、`tests/contracts/test_selection_*.py`、`docs/evidence/**`、`memory/2026-05-26.md`。
 - 禁止修改范围：`third_party/openclaw/**`、`/report` PM 决策逻辑与 exporter/prompt、selection 算法权重/阈值/排序规则、新增 runtime guard/hard gate、mock/stub/fake/fallback/capture-only 冒充 runtime/live。
 - 实现要求：必须走现有 data_gateway/provider registry/Mongo/OpenViking 证据链；无可用数据源或字段不足时 fail closed 并写 data gaps，不得生成 fake completed run；provider attempts/normalized refs/provider batch plan/data gaps 必须可审计。
-- 验收证据：`docs/evidence/sel-13-data-gateway-batch-*.md`（或 `*-blocked-*.md`）+ 对应 run/测试证据路径；旧 `sel-13-openbb-*` 文件名只作为历史证据，不代表 OpenBB 是当前运行依赖。
+- 验收证据：`docs/evidence/sel-13-data-gateway-batch-*.md`（或 `*-blocked-*.md`）+ 对应 run/测试证据路径；旧 `sel-13-removed_data_gateway-*` 文件名只作为历史证据，不代表 已删除数据网关 是当前运行依赖。
 - 必跑测试/命令：
   - `uv run pytest tests/integration/selection/test_data_job_pipeline.py`
   - `uv run pytest tests/integration/selection/test_store_persistence_restore.py`
@@ -236,7 +236,7 @@
 - mock/stub/fake/fallback 检查：禁止用测试夹具、手工假 record、capture-only 或隐藏 fallback 伪造 completed run。
 - 依赖任务：SEL-12。
 - 是否可并行：否。
-- 最新执行（2026-06-03，SEL-13-REWORK）：已完成功能接线与回归测试；当前运行目标是 data_gateway/provider registry/Mongo/OpenViking 证据链，不是 OpenBB。真实本地预打包 smoke 已不再出现旧 `symbol_required`，但用户当前包缺公司名/行业身份和定增覆盖，候选池按真实缺口 fail closed。
+- 最新执行（2026-06-03，SEL-13-REWORK）：已完成功能接线与回归测试；当前运行目标是 data_gateway/provider registry/Mongo/OpenViking 证据链，不是 已删除数据网关。真实本地预打包 smoke 已不再出现旧 `symbol_required`，但用户当前包缺公司名/行业身份和定增覆盖，候选池按真实缺口 fail closed。
 
 ## 3. 派发规则（给实现 agent）
 

@@ -161,7 +161,6 @@ describe('settings forbidden surface', () => {
       'newsapi',
       'x.com',
       'reddit',
-      'openbb',
       'sec edgar',
       'binance',
       'okx',

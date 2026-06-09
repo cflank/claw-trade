@@ -100,7 +100,7 @@ data_gateway 失败 -> 旧数据路径 silent fallback
 
 - claw-trade 控制工作流状态机、worker 调度、artifact 权威、hard gate 和报告导出。
 - OpenClaw 只运行单个 worker turn，负责真实 provider prompt、tool schema、tool call 和 LLM response。
-- `src/claw_trade/data_gateway` 是统一数据层入口和 provider evidence 记录者；OpenBB 本体不是目标运行时依赖。
+- `src/claw_trade/data_gateway` 是统一数据层入口和 provider evidence 记录者；已删除数据网关 本体不是目标运行时依赖。
 - Mongo 保存 provider raw/cache/attempt/normalized 等运行证据。
 - OpenViking 保存 approved L1/L2 material、manifest、hash、lineage 和下游 handoff。
 
@@ -517,9 +517,9 @@ worker 不应直接看到：
 - HTTP headers。
 - provider token。
 - Mongo raw/cache/debug envelope。
-- legacy OpenBB atomic/admin/discovery tools。
+- legacy 已删除数据网关 atomic/admin/discovery tools。
 - OpenViking protocol 文本。
-- OpenClaw/OpenViking/legacy OpenBB 内部工程协议。
+- OpenClaw/OpenViking/legacy 已删除数据网关 内部工程协议。
 
 资料包应返回：
 
@@ -675,7 +675,7 @@ lockup:
 - 用户 provider 试图覆盖官方原始披露事实源。
 - 缺数据时想用新闻、搜索或模型推断冒充公告、财报、资金事实。
 - 需要让 Python 控制层写投资判断或 PM 最终结论。
-- 需要把 legacy OpenBB atomic/admin/discovery tools 暴露给报告 worker。
+- 需要把 legacy 已删除数据网关 atomic/admin/discovery tools 暴露给报告 worker。
 - 需要恢复旧 provider executor 或旧 MCP 作为 runtime fallback。
 
 ## 14. 成功标准

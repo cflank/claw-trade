@@ -23,6 +23,9 @@ _PROVIDER_TO_SOURCE_TYPE: dict[str, str] = {
     "us_fred_macro": "fred",
     "crypto_coingecko_market": "coingecko_pro",
     "crypto_coinglass_derivatives": "coinglass",
+    "crypto_glassnode_onchain": "glassnode",
+    "crypto_lunarcrush_social": "lunarcrush",
+    "crypto_token_terminal_fundamentals": "token_terminal",
 }
 
 class RateLimitPolicyResolver:

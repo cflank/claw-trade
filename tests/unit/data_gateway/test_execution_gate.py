@@ -114,7 +114,7 @@ def test_gate_marks_cooldown_after_provider_429_fetch_result() -> None:
         SimpleNamespace(
             status="rate_limited",
             http_observations=(
-                SimpleNamespace(response_headers_redacted={"retry-after": "30"}),
+                SimpleNamespace(response_headers_redacted={"retry-after": "120"}),
             ),
         ),
     )

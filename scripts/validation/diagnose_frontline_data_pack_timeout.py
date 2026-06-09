@@ -83,6 +83,124 @@ def _normalized_rows_details(rows: Any) -> dict[str, Any]:
     return {"normalized_row_count": row_count}
 
 
+def _result_dataset(request_id: str) -> str:
+    parts = request_id.split(":")
+    if len(parts) < 5:
+        return ""
+    return parts[4]
+
+
+def _result_domain(request_id: str) -> str:
+    parts = request_id.split(":")
+    if len(parts) < 5:
+        return ""
+    return parts[2]
+
+
+def _row_field_sample(rows: Any) -> list[str]:
+    if not isinstance(rows, list | tuple):
+        return []
+    fields: list[str] = []
+    for row in rows[:20]:
+        if not isinstance(row, dict):
+            continue
+        for key in row:
+            if key not in fields:
+                fields.append(str(key))
+            if len(fields) >= 20:
+                return fields
+    return fields
+
+
+def _compact_gap(gap: Any, *, fallback_request_id: str) -> dict[str, Any]:
+    if not isinstance(gap, dict):
+        return {"request_id": fallback_request_id, "raw": str(gap)}
+    return {
+        "gap_id": gap.get("gap_id"),
+        "request_id": gap.get("request_id") or fallback_request_id,
+        "domain": _result_domain(str(gap.get("request_id") or fallback_request_id)),
+        "dataset": _result_dataset(str(gap.get("request_id") or fallback_request_id)),
+        "severity": gap.get("severity"),
+        "reason": gap.get("reason"),
+        "market": gap.get("market"),
+        "symbol_id": gap.get("symbol_id"),
+        "data_type": gap.get("data_type"),
+        "granularity": gap.get("granularity"),
+        "required_fields": list(gap.get("required_fields") or ()),
+        "provider_ids_tried": list(gap.get("provider_ids_tried") or ()),
+        "evidence_refs": list(gap.get("evidence_refs") or ()),
+        "human_readable": gap.get("human_readable"),
+    }
+
+
+def _compact_data_results(data_results: Any) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    if not isinstance(data_results, list | tuple):
+        return compact
+    for item in data_results:
+        if not isinstance(item, dict):
+            continue
+        request_id = str(item.get("request_id") or "")
+        rows = item.get("rows") or ()
+        dataset_refs = item.get("dataset_refs") or ()
+        raw_refs = item.get("raw_refs") or ()
+        attempt_refs = item.get("attempt_refs") or ()
+        gaps = item.get("gaps") or ()
+        compact.append(
+            {
+                "request_id": request_id,
+                "domain": _result_domain(request_id),
+                "dataset": _result_dataset(request_id),
+                "status": item.get("status"),
+                "row_count": len(rows) if isinstance(rows, list | tuple) else None,
+                "row_fields_sample": _row_field_sample(rows),
+                "dataset_ref_count": len(dataset_refs) if isinstance(dataset_refs, list | tuple) else None,
+                "dataset_refs_sample": list(dataset_refs[:5]) if isinstance(dataset_refs, list | tuple) else [],
+                "raw_ref_count": len(raw_refs) if isinstance(raw_refs, list | tuple) else None,
+                "attempt_ref_count": len(attempt_refs) if isinstance(attempt_refs, list | tuple) else None,
+                "attempt_refs_sample": list(attempt_refs[:5]) if isinstance(attempt_refs, list | tuple) else [],
+                "gap_count": len(gaps) if isinstance(gaps, list | tuple) else None,
+                "gaps": [_compact_gap(gap, fallback_request_id=request_id) for gap in gaps] if isinstance(gaps, list | tuple) else [],
+                "source_summary": item.get("source_summary"),
+                "freshness": item.get("freshness"),
+            }
+        )
+    return compact
+
+
+def _compact_gaps(data_results: Any) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
+    if not isinstance(data_results, list | tuple):
+        return gaps
+    for item in data_results:
+        if not isinstance(item, dict):
+            continue
+        request_id = str(item.get("request_id") or "")
+        for gap in item.get("gaps") or ():
+            gaps.append(_compact_gap(gap, fallback_request_id=request_id))
+    return gaps
+
+
+def _source_call_summary(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("step") != "ingest.ingest":
+            continue
+        calls.append(
+            {
+                "provider_id": event.get("provider_id"),
+                "endpoint_id": event.get("endpoint_id"),
+                "data_type": event.get("data_type"),
+                "granularity": event.get("granularity"),
+                "symbol_ids": event.get("symbol_ids"),
+                "request_ids": event.get("request_ids"),
+                "fetch_status": event.get("fetch_status"),
+                "elapsed_ms": event.get("elapsed_ms"),
+            }
+        )
+    return calls
+
+
 def _attempt_details(*args: Any, **kwargs: Any) -> dict[str, Any]:
     batch = kwargs.get("batch")
     details = _batch_details(batch) if batch is not None else {}
@@ -173,25 +291,29 @@ def main() -> int:
     args = parser.parse_args()
 
     recorder = Recorder()
-    original_build_data_api = bridge._build_data_api
+    original_build_data_api = bridge.build_data_api_from_env
 
     def instrumented_build_data_api() -> Any:
-        with recorder.span("bridge._build_data_api"):
+        with recorder.span("bridge.build_data_api_from_env"):
             api = original_build_data_api()
         return _wrap_api(recorder, api)
 
-    bridge._build_data_api = instrumented_build_data_api
+    bridge.build_data_api_from_env = instrumented_build_data_api
     started = time.monotonic()
     with recorder.span("bridge.run_frontline_data_pack", market=args.market, domain=args.domain):
         result = bridge.run_frontline_data_pack(_tool_input(args), _runtime_context(args))
 
+    data_results = result.get("data_results", [])
     output = {
         "schema": "frontline-data-pack-timeout-diagnosis-v1",
         "generated_at": _now_iso(),
         "elapsed_ms": int((time.monotonic() - started) * 1000),
         "result_status": result.get("status"),
         "result_ok": result.get("ok"),
-        "data_result_statuses": [item.get("status") for item in result.get("data_results", []) if isinstance(item, dict)],
+        "data_result_statuses": [item.get("status") for item in data_results if isinstance(item, dict)],
+        "data_results_summary": _compact_data_results(data_results),
+        "gaps_summary": _compact_gaps(data_results),
+        "source_calls_summary": _source_call_summary(recorder.events),
         "events": recorder.events,
         "env": {
             "CN_A_PROVIDER_TOTAL_TIMEOUT_MS": os.environ.get("CN_A_PROVIDER_TOTAL_TIMEOUT_MS"),

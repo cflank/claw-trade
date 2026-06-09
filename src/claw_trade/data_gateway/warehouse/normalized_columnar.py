@@ -26,6 +26,8 @@ _ROW_EXCLUDE_FIELDS = {
     "dataset_checksum_scope",
     "dataset_row_count",
 }
+_MANIFEST_FULL_DATASET_REFS_LIMIT = 500
+_MANIFEST_DATASET_REFS_SAMPLE_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ class NormalizedColumnarWarehouse:
         self._write_parquet(partition_path, rows)
         file_sha256 = _file_sha256(partition_path)
         dataset_refs = tuple(dict.fromkeys(str(record.get("dataset_ref")) for record in records if record.get("dataset_ref")))
+        manifest_dataset_refs = _manifest_dataset_refs(dataset_refs)
+        dataset_refs_sha256 = _dataset_refs_sha256(dataset_refs)
         manifest = {
             "manifest_ref": f"manifest:normalized:{market}:{dataset}:{granularity}:{partition_id}",
             "status": "active",
@@ -75,8 +79,14 @@ class NormalizedColumnarWarehouse:
             "granularity": granularity,
             "partition_id": partition_id,
             "path": str(partition_path),
+            "relative_path": str(partition_path.relative_to(self.root)),
             "row_count": len(rows),
-            "dataset_refs": dataset_refs,
+            "dataset_refs": manifest_dataset_refs,
+            "dataset_ref_count": len(dataset_refs),
+            "dataset_refs_truncated": len(manifest_dataset_refs) < len(dataset_refs),
+            "dataset_refs_sample": manifest_dataset_refs,
+            "dataset_refs_sha256": dataset_refs_sha256,
+            "dataset_ref_prefixes": _dataset_ref_prefixes(dataset_refs),
             "symbol_ids": tuple(dict.fromkeys(str(record.get("symbol_id")) for record in records if record.get("symbol_id"))),
             "universe_refs": tuple(dict.fromkeys(str(record.get("universe_ref")) for record in records if record.get("universe_ref"))),
             "field_set": tuple(sorted({field for record in records for field in tuple(record.get("field_set", ()) or ())})),
@@ -168,7 +178,7 @@ class NormalizedColumnarWarehouse:
                 continue
             try:
                 rows = self._iter_partition_rows(
-                    Path(str(manifest.get("path"))),
+                    self._manifest_path(manifest),
                     dataset=dataset,
                     market=market,
                     symbol_id=symbol_id,
@@ -208,7 +218,7 @@ class NormalizedColumnarWarehouse:
             if self._invalid_manifest_document(manifest) is not None:
                 continue
             total += self._count_partition_rows(
-                Path(str(manifest.get("path"))),
+                self._manifest_path(manifest),
                 dataset=str(kwargs["dataset"]),
                 market=str(kwargs["market"]),
                 symbol_id=kwargs.get("symbol_id"),
@@ -258,7 +268,7 @@ class NormalizedColumnarWarehouse:
         for manifest in selected_manifests:
             try:
                 summary = self._partition_summary(
-                    Path(str(manifest.get("path"))),
+                    self._manifest_path(manifest),
                     dataset=dataset,
                     market=market,
                     symbol_id=symbol_id,
@@ -554,13 +564,51 @@ class NormalizedColumnarWarehouse:
         return True
 
     def _invalid_manifest_document(self, manifest: Mapping[str, Any]) -> dict[str, Any] | None:
-        path = Path(str(manifest.get("path") or ""))
+        path = self._manifest_path(manifest)
         expected_hash = str(manifest.get("sha256") or "").strip()
         if not path.exists():
             return _invalid_manifest_document(manifest, "missing_file")
         if expected_hash and _file_sha256(path) != expected_hash:
             return _invalid_manifest_document(manifest, "sha256_mismatch")
         return None
+
+    def _manifest_path(self, manifest: Mapping[str, Any]) -> Path:
+        raw_path = Path(str(manifest.get("path") or ""))
+        if raw_path.exists():
+            return raw_path
+
+        relative_path = str(manifest.get("relative_path") or "").strip()
+        candidates: list[Path] = []
+        if relative_path:
+            candidates.append(self.root / relative_path)
+
+        derived_relative_path = self._derived_manifest_relative_path(manifest=manifest, raw_path=raw_path)
+        if derived_relative_path is not None:
+            candidates.append(self.root / derived_relative_path)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0] if candidates else raw_path
+
+    @staticmethod
+    def _derived_manifest_relative_path(*, manifest: Mapping[str, Any], raw_path: Path) -> Path | None:
+        market = str(manifest.get("market") or "").strip()
+        dataset = str(manifest.get("dataset") or "").strip()
+        granularity = str(manifest.get("granularity") or "").strip()
+        filename = raw_path.name
+        if not filename:
+            partition_id = str(manifest.get("partition_id") or "").strip()
+            if partition_id:
+                filename = f"partition-{partition_id}.parquet"
+        if not market or not dataset or not granularity or not filename:
+            return None
+        return (
+            Path(f"market={_safe_token(market)}")
+            / f"dataset={_safe_token(dataset)}"
+            / f"granularity={_safe_token(granularity)}"
+            / filename
+        )
 
 
 def _parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -586,6 +634,38 @@ def _parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
         "dataset_row_count": int(record.get("dataset_row_count") or 0),
         "row_json": json.dumps(row_payload, ensure_ascii=False, default=str, sort_keys=True),
     }
+
+
+def _manifest_dataset_refs(dataset_refs: Sequence[str]) -> tuple[str, ...]:
+    if len(dataset_refs) <= _MANIFEST_FULL_DATASET_REFS_LIMIT:
+        return tuple(dataset_refs)
+    head_count = _MANIFEST_DATASET_REFS_SAMPLE_LIMIT // 2
+    tail_count = _MANIFEST_DATASET_REFS_SAMPLE_LIMIT - head_count
+    return tuple((*dataset_refs[:head_count], *dataset_refs[-tail_count:]))
+
+
+def _dataset_refs_sha256(dataset_refs: Sequence[str]) -> str:
+    return "sha256:" + sha256(json.dumps(tuple(dataset_refs), ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _dataset_ref_prefixes(dataset_refs: Sequence[str]) -> tuple[str, ...]:
+    prefixes: list[str] = []
+    for dataset_ref in dataset_refs:
+        prefix = _dataset_ref_lookup_prefix(dataset_ref)
+        if prefix is None:
+            continue
+        if prefix not in prefixes:
+            prefixes.append(prefix)
+    return tuple(prefixes)
+
+
+def _dataset_ref_lookup_prefix(dataset_ref: str) -> str | None:
+    parts = str(dataset_ref).split(":")
+    if len(parts) < 6 or parts[0] != "dataset":
+        return None
+    if len(parts) >= 8 and parts[2] == "CRYPTO":
+        return ":".join(parts[:6]) + ":"
+    return ":".join(parts[:5]) + ":"
 
 
 def _document_from_parquet_row(row: Mapping[str, Any], *, include_row: bool, fields: Sequence[str] = ()) -> dict[str, Any]:
@@ -658,6 +738,7 @@ def _row_from_record(record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 _MISSING_JSON_FIELD = object()
+_STRUCTURAL_ROW_FIELDS: tuple[str, ...] = ("open_time", "close_time", "timestamp", "time")
 
 
 def _projected_fields(value: Any) -> tuple[str, ...]:
@@ -669,7 +750,8 @@ def _projected_fields(value: Any) -> tuple[str, ...]:
         candidates = tuple(value)
     else:
         return ()
-    return tuple(dict.fromkeys(str(field).strip() for field in candidates if str(field).strip()))
+    requested = tuple(str(field).strip() for field in candidates if str(field).strip())
+    return tuple(dict.fromkeys((*requested, *_STRUCTURAL_ROW_FIELDS)))
 
 
 def _json_path_for_field(field: str) -> str:

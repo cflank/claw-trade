@@ -2,7 +2,7 @@
 
 状态：详细设计，未进入实现。  
 日期：2026-05-21  
-依据：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`、`docs/架构设计.md`、`memory/2026-05-20.md`。旧 `docs/数据源openbb引入方案.md`、`docs/数据源修改实施方案.md` 只作为历史背景，不再作为实施合同。
+依据：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`、`docs/架构设计.md`、`memory/2026-05-20.md`。旧 `docs/数据源removed_data_gateway引入方案.md`、`docs/数据源修改实施方案.md` 只作为历史背景，不再作为实施合同。
 
 ## 1. 总体结论
 
@@ -13,20 +13,20 @@
 ### Pushback
 
 - 当前代码已有 `data_gateway` 和 canonical `claw_get_*_pack` 基础，但 `PackDomain` 仍只有 `market/fundamental/news/social`，新增三域需要模型、provider plan、tool registry、pack endpoint、workflow 和 UI 同步扩展。
-- 旧 OpenBB submodule/runtime 决策已 superseded；当前目标是把已列入设计的七域 provider 矩阵一次性纳入 `src/claw_trade/data_gateway`，而不是恢复 OpenBB 本体。
+- 旧 已删除数据网关 submodule/runtime 决策已 superseded；当前目标是把已列入设计的七域 provider 矩阵一次性纳入 `src/claw_trade/data_gateway`，而不是恢复 已删除数据网关 本体。
 - A股 `a-stock-data` 只能作为 A股源分类、字段映射和默认顺序参考；若后续发现某接口只能靠旧脚本直连，必须停止，不得为跑通而绕过 `data_gateway`。
 
 ### 已确认事实
 
 - `claw-trade` 拥有 workflow 状态机、worker 调度、artifact 权威、hard gate 和导出。
 - OpenClaw 只运行单个 worker turn，负责真实模型 prompt、tool schema、tool call、LLM response 和 provider payload capture。
-- `src/claw_trade/data_gateway` 是统一数据层入口；Provider 能力来自 `ProviderPlugin.capabilities()`。数据层失败不能回退到旧 provider executor、旧 MCP 或 OpenBB legacy 路径。
+- `src/claw_trade/data_gateway` 是统一数据层入口；Provider 能力来自 `ProviderPlugin.capabilities()`。数据层失败不能回退到旧 provider executor、旧 MCP 或 已删除数据网关 legacy 路径。
 - Mongo 保存 8 个目标 collection 下的 provider raw/cache/attempt/normalized 等运行证据；OpenViking 保存 approved L1/L2 material、manifest、hash、lineage 和下游 handoff。
 - CN_A 扩展新增 `policy_analyst`、`hot_money_tracker`、`lockup_watcher`，并新增 `policy`、`hot_money`、`lockup` 三个数据域。
 
 ### 推断
 
-- 新增三域应复用现有 `src/claw_trade/data_gateway/**` 的模型、provider registry、批量计划、Mongo store 和资料包服务，而不是新增第二套数据网关或恢复 OpenBB wrapper。
+- 新增三域应复用现有 `src/claw_trade/data_gateway/**` 的模型、provider registry、批量计划、Mongo store 和资料包服务，而不是新增第二套数据网关或恢复 已删除数据网关 wrapper。
 - 新 worker 应使用与现有 `agents/<worker>/` 相同的 agent 配置结构：`IDENTITY.md`、`USER.md`、`STAGES.yaml`、`SKILLS.md`、`TOOLS.md` 或相同等价文件。
 - CN_A 前线保持 collect-first 并行批处理。这里的“顺序”只指调度表、证据编号、approved material 展示顺序和下游 prompt 注入顺序，不表示把 7 个前线 worker 改成串行。
 
@@ -121,7 +121,7 @@ worker -> Python direct EastMoney/THS/Tencent/Cninfo provider
 OpenClaw tool -> old provider_executor
 OpenClaw -> workflow DAG decision
 workflow/controller -> external provider fetch
-data_gateway failure -> old MCP/provider/OpenBB legacy silent fallback
+data_gateway failure -> old MCP/provider/已删除数据网关 legacy silent fallback
 OpenViking -> market/news/announcement/social provider
 user declarative provider -> overwrite official_original source
 search discovery/news clue/model inference -> official filing/fund flow fact
@@ -138,9 +138,9 @@ worker 主材料只能是：
 不得进入 prompt 主体：
 
 - provider raw JSON、HTTP headers、token、Mongo raw/cache/debug envelope。
-- legacy OpenBB atomic/admin/discovery tools。
+- legacy 已删除数据网关 atomic/admin/discovery tools。
 - OpenViking protocol 文本、URI/hash/L1/L2 工程协议块。
-- OpenClaw/legacy OpenBB/OpenViking 内部调试字段。
+- OpenClaw/legacy 已删除数据网关/OpenViking 内部调试字段。
 - `provider_attempts` 的完整机器对象；可以只暴露读者化来源尝试摘要和引用 id。
 
 ### 3.5 质量门边界（Phase 1 冻结）
@@ -836,7 +836,7 @@ class ProviderAdapter(Protocol):
 
 ### 7.2A A股 provider 作用域与默认优先级落地
 
-`a-stock-data` 的默认优先级不是“所有场景只先接一个源”。它按用途给默认顺序。这里的“接口地址”就是它代码里写死的外部 API URL、请求参数、请求头和字段解析方式，不是 OpenBB 子模块 URL。
+`a-stock-data` 的默认优先级不是“所有场景只先接一个源”。它按用途给默认顺序。这里的“接口地址”就是它代码里写死的外部 API URL、请求参数、请求头和字段解析方式，不是 已删除数据网关 子模块 URL。
 
 实际产品中的 provider 必须都是 `data_gateway` 下的 provider plugin/adapter。系统默认源按下列作用域接入；Tushare 等非默认源只有在用户配置、验证并启用后才进入候选，并且只能在其声明的同一 `market/domain/source_role/coverage_group` 内优先。
 
@@ -1305,7 +1305,7 @@ provider payload 的 model-visible messages 中禁止出现：
 
 - `RuntimeTarget`、`ReportSubmission`、`[ApprovedMaterials]`
 - `material_id`、`capability`、URI/hash/receipt/L1/L2 协议段
-- OpenClaw/OpenViking/legacy OpenBB debug 包装、attempt JSON、cache envelope
+- OpenClaw/OpenViking/legacy 已删除数据网关 debug 包装、attempt JSON、cache envelope
 
 #### provider payload 对齐验收
 
@@ -1346,7 +1346,7 @@ profiles:
 model-visible tool schema 统一规则：
 
 - 只能出现 canonical pack 工具名：`claw_get_policy_pack` / `claw_get_hot_money_pack` / `claw_get_lockup_pack`。
-- 不得出现 OpenViking write/read、legacy OpenBB atomic/admin/discovery、Mongo/cache/raw/debug 或旧 provider alias 工具。
+- 不得出现 OpenViking write/read、legacy 已删除数据网关 atomic/admin/discovery、Mongo/cache/raw/debug 或旧 provider alias 工具。
 - `cn_a_policy_data`、`cn_a_hot_money_data`、`cn_a_lockup_data` 这类名称若在内部代码中保留为兼容别名，只能用于内部映射，不得进入 OpenClaw provider payload 的 `tools` 或 `messages`。
 - 验收以 `openclaw_llm_provider_payload` 为准；任何 alias 出现在 payload 即判定不符合设计。
 
@@ -1372,7 +1372,7 @@ Python 只能搬运 approved L1 原文，不能摘要、改写、压缩或生成
 
 新增 worker 和下游 worker prompt 不得包含：
 
-- legacy OpenBB raw/debug/cache envelope。
+- legacy 已删除数据网关 raw/debug/cache envelope。
 - provider attempt 机器 JSON。
 - OpenViking URI/hash/material_id/capability 协议文本。
 - OpenClaw runtime wrapper prose。
@@ -1593,7 +1593,7 @@ Collect-first 报告必须附：
 | `test_no_legacy_provider_path` | 全仓扫描 + data_gateway 运行 | 旧路径阻断 | 无 `frontline_data_pack.provider_executor`、无旧 executor 调用 | grep/pytest 输出 | `rg -n \"frontline_data_pack\\.provider_executor|provider_executor\" src openclaw_plugins agents` |
 | `test_no_silent_fallback_after_provider_failure` | 人工构造 provider 失败 | fallback 边界 | 产生 attempt + gap，不调用旧路径 | `provider_attempts` + run trace | `uv run pytest tests/contracts/test_data_gateway_cutover.py tests/contracts/test_frontline_tool_protocol.py` |
 | `test_official_original_not_overridden` | 用户源 + 官方源冲突样本 | 官方原文保护 | 官方源仍被尝试，用户源不覆盖事实权威 | attempts + pytest 输出 | `uv run pytest tests/unit/data_gateway/test_provider_registry.py -k official_original_not_overridden` |
-| `test_no_atomic_admin_discovery_in_payload` | frontline live call payload | schema 边界 | payload 不含 legacy OpenBB atomic/admin/discovery 工具 | `runs/<run_id>/calls/*/provider_payload*.json` | `uv run pytest tests/contracts/test_provider_payload_visible_tools.py` |
+| `test_no_atomic_admin_discovery_in_payload` | frontline live call payload | schema 边界 | payload 不含 legacy 已删除数据网关 atomic/admin/discovery 工具 | `runs/<run_id>/calls/*/provider_payload*.json` | `uv run pytest tests/contracts/test_provider_payload_visible_tools.py` |
 | `test_no_raw_debug_cache_envelope_in_prompt` | frontline + downstream payload | prompt 材料边界 | model-visible prompt 无 raw/debug/cache envelope | provider payload evidence | `uv run pytest tests/contracts/test_prompt_material_boundary.py` |
 | `test_no_python_prefetch` | run 初始化 | 控制层边界 | 初始化后未发生 remote prefetch attempt | run evidence、`provider_attempts` | `uv run pytest tests/integration/data_gateway/test_run_plan_no_prefetch.py` |
 
@@ -1606,7 +1606,7 @@ Collect-first 报告必须附：
 | 冻结门项目 | 必要决策 | 关闭证据 |
 |---|---|---|
 | data_gateway 当前合同 | 已关闭；编码前只核对与 `docs/数据层详细设计.md`、`docs/数据层实施任务清单.md` 不漂移 | 数据层文档 + focused contract tests |
-| SSRF 策略 | 已关闭；用户声明式 provider 进入 live 前必须按该策略实现并测试，不得放松 | `docs/evidence/openbb-declarative-provider-security.md` |
+| SSRF 策略 | 已关闭；用户声明式 provider 进入 live 前必须按该策略实现并测试，不得放松 | `docs/evidence/removed_data_gateway-declarative-provider-security.md` |
 | A股 provider 作用域 | 已关闭；按 7.2/7.2A 七域全量 provider 矩阵实施，不再做范围缩减版 | 设计附录/评审记录确认 market/domain/source_role/coverage_group |
 | raw export policy/license | 作为 provider 接入证据逐源记录；不作为“是否先用文档源”的前置拍板 | 源级 license/raw export policy 记录 |
 | prompt baseline | baseline 文件路径和 commit 已在 11.1A 固化；本地 `../TradingAgents-astock` 已存在；编码时提取原文并形成对照记录 | baseline 对照记录（源文件路径+commit+目标 prompt） |
@@ -1792,7 +1792,7 @@ Collect-first 报告必须附：
 - 用户 provider 试图覆盖官方原始披露事实源。
 - 缺数据时需要用新闻、搜索或模型推断冒充公告、财报、资金事实。
 - 需要让 Python 控制层写投资判断或 PM 最终结论。
-- 需要把 legacy OpenBB atomic/admin/discovery tools 暴露给报告 worker。
+- 需要把 legacy 已删除数据网关 atomic/admin/discovery tools 暴露给报告 worker。
 - 需要恢复旧 provider executor 或旧 MCP 作为 runtime fallback。
 - OpenClaw 被要求承担 CN_A DAG 或 provider 编排。
 - OpenViking 被要求成为行情、新闻、公告、舆情 provider。

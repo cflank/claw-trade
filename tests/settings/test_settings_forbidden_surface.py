@@ -171,7 +171,6 @@ def test_settings_forbidden_surface_uses_real_ui_artifacts_and_writes_text_snaps
         "baostock",
         "cninfo",
         "yahoo_finance",
-        "openbb",
         "csmar",
         "resset",
         "joinquant",

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import Any, Mapping, Sequence
@@ -323,7 +323,16 @@ class BinanceSpotMarketPlugin:
         rows = [
             row
             for item in payload
-            if (row := _kline_to_row(item, symbol=symbol, base_asset=base_asset, quote_asset=quote_asset)) is not None
+            if (
+                row := _kline_to_row(
+                    item,
+                    symbol=symbol,
+                    base_asset=base_asset,
+                    quote_asset=quote_asset,
+                    granularity="1h",
+                )
+            )
+            is not None
         ]
         for row in rows:
             row["dataset"] = "intraday_bar"
@@ -350,7 +359,19 @@ class CoinGeckoCryptoPlugin:
                     data_type="valuation_metric",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "market_cap", "fdv", "circulating_supply", "total_supply", "volume"),
+                    fields=(
+                        "price",
+                        "price_unit",
+                        "market_cap",
+                        "market_cap_unit",
+                        "fdv",
+                        "fdv_unit",
+                        "circulating_supply",
+                        "total_supply",
+                        "supply_unit",
+                        "volume",
+                        "volume_unit",
+                    ),
                     priority_rank=20,
                 ),
             ),
@@ -409,11 +430,16 @@ class CoinGeckoCryptoPlugin:
         row.update(
             {
                 "price": _decimal_float(item.get("current_price")),
+                "price_unit": "USD",
                 "market_cap": _decimal_float(item.get("market_cap")),
+                "market_cap_unit": "USD",
                 "fdv": _decimal_float(item.get("fully_diluted_valuation")),
+                "fdv_unit": "USD",
                 "circulating_supply": _decimal_float(item.get("circulating_supply")),
                 "total_supply": _decimal_float(item.get("total_supply")),
+                "supply_unit": base_asset,
                 "volume": _decimal_float(item.get("total_volume")),
+                "volume_unit": "USD",
                 "timestamp": parse_datetime(item.get("last_updated")),
             }
         )
@@ -505,35 +531,41 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("realtime",),
-            "fields": ("open_interest", "timestamp", "symbol_id"),
+            "fields": ("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
             "priority_rank": 10,
             "path": "/api/futures/open-interest/exchange-list",
             "symbol_mode": "asset",
             "metric_keys": (
-                "open_interest",
                 "open_interest_usd",
+                "sumOpenInterestValue",
+                "openInterestUsd",
+                "openInterestValue",
+                "open_interest_value",
+                "value_usd",
+                "open_interest",
                 "open_interest_quantity",
                 "openInterest",
                 "sumOpenInterest",
-                "sumOpenInterestValue",
                 "oi",
                 "close",
                 "value",
             ),
             "metric_field": "open_interest",
+            "metric_unit": "USD",
         },
         {
             "endpoint_id": "futures_funding_rate",
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("1h", "daily"),
-            "fields": ("funding_rate", "timestamp", "symbol_id"),
+            "fields": ("funding_rate", "funding_rate_unit", "timestamp", "symbol_id"),
             "priority_rank": 10,
             "path": "/api/futures/funding-rate/oi-weight-history",
             "symbol_mode": "asset",
             "requires_interval": True,
             "metric_keys": ("funding_rate", "fundingRate", "rate", "close", "value"),
             "metric_field": "funding_rate",
+            "metric_unit": "percent",
         },
         {
             "endpoint_id": "futures_long_short_ratio",
@@ -563,7 +595,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("1h", "daily"),
-            "fields": ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
+            "fields": ("taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
             "priority_rank": 12,
             "path": "/api/futures/aggregated-taker-buy-sell-volume/history",
             "symbol_mode": "asset",
@@ -576,13 +608,63 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("1h", "daily"),
-            "fields": ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
+            "fields": ("long_liquidation", "short_liquidation", "liquidation_value", "liquidation_value_unit", "timestamp", "symbol_id"),
             "priority_rank": 12,
             "path": "/api/futures/liquidation/aggregated-history",
             "symbol_mode": "asset",
             "requires_exchange_list": True,
             "requires_interval": True,
             "metric_kind": "liquidation",
+        },
+        {
+            "endpoint_id": "futures_liquidation_heatmap",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("1h",),
+            "fields": ("liquidation_price", "liquidation_price_unit", "liquidation_size", "liquidation_size_unit", "side", "timestamp", "symbol_id"),
+            "priority_rank": 11,
+            "path": "/api/futures/liquidation/heatmap/model1",
+            "symbol_mode": "contract",
+            "requires_exchange": True,
+            "requires_range": True,
+            "metric_kind": "liquidation_heatmap",
+        },
+        {
+            "endpoint_id": "options_open_interest",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("1h",),
+            "fields": ("options_open_interest", "options_volume", "timestamp", "symbol_id"),
+            "priority_rank": 11,
+            "path": "/api/option/exchange-oi-history",
+            "symbol_mode": "asset",
+            "requires_range": True,
+            "metric_kind": "options",
+        },
+        {
+            "endpoint_id": "spot_cvd_history",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("1h",),
+            "fields": ("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "timestamp", "symbol_id"),
+            "priority_rank": 11,
+            "path": "/api/spot/cvd/history",
+            "symbol_mode": "contract",
+            "requires_exchange": True,
+            "requires_interval": True,
+            "requires_unit": True,
+            "metric_kind": "cvd",
+        },
+        {
+            "endpoint_id": "etf_flow_history",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("daily",),
+            "fields": ("etf_flow_usd", "price", "timestamp", "symbol_id"),
+            "priority_rank": 11,
+            "path_by_asset": {"BTC": "/api/etf/bitcoin/flow-history", "ETH": "/api/etf/ethereum/flow-history", "XRP": "/api/etf/xrp/flow-history"},
+            "symbol_mode": "asset",
+            "metric_kind": "etf_flow",
         },
         {
             "endpoint_id": "futures_price_history",
@@ -637,7 +719,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_onchain_metric",
             "source_role": "paid_data",
             "granularity": ("daily",),
-            "fields": ("timestamp", "metric", "value", "chain"),
+            "fields": ("timestamp", "metric", "value", "value_unit", "chain"),
             "priority_rank": 12,
             "path": "/api/exchange/balance/chart",
             "symbol_mode": "asset",
@@ -649,7 +731,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_onchain_metric",
             "source_role": "paid_data",
             "granularity": ("event",),
-            "fields": ("timestamp", "metric", "value", "chain"),
+            "fields": ("timestamp", "metric", "value", "value_unit", "chain"),
             "priority_rank": 14,
             "path": "/api/chain/v2/whale-transfer",
             "symbol_mode": "asset",
@@ -661,7 +743,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_onchain_metric",
             "source_role": "paid_data",
             "granularity": ("realtime",),
-            "fields": ("timestamp", "metric", "value", "chain"),
+            "fields": ("timestamp", "metric", "value", "value_unit", "chain"),
             "priority_rank": 16,
             "path": "/api/spot/coin/netflow",
             "symbol_mode": "asset",
@@ -682,7 +764,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("realtime",),
-            "fields": ("net_inflow", "timestamp", "symbol_id"),
+            "fields": ("net_inflow", "net_inflow_unit", "timestamp", "symbol_id"),
             "priority_rank": 16,
             "path": "/api/futures/coin/netflow",
             "symbol_mode": "asset",
@@ -697,17 +779,19 @@ class CoinglassCryptoPlugin:
                 "value",
             ),
             "metric_field": "net_inflow",
+            "metric_unit": "USD",
         },
         {
             "endpoint_id": "bitcoin_ahr999",
             "data_type": "crypto_onchain_metric",
             "source_role": "paid_data",
             "granularity": ("daily",),
-            "fields": ("timestamp", "metric", "value", "chain"),
+            "fields": ("timestamp", "metric", "value", "value_unit", "chain"),
             "priority_rank": 18,
             "path": "/api/index/ahr999",
             "symbol_mode": "btc_only",
             "metric": "ahr999",
+            "metric_unit": "dimensionless",
             "metric_keys": ("ahr999", "ahr999Index", "ahr999_value", "index", "current_value", "value"),
         },
     )
@@ -763,34 +847,43 @@ class CoinglassCryptoPlugin:
             return FetchResult.from_error(task, status="not_applicable", error=RuntimeError("coinglass_btc_only_indicator"))
         if spec.get("symbol_mode") == "contract" and not contract:
             return FetchResult.from_error(task, status="not_applicable", error=RuntimeError("coinglass_contract_missing"))
+        path = _coinglass_path(spec, asset=asset)
+        if path is None:
+            return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"coinglass_endpoint_not_supported_for_asset:{endpoint_id}:{asset}"))
         host, prefix = self._endpoint(ctx)
-        query = _coinglass_query(task, spec=spec, asset=asset, contract=contract)
         header_name = _coinglass_header_name(ctx, self.credential_name)
-        payload, observations, error = send_json_request(
-            task,
-            ctx,
-            HttpRequestSpec(
-                method="GET",
-                host=host,
-                path=f"{prefix}{spec['path']}",
-                query=query,
-                headers={"accept": "application/json", header_name: token},
-                provider_config_version=getattr(task, "provider_config_version", None),
-            ),
-        )
-        if error is not None:
-            return error
-        rows = _coinglass_rows_from_payload(
-            payload,
-            task,
-            spec=spec,
-            symbol=symbol or contract or asset,
-            asset=asset,
-            quote_asset=symbols.crypto_quote_symbol or "USDT",
-        )
+        rows_list: list[dict[str, Any]] = []
+        observations_list: list[Any] = []
+        for query in _coinglass_queries(task, spec=spec, asset=asset, contract=contract):
+            payload, observations, error = send_json_request(
+                task,
+                ctx,
+                HttpRequestSpec(
+                    method="GET",
+                    host=host,
+                    path=f"{prefix}{path}",
+                    query=query,
+                    headers={"accept": "application/json", header_name: token},
+                    provider_config_version=getattr(task, "provider_config_version", None),
+                ),
+            )
+            observations_list.extend(observations)
+            if error is not None:
+                return error
+            rows_list.extend(
+                _coinglass_rows_from_payload(
+                    payload,
+                    task,
+                    spec=spec,
+                    symbol=symbol or contract or asset,
+                    asset=asset,
+                    quote_asset=symbols.crypto_quote_symbol or "USDT",
+                )
+            )
+        rows = _dedupe_coinglass_rows(rows_list)
         if not rows:
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        return FetchResult.from_success(task, payload={"rows": list(rows)}, row_count=len(rows), http_observations=observations)
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations_list))
+        return FetchResult.from_success(task, payload={"rows": list(rows)}, row_count=len(rows), http_observations=tuple(observations_list))
 
     @classmethod
     def _spec(cls, endpoint_id: str) -> dict[str, Any] | None:
@@ -818,6 +911,13 @@ def _is_keystore_coinglass_proxy(host: str, prefix: str) -> bool:
     return "proxy.keystore.com.cn" in target and "/proxy/coinglass" in target
 
 
+def _coinglass_path(spec: Mapping[str, Any], *, asset: str) -> str | None:
+    path_by_asset = spec.get("path_by_asset")
+    if isinstance(path_by_asset, Mapping):
+        return non_empty(path_by_asset.get(asset.upper()))
+    return non_empty(spec.get("path"))
+
+
 def _coinglass_query(task: Any, *, spec: Mapping[str, Any], asset: str, contract: str | None) -> dict[str, Any]:
     params = getattr(task, "params", {}) if isinstance(getattr(task, "params", {}), Mapping) else {}
     query: dict[str, Any] = {}
@@ -832,8 +932,12 @@ def _coinglass_query(task: Any, *, spec: Mapping[str, Any], asset: str, contract
         query["exchange_list"] = non_empty(params.get("exchange_list")) or "Binance,OKX,Bybit"
     if spec.get("requires_interval"):
         query["interval"] = _coinglass_interval(task)
-    if "heatmap" in str(spec.get("path", "")):
-        query["range"] = non_empty(params.get("range")) or "24h"
+    if spec.get("requires_range"):
+        query["range"] = non_empty(params.get("range")) or _coinglass_range(task)
+    if spec.get("requires_unit"):
+        query["unit"] = non_empty(params.get("unit")) or "usd"
+    if spec.get("metric_kind") == "options":
+        query["unit"] = non_empty(params.get("unit")) or ("USD" if asset.upper() in {"BTC", "ETH"} else "USD")
     start_ms = _start_millis(getattr(task, "date_range_start", None))
     end_ms = _end_millis(getattr(task, "date_range_end", None))
     if start_ms is not None:
@@ -841,8 +945,78 @@ def _coinglass_query(task: Any, *, spec: Mapping[str, Any], asset: str, contract
     if end_ms is not None:
         query["end_time"] = end_ms
     if spec.get("requires_interval"):
-        query["limit"] = non_empty(params.get("limit")) or "100"
+        query["limit"] = non_empty(params.get("limit")) or _coinglass_limit(task)
     return query
+
+
+def _coinglass_queries(task: Any, *, spec: Mapping[str, Any], asset: str, contract: str | None) -> tuple[dict[str, Any], ...]:
+    query = _coinglass_query(task, spec=spec, asset=asset, contract=contract)
+    if not _coinglass_should_chunk(task, spec=spec):
+        return (query,)
+    start = _as_date(getattr(task, "date_range_start", None))
+    end = _as_date(getattr(task, "date_range_end", None))
+    if start is None or end is None or start > end:
+        return (query,)
+    queries: list[dict[str, Any]] = []
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + timedelta(days=179), end)
+        chunk_query = dict(query)
+        chunk_query["start_time"] = _start_millis(chunk_start)
+        chunk_query["end_time"] = _end_millis(chunk_end)
+        queries.append(chunk_query)
+        chunk_start = chunk_end + timedelta(days=1)
+    return tuple(queries)
+
+
+def _coinglass_should_chunk(task: Any, *, spec: Mapping[str, Any]) -> bool:
+    if not spec.get("requires_interval"):
+        return False
+    endpoint_id = str(spec.get("endpoint_id") or "")
+    if endpoint_id not in {
+        "futures_funding_rate",
+        "futures_long_short_ratio",
+        "futures_taker_buy_sell",
+        "futures_liquidation",
+    }:
+        return False
+    params = getattr(task, "params", {}) if isinstance(getattr(task, "params", {}), Mapping) else {}
+    if non_empty(params.get("limit")) or non_empty(params.get("start_time")) or non_empty(params.get("end_time")):
+        return False
+    start = _as_date(getattr(task, "date_range_start", None))
+    end = _as_date(getattr(task, "date_range_end", None))
+    return start is not None and end is not None and (end - start).days + 1 > 180
+
+
+def _coinglass_limit(task: Any) -> str:
+    del task
+    return "100"
+
+
+def _coinglass_range(task: Any) -> str:
+    granularity = str(getattr(task, "granularity", "") or "").lower()
+    if granularity == "daily":
+        return "all"
+    start = _as_date(getattr(task, "date_range_start", None))
+    end = _as_date(getattr(task, "date_range_end", None))
+    if start is not None and end is not None:
+        span_days = max((end - start).days + 1, 1)
+        if span_days <= 1:
+            return "1d"
+        if span_days <= 3:
+            return "3d"
+        if span_days <= 7:
+            return "7d"
+        if span_days <= 30:
+            return "30d"
+        if span_days <= 90:
+            return "90d"
+        if span_days <= 180:
+            return "180d"
+        if span_days <= 366:
+            return "1y"
+        return "all"
+    return "3d"
 
 
 def _coinglass_interval(task: Any) -> str:
@@ -868,6 +1042,11 @@ def _coinglass_rows_from_payload(
     quote_asset: str,
 ) -> tuple[dict[str, Any], ...]:
     dataset = str(spec["data_type"])
+    metric_kind = str(spec.get("metric_kind") or "")
+    if dataset == "crypto_derivative_metric" and metric_kind == "liquidation_heatmap":
+        return _coinglass_heatmap_metric_rows(payload, task, spec=spec, symbol=symbol, asset=asset, quote_asset=quote_asset)
+    if dataset == "crypto_derivative_metric" and metric_kind in {"options", "cvd", "etf_flow"}:
+        return _coinglass_named_metric_rows(payload, task, spec=spec, symbol=symbol, asset=asset, quote_asset=quote_asset)
     if dataset == "order_book_snapshot":
         rows: list[dict[str, Any]] = []
         for levels in _coinglass_order_book_rows_from_payload(payload):
@@ -913,6 +1092,18 @@ def _coinglass_rows_from_payload(
     return (row,) if row is not None else ()
 
 
+def _dedupe_coinglass_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for row in rows:
+        key = tuple(sorted((str(field), repr(value)) for field, value in row.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dict(row))
+    return tuple(deduped)
+
+
 def _coinglass_row_from_payload(
     payload: Any,
     task: Any,
@@ -954,15 +1145,38 @@ def _coinglass_row_from_payload(
         _apply_crypto_period(row, row["timestamp"])
         return row
     if dataset == "crypto_onchain_metric":
-        value = _coinglass_onchain_value(payload, item, spec=spec)
+        value, source_field = _coinglass_onchain_value_with_key(payload, item, spec=spec)
         if value is None:
             return None
         timestamp = _coinglass_timestamp(item)
         row.update({"timestamp": timestamp, "metric": str(spec.get("metric", endpoint_id)), "value": value, "chain": _coinglass_chain(item)})
+        if source_field:
+            row["value_source_field"] = source_field
+        value_unit = non_empty(spec.get("metric_unit")) or _coinglass_onchain_value_unit(
+            str(spec.get("metric", endpoint_id)),
+            source_field,
+            base_asset=asset,
+        )
+        if value_unit == "base_asset":
+            value_unit = asset.upper()
+        if value_unit:
+            row["value_unit"] = value_unit
         _apply_crypto_period(row, timestamp)
         return row
     if dataset == "crypto_derivative_metric":
-        if spec.get("metric_kind") == "taker":
+        if spec.get("metric_kind") == "options":
+            _set_optional_metric(row, "options_open_interest", item, ("options_open_interest", "open_interest", "openInterest", "oi", "sumOpenInterest", "value"))
+            _set_optional_metric(row, "options_volume", item, ("options_volume", "volume", "vol", "sumVolume"))
+        elif spec.get("metric_kind") == "cvd":
+            _set_optional_metric(row, "cvd", item, ("cvd", "cumulativeVolumeDelta", "cumulative_volume_delta", "delta", "value", "close"))
+            _set_optional_metric(row, "taker_buy_volume", item, ("taker_buy_volume", "takerBuyVolume", "buy_volume", "buyVolume", "buy"))
+            _set_optional_metric(row, "taker_sell_volume", item, ("taker_sell_volume", "takerSellVolume", "sell_volume", "sellVolume", "sell"))
+            if any(row.get(field) is not None for field in ("cvd", "taker_buy_volume", "taker_sell_volume")):
+                row["taker_volume_unit"] = "USD"
+        elif spec.get("metric_kind") == "etf_flow":
+            _set_optional_metric(row, "etf_flow_usd", item, ("etf_flow_usd", "changeUsd", "change_usd", "netFlow", "net_flow", "flow", "value"))
+            _set_optional_metric(row, "price", item, ("price", "closePrice", "close_price", "close"))
+        elif spec.get("metric_kind") == "taker":
             _set_optional_metric(
                 row,
                 "taker_buy_volume",
@@ -980,6 +1194,8 @@ def _coinglass_row_from_payload(
             sell = row.get("taker_sell_volume")
             if row.get("taker_buy_sell_ratio") is None and buy is not None and sell not in {None, 0}:
                 row["taker_buy_sell_ratio"] = buy / sell
+            if any(row.get(field) is not None for field in ("taker_buy_volume", "taker_sell_volume")):
+                row["taker_volume_unit"] = "USD"
         elif spec.get("metric_kind") == "liquidation":
             _set_optional_metric(
                 row,
@@ -998,17 +1214,152 @@ def _coinglass_row_from_payload(
             short_value = row.get("short_liquidation")
             if row.get("liquidation_value") is None and long_value is not None and short_value is not None:
                 row["liquidation_value"] = long_value + short_value
+            if any(row.get(field) is not None for field in ("long_liquidation", "short_liquidation", "liquidation_value")):
+                row["liquidation_value_unit"] = "USD"
         else:
             field = str(spec.get("metric_field", "value"))
-            value = _first_numeric_metric(_provider_data(payload), tuple(spec.get("metric_keys", (field, "value"))))
+            value, source_field = _first_numeric_metric_with_key(_provider_data(payload), tuple(spec.get("metric_keys", (field, "value"))))
             if value is not None:
                 row[field] = value
+                if source_field:
+                    row[f"{field}_source_field"] = source_field
+                unit = _coinglass_metric_unit(field, source_field)
+                if source_field is None:
+                    unit = non_empty(spec.get("metric_unit")) or unit
+                if unit:
+                    row[f"{field}_unit"] = unit
         row["timestamp"] = _coinglass_timestamp(item)
         _apply_crypto_period(row, row["timestamp"])
         if not any(row.get(field) is not None for field in tuple(spec["fields"]) if field not in {"timestamp", "symbol_id"}):
             return None
         return row
     return None
+
+
+def _coinglass_named_metric_rows(
+    payload: Any,
+    task: Any,
+    *,
+    spec: Mapping[str, Any],
+    symbol: str,
+    asset: str,
+    quote_asset: str,
+) -> tuple[dict[str, Any], ...]:
+    data = _provider_data(payload)
+    items = data if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray, Mapping)) else (data,)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        row = _coinglass_row_from_payload({"data": item}, task, spec=spec, symbol=symbol, asset=asset, quote_asset=quote_asset)
+        if row is not None:
+            rows.append(row)
+    if rows:
+        return tuple(rows)
+    row = _coinglass_row_from_payload(payload, task, spec=spec, symbol=symbol, asset=asset, quote_asset=quote_asset)
+    return (row,) if row is not None else ()
+
+
+def _coinglass_heatmap_metric_rows(
+    payload: Any,
+    task: Any,
+    *,
+    spec: Mapping[str, Any],
+    symbol: str,
+    asset: str,
+    quote_asset: str,
+) -> tuple[dict[str, Any], ...]:
+    points = _coinglass_heatmap_points(_provider_data(payload))
+    rows: list[dict[str, Any]] = []
+    for point in points:
+        price = _first_numeric_metric(point, ("liquidation_price", "liquidationPrice", "price", "p", "y"))
+        size = _first_numeric_metric(point, ("liquidation_size", "liquidationSize", "size", "amount", "value", "v", "liq", "liquidation"))
+        if price is None or size is None:
+            continue
+        timestamp = _coinglass_timestamp_or_none(point) or datetime.now(tz=UTC)
+        row = _crypto_base_row(
+            dataset="crypto_derivative_metric",
+            symbol=symbol,
+            base_asset=asset,
+            quote_asset=quote_asset,
+            provider_id=CoinglassCryptoPlugin.plugin_id,
+            endpoint_id=str(spec["endpoint_id"]),
+            source_role=str(spec["source_role"]),
+            granularity=str(getattr(task, "granularity", None) or tuple(spec["granularity"])[0]),
+        )
+        row.update(
+            {
+                "liquidation_price": price,
+                "liquidation_size": size,
+                "liquidation_price_unit": quote_asset,
+                "liquidation_size_unit": "USD",
+                "side": non_empty(point.get("side") or point.get("direction")) or "unknown",
+                "timestamp": timestamp,
+            }
+        )
+        _apply_crypto_period(row, timestamp)
+        rows.append(row)
+    return tuple(rows)
+
+
+def _coinglass_heatmap_points(value: Any) -> tuple[dict[str, Any], ...]:
+    points: list[dict[str, Any]] = []
+    _collect_coinglass_heatmap_points(value, points)
+    return tuple(points)
+
+
+def _collect_coinglass_heatmap_points(value: Any, points: list[dict[str, Any]]) -> None:
+    if isinstance(value, Mapping):
+        price = _first_numeric_metric(value, ("liquidation_price", "liquidationPrice", "price", "p", "y"))
+        size = _first_numeric_metric(value, ("liquidation_size", "liquidationSize", "size", "amount", "value", "v", "liq", "liquidation"))
+        if price is not None and size is not None:
+            points.append(dict(value))
+            return
+        for child in value.values():
+            _collect_coinglass_heatmap_points(child, points)
+        return
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if len(value) >= 3:
+            first = _decimal_float(value[0])
+            second = _decimal_float(value[1])
+            third = _decimal_float(value[2])
+            first_timestamp = _safe_parse_plausible_datetime(value[0])
+            if first_timestamp is not None and second is not None and third is not None:
+                points.append({"liquidation_price": second, "liquidation_size": third, "timestamp": first_timestamp})
+                return
+            if first is not None and second is not None:
+                point: dict[str, Any] = {"liquidation_price": first, "liquidation_size": second}
+                parsed = _safe_parse_plausible_datetime(value[2])
+                if parsed is not None:
+                    point["timestamp"] = parsed
+                points.append(point)
+                return
+        if len(value) >= 2:
+            first = _decimal_float(value[0])
+            second = _decimal_float(value[1])
+            if first is not None and second is not None and _safe_parse_datetime(value[0]) is None:
+                points.append({"liquidation_price": first, "liquidation_size": second})
+                return
+        for child in value:
+            _collect_coinglass_heatmap_points(child, points)
+
+
+def _safe_parse_datetime(value: Any) -> datetime | None:
+    try:
+        return parse_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_parse_plausible_datetime(value: Any) -> datetime | None:
+    parsed = _safe_parse_datetime(value)
+    if parsed is None:
+        return None
+    if parsed < datetime(2010, 1, 1, tzinfo=UTC):
+        return None
+    if parsed > datetime.now(tz=UTC) + timedelta(days=730):
+        return None
+    return parsed
 
 
 def _first_mapping(value: Any) -> Mapping[str, Any]:
@@ -1117,6 +1468,11 @@ def _coinglass_chain(item: Mapping[str, Any]) -> str:
 
 
 def _coinglass_onchain_value(payload: Any, item: Mapping[str, Any], *, spec: Mapping[str, Any]) -> float | None:
+    value, _source_field = _coinglass_onchain_value_with_key(payload, item, spec=spec)
+    return value
+
+
+def _coinglass_onchain_value_with_key(payload: Any, item: Mapping[str, Any], *, spec: Mapping[str, Any]) -> tuple[float | None, str | None]:
     endpoint_id = str(spec.get("endpoint_id", ""))
     if endpoint_id == "onchain_exchange_balance":
         data = _provider_data(payload)
@@ -1126,12 +1482,25 @@ def _coinglass_onchain_value(payload: Any, item: Mapping[str, Any], *, spec: Map
                 preferred_series = data_map.get("Binance") or data_map.get("binance")
                 value = _last_numeric_from_series(preferred_series)
                 if value is not None:
-                    return value
+                    return value, "data_map.Binance"
                 for series in data_map.values():
                     value = _last_numeric_from_series(series)
                     if value is not None:
-                        return value
-    return _first_numeric_metric(_provider_data(payload), tuple(spec.get("metric_keys", ("value", "amount", "balance", "total", "close"))))
+                        return value, "data_map"
+    return _first_numeric_metric_with_key(_provider_data(payload), tuple(spec.get("metric_keys", ("value", "amount", "balance", "total", "close"))))
+
+
+def _coinglass_onchain_value_unit(metric: str, source_field: str | None, *, base_asset: str | None = None) -> str | None:
+    token = (source_field or "").lower()
+    if "usd" in token:
+        return "USD"
+    if metric == "exchange_balance":
+        return str(base_asset or "base_asset").upper()
+    if metric == "spot_coin_netflow":
+        return "USD"
+    if metric == "whale_transfer" and token in {"netflow", "net_flow", "netinflow", "value", "amountusd", "amount_usd"}:
+        return "USD"
+    return None
 
 
 def _last_numeric_from_series(value: Any) -> float | None:
@@ -1148,6 +1517,361 @@ def _set_optional_metric(row: dict[str, Any], field: str, item: Mapping[str, Any
     value = _first_numeric_metric(item, keys)
     if value is not None:
         row[field] = value
+
+
+class LunarCrushCryptoSocialPlugin:
+    plugin_id = "crypto_lunarcrush_social"
+    version = "1.0.0"
+    credential_name = "data_source:lunarcrush"
+
+    def __init__(self) -> None:
+        self._capabilities = ProviderCapabilities(
+            provider_id=self.plugin_id,
+            plugin_version=self.version,
+            endpoints=(
+                endpoint_capability(
+                    endpoint_id="topic",
+                    market="CRYPTO",
+                    data_type="social_signal",
+                    source_role="paid_data",
+                    granularity=("event",),
+                    fields=("source", "timestamp", "score", "sentiment", "social_dominance", "num_posts", "interactions", "symbol_id"),
+                    priority_rank=8,
+                ),
+            ),
+            credential_policy=CredentialPolicy(
+                credential_required=True,
+                credential_names=(self.credential_name,),
+                credential_scope="provider_token",
+                missing_behavior="credential_missing",
+            ),
+            license_policy=METADATA_ONLY_LICENSE,
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
+            default_priority_rank=8,
+        )
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
+
+    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
+        return (batch,)
+
+    def fetch(self, task: Any, ctx: Any) -> FetchResult:
+        token = credential_value(ctx, self.credential_name)
+        if token is None:
+            return FetchResult.from_error(task, status="credential_missing", error=RuntimeError(f"credential_missing:{self.credential_name}"))
+        symbol = first_symbol(task) or "BTC"
+        symbols = resolve_crypto_provider_symbols(symbol)
+        base_asset = symbols.crypto_base_symbol or symbol.upper()
+        quote_asset = symbols.crypto_quote_symbol or "USDT"
+        topic = symbols.coingecko_coin_id or base_asset.lower()
+        host, prefix = endpoint(ctx, self.credential_name, "https://lunarcrush.com/api4")
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/public/topic/{topic}/v1",
+                headers={"accept": "application/json", "authorization": f"Bearer {token}"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        item = _first_mapping(_provider_data(payload))
+        if not item:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        row = _crypto_base_row(
+            dataset="social_signal",
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            provider_id=self.plugin_id,
+            endpoint_id="topic",
+            source_role="paid_data",
+            granularity="event",
+        )
+        timestamp = _safe_parse_datetime(item.get("timestamp") or item.get("time")) or datetime.now(tz=UTC)
+        row.update(
+            {
+                "source": "LunarCrush",
+                "timestamp": timestamp,
+                "score": _first_numeric_metric(item, ("galaxy_score", "galaxyScore", "alt_rank", "altRank", "score")),
+                "sentiment": non_empty(item.get("sentiment") or item.get("sentiment_classification")),
+                "social_dominance": _first_numeric_metric(item, ("social_dominance", "socialDominance")),
+                "num_posts": _first_numeric_metric(item, ("num_posts", "posts", "post_count")),
+                "interactions": _first_numeric_metric(item, ("interactions", "interactions_24h", "social_interactions")),
+            }
+        )
+        _apply_crypto_period(row, timestamp)
+        if not any(row.get(field) is not None for field in ("score", "social_dominance", "num_posts", "interactions")):
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": [row]}, row_count=1, http_observations=observations)
+
+
+class GlassnodeCryptoOnchainPlugin:
+    plugin_id = "crypto_glassnode_onchain"
+    version = "1.0.0"
+    credential_name = "data_source:glassnode"
+    _metrics: tuple[tuple[str, str], ...] = (
+        ("active_addresses", "/v1/metrics/addresses/active_count"),
+        ("mvrv", "/v1/metrics/indicators/mvrv_account_based"),
+        ("sth_sopr", "/v1/metrics/indicators/sopr_less_155"),
+        ("lth_sopr", "/v1/metrics/indicators/sopr_more_155"),
+        ("nupl", "/v1/metrics/indicators/net_unrealized_profit_loss"),
+    )
+
+    def __init__(self) -> None:
+        self._capabilities = ProviderCapabilities(
+            provider_id=self.plugin_id,
+            plugin_version=self.version,
+            endpoints=(
+                endpoint_capability(
+                    endpoint_id="deep_onchain_metrics",
+                    market="CRYPTO",
+                    data_type="crypto_onchain_metric",
+                    source_role="paid_data",
+                    granularity=("daily",),
+                    fields=("timestamp", "metric", "value", "chain", "source_metric"),
+                    priority_rank=8,
+                ),
+            ),
+            credential_policy=CredentialPolicy(
+                credential_required=True,
+                credential_names=(self.credential_name,),
+                credential_scope="provider_token",
+                missing_behavior="credential_missing",
+            ),
+            license_policy=METADATA_ONLY_LICENSE,
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
+            default_priority_rank=8,
+        )
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
+
+    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
+        return (batch,)
+
+    def fetch(self, task: Any, ctx: Any) -> FetchResult:
+        token = credential_value(ctx, self.credential_name)
+        if token is None:
+            return FetchResult.from_error(task, status="credential_missing", error=RuntimeError(f"credential_missing:{self.credential_name}"))
+        symbol = first_symbol(task) or "BTC"
+        symbols = resolve_crypto_provider_symbols(symbol)
+        base_asset = symbols.crypto_base_symbol or symbol.upper()
+        quote_asset = symbols.crypto_quote_symbol or "USDT"
+        host, prefix = endpoint(ctx, self.credential_name, "https://api.glassnode.com")
+        rows: list[dict[str, Any]] = []
+        observations: list[Any] = []
+        for metric, path in self._metrics:
+            query = {
+                "a": base_asset.upper(),
+                "i": "24h",
+                "f": "json",
+                "api_key": token,
+            }
+            start = _start_seconds(getattr(task, "date_range_start", None))
+            end = _end_seconds(getattr(task, "date_range_end", None))
+            if start is not None:
+                query["s"] = start
+            if end is not None:
+                query["u"] = end
+            payload, http_observations, error = send_json_request(
+                task,
+                ctx,
+                HttpRequestSpec(
+                    method="GET",
+                    host=host,
+                    path=f"{prefix}{path}",
+                    query=query,
+                    headers={"accept": "application/json"},
+                    provider_config_version=getattr(task, "provider_config_version", None),
+                ),
+            )
+            observations.extend(http_observations)
+            if error is not None:
+                return error
+            rows.extend(
+                _glassnode_rows(
+                    payload,
+                    task,
+                    metric=metric,
+                    symbol=symbol,
+                    base_asset=base_asset,
+                    quote_asset=quote_asset,
+                    provider_id=self.plugin_id,
+                    endpoint_id="deep_onchain_metrics",
+                )
+            )
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations))
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=tuple(observations))
+
+
+class TokenTerminalCryptoFundamentalsPlugin:
+    plugin_id = "crypto_token_terminal_fundamentals"
+    version = "1.0.0"
+    credential_name = "data_source:token_terminal"
+
+    def __init__(self) -> None:
+        self._capabilities = ProviderCapabilities(
+            provider_id=self.plugin_id,
+            plugin_version=self.version,
+            endpoints=(
+                endpoint_capability(
+                    endpoint_id="protocol_revenue",
+                    market="CRYPTO",
+                    data_type="defi_metric",
+                    source_role="paid_data",
+                    granularity=("daily",),
+                    fields=("protocol_revenue", "fees", "timestamp", "symbol_id"),
+                    priority_rank=8,
+                ),
+            ),
+            credential_policy=CredentialPolicy(
+                credential_required=True,
+                credential_names=(self.credential_name,),
+                credential_scope="provider_token",
+                missing_behavior="credential_missing",
+            ),
+            license_policy=METADATA_ONLY_LICENSE,
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
+            default_priority_rank=8,
+        )
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
+
+    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
+        return (batch,)
+
+    def fetch(self, task: Any, ctx: Any) -> FetchResult:
+        token = credential_value(ctx, self.credential_name)
+        if token is None:
+            return FetchResult.from_error(task, status="credential_missing", error=RuntimeError(f"credential_missing:{self.credential_name}"))
+        symbol = first_symbol(task) or "BTC"
+        symbols = resolve_crypto_provider_symbols(symbol)
+        base_asset = symbols.crypto_base_symbol or symbol.upper()
+        quote_asset = symbols.crypto_quote_symbol or "USDT"
+        project_id = symbols.defillama_protocol_slug or symbols.coingecko_coin_id or base_asset.lower()
+        host, prefix = endpoint(ctx, self.credential_name, "https://api.tokenterminal.com")
+        query: dict[str, Any] = {"project_ids": project_id}
+        start = _date_text_for_query(getattr(task, "date_range_start", None))
+        end = _date_text_for_query(getattr(task, "date_range_end", None))
+        if start is not None:
+            query["start"] = start
+        if end is not None:
+            query["end"] = end
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/v2/metrics/revenue",
+                query=query,
+                headers={"accept": "application/json", "authorization": f"Bearer {token}"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _token_terminal_revenue_rows(
+            payload,
+            task,
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            provider_id=self.plugin_id,
+            endpoint_id="protocol_revenue",
+        )
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
+
+def _glassnode_rows(
+    payload: Any,
+    task: Any,
+    *,
+    metric: str,
+    symbol: str,
+    base_asset: str,
+    quote_asset: str,
+    provider_id: str,
+    endpoint_id: str,
+) -> list[dict[str, Any]]:
+    data = _provider_data(payload)
+    items = data if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray, Mapping)) else (data,)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        value = _first_numeric_metric(item, ("v", "value"))
+        if value is None:
+            continue
+        timestamp = _safe_parse_datetime(item.get("t")) or datetime.now(tz=UTC)
+        row = _crypto_base_row(
+            dataset="crypto_onchain_metric",
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            provider_id=provider_id,
+            endpoint_id=endpoint_id,
+            source_role="paid_data",
+            granularity=str(getattr(task, "granularity", None) or "daily"),
+        )
+        row.update({"timestamp": timestamp, "metric": metric, "source_metric": metric, "value": value, "chain": base_asset.upper()})
+        _apply_crypto_period(row, timestamp)
+        rows.append(row)
+    return rows
+
+
+def _token_terminal_revenue_rows(
+    payload: Any,
+    task: Any,
+    *,
+    symbol: str,
+    base_asset: str,
+    quote_asset: str,
+    provider_id: str,
+    endpoint_id: str,
+) -> list[dict[str, Any]]:
+    data = _provider_data(payload)
+    items = data if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray, Mapping)) else (data,)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        revenue = _first_numeric_metric(item, ("protocol_revenue", "revenue", "value"))
+        fees = _first_numeric_metric(item, ("fees", "total_fees"))
+        if revenue is None and fees is None:
+            continue
+        timestamp = _safe_parse_datetime(item.get("timestamp") or item.get("date")) or datetime.now(tz=UTC)
+        row = _crypto_base_row(
+            dataset="defi_metric",
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            provider_id=provider_id,
+            endpoint_id=endpoint_id,
+            source_role="paid_data",
+            granularity=str(getattr(task, "granularity", None) or "daily"),
+        )
+        row.update({"timestamp": timestamp, "protocol_revenue": revenue, "fees": fees})
+        _apply_crypto_period(row, timestamp)
+        rows.append(row)
+    return rows
+
+
+def _date_text_for_query(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return non_empty(value)
 
 
 class AlternativeMeCryptoSentimentPlugin:
@@ -1396,6 +2120,9 @@ def build_crypto_provider_plugins() -> tuple[object, ...]:
         CoinGeckoCryptoPlugin(),
         DefiLlamaCryptoPlugin(),
         CoinglassCryptoPlugin(),
+        LunarCrushCryptoSocialPlugin(),
+        GlassnodeCryptoOnchainPlugin(),
+        TokenTerminalCryptoFundamentalsPlugin(),
         AlternativeMeCryptoSentimentPlugin(),
         CryptoProjectNewsPlugin(),
         CryptoGoogleNewsDiscoveryPlugin(),
@@ -1437,7 +2164,14 @@ def _endpoint_from_settings(ctx: Any, *, default_host: str) -> tuple[str, str]:
     return f"{parsed.scheme}://{parsed.netloc}", parsed.path.rstrip("/")
 
 
-def _kline_to_row(item: Any, *, symbol: str, base_asset: str, quote_asset: str) -> dict[str, Any] | None:
+def _kline_to_row(
+    item: Any,
+    *,
+    symbol: str,
+    base_asset: str,
+    quote_asset: str,
+    granularity: str = "daily",
+) -> dict[str, Any] | None:
     if not isinstance(item, list) or len(item) < 8:
         return None
     try:
@@ -1453,15 +2187,20 @@ def _kline_to_row(item: Any, *, symbol: str, base_asset: str, quote_asset: str) 
     amount = _decimal_float(item[7])
     if None in {open_price, high, low, close, volume, amount}:
         return None
-    period_start = datetime.fromtimestamp(open_time / 1000, tz=UTC).date()
-    period_end = datetime.fromtimestamp(close_time / 1000, tz=UTC).date()
-    return {
-        "dataset": "daily_bar",
+    normalized_open = datetime.fromtimestamp(open_time / 1000, tz=UTC)
+    normalized_close = datetime.fromtimestamp(close_time / 1000, tz=UTC)
+    is_daily = granularity == "daily"
+    period_start = normalized_open.date() if is_daily else normalized_open
+    period_end = normalized_close.date() if is_daily else normalized_close
+    row = {
+        "dataset": "daily_bar" if is_daily else "intraday_bar",
         "market": "CRYPTO",
         "symbol_id": symbol,
-        "granularity": "daily",
+        "granularity": granularity,
         "period_start": period_start,
         "period_end": period_end,
+        "open_time": normalized_open,
+        "close_time": normalized_close,
         "open": open_price,
         "high": high,
         "low": low,
@@ -1474,11 +2213,16 @@ def _kline_to_row(item: Any, *, symbol: str, base_asset: str, quote_asset: str) 
         "calendar": "CRYPTO_24_7",
         "base_asset": base_asset,
         "quote_asset": quote_asset,
+        "universe_ref": "binance_spot_all_symbols",
+        "source_market_segment": "spot",
         "provider_lineage": {"provider_id": "crypto_primary", "endpoint_id": "spot_daily_bar"},
         "source_roles": ("official",),
         "schema_id": "daily_bar.v1",
         "quality_flags": (),
     }
+    if is_daily:
+        row["date"] = period_start
+    return row
 
 
 def _decimal_float(value: Any) -> float | None:
@@ -1500,6 +2244,20 @@ def _end_millis(value: Any) -> int | None:
     if day is None:
         return None
     return int(datetime.combine(day, time.max, tzinfo=UTC).timestamp() * 1000)
+
+
+def _start_seconds(value: Any) -> int | None:
+    day = _as_date(value)
+    if day is None:
+        return None
+    return int(datetime.combine(day, time.min, tzinfo=UTC).timestamp())
+
+
+def _end_seconds(value: Any) -> int | None:
+    day = _as_date(value)
+    if day is None:
+        return None
+    return int(datetime.combine(day, time.max, tzinfo=UTC).timestamp())
 
 
 def _as_date(value: Any) -> date | None:
@@ -1562,8 +2320,6 @@ def _crypto_base_row(
         "market": "CRYPTO",
         "symbol_id": symbol,
         "granularity": granularity,
-        "period_start": now.date(),
-        "period_end": now.date(),
         "exchange": _crypto_exchange_label(provider_id),
         "currency": quote_asset,
         "timezone": "UTC",
@@ -1622,6 +2378,12 @@ def _crypto_exchange_label(provider_id: str) -> str:
         return "DEFILLAMA"
     if "COINGLASS" in token:
         return "COINGLASS"
+    if "LUNARCRUSH" in token:
+        return "LUNARCRUSH"
+    if "GLASSNODE" in token:
+        return "GLASSNODE"
+    if "TOKEN_TERMINAL" in token:
+        return "TOKEN_TERMINAL"
     if "ALTERNATIVE" in token:
         return "ALTERNATIVE_ME"
     if "PROJECT" in token:
@@ -1632,18 +2394,39 @@ def _crypto_exchange_label(provider_id: str) -> str:
 
 
 def _first_numeric_metric(value: Any, keys: tuple[str, ...]) -> float | None:
+    result, _source_field = _first_numeric_metric_with_key(value, keys)
+    return result
+
+
+def _first_numeric_metric_with_key(value: Any, keys: tuple[str, ...]) -> tuple[float | None, str | None]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, Mapping)):
         for item in value:
-            result = _first_numeric_metric(item, keys)
+            result, source_field = _first_numeric_metric_with_key(item, keys)
             if result is not None:
-                return result
-        return None
+                return result, source_field
+        return None, None
     if not isinstance(value, Mapping):
-        return _decimal_float(value)
+        return _decimal_float(value), None
     for key in keys:
         result = _decimal_float(value.get(key))
         if result is not None:
-            return result
+            return result, key
+    return None, None
+
+
+def _coinglass_metric_unit(field: str, source_field: str | None) -> str | None:
+    token = (source_field or "").lower()
+    if field == "open_interest":
+        if "usd" in token or "value" in token or token in {"value", "close"}:
+            return "USD"
+        if "quantity" in token:
+            return "base_asset_quantity"
+        return "contracts"
+    if field == "funding_rate":
+        return "percent"
+    if field == "net_inflow":
+        if "usd" in token or token in {"value", "netflow", "net_flow", "netinflow", "net_inflow"}:
+            return "USD"
     return None
 
 
@@ -1717,6 +2500,9 @@ __all__ = [
     "CryptoGoogleNewsDiscoveryPlugin",
     "CryptoProjectNewsPlugin",
     "DefiLlamaCryptoPlugin",
+    "GlassnodeCryptoOnchainPlugin",
+    "LunarCrushCryptoSocialPlugin",
+    "TokenTerminalCryptoFundamentalsPlugin",
     "build_crypto_provider_plugin",
     "build_crypto_provider_plugins",
 ]

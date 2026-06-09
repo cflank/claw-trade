@@ -192,6 +192,7 @@ def analyze_market_frame(frame: pd.DataFrame, *, ticker: str) -> AnalysisBundle:
         "indicator_backend": indicator_backend,
         "trend": _trend_state(latest, enriched),
         "volume_state": _volume_state(enriched),
+        "latest_close": _to_float(latest["close"]),
         "support_levels": _levels(enriched["low"], "min"),
         "resistance_levels": _levels(enriched["high"], "max"),
     }

@@ -84,7 +84,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - `market_analyst` 只看到 `claw_get_market_pack`。
 - `claw_get_market_pack` 内部通过 data_gateway 执行 CoinGlass、Binance、Bybit、FRED 等 approved provider plugin/adapter，并写 data_gateway attempt/raw/normalized evidence。
 - CryptoLens 只读取 data_gateway normalized crypto bundle 做离线分析，输出指标解释、条件场景、失效条件和数据缺口。
-- 禁止任何 worker 直接调用旧 BB MCP、CryptoLens raw tool 或 legacy OpenBB atomic provider tool。下游 worker 默认读取前线已批准报告。
+- 禁止任何 worker 直接调用旧 BB MCP、CryptoLens raw tool 或 legacy 已删除数据网关 atomic provider tool。下游 worker 默认读取前线已批准报告。
 
 ### 4.2 CoinGecko
 
@@ -139,9 +139,9 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - 对 DeFi 协议、公链生态、L2、DEX、借贷、稳定币和桥类项目优先使用。
 - 对非 DeFi 资产，资料包必须明确说明 DefiLlama 覆盖不足。
 
-### 4.4 legacy OpenBB
+### 4.4 legacy 已删除数据网关
 
-定位：历史评估过的统一数据接入平台。OpenBB 本体已删除，不再作为当前目标运行时、唯一外部数据入口或 provider 接口层。
+定位：历史评估过的统一数据接入平台。已删除数据网关 本体已删除，不再作为当前目标运行时、唯一外部数据入口或 provider 接口层。
 
 适合：
 
@@ -152,13 +152,13 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 风险：
 
 - 层太厚，容易把过多工具暴露给 worker。
-- OpenBB 本身开源不等于底层数据都免费。
+- 已删除数据网关 本身开源不等于底层数据都免费。
 - 许多高质量 provider 仍然需要单独 key 或订阅。
 
 当前口径：
 
 - CRYPTO provider 主干落在 `src/claw_trade/data_gateway`。
-- 不恢复 OpenBB runtime/submodule，也不把 legacy OpenBB 全量工具、discovery/admin tool 或 atomic provider tool 暴露给 worker。
+- 不恢复 已删除数据网关 runtime/submodule，也不把 legacy 已删除数据网关 全量工具、discovery/admin tool 或 atomic provider tool 暴露给 worker。
 
 ### 4.5 商业搜索 API
 
@@ -274,7 +274,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 第一阶段 CRYPTO 市场分析只有一个 worker 可见工具：
 
-- `claw_get_market_pack`。它是 market worker 的统一资料包入口，不是数据源、不是 CryptoLens、不是 legacy OpenBB 本体。
+- `claw_get_market_pack`。它是 market worker 的统一资料包入口，不是数据源、不是 CryptoLens、不是 legacy 已删除数据网关 本体。
 - CRYPTO 下的内部链路是：`claw_get_market_pack -> data_gateway 取数 -> normalized crypto bundle -> CryptoLens analysis engine -> reader_brief`。
 - worker 只看到资料包的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；provider raw payload、CryptoLens raw result、Mongo raw/cache object 都不得成为 worker 主材料。
 
@@ -471,7 +471,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 | Polymarket | 市场数据公开程度高 | 中 | 事件预期，不是新闻事实 |
 | Dune | Freemium / paid | 高 | 深度链上，成本和查询维护较高 |
 | The Graph | Freemium / paid | 中高 | 链上查询，依赖 subgraph/API 覆盖 |
-| legacy OpenBB | 框架开源，数据源另算 | 不作为当前目标运行时 | 只保留历史评估和 forbidden legacy path 语境 |
+| legacy 已删除数据网关 | 框架开源，数据源另算 | 不作为当前目标运行时 | 只保留历史评估和 forbidden legacy path 语境 |
 | Awesome-finance-skills | 代码免费 | 取决于底层免费源 | 适合参考 skill 设计 |
 | daily_stock_analysis | 代码免费 | 取决于底层免费/商业源 | 适合参考配置设计 |
 | Kronos | 模型开源 | 取决于输入数据和回测 | 不是数据源 |
@@ -508,7 +508,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 ## 12. 暂不做
 
-- 不把 legacy OpenBB 全量 MCP 直接挂给 worker。
+- 不把 legacy 已删除数据网关 全量 MCP 直接挂给 worker。
 - 不把 CoinGecko 当成 CoinGlass 替代品。
 - 不把 DefiLlama 当成所有币种的万能基本面源。
 - 不把 Polymarket 当新闻事实源。
@@ -526,7 +526,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - Dune MCP: https://docs.dune.com/api-reference/agents/mcp/
 - LunarCrush GitHub: https://github.com/lunarcrush
 - Polymarket API docs: https://polymarket-docs.copilot.markets/api-reference/introduction
-- OpenBB MCP tools: https://docs.openbb.co/workspace/analysts/ai-features/mcp-tools
+- 已删除数据网关 MCP tools: https://docs.removed_data_gateway.co/workspace/analysts/ai-features/mcp-tools
 - Awesome-finance-skills: https://github.com/RKiding/Awesome-finance-skills
 - daily_stock_analysis: https://github.com/ZhuLinsen/daily_stock_analysis
 - Kronos: https://github.com/shiyu-coder/Kronos

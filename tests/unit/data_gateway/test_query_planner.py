@@ -52,6 +52,39 @@ def test_query_planner_builds_warehouse_checks_required_coverage_and_expected_ou
     assert plan.expected_outputs == ("daily_bar",)
 
 
+def test_query_planner_scopes_crypto_bar_warehouse_checks_to_spot_universe() -> None:
+    planner = QueryPlanner()
+    bar_plan = planner.validate_and_normalize(
+        _request(
+            market=Market.CRYPTO,
+            symbol_id="btcusdt",
+            timezone="UTC",
+            calendar="CRYPTO_24_7",
+            data_type="intraday_bar",
+            granularity="1h",
+            fields=("open", "close"),
+            base_asset="BTC",
+            quote_asset="USDT",
+        )
+    )
+    derivative_plan = planner.validate_and_normalize(
+        _request(
+            market=Market.CRYPTO,
+            symbol_id="btcusdt",
+            timezone="UTC",
+            calendar="CRYPTO_24_7",
+            data_type="crypto_derivative_metric",
+            granularity="1h",
+            fields=("open_interest",),
+            base_asset="BTC",
+            quote_asset="USDT",
+        )
+    )
+
+    assert bar_plan.warehouse_checks[0].universe_ref == "binance_spot_all_symbols"
+    assert derivative_plan.warehouse_checks[0].universe_ref is None
+
+
 def test_query_planner_does_not_generate_provider_candidates_or_batch_plan() -> None:
     planner = QueryPlanner()
     plan = planner.validate_and_normalize(_request())

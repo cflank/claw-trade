@@ -87,7 +87,6 @@ def test_settings_enhanced_sources_exposes_provider_backed_api_sources_and_filte
     for default_or_internal in (
         "akshare",
         "eastmoney",
-        "openbb",
         "coingecko",
         "binance",
         "okx",

@@ -1,5 +1,17 @@
 # claw-trade
 
+## 系统原始数据
+
+A 股出厂恢复包：
+
+```text
+data/a-share-cn-required-300td-20260608.tar
+```
+
+说明和校验文件见 [data/README.md](data/README.md)。
+恢复脚本：`scripts/selection/restore_a_share_factory_seed.py`。
+增量合并脚本：`scripts/selection/merge_a_share_factory_seed_incremental.py`。
+
 ## 专业投研报告数据源配置
 
 真正专业报告：

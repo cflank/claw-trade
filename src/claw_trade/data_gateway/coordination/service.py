@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from claw_trade.data_gateway.coordination.scheduler import DataRunScheduleContext, DataRunScheduler
+from claw_trade.data_gateway.crypto_prepackaged_importer import local_warehouse_empty_gap
 from claw_trade.data_gateway.models import (
     DataGap,
     DataPlan,
@@ -15,6 +16,7 @@ from claw_trade.data_gateway.models import (
     DataResult,
     DataResultStatus,
     GapReason,
+    GapSeverity,
     GateDecision,
     IngestResult,
     Market,
@@ -380,9 +382,18 @@ class DataService:
 
         results: list[DataResult] = []
         for request in requests:
+            initial_per_request = self._slice_warehouse_result(initial, request)
             final_per_request = self._slice_warehouse_result(final, request)
             ingest_per_request = self._slice_ingest_results(ingest_results, request.request_id)
-            results.append(self._compose_result(request.request_id, final_per_request, ingest_per_request))
+            preserved_gaps = self._preserved_initial_local_gaps(request, initial_per_request)
+            results.append(
+                self._compose_result(
+                    request.request_id,
+                    final_per_request,
+                    ingest_per_request,
+                    preserved_gaps=preserved_gaps,
+                )
+            )
         self._log_data_service_event("done", run_id=run_id, elapsed_ms=self._elapsed_ms(started), results=len(results))
         return results
 
@@ -538,11 +549,16 @@ class DataService:
         request_id: str,
         final_warehouse: WarehouseResult,
         ingest_results: Sequence[IngestResult],
+        *,
+        preserved_gaps: Sequence[DataGap] = (),
     ) -> DataResult:
         dataset_refs: list[str] = list(final_warehouse.dataset_refs)
         raw_refs: list[str] = []
         attempt_refs: list[str] = list(final_warehouse.attempt_refs)
-        gaps: list[DataGap] = [self._coerce_gap(gap, request_id=request_id) for gap in final_warehouse.gaps]
+        gaps: list[DataGap] = [self._coerce_gap(gap, request_id=request_id) for gap in preserved_gaps]
+        if final_warehouse.satisfied and final_warehouse.dataset_refs:
+            gaps = [self._demote_preserved_gap_after_fill(gap) for gap in gaps]
+        gaps.extend(self._coerce_gap(gap, request_id=request_id) for gap in final_warehouse.gaps)
         for ingest_result in ingest_results:
             if not final_warehouse.dataset_refs:
                 dataset_refs.extend(ingest_result.dataset_refs)
@@ -554,6 +570,9 @@ class DataService:
         dataset_refs = list(dict.fromkeys(dataset_refs))
         raw_refs = list(dict.fromkeys(raw_refs))
         attempt_refs = list(dict.fromkeys(attempt_refs))
+        gaps = self._drop_satisfied_date_range_missing_gaps(gaps, final_warehouse.satisfied)
+        gaps = self._drop_filled_local_warehouse_empty_gaps(gaps, final_warehouse.rows)
+        gaps = self._drop_satisfied_field_missing_gaps(gaps, final_warehouse.rows)
         gaps = self._dedupe_gaps(gaps)
         status = self._resolve_status(final_warehouse.satisfied, dataset_refs, gaps)
         return DataResult(
@@ -567,6 +586,16 @@ class DataService:
             freshness=final_warehouse.freshness,
             as_of=datetime.now(tz=UTC),
         )
+
+    @staticmethod
+    def _preserved_initial_local_gaps(request: DataRequest, initial_warehouse: WarehouseResult) -> tuple[DataGap, ...]:
+        if request.market != Market.CRYPTO or request.data_type not in {"daily_bar", "intraday_bar"}:
+            return ()
+        preserved: list[DataGap] = []
+        if any(gap.reason == GapReason.WAREHOUSE_MISSING for gap in initial_warehouse.gaps):
+            preserved.append(local_warehouse_empty_gap(request))
+        preserved.extend(gap for gap in initial_warehouse.gaps if gap.reason == GapReason.DATE_RANGE_MISSING)
+        return tuple(preserved)
 
     @staticmethod
     def _dedupe_gaps(gaps: Sequence[DataGap]) -> list[DataGap]:
@@ -588,6 +617,58 @@ class DataService:
             seen.add(key)
             deduped.append(gap)
         return deduped
+
+    @staticmethod
+    def _drop_satisfied_field_missing_gaps(gaps: Sequence[DataGap], rows: Sequence[Mapping[str, Any]]) -> list[DataGap]:
+        if not rows:
+            return list(gaps)
+        row_fields = DataService._fields_present_in_rows(rows)
+        filtered: list[DataGap] = []
+        for gap in gaps:
+            if gap.reason == GapReason.FIELD_MISSING and gap.required_fields:
+                required = {str(field) for field in gap.required_fields}
+                if required.issubset(row_fields):
+                    continue
+            filtered.append(gap)
+        return filtered
+
+    @staticmethod
+    def _drop_satisfied_date_range_missing_gaps(gaps: Sequence[DataGap], satisfied: bool) -> list[DataGap]:
+        if not satisfied:
+            return list(gaps)
+        return [gap for gap in gaps if gap.reason != GapReason.DATE_RANGE_MISSING]
+
+    @staticmethod
+    def _drop_filled_local_warehouse_empty_gaps(gaps: Sequence[DataGap], rows: Sequence[Mapping[str, Any]]) -> list[DataGap]:
+        if not rows:
+            return list(gaps)
+        return [
+            gap
+            for gap in gaps
+            if not (
+                gap.reason == GapReason.WAREHOUSE_MISSING
+                and str(gap.human_readable).startswith("local_warehouse_empty")
+            )
+        ]
+
+    @staticmethod
+    def _fields_present_in_rows(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+        fields: set[str] = set()
+        for row in rows:
+            fields.update(str(key) for key in row)
+            fields.update(str(item) for item in tuple(row.get("field_set", ()) or ()))
+            nested_row = row.get("row")
+            if isinstance(nested_row, Mapping):
+                fields.update(str(key) for key in nested_row)
+        return fields
+
+    @staticmethod
+    def _demote_preserved_gap_after_fill(gap: DataGap) -> DataGap:
+        if gap.reason not in {GapReason.WAREHOUSE_MISSING, GapReason.DATE_RANGE_MISSING}:
+            return gap
+        if gap.severity != GapSeverity.BLOCKER:
+            return gap
+        return gap.model_copy(update={"severity": GapSeverity.WARN})
 
     @staticmethod
     def _resolve_status(satisfied: bool, dataset_refs: Sequence[str], gaps: Sequence[Any]) -> DataResultStatus:
@@ -782,6 +863,14 @@ class DataService:
             return False
         if row.get("granularity") and str(row.get("granularity")) != request.granularity:
             return False
+        if request.fields:
+            row_fields = set(str(key) for key in row)
+            row_fields.update(str(item) for item in tuple(row.get("field_set", ()) or ()))
+            nested_row = row.get("row")
+            if isinstance(nested_row, Mapping):
+                row_fields.update(str(key) for key in nested_row)
+            if not all(str(field) in row_fields for field in request.fields):
+                return False
         row_start = DataService._date_key(row.get("period_start"))
         row_end = DataService._date_key(row.get("period_end"))
         request_start = DataService._date_key(request.date_range_start)

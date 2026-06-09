@@ -133,7 +133,7 @@ describe('settings-enhanced-sources', () => {
     for (const approved of ['Tushare']) {
       expect(scoped.getAllByText(approved).length).toBeGreaterThanOrEqual(1);
     }
-    for (const hidden of ['CSMAR', 'Wind', 'OpenBB', 'AKShare', '东方财富', 'SEC EDGAR', 'CoinGecko', 'Binance', 'OKX', 'CCXT', 'LongPort']) {
+    for (const hidden of ['CSMAR', 'Wind', 'AKShare', '东方财富', 'SEC EDGAR', 'CoinGecko', 'Binance', 'OKX', 'CCXT', 'LongPort']) {
       expect(scoped.queryByText(hidden)).not.toBeInTheDocument();
     }
     expect((section as HTMLElement).querySelectorAll('.ct-source-category-card')).toHaveLength(3);

@@ -11,8 +11,8 @@
 本文不新增未批准架构：
 
 - CryptoLens 仍只是迁入 claw-trade 的 CRYPTO 离线指标分析引擎，不是数据源、provider、外部 MCP、独立 worker、trader 或 portfolio_manager 决策器。
-- data_gateway 仍是唯一外部取数入口、唯一 provider 接口层和唯一 provider evidence 记录者；OpenBB 本体不是当前目标运行时依赖。
-- CRYPTO worker 仍只通过 `claw_get_market_pack` 获取自然语言 market pack；worker 不直接读取旧 BB MCP、CryptoLens raw JSON、legacy OpenBB atomic/admin/discovery tools、Mongo raw/cache/debug envelope 或 OpenViking protocol。
+- data_gateway 仍是唯一外部取数入口、唯一 provider 接口层和唯一 provider evidence 记录者；已删除数据网关 本体不是当前目标运行时依赖。
+- CRYPTO worker 仍只通过 `claw_get_market_pack` 获取自然语言 market pack；worker 不直接读取旧 BB MCP、CryptoLens raw JSON、legacy 已删除数据网关 atomic/admin/discovery tools、Mongo raw/cache/debug envelope 或 OpenViking protocol。
 - CryptoLens analysis 只消费 data_gateway normalized crypto bundle，不出网、不读 provider key、不调用 provider/runtime、不访问 Mongo、不写 BUY/HOLD/SELL、仓位、执行建议、PM rating 或最终投资裁决。
 - Python 控制层只做 plan、dispatch、pack 构建、证据保存和材料搬运，不写 worker 市场分析结论，不改写 PM 最终裁决。
 - 本清单中的测试、import-block 和 live/fresh gate 只验证设计合同，不新增 runtime guard、风格 gate 或投资判断 gate。
@@ -25,11 +25,11 @@
 |---|---|---|---|---|
 | T-CL-1 | 冻结口径并记录当前偏差基线 | 无 | 串行第一步 | 口径证据、偏差清单、当前 BTC 不可作为完成证据 |
 | T-CL-2 | 只读盘点旧 BB 代码，形成迁入/剔除清单 | T-CL-1 | 可与 T-CL-3 并行 | 可迁入模块表、禁止运行路径表 |
-| T-CL-3 | 建立旧路径、旧工具、旧 executor、legacy OpenBB atomic/admin/discovery import-block 基线 | T-CL-1 | 可与 T-CL-2 并行 | 禁止项扫描、import-block 测试基线 |
+| T-CL-3 | 建立旧路径、旧工具、旧 executor、legacy 已删除数据网关 atomic/admin/discovery import-block 基线 | T-CL-1 | 可与 T-CL-2 并行 | 禁止项扫描、import-block 测试基线 |
 | T-CL-4 | 定义 data_gateway normalized crypto bundle 合同 | T-CL-1 | 可与 T-CL-5 前半并行 | bundle/input/status/dat gap/conflict/ref 合同 |
 | T-CL-5 | 扩展 data_gateway CRYPTO provider plan 和 adapters | T-CL-4 | 子域可并行 | market/OHLCV/derivatives/liquidation/onchain/macro/events/AHR999 provider evidence |
 | T-CL-6 | 按旧 BB 纯分析口径 Python 重写 CryptoLens | T-CL-2、T-CL-4 | 可与 T-CL-5 后半并行 | `src/claw_trade/data_gateway/analysis/crypto_lens/**` |
-| T-CL-7 | 实现 CryptoLens adapter、input/output/evidence | T-CL-4、T-CL-6 | 串行于 T-CL-6 后 | `analyze_data_gateway_crypto_lens_bundle`、`crypto_lens_analysis_evidence` |
+| T-CL-7 | 实现 CryptoLens adapter、input/output/evidence | T-CL-4、T-CL-6 | 串行于 T-CL-6 后 | `analyze_crypto_lens_data_results`、`crypto_lens_analysis_evidence` / report evidence file |
 | T-CL-8 | 接入 CRYPTO MarketPackBuilder 和图表/readiness | T-CL-5、T-CL-7 | 串行集成 | reader_brief、chart readiness、data gaps、pack audit |
 | T-CL-9 | 验证 OpenClaw tool schema 和 worker 可见边界 | T-CL-8、T-CL-3 | 可与 T-CL-10 并行 | provider payload scan、pack-only schema |
 | T-CL-10 | 闭合 evidence chain 和 OpenViking relation/export 边界 | T-CL-7、T-CL-8 | 可与 T-CL-9 并行 | final report -> HTTP/raw evidence lineage |
@@ -57,12 +57,12 @@
 交付：
 
 - 记录 CryptoLens 不是数据源、不是 provider、不是 MCP、不是 worker、不是决策器。
-- 记录 data_gateway 是唯一外部取数入口，OpenBB 本体已删除且只作为历史/禁用路径参考。
+- 记录 data_gateway 是唯一外部取数入口，已删除数据网关 本体已删除且只作为历史/禁用路径参考。
 - 记录当前 BTC canonical final report 只证明诚实缺口，不证明 CryptoLens 覆盖完成。
 
 验收：
 
-- 证据中明确当前 CRYPTO market source 是否仍只有历史 `openbb_yfinance/crypto_price_historical` 或等价窄覆盖。
+- 证据中明确当前 CRYPTO market source 是否仍只有历史 `removed_data_gateway_yfinance/crypto_price_historical` 或等价窄覆盖。
 - 明确后续所有任务不得恢复旧 BB 直连。
 
 ### T-CL-2：旧 BB 只读盘点与迁入/剔除清单
@@ -89,7 +89,7 @@
 
 ### T-CL-3：禁止路径和 import-block 基线
 
-目标：先建立负面证明，防止迁移过程中旧 BB、旧工具、旧 executor 或 legacy OpenBB atomic/admin/discovery 工具 silent fallback。
+目标：先建立负面证明，防止迁移过程中旧 BB、旧工具、旧 executor 或 legacy 已删除数据网关 atomic/admin/discovery 工具 silent fallback。
 
 范围：
 
@@ -106,7 +106,7 @@
 验收：
 
 - `uv run pytest tests/integration/data_gateway/test_old_provider_import_block.py tests/integration/data_gateway/test_mcp_visible_tools.py tests/unit/data_gateway/test_tool_schema.py`
-- 额外扫描证明 data_gateway 模式下没有旧 BB MCP 或 legacy OpenBB runtime 参与 CRYPTO pack 成功路径。
+- 额外扫描证明 data_gateway 模式下没有旧 BB MCP 或 legacy 已删除数据网关 runtime 参与 CRYPTO pack 成功路径。
 
 ### T-CL-4：data_gateway normalized crypto bundle 合同
 
@@ -201,12 +201,12 @@ src/claw_trade/data_gateway/analysis/crypto_lens/
 
 ### T-CL-7：CryptoLens adapter、input/output/evidence
 
-目标：实现 data_gateway normalized bundle 到 CryptoLens analysis result 的唯一入口，并写独立 analysis evidence。
+目标：实现 data_gateway normalized rows 到 CryptoLens analysis result 的唯一入口，并写独立 analysis evidence。
 
 接口：
 
 ```text
-analyze_data_gateway_crypto_lens_bundle(input) -> CryptoLensAnalysisResult
+analyze_crypto_lens_data_results(results: Sequence[DataResult], ...) -> CryptoLensAnalysisResult
 ```
 
 要求：
@@ -214,13 +214,13 @@ analyze_data_gateway_crypto_lens_bundle(input) -> CryptoLensAnalysisResult
 - 只读入参。
 - 输出可 hash。
 - 缺口原样传递或进一步细化。
-- input 映射必须来自真实 normalized bundle + attempt/normalized refs，不接受 ticker/market/date 的模型侧覆盖来篡改 runtime 实际值。
+- input 映射必须来自真实 report DataResult 批结果、attempt refs 和 normalized dataset refs，不接受 ticker/market/date 的模型侧覆盖来篡改 runtime 实际值。
 - 不调用网络、不读取 provider key、不访问 Mongo、不调用 provider/runtime。
 - 不输出 BUY/HOLD/SELL、仓位、执行建议、PM rating 或最终投资裁决。
 
 证据：
 
-- `crypto_lens_analysis_evidence` 记录 run_id、call_id、worker_id、analysis_id、engine name/version/source hash、input hash、normalized refs、output hash、no-network assertion、data gaps/conflicts、analysis result ref。
+- report evidence file 记录 run_id、call_id、worker_id、analysis_id、engine name/version/source hash、input hash、normalized refs、output hash、no-network assertion、data gaps/conflicts、analysis result ref。当前 report path 写入 `evidence_root/data-layer/crypto-lens/<run>/<call>/analysis.json`；CryptoLens analysis runtime 不访问 Mongo。
 - 不得把 `crypto_lens_analysis_evidence` 命名或伪装成 data_gateway HTTP/raw provider evidence。
 
 验收：
@@ -228,7 +228,7 @@ analyze_data_gateway_crypto_lens_bundle(input) -> CryptoLensAnalysisResult
 - no-network、no-key、no-Mongo、no-provider-runtime tests。
 - analysis evidence 与 data_gateway provider HTTP/raw evidence 命名隔离 tests。
 - CryptoLensAnalysisResult 全字段合同测试通过（包含 success/partial/failure 分支字段完整性）。
-- 真实 attempts/normalized refs 进入 CryptoLens input 的集成测试通过。
+- 真实 attempts/normalized dataset refs 进入 CryptoLens input 的集成测试通过。
 - input 污染测试通过：raw/debug/protocol/prompt 字段不进入分析入参。
 
 ### T-CL-8：CRYPTO MarketPackBuilder 接入
@@ -239,7 +239,7 @@ analyze_data_gateway_crypto_lens_bundle(input) -> CryptoLensAnalysisResult
 
 ```text
 data_gateway provider execution
-  -> normalized crypto bundle
+  -> report DataResult batch with normalized rows / refs
   -> CryptoLens analysis engine
   -> reader_brief
   -> chart assets
@@ -282,7 +282,7 @@ reader brief 必须包含：
 
 - CRYPTO `market_analyst` provider payload 的 visible tool schema 只含 `claw_get_market_pack`。
 - downstream workers 不看到数据工具。
-- provider payload 不含旧 BB MCP 原子工具、legacy OpenBB atomic/admin/discovery/raw/debug/cache tools。
+- provider payload 不含旧 BB MCP 原子工具、legacy 已删除数据网关 atomic/admin/discovery/raw/debug/cache tools。
 - worker prompt 不包含 provider raw payload、CryptoLens raw JSON、Mongo raw/cache/debug envelope、OpenViking protocol 正文。
 - model-visible schema 不接受 ticker/market/date 的模型侧覆盖来替代 runtime 真实 run 上下文。
 - `agents/market_analyst/skills/crypto-trading-analysis/**` 审计通过：skill 只解释已给材料，不取数、不调 provider、不计算指标、不写最终投资结论。
@@ -344,7 +344,7 @@ final report claim
 - 必须执行 live runtime preflight gate。
 - 使用 fixed runtime profile：`scripts/start-control-runtime.sh`、claw-trade repo `uv`、OpenViking `1933`、OpenClaw gateway `18789`、no invest sidecar、OpenViking config from `~/.openviking/ov.conf`、runtime config/data/cache under `.runtime/dev-services`。
 - 需要 clean runtime 的命令必须通过 `scripts/start-control-runtime.sh -- <command>` 启动和关闭服务。
-- 开工冻结门证据齐备：data_gateway 合同、provider plugins/adapters、license/raw policy 和 legacy OpenBB 删除/禁用证据已落在设计证据目录。
+- 开工冻结门证据齐备：data_gateway 合同、provider plugins/adapters、license/raw policy 和 legacy 已删除数据网关 删除/禁用证据已落在设计证据目录。
 
 必须收集：
 
@@ -378,7 +378,7 @@ final report claim
 | 禁止旧 BB MCP、旧 BB 直连、CryptoLens 再调 provider/runtime | 1、4、9.4、15 | T-CL-2、T-CL-3、T-CL-6、T-CL-11 |
 | `/report` 到 final report 端到端时序 | 5.1 | T-CL-8、T-CL-9、T-CL-10、T-CL-12 |
 | data_gateway CRYPTO 多域 provider adapters | 6.1、8 | T-CL-5、T-CL-11、T-CL-12 |
-| NormalizedCryptoMarketBundle 作为唯一输入 | 6.2、6.3 | T-CL-4、T-CL-7 |
+| data_gateway normalized rows / DataResult refs 作为唯一输入 | 6.2、6.3 | T-CL-4、T-CL-7 |
 | CryptoLens analysis adapter 和代码迁入 | 6.4、9.1 | T-CL-2、T-CL-6、T-CL-7 |
 | CryptoLens output 边界：不写最终投资裁决 | 6.5 | T-CL-7、T-CL-8、T-CL-10 |
 | MarketPackBuilder 自然语言 reader_brief | 6.6、11 | T-CL-8、T-CL-9 |
@@ -405,10 +405,10 @@ final report claim
 | 旧资料包 fallback | `crypto_market_data_pack.py`、`market_market_data_pack`、`crypto_market_data_pack`、`frontline_data_pack` | 不能在 data_gateway 失败后 silent fallback | T-CL-3、T-CL-8、T-CL-11 |
 | 旧 provider executor | `frontline_data_pack.provider_executor`、旧 `provider_executor` import slice、旧 `claw_trade.providers` | 目标态使用 data_gateway provider contract，不复用旧 executor | T-CL-3、T-CL-5、T-CL-11 |
 | US atomic tools | `get_stock_data`、`get_indicators`、`get_fundamentals`、`get_balance_sheet`、`get_cashflow`、`get_income_statement`、`get_news`、`get_global_news` | worker 可见工具必须收敛为 canonical pack | T-CL-3、T-CL-9、T-CL-12 |
-| legacy OpenBB atomic/admin/discovery/debug tools（model-visible） | `provider.`、`admin.`、`discovery.`、`activate_tools`、`execute_prompt`、`list_providers`、`cache`、`raw`、`debug` | report worker 模型不能直接调用这些工具；控制层/CLI/UI 调试入口可存在但不进 worker schema | T-CL-3、T-CL-9、T-CL-12 |
+| legacy 已删除数据网关 atomic/admin/discovery/debug tools（model-visible） | `provider.`、`admin.`、`discovery.`、`activate_tools`、`execute_prompt`、`list_providers`、`cache`、`raw`、`debug` | report worker 模型不能直接调用这些工具；控制层/CLI/UI 调试入口可存在但不进 worker schema | T-CL-3、T-CL-9、T-CL-12 |
 | raw/cache/debug material | provider raw JSON、CryptoLens raw JSON、Mongo raw/cache object、debug envelope、OpenViking protocol | worker 只看自然语言 pack 和 approved L1 | T-CL-8、T-CL-9、T-CL-10 |
 | CryptoLens 出网或读 key | `fetch`、`requests`、`httpx`、`axios`、provider key env reads inside `analysis/crypto_lens` | CryptoLens 是离线分析层，不是 provider | T-CL-6、T-CL-7、T-CL-11 |
-| CryptoLens 再调 provider/runtime | CryptoLens module import/call legacy OpenBB runtime、pack endpoint、provider adapters | 会形成 provider -> CryptoLens -> provider 绕圈 | T-CL-7、T-CL-11 |
+| CryptoLens 再调 provider/runtime | CryptoLens module import/call legacy 已删除数据网关 runtime、pack endpoint、provider adapters | 会形成 provider -> CryptoLens -> provider 绕圈 | T-CL-7、T-CL-11 |
 | CryptoLens 写最终投资裁决 | BUY/HOLD/SELL、position size、execution order、PM rating/final decision fields | PM 拥有最终投资裁决，CryptoLens 只供 market analysis | T-CL-7、T-CL-8、T-CL-10 |
 | fake 验收 | mock/stub/fake/capture-only success | 不能证明 live/fresh provider 和 evidence 行为 | T-CL-11、T-CL-12 |
 | secret 泄漏 | 真实 API key 写入 docs/memory/evidence/final report/prompt/material | 只能记录 credential present/missing 和脱敏 evidence | T-CL-5、T-CL-11、T-CL-12 |
@@ -420,9 +420,9 @@ final report claim
 1. `claw_get_market_pack` 在 CRYPTO 下真实走 data_gateway provider plan 取数，RunProviderPlan 不 prefetch、不写 remote success。
 2. 所有外部 provider 请求都有 data_gateway HTTP/raw evidence，并有 attempt、normalized ref、cache receipt、rate-limit 或错误记录。
 3. CryptoLens analysis engine 来自 claw-trade 仓库内部代码，在 report runtime 中不出网、不读 provider key、不访问 Mongo、不调用 provider/runtime。
-4. CryptoLens analysis input 只来自 data_gateway normalized crypto bundle。
+4. CryptoLens analysis input 只来自 data_gateway normalized rows、DataResult 批结果和 refs。
 5. CryptoLens analysis evidence 独立命名为 `crypto_lens_analysis_evidence`，不能替代 data_gateway HTTP/raw provider evidence。
-6. worker 只看到 `claw_get_market_pack` 和自然语言 market pack，不看到旧 BB MCP、legacy OpenBB atomic/admin/discovery/raw/debug/cache tools、raw JSON、Mongo raw/cache/debug envelope 或 OpenViking protocol。
+6. worker 只看到 `claw_get_market_pack` 和自然语言 market pack，不看到旧 BB MCP、legacy 已删除数据网关 atomic/admin/discovery/raw/debug/cache tools、raw JSON、Mongo raw/cache/debug envelope 或 OpenViking protocol。
 7. BTC fresh/live report 恢复 CryptoLens 指标分析密度；缺失域真实写 data gaps，不能把未覆盖写成成功覆盖。
 8. final report evidence chain 能追到 PM L1、market L1、CRYPTO market pack audit、CryptoLens analysis evidence、data_gateway normalized refs、provider attempts、HTTP evidence、raw evidence。
 9. `/mnt/d/src/BB` 不存在或不可访问、`BB_MCP_SERVER_PATH`/`BB_MCP_CWD` 为空或无效时，目标态 CRYPTO market pack 仍能运行且不启动外部 BB MCP。
@@ -462,11 +462,11 @@ BTC live/fresh gate 必须另行执行，且不能用静态 render、exporter ou
 - 旧 BB 纯分析代码无法获得，必须改为重新实现分析引擎；这属于范围和证据来源变化。
 - 某 provider 的许可、费用、商业使用边界或 raw export policy 不明确。
 - data_gateway 无法承载某个必需 provider 域，且没有批准的缺口表达策略。
-- 需要把 legacy OpenBB atomic/admin/discovery/raw/debug/cache tools 暴露给 worker。
+- 需要把 legacy 已删除数据网关 atomic/admin/discovery/raw/debug/cache tools 暴露给 worker。
 - 需要让 worker 直接读 raw JSON、Mongo raw/cache object、debug envelope 或 OpenViking protocol 正文。
 - 需要 Python 写 worker 市场分析结论、PM rating 或最终投资裁决。
 - 需要新增或收紧 runtime guard、风格 gate、投资判断 gate 才能让报告“看起来正确”。
-- 需要恢复 `third_party/openbb` 或把 CryptoLens 代码放进外部 runtime 写 claw-trade 业务逻辑。
+- 需要恢复 `third_party/removed_data_gateway` 或把 CryptoLens 代码放进外部 runtime 写 claw-trade 业务逻辑。
 - 无法取得真实 provider payload capture，却要声称 worker 可见边界已验证。
 - live/fresh 运行未通过 fixed runtime preflight gate。
 - 同一 gate 类别经过两次 focused fix 后仍失败。

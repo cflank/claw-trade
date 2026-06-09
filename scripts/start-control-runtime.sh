@@ -124,8 +124,12 @@ CN_A_MONGODB_DATABASE="${CN_A_MONGODB_DATABASE:-claw_trade}"
 CN_A_MONGODB_CACHE_COLLECTION="${CN_A_MONGODB_CACHE_COLLECTION:-cn_a_fundamental_cache}"
 DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"
 DATA_GATEWAY_MONGODB_DATABASE="${DATA_GATEWAY_MONGODB_DATABASE:-${CN_A_MONGODB_DATABASE}}"
+DATA_GATEWAY_SEED_MONGODB_URI="${DATA_GATEWAY_SEED_MONGODB_URI:-}"
+DATA_GATEWAY_SEED_MONGODB_DATABASE="${DATA_GATEWAY_SEED_MONGODB_DATABASE:-}"
+DATA_GATEWAY_COLUMNAR_ROOT="${DATA_GATEWAY_COLUMNAR_ROOT:-}"
 export CN_A_MONGODB_URI CN_A_MONGODB_DATABASE CN_A_MONGODB_CACHE_COLLECTION
 export DATA_GATEWAY_MONGODB_URI DATA_GATEWAY_MONGODB_DATABASE
+export DATA_GATEWAY_SEED_MONGODB_URI DATA_GATEWAY_SEED_MONGODB_DATABASE DATA_GATEWAY_COLUMNAR_ROOT
 
 OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
 OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL:-${OPENVIKING_ENDPOINT}}"
@@ -163,6 +167,10 @@ export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED CLAW_TRADE_OPENVIKING_VECTORIZE C
 CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-}"
 CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-60000}"
 CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-probe-$(date -u +%Y%m%d%H%M%S)-$RANDOM}"
+if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+  OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"
+fi
+export OPENCLAW_GATEWAY_TOKEN
 CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
 CLAW_TRADE_OPENVIKING_SERVER_BIN="${CLAW_TRADE_OPENVIKING_SERVER_BIN:-}"
@@ -185,6 +193,35 @@ log_warn() {
 
 log_error() {
   printf '[ERROR] %s\n' "$*" >&2
+}
+
+guard_factory_columnar_root() {
+  local root="${DATA_GATEWAY_COLUMNAR_ROOT:-}"
+  if [[ -z "${root}" ]]; then
+    return 0
+  fi
+  case "${root}" in
+    data/crypto-history-full/*|"${ROOT_DIR}/data/crypto-history-full"/*)
+      if [[ "${CLAW_TRADE_ALLOW_FACTORY_COLUMNAR_WRITE:-0}" != "1" ]]; then
+        log_error "DATA_GATEWAY_COLUMNAR_ROOT 指向项目出厂数据目录：${root}"
+        log_error "运行时 provider 增量会写入该目录，已阻止。请留空使用 runtime 默认写入根，或仅在维护导入时显式设置 CLAW_TRADE_ALLOW_FACTORY_COLUMNAR_WRITE=1。"
+        exit 1
+      fi
+      ;;
+  esac
+}
+
+guard_factory_mongo_database() {
+  local database="${DATA_GATEWAY_MONGODB_DATABASE:-}"
+  case "${database}" in
+    claw_trade_crypto_history_*)
+      if [[ "${CLAW_TRADE_ALLOW_FACTORY_MONGO_WRITE:-0}" != "1" ]]; then
+        log_error "DATA_GATEWAY_MONGODB_DATABASE 指向加密出厂 seed 库：${database}"
+        log_error "运行时证据会写入该 Mongo 库，已阻止。请把 DATA_GATEWAY_MONGODB_DATABASE 设为运行时写库，并用 DATA_GATEWAY_SEED_MONGODB_DATABASE 只读挂载 seed 库。"
+        exit 1
+      fi
+      ;;
+  esac
 }
 
 configure_openviking_embedding_runtime_flags() {
@@ -574,6 +611,9 @@ export_runtime_env_for_child_commands() {
   export CN_A_MONGODB_CACHE_COLLECTION
   export DATA_GATEWAY_MONGODB_URI
   export DATA_GATEWAY_MONGODB_DATABASE
+  export DATA_GATEWAY_SEED_MONGODB_URI
+  export DATA_GATEWAY_SEED_MONGODB_DATABASE
+  export DATA_GATEWAY_COLUMNAR_ROOT
   if [[ "${openviking_mcp_started}" == "1" ]]; then
     export OPENVIKING_MCP_URL
   else
@@ -630,11 +670,13 @@ preauthorize_openclaw_gateway_cli_scopes() {
     --json
     --scope
     operator.admin
+    --url
+    "${OPENCLAW_GATEWAY_URL}"
   )
   if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
-    preauth_cmd+=(--url "${OPENCLAW_GATEWAY_URL}" --token "${OPENCLAW_GATEWAY_TOKEN}")
+    preauth_cmd+=(--token "${OPENCLAW_GATEWAY_TOKEN}")
   elif [[ -n "${OPENCLAW_GATEWAY_PASSWORD:-}" ]]; then
-    preauth_cmd+=(--url "${OPENCLAW_GATEWAY_URL}" --password "${OPENCLAW_GATEWAY_PASSWORD}")
+    preauth_cmd+=(--password "${OPENCLAW_GATEWAY_PASSWORD}")
   fi
 
   set +e
@@ -643,9 +685,30 @@ preauthorize_openclaw_gateway_cli_scopes() {
     "${preauth_cmd[@]}" >"${preauth_log}" 2>&1
   local status=$?
   set -e
-  if [[ "${status}" == "0" ]]; then
+  if [[ "${status}" == "0" ]] || grep -Eq '"sentinel"[[:space:]]*:' "${preauth_log}"; then
     log_info "OpenClaw CLI scope 预授权完成。"
     return 0
+  fi
+  if ! grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_log}"; then
+    log_warn "OpenClaw CLI scope 预授权首次失败，等待 gateway 稳定后重试一次。日志：${preauth_log}"
+    sleep 2
+    set +e
+    OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+    OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+      "${preauth_cmd[@]}" >"${preauth_retry_log}" 2>&1
+    status=$?
+    set -e
+    if [[ "${status}" == "0" ]] || grep -Eq '"sentinel"[[:space:]]*:' "${preauth_retry_log}"; then
+      log_info "OpenClaw CLI scope 预授权完成。"
+      return 0
+    fi
+    if grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_retry_log}"; then
+      preauth_log="${preauth_retry_log}"
+    else
+      log_error "OpenClaw CLI scope 预授权失败。日志：${preauth_retry_log}"
+      tail -n 40 "${preauth_retry_log}" >&2 || true
+      exit 1
+    fi
   fi
   if grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_log}"; then
     local request_id
@@ -759,6 +822,7 @@ prepare_openclaw_trade_agent_config() {
 
   ROOT_DIR_VALUE="${ROOT_DIR}" \
   OPENCLAW_CONFIG_PATH_VALUE="${OPENCLAW_CONFIG_PATH}" \
+  OPENCLAW_GATEWAY_TOKEN_VALUE="${OPENCLAW_GATEWAY_TOKEN:-}" \
   OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}" \
   CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER:-}" \
   CLAW_TRADE_RUNTIME_REPORT_MODEL_MODEL_VALUE="${CLAW_TRADE_RUNTIME_REPORT_MODEL_MODEL:-}" \
@@ -775,6 +839,7 @@ prepare_openclaw_trade_agent_config() {
 const fs = require("node:fs");
 const rootDir = process.env.ROOT_DIR_VALUE;
 const outputPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
+const gatewayToken = String(process.env.OPENCLAW_GATEWAY_TOKEN_VALUE || "").trim();
 const rawLlmIdleTimeoutSeconds = process.env.OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS_VALUE;
 const mongoReportProvider = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE || "").trim().toLowerCase();
 const mongoReportModel = String(process.env.CLAW_TRADE_RUNTIME_REPORT_MODEL_MODEL_VALUE || "").trim();
@@ -1158,6 +1223,7 @@ const mergedConfig = {
   gateway: {
     mode: "local",
     bind: "loopback",
+    ...(gatewayToken ? { auth: { token: gatewayToken }, remote: { token: gatewayToken } } : {}),
   },
   agents: {
     defaults: mergedDefaults,
@@ -1293,9 +1359,32 @@ fs.writeFileSync(outputPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 NODE
 }
 
+clear_stale_openviking_data_lock() {
+  local pid_file="${OPENVIKING_DATA_DIR}/.openviking.pid"
+  if [[ ! -f "${pid_file}" ]]; then
+    return 0
+  fi
+  local lock_pid
+  lock_pid="$(tr -cd '0-9' < "${pid_file}" || true)"
+  if [[ -z "${lock_pid}" ]]; then
+    log_warn "删除无效 OpenViking data lock：${pid_file}"
+    rm -f "${pid_file}"
+    return 0
+  fi
+  if kill -0 "${lock_pid}" 2>/dev/null; then
+    log_error "OpenViking data 目录仍被进程占用：pid=${lock_pid}, pid_file=${pid_file}"
+    exit 1
+  fi
+  log_warn "删除 stale OpenViking data lock：${pid_file} (pid=${lock_pid} 已不存在)"
+  rm -f "${pid_file}"
+}
+
 trap 'on_script_exit $?' EXIT
 trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
+
+guard_factory_columnar_root
+guard_factory_mongo_database
 
 mkdir -p "${RUNTIME_DIR}" "${LOG_DIR}" "${PID_DIR}"
 mkdir -p "${UV_CACHE_DIR}"
@@ -1330,6 +1419,7 @@ ensure_openclaw_control_ui_assets
 ensure_openclaw_weixin_plugin_ready
 prepare_openclaw_trade_agent_config
 prepare_openviking_runtime_config
+clear_stale_openviking_data_lock
 
 if [[ ! -x "${OPENCLAW_GATEWAY_CALL_BIN}" ]]; then
   log_error "OPENCLAW_GATEWAY_CALL_BIN 不可执行：${OPENCLAW_GATEWAY_CALL_BIN}"
@@ -1519,6 +1609,9 @@ write_runtime_env_var "CN_A_MONGODB_DATABASE" "${CN_A_MONGODB_DATABASE}"
 write_runtime_env_var "CN_A_MONGODB_CACHE_COLLECTION" "${CN_A_MONGODB_CACHE_COLLECTION}"
 write_runtime_env_var "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"
 write_runtime_env_var "DATA_GATEWAY_MONGODB_DATABASE" "${DATA_GATEWAY_MONGODB_DATABASE}"
+write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_URI" "${DATA_GATEWAY_SEED_MONGODB_URI}"
+write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_DATABASE" "${DATA_GATEWAY_SEED_MONGODB_DATABASE}"
+write_runtime_env_var "DATA_GATEWAY_COLUMNAR_ROOT" "${DATA_GATEWAY_COLUMNAR_ROOT}"
 write_runtime_env_var "CLAW_TRADE_LOCAL_MONGODB_STARTED" "${local_mongodb_started}"
 if [[ "${openviking_mcp_started}" == "1" ]]; then
   write_runtime_env_var "OPENVIKING_MCP_URL" "${OPENVIKING_MCP_URL}"

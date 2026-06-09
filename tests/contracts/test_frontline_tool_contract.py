@@ -28,7 +28,7 @@ EXPECTED_CRYPTO_FRONTLINE_VISIBLE_TOOLS = {
     "social_analyst": ("claw_get_social_pack",),
 }
 
-OPENBB_PACK_TOOL_PARAM_FIELDS: set[str] = set()
+PACK_TOOL_PARAM_FIELDS: set[str] = set()
 
 FORBIDDEN_PROVIDER_ATOMIC_TOOL_HINTS = (
     "akshare",
@@ -187,7 +187,7 @@ console.log(JSON.stringify(registrations));
     for item in registrations:
         assert item["schemaType"] == "object"
         assert item["additionalProperties"] is False
-        assert set(item["fields"]) == OPENBB_PACK_TOOL_PARAM_FIELDS
+        assert set(item["fields"]) == PACK_TOOL_PARAM_FIELDS
 
 
 def test_frontline_plugin_legacy_rollback_flag_still_registers_only_canonical_tools() -> None:

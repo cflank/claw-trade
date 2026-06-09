@@ -2,7 +2,7 @@
 
 Rule version: `bb-liquidity-derivatives-skill-v1`.
 
-Liquidation and derivatives data describe crowding, pressure, and likely liquidity magnets. They do not guarantee direction.
+Liquidation and derivatives data describe current levels, units, crowding readings, and sample limits. They do not prove direction, targets, or execution paths unless upstream evidence provides statistics or execution-mechanism proof.
 
 ## Required Inputs
 
@@ -25,14 +25,14 @@ If a domain is not ready, state the impact before using any derivative conclusio
 
 Use:
 
-- above-price liquidation clusters can be upside liquidity targets
-- below-price liquidation clusters can be downside liquidity targets
-- large clusters can explain why price may probe a zone before reversing
-- take-profit logic should usually be before the dense cluster, not exactly inside it
+- above-price and below-price liquidation clusters are recorded levels, sizes, units, and sample limits
+- cluster size alone must not be converted into a target, support/resistance, squeeze path, or reversal story
+- if upstream evidence provides statistics or execution-mechanism proof, describe that proof before discussing any trading effect
+- without that proof, use liquidation clusters only as monitored reference levels
 
 Hard rule:
 
-- If `liquidation_map` is missing or not ready, do not output liquidation-hunt targets.
+- If `liquidation_map` is missing, partial, or lacks statistical/execution-mechanism proof, do not output liquidation-hunt targets.
 
 If liquidation cluster levels conflict by more than 2%, do not output a single precise level.
 
@@ -55,7 +55,7 @@ Use:
 
 - negative funding can indicate short crowding
 - positive funding can indicate long crowding
-- extreme funding increases squeeze risk
+- extreme funding can be reported as a reading only; squeeze risk needs upstream statistical or execution-mechanism proof
 
 Limits:
 

@@ -28,6 +28,8 @@ class _Batch:
     base_asset: str | None = None
     quote_asset: str | None = None
     universe_ref: str | None = None
+    request_ids: tuple[str, ...] = ()
+    symbol_ids: tuple[str, ...] = ()
     raw_storage_mode: str = "store_full"
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
@@ -251,6 +253,64 @@ def test_ingest_pipeline_stores_partial_rows_when_provider_date_range_is_short()
     assert ingest.remote_success is False
     assert ingest.dataset_refs
     assert any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+
+
+def test_crypto_provider_event_period_comes_from_published_at_not_fetch_day() -> None:
+    from claw_trade.data_gateway.providers.plugins.crypto import _crypto_base_row
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="crypto_project_official_news",
+        endpoint_id="github_releases",
+        market="CRYPTO",
+        data_type="company_news",
+        granularity="event",
+        fields_union=("title", "published_at", "source", "summary", "url"),
+        exchange="GITHUB",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="SOL",
+        quote_asset="USDT",
+        date_range_start=date(2026, 2, 1),
+        date_range_end=date(2026, 2, 28),
+    )
+    row = _crypto_base_row(
+        dataset="company_news",
+        symbol="SOLUSDT",
+        base_asset="SOL",
+        quote_asset="USDT",
+        provider_id="crypto_project_official_news",
+        endpoint_id="github_releases",
+        source_role="official",
+        granularity="event",
+    )
+    row.update(
+        {
+            "title": "Release",
+            "published_at": "2026-02-04T08:00:00Z",
+            "source": "GitHub:solana-labs/solana",
+            "summary": "release notes",
+            "url": "https://example.com/release",
+        }
+    )
+    assert "period_start" not in row
+
+    ingest = pipeline.ingest(FetchResult.from_success(batch, payload={"rows": [row]}), batch)
+
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+    stored = repo.get_normalized_document_for_maintenance(ingest.dataset_refs[0])
+    assert stored is not None
+    assert stored["period_start"] == date(2026, 2, 4)
+    assert stored["period_end"] == date(2026, 2, 4)
 
 
 def test_normalized_store_keeps_same_period_different_field_sets_separate() -> None:
@@ -560,6 +620,33 @@ def test_ingest_pipeline_rate_limited_gate_does_not_crash_and_is_non_remote() ->
     assert ingest.attempt_refs
     assert ingest.gaps
     assert ingest.gaps[0].reason == "rate_limited"
+
+
+def test_ingest_pipeline_rate_limited_gate_keeps_batch_context() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="realtime",
+        request_ids=("run:test:report-prefetch:market:13:crypto_derivative_metric",),
+        symbol_ids=("BNBUSDT",),
+    )
+    gate = GateDecision(kind="cooldown_skipped", evidence_refs=("rate_limit:ratelimit:coinglass",))
+
+    ingest = pipeline.record_gate_result(batch, gate)
+
+    assert ingest.gaps
+    gap = ingest.gaps[0]
+    assert gap.reason == "cooldown_skipped"
+    assert gap.market == "CRYPTO"
+    assert gap.symbol_id == "BNBUSDT"
+    assert gap.request_id == "run:test:report-prefetch:market:13:crypto_derivative_metric"
+    assert gap.data_type == "crypto_derivative_metric"
 
 
 def test_ingest_pipeline_evidence_write_failed_is_fail_closed() -> None:

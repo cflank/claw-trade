@@ -11,16 +11,6 @@ dependencies = [
     "matplotlib>=3.10.8",
     "mootdx>=0.11.7,<1",
     "mplfinance>=0.12.10b0",
-    "openbb-core",
-    "openbb-crypto",
-    "openbb-deribit",
-    "openbb-economy",
-    "openbb-equity",
-    "openbb-fmp",
-    "openbb-fred",
-    "openbb-news",
-    "openbb-sec",
-    "openbb-yfinance",
     "openviking==0.3.5",
     "pandas>=2.2.3",
     "pandas-ta>=0.4.71b0",
@@ -36,18 +26,6 @@ dependencies = [
     "yfinance>=0.2.54",
     "duckdb>=1.2,<2",
 ]
-
-[tool.uv.sources]
-openbb-core = { path = "third_party/openbb/openbb_platform/core", editable = true }
-openbb-crypto = { path = "third_party/openbb/openbb_platform/extensions/crypto", editable = true }
-openbb-deribit = { path = "third_party/openbb/openbb_platform/providers/deribit", editable = true }
-openbb-economy = { path = "third_party/openbb/openbb_platform/extensions/economy", editable = true }
-openbb-equity = { path = "third_party/openbb/openbb_platform/extensions/equity", editable = true }
-openbb-fmp = { path = "third_party/openbb/openbb_platform/providers/fmp", editable = true }
-openbb-fred = { path = "third_party/openbb/openbb_platform/providers/fred", editable = true }
-openbb-news = { path = "third_party/openbb/openbb_platform/extensions/news", editable = true }
-openbb-sec = { path = "third_party/openbb/openbb_platform/providers/sec", editable = true }
-openbb-yfinance = { path = "third_party/openbb/openbb_platform/providers/yfinance", editable = true }
 
 [build-system]
 requires = ["hatchling"]

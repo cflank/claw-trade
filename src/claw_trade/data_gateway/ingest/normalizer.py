@@ -321,6 +321,9 @@ def _date_range_gap(rows: list[dict[str, Any]], batch: Any, raw_refs: tuple[str,
     request_end = _to_date(getattr(batch, "date_range_end", None))
     if request_start is None and request_end is None:
         return None
+    batch_granularity = _normalize_granularity(getattr(batch, "granularity", None))
+    if batch_granularity in {"event", "realtime"}:
+        return None
 
     starts = [_to_date(row.get("period_start")) for row in rows]
     ends = [_to_date(row.get("period_end")) for row in rows]

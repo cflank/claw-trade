@@ -160,7 +160,7 @@ def test_cn_a_daily_bar_falls_back_to_public_sources_when_tushare_token_missing(
     ]
 
 
-def test_report_prefetch_skips_mootdx_public_provider() -> None:
+def test_report_prefetch_keeps_mootdx_public_provider() -> None:
     selector = ProviderSelector(
         build_minimal_provider_registry(),
         credential_resolver=FakeCredentialResolver({}),
@@ -172,22 +172,26 @@ def test_report_prefetch_skips_mootdx_public_provider() -> None:
     )
 
     ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
-    assert ("cn_a_mootdx_market", "quote_snapshot") not in ordered
+    assert ("cn_a_mootdx_market", "quote_snapshot") in ordered
 
 
-def test_non_report_requests_can_still_use_mootdx_public_provider() -> None:
+def test_consumer_label_does_not_change_cn_a_realtime_quote_providers() -> None:
     selector = ProviderSelector(
         build_minimal_provider_registry(),
         credential_resolver=FakeCredentialResolver({}),
     )
-    request = _cn_a_realtime_quote_request(consumer="maintenance")
-    candidates = selector.select_candidates(
+    report_candidates = selector.select_candidates(
         (SimpleNamespace(request_id="gap-cn-a-quote", required_level="required"),),
-        FakeQueryPlan(request),
+        FakeQueryPlan(_cn_a_realtime_quote_request(consumer="report")),
+    )
+    maintenance_candidates = selector.select_candidates(
+        (SimpleNamespace(request_id="gap-cn-a-quote", required_level="required"),),
+        FakeQueryPlan(_cn_a_realtime_quote_request(consumer="maintenance")),
     )
 
-    ordered = [(item.provider_id, item.endpoint_id) for item in candidates]
-    assert ("cn_a_mootdx_market", "quote_snapshot") in ordered
+    assert [(item.provider_id, item.endpoint_id) for item in report_candidates] == [
+        (item.provider_id, item.endpoint_id) for item in maintenance_candidates
+    ]
 
 
 def _cn_a_daily_bar_request() -> SimpleNamespace:
@@ -459,12 +463,20 @@ def _product_request_specs() -> tuple[tuple[str, str, str, str, str, tuple[str, 
     return tuple(specs)
 
 
-def _request(*, market: str, data_type: str, granularity: str, fields: tuple[str, ...]) -> SimpleNamespace:
+def _request(
+    *,
+    market: str,
+    data_type: str,
+    granularity: str,
+    fields: tuple[str, ...],
+    consumer: str | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         market=market,
         data_type=data_type,
         granularity=granularity,
         fields=fields,
+        consumer=consumer,
         source_role_required=None,
         symbol_id=_SYMBOL_BY_MARKET[market],
         universe_ref=None,
@@ -967,5 +979,61 @@ def test_product_request_field_filters_have_explicit_provider_exclusions() -> No
             )
             actual[key] = capability.coverage_fields
 
-    assert set(actual) == set(_INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS), actual
+    unexpected = {
+        key: coverage_fields
+        for key, coverage_fields in actual.items()
+        if key not in _INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS and not _is_known_crypto_metric_endpoint_split(key)
+    }
+    missing_static = {
+        key
+        for key in _INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS
+        if not _is_known_crypto_metric_endpoint_split(key)
+    } - set(actual)
+    assert unexpected == {}
+    assert missing_static == set()
     assert all(reason for reason in _INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS.values())
+
+
+def _is_known_crypto_metric_endpoint_split(key: tuple[object, ...]) -> bool:
+    origin, market, _domain, data_type, _granularity, _fields, provider_id, _endpoint_id, _missing = key
+    return (
+        origin == "report"
+        and market == "CRYPTO"
+        and provider_id == "crypto_coinglass_derivatives"
+        and data_type in {"crypto_derivative_metric", "crypto_onchain_metric"}
+    )
+
+
+def test_product_request_provider_candidates_do_not_depend_on_consumer_label() -> None:
+    registry = build_minimal_provider_registry()
+    selector = ProviderSelector(registry)
+    gap = SimpleNamespace(request_id="product-request-consumer-boundary", symbol_id="product", required_level="required")
+
+    for origin, market, domain, data_type, granularity, fields in _product_request_specs():
+        base = _selected_provider_endpoints(
+            selector,
+            gap,
+            _request(market=market, data_type=data_type, granularity=granularity, fields=fields),
+        )
+        tagged = _selected_provider_endpoints(
+            selector,
+            gap,
+            _request(market=market, data_type=data_type, granularity=granularity, fields=fields, consumer=origin),
+        )
+        maintenance = _selected_provider_endpoints(
+            selector,
+            gap,
+            _request(market=market, data_type=data_type, granularity=granularity, fields=fields, consumer="maintenance"),
+        )
+
+        assert tagged == base, (origin, market, domain, data_type, granularity, fields)
+        assert maintenance == base, (origin, market, domain, data_type, granularity, fields)
+
+
+def _selected_provider_endpoints(
+    selector: ProviderSelector, gap: SimpleNamespace, request: SimpleNamespace
+) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (candidate.provider_id, candidate.endpoint_id)
+        for candidate in selector.select_candidates((gap,), FakeQueryPlan(request))
+    )

@@ -311,11 +311,11 @@ def test_run_dir_blocks_traversal(tmp_path: Path) -> None:
 
 def test_run_request_roundtrip_preserves_data_gateway_metadata(tmp_path: Path) -> None:
     store = WorkflowStore(tmp_path)
-    state = store.create_run(replace(_request(), data_gateway="openbb"))
+    state = store.create_run(replace(_request(), data_gateway="data_gateway"))
 
     loaded = store.load_state(state.run_id)
 
-    assert loaded.request.data_gateway == "openbb"
+    assert loaded.request.data_gateway == "data_gateway"
 
 
 def _request() -> RunRequest:

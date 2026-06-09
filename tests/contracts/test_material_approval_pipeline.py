@@ -93,6 +93,28 @@ def test_approve_worker_material_accepts_cn_a_portfolio_manager_natural_language
     assert result.material.worker_id == "portfolio_manager"
 
 
+def test_approve_worker_material_does_not_reject_crypto_natural_language_by_lexical_terms(
+    tmp_path: Path,
+) -> None:
+    call = _make_call(
+        tmp_path,
+        worker_id="market_analyst",
+        stage=Stage.FRONTLINE,
+        profile="CRYPTO",
+        market="CRYPTO",
+    )
+    l1_text = "# SOL 市场报告\n\nRSI 历史上在类似场景往往反弹。"
+    evidence = _make_evidence(call, raw_output=l1_text)
+    l2_index = _make_l2_index(call, evidence_id="l2-1")
+    client, receipt = _seed_openviking_client(call=call, evidence=evidence, l1_text=l1_text, l2_index=l2_index)
+    _write_material_claims_evidence(call=call, receipt=receipt, claim_evidence_id="l2-1")
+
+    result = approve_worker_material(call=call, evidence=evidence, openviking=client)
+
+    assert result.ok
+    assert result.material is not None
+
+
 def test_runner_helper_writes_hard_gate_before_manifest_and_skips_failed_approval(tmp_path: Path) -> None:
     call = _make_call(tmp_path, worker_id="market_analyst", stage=Stage.FRONTLINE)
     l1_text = _l1_report()
@@ -137,6 +159,7 @@ def _make_call(
     stage: Stage,
     call_id: str = "call-1",
     profile: str = "US",
+    market: str = "US",
 ) -> WorkerCall:
     target = make_material_target("run-1", stage, worker_id, call_id)
     evidence_dir = tmp_path / "runs" / "run-1" / "calls" / call_id / "evidence"
@@ -149,7 +172,7 @@ def _make_call(
         profile=profile,
         ticker="AAPL",
         company_name="Apple Inc.",
-        market="US",
+        market=market,
         currency="USD",
         currency_symbol="$",
         current_date="2026-05-04",

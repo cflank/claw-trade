@@ -85,8 +85,8 @@ Limits:
 Meaning:
 
 - fast displacement can leave an inefficient price area
-- open FVG can become a retest, magnet, or target area
-- nearest above/below FVG is a candidate zone, not a guaranteed destination
+- open FVG is a recorded price zone; in claw-trade CRYPTO reports it is not a magnet, target, or destination unless upstream evidence provides statistics or execution-mechanism proof
+- nearest above/below FVG is a candidate zone only for location tracking, not a support, resistance, target, or trade reason by itself
 
 Required output:
 

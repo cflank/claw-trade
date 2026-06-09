@@ -365,6 +365,27 @@ def _read_daily_history(path: Path) -> tuple[dict[str, float | str], ...]:
     return tuple(sorted(rows, key=lambda item: str(item["date"])))
 
 
+def load_a_share_identity_facts(
+    local_roots: Iterable[Path],
+    *,
+    symbols: tuple[str, ...] = (),
+    trade_date: str | None = None,
+    source_order: tuple[str, ...] = (),
+    fetch_timeout_seconds: float = 12.0,
+    tushare_token: str | None = None,
+    tushare_endpoint_url: str | None = None,
+) -> tuple[dict[str, _IdentityFacts], _IdentityLoadSummary]:
+    return _identity_facts_by_symbol(
+        tuple(local_roots),
+        symbols=symbols,
+        trade_date=trade_date,
+        source_order=source_order,
+        fetch_timeout_seconds=fetch_timeout_seconds,
+        tushare_token=tushare_token,
+        tushare_endpoint_url=tushare_endpoint_url,
+    )
+
+
 def _identity_facts_by_symbol(
     local_roots: tuple[Path, ...],
     *,

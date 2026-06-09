@@ -161,6 +161,20 @@ class ProviderRegistry:
         ordered = sorted(caps, key=lambda cap: (cap.priority_rank, cap.provider_id, cap.endpoint_id))
         return tuple(ordered)
 
+    def list_all_capabilities(self) -> tuple[ProviderCapabilityView, ...]:
+        return tuple(
+            sorted(
+                self._capabilities,
+                key=lambda cap: (
+                    cap.market,
+                    cap.provider_id,
+                    cap.data_type,
+                    cap.endpoint_id,
+                    cap.priority_rank,
+                ),
+            )
+        )
+
     def read_capabilities(self, provider_ids: Iterable[str]) -> CapabilitySnapshot:
         provider_id_set = set(provider_ids)
         caps = [cap for cap in self._capabilities if cap.provider_id in provider_id_set]

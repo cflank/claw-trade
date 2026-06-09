@@ -55,6 +55,8 @@ class RateLimiter:
             now = self._now()
             active_cooldown = self._repository.get_active_rate_limit_cooldown(rate_limit_key=key, now=now)
             if active_cooldown is not None:
+                if self._wait_for_cooldown(now=now, cooldown_until=active_cooldown, policy=policy):
+                    continue
                 return RateLimitDecision.blocked("cooldown_skipped", retry_after=active_cooldown)
 
             window_start = self._window_start(now, policy)
@@ -68,6 +70,8 @@ class RateLimiter:
             )
             cooldown_until = state.get("cooldown_until")
             if isinstance(cooldown_until, datetime) and now < cooldown_until:
+                if self._wait_for_cooldown(now=now, cooldown_until=cooldown_until, policy=policy):
+                    continue
                 return RateLimitDecision.blocked("cooldown_skipped", retry_after=cooldown_until)
 
             if policy.max_requests is None:
@@ -122,6 +126,25 @@ class RateLimiter:
         elapsed = max((now - anchor).total_seconds(), 0)
         windows_elapsed = int(elapsed // policy.window_seconds)
         return anchor + timedelta(seconds=windows_elapsed * policy.window_seconds)
+
+    def _wait_for_cooldown(self, *, now: datetime, cooldown_until: datetime, policy: RateLimitPolicy) -> bool:
+        if cooldown_until.tzinfo is None:
+            cooldown_until = cooldown_until.replace(tzinfo=UTC)
+        if cooldown_until.tzinfo != UTC:
+            cooldown_until = cooldown_until.astimezone(UTC)
+        if cooldown_until <= now:
+            return True
+
+        max_wait_seconds = policy.wait_timeout_seconds if policy.wait_timeout_seconds > 0 else policy.window_seconds
+        if max_wait_seconds <= 0:
+            return False
+        if cooldown_until > now + timedelta(seconds=max_wait_seconds):
+            return False
+
+        wait_seconds = max((cooldown_until - self._now()).total_seconds(), 0)
+        if wait_seconds > 0:
+            self._sleep(wait_seconds)
+        return True
 
     @staticmethod
     def _floor_to_window(now: datetime, window_seconds: int) -> datetime:

@@ -55,7 +55,7 @@ It is invalid if price accepts beyond the swept level.
 
 ## FVG And OB
 
-- FVG is an inefficient move that may become a retest or magnet area.
+- FVG is an inefficient move. In claw-trade CRYPTO reports, record its location and sample limits; do not call it a magnet or target unless upstream evidence provides statistics or execution-mechanism proof.
 - OB is the last opposing candle area before displacement.
 - FVG/OB are support/resistance candidates only; neither is a complete trade reason alone.
 

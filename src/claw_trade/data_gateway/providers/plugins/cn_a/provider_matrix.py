@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
+import os
+import queue as queue_module
 import re
 import socket
 from datetime import UTC, date, datetime
@@ -48,8 +51,10 @@ _BAIDU_FINANCE_ENDPOINT = "https://finance.pae.baidu.com"
 _GOOGLE_NEWS_ENDPOINT = "https://news.google.com"
 _BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36"
 _COMMON_HEADERS = {"accept": "application/json", "user-agent": _BROWSER_USER_AGENT}
+_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS = 6.0
 _BAOSTOCK_SOCKET_TIMEOUT_SECONDS = 8.0
 _MOOTDX_SOCKET_TIMEOUT_SECONDS = 5.0
+_MOOTDX_FETCH_TIMEOUT_SECONDS = 6.0
 
 
 class TushareFundamentalPlugin:
@@ -66,7 +71,20 @@ class TushareFundamentalPlugin:
                     data_type="financial_statement",
                     source_role="paid_data",
                     granularity=("quarterly",),
-                    fields=("period", "revenue", "net_income", "assets", "liabilities", "cash_flow"),
+                    fields=(
+                        "period",
+                        "revenue",
+                        "net_income",
+                        "assets",
+                        "liabilities",
+                        "cash_flow",
+                        "amount_unit",
+                        "revenue_basis",
+                        "net_income_basis",
+                        "cash_flow_basis",
+                        "assets_basis",
+                        "liabilities_basis",
+                    ),
                     priority_rank=10,
                 ),
                 _endpoint(
@@ -82,7 +100,7 @@ class TushareFundamentalPlugin:
                     data_type="valuation_metric",
                     source_role="paid_data",
                     granularity=("daily",),
-                    fields=("pe", "pb", "ps", "market_cap"),
+                    fields=("pe", "pb", "ps", "market_cap", "market_cap_unit"),
                     priority_rank=10,
                 ),
                 _endpoint(
@@ -90,7 +108,7 @@ class TushareFundamentalPlugin:
                     data_type="capital_flow",
                     source_role="paid_data",
                     granularity=("daily",),
-                    fields=("date", "main_net", "small_net", "mid_net", "large_net", "super_net", "symbol_id"),
+                    fields=("date", "main_net", "small_net", "mid_net", "large_net", "super_net", "amount_unit", "symbol_id"),
                     priority_rank=8,
                 ),
                 _endpoint(
@@ -98,7 +116,7 @@ class TushareFundamentalPlugin:
                     data_type="capital_flow",
                     source_role="paid_data",
                     granularity=("daily",),
-                    fields=("date", "main_net", "small_net", "mid_net", "large_net", "symbol_id"),
+                    fields=("date", "main_net", "small_net", "mid_net", "large_net", "amount_unit", "symbol_id"),
                     priority_rank=9,
                 ),
                 _endpoint(
@@ -106,7 +124,7 @@ class TushareFundamentalPlugin:
                     data_type="sector_snapshot",
                     source_role="paid_data",
                     granularity=("event",),
-                    fields=("sector_code", "sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "timestamp"),
+                    fields=("sector_code", "sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "amount_unit", "timestamp"),
                     priority_rank=8,
                 ),
                 _endpoint(
@@ -114,7 +132,7 @@ class TushareFundamentalPlugin:
                     data_type="sector_snapshot",
                     source_role="paid_data",
                     granularity=("event",),
-                    fields=("sector_code", "sector_name", "main_net", "timestamp"),
+                    fields=("sector_code", "sector_name", "main_net", "amount_unit", "timestamp"),
                     priority_rank=9,
                 ),
                 _endpoint(
@@ -122,7 +140,7 @@ class TushareFundamentalPlugin:
                     data_type="sector_snapshot",
                     source_role="paid_data",
                     granularity=("event",),
-                    fields=("sector_code", "sector_name", "main_net", "timestamp"),
+                    fields=("sector_code", "sector_name", "main_net", "amount_unit", "timestamp"),
                     priority_rank=10,
                 ),
                 _endpoint(
@@ -378,6 +396,7 @@ class TushareFundamentalPlugin:
             _set_decimal(row, "pb", item.get("pb"))
             _set_decimal(row, "ps", item.get("ps"))
             _set_decimal(row, "market_cap", item.get("total_mv"))
+            row["market_cap_unit"] = "CNY_10K"
             rows.append(row)
         if not rows:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
@@ -634,7 +653,7 @@ class AkShareSocialNewsPlugin:
                     data_type="daily_bar",
                     source_role="built_in_public",
                     granularity=("daily",),
-                    fields=("date", "open", "high", "low", "close", "volume", "amount", "adjustment"),
+                    fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit", "adjustment"),
                     priority_rank=20,
                 ),
                 _endpoint(
@@ -642,18 +661,18 @@ class AkShareSocialNewsPlugin:
                     data_type="quote_snapshot",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
+                    fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=18,
                     batch_by="symbol",
                     max_symbols_per_call=100,
-                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
+                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                 ),
                 _endpoint(
                     endpoint_id="stock_individual_info_em",
                     data_type="valuation_metric",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("market_cap", "price", "symbol_id"),
+                    fields=("market_cap", "market_cap_unit", "price", "symbol_id"),
                     priority_rank=24,
                 ),
                 _endpoint(
@@ -661,7 +680,7 @@ class AkShareSocialNewsPlugin:
                     data_type="capital_flow",
                     source_role="built_in_public",
                     granularity=("daily",),
-                    fields=("date", "main_net", "super_net", "large_net", "mid_net", "small_net", "symbol_id"),
+                    fields=("date", "main_net", "super_net", "large_net", "mid_net", "small_net", "amount_unit", "symbol_id"),
                     priority_rank=11,
                     http_visibility="sdk_internal_unknown",
                 ),
@@ -670,7 +689,7 @@ class AkShareSocialNewsPlugin:
                     data_type="sector_snapshot",
                     source_role="built_in_public",
                     granularity=("event",),
-                    fields=("sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "timestamp"),
+                    fields=("sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "amount_unit", "timestamp"),
                     priority_rank=11,
                     http_visibility="sdk_internal_unknown",
                 ),
@@ -1220,7 +1239,7 @@ class EastMoneyCNMarketDataPlugin:
                     data_type="capital_flow",
                     source_role="built_in_public",
                     granularity=("daily",),
-                    fields=("date", "main_net", "small_net", "mid_net", "large_net", "super_net", "symbol_id"),
+                    fields=("date", "main_net", "small_net", "mid_net", "large_net", "super_net", "amount_unit", "symbol_id"),
                     priority_rank=12,
                 ),
                 _endpoint(
@@ -1228,7 +1247,7 @@ class EastMoneyCNMarketDataPlugin:
                     data_type="sector_snapshot",
                     source_role="built_in_public",
                     granularity=("event",),
-                    fields=("sector_code", "sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "timestamp"),
+                    fields=("sector_code", "sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "amount_unit", "timestamp"),
                     priority_rank=12,
                 ),
                 _endpoint(
@@ -1268,18 +1287,18 @@ class EastMoneyCNMarketDataPlugin:
                     data_type="quote_snapshot",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
+                    fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=12,
                     batch_by="symbol",
                     max_symbols_per_call=100,
-                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
+                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                 ),
                 _endpoint(
                     endpoint_id="daily_bar",
                     data_type="daily_bar",
                     source_role="built_in_public",
                     granularity=("daily",),
-                    fields=("date", "open", "high", "low", "close", "volume", "amount", "adjustment"),
+                    fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit", "adjustment"),
                     priority_rank=30,
                 ),
                 _endpoint(
@@ -1287,7 +1306,7 @@ class EastMoneyCNMarketDataPlugin:
                     data_type="valuation_metric",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("market_cap", "price", "symbol_id"),
+                    fields=("market_cap", "market_cap_unit", "price", "symbol_id"),
                     priority_rank=24,
                 ),
                 _endpoint(
@@ -1358,6 +1377,7 @@ class EastMoneyCNMarketDataPlugin:
                 },
                 headers=_COMMON_HEADERS,
                 provider_config_version=getattr(task, "provider_config_version", None),
+                timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
             )
         )
         error = _http_error(capture)
@@ -1409,6 +1429,7 @@ class EastMoneyCNMarketDataPlugin:
                 },
                 headers=_COMMON_HEADERS,
                 provider_config_version=getattr(task, "provider_config_version", None),
+                timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
             )
         )
         error = _http_error(capture)
@@ -1426,6 +1447,7 @@ class EastMoneyCNMarketDataPlugin:
         _set_decimal(row, "price", _pick(data, "f43"))
         _set_decimal(row, "market_cap", _pick(data, "f116"))
         _set_decimal(row, "float_market_cap", _pick(data, "f117"))
+        row["market_cap_unit"] = "CNY"
         _set_decimal(row, "total_shares", _pick(data, "f84"))
         _set_decimal(row, "float_shares", _pick(data, "f85"))
         row["industry"] = _text(_pick(data, "f127"))
@@ -1443,6 +1465,7 @@ class EastMoneyCNMarketDataPlugin:
                 query={"client": "web", "biz": "web_724", "fastColumn": "102", "sortEnd": "", "pageSize": 50},
                 headers={**_COMMON_HEADERS, "referer": "https://kuaixun.eastmoney.com/"},
                 provider_config_version=getattr(task, "provider_config_version", None),
+                timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
             )
         )
         error = _http_error(capture)
@@ -1497,6 +1520,7 @@ class EastMoneyCNMarketDataPlugin:
                 },
                 headers=_COMMON_HEADERS,
                 provider_config_version=getattr(task, "provider_config_version", None),
+                timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
             )
         )
         error = _http_error(capture)
@@ -1681,6 +1705,7 @@ class EastMoneyCNMarketDataPlugin:
                     },
                     headers=_COMMON_HEADERS,
                     provider_config_version=getattr(task, "provider_config_version", None),
+                    timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
                 )
             )
             observations.append(capture.observation)
@@ -1702,6 +1727,7 @@ class EastMoneyCNMarketDataPlugin:
                     "change": _decimal_or_none(_pick(item, "f169")),
                     "volume": _decimal_or_none(_pick(item, "f47")),
                     "amount": _decimal_or_none(_pick(item, "f48")),
+                    "amount_unit": "CNY",
                     "high": _decimal_or_none(_pick(item, "f44")),
                     "low": _decimal_or_none(_pick(item, "f45")),
                     "open": _decimal_or_none(_pick(item, "f46")),
@@ -1762,6 +1788,7 @@ class EastMoneyCNMarketDataPlugin:
             _set_decimal(row, "low", _pos(values, 4))
             _set_decimal(row, "volume", _pos(values, 5))
             _set_decimal(row, "amount", _pos(values, 6))
+            row["amount_unit"] = "CNY"
             row["adjustment"] = "qfq"
             rows.append(row)
         if not rows:
@@ -1783,7 +1810,7 @@ class BaostockCNProviderPlugin:
                     data_type="daily_bar",
                     source_role="built_in_public",
                     granularity=("daily",),
-                    fields=("date", "open", "high", "low", "close", "volume", "amount", "adjustment"),
+                    fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit", "adjustment"),
                     priority_rank=25,
                     http_visibility="no_http",
                 ),
@@ -1828,7 +1855,20 @@ class BaostockCNProviderPlugin:
                     data_type="financial_statement",
                     source_role="built_in_public",
                     granularity=("quarterly",),
-                    fields=("period", "revenue", "net_income", "assets", "liabilities", "cash_flow"),
+                    fields=(
+                        "period",
+                        "revenue",
+                        "net_income",
+                        "assets",
+                        "liabilities",
+                        "cash_flow",
+                        "amount_unit",
+                        "revenue_basis",
+                        "net_income_basis",
+                        "cash_flow_basis",
+                        "assets_basis",
+                        "liabilities_basis",
+                    ),
                     priority_rank=30,
                     http_visibility="no_http",
                 ),
@@ -1955,6 +1995,8 @@ class BaostockCNProviderPlugin:
             _set_decimal(row, "close", item.get("close"))
             _set_decimal(row, "volume", item.get("volume"))
             _set_decimal(row, "amount", item.get("amount"))
+            if dataset == "daily_bar":
+                row["amount_unit"] = "CNY"
             rows.append(row)
         if not rows:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
@@ -2167,12 +2209,12 @@ class MootdxCNProviderPlugin:
                     data_type="quote_snapshot",
                     source_role="built_in_public",
                     granularity=("realtime",),
-                    fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
+                    fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=15,
                     http_visibility="no_http",
                     batch_by="symbol",
                     max_symbols_per_call=80,
-                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "timestamp", "symbol_id", "name", "company_name"),
+                    mergeable_fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                 ),
                 _endpoint(
                     endpoint_id="order_book_snapshot",
@@ -2200,7 +2242,7 @@ class MootdxCNProviderPlugin:
                     data_type="daily_bar",
                     source_role="built_in_public",
                     granularity=("daily",),
-                    fields=("date", "open", "high", "low", "close", "volume", "amount", "adjustment"),
+                    fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit", "adjustment"),
                     priority_rank=32,
                     http_visibility="no_http",
                 ),
@@ -2237,6 +2279,12 @@ class MootdxCNProviderPlugin:
 
     def fetch(self, task: Any, ctx: Any) -> FetchResult:
         del ctx
+        timeout_seconds = _mootdx_fetch_timeout_seconds()
+        if timeout_seconds > 0 and "fork" in mp.get_all_start_methods():
+            return _fetch_mootdx_with_timeout(task, timeout_seconds=timeout_seconds)
+        return self._fetch_direct(task)
+
+    def _fetch_direct(self, task: Any) -> FetchResult:
         symbols = tuple(str(symbol).strip().upper() for symbol in getattr(task, "symbol_ids", ()) or () if str(symbol).strip())
         if not symbols:
             return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
@@ -2298,6 +2346,7 @@ class MootdxCNProviderPlugin:
                         "change_pct": _decimal_or_none(_pick(item, "change_percent", "涨跌幅")),
                         "volume": _decimal_or_none(_pick(item, "vol", "volume")),
                         "amount": _decimal_or_none(_pick(item, "amount")),
+                        "amount_unit": "CNY",
                         "symbol_id": symbol,
                         "name": _text(_pick(item, "name", "stock_name", "security_name", "名称")),
                         "company_name": _text(_pick(item, "name", "stock_name", "security_name", "名称")),
@@ -2351,6 +2400,7 @@ class MootdxCNProviderPlugin:
             _set_decimal(row, "close", item.get("close"))
             _set_decimal(row, "volume", _pick(item, "vol", "volume"))
             _set_decimal(row, "amount", item.get("amount"))
+            row["amount_unit"] = "CNY"
             rows.append(row)
         if not rows:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
@@ -2404,6 +2454,55 @@ class MootdxCNProviderPlugin:
         if not rows:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows))
+
+
+def _fetch_mootdx_with_timeout(task: Any, *, timeout_seconds: float) -> FetchResult:
+    ctx = mp.get_context("fork")
+    result_queue: Any = ctx.Queue(maxsize=1)
+    process = ctx.Process(target=_mootdx_fetch_worker, args=(task, result_queue))
+    process.start()
+    process.join(timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join(2)
+        if process.is_alive() and hasattr(process, "kill"):
+            process.kill()
+            process.join(2)
+        return FetchResult.from_error(
+            task,
+            status="error",
+            error=TimeoutError(f"mootdx_fetch_timeout:{timeout_seconds:g}s"),
+        )
+    try:
+        payload = result_queue.get_nowait()
+    except queue_module.Empty:
+        return FetchResult.from_error(
+            task,
+            status="error",
+            error=RuntimeError(f"mootdx_fetch_worker_exited_without_payload:{process.exitcode}"),
+        )
+    if isinstance(payload, Mapping) and payload.get("ok") is True:
+        return FetchResult.model_validate(payload.get("result"))
+    reason = str(payload.get("reason") if isinstance(payload, Mapping) else payload)
+    return FetchResult.from_error(task, status="error", error=RuntimeError(reason))
+
+
+def _mootdx_fetch_worker(task: Any, result_queue: Any) -> None:
+    try:
+        result = MootdxCNProviderPlugin()._fetch_direct(task)
+        result_queue.put({"ok": True, "result": result.model_dump(mode="json")})
+    except Exception as exc:
+        result_queue.put({"ok": False, "reason": str(exc)})
+
+
+def _mootdx_fetch_timeout_seconds() -> float:
+    raw = os.environ.get("CLAW_TRADE_MOOTDX_FETCH_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return _MOOTDX_FETCH_TIMEOUT_SECONDS
+    try:
+        return float(raw)
+    except ValueError:
+        return _MOOTDX_FETCH_TIMEOUT_SECONDS
 
 
 class CNInfoEventsPlugin:
@@ -2684,7 +2783,7 @@ def _tushare_irm_api(symbol: str) -> str:
 
 def _base_row(task: Any, *, symbol: str, dataset: str, period: str) -> dict[str, Any]:
     parsed = _period_date(period)
-    return {
+    row = {
         "dataset": dataset,
         "market": "CN_A",
         "symbol_id": symbol,
@@ -2701,6 +2800,18 @@ def _base_row(task: Any, *, symbol: str, dataset: str, period: str) -> dict[str,
         "schema_id": f"{dataset}.v1",
         "quality_flags": (),
     }
+    if dataset == "financial_statement":
+        row.update(
+            {
+                "amount_unit": "CNY",
+                "revenue_basis": "period_cumulative",
+                "net_income_basis": "period_cumulative",
+                "cash_flow_basis": "period_cumulative",
+                "assets_basis": "period_end_point_in_time",
+                "liabilities_basis": "period_end_point_in_time",
+            }
+        )
+    return row
 
 
 def _base_event_row(task: Any, *, symbol: str, dataset: str, period: date | None) -> dict[str, Any]:
@@ -3052,7 +3163,8 @@ def _google_query(task: Any) -> str:
     code = _stock_code(symbol)
     if endpoint == "macro_news":
         return "中国 宏观 政策 金融 市场"
-    return " ".join(part for part in (symbol, code, "公司 新闻") if part)
+    company_name = _cn_a_company_name_hint(symbol)
+    return " ".join(part for part in (company_name, symbol, code, "公司 新闻") if part)
 
 
 def _google_news_rows(task: Any, *, xml_text: str) -> list[dict[str, Any]]:
@@ -3067,6 +3179,9 @@ def _google_news_rows(task: Any, *, xml_text: str) -> list[dict[str, Any]]:
         title = _xml_text(item, "title")
         link = _xml_text(item, "link")
         published_at = _parse_datetime(_xml_text(item, "pubDate"))
+        summary = _xml_text(item, "description")
+        if endpoint == "company_news" and _is_non_target_company_news(title=title, summary=summary, symbol=_first_symbol(task) or ""):
+            continue
         row = {
             "dataset": dataset,
             "market": "CN_A",
@@ -3081,7 +3196,7 @@ def _google_news_rows(task: Any, *, xml_text: str) -> list[dict[str, Any]]:
             "title": title,
             "published_at": published_at,
             "source": "google_news_rss",
-            "summary": _xml_text(item, "description"),
+            "summary": summary,
             "url": link,
             "provider_lineage": {"provider_id": getattr(task, "provider_id", None), "endpoint_id": endpoint},
             "source_roles": ("discovery",),
@@ -3092,6 +3207,28 @@ def _google_news_rows(task: Any, *, xml_text: str) -> list[dict[str, Any]]:
             row["region"] = "CN"
         rows.append(row)
     return rows
+
+
+def _cn_a_company_name_hint(symbol: str) -> str:
+    code = _stock_code(symbol)
+    return {
+        "000001": "平安银行",
+        "000002": "万科A",
+        "600000": "浦发银行",
+        "600519": "贵州茅台",
+        "601318": "中国平安",
+    }.get(code, "")
+
+
+def _is_non_target_company_news(*, title: str, summary: str, symbol: str) -> bool:
+    code = _stock_code(symbol)
+    text = f"{title} {summary}"
+    company_name = _cn_a_company_name_hint(symbol)
+    if company_name and company_name in text:
+        return False
+    if code == "000001" and "上证指数" in text and "平安银行" not in text:
+        return True
+    return False
 
 
 def _http_error(capture: Any) -> RuntimeError | None:

@@ -43,8 +43,10 @@ def build_data_api_from_env() -> DataAPI:
 
 def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
     database = open_data_gateway_database_from_env()
+    seed_database = open_data_gateway_seed_database_from_env()
     repository = DatasetRepository.from_database(
         database,
+        seed_database=seed_database,
         normalized_columnar=NormalizedColumnarWarehouse.from_env(),
     )
 
@@ -107,6 +109,24 @@ def open_data_gateway_database_from_env() -> Any:
         or os.environ.get("CN_A_MONGODB_DATABASE", "").strip()
         or _database_name_from_uri(uri)
     )
+    from pymongo import MongoClient
+
+    client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+    return client[database_name]
+
+
+def open_data_gateway_seed_database_from_env() -> Any | None:
+    seed_uri = os.environ.get("DATA_GATEWAY_SEED_MONGODB_URI", "").strip()
+    seed_database_name = os.environ.get("DATA_GATEWAY_SEED_MONGODB_DATABASE", "").strip()
+    if not seed_uri and not seed_database_name:
+        return None
+    uri = seed_uri or (
+        os.environ.get("DATA_GATEWAY_MONGODB_URI", "").strip()
+        or os.environ.get("CN_A_MONGODB_URI", "").strip()
+    )
+    if not uri:
+        raise RuntimeError("DATA_GATEWAY_SEED_MONGODB_URI or DATA_GATEWAY_MONGODB_URI is required for seed catalog access")
+    database_name = seed_database_name or _database_name_from_uri(uri)
     from pymongo import MongoClient
 
     client = MongoClient(uri, serverSelectionTimeoutMS=5000)

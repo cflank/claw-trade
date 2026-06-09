@@ -62,6 +62,8 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "DEEPSEEK_API_KEY" in text
     assert "OPENCLAW_GATEWAY_TIMEOUT_MS" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" in text
+    assert 'OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"' in text
+    assert "export OPENCLAW_GATEWAY_TOKEN" in text
     assert 'CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-60000}"' in text
     assert "LOCAL_MONGODB_START_SCRIPT" in text
     assert "start_local_mongodb_if_needed" in text
@@ -106,6 +108,9 @@ def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_
     assert 'write_runtime_env_var "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"' in text
     assert 'write_runtime_env_var "CN_A_MONGODB_URI" "${CN_A_MONGODB_URI}"' in text
     assert 'write_runtime_env_var "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"' in text
+    assert 'write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_URI" "${DATA_GATEWAY_SEED_MONGODB_URI}"' in text
+    assert 'write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_DATABASE" "${DATA_GATEWAY_SEED_MONGODB_DATABASE}"' in text
+    assert 'write_runtime_env_var "DATA_GATEWAY_COLUMNAR_ROOT" "${DATA_GATEWAY_COLUMNAR_ROOT}"' in text
     assert 'if [[ "${openviking_mcp_started}" == "1" ]]; then' in text
     assert 'write_runtime_env_var "OPENVIKING_MCP_URL" "${OPENVIKING_MCP_URL}"' in text
 
@@ -123,6 +128,8 @@ def test_start_control_runtime_script_exports_runtime_env_before_child_command()
     assert "export OPENVIKING_DATA_DIR" in text
     assert "export CN_A_MONGODB_URI" in text
     assert "export DATA_GATEWAY_MONGODB_URI" in text
+    assert "DATA_GATEWAY_SEED_MONGODB_DATABASE" in text
+    assert "DATA_GATEWAY_COLUMNAR_ROOT" in text
     export_index = text.index("export_runtime_env_for_child_commands")
     command_index = text.index('if [[ ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then')
     supervise_index = text.rindex("\nsupervise_started_services")
@@ -140,6 +147,31 @@ def test_start_control_runtime_script_child_command_mode_uses_cleanup_trap() -> 
     trap_index = text.index("trap 'on_script_exit $?' EXIT")
     command_index = text.index('"${RUNTIME_COMMAND[@]}"')
     assert trap_index < command_index
+
+
+def test_start_control_runtime_script_blocks_factory_columnar_root_by_default() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "guard_factory_columnar_root() {" in text
+    assert "data/crypto-history-full/*" in text
+    assert "CLAW_TRADE_ALLOW_FACTORY_COLUMNAR_WRITE" in text
+    assert "运行时 provider 增量会写入该目录，已阻止" in text
+    guard_call_index = text.index("\nguard_factory_columnar_root\n")
+    cleanup_index = text.index('log_info "删除旧 runtime.env，避免复验读取到过期环境"')
+    assert guard_call_index < cleanup_index
+
+
+def test_start_control_runtime_script_blocks_factory_mongo_database_by_default() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "guard_factory_mongo_database() {" in text
+    assert "claw_trade_crypto_history_*" in text
+    assert "CLAW_TRADE_ALLOW_FACTORY_MONGO_WRITE" in text
+    assert "DATA_GATEWAY_SEED_MONGODB_DATABASE" in text
+    assert "运行时证据会写入该 Mongo 库，已阻止" in text
+    guard_call_index = text.index("\nguard_factory_mongo_database\n")
+    cleanup_index = text.index('log_info "删除旧 runtime.env，避免复验读取到过期环境"')
+    assert guard_call_index < cleanup_index
 
 
 def test_start_control_runtime_script_uses_trade_openviking_wheel_and_keeps_override_bin_branch() -> None:
@@ -186,6 +218,26 @@ def test_start_control_runtime_script_gateway_run_uses_local_state_and_dev_mode(
     assert "reset" not in text
 
 
+def test_start_control_runtime_script_writes_gateway_token_to_cli_config() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'OPENCLAW_GATEWAY_TOKEN_VALUE="${OPENCLAW_GATEWAY_TOKEN:-}"' in text
+    assert 'const gatewayToken = String(process.env.OPENCLAW_GATEWAY_TOKEN_VALUE || "").trim();' in text
+    assert "auth: { token: gatewayToken }" in text
+    assert "remote: { token: gatewayToken }" in text
+
+
+def test_start_control_runtime_script_removes_only_stale_openviking_data_lock() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "clear_stale_openviking_data_lock() {" in text
+    assert 'local pid_file="${OPENVIKING_DATA_DIR}/.openviking.pid"' in text
+    assert 'kill -0 "${lock_pid}"' in text
+    assert "OpenViking data 目录仍被进程占用" in text
+    assert "删除 stale OpenViking data lock" in text
+    assert "clear_stale_openviking_data_lock\n\nif [[ ! -x" in text
+
+
 def test_start_control_runtime_script_ensures_openclaw_control_ui_assets_before_gateway_boot() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
@@ -210,6 +262,7 @@ def test_start_control_runtime_script_preauthorizes_gateway_cli_admin_scope_with
     assert "update.status" in text
     assert "--scope" in text
     assert "operator.admin" in text
+    assert '--url\n    "${OPENCLAW_GATEWAY_URL}"' in text
     assert 'OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}"' in text
     assert 'OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"' in text
     assert "scope upgrade pending approval" in text
@@ -431,6 +484,7 @@ def test_start_control_runtime_script_does_not_write_secrets_or_remove_runs_root
 
     assert "OPENVIKING_API_KEY=" not in text
     assert "OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}" not in text
+    assert 'write_runtime_env_var "OPENCLAW_GATEWAY_TOKEN"' not in text
     forbidden_plain = "rm -rf " + "runs"
     forbidden_quote = 'rm -rf "' + "runs"
     assert forbidden_plain not in text

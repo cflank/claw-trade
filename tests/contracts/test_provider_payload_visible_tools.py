@@ -51,7 +51,7 @@ _FORBIDDEN_LEGACY_ALIASES = {
     "bb_crypto_data",
 }
 
-_FORBIDDEN_OPENBB_PATTERNS = (
+_FORBIDDEN_LEGACY_TOOL_PATTERNS = (
     "provider.",
     "admin.",
     "discovery.",
@@ -259,7 +259,7 @@ def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str
 
         if tool_name in forbidden_exact:
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {tool_name}")
-        if any(pattern in tool_name for pattern in _FORBIDDEN_OPENBB_PATTERNS):
+        if any(pattern in tool_name for pattern in _FORBIDDEN_LEGACY_TOOL_PATTERNS):
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {tool_name}")
         if not (tool_name.startswith("claw_get_") and tool_name.endswith("_pack")):
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {tool_name}")

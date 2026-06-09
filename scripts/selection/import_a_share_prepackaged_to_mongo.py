@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import Sequence
 from urllib.parse import urlparse
 
 from claw_trade.data_gateway.a_share_prepackaged_importer import (
@@ -12,9 +13,10 @@ from claw_trade.data_gateway.a_share_prepackaged_importer import (
     import_a_share_prepackaged_to_repository,
 )
 from claw_trade.data_gateway.warehouse import DatasetRepository
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Import local A-share daily/factor packages into unified data warehouse.")
     parser.add_argument("--daily-root", required=True, type=Path)
     parser.add_argument("--factor-root", required=True, type=Path)
@@ -50,7 +52,13 @@ def main() -> int:
         "--mongo-database",
         default=os.environ.get("DATA_GATEWAY_MONGODB_DATABASE") or os.environ.get("CN_A_MONGODB_DATABASE") or "",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--columnar-root",
+        type=Path,
+        default=Path(os.environ["DATA_GATEWAY_COLUMNAR_ROOT"]) if os.environ.get("DATA_GATEWAY_COLUMNAR_ROOT") else None,
+        help="Root for normalized Parquet partitions. Defaults to the same DATA_GATEWAY_COLUMNAR_ROOT/runtime path as data_gateway runtime.",
+    )
+    args = parser.parse_args(argv)
 
     if args.audit_only:
         payload = {
@@ -67,11 +75,8 @@ def main() -> int:
     if not args.mongo_uri:
         raise SystemExit("missing --mongo-uri or DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI")
 
-    from pymongo import MongoClient
-
-    client = MongoClient(args.mongo_uri, serverSelectionTimeoutMS=5000)
     database_name = args.mongo_database or _database_name_from_uri(args.mongo_uri)
-    repository = DatasetRepository.from_database(client[database_name])
+    repository = _repository_from_mongo(args.mongo_uri, database_name, columnar_root=args.columnar_root)
     result = import_a_share_prepackaged_to_repository(
         daily_root=args.daily_root,
         factor_root=args.factor_root,
@@ -91,11 +96,24 @@ def main() -> int:
         {
             "mode": "import",
             "mongo_database": database_name,
+            "catalog_storage": "mongo",
+            "normalized_storage": "parquet",
+            "columnar_root": str(NormalizedColumnarWarehouse.from_env(root=args.columnar_root).root),
             **result.as_dict(),
         },
         target=args.output_json,
     )
     return 0
+
+
+def _repository_from_mongo(mongo_uri: str, mongo_database: str, *, columnar_root: Path | None = None) -> DatasetRepository:
+    from pymongo import MongoClient
+
+    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+    return DatasetRepository.from_database(
+        client[mongo_database],
+        normalized_columnar=NormalizedColumnarWarehouse.from_env(root=columnar_root),
+    )
 
 
 def _emit(payload: dict[str, object], *, target: str) -> None:

@@ -190,7 +190,7 @@ def test_selection_provider_batch_plan_scope_is_selection_batch_only() -> None:
         lookback_trading_days=260,
         universe_scope="all_a_shares",
         coverage_groups=("market", "fundamental", "news"),
-        provider_candidates=("openbb",),
+        provider_candidates=("tushare",),
         ttl_policy_ref="ttl://policy-1",
         lineage_root_ref="lineage://root-1",
     )
@@ -205,7 +205,7 @@ def test_selection_provider_batch_plan_scope_is_selection_batch_only() -> None:
             lookback_trading_days=260,
             universe_scope="all_a_shares",
             coverage_groups=("market",),
-            provider_candidates=("openbb",),
+            provider_candidates=("tushare",),
             ttl_policy_ref="ttl://policy-1",
             lineage_root_ref="lineage://root-1",
         )

@@ -155,8 +155,7 @@ class Warehouse:
         if coverage_by_request:
             freshness["coverage_by_request"] = tuple(coverage_by_request)
 
-        unique_rows = tuple(rows)
-        dataset_refs_for_rows = tuple(dataset_refs)
+        unique_rows, dataset_refs_for_rows = self._dedupe_rows_with_dataset_refs(rows, dataset_refs)
         attempt_refs_by_dataset_ref = (
             self._repository.find_provider_attempt_refs_by_dataset_ref(dataset_refs_for_rows)
             if dataset_refs_for_rows
@@ -563,6 +562,19 @@ class Warehouse:
             if record.universe_ref:
                 row.setdefault("universe_ref", record.universe_ref)
             row.setdefault("granularity", record.granularity)
+            if record.dataset == "intraday_bar":
+                row_time_start = row.get("open_time") or row.get("timestamp") or row.get("time")
+                row_time_end = row.get("close_time") or row_time_start
+                if row_time_start is None:
+                    ref_time_start, ref_time_end = Warehouse._intraday_period_from_dataset_ref(record.dataset_ref)
+                    row_time_start = ref_time_start
+                    row_time_end = ref_time_end or row_time_start
+                if row_time_start is not None:
+                    row.setdefault("open_time", row_time_start)
+                    row["period_start"] = row_time_start
+                if row_time_end is not None:
+                    row.setdefault("close_time", row_time_end)
+                    row["period_end"] = row_time_end
             if record.period_start is not None:
                 row.setdefault("period_start", record.period_start)
                 if record.dataset == "daily_bar":
@@ -571,6 +583,114 @@ class Warehouse:
                 row.setdefault("period_end", record.period_end)
             rows.append(row)
         return tuple(rows)
+
+    @staticmethod
+    def _dedupe_rows_with_dataset_refs(
+        rows: Sequence[dict[str, Any]],
+        dataset_refs: Sequence[str],
+    ) -> tuple[tuple[dict[str, Any], ...], tuple[str, ...]]:
+        deduped_rows: list[dict[str, Any]] = []
+        deduped_refs: list[str] = []
+        seen: set[tuple[Any, ...]] = set()
+        for index, row in enumerate(rows):
+            key = Warehouse._row_identity_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped_rows.append(row)
+            if index < len(dataset_refs):
+                deduped_refs.append(str(dataset_refs[index]))
+        if len(dataset_refs) > len(rows):
+            deduped_refs.extend(str(ref) for ref in dataset_refs[len(rows) :])
+        return tuple(deduped_rows), tuple(dict.fromkeys(deduped_refs))
+
+    @staticmethod
+    def _row_identity_key(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        if row.get("dataset") in {"daily_bar", "intraday_bar"}:
+            return (
+                row.get("dataset"),
+                row.get("market"),
+                row.get("symbol_id"),
+                row.get("universe_ref"),
+                row.get("exchange"),
+                row.get("currency"),
+                row.get("base_asset"),
+                row.get("quote_asset"),
+                row.get("granularity"),
+                Warehouse._identity_value(row.get("period_start")),
+                Warehouse._identity_value(row.get("period_end")),
+                Warehouse._identity_value(row.get("open")),
+                Warehouse._identity_value(row.get("high")),
+                Warehouse._identity_value(row.get("low")),
+                Warehouse._identity_value(row.get("close")),
+                Warehouse._identity_value(row.get("volume")),
+                Warehouse._identity_value(row.get("amount")),
+            )
+        return (
+            row.get("dataset"),
+            row.get("market"),
+            row.get("symbol_id"),
+            row.get("universe_ref"),
+            row.get("granularity"),
+            Warehouse._identity_value(row.get("period_start")),
+            Warehouse._identity_value(row.get("period_end")),
+            tuple(
+                sorted(
+                    (str(key), Warehouse._identity_value(value))
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        "as_of",
+                        "close_time",
+                        "fresh_until",
+                        "open_time",
+                        "provider_lineage",
+                        "quality_flags",
+                        "source_roles",
+                        "time",
+                        "timestamp",
+                    }
+                )
+            ),
+        )
+
+    @staticmethod
+    def _identity_value(value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, float):
+            return f"{value:.12g}"
+        text = str(value)
+        try:
+            return f"{float(text):.12g}"
+        except (TypeError, ValueError):
+            return text
+
+    @staticmethod
+    def _intraday_period_from_dataset_ref(dataset_ref: str) -> tuple[datetime | None, datetime | None]:
+        parts = str(dataset_ref).split(":", 6)
+        if len(parts) < 7 or parts[0] != "dataset" or parts[1] != "intraday_bar":
+            return None, None
+        period_text = parts[6]
+        if "Z:" not in period_text:
+            return None, None
+        start_text, end_text = period_text.split("Z:", 1)
+        return Warehouse._parse_dataset_ref_datetime(start_text + "Z"), Warehouse._parse_dataset_ref_datetime(end_text)
+
+    @staticmethod
+    def _parse_dataset_ref_datetime(value: str) -> datetime | None:
+        text = str(value or "").strip()
+        if not text or "T" not in text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
 
     @staticmethod
     def _dataset_ref(record: DatasetRecord) -> str:

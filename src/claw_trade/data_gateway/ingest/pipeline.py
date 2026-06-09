@@ -114,9 +114,9 @@ class IngestPipeline:
         elif gate.kind == "cached_empty":
             gaps = (DataGap.by_reason("cached_empty", evidence_refs=tuple(refs.attempt_refs)),)
         elif gate.kind == "rate_limited":
-            gaps = (DataGap.by_reason("rate_limited", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
+            gaps = (_batch_gap(batch, "rate_limited", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
         elif gate.kind == "cooldown_skipped":
-            gaps = (DataGap.by_reason("cooldown_skipped", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
+            gaps = (_batch_gap(batch, "cooldown_skipped", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
         elif gate.kind == "shared_result":
             gaps = ()
         else:

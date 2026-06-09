@@ -696,6 +696,199 @@ def test_final_report_batch_runs_report_polisher_dynamic_serial_section_turns(mo
         assert harness.openviking.read_material_ids[offset : offset + len(source_material_ids)] == source_material_ids
 
 
+def test_report_polisher_receives_report_data_evidence_summary(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "openclaw.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {"defaults": {"model": {"primary": "deepseek/deepseek-chat"}}},
+                "models": {
+                    "providers": {
+                        "deepseek": {
+                            "models": [
+                                {
+                                    "id": "deepseek-chat",
+                                    "maxTokens": 8192,
+                                    "contextWindow": 131072,
+                                }
+                            ]
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(config_path))
+    harness = _RunnerHarness(tmp_path)
+    request = replace(
+        _request(profile="CN_A"),
+        ticker="000001.SZ",
+        company_name="平安银行",
+        market="CN_A",
+        currency="CNY",
+        currency_symbol="¥",
+        entry_point=WorkflowEntryPoint.REPORT_COMMAND,
+    )
+    state = harness.store.create_run(request)
+    _seed_final_report_upstream_manifest(harness, state)
+    prefetch_path = state.run_dir / "data-layer" / "report-prefetch.json"
+    prefetch_path.parent.mkdir(parents=True, exist_ok=True)
+    prefetch_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "schema_version": "report_data_prefetch.v1",
+                "run_id": state.run_id,
+                "market": "CN_A",
+                "status": "partial",
+                "data_results": [
+                    {
+                        "request_id": f"{state.run_id}:report-prefetch:fundamental:1:financial_statement",
+                        "status": "ready",
+                        "rows": [
+                            {
+                                "period": "2026-03-31",
+                                "revenue": 35277000000.0,
+                                "net_income": 14523000000.0,
+                                "assets": 6033962000000.0,
+                                "liabilities": 5489879000000.0,
+                                "cash_flow": 37802000000.0,
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FINAL_REPORT,
+        worker_ids=("report_polisher",),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=False,
+        stop_point=StopPoint.NONE,
+    )
+    calls_seen: list[WorkerCall] = []
+
+    def _run(call: WorkerCall) -> WorkerResult:
+        calls_seen.append(call)
+        return WorkerResult(
+            run_id=call.run_id,
+            call_id=call.call_id,
+            worker_id=call.worker_id,
+            stage=call.stage,
+            status=WorkerStatus.SUCCEEDED,
+            openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+            approved_material_id=f"mat-final-report-{call.turn_index}",
+            failure=None,
+            turn_index=call.turn_index,
+            round_index=call.round_index,
+            role_turn_index=call.role_turn_index,
+        )
+
+    harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+    result = harness.runner.run_stage_batch(state, batch)
+
+    assert result.failures == ()
+    assert calls_seen
+    summary = calls_seen[0].prompt_runtime_vars["data_evidence_summary"]
+    assert "财务报表最新记录" in summary
+    assert "收入 35277000000.0" in summary
+    assert "本次调用未注入数据层证据摘要" not in summary
+
+
+def test_trader_and_portfolio_manager_receive_report_data_evidence_summary(tmp_path: Path) -> None:
+    for worker_id, stage in (("trader", Stage.TRADE_DECISION), ("portfolio_manager", Stage.PORTFOLIO_DECISION)):
+        harness = _RunnerHarness(tmp_path / worker_id)
+        request = replace(
+            _request(profile="CN_A"),
+            ticker="000001.SZ",
+            company_name="平安银行",
+            market="CN_A",
+            currency="CNY",
+            currency_symbol="¥",
+            entry_point=WorkflowEntryPoint.REPORT_COMMAND,
+        )
+        state = harness.store.create_run(request)
+        _seed_material(harness, state, "research_manager", Stage.INVESTMENT_DECISION, "# research\napproved")
+        if worker_id == "portfolio_manager":
+            _seed_material(harness, state, "trader", Stage.TRADE_DECISION, "# trader\napproved")
+            _seed_material(harness, state, "risk_challenger", Stage.RISK_DEBATE, "# risk challenger\napproved")
+            _seed_material(harness, state, "risk_guardian", Stage.RISK_DEBATE, "# risk guardian\napproved")
+            _seed_material(harness, state, "risk_moderator", Stage.RISK_DEBATE, "# risk moderator\napproved")
+        prefetch_path = state.run_dir / "data-layer" / "report-prefetch.json"
+        prefetch_path.parent.mkdir(parents=True, exist_ok=True)
+        prefetch_path.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "schema_version": "report_data_prefetch.v1",
+                    "run_id": state.run_id,
+                    "market": "CN_A",
+                    "status": "partial",
+                    "data_results": [
+                        {
+                            "request_id": f"{state.run_id}:report-prefetch:fundamental:1:financial_statement",
+                            "status": "ready",
+                            "rows": [
+                                {
+                                    "period": "2026-03-31",
+                                    "revenue": 35277000000.0,
+                                    "net_income": 14523000000.0,
+                                    "assets": 6033962000000.0,
+                                    "liabilities": 5489879000000.0,
+                                    "cash_flow": 37802000000.0,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        batch = StageBatch(
+            run_id=state.run_id,
+            stage=stage,
+            worker_ids=(worker_id,),
+            scope=BatchScope.FULL_STAGE,
+            collect_first=False,
+            stop_point=StopPoint.NONE,
+        )
+        calls_seen: list[WorkerCall] = []
+
+        def _run(call: WorkerCall) -> WorkerResult:
+            calls_seen.append(call)
+            return WorkerResult(
+                run_id=call.run_id,
+                call_id=call.call_id,
+                worker_id=call.worker_id,
+                stage=call.stage,
+                status=WorkerStatus.SUCCEEDED,
+                openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+                approved_material_id=f"mat-{worker_id}",
+                failure=None,
+                turn_index=call.turn_index,
+                round_index=call.round_index,
+                role_turn_index=call.role_turn_index,
+            )
+
+        harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+        result = harness.runner.run_stage_batch(state, batch)
+
+        assert result.failures == ()
+        assert calls_seen
+        summary = calls_seen[0].prompt_runtime_vars["data_evidence_summary"]
+        assert "财务报表最新记录" in summary
+        assert "收入 35277000000.0" in summary
+        assert "本次调用未注入数据层证据摘要" not in summary
+
+
 def test_non_final_report_batch_keeps_single_worker_turn(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
     state = harness.store.create_run(_request())

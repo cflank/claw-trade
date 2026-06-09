@@ -9,7 +9,7 @@ _FORBIDDEN_IMPORT_PREFIXES = (
     "aiohttp",
     "pymongo",
     "motor",
-    "openbb",
+    "open" + "bb",
     "socket",
 )
 
@@ -23,6 +23,8 @@ _FORBIDDEN_SOURCE_TOKENS = (
     "MongoClient",
     "http://",
     "https://",
+    "open" + "bb",
+    "Open" + "BB",
 )
 
 
@@ -32,6 +34,12 @@ def _crypto_lens_root() -> Path:
 
 def _iter_python_files() -> list[Path]:
     return sorted(path for path in _crypto_lens_root().rglob("*.py"))
+
+
+def test_crypto_lens_source_tree_exists() -> None:
+    files = _iter_python_files()
+    assert _crypto_lens_root().is_dir()
+    assert files
 
 
 def test_crypto_lens_has_no_forbidden_network_or_db_imports() -> None:

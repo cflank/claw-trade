@@ -52,7 +52,7 @@ Definitions:
 Forbidden shortcut:
 
 ```text
-RSI: 中性；MACD: 偏多；FVG: 支撑。
+RSI: 中性；MACD: 偏多；FVG: 直接给交易结论。
 ```
 
 Required replacement:
@@ -64,6 +64,8 @@ RSI / MACD:
 交易作用: 作为突破确认的辅助，不是独立入场触发。
 失效: 4h 重新跌回关键均线/布林中轨下方，短线修复失效。
 ```
+
+When FVG has no upstream statistical or execution-mechanism proof, write it as a recorded zone with sample limits, not as support, resistance, target, magnet, or standalone trade reason.
 
 ## Mandatory Coverage Matrix
 

@@ -2,7 +2,7 @@
 
 状态：总体设计草案，已有首版实现，本文按当前实现口径同步。
 日期：2026-05-24  
-依据：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`、`docs/设置模块设计文档.md`，以及对 `myhhub/stock`、`ArvinLovegood/go-stock`、`sngyai/Sequoia-X` 的源码调研。旧 `docs/数据源openbb引入方案.md` 只作为历史背景。
+依据：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`、`docs/设置模块设计文档.md`，以及对 `myhhub/stock`、`ArvinLovegood/go-stock`、`sngyai/Sequoia-X` 的源码调研。旧 `docs/数据源removed_data_gateway引入方案.md` 只作为历史背景。
 
 ## 1. 总体结论
 
@@ -36,7 +36,7 @@
 
 - `claw-trade` 当前架构中，工作流状态机、调度、artifact 权威、hard gate 和报告导出归 `claw-trade`。
 - OpenClaw 负责单个 worker turn、真实 provider prompt、tool schema、tool call、LLM response 和 provider payload capture。
-- data_gateway 是当前外部数据入口和 provider evidence 记录层；OpenBB 本体不是目标运行时依赖。
+- data_gateway 是当前外部数据入口和 provider evidence 记录层；已删除数据网关 本体不是目标运行时依赖。
 - Mongo 已用于保存 provider attempts、raw payloads、normalized results、cache entries、run provider plans 等证据。
 - OpenViking 已用于 approved L1/L2 material、manifest、hash、lineage 和下游 handoff。
 - 现有请求模型是单标的报告路径中心的 `RunRequest`，不是全市场或候选池中心的 selection 请求模型。
@@ -855,7 +855,7 @@ worker 不可见材料：
 - 全市场 OHLCV 明细表。
 - provider raw JSON。
 - Mongo raw payload。
-- legacy OpenBB debug envelope。
+- legacy 已删除数据网关 debug envelope。
 - 5000 只股票完整数据。
 - provider secret、token、HTTP headers。
 - raw/debug/provider envelope、Mongo/OpenViking 协议、manifest/hash/lineage/receipt 机器字段正文。
@@ -1035,7 +1035,7 @@ selection_manager visible tools == []
 selection_portfolio_manager visible tools == []
 ```
 
-任何 legacy OpenBB atomic/admin/discovery/provider tool、Mongo/debug/raw tool、OpenViking write tool 出现在 selection worker 的 provider payload 中，均判定不符合设计。
+任何 legacy 已删除数据网关 atomic/admin/discovery/provider tool、Mongo/debug/raw tool、OpenViking write tool 出现在 selection worker 的 provider payload 中，均判定不符合设计。
 
 #### 5.3.6 Runtime 边界
 
@@ -1067,7 +1067,7 @@ FORBIDDEN_SELECTION_TOOL_PATTERNS = (
     "provider.",
     "admin.",
     "discovery.",
-    "openbb",
+    "removed_data_gateway",
     "eastmoney",
     "baostock",
     "mongo",

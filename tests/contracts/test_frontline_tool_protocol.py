@@ -672,7 +672,7 @@ def test_successful_pack_only_exposes_natural_material_to_model_and_keeps_detail
         "model_visible_text": "资料范围：已采集公司新闻十条。材料正文：公司新闻包括腾讯发布经营进展公告。证据缺口：宏观新闻不足。",
         "provider_attempts": [
             {
-                "provider": "openbb",
+                "provider": "local_pack_provider",
                 "endpoint": "news/company",
                 "raw_payload_ref": "viking://resources/workflow/run/frontline/news/raw.json",
             }
@@ -831,7 +831,7 @@ def test_partial_pack_model_text_does_not_present_tool_success_as_data_readiness
         "readiness": {"status": status, "reason": "没有原始社交事实源。"},
         "provider_attempts": [
             {
-                "provider": "openbb",
+                "provider": "local_pack_provider",
                 "status": "config_blocked",
                 "raw_payload_ref": "viking://resources/workflow/run/frontline/social/raw.json",
             }

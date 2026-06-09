@@ -27,6 +27,7 @@ from claw_trade.guards.provider_request import validate_provider_request
 from claw_trade.guards.tool_calls import validate_tool_calls
 from claw_trade.guards.visible_tools import validate_visible_tools
 from claw_trade.guards.workspace_evidence import validate_workspace_evidence
+from claw_trade.reports.data_evidence_summary import summarize_report_prefetch_manifest
 from claw_trade.reports.structure import validate_report_polisher_segment_text
 from claw_trade.runtime.evidence_reader import (
     EvidenceReader,
@@ -639,6 +640,7 @@ class ControlRunner:
                     spec.section_plan.instruction,
                 )
             call = _with_report_prefetch_manifest(call, state)
+            call = _with_report_data_evidence_summary(call, state)
             result = self.run_single_worker(call)
             self.store.save_worker_result(result)
             worker_results.append(result)
@@ -817,7 +819,9 @@ class ControlRunner:
                 worker_results_by_id[worker_id] = result
                 break
 
-            prepared_calls.append(_with_report_prefetch_manifest(prompt_result.call, state))
+            prepared_call = _with_report_prefetch_manifest(prompt_result.call, state)
+            prepared_call = _with_report_data_evidence_summary(prepared_call, state)
+            prepared_calls.append(prepared_call)
 
         if prepared_calls:
             with ThreadPoolExecutor(max_workers=len(prepared_calls)) as executor:
@@ -1437,6 +1441,7 @@ def build_profile_prompt_vars(
         return {
             "investment_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "past_memory_str": _default_memory_for_worker(call.worker_id),
+            "data_evidence_summary": _default_data_evidence_summary(),
         }
     if call.worker_id == "risk_challenger":
         return {
@@ -1472,6 +1477,7 @@ def build_profile_prompt_vars(
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
             "history": _conversation_history(*risk_arguments),
             "past_memory_str": _default_memory_for_worker(call.worker_id),
+            "data_evidence_summary": _default_data_evidence_summary(),
         }
     if call.worker_id == "report_polisher":
         if call.profile == "US":
@@ -1531,6 +1537,7 @@ def build_profile_prompt_vars(
             "trader_report": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
             "supporting_worker_reports": supporting_reports,
             "chart_assets_note": chart_assets_note,
+            "data_evidence_summary": _default_data_evidence_summary(),
             "final_report_section_instruction": "",
         }
     return {}
@@ -1607,6 +1614,14 @@ _REPORT_PREFETCH_WORKERS = frozenset(
     }
 )
 
+_REPORT_DATA_EVIDENCE_WORKERS = frozenset(
+    {
+        "trader",
+        "portfolio_manager",
+        "report_polisher",
+    }
+)
+
 
 def _with_report_prefetch_manifest(call: WorkerCall, state: WorkflowState) -> WorkerCall:
     if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
@@ -1622,6 +1637,26 @@ def _with_report_prefetch_manifest(call: WorkerCall, state: WorkflowState) -> Wo
         "report_prefetch_manifest_path",
         str(state.run_dir / "data-layer" / "report-prefetch.json"),
     )
+
+
+def _with_report_data_evidence_summary(call: WorkerCall, state: WorkflowState) -> WorkerCall:
+    if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
+        return call
+    if state.request.data_gateway.strip().lower() != "data_gateway":
+        return call
+    if call.worker_id not in _REPORT_DATA_EVIDENCE_WORKERS:
+        return call
+    manifest_path = state.run_dir / "data-layer" / "report-prefetch.json"
+    summary = summarize_report_prefetch_manifest(
+        manifest_path,
+        ticker=state.request.ticker,
+        company_name=state.request.company_name,
+    )
+    return _with_prompt_runtime_var(call, "data_evidence_summary", summary)
+
+
+def _default_data_evidence_summary() -> str:
+    return "本次调用未注入数据层证据摘要；只能依据已批准上游报告，不得补写缺失的数据事实。"
 
 
 def _blocked_worker_result_from_failure(

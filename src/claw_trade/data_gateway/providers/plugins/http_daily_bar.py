@@ -186,7 +186,7 @@ class TushareDailyBarPlugin(_HttpDailyBarPlugin):
     credential_name = "data_source:tushare"
     default_endpoint = "https://api.tushare.pro"
     source_role = "paid_data"
-    fields = ("date", "open", "high", "low", "close", "volume", "amount")
+    fields = ("date", "open", "high", "low", "close", "volume", "amount", "amount_unit")
     _currency = "CNY"
     _timezone = "Asia/Shanghai"
     _calendar = "CN_A_SSE_SZSE"

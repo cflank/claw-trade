@@ -23,7 +23,6 @@ SEL04_APPROVED_ARTIFACTS = (
 _FORBIDDEN_SOURCE_TOKENS = (
     "claw_trade.data_gateway",
     "claw_trade.providers",
-    "openbb",
     "pymongo",
     "MongoClient",
     "provider_executor",
@@ -85,7 +84,6 @@ def test_selection_tool_backend_runs_with_provider_and_raw_imports_blocked(tmp_p
         BLOCKED = (
             "claw_trade.data_gateway",
             "claw_trade.providers",
-            "openbb",
             "pymongo",
             "frontline_data_pack",
             "provider_executor",

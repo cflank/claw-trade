@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -82,6 +82,15 @@ def _daily_row(symbol: str = "600519.SH") -> dict[str, object]:
     }
 
 
+def _daily_row_for_day(day_offset: int, symbol: str = "600519.SH") -> dict[str, object]:
+    day = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=day_offset)
+    row = _daily_row(symbol=symbol)
+    row["period_start"] = day.date().isoformat()
+    row["period_end"] = day.date().isoformat()
+    row["dataset_ref"] = f"dataset:daily_bar:CN_A:{symbol}:daily:{day.date().isoformat()}:{day.date().isoformat()}"
+    return row
+
+
 def _warehouse_check(symbol: str = "600519.SH") -> WarehouseCheck:
     return WarehouseCheck(
         request_id=f"req-parquet:{symbol}",
@@ -151,6 +160,122 @@ def test_repository_writes_normalized_rows_to_parquet_manifest_not_mongo_rows(tm
     assert manifests[0]["storage"] == "parquet"
     assert manifests[0]["sha256"]
     assert manifests[0]["dataset_refs"] == refs
+
+
+def test_repository_reads_columnar_rows_from_read_only_seed_manifest(tmp_path) -> None:
+    runtime_collections = _collections()
+    seed_collections = _collections()
+    columnar = NormalizedColumnarWarehouse(tmp_path / "normalized")
+    result = columnar.write_records((_daily_row(),))
+    assert result.manifest is not None
+    seed_collections["dataset_manifests"][str(result.manifest["manifest_ref"])] = dict(result.manifest)
+    repository = DatasetRepository.from_database(
+        runtime_collections,
+        seed_database=seed_collections,
+        normalized_columnar=columnar,
+    )
+
+    rows = repository.query_normalized(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_id="600519.SH",
+        universe_ref=None,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].row["close"] == 10.5
+    assert runtime_collections["dataset_manifests"] == {}
+
+
+def test_columnar_manifest_rebases_legacy_path_to_current_root(tmp_path) -> None:
+    runtime_collections = _collections()
+    seed_collections = _collections()
+    original_root = tmp_path / "original" / "normalized"
+    relocated_root = tmp_path / "relocated" / "normalized"
+    original_columnar = NormalizedColumnarWarehouse(original_root)
+    result = original_columnar.write_records((_daily_row(),))
+    manifest = dict(result.manifest)
+    manifest.pop("relative_path", None)
+
+    original_path = Path(str(manifest["path"]))
+    relocated_path = (
+        relocated_root
+        / f"market={manifest['market']}"
+        / f"dataset={manifest['dataset']}"
+        / f"granularity={manifest['granularity']}"
+        / original_path.name
+    )
+    relocated_path.parent.mkdir(parents=True, exist_ok=True)
+    original_path.rename(relocated_path)
+    seed_collections["dataset_manifests"][str(manifest["manifest_ref"])] = manifest
+    repository = DatasetRepository.from_database(
+        runtime_collections,
+        seed_database=seed_collections,
+        normalized_columnar=NormalizedColumnarWarehouse(relocated_root),
+    )
+
+    rows = repository.query_normalized(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_id="600519.SH",
+        universe_ref=None,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].row["close"] == 10.5
+
+
+def test_large_columnar_manifest_stores_compact_dataset_ref_lineage(tmp_path) -> None:
+    collections = _collections()
+    repository = DatasetRepository(
+        collections=collections,
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    rows = tuple(_daily_row_for_day(offset) for offset in range(501))
+
+    refs = repository.upsert_normalized_documents(rows)
+
+    assert len(refs) == 501
+    manifests = tuple(collections["dataset_manifests"].values())
+    assert len(manifests) == 1
+    manifest = manifests[0]
+    assert manifest["relative_path"].endswith(".parquet")
+    assert len(manifest["dataset_refs"]) == 20
+    assert manifest["dataset_ref_count"] == 501
+    assert manifest["dataset_refs_truncated"] is True
+    assert manifest["dataset_refs_sample"] == manifest["dataset_refs"]
+    assert manifest["dataset_refs_sha256"].startswith("sha256:")
+    assert manifest["dataset_ref_prefixes"] == ("dataset:daily_bar:CN_A:600519.SH:daily:",)
+
+    result = Warehouse(repository).check(
+        (
+            _warehouse_check(),
+        ),
+        _coverage(),
+    )
+    assert result.status == "ready"
+
+
+def test_columnar_batch_upsert_dedupes_duplicate_dataset_refs_before_writing(tmp_path) -> None:
+    repository = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    first = _daily_row()
+    second = dict(first)
+    second["close"] = 12.5
+
+    refs = repository.upsert_normalized_documents((first, second))
+
+    result = Warehouse(repository).check((_warehouse_check(),), _coverage())
+    manifests = repository.list_dataset_manifests()
+
+    assert refs == ("dataset:daily_bar:CN_A:600519.SH:daily:2026-06-04:2026-06-04",)
+    assert len(manifests) == 1
+    assert manifests[0]["row_count"] == 1
+    assert result.satisfied is True
+    assert len(result.rows) == 1
+    assert result.rows[0]["close"] == 12.5
 
 
 def test_columnar_manifest_lookup_uses_targeted_query_not_full_scan(tmp_path) -> None:

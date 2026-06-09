@@ -9,11 +9,11 @@
 
 可拆解。
 
-未发现需要停止拆解的文档冲突。需要注意：`docs/数据源openbb引入方案.md` 的旧任务名仍出现 “skeleton” 字样，但同一文档和后续 A股设计已经明确禁止空壳/占位实现；本清单不沿用“搭骨架”交付语义，只拆真实可验收任务。
+未发现需要停止拆解的文档冲突。需要注意：`docs/数据源removed_data_gateway引入方案.md` 的旧任务名仍出现 “skeleton” 字样，但同一文档和后续 A股设计已经明确禁止空壳/占位实现；本清单不沿用“搭骨架”交付语义，只拆真实可验收任务。
 
 ## Source Coverage Map
 
-说明：旧 `docs/数据源openbb引入方案.md` 和 `docs/数据源修改实施方案.md` 只作为历史背景或负面路径参考；当前实施合同以 `docs/数据层详细设计.md`、`docs/数据层实施任务清单.md` 和 active A股设计为准。
+说明：旧 `docs/数据源removed_data_gateway引入方案.md` 和 `docs/数据源修改实施方案.md` 只作为历史背景或负面路径参考；当前实施合同以 `docs/数据层详细设计.md`、`docs/数据层实施任务清单.md` 和 active A股设计为准。
 
 | 文档 | 章节/范围 | 是否覆盖 | 对应任务编号 | 备注 |
 |---|---|---:|---|---|
@@ -72,8 +72,8 @@
 | `docs/A股扩展详细设计.md` | 17 总体停止条件 | 是 | 全部任务 | 原样进入任务 stop conditions |
 | `docs/数据层详细设计.md` | 1-4 目标/模块/数据流/接口 | 是 | P1-01, P1-04, P1-05, P1-12 | `DataRequest -> DataResult`、6 层数据层、provider registry/Mongo evidence |
 | `docs/数据层详细设计.md` | 5-11 模型/provider/执行/入库/Mongo | 是 | P1-01 至 P1-07, P1-14 | `ProviderPlugin.capabilities()`、attempt/raw/normalized/cache、8 个 Mongo collection |
-| `docs/数据层实施任务清单.md` | 1-7 当前状态/边界/cutover/stop | 是 | P0-01, P1-02, P1-03, P1-13 | OpenBB 本体不是目标运行时依赖；旧 `openbb_*` 只作 forbidden legacy path |
-| `docs/数据源openbb引入方案.md` | superseded 历史口径 | 否 | Historical only | 只作背景；不得作为当前实施合同或验收来源 |
+| `docs/数据层实施任务清单.md` | 1-7 当前状态/边界/cutover/stop | 是 | P0-01, P1-02, P1-03, P1-13 | 已删除数据网关 本体不是目标运行时依赖；旧 `removed_data_gateway_*` 只作 forbidden legacy path |
+| `docs/数据源removed_data_gateway引入方案.md` | superseded 历史口径 | 否 | Historical only | 只作背景；不得作为当前实施合同或验收来源 |
 | `docs/数据层实施任务清单.md` | 1 设计来源与硬边界 | 是 | P0-01 | 当前数据层边界 |
 | `docs/数据源修改实施方案.md` | superseded 历史口径 | 否 | Historical only | 只作背景；不得作为当前实施合同或验收来源 |
 | `docs/数据源修改实施方案.md` | 10 Test Matrix | 是 | P1-14 | unit/integration/live |
@@ -90,7 +90,7 @@
 | `docs/架构设计.md` | 10 OpenClaw runtime seam | 是 | P1-10, P1-14 | payload/tool capture |
 | `docs/架构设计.md` | 11 本地 runtime 架构 | 是 | P1-14, P3-02 | fixed runtime |
 | `docs/架构设计.md` | 12-16 目录/配置/证据/Git/历史 | 是 | P0-01, P1-02, P1-13, P1-15 | 证据与历史边界 |
-| `memory/2026-05-20.md` | A股/OpenBB 文档形成与修订 | 是 | P0-01, P1-06 至 P1-10 | A股扩展来源与修订依据 |
+| `memory/2026-05-20.md` | A股/已删除数据网关 文档形成与修订 | 是 | P0-01, P1-06 至 P1-10 | A股扩展来源与修订依据 |
 | `memory/2026-05-21.md` | 复审/拍板/修订 | 是 | 全部任务 | 七域全量、Tushare、official_original、astock-peg、prompt baseline |
 
 ## Task List
@@ -103,7 +103,7 @@
 
 - 任务编号：P0-01
 - 任务名称：A股扩展实施冻结门核验
-- 来源文档和章节：`A股扩展详细设计` 15/16；`数据源修改实施方案` 1/4；`数据源openbb引入方案` 13.0；`memory/2026-05-21` 10:40/10:56/11:18。
+- 来源文档和章节：`A股扩展详细设计` 15/16；`数据源修改实施方案` 1/4；`数据源removed_data_gateway引入方案` 13.0；`memory/2026-05-21` 10:40/10:56/11:18。
 - 目标：核验当前 `data_gateway` 合同、SSRF 策略、七域 provider 作用域、raw/license、baseline 路径、chart readiness、official_original readiness 均按已批准文档冻结。
 - 明确不做什么：不写运行代码；不重新缩小 Phase 1；不把 provider 样本缺失改成人类拍板门。
 - 允许修改范围：实施时仅 `docs/evidence/**`、`memory/YYYY-MM-DD.md`。
@@ -111,7 +111,7 @@
 - 实现要求：逐项记录证据路径；若证据缺失，标为“实施前阻断”，不是自行改设计。
 - 验收证据：冻结门核对表；数据层合同对齐 evidence；TradingAgents-astock commit `661ccffa812f5182079f604838d4eea3b4abc7ea` 可读。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_data_gateway_cutover.py tests/contracts/test_mongo_collection_contract.py`。
-- stop conditions：任一证据仍是占位；需要恢复 OpenBB 本体或旧 provider executor 才能承载 pack；SSRF 策略放松。
+- stop conditions：任一证据仍是占位；需要恢复 已删除数据网关 本体或旧 provider executor 才能承载 pack；SSRF 策略放松。
 - mock/stub/fake/fallback 检查：不得用“计划写”或空 evidence 文件冒充关闭。
 - 依赖任务：无。
 - 是否可并行：否，串行前置。
@@ -122,7 +122,7 @@
 
 - 任务编号：P1-01
 - 任务名称：数据模型、状态、三新增 domain 合同
-- 来源文档和章节：`数据源openbb引入方案` 5、13.2、13.3；`A股扩展详细设计` 5、10。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 5、13.2、13.3；`A股扩展详细设计` 5、10。
 - 目标：落地七域 `PackDomain`、CN_A-only 校验、ProviderAttempt/Result/Readiness/DataGap/CacheReceipt/ChartAsset/DomainPackResult 等合同。
 - 明确不做什么：不写 provider fetch；不写 pack 业务；不新增 guard。
 - 允许修改范围：`src/claw_trade/data_gateway/models.py`、`errors.py`、`providers/base.py`、`settings.py`、模型测试。
@@ -139,9 +139,9 @@
 
 - 任务编号：P1-02
 - 任务名称：Mongo evidence store 与 persistent single-flight
-- 来源文档和章节：`数据源openbb引入方案` 13.4、13.5；`数据源修改实施方案` T3。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 13.4、13.5；`数据源修改实施方案` T3。
 - 目标：实现 provider manifests、validation receipts、attempts、raw payloads、cache、normalized、rate limits、run plans、single-flight stores。
-- 明确不做什么：不让 Mongo 成为 worker 材料源；不以 legacy OpenBB cache 替代 Mongo evidence。
+- 明确不做什么：不让 Mongo 成为 worker 材料源；不以 legacy 已删除数据网关 cache 替代 Mongo evidence。
 - 允许修改范围：`src/claw_trade/data_gateway/store/**`、cache/attempt/run-plan integration tests。
 - 禁止修改范围：pack reader brief、provider adapter、worker prompt、exporter。
 - 实现要求：raw/normalized/cache/attempt 写失败必须显式失败；single-flight 用 Mongo lease，多进程有效。
@@ -156,7 +156,7 @@
 
 - 任务编号：P1-03
 - 任务名称：Provider catalog、声明式准入与 priority 边界
-- 来源文档和章节：`A股扩展方案` 7/8；`A股扩展详细设计` 8/9；`数据源openbb引入方案` 8.5、13.6.1、13.7、13.16。
+- 来源文档和章节：`A股扩展方案` 7/8；`A股扩展详细设计` 8/9；`数据源removed_data_gateway引入方案` 8.5、13.6.1、13.7、13.16。
 - 目标：实现 system/user provider catalog、admission 状态机、SSRF/license/raw policy、user-preferred 同四元组排序。
 - 明确不做什么：不新增第二套 provider 系统；不允许普通用户代码型 provider；不允许用户源声明/覆盖 `official_original`。
 - 允许修改范围：`src/claw_trade/data_gateway/providers/{catalog,admission,declarative,registry,license_policy,secrets}.py` 和相关测试。
@@ -173,7 +173,7 @@
 
 - 任务编号：P1-04
 - 任务名称：RunProviderPlan 与 no-prefetch workflow 接入
-- 来源文档和章节：`数据源openbb引入方案` 13.8；`A股扩展详细设计` 13.1。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 13.8；`A股扩展详细设计` 13.1。
 - 目标：`/report` run 初始化生成七域 RunProviderPlan，冻结 config version，`remote_prefetch_allowed=false`。
 - 明确不做什么：Python 控制层不 fetch provider，不为普通 chat 建 plan。
 - 允许修改范围：`src/claw_trade/data_gateway/providers/run_plan.py`、`store/run_plans.py`、workflow run 初始化接入点、run plan tests。
@@ -190,15 +190,15 @@
 
 - 任务编号：P1-05
 - 任务名称：data_gateway pack tool / 7-pack 接线
-- 来源文档和章节：`数据源openbb引入方案` 4.8、13.1.1、13.12、13.12.1；`A股扩展详细设计` 6。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 4.8、13.1.1、13.12、13.12.1；`A股扩展详细设计` 6。
 - 目标：通过当前 `data_gateway` 和 stage-scoped tool schema 暴露七个 canonical pack tool。
-- 明确不做什么：不暴露 provider atomic/admin/discovery/debug/cache tools；不 import 旧 provider executor fallback；不恢复 OpenBB runtime。
+- 明确不做什么：不暴露 provider atomic/admin/discovery/debug/cache tools；不 import 旧 provider executor fallback；不恢复 已删除数据网关 runtime。
 - 允许修改范围：`src/claw_trade/data_gateway/**` 的 pack/tool 接线、OpenClaw plugin wrapper、tool schema tests。
 - 禁止修改范围：workflow DAG、PM/exporter 结论、worker business prompt、OpenViking provider 行为。
 - 实现要求：工具返回 worker-visible 自然语言 `reader_brief_md`；audit payload 写 data_gateway/provider evidence；provider payload 证明模型只看 canonical pack tool。
 - 验收证据：data_gateway evidence refs；7 endpoint/tool audit；无旧 executor import 证据。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_frontline_tool_protocol.py tests/contracts/test_tool_registry_contract.py tests/unit/reports/test_data_pack_bridge.py`。
-- stop conditions：必须恢复 OpenBB runtime 或旧 executor；只能本地 Python 直连 provider；tool 需要绕过 `DataAPI`/provider registry。
+- stop conditions：必须恢复 已删除数据网关 runtime 或旧 executor；只能本地 Python 直连 provider；tool 需要绕过 `DataAPI`/provider registry。
 - mock/stub/fake/fallback 检查：endpoint 不能返回占位 reader brief 或假 success。
 - 依赖任务：P1-01, P1-04。
 - 是否可并行：tool registry / pack bridge 审计可早做，接入需等 P1-01。
@@ -207,7 +207,7 @@
 
 - 任务编号：P1-06
 - 任务名称：四个既有 A股域 provider 矩阵接入
-- 来源文档和章节：`A股扩展方案` 6/12；`A股扩展详细设计` 7.2/7.2A；`数据源openbb引入方案` 13.16。
+- 来源文档和章节：`A股扩展方案` 6/12；`A股扩展详细设计` 7.2/7.2A；`数据源removed_data_gateway引入方案` 13.16。
 - 目标：把 `market/fundamental/news/social` 的 A股 provider coverage_group 全量落到 `data_gateway` provider plugins/adapters。
 - 明确不做什么：不把 Tushare 作为默认源；不把 astock-peg 引入；不让新闻/搜索替代 official_original、财报或资金事实。
 - 允许修改范围：`src/claw_trade/data_gateway/providers/cn_a/**`、`packs/{market,fundamental,news,social}.py`、normalizers、fixtures/tests。
@@ -275,7 +275,7 @@
 
 - 任务编号：P1-10
 - 任务名称：OpenClaw visible tool schema 与 provider payload 边界
-- 来源文档和章节：`数据源openbb引入方案` 13.17；`A股扩展详细设计` 11.1/14.4；`AGENTS.md` 11。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 13.17；`A股扩展详细设计` 11.1/14.4；`AGENTS.md` 11。
 - 目标：frontline worker 只见对应 canonical pack tool，downstream worker 不见数据工具，并用真实 `openclaw_llm_provider_payload` 验收。
 - 明确不做什么：不把 data_gateway raw/attempt evidence 当 LLM payload；不让 OpenViking write/read 成为 model-visible 工具。
 - 允许修改范围：`src/claw_trade/config/tool_names.py`、OpenClaw plugin wrapper、tool schema tests、payload scan tests。
@@ -292,7 +292,7 @@
 
 - 任务编号：P1-11
 - 任务名称：OpenViking material plane 与 evidence relations
-- 来源文档和章节：`数据源openbb引入方案` 13.13/13.14；`架构设计` 8/14。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 13.13/13.14；`架构设计` 8/14。
 - 目标：建立 approved L1/L2 material、tree/grep/glob、relations、ovpack、context index、runtime health wrapper。
 - 明确不做什么：OpenViking 不做 provider；OpenViking search 不当 fresh 数据；engineering memory 不进 worker prompt。
 - 允许修改范围：`src/claw_trade/data_gateway/openviking/**`、`src/claw_trade/artifacts/openviking_client.py` 通用 wrapper、OpenViking tests。
@@ -326,7 +326,7 @@
 
 - 任务编号：P1-13
 - 任务名称：旧 provider 路径盘点、负面证明与按 pack 删除边界
-- 来源文档和章节：`数据源openbb引入方案` 4.10、8、13.18；`数据源修改实施方案` T13/T14。
+- 来源文档和章节：`数据源removed_data_gateway引入方案` 4.10、8、13.18；`数据源修改实施方案` T13/T14。
 - 目标：全仓盘点旧 MCP/provider/direct client/US atomics，建立 import-block 负面证明；已验收 pack 才按 pack 删除/隔离旧路径。
 - 明确不做什么：不保留旧 provider runtime fallback；不一次性大爆炸删除未验收路径；compare 结果不进 worker 正文。
 - 允许修改范围：迁移看板、import-block tests、已验收 pack 旧路径删除 diff。
@@ -343,7 +343,7 @@
 
 - 任务编号：P1-14
 - 任务名称：CN_A fresh/live 全链路验收
-- 来源文档和章节：`A股扩展详细设计` 14.4/14.5；`数据源openbb引入方案` 9/13.19；`AGENTS.md` 12.1/13。
+- 来源文档和章节：`A股扩展详细设计` 14.4/14.5；`数据源removed_data_gateway引入方案` 9/13.19；`AGENTS.md` 12.1/13。
 - 目标：用固定 runtime 跑 CN_A 样本，证明 7 frontline、七域 provider attempts、payload、OpenViking lineage、PM 后 `report_polisher/final_report`、最终读者报告全链路。
 - 明确不做什么：不使用 capture-only、mock provider、假 artifact、假 payload；不首错即停，除非命中早停例外。
 - 允许修改范围：live evidence docs、collect-first report、memory；不改源码。
@@ -379,7 +379,7 @@
 
 - 任务编号：P2-01
 - 任务名称：已接入 provider 稳定性、字段漂移、限流与交叉验证补强
-- 来源文档和章节：`A股扩展方案` 12 Phase 2；`A股扩展详细设计` 15.3；`数据源openbb引入方案` 11 Phase 2。
+- 来源文档和章节：`A股扩展方案` 12 Phase 2；`A股扩展详细设计` 15.3；`数据源removed_data_gateway引入方案` 11 Phase 2。
 - 目标：只对 Phase 1 已接入七域矩阵做 schema drift、field_missing、rate limit、failure replacement chain、conflict/cross-check 补强。
 - 明确不做什么：不补 Phase 1 漏做范围；不新增 coverage_group；不把搜索发现升级为事实；不引入 astock-peg。
 - 允许修改范围：`src/claw_trade/data_gateway/providers/cn_a/**`、`packs/**`、`readiness.py`、normalizer/live contract tests。
@@ -398,7 +398,7 @@
 
 - 任务编号：P3-01
 - 任务名称：七域数据源设置页与运行 trace UI
-- 来源文档和章节：`A股扩展方案` 11/12 Phase 3；`A股扩展详细设计` 12；`数据源openbb引入方案` 8.5。
+- 来源文档和章节：`A股扩展方案` 11/12 Phase 3；`A股扩展详细设计` 12；`数据源removed_data_gateway引入方案` 8.5。
 - 目标：UI 展示 CN_A 七域、coverage_group、source_role、system/user provider、priority、health/admission/license/raw、official_original 标识，并在报告详情展示 provider trace。
 - 明确不做什么：不新增第二套 provider 后端；不允许用户上传代码 provider；不展示 raw/token/headers。
 - 允许修改范围：`src/claw_trade/ui_backend/**`、`src/claw_trade/ui_contracts/**`、前端设置页/报告详情、UI tests。
@@ -415,7 +415,7 @@
 
 - 任务编号：P3-02
 - 任务名称：四市场 live/fresh 回归与最终证据收敛
-- 来源文档和章节：`数据源修改实施方案` T16/T17；`数据源openbb引入方案` 9/13.19。
+- 来源文档和章节：`数据源修改实施方案` T16/T17；`数据源removed_data_gateway引入方案` 9/13.19。
 - 目标：CN_A `600519`、HK `00700.HK` + 非腾讯、US `AAPL/MSFT`、CRYPTO `BTC` 四市场 collect-first 验收与最终证据收敛。
 - 明确不做什么：不改源码；不降低验收；不把 HK/US/CRYPTO 缺口塞进 A股任务补做。
 - 允许修改范围：`docs/evidence/**`、collect-first report、memory、最终验收文档。

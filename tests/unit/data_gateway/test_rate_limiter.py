@@ -27,7 +27,23 @@ def test_rate_limiter_fail_fast_blocks_after_budget() -> None:
     assert blocked.reason == "rate_limited"
 
 
-def test_rate_limiter_respects_cooldown() -> None:
+def test_rate_limiter_waits_for_short_cooldown_and_reserves() -> None:
+    clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
+    sleep_calls: list[float] = []
+
+    def _sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        clock.tick(seconds + 0.01)
+
+    limiter = RateLimiter(now_fn=clock, sleep_fn=_sleep)
+    limiter.mark_cooldown("k", until=clock.now + timedelta(seconds=30), reason="provider_429")
+    decision = limiter.reserve("k", RateLimitPolicy(window_seconds=60, max_requests=100))
+
+    assert decision.allowed is True
+    assert sleep_calls == [30.0]
+
+
+def test_rate_limiter_skips_cooldown_beyond_wait_window() -> None:
     clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
     limiter = RateLimiter(now_fn=clock)
     limiter.mark_cooldown("k", until=clock.now + timedelta(seconds=120), reason="provider_429")

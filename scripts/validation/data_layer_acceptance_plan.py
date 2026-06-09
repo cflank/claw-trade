@@ -107,7 +107,7 @@ def final_acceptance_plan() -> FinalAcceptancePlan:
                 required_commands=(
                     'rg -n "stub|mock|fake|fallback|placeholder|capture-only|capture_only" '
                     "src/claw_trade/data_gateway tests/unit/data_gateway tests/integration/data_gateway tests/contracts",
-                    'rg -n "data_gateway_bak|openbb_|OpenViking|worker pack|reader brief|report plan|select plan|material writer" '
+                    'rg -n "data_gateway_bak|OpenViking|worker pack|reader brief|report plan|select plan|material writer" '
                     "src/claw_trade/data_gateway tests/unit/data_gateway tests/integration/data_gateway tests/contracts",
                     'rg -n "remote_success|cache_hit|shared_result|rate_limited|cached_empty|cooldown_skipped|sdk_http_unknown|evidence_write_failed" '
                     "src/claw_trade/data_gateway tests/unit/data_gateway tests/integration/data_gateway tests/contracts",

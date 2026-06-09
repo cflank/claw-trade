@@ -47,7 +47,6 @@ FORBIDDEN_EXTERNAL_IMPORTS = {
     "duckdb",
     "http.client",
     "httpx",
-    "openbb",
     "polars",
     "pymongo",
     "pyarrow",

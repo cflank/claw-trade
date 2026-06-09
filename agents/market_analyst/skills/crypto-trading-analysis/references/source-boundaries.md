@@ -1,14 +1,14 @@
 # Source Boundaries Reference
 
-Rule version: `bb-source-boundaries-skill-v1`.
+Rule version: `crypto-data-source-boundaries-skill-v1`.
 
 This file defines what counts as evidence and what cannot be used to close data gaps.
 
 ## Source Hierarchy
 
 1. Market data pack natural-language brief plus claw-trade data layer structured summary.
-2. Raw BB/CoinGlass payload saved by the pack under provider evidence, used for audit rather than report body.
-3. Single-domain BB/provider tools only for targeted debugging or gap investigation outside the normal worker turn.
+2. Raw provider payload saved by the pack under provider evidence, used for audit rather than report body.
+3. Single-domain provider tools only for targeted debugging or gap investigation outside the normal worker turn.
 4. Browser evidence only as low-confidence visual observation.
 5. User-provided screenshots or descriptions only as low-confidence user observation.
 6. Tutorial content only as methodology.

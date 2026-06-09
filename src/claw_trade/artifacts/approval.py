@@ -8,7 +8,7 @@ from claw_trade.artifacts.claims import MaterialClaimsEvidence, parse_material_c
 from claw_trade.artifacts.manifest import make_material_id
 from claw_trade.artifacts.openviking_client import OpenVikingClient
 from claw_trade.artifacts.refs import ApprovedMaterial, L1Claim, L2Index, MaterialReceipt
-from claw_trade.guards.common import ApprovalResult, combine_guard_results, guard_passed
+from claw_trade.guards.common import ApprovalResult, combine_guard_results
 from claw_trade.guards.l1_l2 import validate_l1_l2_contract, validate_l2_entries
 from claw_trade.guards.openviking_receipt import validate_openviking_receipt
 from claw_trade.runtime.evidence_reader import ProviderEvidence

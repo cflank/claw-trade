@@ -66,6 +66,75 @@ def _warehouse_check() -> WarehouseCheck:
     )
 
 
+def test_warehouse_dedupes_equivalent_rows_without_collapsing_distinct_hours() -> None:
+    duplicate_date_rows = (
+        {
+            "dataset": "daily_bar",
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "granularity": "daily",
+            "period_start": date(2026, 6, 1),
+            "period_end": date(2026, 6, 1),
+            "open": 100.0,
+            "close": 101.0,
+        },
+        {
+            "dataset": "daily_bar",
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "granularity": "daily",
+            "period_start": "2026-06-01",
+            "period_end": "2026-06-01",
+            "open": "100.00000000",
+            "close": "101.00000000",
+            "open_time": "2026-06-01 00:00:00+00:00",
+            "close_time": "2026-06-01 23:59:59.999000+00:00",
+        },
+        {
+            "dataset": "intraday_bar",
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "granularity": "1h",
+            "period_start": datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+            "period_end": datetime(2026, 6, 1, 0, 59, 59, tzinfo=UTC),
+            "open": "100",
+            "close": "101",
+        },
+        {
+            "dataset": "intraday_bar",
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "granularity": "1h",
+            "period_start": datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+            "period_end": datetime(2026, 6, 1, 0, 59, 59, tzinfo=UTC),
+            "open": "100.00000000",
+            "close": "101.00000000",
+            "quote_asset_volume": "10000",
+            "number_of_trades": 42,
+            "market_segment": "spot",
+            "interval": "1h",
+        },
+        {
+            "dataset": "intraday_bar",
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "granularity": "1h",
+            "period_start": datetime(2026, 6, 1, 1, 0, tzinfo=UTC),
+            "period_end": datetime(2026, 6, 1, 1, 59, 59, tzinfo=UTC),
+            "open": "101",
+            "close": "102",
+        },
+    )
+
+    rows, refs = Warehouse._dedupe_rows_with_dataset_refs(
+        duplicate_date_rows,
+        ("dataset:daily:1", "dataset:daily:2", "dataset:hour:0", "dataset:hour:0b", "dataset:hour:1"),
+    )
+
+    assert rows == (duplicate_date_rows[0], duplicate_date_rows[2], duplicate_date_rows[4])
+    assert refs == ("dataset:daily:1", "dataset:hour:0", "dataset:hour:1")
+
+
 def _universe_warehouse_check() -> WarehouseCheck:
     return WarehouseCheck(
         request_id="req-universe-coverage",
@@ -143,6 +212,113 @@ def test_warehouse_materialized_rows_preserve_scope_metadata_for_report_charts()
     assert result.rows[0]["period_start"] == date(2026, 5, 31)
     assert result.rows[0]["dataset"] == "daily_bar"
     assert result.rows[0]["granularity"] == "daily"
+
+
+def test_warehouse_intraday_rows_use_row_open_close_time_from_columnar(tmp_path) -> None:
+    repo = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    repo.upsert_normalized_documents(
+        (
+            {
+                "dataset": "intraday_bar",
+                "market": "CRYPTO",
+                "symbol_id": "BTCUSDT",
+                "universe_ref": None,
+                "granularity": "1h",
+                "period_start": date(2026, 6, 1),
+                "period_end": date(2026, 6, 1),
+                "field_set": ("open", "close", "open_time", "close_time"),
+                "as_of": datetime(2026, 6, 1, tzinfo=UTC),
+                "fresh_until": datetime(2026, 6, 2, tzinfo=UTC),
+                "source_roles": ("official",),
+                "exchange": "BINANCE",
+                "currency": "USDT",
+                "timezone": "UTC",
+                "calendar": "CRYPTO_24_7",
+                "base_asset": "BTC",
+                "quote_asset": "USDT",
+                "provider_lineage": {"provider": "local_crypto_prepackaged"},
+                "schema_id": "crypto_binance_prepackaged_bar.v1",
+                "quality_flags": (),
+                "row": {
+                    "open": "100",
+                    "close": "101",
+                    "open_time": "2026-06-01 01:00:00+00:00",
+                    "close_time": "2026-06-01 01:59:59.999000+00:00",
+                },
+            },
+        )
+    )
+
+    result = Warehouse(repo).query(
+        _request(
+            dataset="intraday_bar",
+            market="CRYPTO",
+            symbol_id="BTCUSDT",
+            granularity="1h",
+            fields=("open", "close"),
+            date_range_start=date(2026, 6, 1),
+            date_range_end=date(2026, 6, 1),
+            source_role_required="official",
+            timezone="UTC",
+            calendar="CRYPTO_24_7",
+        )
+    )
+
+    assert result.status == "ready"
+    assert result.rows[0]["period_start"] == "2026-06-01 01:00:00+00:00"
+    assert result.rows[0]["period_end"] == "2026-06-01 01:59:59.999000+00:00"
+
+
+def test_warehouse_intraday_rows_restore_hour_from_dataset_ref_when_row_time_missing() -> None:
+    record = _base_record()
+    record.update(
+        {
+            "dataset_ref": (
+                "dataset:intraday_bar:CRYPTO:spot:BTCUSDT:1h:"
+                "2026-06-01T01:00:00Z:2026-06-01T01:59:59.999000Z"
+            ),
+            "dataset": "intraday_bar",
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "universe_ref": "binance_spot_all_symbols",
+            "granularity": "1h",
+            "period_start": date(2026, 6, 1),
+            "period_end": date(2026, 6, 1),
+            "source_roles": ("official",),
+            "exchange": "BINANCE",
+            "currency": "USDT",
+            "timezone": "UTC",
+            "calendar": "CRYPTO_24_7",
+            "base_asset": "BTC",
+            "quote_asset": "USDT",
+            "row": {"open": "100", "close": "101"},
+        }
+    )
+
+    result = Warehouse(DatasetRepository(records=[record])).query(
+        _request(
+            dataset="intraday_bar",
+            market="CRYPTO",
+            symbol_id="BTCUSDT",
+            universe_ref=None,
+            granularity="1h",
+            fields=("open", "close"),
+            date_range_start=date(2026, 6, 1),
+            date_range_end=date(2026, 6, 1),
+            source_role_required="official",
+            timezone="UTC",
+            calendar="CRYPTO_24_7",
+        )
+    )
+
+    assert result.status == "ready"
+    assert result.rows[0]["period_start"] == datetime(2026, 6, 1, 1, 0, tzinfo=UTC)
+    assert result.rows[0]["period_end"] == datetime(2026, 6, 1, 1, 59, 59, 999000, tzinfo=UTC)
+    assert result.rows[0]["open_time"] == datetime(2026, 6, 1, 1, 0, tzinfo=UTC)
+    assert result.rows[0]["close_time"] == datetime(2026, 6, 1, 1, 59, 59, 999000, tzinfo=UTC)
 
 
 def test_repository_writes_normalized_dataset_checksum() -> None:
@@ -273,8 +449,10 @@ def test_warehouse_query_pushes_date_range_into_repository_criteria() -> None:
     assert normalized_collection.criteria
     criteria = normalized_collection.criteria[0]
     assert criteria["universe_ref"] == "all_a_shares"
-    assert criteria["period_start"] == {"$lte": "2026-05-31"}
-    assert criteria["period_end"] == {"$gte": "2026-05-01"}
+    assert any(
+        branch["period_start"] == {"$lte": "2026-05-31"} and branch["period_end"] == {"$gte": "2026-05-01"}
+        for branch in criteria["$or"]
+    )
     assert criteria["dataset_checksum"] == {"$exists": True, "$ne": None}
 
 
@@ -456,6 +634,43 @@ def test_repository_filters_provider_attempts_by_dataset_refs() -> None:
     assert refs == {"dataset:one": ("attempt:one",)}
 
 
+def test_repository_reads_seed_catalog_but_writes_runtime_catalog() -> None:
+    runtime_collections = _collections()
+    seed_collections = _collections()
+    dataset_ref = "dataset:daily_bar:CRYPTO:spot:BTCUSDT:daily:2026-06-06:2026-06-06"
+    seed_collections["raw_payloads"]["raw:seed"] = {"raw_ref": "raw:seed", "provider": "local_crypto_prepackaged"}
+    seed_collections["provider_attempts"]["attempt:seed"] = {
+        "attempt_ref": "attempt:seed",
+        "provider": "local_crypto_prepackaged",
+        "dataset_refs": (dataset_ref,),
+    }
+    seed_collections["dataset_manifests"]["manifest:seed"] = {
+        "manifest_ref": "manifest:seed",
+        "storage": "parquet",
+        "status": "active",
+        "dataset": "daily_bar",
+        "market": "CRYPTO",
+    }
+    seed_collections["provider_result_cache"]["cache:seed"] = {
+        "cache_key_hash": "cache:seed",
+        "status": "remote_success",
+    }
+    repo = DatasetRepository.from_database(runtime_collections, seed_database=seed_collections)
+
+    assert repo.get_raw_payload("raw:seed") is not None
+    assert repo.find_provider_attempt_refs_by_dataset_ref((dataset_ref,)) == {dataset_ref: ("attempt:seed",)}
+    assert any(manifest.get("manifest_ref") == "manifest:seed" for manifest in repo.list_dataset_manifests())
+    assert repo.read_provider_result_cache("cache:seed") is None
+
+    raw_ref = repo.insert_raw_payload({"raw_ref": "raw:runtime", "provider": "runtime_provider"})
+    attempt_ref = repo.insert_provider_attempt({"attempt_ref": "attempt:runtime", "provider": "runtime_provider"})
+
+    assert raw_ref in runtime_collections["raw_payloads"]
+    assert attempt_ref in runtime_collections["provider_attempts"]
+    assert raw_ref not in seed_collections["raw_payloads"]
+    assert attempt_ref not in seed_collections["provider_attempts"]
+
+
 def test_repository_finds_company_names_by_symbol_ids_without_integrity_requirement() -> None:
     collections = _collections()
     normalized = collections["normalized_datasets"]
@@ -551,6 +766,23 @@ def test_repository_finds_company_names_from_columnar_quote_snapshot(tmp_path) -
     )
 
     assert names == {"688017.SH": "绿的谐波"}
+
+
+def test_normalized_query_criteria_includes_datetime_range_branch_for_mongo_intraday() -> None:
+    criteria = DatasetRepository._normalized_query_criteria(
+        dataset="intraday_bar",
+        market="CRYPTO",
+        symbol_id="BTCUSDT",
+        universe_ref="binance_spot_all_symbols",
+        date_range_start=date(2025, 1, 1),
+        date_range_end=date(2025, 1, 31),
+        require_integrity_metadata=True,
+    )
+
+    branches = criteria["$or"]
+    assert any(branch["period_start"]["$lte"] == "2025-01-31" for branch in branches)
+    assert any(branch["period_start"]["$lte"] == datetime(2025, 1, 31, 23, 59, 59, 999999) for branch in branches)
+    assert any(branch["period_end"]["$gte"] == datetime(2025, 1, 1) for branch in branches)
 
 
 class _NormalizedDatasetProjectionProbe:

@@ -74,7 +74,7 @@ class QueryPlanner:
                 request_id=req.request_id,
                 market=req.market,
                 symbol_id=req.symbol_id,
-                universe_ref=req.universe_ref,
+                universe_ref=self._warehouse_universe_ref(req),
                 data_type=req.data_type,
                 granularity=req.granularity,
                 fields=req.fields,
@@ -88,6 +88,14 @@ class QueryPlanner:
             )
             for req in requests
         )
+
+    @staticmethod
+    def _warehouse_universe_ref(request: DataRequest) -> str | None:
+        if request.universe_ref:
+            return request.universe_ref
+        if request.market == Market.CRYPTO and request.symbol_id and request.data_type in {"daily_bar", "intraday_bar"}:
+            return "binance_spot_all_symbols"
+        return None
 
     def build_required_coverage(self, requests: Sequence[DataRequest]) -> CoverageRequirement:
         request_ids = tuple(req.request_id for req in requests)

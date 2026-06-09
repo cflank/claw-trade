@@ -184,7 +184,7 @@ def test_run_control_and_runner_cutover_do_not_bind_legacy_runtime_modules() -> 
         f"claw_trade.{_DG}.store",
         f"claw_trade.{_DG}.providers.defaults",
         f"claw_trade.{_DG}.providers.run_plan",
-        "OpenBBMongoLineageWriter",
+        "LegacyMongoLineageWriter",
         f'{_DG}_mode="{_LEGACY_MODE}"',
         f"{_DG}={_LEGACY_MODE}",
         f"report_command 仅允许 {_DG}={_LEGACY_MODE}",

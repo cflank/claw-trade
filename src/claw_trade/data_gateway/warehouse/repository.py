@@ -57,6 +57,7 @@ REQUIRED_MULTI_MARKET_FIELDS: tuple[str, ...] = (
     "schema_id",
     "quality_flags",
 )
+STRUCTURAL_ROW_FIELDS: tuple[str, ...] = ("open_time", "close_time", "timestamp", "time")
 
 _PROVIDER_NAME_PREFIXES: tuple[str, ...] = (
     "tushare",
@@ -68,7 +69,6 @@ _PROVIDER_NAME_PREFIXES: tuple[str, ...] = (
     "coingecko",
     "sec",
     "fred",
-    "openbb",
 )
 
 _COLLECTION_KEY_FIELDS: dict[str, str] = {
@@ -90,7 +90,7 @@ _COLLECTION_INDEXES: dict[str, tuple[tuple[str, ...], ...]] = {
         ("dataset", "market", "universe_ref", "period_start", "period_end"),
     ),
     "raw_payloads": (("raw_ref",),),
-    "provider_attempts": (("attempt_ref",), ("dataset_refs",)),
+    "provider_attempts": (("attempt_ref",), ("dataset_ref_prefixes",)),
     "provider_rate_limits": (("rate_limit_ref",), ("rate_key_hash",)),
     "single_flight_calls": (("call_key_hash",),),
     "provider_result_cache": (("cache_key_hash",),),
@@ -101,6 +101,12 @@ _COLLECTION_INDEXES: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     "maintenance_jobs": (("job_id",),),
 }
+
+_SEED_READ_COLLECTIONS: tuple[str, ...] = (
+    "raw_payloads",
+    "provider_attempts",
+    "dataset_manifests",
+)
 
 _DATASET_CHECKSUM_ALGORITHM = "sha256:canonical-json-v1"
 _DATASET_CHECKSUM_SCOPE = "normalized-batch-v1"
@@ -174,19 +180,24 @@ def _company_name_from_row(row: Mapping[str, Any]) -> str | None:
 
 
 class _CollectionAdapter:
-    def __init__(self, *, name: str, key_field: str, backend: Any) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        key_field: str,
+        backend: Any,
+        read_backends: Sequence[Any] = (),
+    ) -> None:
         self.name = name
         self.key_field = key_field
         self.backend = backend
+        self.read_backends = tuple(read_backends)
 
     def get(self, key: str) -> dict[str, Any] | None:
-        if isinstance(self.backend, MutableMapping):
-            row = self.backend.get(key)
-            return None if row is None else dict(row)
-        finder = getattr(self.backend, "find_one", None)
-        if callable(finder):
-            row = finder({self.key_field: key})
-            return None if row is None else dict(row)
+        for backend in self._read_backends():
+            row = self._get_from_backend(backend, key)
+            if row is not None:
+                return row
         return None
 
     def set(self, key: str, doc: Mapping[str, Any]) -> None:
@@ -241,7 +252,19 @@ class _CollectionAdapter:
 
     def find(self, criteria: Mapping[str, Any], *, include_row: bool = True) -> tuple[dict[str, Any], ...]:
         criteria_dict = dict(criteria)
-        if isinstance(self.backend, MutableMapping):
+        rows: list[dict[str, Any]] = []
+        for backend in self._read_backends():
+            rows.extend(self._find_from_backend(backend, criteria_dict, include_row=include_row))
+        return self._dedupe_rows(tuple(rows))
+
+    def _find_from_backend(
+        self,
+        backend: Any,
+        criteria_dict: Mapping[str, Any],
+        *,
+        include_row: bool,
+    ) -> tuple[dict[str, Any], ...]:
+        if isinstance(backend, MutableMapping):
             def _copy(item: Mapping[str, Any]) -> dict[str, Any]:
                 copied = dict(item)
                 if not include_row:
@@ -250,10 +273,10 @@ class _CollectionAdapter:
 
             return tuple(
                 _copy(item)
-                for item in self.backend.values()
+                for item in backend.values()
                 if _matches_criteria(item, criteria_dict)
             )
-        finder = getattr(self.backend, "find", None)
+        finder = getattr(backend, "find", None)
         if callable(finder):
             if include_row:
                 rows = finder(criteria_dict)
@@ -275,6 +298,8 @@ class _CollectionAdapter:
         criteria_dict = dict(criteria)
         if limit <= 0:
             return ()
+        if self.read_backends:
+            return self.find(criteria_dict, include_row=include_row)[:limit]
         if isinstance(self.backend, MutableMapping):
             matches: list[dict[str, Any]] = []
             for item in self.backend.values():
@@ -309,29 +334,11 @@ class _CollectionAdapter:
         return ()
 
     def iter_find(self, criteria: Mapping[str, Any], *, include_row: bool = True) -> Iterable[dict[str, Any]]:
-        criteria_dict = dict(criteria)
-        if isinstance(self.backend, MutableMapping):
-            for item in self.backend.values():
-                if not _matches_criteria(item, criteria_dict):
-                    continue
-                copied = dict(item)
-                if not include_row:
-                    copied.pop("row", None)
-                yield copied
-            return
-        finder = getattr(self.backend, "find", None)
-        if callable(finder):
-            if include_row:
-                rows = finder(criteria_dict)
-            else:
-                try:
-                    rows = finder(criteria_dict, {"row": 0})
-                except TypeError:
-                    rows = finder(criteria_dict)
-            for item in rows:
-                yield dict(item)
+        yield from self.find(criteria, include_row=include_row)
 
     def aggregate(self, pipeline: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...] | None:
+        if self.read_backends:
+            return None
         if isinstance(self.backend, MutableMapping):
             return None
         aggregator = getattr(self.backend, "aggregate", None)
@@ -341,6 +348,8 @@ class _CollectionAdapter:
 
     def count(self, criteria: Mapping[str, Any]) -> int:
         criteria_dict = dict(criteria)
+        if self.read_backends:
+            return len(self.find(criteria_dict, include_row=False))
         if isinstance(self.backend, MutableMapping):
             return sum(1 for item in self.backend.values() if _matches_criteria(item, criteria_dict))
         counter = getattr(self.backend, "count_documents", None)
@@ -396,9 +405,15 @@ class _CollectionAdapter:
         return deleted
 
     def values(self) -> tuple[dict[str, Any], ...]:
-        if isinstance(self.backend, MutableMapping):
-            return tuple(dict(item) for item in self.backend.values())
-        finder = getattr(self.backend, "find", None)
+        rows: list[dict[str, Any]] = []
+        for backend in self._read_backends():
+            rows.extend(self._values_from_backend(backend))
+        return self._dedupe_rows(tuple(rows))
+
+    def _values_from_backend(self, backend: Any) -> tuple[dict[str, Any], ...]:
+        if isinstance(backend, MutableMapping):
+            return tuple(dict(item) for item in backend.values())
+        finder = getattr(backend, "find", None)
         if callable(finder):
             rows = finder({})
             return tuple(dict(item) for item in rows)
@@ -424,6 +439,33 @@ class _CollectionAdapter:
             return True
         self.set(key, payload)
         return True
+
+    def _read_backends(self) -> tuple[Any, ...]:
+        return (self.backend, *self.read_backends)
+
+    def _get_from_backend(self, backend: Any, key: str) -> dict[str, Any] | None:
+        if isinstance(backend, MutableMapping):
+            row = backend.get(key)
+            return None if row is None else dict(row)
+        finder = getattr(backend, "find_one", None)
+        if callable(finder):
+            row = finder({self.key_field: key})
+            return None if row is None else dict(row)
+        return None
+
+    def _dedupe_rows(self, rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in rows:
+            copied = dict(row)
+            key = copied.get(self.key_field)
+            if key is not None:
+                key_text = str(key)
+                if key_text in seen:
+                    continue
+                seen.add(key_text)
+            deduped.append(copied)
+        return tuple(deduped)
 
 
 def _mongo_safe_document(value: Any) -> Any:
@@ -451,6 +493,60 @@ def _date_query_text(value: Any) -> str | None:
     if not text:
         return None
     return text[:10]
+
+
+def _date_query_datetime_start(value: Any) -> datetime | None:
+    parsed = _coerce_query_datetime(value)
+    if parsed is not None:
+        return parsed
+    parsed_date = _coerce_query_date(value)
+    if parsed_date is None:
+        return None
+    return datetime(parsed_date.year, parsed_date.month, parsed_date.day)
+
+
+def _date_query_datetime_end(value: Any) -> datetime | None:
+    parsed = _coerce_query_datetime(value)
+    if parsed is not None:
+        return parsed
+    parsed_date = _coerce_query_date(value)
+    if parsed_date is None:
+        return None
+    return datetime(parsed_date.year, parsed_date.month, parsed_date.day, 23, 59, 59, 999999)
+
+
+def _coerce_query_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return _naive_utc_datetime(value)
+    if isinstance(value, date):
+        return None
+    text = str(value or "").strip()
+    if not text or "T" not in text:
+        return None
+    try:
+        return _naive_utc_datetime(datetime.fromisoformat(text.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+
+
+def _coerce_query_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).date() if value.tzinfo is not None else value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _naive_utc_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def _matches_criteria(item: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
@@ -507,6 +603,47 @@ def _matches_value(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
+def _dataset_ref_prefix_map(dataset_refs: Sequence[str]) -> dict[str, tuple[str, ...]]:
+    grouped: dict[str, list[str]] = {}
+    for dataset_ref in dataset_refs:
+        prefix = _dataset_ref_lookup_prefix(dataset_ref)
+        if prefix is None:
+            continue
+        grouped.setdefault(prefix, []).append(dataset_ref)
+    return {prefix: tuple(refs) for prefix, refs in grouped.items()}
+
+
+def _dataset_ref_lookup_prefix(dataset_ref: str) -> str | None:
+    parts = str(dataset_ref).split(":")
+    if len(parts) < 6 or parts[0] != "dataset":
+        return None
+    if len(parts) >= 8 and parts[2] == "CRYPTO":
+        return ":".join(parts[:6]) + ":"
+    return ":".join(parts[:5]) + ":"
+
+
+def _compact_refs_for_metadata(prefix: str, refs: Sequence[str], *, full_limit: int = 500, sample_limit: int = 20) -> dict[str, Any]:
+    normalized_refs = tuple(dict.fromkeys(str(ref) for ref in refs if str(ref).strip()))
+    digest = "sha256:" + sha256(
+        json.dumps(normalized_refs, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    if len(normalized_refs) <= full_limit:
+        sample = normalized_refs
+        truncated = False
+    else:
+        head_count = sample_limit // 2
+        tail_count = sample_limit - head_count
+        sample = tuple((*normalized_refs[:head_count], *normalized_refs[-tail_count:]))
+        truncated = True
+    return {
+        f"{prefix}_refs": sample,
+        f"{prefix}_ref_count": len(normalized_refs),
+        f"{prefix}_refs_truncated": truncated,
+        f"{prefix}_refs_sample": sample,
+        f"{prefix}_refs_sha256": digest,
+    }
+
+
 def _comparable_value(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.date().isoformat()
@@ -530,6 +667,7 @@ class DatasetRepository:
         records: Iterable[Mapping[str, Any]] | None = None,
         *,
         database: Any | None = None,
+        seed_database: Any | None = None,
         collections: Mapping[str, Any] | None = None,
         normalized_columnar: NormalizedColumnarWarehouse | None = None,
         allow_normalized_mongo_fallback: bool = False,
@@ -543,6 +681,7 @@ class DatasetRepository:
         )
         self._collections: dict[str, _CollectionAdapter] = self._build_collection_adapters(
             database=database,
+            seed_database=seed_database,
             collections=collections,
         )
         self._ensure_collection_indexes()
@@ -554,12 +693,14 @@ class DatasetRepository:
         cls,
         database: Any,
         *,
+        seed_database: Any | None = None,
         normalized_columnar: NormalizedColumnarWarehouse | None = None,
         allow_normalized_mongo_fallback: bool = False,
         allow_normalized_mongo_read: bool = False,
     ) -> "DatasetRepository":
         return cls(
             database=database,
+            seed_database=seed_database,
             normalized_columnar=normalized_columnar,
             allow_normalized_mongo_fallback=allow_normalized_mongo_fallback,
             allow_normalized_mongo_read=allow_normalized_mongo_read,
@@ -599,12 +740,23 @@ class DatasetRepository:
             record_dict["dataset_ref"] = dataset_ref
             refs.append(dataset_ref)
             items.append((dataset_ref, record_dict))
-        checked_records = self._ensure_dataset_checksum(tuple(record for _ref, record in items))
-        if items:
+        deduped_items = self._dedupe_normalized_upsert_items(items)
+        checked_records = self._ensure_dataset_checksum(tuple(record for _ref, record in deduped_items))
+        if deduped_items:
             self._persist_normalized_records(
-                tuple((ref, record) for (ref, _old), record in zip(items, checked_records, strict=True))
+                tuple((ref, record) for (ref, _old), record in zip(deduped_items, checked_records, strict=True))
             )
         return tuple(dict.fromkeys(refs))
+
+    @staticmethod
+    def _dedupe_normalized_upsert_items(items: Sequence[tuple[str, dict[str, Any]]]) -> tuple[tuple[str, dict[str, Any]], ...]:
+        latest_by_ref: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for dataset_ref, record in items:
+            if dataset_ref not in latest_by_ref:
+                order.append(dataset_ref)
+            latest_by_ref[dataset_ref] = record
+        return tuple((dataset_ref, latest_by_ref[dataset_ref]) for dataset_ref in order)
 
     def _persist_normalized_records(self, items: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
         if not items:
@@ -637,6 +789,8 @@ class DatasetRepository:
     ) -> None:
         incoming_refs = {str(ref) for ref in dataset_refs if str(ref).strip()}
         new_manifest = dict(manifest)
+        incoming_prefixes = set(_dataset_ref_prefix_map(tuple(incoming_refs)))
+        new_manifest.setdefault("dataset_ref_prefixes", tuple(sorted(incoming_prefixes)))
         manifest_ref = str(new_manifest.get("manifest_ref") or f"manifest:{uuid4().hex[:12]}")
         new_manifest["manifest_ref"] = manifest_ref
         superseded_refs: list[str] = []
@@ -652,13 +806,16 @@ class DatasetRepository:
                 if not existing_ref or existing_ref == manifest_ref:
                     continue
                 existing_dataset_refs = {str(ref) for ref in tuple(existing.get("dataset_refs", ()) or ())}
-                if not incoming_refs.intersection(existing_dataset_refs):
+                existing_prefixes = {str(ref) for ref in tuple(existing.get("dataset_ref_prefixes", ()) or ())}
+                ref_overlap = bool(incoming_refs.intersection(existing_dataset_refs))
+                prefix_overlap = bool(incoming_prefixes and existing_prefixes and incoming_prefixes.intersection(existing_prefixes))
+                if not ref_overlap and not prefix_overlap:
                     continue
                 updated = dict(existing)
                 updated["status"] = "superseded"
                 updated["superseded_at"] = now
                 updated["superseded_by_manifest_ref"] = manifest_ref
-                updated["superseded_by_dataset_refs"] = tuple(sorted(incoming_refs))
+                updated.update(_compact_refs_for_metadata("superseded_by_dataset", tuple(sorted(incoming_refs))))
                 collection.set(existing_ref, updated)
                 superseded_refs.append(existing_ref)
             if superseded_refs:
@@ -859,12 +1016,25 @@ class DatasetRepository:
             criteria["symbol_id"] = symbol_id
         if universe_ref:
             criteria["universe_ref"] = universe_ref
+        range_text: dict[str, Any] = {}
         start = _date_query_text(date_range_start)
         end = _date_query_text(date_range_end)
         if end:
-            criteria["period_start"] = {"$lte": end}
+            range_text["period_start"] = {"$lte": end}
         if start:
-            criteria["period_end"] = {"$gte": start}
+            range_text["period_end"] = {"$gte": start}
+        if range_text:
+            branches: list[dict[str, Any]] = [range_text]
+            range_datetime: dict[str, Any] = {}
+            end_datetime = _date_query_datetime_end(date_range_end)
+            start_datetime = _date_query_datetime_start(date_range_start)
+            if end_datetime is not None:
+                range_datetime["period_start"] = {"$lte": end_datetime}
+            if start_datetime is not None:
+                range_datetime["period_end"] = {"$gte": start_datetime}
+            if range_datetime:
+                branches.append(range_datetime)
+            criteria["$or"] = tuple(branches)
         if require_integrity_metadata:
             criteria["dataset_checksum"] = {"$exists": True, "$ne": None}
             criteria["dataset_checksum_algorithm"] = _DATASET_CHECKSUM_ALGORITHM
@@ -884,7 +1054,8 @@ class DatasetRepository:
         row_payload = row if isinstance(row, Mapping) else {}
         requested_fields = tuple(dict.fromkeys(str(field).strip() for field in fields if str(field).strip()))
         if requested_fields:
-            row_payload = {field: row_payload[field] for field in requested_fields if field in row_payload}
+            projected_fields = tuple(dict.fromkeys((*requested_fields, *STRUCTURAL_ROW_FIELDS)))
+            row_payload = {field: row_payload[field] for field in projected_fields if field in row_payload}
         return DatasetRecord(
             dataset_ref=str(record.get("dataset_ref")),
             dataset=dataset,
@@ -1288,6 +1459,23 @@ class DatasetRepository:
                 normalized_ref = str(dataset_ref).strip()
                 if normalized_ref in found and attempt_ref not in found[normalized_ref]:
                     found[normalized_ref].append(attempt_ref)
+        missing_refs = tuple(ref for ref, refs in found.items() if not refs)
+        if missing_refs:
+            prefix_map = _dataset_ref_prefix_map(missing_refs)
+            if prefix_map:
+                with self._lock:
+                    prefix_attempts = self._collection("provider_attempts").find(
+                        {"dataset_ref_prefixes": {"$in": tuple(prefix_map)}}
+                    )
+                for attempt in prefix_attempts:
+                    attempt_ref = str(attempt.get("attempt_ref") or "").strip()
+                    if not attempt_ref:
+                        continue
+                    prefixes = tuple(str(prefix).strip() for prefix in tuple(attempt.get("dataset_ref_prefixes", ()) or ()))
+                    for prefix in prefixes:
+                        for dataset_ref in prefix_map.get(prefix, ()):
+                            if attempt_ref not in found[dataset_ref]:
+                                found[dataset_ref].append(attempt_ref)
         return {ref: tuple(refs) for ref, refs in found.items() if refs}
 
     def write_dataset_manifest(self, manifest: Mapping[str, Any]) -> str:
@@ -1576,6 +1764,7 @@ class DatasetRepository:
         self,
         *,
         database: Any | None,
+        seed_database: Any | None,
         collections: Mapping[str, Any] | None,
     ) -> dict[str, _CollectionAdapter]:
         if collections is not None:
@@ -1585,8 +1774,20 @@ class DatasetRepository:
         else:
             backends = {name: {} for name in ALLOWED_MONGO_COLLECTIONS}
 
+        seed_backends: dict[str, tuple[Any, ...]] = {}
+        if seed_database is not None:
+            seed_backends = {
+                name: (self._resolve_database_collection(seed_database, name),)
+                for name in _SEED_READ_COLLECTIONS
+            }
+
         return {
-            name: _CollectionAdapter(name=name, key_field=_COLLECTION_KEY_FIELDS[name], backend=backends[name])
+            name: _CollectionAdapter(
+                name=name,
+                key_field=_COLLECTION_KEY_FIELDS[name],
+                backend=backends[name],
+                read_backends=seed_backends.get(name, ()),
+            )
             for name in ALLOWED_MONGO_COLLECTIONS
         }
 

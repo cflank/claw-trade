@@ -3,7 +3,7 @@
 状态：详细设计草案，已有首版实现，本文按当前实现口径同步。
 日期：2026-05-24  
 唯一主设计来源：`docs/A股选股总体设计.md`。  
-参考边界：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`。旧 `docs/数据源openbb引入方案.md` 只作历史背景。
+参考边界：`AGENTS.md`、`docs/A股扩展方案.md`、`docs/A股扩展详细设计.md`、`docs/数据层详细设计.md`、`docs/数据层实施任务清单.md`。旧 `docs/数据源removed_data_gateway引入方案.md` 只作历史背景。
 
 说明：
 
@@ -998,7 +998,7 @@ Python 确定性层只可以写可复算事实和读者化来源摘要：
 
 - raw/debug/provider/cache/attempt JSON。
 - Mongo collection 名、OpenViking URI、hash、manifest、lineage、receipt。
-- OpenClaw/OpenViking/legacy OpenBB runtime wrapper prose。
+- OpenClaw/OpenViking/legacy 已删除数据网关 runtime wrapper prose。
 - provider secrets、headers、tokens。
 
 ## 7. `claw_get_selection_candidate_pack` 工具详细设计
@@ -1653,7 +1653,7 @@ Guard source: `docs/A股选股总体设计.md §2.2/§3.8.5/§11.1`。
 | 测试名 | fixture | 执行动作 | 断言 | 证明哪个总体设计要求 |
 |---|---|---|---|---|
 | `test_selection_data_job_provider_failure_records_gap_no_hidden_fallback` | first provider fails, second succeeds | run job | both attempts visible; no old path import | no hidden fallback |
-| `test_selection_tool_never_calls_openbb` | approved pack + data_gateway/provider spy raising | call tool | tool succeeds from approved pack; data_gateway/provider spy not called | tool only reads approved pack |
+| `test_selection_tool_never_calls_removed_data_gateway` | approved pack + data_gateway/provider spy raising | call tool | tool succeeds from approved pack; data_gateway/provider spy not called | tool only reads approved pack |
 | `test_select_unavailable_only_schedules_background_refresh` | no completed run | `/select` | refresh gateway called once；provider/table fetch not called；response is started/running/unconfigured | `/select` 不现场拉数，只触发后台补数 |
 
 ### 13.7 No-auto-report tests

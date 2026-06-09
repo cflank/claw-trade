@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
 from claw_trade.data_gateway.coordination.service import DataService
@@ -44,6 +44,31 @@ def _symbol_request(request_id: str, symbol_id: str) -> DataRequest:
     payload = _request(request_id).model_dump()
     payload["symbol_id"] = symbol_id
     return DataRequest.model_validate(payload)
+
+
+def _crypto_request(request_id: str = "req-crypto-service-1") -> DataRequest:
+    return DataRequest.model_validate(
+        {
+            "request_id": request_id,
+            "market": "CRYPTO",
+            "symbol_id": "SOLUSDT",
+            "exchange": "BINANCE",
+            "currency": "USDT",
+            "timezone": "UTC",
+            "calendar": "CRYPTO_24_7",
+            "base_asset": "SOL",
+            "quote_asset": "USDT",
+            "data_type": "daily_bar",
+            "granularity": "daily",
+            "fields": ("open", "high", "low", "close", "volume"),
+            "date_range_start": date(2026, 6, 1),
+            "date_range_end": date(2026, 6, 7),
+            "freshness_policy": "calendar_day",
+            "consumer": "report",
+            "consumer_id": "market_analyst",
+            "as_of": datetime(2026, 6, 7, tzinfo=UTC),
+        }
+    )
 
 
 def _gap(request_id: str) -> DataGap:
@@ -116,6 +141,114 @@ class _Warehouse:
             rows=({"close": 2.0},),
             dataset_refs=("dataset:recheck",),
             freshness={"policy": "trading_day"},
+        )
+
+
+class _CryptoLocalEmptyWarehouse:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def check(self, checks, coverage) -> WarehouseResult:
+        del coverage
+        self._events.append("warehouse.check")
+        check = checks[0]
+        return WarehouseResult(
+            satisfied=False,
+            gaps=(
+                DataGap.by_reason(
+                    GapReason.WAREHOUSE_MISSING,
+                    request_id=check.request_id,
+                    market=Market.CRYPTO,
+                    data_type=check.data_type,
+                    granularity=check.granularity,
+                    symbol_id=check.symbol_id,
+                    message="warehouse_missing",
+                    as_of=datetime(2026, 6, 7, tzinfo=UTC),
+                ),
+            ),
+        )
+
+    def recheck(self, checks, coverage) -> WarehouseResult:
+        del checks, coverage
+        self._events.append("warehouse.recheck")
+        return WarehouseResult(
+            satisfied=True,
+            rows=(
+                {
+                    "dataset": "daily_bar",
+                    "market": "CRYPTO",
+                    "symbol_id": "SOLUSDT",
+                    "exchange": "BINANCE",
+                    "base_asset": "SOL",
+                    "quote_asset": "USDT",
+                    "granularity": "daily",
+                    "period_start": "2026-06-01",
+                    "period_end": "2026-06-07",
+                    "open": 149.0,
+                    "high": 155.0,
+                    "low": 148.0,
+                    "close": 150.0,
+                    "volume": 1000.0,
+                },
+            ),
+            dataset_refs=("dataset:daily_bar:CRYPTO:SOLUSDT:2026-06-01:2026-06-07",),
+            attempt_refs=("attempt:local-seed",),
+            freshness={"policy": "calendar_day"},
+        )
+
+
+class _CryptoDateRangeMissingWarehouse:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def check(self, checks, coverage) -> WarehouseResult:
+        del coverage
+        self._events.append("warehouse.check")
+        check = checks[0]
+        return WarehouseResult(
+            satisfied=False,
+            dataset_refs=("dataset:daily_bar:CRYPTO:spot:SOLUSDT:daily:2026-06-01:2026-06-03",),
+            attempt_refs=("attempt:local-seed-partial",),
+            gaps=(
+                DataGap.by_reason(
+                    GapReason.DATE_RANGE_MISSING,
+                    request_id=check.request_id,
+                    market=Market.CRYPTO,
+                    data_type=check.data_type,
+                    granularity=check.granularity,
+                    symbol_id=check.symbol_id,
+                    message="date_range_missing: local CRYPTO seed covers 2026-06-01..2026-06-03 only.",
+                    as_of=datetime(2026, 6, 7, tzinfo=UTC),
+                ),
+            ),
+        )
+
+    def recheck(self, checks, coverage) -> WarehouseResult:
+        del checks, coverage
+        self._events.append("warehouse.recheck")
+        return WarehouseResult(
+            satisfied=True,
+            rows=(
+                {
+                    "dataset": "daily_bar",
+                    "market": "CRYPTO",
+                    "symbol_id": "SOLUSDT",
+                    "exchange": "BINANCE",
+                    "base_asset": "SOL",
+                    "quote_asset": "USDT",
+                    "granularity": "daily",
+                    "period_start": "2026-06-01",
+                    "period_end": "2026-06-07",
+                    "open": 149.0,
+                    "high": 155.0,
+                    "low": 148.0,
+                    "close": 150.0,
+                    "volume": 1000.0,
+                },
+            ),
+            dataset_refs=("dataset:daily_bar:CRYPTO:SOLUSDT:2026-06-01:2026-06-07",),
+            attempt_refs=("attempt:local-seed-partial",),
+            freshness={"policy": "calendar_day"},
         )
 
 
@@ -756,6 +889,105 @@ def test_data_service_ready_result_drops_superseded_ingest_gaps() -> None:
     assert result.gaps == ()
 
 
+def test_data_service_preserves_crypto_local_empty_gap_after_provider_fill() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_CryptoLocalEmptyWarehouse(events),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+
+    result = service.get_data(_crypto_request("req-crypto-local-empty"))
+
+    assert result.status == DataResultStatus.READY
+    assert result.dataset_refs == ("dataset:daily_bar:CRYPTO:SOLUSDT:2026-06-01:2026-06-07",)
+    assert result.attempt_refs == ("attempt:local-seed", "attempt:1")
+    assert [gap.reason for gap in result.gaps] == [GapReason.WAREHOUSE_MISSING]
+    assert result.gaps[0].severity == GapSeverity.WARN
+    assert result.gaps[0].market == Market.CRYPTO
+    assert result.gaps[0].symbol_id == "SOLUSDT"
+    assert result.gaps[0].provider_ids_tried == ("local_crypto_prepackaged",)
+    assert "local_warehouse_empty" in result.gaps[0].human_readable
+
+
+def test_data_service_drops_crypto_date_range_gap_after_provider_fill() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_CryptoDateRangeMissingWarehouse(events),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_BatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_FetchEngine(events),
+        ingest=_Ingest(events),
+    )
+
+    result = service.get_data(_crypto_request("req-crypto-date-range-missing"))
+
+    assert result.status == DataResultStatus.READY
+    assert result.dataset_refs == ("dataset:daily_bar:CRYPTO:SOLUSDT:2026-06-01:2026-06-07",)
+    assert result.attempt_refs == ("attempt:local-seed-partial", "attempt:1")
+    assert result.gaps == ()
+
+
+def test_data_service_slices_multi_metric_rows_by_requested_fields() -> None:
+    funding_request = DataRequest.model_validate(
+        {
+            "request_id": "req-funding",
+            "market": "CRYPTO",
+            "symbol_id": "SOLUSDT",
+            "exchange": "BINANCE",
+            "currency": "USDT",
+            "timezone": "UTC",
+            "calendar": "CRYPTO_24_7",
+            "base_asset": "SOL",
+            "quote_asset": "USDT",
+            "data_type": "crypto_derivative_metric",
+            "granularity": "1h",
+            "fields": ("funding_rate", "timestamp", "symbol_id"),
+            "date_range_start": date(2026, 6, 1),
+            "date_range_end": date(2026, 6, 7),
+            "freshness_policy": "trading_day",
+            "consumer": "report",
+            "consumer_id": "market_analyst",
+            "as_of": datetime(2026, 6, 7, tzinfo=UTC),
+        }
+    )
+
+    assert DataService._row_matches_request(
+        {
+            "dataset": "crypto_derivative_metric",
+            "market": "CRYPTO",
+            "symbol_id": "SOLUSDT",
+            "granularity": "1h",
+            "period_start": "2026-06-02",
+            "period_end": "2026-06-02",
+            "funding_rate": 0.0001,
+            "timestamp": "2026-06-02T00:00:00Z",
+        },
+        funding_request,
+    )
+    assert not DataService._row_matches_request(
+        {
+            "dataset": "crypto_derivative_metric",
+            "market": "CRYPTO",
+            "symbol_id": "SOLUSDT",
+            "granularity": "1h",
+            "period_start": "2026-06-02",
+            "period_end": "2026-06-02",
+            "long_short_ratio": 1.2,
+            "timestamp": "2026-06-02T00:00:00Z",
+        },
+        funding_request,
+    )
+
+
 def test_data_service_skips_recheck_when_remote_attempt_writes_no_dataset_refs() -> None:
     events: list[str] = []
     service = DataService(
@@ -791,6 +1023,59 @@ def test_data_service_dedupes_identical_gaps() -> None:
     duplicate = gap.model_copy(update={"gap_id": "gap:req-gap:field_missing:duplicate"})
 
     assert DataService._dedupe_gaps((gap, duplicate)) == [gap]
+
+
+def test_data_service_drops_field_missing_gap_when_final_rows_have_required_fields() -> None:
+    gap = DataGap.by_reason(
+        "field_missing",
+        request_id="req-onchain",
+        market=Market.CRYPTO,
+        data_type="crypto_onchain_metric",
+        granularity="daily",
+        required_fields=("value_unit",),
+        symbol_id="BTCUSDT",
+    )
+
+    assert DataService._drop_satisfied_field_missing_gaps(
+        (gap,),
+        (
+            {
+                "dataset": "crypto_onchain_metric",
+                "market": "CRYPTO",
+                "symbol_id": "BTCUSDT",
+                "granularity": "daily",
+                "metric": "ahr999",
+                "value": 0.318,
+                "value_unit": "dimensionless",
+                "field_set": ("metric", "value", "value_unit"),
+            },
+        ),
+    ) == []
+
+
+def test_data_service_drops_local_warehouse_empty_gap_when_rows_are_filled() -> None:
+    gap = DataGap.by_reason(
+        "warehouse_missing",
+        request_id="req-intraday",
+        market=Market.CRYPTO,
+        data_type="intraday_bar",
+        granularity="1h",
+        symbol_id="BTCUSDT",
+        message="local_warehouse_empty: local CRYPTO seed warehouse has no bars for BTCUSDT",
+    )
+
+    assert DataService._drop_filled_local_warehouse_empty_gaps(
+        (gap,),
+        (
+            {
+                "dataset": "intraday_bar",
+                "market": "CRYPTO",
+                "symbol_id": "BTCUSDT",
+                "granularity": "1h",
+                "period_start": "2026-06-01T00:00:00Z",
+            },
+        ),
+    ) == []
 
 
 def test_data_service_batch_uses_unified_ten_step_flow_once() -> None:

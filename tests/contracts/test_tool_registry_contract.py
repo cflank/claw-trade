@@ -16,7 +16,6 @@ from claw_trade.workflow.models import Stage
 
 def test_load_tool_registry_defaults_to_canonical_data_pack_intents(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", raising=False)
-    monkeypatch.delenv("CLAW_TRADE_OPENBB_TOOL_SCHEMA_ENABLED", raising=False)
     result = load_tool_registry()
     assert result.ok is True
     assert result.registry is not None
@@ -44,7 +43,6 @@ def test_load_tool_registry_defaults_to_canonical_data_pack_intents(monkeypatch:
 
 
 def test_legacy_rollback_flag_no_longer_changes_tool_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CLAW_TRADE_OPENBB_TOOL_SCHEMA_ENABLED", "false")
     monkeypatch.delenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", raising=False)
     assert load_tool_registry().registry.intent_to_tools["us_market_data"] == ("claw_get_market_pack",)
 

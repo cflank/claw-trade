@@ -5,7 +5,7 @@
 
 > **2026-06 当前数据层口径**
 >
-> 本文中旧称 “OpenBB/data_gateway” 的目标入口，当前统一改读为 `src/claw_trade/data_gateway`：核心合同是 `DataRequest -> DataResult`，Provider 能力来自 `ProviderPlugin.capabilities()`，Mongo 证据使用当前 8 个目标 collection。OpenBB 本体不是目标运行时依赖；旧 `openbb_*` 证据名只可作为历史背景或 forbidden legacy path 参考。
+> 本文中旧称 “已删除数据网关/data_gateway” 的目标入口，当前统一改读为 `src/claw_trade/data_gateway`：核心合同是 `DataRequest -> DataResult`，Provider 能力来自 `ProviderPlugin.capabilities()`，Mongo 证据使用当前 8 个目标 collection。已删除数据网关 本体不是目标运行时依赖；旧 `removed_data_gateway_*` 证据名只可作为历史背景或 forbidden legacy path 参考。
 
 ## 1. 结论
 
@@ -159,7 +159,7 @@ worker 可见的市场资料包工具名。
 
 3. worker 只看一个 market pack。
 
-   `market_analyst` 只调用 `claw_get_market_pack`。它不得直接看到 CryptoLens raw JSON、旧 BB MCP 原子工具、legacy OpenBB atomic/admin/discovery tool、Mongo raw/cache/debug envelope。
+   `market_analyst` 只调用 `claw_get_market_pack`。它不得直接看到 CryptoLens raw JSON、旧 BB MCP 原子工具、legacy 已删除数据网关 atomic/admin/discovery tool、Mongo raw/cache/debug envelope。
 
 4. Python 控制层只做计划和调度。
 
@@ -235,8 +235,8 @@ Chat /report
   -> data_gateway pack/tool backend
   -> DomainPackService 按数据请求执行 data_gateway provider plugins/adapters
   -> data_gateway 写 provider attempts/raw refs
-  -> data_gateway 写 normalized crypto bundle / normalized refs
-  -> CryptoLens 只消费 normalized crypto bundle 做离线分析
+  -> data_gateway 写 normalized rows / normalized refs
+  -> CryptoLens 只消费 report DataResult 批结果和 normalized refs 做离线分析
   -> CryptoLens 写 crypto_lens_analysis_evidence
   -> MarketPackBuilder 合成 reader_brief、chart readiness、data gaps、refs
   -> market_analyst 基于 reader_brief 写 approved market L1
@@ -252,7 +252,7 @@ Chat /report
      -> raw payload refs
 ```
 
-此时 worker 不看 CryptoLens raw JSON、旧 BB MCP 原子工具、legacy OpenBB atomic/admin/discovery tools、Mongo raw/cache/debug envelope，也不看 OpenViking protocol 正文。
+此时 worker 不看 CryptoLens raw JSON、旧 BB MCP 原子工具、legacy 已删除数据网关 atomic/admin/discovery tools、Mongo raw/cache/debug envelope，也不看 OpenViking protocol 正文。
 
 ## 6. 组件设计
 
@@ -288,6 +288,8 @@ Chat /report
 ### 6.2 `NormalizedCryptoMarketBundle`
 
 这是 `data_gateway` 喂给 CryptoLens 的唯一输入。
+
+当前代码实现使用 report path 的 `DataResult` 批结果作为等价输入合同：`rows` 提供 normalized rows，`dataset_refs` 提供 normalized refs，`attempt_refs` 提供来源尝试 refs；不要求仓库中存在名为 `NormalizedCryptoMarketBundle` 的运行时类。
 
 建议结构：
 
@@ -391,10 +393,10 @@ src/claw_trade/data_gateway/analysis/crypto_lens/
 
 职责：
 
-- 将 `NormalizedCryptoMarketBundle` 转成 CryptoLens analysis input；
+- 将 data_gateway report `DataResult` 批结果中的 normalized rows、attempt refs 和 dataset refs 转成 CryptoLens analysis input；
 - 调用本项目内部的 CryptoLens 纯分析函数；
 - 禁止 CryptoLens analysis runtime 出网；
-- 写 `crypto_lens_analysis_evidence`；
+- 写 report evidence file；当前 report path 写入 `evidence_root/data-layer/crypto-lens/<run>/<call>/analysis.json`，CryptoLens analysis runtime 不访问 Mongo；
 - 把 CryptoLens 输出转成 `CryptoLensAnalysisResult`。
 
 CryptoLens 代码迁移方式：
@@ -772,7 +774,7 @@ claw_get_market_pack
 
 ```text
 bb_crypto_data__build_trade_context
-legacy OpenBB atomic provider tools
+legacy 已删除数据网关 atomic provider tools
 CoinGlass tools
 Binance tools
 ```
@@ -860,7 +862,7 @@ Binance tools
 目标接口：
 
 ```text
-analyze_crypto_lens_bundle(input) -> CryptoLensAnalysisResult
+analyze_crypto_lens_data_results(results: Sequence[DataResult], ...) -> CryptoLensAnalysisResult
 ```
 
 要求：
@@ -880,7 +882,7 @@ CRYPTO `claw_get_market_pack` 流程改为：
 
 ```text
 data_gateway provider execution
-  -> normalized crypto bundle
+  -> report DataResult batch with normalized rows / refs
   -> CryptoLens analysis engine
   -> reader_brief
   -> chart assets
@@ -926,7 +928,7 @@ final report claim
 - CryptoLens analysis adapter 不读取 provider env key。
 - data_gateway provider adapter 可以读取从 Win11 旧 BB 迁移过来的本地 key，但 evidence 不泄漏 key 值。
 - CryptoLens analysis module 不引用 `/mnt/d/src/BB`、`D:\src\BB`、`BB_MCP_SERVER_PATH`、`BB_MCP_CWD`。
-- data_gateway normalized bundle -> CryptoLens input 映射正确。
+- data_gateway DataResult rows / normalized refs -> CryptoLens input 映射正确。
 - 缺 derivatives 时 funding/OI/多空比/CVD 均进入缺口，不写中性。
 - 缺 liquidation_map 时不生成清算簇结论。
 - OHLCV 样本不足时技术指标状态为 partial/insufficient。
@@ -949,11 +951,11 @@ final report claim
 - 旧 BB `domains/live.ts` 的直接 provider fetch 路径不得被 report runtime 调用；
 - 外部 Win11 BB MCP 不得被 report runtime 调用；
 - 把 `BB_MCP_SERVER_PATH` 和 `BB_MCP_CWD` 设置成无效路径时，目标态 CRYPTO market pack 不得因此失败；
-- US atomics 和 legacy OpenBB atomic provider tools 不得进入 worker tool schema。
+- US atomics 和 legacy 已删除数据网关 atomic provider tools 不得进入 worker tool schema。
 
 ### 集成测试
 
-- 构造 fixture data_gateway normalized bundle，验证 CryptoLens output 和 reader brief。
+- 构造 fixture data_gateway DataResult 批结果，验证 CryptoLens output 和 reader brief。
 - 构造真实 CRYPTO provider attempts，验证 normalized refs 进入 CryptoLens analysis input。
 - 验证 chart assets 可被 exporter 复制。
 - 验证 OpenViking relations 包含 CryptoLens analysis evidence 节点。
@@ -975,14 +977,14 @@ BTC 样本必须证明：
 当前 canonical T16 final BTC 证据目录：
 
 ```text
-docs/evidence/openbb-canonical-t16-final-20260518T125112Z/crypto_btc/
+docs/evidence/removed_data_gateway-canonical-t16-final-20260518T125112Z/crypto_btc/
 ```
 
 不能作为 CryptoLens 接入完成证据。
 
 原因：
 
-- CRYPTO market source 只显示 `openbb_yfinance/crypto_price_historical`；
+- CRYPTO market source 只显示 `removed_data_gateway_yfinance/crypto_price_historical`；
 - CryptoLens 分析材料没有进入当前 `claw_get_market_pack` 后端；
 - 该旧 final report 中的旧 BB/CoinGlass 缺失说明是诚实缺口，但不是目标完成态。
 
@@ -995,7 +997,7 @@ docs/evidence/openbb-canonical-t16-final-20260518T125112Z/crypto_btc/
 - 不让 CryptoLens 自己调用 CoinGlass/Binance/Bybit/FRED；
 - 不让 report runtime 调用 Win11 下的旧 BB 项目目录；
 - 不把外部 BB MCP 作为目标运行依赖；
-- 不恢复 `third_party/openbb`，也不把 CryptoLens 放进外部 runtime 写 claw-trade 业务逻辑；
+- 不恢复 `third_party/removed_data_gateway`，也不把 CryptoLens 放进外部 runtime 写 claw-trade 业务逻辑；
 - 不让 Python 改写 PM 结论；
 - 不新增投资判断 gate 或风格 gate；
 - 不把 OpenViking 当 fresh provider 数据源；
@@ -1033,7 +1035,7 @@ docs/evidence/openbb-canonical-t16-final-20260518T125112Z/crypto_btc/
 2. 所有外部 provider 请求都有 provider_attempts/raw_payloads evidence。
 3. CryptoLens analysis engine 在 report runtime 中不出网、不读 provider key。
 4. CryptoLens analysis engine 来自 claw-trade 仓库内部代码，不依赖 Win11 旧 BB 项目、`/mnt/d/src/BB` 或外部 BB MCP。
-5. CryptoLens analysis input 只来自 data_gateway normalized bundle。
+5. CryptoLens analysis input 只来自 data_gateway normalized rows、DataResult 批结果和 refs。
 6. worker 只看到自然语言 market pack。
 7. BTC fresh/live report 中恢复 CryptoLens 指标分析密度。
 8. 缺失字段仍真实进入 data gaps。

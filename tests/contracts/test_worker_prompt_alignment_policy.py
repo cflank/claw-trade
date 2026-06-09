@@ -446,11 +446,11 @@ def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> N
         "fundamental_analyst": ("加密资产基本面分析师", "代币经济分析", "FDV/TVL", "买入/持有/卖出"),
         "news_analyst": ("加密市场新闻与事件分析师", "监管", "机构资金", "Markdown 表格"),
         "social_analyst": ("加密社区与市场情绪分析师", "真实平台样本", "1-5 天市场反应"),
-        "bull_researcher": ("看涨加密资产研究员", "反驳看跌观点", "清算挤压"),
+        "bull_researcher": ("看涨加密资产研究员", "反驳看跌观点", "已由上游材料证明的清算相关行情"),
         "bear_researcher": ("看跌加密资产研究员", "反驳看涨观点", "代币释放/解锁"),
         "research_manager": ("买入、卖出或持有", "避免仅仅因为双方都有有效观点就默认选择持有", "价格区间与交易条件分析"),
         "trader": ("最终交易建议: **买入/持有/卖出**", "入场条件", "止损/失效位"),
-        "risk_challenger": ("激进风险分析师", "高回报、高风险", "清算空头挤压"),
+        "risk_challenger": ("激进风险分析师", "承担风险可能带来的好处", "清算相关行情"),
         "risk_guardian": ("安全/保守风险分析师", "保护资产", "交易所风险"),
         "risk_moderator": ("中性风险分析师", "平衡的加密资产风险视角", "降低杠杆"),
         "portfolio_manager": ("买入、卖出或持有", "清晰和果断", "调整后的交易员计划"),
@@ -471,6 +471,29 @@ def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> N
             assert "PE/PB/ROE" in text
 
 
+def test_crypto_downstream_materials_are_not_inlined_inside_instruction_sentences() -> None:
+    trader_text = (Path("agents") / "trader" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
+    moderator_text = (Path("agents") / "risk_moderator" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+    pm_text = (Path("agents") / "portfolio_manager" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "0-1之间" not in trader_text
+    assert "风险评分" not in trader_text
+
+    assert "**{trader_plan}**" not in pm_text
+    assert "{trader_plan}" not in pm_text
+    assert "**研究经理计划：**" in pm_text
+    assert "**交易员决策：**" in pm_text
+    assert pm_text.index("{research_plan}") > pm_text.index("**研究经理计划：**")
+    assert pm_text.index("{trader_decision}") > pm_text.index("{research_plan}")
+
+    assert "交易员决策材料：" in moderator_text
+    assert moderator_text.index("{trader_decision}") > moderator_text.index("交易员决策材料：")
+
+
 def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() -> None:
     expected_snippets = {
         "fundamental_analyst": (
@@ -483,15 +506,15 @@ def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() ->
             "不得写真实新闻、真实公告、真实监管事件或真实市场反应结论",
             "搜索摘要和媒体聚合标题只能作为发现线索",
             "即使线索提到机构资金、监管、链上活动或其它市场主题，也不能写成已验证事实",
-            "事件预期来源只能表达事件预期或盘口概率",
+            "事件预期来源只能表达“市场预期线索”",
             "市场级情绪指标不是新闻源",
         ),
         "social_analyst": (
             "舆情资料包工具",
             "不得写真实社交平台观点、真实 KOL 立场、真实社区共识或真实情绪结论",
             "搜索摘要只能作为公开讨论线索",
-            "即使搜索摘要提到机构资金、链上大户或交易所行为，也不能写成已验证事实",
-            "事件预期来源只能表达事件预期或盘口概率",
+            "即使搜索摘要涉及机构资金、链上大户或交易所行为，也不能写成已验证事实",
+            "事件预期来源只能表达“市场预期线索”",
             "市场级情绪指标只能表达市场级情绪",
         ),
     }
@@ -520,7 +543,7 @@ def test_crypto_trader_and_polisher_forbid_unaudited_liquidation_price_calculati
     for text in (trader_text, polisher_text):
         assert "交易所、合约类型、保证金模式、维持保证金率和实际持仓参数" in text
         assert "不得" in text
-        assert "具体清算价或强制平仓类价格" in text
+        assert "具体清算价或合约清算相关价格" in text
         assert "清算价无法由现有材料审计计算" in text
 
 
@@ -557,7 +580,7 @@ def test_crypto_prompts_forbid_public_knowledge_gap_fill_facts() -> None:
     challenger_text = (Path("agents") / "risk_challenger" / "prompts" / "CRYPTO.md").read_text(
         encoding="utf-8"
     )
-    assert "只能列为待验证条件" in challenger_text
+    assert "只能列为待验证数据类别" in challenger_text
 
 
 @pytest.mark.parametrize(("worker_id", "profile"), APPROVED_CRYPTO_PROMPT_CASES)
@@ -826,7 +849,7 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "OB/订单块" in crypto_text
     assert "FVG" in crypto_text
     assert "AHR999" in crypto_text
-    assert "数据 -> 推导 -> 交易作用 -> 失效" in crypto_text
+    assert "数据 -> 推导 -> 交易作用 -> 待确认条件" in crypto_text
     assert "必须用 Markdown 表格排版" in crypto_text
     assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
     assert "不要把 Vegas、布林带、RSI、MACD、KD 挤在同一段" in crypto_text
@@ -842,7 +865,8 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "时间覆盖缺口写成" in crypto_text
     assert "终稿输出前最后自检" in crypto_text
     assert "不要用反引号保留内部标识" in crypto_text
-    assert "未形成可引用的数据集、原始来源或来源尝试记录" in crypto_text
+    assert "对应资料包的可引用材料状态" in crypto_text
+    assert "不得扩写成全局外部来源没有调用" in crypto_text
     assert "不要为了说明某条论据不可引用而写出未验证事实本身" in crypto_text
     assert "未验证的供给、网络采用、机构资金、宏观或链上线索" in crypto_text
     assert "任何工具名、审计计数、机器状态码、带下划线字段" in crypto_text

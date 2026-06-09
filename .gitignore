@@ -5,6 +5,14 @@ src-bak/
 .claude/
 runs/
 logs/
+data/crypto-history-full/
+data/*.tar
+data/*.tar.gz
+data/*.tgz
+data/*.zip
+docs/evidence/fullchain-crypto-btc-bnb-20260609*/
+docs/evidence/live-ashare-fullchain-data-gaps-*/
+docs/evidence/live-crypto-*/
 agents/*/.openclaw/
 web/**/node_modules/
 web/**/dist/
