@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
+from claw_trade.data_gateway import source_probe as ui_runtime_checks
 from claw_trade.data_gateway.models import Market
-from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
 from claw_trade.ui_backend.data_source_settings import (
     SUPPORTED_DATA_SOURCE_TYPES,
     DataSourceSettingsService,
@@ -14,16 +14,11 @@ from claw_trade.ui_backend.settings_service import UiBoundaryError
 
 PROBE_BACKED_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
-    "alpha_vantage",
-    "fmp",
-    "polygon",
     "finnhub",
     "fred",
-    "tiingo",
-    "nasdaq_data_link",
     "coingecko_pro",
-    "coinmarketcap",
     "coinglass",
+    "glassnode",
 )
 
 
@@ -93,6 +88,7 @@ def test_settings_enhanced_sources_exposes_provider_backed_api_sources_and_filte
         "ccxt",
         "sec_edgar",
         "yahoo_finance",
+        "alpha_vantage",
         "fmp",
         "polygon",
         "tiingo",
@@ -104,6 +100,7 @@ def test_settings_enhanced_sources_exposes_provider_backed_api_sources_and_filte
         "x",
         "reddit",
         "lunarcrush",
+        "token_terminal",
     ):
         assert default_or_internal not in listed_types
     for item in listed["instances"]:
@@ -264,16 +261,11 @@ def test_data_source_health_tester_dispatches_all_fixed_sources(monkeypatch: pyt
         return _probe
 
     monkeypatch.setattr(ui_runtime_checks, "_probe_tushare", _record("tushare"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_alpha_vantage", _record("alpha_vantage"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_fmp", _record("fmp"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_polygon", _record("polygon"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_finnhub", _record("finnhub"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_fred", _record("fred"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_tiingo", _record("tiingo"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_nasdaq_data_link", _record("nasdaq_data_link"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coingecko_pro", _record("coingecko_pro"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_coinmarketcap", _record("coinmarketcap"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coinglass", _record("coinglass"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_glassnode", _record("glassnode"))
 
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
     for source_type in PROBE_BACKED_SOURCE_TYPES:
@@ -287,16 +279,11 @@ def test_data_source_health_tester_dispatches_all_fixed_sources(monkeypatch: pyt
     ("source_type", "instance", "env"),
     (
         ("tushare", {"supportedType": "tushare"}, {}),
-        ("alpha_vantage", {"supportedType": "alpha_vantage"}, {}),
-        ("fmp", {"supportedType": "fmp"}, {}),
-        ("polygon", {"supportedType": "polygon"}, {}),
         ("finnhub", {"supportedType": "finnhub"}, {}),
         ("fred", {"supportedType": "fred"}, {}),
-        ("tiingo", {"supportedType": "tiingo"}, {}),
-        ("nasdaq_data_link", {"supportedType": "nasdaq_data_link"}, {}),
         ("coingecko_pro", {"supportedType": "coingecko_pro"}, {}),
-        ("coinmarketcap", {"supportedType": "coinmarketcap"}, {}),
         ("coinglass", {"supportedType": "coinglass"}, {}),
+        ("glassnode", {"supportedType": "glassnode"}, {}),
     ),
 )
 def test_data_source_health_tester_requires_credentials_for_keyed_sources(
@@ -312,17 +299,17 @@ def test_data_source_health_tester_requires_credentials_for_keyed_sources(
 def test_settings_enhanced_sources_keyed_source_without_key_is_rejected_before_probe() -> None:
     service = DataSourceSettingsService(
         health_tester=ui_runtime_checks.build_data_source_health_tester(env={}),
-        display_decision_source=lambda: (_show_decision("alpha_vantage", market=Market.US),),
+        display_decision_source=lambda: (_show_decision("finnhub", market=Market.US),),
     )
 
     with pytest.raises(UiBoundaryError) as exc:
         service.test_data_source_instance(
             {
-                "supportedType": "alpha_vantage",
-                "displayName": "Alpha Vantage",
+                "supportedType": "finnhub",
+                "displayName": "Finnhub",
                 "enabled": False,
             },
-            request_id="s05-alpha-vantage-missing-key",
+            request_id="s05-finnhub-missing-key",
         )
 
     assert exc.value.code == "INVALID_INPUT"
@@ -369,16 +356,11 @@ class _HttpProbeResponse:
 @pytest.mark.parametrize(
     ("source_type", "credential", "payload"),
     (
-        ("alpha_vantage", "k", {"Error Message": "bad key"}),
-        ("fmp", "k", {"error": "bad key"}),
-        ("polygon", "k", {"status": "ERROR", "error": "bad key"}),
         ("finnhub", "k", {"error": "invalid token"}),
         ("fred", "k", {"error_message": "bad key"}),
-        ("tiingo", "k", {"detail": "bad key"}),
-        ("nasdaq_data_link", "k", {"quandl_error": {"code": "QEAx01"}}),
         ("coingecko_pro", "k", {"error": "throttled"}),
-        ("coinmarketcap", "k", {"status": {"error_code": 1001, "error_message": "bad key"}}),
         ("coinglass", "k", {"message": "bad key"}),
+        ("glassnode", "k", {"error": "bad key"}),
     ),
 )
 def test_data_source_health_tester_does_not_validate_error_payloads(

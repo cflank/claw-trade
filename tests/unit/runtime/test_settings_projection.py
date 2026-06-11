@@ -119,19 +119,19 @@ def test_export_runtime_settings_imports_provider_rate_limit_env_to_mongo(monkey
 def test_export_runtime_settings_imports_all_catalog_data_source_env_keys(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     database = _FakeDatabase()
     monkeypatch.setattr(settings_projection, "_open_settings_database_from_env", lambda: database)
-    monkeypatch.setenv("POLYGON_API_KEY", "polygon-key")
-    monkeypatch.setenv("POLYGON_BASE_URL", "https://polygon.example")
+    monkeypatch.setenv("GLASSNODE_API_KEY", "glassnode-key")
+    monkeypatch.setenv("GLASSNODE_BASE_URL", "https://glassnode.example")
     monkeypatch.setenv("SEC_EDGAR_BASE_URL", "https://sec.example")
 
     export_runtime_settings_from_mongo(import_env_data_sources=True)
 
-    polygon = database.data_source_docs["polygon"]["record"]
+    glassnode = database.data_source_docs["glassnode"]["record"]
     sec = database.data_source_docs["sec_edgar"]["record"]
-    assert isinstance(polygon, dict)
+    assert isinstance(glassnode, dict)
     assert isinstance(sec, dict)
-    assert polygon["enabled"] is True
-    assert polygon["endpoint_url"] == "https://polygon.example"
-    assert database.secret_docs[str(polygon["credential_ref"])]["value"] == "polygon-key"
+    assert glassnode["enabled"] is True
+    assert glassnode["endpoint_url"] == "https://glassnode.example"
+    assert database.secret_docs[str(glassnode["credential_ref"])]["value"] == "glassnode-key"
     assert sec["enabled"] is True
     assert sec["endpoint_url"] == "https://sec.example"
 

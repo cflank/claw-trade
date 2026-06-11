@@ -192,16 +192,6 @@ function dataSourceStatusTone(state: DataSourceInstanceForUser['state']) {
   }
 }
 
-type MarketSourceTab = {
-  id: string;
-  title: string;
-  categories: Array<{
-    id: string;
-    title: string;
-    types: string[];
-  }>;
-};
-
 type SettingsMainTab = 'model' | 'general' | 'data';
 
 const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
@@ -210,146 +200,10 @@ const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
   { id: 'data', title: '数据源' },
 ];
 
-const CN_A_API_SOURCE_TYPES = ['tushare'];
-const HK_API_SOURCE_TYPES = ['tushare', 'finnhub'];
-const GLOBAL_EQUITY_API_SOURCE_TYPES = ['alpha_vantage', 'finnhub'];
-const GLOBAL_EQUITY_FUNDAMENTAL_API_SOURCE_TYPES = ['alpha_vantage', 'finnhub'];
-const GLOBAL_MACRO_API_SOURCE_TYPES = ['fred'];
-
-const DATA_SOURCE_MARKETS: MarketSourceTab[] = [
-  {
-    id: 'cn-a',
-    title: 'A股',
-    categories: [
-      { id: 'quotes', title: '行情', types: CN_A_API_SOURCE_TYPES },
-      {
-        id: 'fundamental',
-        title: '基本面',
-        types: CN_A_API_SOURCE_TYPES,
-      },
-      { id: 'news', title: '新闻公告', types: ['tushare'] },
-    ],
-  },
-  {
-    id: 'hk',
-    title: '港股',
-    categories: [
-      {
-        id: 'quotes',
-        title: '行情',
-        types: HK_API_SOURCE_TYPES,
-      },
-      {
-        id: 'fundamental',
-        title: '基本面',
-        types: HK_API_SOURCE_TYPES,
-      },
-      { id: 'news', title: '新闻公告', types: HK_API_SOURCE_TYPES },
-    ],
-  },
-  {
-    id: 'us',
-    title: '美股',
-    categories: [
-      {
-        id: 'quotes',
-        title: '行情',
-        types: GLOBAL_EQUITY_API_SOURCE_TYPES,
-      },
-      {
-        id: 'fundamental',
-        title: '基本面',
-        types: GLOBAL_EQUITY_FUNDAMENTAL_API_SOURCE_TYPES,
-      },
-      { id: 'filings', title: '公告披露', types: ['finnhub'] },
-      { id: 'news', title: '新闻', types: ['alpha_vantage', 'finnhub'] },
-    ],
-  },
-  {
-    id: 'global',
-    title: '全球市场/宏观',
-    categories: [
-      {
-        id: 'quotes',
-        title: '跨市场行情',
-        types: GLOBAL_EQUITY_API_SOURCE_TYPES,
-      },
-      {
-        id: 'fundamental',
-        title: '跨市场基本面',
-        types: GLOBAL_EQUITY_FUNDAMENTAL_API_SOURCE_TYPES,
-      },
-      {
-        id: 'macro',
-        title: '宏观经济',
-        types: GLOBAL_MACRO_API_SOURCE_TYPES,
-      },
-      { id: 'news', title: '全球新闻', types: ['finnhub'] },
-    ],
-  },
-  {
-    id: 'crypto',
-    title: '加密货币',
-    categories: [
-      {
-        id: 'quotes',
-        title: '行情与估值',
-        types: ['coingecko_pro'],
-      },
-      {
-        id: 'fundamental',
-        title: '链上与基本面',
-        types: ['coingecko_pro', 'coinglass'],
-      },
-      { id: 'derivatives', title: '衍生品与资金', types: ['coinglass'] },
-    ],
-  },
-];
-
-type VisibleSourceCategory = MarketSourceTab['categories'][number] & {
-  sources: DataSourceInstanceForUser[];
-  selected: DataSourceInstanceForUser | null;
-};
-
-type VisibleSourceMarket = Omit<MarketSourceTab, 'categories'> & {
-  categories: VisibleSourceCategory[];
-};
+const DATA_SOURCE_TYPES = ['tushare', 'finnhub', 'fred', 'coingecko_pro', 'coinglass', 'glassnode'];
 
 function dataSourceByType(dataSources: DataSourceInstanceForUser[]) {
   return new Map(dataSources.map((item) => [item.supportedType, item]));
-}
-
-function selectedSourceForCategory(
-  category: MarketSourceTab['categories'][number],
-  sourceMap: Map<string, DataSourceInstanceForUser>,
-  dataSourceDraft: DataSourceInstanceDraftInput,
-) {
-  if (category.types.includes(dataSourceDraft.supportedType)) {
-    const selected = sourceMap.get(dataSourceDraft.supportedType);
-    if (selected) {
-      return selected;
-    }
-  }
-  const enabled = category.types.map((type) => sourceMap.get(type)).find((item) => item?.enabled);
-  return enabled ?? category.types.map((type) => sourceMap.get(type)).find(Boolean) ?? null;
-}
-
-function buildVisibleSourceMarkets(
-  dataSources: DataSourceInstanceForUser[],
-  sourceMap: Map<string, DataSourceInstanceForUser>,
-  dataSourceDraft: DataSourceInstanceDraftInput,
-): VisibleSourceMarket[] {
-  return DATA_SOURCE_MARKETS.map((market) => ({
-    ...market,
-    categories: market.categories.map((category) => {
-      const sources = category.types.map((type) => sourceMap.get(type)).filter(Boolean) as DataSourceInstanceForUser[];
-      return {
-        ...category,
-        sources,
-        selected: selectedSourceForCategory(category, sourceMap, dataSourceDraft),
-      };
-    }).filter((category) => category.sources.length > 0),
-  })).filter((market) => market.categories.length > 0);
 }
 
 export function SettingsSections({
@@ -423,24 +277,15 @@ export function SettingsSections({
   const modelOptions = modelOptionsForProvider(llm.provider, llm.defaultModel);
   const selectedModel = normalizeLlmModelValue(llm.provider, llm.defaultModel);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsMainTab>('model');
-  const [activeSourceMarket, setActiveSourceMarket] = useState(DATA_SOURCE_MARKETS[0].id);
-  const sourceMap = dataSourceByType(dataSources);
-  const visibleMarkets = buildVisibleSourceMarkets(dataSources, sourceMap, dataSourceDraft);
-  const activeMarket = visibleMarkets.find((item) => item.id === activeSourceMarket) ?? visibleMarkets[0] ?? null;
-  const sourceCategories = activeMarket?.categories ?? [];
-  const hasDataSources = dataSources.length > 0;
-  const canEditDataSource = hasDataSources && Boolean(dataSourceDraft.supportedType);
+  const visibleDataSources = DATA_SOURCE_TYPES.map((type) => dataSources.find((item) => item.supportedType === type)).filter(
+    Boolean,
+  ) as DataSourceInstanceForUser[];
+  const sourceMap = dataSourceByType(visibleDataSources);
+  const hasDataSources = visibleDataSources.length > 0;
+  const canEditDataSource = hasDataSources && sourceMap.has(dataSourceDraft.supportedType);
   const selectSettingsTab = (tabId: SettingsMainTab) => {
     setActiveSettingsTab(tabId);
     onSettingsTabChange?.(tabId);
-  };
-  const selectSourceMarket = (marketId: string) => {
-    setActiveSourceMarket(marketId);
-    const market = visibleMarkets.find((item) => item.id === marketId);
-    const firstSource = market?.categories.flatMap((category) => category.sources)[0] ?? null;
-    if (firstSource && firstSource.supportedType !== dataSourceDraft.supportedType) {
-      onEditDataSource(firstSource);
-    }
   };
   const selectDataSource = (supportedType: string) => {
     const item = sourceMap.get(supportedType);
@@ -635,71 +480,38 @@ export function SettingsSections({
         <div className="ct-section-head">
           <h2>增强数据源</h2>
           <span className="ct-status-pill ct-status-pending">
-            {hasDataSources ? `${dataSources.length} 个 API 源` : '暂无源'}
+            {hasDataSources ? `${visibleDataSources.length} 个 API 源` : '暂无源'}
           </span>
         </div>
-        <p className="ct-section-desc">这里按市场列出当前已接入数据网关、可测试连接的 API 增强源；暂不能接入报告数据路径的源不在这里显示。</p>
-        {hasDataSources ? (
-        <div className="ct-source-market-tabs" role="tablist" aria-label="数据源市场">
-          {visibleMarkets.map((market) => (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeMarket?.id === market.id}
-              className={`ct-source-market-tab${activeMarket?.id === market.id ? ' is-active' : ''}`}
-              key={market.id}
-              onClick={() => selectSourceMarket(market.id)}
-            >
-              {market.title}
-            </button>
-          ))}
-        </div>
-        ) : null}
-        <div className="ct-source-category-grid">
-          {sourceCategories.map((category) => {
-            const selected = category.selected;
-            const active = selected?.supportedType === dataSourceDraft.supportedType;
+        <p className="ct-section-desc">这里列出当前可配置的 API 数据源；同一个源只保存一份配置。</p>
+        <div className="ct-source-grid">
+          {visibleDataSources.map((source) => {
+            const active = source.supportedType === dataSourceDraft.supportedType;
             return (
               <div
-                className={`ct-source-category-card${active ? ' is-active' : ''}`}
-                key={category.id}
-                data-testid={`data-source-category-${category.id}`}
+                className={`ct-source-card${active ? ' is-active' : ''}`}
+                key={source.instanceId}
+                data-testid={`data-source-card-${source.supportedType}`}
               >
-                <div className="ct-source-category-head">
-                  <h3>{category.title}</h3>
-                  {selected ? (
-                    <span className={`ct-status-pill ct-status-${dataSourceStatusTone(selected.state)}`}>
-                      {selected.enabled ? '已启用' : dataSourceStateLabel(selected.state)}
-                    </span>
-                  ) : null}
+                <div className="ct-source-card-head">
+                  <h3>{source.displayName}</h3>
+                  <span className={`ct-status-pill ct-status-${dataSourceStatusTone(source.state)}`}>
+                    {source.enabled ? '已启用' : dataSourceStateLabel(source.state)}
+                  </span>
                 </div>
-                {selected ? (
-                  <>
-                    <label className="ct-field ct-source-select-field">
-                      <span>此功能可配置的增强源</span>
-                      <select
-                        aria-label={`${category.title}可配置增强源`}
-                        value={selected.supportedType}
-                        onChange={(event) => selectDataSource(event.target.value)}
-                      >
-                        {category.sources.map((item) => (
-                          <option key={item.instanceId} value={item.supportedType}>
-                            {item.displayName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="ct-source-summary">
-                      <span>{`API Key：${dataSourceKeyLabel(selected)}`}</span>
-                      <span>{`接口地址：${dataSourceEndpointLabel(selected)}`}</span>
-                      <span>{`启用开关：${selected.enabled ? '已启用' : '未启用'}`}</span>
-                      <span>{`最近测试结果：${recentDataSourceTestLabel(selected.state, selected.lastTestAt)}`}</span>
-                    </div>
-                    <p className="ct-source-edit-hint">
-                      选中后，在下方“配置详情”里填写这个源。
-                    </p>
-                  </>
-                ) : null}
+                <div className="ct-source-summary">
+                  <span>{`API Key：${dataSourceKeyLabel(source)}`}</span>
+                  <span>{`接口地址：${dataSourceEndpointLabel(source)}`}</span>
+                  <span>{`启用开关：${source.enabled ? '已启用' : '未启用'}`}</span>
+                  <span>{`最近测试结果：${recentDataSourceTestLabel(source.state, source.lastTestAt)}`}</span>
+                </div>
+                <button
+                  type="button"
+                  className="ct-text-button ct-source-edit-button"
+                  onClick={() => selectDataSource(source.supportedType)}
+                >
+                  编辑
+                </button>
               </div>
             );
           })}
@@ -818,7 +630,7 @@ export function SettingsSections({
             {dataSourceActionMessage}
           </div>
         ) : null}
-        {dataSources.length === 0 ? <p className="ct-empty ct-empty-section">暂无数据源配置</p> : null}
+        {visibleDataSources.length === 0 ? <p className="ct-empty ct-empty-section">暂无数据源配置</p> : null}
         {sectionErrors.dataSources ? <div className="ct-inline-alert is-error">{sectionErrors.dataSources}</div> : null}
       </section>
         ) : null}

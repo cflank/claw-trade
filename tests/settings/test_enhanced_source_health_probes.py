@@ -14,16 +14,11 @@ ui_runtime_checks = source_probe
 
 PROBE_BACKED_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
-    "alpha_vantage",
-    "fmp",
-    "polygon",
     "finnhub",
     "fred",
-    "tiingo",
-    "nasdaq_data_link",
     "coingecko_pro",
-    "coinmarketcap",
     "coinglass",
+    "glassnode",
 )
 
 
@@ -50,16 +45,11 @@ def test_data_source_health_tester_fixed_sources_do_not_hit_probe_not_supported(
         return _probe
 
     monkeypatch.setattr(ui_runtime_checks, "_probe_tushare", _record("tushare"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_alpha_vantage", _record("alpha_vantage"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_fmp", _record("fmp"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_polygon", _record("polygon"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_finnhub", _record("finnhub"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_fred", _record("fred"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_tiingo", _record("tiingo"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_nasdaq_data_link", _record("nasdaq_data_link"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coingecko_pro", _record("coingecko_pro"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_coinmarketcap", _record("coinmarketcap"))
     monkeypatch.setattr(ui_runtime_checks, "_probe_coinglass", _record("coinglass"))
+    monkeypatch.setattr(ui_runtime_checks, "_probe_glassnode", _record("glassnode"))
 
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
     for source_type in PROBE_BACKED_SOURCE_TYPES:
@@ -177,16 +167,11 @@ def test_probe_tushare_rejects_empty_result(monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.parametrize(
     ("source_type", "credential", "payload"),
     (
-        ("alpha_vantage", "k", {"Global Quote": {"05. price": "1.0"}}),
-        ("fmp", "k", [{"symbol": "AAPL"}]),
-        ("polygon", "k", {"status": "OK", "results": {"ticker": "AAPL"}}),
         ("finnhub", "k", {"c": 1.0}),
         ("fred", "k", {"observations": [{"value": "4.1"}]}),
-        ("tiingo", "k", {"ticker": "AAPL"}),
-        ("nasdaq_data_link", "k", {"datasets": [{"database_code": "FRED"}]}),
         ("coingecko_pro", "k", {"gecko_says": "(V3) To the Moon!"}),
-        ("coinmarketcap", "k", {"data": {"plan": {"credit_limit_daily": 1}}}),
         ("coinglass", "k", {"code": "0", "data": [{"exchange": "Binance"}]}),
+        ("glassnode", "k", [{"t": 1772236800, "v": 1000}]),
     ),
 )
 def test_requests_based_probes_accept_success_payloads(
@@ -210,16 +195,11 @@ def test_requests_based_probes_accept_success_payloads(
 @pytest.mark.parametrize(
     ("source_type", "credential", "payload"),
     (
-        ("alpha_vantage", "k", {"Error Message": "bad key"}),
-        ("fmp", "k", {"error": "bad key"}),
-        ("polygon", "k", {"status": "ERROR", "error": "bad key"}),
         ("finnhub", "k", {"error": "invalid token"}),
         ("fred", "k", {"error_message": "bad key"}),
-        ("tiingo", "k", {"detail": "bad key"}),
-        ("nasdaq_data_link", "k", {"quandl_error": {"code": "QEAx01"}}),
         ("coingecko_pro", "k", {"error": "throttled"}),
-        ("coinmarketcap", "k", {"status": {"error_code": 1001, "error_message": "bad key"}}),
         ("coinglass", "k", {"message": "bad key"}),
+        ("glassnode", "k", {"error": "bad key"}),
     ),
 )
 def test_requests_based_probes_reject_error_payloads(
@@ -255,16 +235,11 @@ def test_probe_binance_http_failure_is_not_validated(monkeypatch: pytest.MonkeyP
     "source_type",
     (
         "tushare",
-        "alpha_vantage",
-        "fmp",
-        "polygon",
         "finnhub",
         "fred",
-        "tiingo",
-        "nasdaq_data_link",
         "coingecko_pro",
-        "coinmarketcap",
         "coinglass",
+        "glassnode",
     ),
 )
 def test_keyed_sources_require_credentials_without_legacy_success(source_type: str) -> None:

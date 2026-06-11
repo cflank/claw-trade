@@ -58,15 +58,15 @@ const fixedSources = [
   { instanceId: 'ds-newsapi', supportedType: 'newsapi', group: 'global_news', displayName: 'NewsAPI' },
   { instanceId: 'ds-x', supportedType: 'x', group: 'global_social', displayName: 'X.com' },
   { instanceId: 'ds-reddit', supportedType: 'reddit', group: 'global_social', displayName: 'Reddit' },
-  { instanceId: 'ds-alpha-vantage', supportedType: 'alpha_vantage', group: 'global_data', displayName: 'Alpha Vantage' },
   { instanceId: 'ds-fmp', supportedType: 'fmp', group: 'global_data', displayName: 'FMP' },
   { instanceId: 'ds-polygon', supportedType: 'polygon', group: 'global_data', displayName: 'Polygon' },
   { instanceId: 'ds-finnhub', supportedType: 'finnhub', group: 'global_data', displayName: 'Finnhub' },
   { instanceId: 'ds-tiingo', supportedType: 'tiingo', group: 'global_data', displayName: 'Tiingo' },
   { instanceId: 'ds-nasdaq', supportedType: 'nasdaq_data_link', group: 'global_data', displayName: 'Nasdaq Data Link' },
+  { instanceId: 'ds-fred', supportedType: 'fred', group: 'global_macro', displayName: 'FRED' },
   { instanceId: 'ds-coingecko-pro', supportedType: 'coingecko_pro', group: 'crypto_data', displayName: 'CoinGecko Pro' },
-  { instanceId: 'ds-cmc', supportedType: 'coinmarketcap', group: 'crypto_data', displayName: 'CoinMarketCap' },
   { instanceId: 'ds-coinglass', supportedType: 'coinglass', group: 'crypto_data', displayName: 'Coinglass' },
+  { instanceId: 'ds-glassnode', supportedType: 'glassnode', group: 'crypto_data', displayName: 'Glassnode' },
   { instanceId: 'ds-future-api', supportedType: 'future_api_source', group: 'global_data', displayName: 'Future API Source' },
 ] as const;
 
@@ -142,28 +142,28 @@ describe('settings-css-sections', () => {
     expect(within(sourceSection).queryByLabelText('代理地址')).not.toBeInTheDocument();
     expect(within(sourceSection).queryByLabelText('请求头名')).not.toBeInTheDocument();
     expect(within(sourceSection).queryByLabelText('优先级')).not.toBeInTheDocument();
-    expect(sourceSection.querySelectorAll('.ct-source-category-card')).toHaveLength(3);
+    expect(sourceSection.querySelectorAll('.ct-source-card')).toHaveLength(6);
+    expect(sourceSection.querySelectorAll('.ct-source-category-card')).toHaveLength(0);
     expect(sourceSection.querySelectorAll('.ct-source-row')).toHaveLength(0);
     expect(sourceSection.querySelectorAll('.ct-source-list')).toHaveLength(0);
-    expect(within(sourceSection).getByRole('tab', { name: 'A股' })).toHaveAttribute('aria-selected', 'true');
-    expect(within(sourceSection).getByRole('tab', { name: '美股' })).toBeInTheDocument();
-    expect(within(sourceSection).getByRole('tab', { name: '加密货币' })).toBeInTheDocument();
-    expect(within(sourceSection).getByLabelText('行情可配置增强源')).toHaveValue('tushare');
-    expect(within(sourceSection).getByLabelText('基本面可配置增强源')).toHaveValue('tushare');
-    expect(within(sourceSection).getByLabelText('新闻公告可配置增强源')).toHaveValue('tushare');
-    expect(within(sourceSection).queryByLabelText('社交舆情可配置增强源')).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByRole('tab', { name: 'A股' })).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByRole('tab', { name: '美股' })).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByRole('tab', { name: '加密货币' })).not.toBeInTheDocument();
+    expect(within(sourceSection).queryByLabelText(/可配置增强源/)).not.toBeInTheDocument();
+    expect(within(sourceSection).getByTestId('data-source-card-finnhub')).toBeInTheDocument();
+    expect(within(sourceSection).getByTestId('data-source-card-coinglass')).toBeInTheDocument();
     expect(within(sourceSection).getByText('配置详情：Tushare')).toBeInTheDocument();
     expect(stylesText).toMatch(/\.ct-source-editor-panel\s*{[^}]*border:\s*2px solid var\(--ct-primary\);/s);
     expect(stylesText).toMatch(/\.ct-settings-section\s*{[^}]*border:\s*1px solid var\(--ct-border-strong\);[^}]*box-shadow:\s*var\(--ct-shadow-panel\);/s);
     expect(stylesText).toMatch(/\.ct-section-head\s*{[^}]*padding-bottom:\s*12px;[^}]*border-bottom:\s*1px solid var\(--ct-border\);/s);
-    expect(stylesText).toMatch(/\.ct-source-market-tabs\s*{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;/s);
-    expect(stylesText).toMatch(/\.ct-source-category-grid\s*{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
-    expect(stylesText).toMatch(/\.ct-source-category-card\s*{[^}]*border:\s*1px solid var\(--ct-border\);[^}]*border-radius:\s*var\(--ct-radius-sm\);/s);
-    expect(stylesText).toMatch(/\.ct-source-category-card\.is-active\s*{[^}]*box-shadow:\s*inset 3px 0 0 var\(--ct-primary\);/s);
+    expect(stylesText).toMatch(/\.ct-source-grid\s*{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s);
+    expect(stylesText).toMatch(/\.ct-source-card\s*{[^}]*border:\s*1px solid var\(--ct-border\);[^}]*border-radius:\s*var\(--ct-radius-sm\);/s);
+    expect(stylesText).toMatch(/\.ct-source-card\.is-active\s*{[^}]*box-shadow:\s*inset 3px 0 0 var\(--ct-primary\);/s);
+    expect(stylesText).not.toContain('.ct-source-market-tabs');
+    expect(stylesText).not.toContain('.ct-source-category-grid');
     expect(stylesText).not.toContain('.ct-source-list');
     expect(stylesText).not.toContain('.ct-source-row');
 
-    fireEvent.click(screen.getByRole('tab', { name: '全球市场/宏观' }));
     expect(within(sourceSection).queryByText('其它 API 源')).not.toBeInTheDocument();
     expect(within(sourceSection).queryByText('Future API Source')).not.toBeInTheDocument();
     expect(within(sourceSection).queryByText('FMP')).not.toBeInTheDocument();

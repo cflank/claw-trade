@@ -260,17 +260,6 @@ _INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS = {
     ): "Finnhub stock metric exposes ROE/ROA/profit margin/EPS, not gross margin or revenue growth.",
     (
         "report",
-        "US",
-        "fundamental",
-        "financial_metric",
-        "quarterly",
-        ("roe", "roa", "profit_margin", "eps"),
-        "us_alpha_vantage_data",
-        "overview_financial_metric",
-        ("roa",),
-    ): "Alpha Vantage overview exposes gross margin/revenue growth, not ROA.",
-    (
-        "report",
         "HK",
         "fundamental",
         "financial_metric",
@@ -791,7 +780,7 @@ def test_selector_distinguishes_unconfigured_disabled_and_missing_secret_sources
             "paid_data",
             1,
             credential_required=True,
-            credential_names=("data_source:alpha_vantage",),
+            credential_names=("data_source:finnhub",),
         )
     )
     request = SimpleNamespace(
@@ -815,12 +804,12 @@ def test_selector_distinguishes_unconfigured_disabled_and_missing_secret_sources
         credential_resolver=_resolver(
             (
                 {
-                    "supported_type": "alpha_vantage",
+                    "supported_type": "finnhub",
                     "enabled": False,
-                    "credential_ref": "secret:alpha",
+                    "credential_ref": "secret:finnhub",
                 },
             ),
-            {"secret:alpha": "token"},
+            {"secret:finnhub": "token"},
         ),
     )
     disabled = disabled_selector.select_candidates((gap,), FakeQueryPlan(request))
@@ -829,7 +818,7 @@ def test_selector_distinguishes_unconfigured_disabled_and_missing_secret_sources
         credential_resolver=_resolver(
             (
                 {
-                    "supported_type": "alpha_vantage",
+                    "supported_type": "finnhub",
                     "enabled": True,
                     "credential_ref": "secret:missing",
                 },
@@ -849,7 +838,7 @@ def test_selector_distinguishes_unconfigured_disabled_and_missing_secret_sources
     assert [skip.reason for skip in missing_secret_selector.skipped_candidates] == ["credential_missing"]
 
 
-def test_selector_marks_unconfigured_crypto_paid_sources_as_not_configured_when_coinglass_is_enabled() -> None:
+def test_selector_marks_unconfigured_glassnode_as_not_configured_when_coinglass_is_enabled() -> None:
     selector = ProviderSelector(
         build_minimal_provider_registry(),
         credential_resolver=_resolver(
@@ -878,34 +867,6 @@ def test_selector_marks_unconfigured_crypto_paid_sources_as_not_configured_when_
             ),
             ("crypto_glassnode_onchain", "deep_onchain_metrics"),
         ),
-        (
-            SimpleNamespace(
-                market="CRYPTO",
-                data_type="defi_metric",
-                granularity="daily",
-                fields=("protocol_revenue", "fees", "timestamp", "symbol_id"),
-                source_role_required=None,
-                symbol_id="BTCUSDT",
-                universe_ref=None,
-                date_range_start=date(2026, 6, 1),
-                date_range_end=date(2026, 6, 7),
-            ),
-            ("crypto_token_terminal_fundamentals", "protocol_revenue"),
-        ),
-        (
-            SimpleNamespace(
-                market="CRYPTO",
-                data_type="social_signal",
-                granularity="event",
-                fields=("source", "timestamp", "score", "sentiment", "social_dominance", "num_posts", "interactions", "symbol_id"),
-                source_role_required=None,
-                symbol_id="BTCUSDT",
-                universe_ref=None,
-                date_range_start=date(2026, 6, 1),
-                date_range_end=date(2026, 6, 7),
-            ),
-            ("crypto_lunarcrush_social", "topic"),
-        ),
     )
 
     for request, expected_skip in cases:
@@ -933,7 +894,7 @@ def test_selector_with_minimal_plugins_respects_market_boundary() -> None:
     selector = ProviderSelector(registry)
     candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
 
-    assert [getattr(candidate, "provider_id") for candidate in candidates] == ["us_primary", "us_yahoo_finance"]
+    assert [getattr(candidate, "provider_id") for candidate in candidates] == ["us_yahoo_finance"]
 
 
 def test_selector_with_cn_a_selection_daily_fields_keeps_tushare_first() -> None:
@@ -1140,7 +1101,7 @@ def test_selector_with_migrated_us_hk_crypto_matrices_picks_domain_providers() -
                 date_range_start=None,
                 date_range_end=None,
             ),
-            ("us_alpha_vantage_data", "us_finnhub_data"),
+            ("us_finnhub_data", "us_yahoo_finance"),
         ),
         (
             SimpleNamespace(

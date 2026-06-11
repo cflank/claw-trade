@@ -1235,41 +1235,14 @@ body {
   margin-top: 8px;
 }
 
-.ct-source-market-tabs {
-  margin-top: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.ct-source-market-tab {
-  min-height: 32px;
-  border: 1px solid var(--ct-border);
-  border-radius: var(--ct-radius-sm);
-  background: #fff;
-  color: var(--ct-text-muted);
-  padding: 0 12px;
-  font: inherit;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ct-source-market-tab.is-active {
-  border-color: var(--ct-primary);
-  background: var(--ct-primary-soft);
-  color: var(--ct-primary);
-}
-
-.ct-source-category-grid {
+.ct-source-grid {
   margin-top: 12px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.ct-source-category-card {
+.ct-source-card {
   min-width: 0;
   border: 1px solid var(--ct-border);
   border-radius: var(--ct-radius-sm);
@@ -1277,13 +1250,13 @@ body {
   padding: 12px;
 }
 
-.ct-source-category-card.is-active {
+.ct-source-card.is-active {
   border-color: var(--ct-primary);
   background: #fff;
   box-shadow: inset 3px 0 0 var(--ct-primary);
 }
 
-.ct-source-category-head {
+.ct-source-card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1291,15 +1264,11 @@ body {
   min-height: 28px;
 }
 
-.ct-source-category-head h3 {
+.ct-source-card-head h3 {
   margin: 0;
   color: var(--ct-text);
   font-size: 14px;
   line-height: 20px;
-}
-
-.ct-source-select-field {
-  margin-top: 10px;
 }
 
 .ct-source-summary {
@@ -1312,12 +1281,8 @@ body {
   line-height: 18px;
 }
 
-.ct-source-edit-hint {
+.ct-source-edit-button {
   margin: 8px 0 0;
-  color: var(--ct-primary);
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 600;
 }
 
 .ct-source-editor-panel {
@@ -1565,7 +1530,7 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .ct-source-category-grid {
+  .ct-source-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1614,7 +1579,7 @@ body {
   .ct-workspace-summary,
   .ct-model-grid,
   .ct-form-grid,
-  .ct-source-category-grid {
+  .ct-source-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

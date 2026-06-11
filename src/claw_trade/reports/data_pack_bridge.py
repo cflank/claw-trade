@@ -191,7 +191,6 @@ _CRYPTO_DOMAIN_DATASETS: dict[str, tuple[_DatasetSpec, ...]] = {
             ),
         ),
         ("defi_metric", "realtime", ("tvl", "chains", "category", "symbol_id")),
-        ("defi_metric", "daily", ("protocol_revenue", "fees", "timestamp", "symbol_id")),
         ("crypto_derivative_metric", "daily", ("etf_flow_usd", "price", "timestamp", "symbol_id")),
         ("crypto_onchain_metric", "daily", ("timestamp", "metric", "value", "value_unit", "chain")),
         ("crypto_onchain_metric", "realtime", ("timestamp", "metric", "value", "value_unit", "chain")),

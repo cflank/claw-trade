@@ -323,71 +323,6 @@ class TushareDailyBarPlugin(_HttpDailyBarPlugin):
         return rows
 
 
-class AlphaVantageDailyBarPlugin(_HttpDailyBarPlugin):
-    plugin_id = "us_primary"
-    market = "US"
-    credential_name = "data_source:alpha_vantage"
-    default_endpoint = "https://www.alphavantage.co"
-    source_role = "paid_data"
-    _currency = "USD"
-    _timezone = "America/New_York"
-    _calendar = "US_NYSE_NASDAQ"
-
-    def _request_for(self, task: Any, *, symbol: str, token: str, ctx: Any) -> HttpRequestSpec:
-        host, path = _endpoint(ctx, self.credential_name, self.default_endpoint)
-        query = {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": symbol,
-            "outputsize": _alpha_vantage_outputsize(task),
-            "apikey": token,
-        }
-        return HttpRequestSpec(
-            method="GET",
-            host=host,
-            path=f"{path}/query",
-            query=query,
-            headers={"accept": "application/json"},
-            provider_config_version=getattr(task, "provider_config_version", None),
-        )
-
-    def _rows_from_payload(self, payload: Any, *, task: Any, symbol: str) -> list[dict[str, Any]] | None:
-        if not isinstance(payload, Mapping):
-            return None
-        if _provider_payload_has_error(payload):
-            return None
-        series = payload.get("Time Series (Daily)")
-        if not isinstance(series, Mapping):
-            return []
-        start = _date_value(getattr(task, "date_range_start", None))
-        end = _date_value(getattr(task, "date_range_end", None))
-        rows: list[dict[str, Any]] = []
-        for day_text, item in series.items():
-            period = _date_value(day_text)
-            if period is None or (start and period < start) or (end and period > end):
-                continue
-            if not isinstance(item, Mapping):
-                continue
-            values = _ohlcv(
-                item.get("1. open"),
-                item.get("2. high"),
-                item.get("3. low"),
-                item.get("4. close"),
-                item.get("6. volume") or item.get("5. volume"),
-            )
-            if values is None:
-                continue
-            rows.append(self._base_row(symbol=symbol, period=period, **values))
-        return rows
-
-
-def _alpha_vantage_outputsize(task: Any) -> str:
-    start = _date_value(getattr(task, "date_range_start", None))
-    end = _date_value(getattr(task, "date_range_end", None)) or datetime.now(tz=UTC).date()
-    if start is not None and (end - start).days > 100:
-        return "full"
-    return "compact"
-
-
 def _credential_value(ctx: Any, name: str) -> str | None:
     resolver = getattr(ctx, "credential_resolver", None)
     if resolver is not None:
@@ -504,5 +439,4 @@ def _non_empty(value: Any) -> str | None:
 
 __all__ = [
     "TushareDailyBarPlugin",
-    "AlphaVantageDailyBarPlugin",
 ]

@@ -159,6 +159,6 @@ def test_registry_registers_minimal_market_plugins_for_all_markets() -> None:
     for plugin in iter_minimal_market_plugins():
         registry.register(plugin)
 
-    listed = registry.read_capabilities(("cn_a_primary", "us_primary", "hk_sina_public", "crypto_primary")).list()
+    listed = registry.read_capabilities(("cn_a_primary", "us_yahoo_finance", "hk_sina_public", "crypto_primary")).list()
     assert {cap.market for cap in listed} == {"CN_A", "US", "HK", "CRYPTO"}
-    assert {cap.provider_id for cap in listed} == {"cn_a_primary", "us_primary", "hk_sina_public", "crypto_primary"}
+    assert {cap.provider_id for cap in listed} == {"cn_a_primary", "us_yahoo_finance", "hk_sina_public", "crypto_primary"}

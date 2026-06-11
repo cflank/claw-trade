@@ -111,6 +111,8 @@ def test_rate_limit_policy_resolver_ignores_provider_max_calls_without_user_sett
 
 def test_rate_limit_namespace_uses_final_data_source_not_endpoint() -> None:
     assert provider_rate_limit_namespace("crypto_coinglass_derivatives") == "coinglass"
+    assert provider_rate_limit_namespace("official_api_coinglass") == "coinglass"
+    assert provider_rate_limit_namespace("official_api_tushare") == "tushare"
     assert provider_rate_limit_namespace("us_finnhub_data") == "finnhub"
     assert provider_rate_limit_namespace("hk_finnhub_data") == "finnhub"
 

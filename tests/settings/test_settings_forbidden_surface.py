@@ -212,7 +212,6 @@ def test_settings_forbidden_surface_uses_real_ui_artifacts_and_writes_text_snaps
         "sec_edgar",
         "cryptocompare",
         "messari",
-        "glassnode",
         "santiment",
         "coinmetrics",
         "dune",

@@ -81,28 +81,18 @@ def build_data_source_health_tester(
             _probe_tushare(instance=instance, env=env_values)
         elif supported_type == "akshare":
             _probe_akshare(instance=instance)
-        elif supported_type == "alpha_vantage":
-            _probe_alpha_vantage(instance=instance, env=env_values)
-        elif supported_type == "fmp":
-            _probe_fmp(instance=instance, env=env_values)
-        elif supported_type == "polygon":
-            _probe_polygon(instance=instance, env=env_values)
         elif supported_type == "finnhub":
             _probe_finnhub(instance=instance, env=env_values)
         elif supported_type == "fred":
             _probe_fred(instance=instance, env=env_values)
-        elif supported_type == "tiingo":
-            _probe_tiingo(instance=instance, env=env_values)
-        elif supported_type == "nasdaq_data_link":
-            _probe_nasdaq_data_link(instance=instance, env=env_values)
         elif supported_type == "coingecko":
             _probe_coingecko(instance=instance, env=env_values)
         elif supported_type == "coingecko_pro":
             _probe_coingecko_pro(instance=instance, env=env_values)
-        elif supported_type == "coinmarketcap":
-            _probe_coinmarketcap(instance=instance, env=env_values)
         elif supported_type == "coinglass":
             _probe_coinglass(instance=instance, env=env_values)
+        elif supported_type == "glassnode":
+            _probe_glassnode(instance=instance, env=env_values)
         elif supported_type == "binance":
             _probe_binance(instance=instance, env=env_values)
         elif supported_type == "okx":
@@ -197,45 +187,6 @@ def _probe_akshare(*, instance: Mapping[str, Any]) -> None:
         raise RuntimeError("datasource_test_failed: empty_probe")
 
 
-def _probe_alpha_vantage(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
-    del env
-    api_key = _required_credential(instance=instance)
-    base = _resolve_base_url(instance=instance, default="https://www.alphavantage.co")
-    payload = _request_json(f"{base}/query", params={"function": "GLOBAL_QUOTE", "symbol": "IBM", "apikey": api_key})
-    if not isinstance(payload, Mapping) or _mapping_contains_error(payload):
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-    if _is_empty_object(payload.get("Global Quote")):
-        raise RuntimeError("datasource_test_failed: empty_probe")
-
-
-def _probe_fmp(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
-    del env
-    api_key = _required_credential(instance=instance)
-    base = _resolve_base_url(instance=instance, default="https://financialmodelingprep.com/api/v3")
-    payload = _request_json(f"{base}/profile/AAPL", params={"apikey": api_key})
-    if isinstance(payload, Mapping) and (_mapping_contains_error(payload) or not payload):
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)) and payload:
-        return
-    if isinstance(payload, Mapping) and payload:
-        return
-    raise RuntimeError("datasource_test_failed: empty_probe")
-
-
-def _probe_polygon(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
-    del env
-    api_key = _required_credential(instance=instance)
-    base = _resolve_base_url(instance=instance, default="https://api.polygon.io")
-    payload = _request_json(f"{base}/v3/reference/tickers/AAPL", params={"apiKey": api_key})
-    if not isinstance(payload, Mapping) or _mapping_contains_error(payload):
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-    status = str(payload.get("status", "")).strip().lower()
-    if status and status not in {"ok", "success"}:
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-    if _is_empty_object(payload.get("results")):
-        raise RuntimeError("datasource_test_failed: empty_probe")
-
-
 def _probe_finnhub(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
     del env
     token = _required_credential(instance=instance)
@@ -264,24 +215,6 @@ def _probe_fred(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
         raise RuntimeError("datasource_test_failed: provider_rejected")
 
 
-def _probe_tiingo(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
-    del env
-    token = _required_credential(instance=instance)
-    base = _resolve_base_url(instance=instance, default="https://api.tiingo.com")
-    payload = _request_json(f"{base}/tiingo/daily/AAPL", headers={"Authorization": f"Token {token}", "accept": "application/json"})
-    if not isinstance(payload, Mapping) or _mapping_contains_error(payload) or _is_empty_object(payload):
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-
-
-def _probe_nasdaq_data_link(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
-    del env
-    api_key = _required_credential(instance=instance)
-    base = _resolve_base_url(instance=instance, default="https://data.nasdaq.com/api/v3")
-    payload = _request_json(f"{base}/datasets.json", params={"per_page": 1, "api_key": api_key})
-    if not isinstance(payload, Mapping) or _mapping_contains_error(payload) or _is_empty_object(payload.get("datasets")):
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-
-
 def _probe_coingecko(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
     del env
     api_key = str(instance.get("apiKeyReplacement") or "").strip()
@@ -303,15 +236,6 @@ def _probe_coingecko_pro(*, instance: Mapping[str, Any], env: Mapping[str, str])
         raise RuntimeError("datasource_test_failed: provider_rejected")
 
 
-def _probe_coinmarketcap(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
-    del env
-    api_key = _required_credential(instance=instance)
-    base = _resolve_base_url(instance=instance, default="https://pro-api.coinmarketcap.com")
-    payload = _request_json(f"{base}/v1/key/info", headers={"X-CMC_PRO_API_KEY": api_key, "accept": "application/json"})
-    if not isinstance(payload, Mapping) or _mapping_contains_error(payload) or _is_empty_object(payload.get("data")):
-        raise RuntimeError("datasource_test_failed: provider_rejected")
-
-
 def _probe_coinglass(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
     del env
     api_key = _required_credential(instance=instance)
@@ -327,6 +251,25 @@ def _probe_coinglass(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> 
     data = payload.get("data") if isinstance(payload, Mapping) else None
     if not isinstance(payload, Mapping) or _mapping_contains_error(payload) or _is_empty_object(data):
         raise RuntimeError("datasource_test_failed: provider_rejected")
+
+
+def _probe_glassnode(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:
+    del env
+    api_key = _required_credential(instance=instance)
+    base = _resolve_base_url(instance=instance, default="https://api.glassnode.com")
+    payload = _request_json(
+        f"{base}/v1/metrics/addresses/active_count",
+        params={
+            "a": "BTC",
+            "i": "24h",
+            "f": "json",
+            "api_key": api_key,
+        },
+    )
+    if isinstance(payload, Mapping) and _mapping_contains_error(payload):
+        raise RuntimeError("datasource_test_failed: provider_rejected")
+    if _is_empty_object(payload):
+        raise RuntimeError("datasource_test_failed: empty_probe")
 
 
 def _probe_binance(*, instance: Mapping[str, Any], env: Mapping[str, str]) -> None:

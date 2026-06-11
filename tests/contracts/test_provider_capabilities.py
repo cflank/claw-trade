@@ -20,7 +20,6 @@ from claw_trade.data_gateway.providers.plugins import (
     build_cn_a_provider_plugin,
     build_crypto_provider_plugin,
     build_hk_provider_plugin,
-    build_us_provider_plugin,
     iter_minimal_market_plugins,
 )
 from claw_trade.data_gateway.providers.plugins.cn_a import (
@@ -41,8 +40,6 @@ from claw_trade.data_gateway.providers.plugins.crypto import (
     CryptoProjectNewsPlugin,
     DefiLlamaCryptoPlugin,
     GlassnodeCryptoOnchainPlugin,
-    LunarCrushCryptoSocialPlugin,
-    TokenTerminalCryptoFundamentalsPlugin,
 )
 from claw_trade.data_gateway.providers.plugins.hk import (
     HKAkShareFundamentalPlugin,
@@ -54,7 +51,6 @@ from claw_trade.data_gateway.providers.plugins.hk import (
     HKYahooFinancePlugin,
 )
 from claw_trade.data_gateway.providers.plugins.us import (
-    USAlphaVantageDataPlugin,
     USFinnhubDataPlugin,
     USFREDMacroPlugin,
     USGoogleNewsDiscoveryPlugin,
@@ -239,16 +235,17 @@ def test_minimal_plugins_declare_required_capability_matrix_for_four_markets() -
     for plugin in plugins:
         registry.register(plugin)
 
-    snapshot = registry.read_capabilities(("cn_a_primary", "us_primary", "hk_sina_public", "crypto_primary"))
+    snapshot = registry.read_capabilities(("cn_a_primary", "us_yahoo_finance", "hk_sina_public", "crypto_primary"))
     capabilities = snapshot.list()
-    assert {cap.market for cap in capabilities} == {"CN_A", "US", "HK", "CRYPTO"}
-    for cap in capabilities:
+    daily_capabilities = [cap for cap in capabilities if cap.data_type == "daily_bar"]
+    assert {cap.market for cap in daily_capabilities} == {"CN_A", "US", "HK", "CRYPTO"}
+    for cap in daily_capabilities:
         assert cap.data_type == "daily_bar"
         assert cap.granularity
         assert cap.fields
         expected_source_roles = {
             "cn_a_primary": "paid_data",
-            "us_primary": "paid_data",
+            "us_yahoo_finance": "built_in_public",
             "hk_sina_public": "built_in_public",
             "crypto_primary": "official",
         }
@@ -260,99 +257,6 @@ def test_minimal_plugins_declare_required_capability_matrix_for_four_markets() -
         assert getattr(caps, "credential_policy").missing_behavior == "credential_missing"
         assert all("CLAW_TRADE_" not in name for name in getattr(caps, "credential_policy").credential_names)
         assert getattr(caps, "license_policy").raw_storage_mode in {"store_full", "metadata_only", "no_store"}
-
-
-def test_missing_credential_returns_credential_missing_without_legacy_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    plugin = build_us_provider_plugin()
-    monkeypatch.setenv("IGNORED_PROVIDER_TOKEN", "ignored-env-token")
-    task = SimpleNamespace(
-        batch_id="batch:us",
-        provider_id="us_primary",
-        endpoint_id="daily_bar",
-        market="US",
-        data_type="daily_bar",
-        symbol_ids=("AAPL",),
-    )
-    result = plugin.fetch(task, ctx=SimpleNamespace())
-    assert str(result.status) == "FetchStatus.CREDENTIAL_MISSING" or result.status.value == "credential_missing"
-
-
-def test_plugin_reads_credentials_from_settings_resolver_not_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("IGNORED_PROVIDER_TOKEN", "ignored-env-token")
-    plugin = build_us_provider_plugin()
-    client = _RecordingHttpClient(
-        _HttpResponse(
-            status_code=200,
-            headers={},
-            text='{"Time Series (Daily)":{"2026-05-29":{"1. open":"1.0","2. high":"2.0","3. low":"0.5","4. close":"1.5","6. volume":"100"}}}',
-        )
-    )
-    resolver = DataSourceCredentialResolver(
-        data_source_store=SimpleNamespace(
-            list_instances=lambda: (
-                {
-                    "supported_type": "alpha_vantage",
-                    "enabled": True,
-                    "credential_ref": "data_source:alpha_vantage:1",
-                    "endpoint_url": "https://alpha.example",
-                },
-            )
-        ),
-        secret_store=SimpleNamespace(get=lambda ref: "db-secret" if ref == "data_source:alpha_vantage:1" else None),
-    )
-    task = SimpleNamespace(
-        batch_id="batch:us",
-        provider_id="us_primary",
-        endpoint_id="daily_bar",
-        market="US",
-        data_type="daily_bar",
-        symbol_ids=("AAPL",),
-    )
-
-    result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
-
-    assert result.status.value == "success"
-    assert client.requests[0].query["apikey"] == "db-secret"
-    assert client.requests[0].host == "https://alpha.example"
-    assert client.requests[0].query["outputsize"] == "compact"
-
-
-def test_alpha_vantage_daily_bar_uses_full_output_for_long_ranges() -> None:
-    plugin = build_us_provider_plugin()
-    client = _RecordingHttpClient(
-        _HttpResponse(
-            status_code=200,
-            headers={},
-            text='{"Time Series (Daily)":{"2026-05-29":{"1. open":"1.0","2. high":"2.0","3. low":"0.5","4. close":"1.5","6. volume":"100"}}}',
-        )
-    )
-    resolver = DataSourceCredentialResolver(
-        data_source_store=SimpleNamespace(
-            list_instances=lambda: (
-                {
-                    "supported_type": "alpha_vantage",
-                    "enabled": True,
-                    "credential_ref": "data_source:alpha_vantage:1",
-                    "endpoint_url": "https://alpha.example",
-                },
-            )
-        ),
-        secret_store=SimpleNamespace(get=lambda ref: "db-secret" if ref == "data_source:alpha_vantage:1" else None),
-    )
-    task = SimpleNamespace(
-        batch_id="batch:us",
-        provider_id="us_primary",
-        endpoint_id="daily_bar",
-        market="US",
-        data_type="daily_bar",
-        symbol_ids=("AAPL",),
-        date_range_start=date(2025, 1, 1),
-        date_range_end=date(2026, 5, 29),
-    )
-
-    plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
-
-    assert client.requests[0].query["outputsize"] == "full"
 
 
 def test_crypto_plugin_fetches_daily_bar_through_managed_http_without_environment_token() -> None:
@@ -749,7 +653,6 @@ def test_us_hk_crypto_provider_matrices_declare_source_backed_interfaces_without
     registry = ProviderRegistry()
     plugins = (
         USSECProviderPlugin(),
-        USAlphaVantageDataPlugin(),
         USFinnhubDataPlugin(),
         USYahooFinancePlugin(),
         USFREDMacroPlugin(),
@@ -775,7 +678,7 @@ def test_us_hk_crypto_provider_matrices_declare_source_backed_interfaces_without
     expected = {
         ("US", "official_filing"): ("us_sec_official", "submissions", "official", "managed_http"),
         ("US", "financial_statement"): ("us_sec_official", "companyfacts", "official", "managed_http"),
-        ("US", "company_news"): ("us_alpha_vantage_data", "news_sentiment", "paid_data", "managed_http"),
+        ("US", "company_news"): ("us_finnhub_data", "company_news", "paid_data", "managed_http"),
         ("US", "valuation_metric"): ("us_yahoo_finance", "quote_summary_valuation", "built_in_public", "managed_http"),
         ("US", "macro_series"): ("us_fred_macro", "series_observations", "official", "managed_http"),
         ("US", "social_signal"): ("us_stocktwits_social", "symbol_stream", "sentiment", "managed_http"),
@@ -1102,127 +1005,6 @@ def test_us_yahoo_finance_fetches_valuation_metric_through_managed_http() -> Non
     assert row["dataset"] == "valuation_metric"
     assert row["pe"] == 28.5
     assert row["market_cap"] == 3000000000.0
-
-
-def test_us_alpha_vantage_declares_tradingagents_fundamental_and_news_interfaces() -> None:
-    endpoints = {endpoint.endpoint_id: endpoint for endpoint in USAlphaVantageDataPlugin().capabilities().endpoints}
-
-    assert endpoints["overview_valuation"].data_type == "valuation_metric"
-    assert endpoints["overview_financial_metric"].data_type == "financial_metric"
-    assert endpoints["financial_statement"].data_type == "financial_statement"
-    assert endpoints["news_sentiment"].data_type == "company_news"
-    assert endpoints["global_news_sentiment"].data_type == "macro_news"
-    assert all(endpoint.source_role == "paid_data" for endpoint in endpoints.values())
-
-
-def test_us_alpha_vantage_overview_reads_settings_credential_and_parses_metrics() -> None:
-    plugin = USAlphaVantageDataPlugin()
-    client = _RecordingHttpClient(
-        _HttpResponse(
-            status_code=200,
-            headers={},
-            text=(
-                '{"Symbol":"AAPL","PERatio":"28.5","PriceToBookRatio":"45.1",'
-                '"PriceToSalesRatioTTM":"7.2","MarketCapitalization":"3000000000000",'
-                '"LatestQuarter":"2026-03-31"}'
-            ),
-        )
-    )
-    resolver = SimpleNamespace(
-        get_credential=lambda name: "av-token" if name == "data_source:alpha_vantage" else None,
-        get_endpoint_url=lambda name: "https://alpha.example" if name == "data_source:alpha_vantage" else None,
-    )
-    task = FetchTask(
-        batch_id="batch:us-alpha-overview",
-        provider_id="us_alpha_vantage_data",
-        endpoint_id="overview_valuation",
-        market="US",
-        data_type="valuation_metric",
-        granularity="realtime",
-        symbol_ids=("AAPL",),
-        date_range_start=None,
-        date_range_end=None,
-        fields=("pe", "pb", "ps", "market_cap"),
-        provider_config_version="1.0.0",
-        params={},
-    )
-
-    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client), credential_resolver=resolver))
-
-    assert result.status.value == "success"
-    request = client.requests[0]
-    assert request.host == "https://alpha.example"
-    assert request.query["function"] == "OVERVIEW"
-    assert request.query["apikey"] == "av-token"
-    row = result.payload["rows"][0]
-    assert row["dataset"] == "valuation_metric"
-    assert row["pe"] == 28.5
-    assert row["market_cap"] == 3000000000000.0
-
-
-def test_us_alpha_vantage_news_sentiment_fetches_company_news_without_discovery_downgrade() -> None:
-    plugin = USAlphaVantageDataPlugin()
-    client = _RecordingHttpClient(
-        _HttpResponse(
-            status_code=200,
-            headers={},
-            text=(
-                '{"feed":[{"title":"Apple news","url":"https://example.test/a",'
-                '"time_published":"20260529T153000","source":"Reuters","summary":"summary"}]}'
-            ),
-        )
-    )
-    resolver = SimpleNamespace(
-        get_credential=lambda name: "av-token" if name == "data_source:alpha_vantage" else None,
-        get_endpoint_url=lambda name: "https://alpha.example" if name == "data_source:alpha_vantage" else None,
-    )
-    task = FetchTask(
-        batch_id="batch:us-alpha-news",
-        provider_id="us_alpha_vantage_data",
-        endpoint_id="news_sentiment",
-        market="US",
-        data_type="company_news",
-        granularity="event",
-        symbol_ids=("AAPL",),
-        date_range_start=date(2026, 5, 1),
-        date_range_end=date(2026, 5, 31),
-        fields=("title", "published_at", "source", "summary", "url", "symbol_id"),
-        provider_config_version="1.0.0",
-        params={},
-    )
-
-    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client), credential_resolver=resolver))
-
-    assert result.status.value == "success"
-    request = client.requests[0]
-    assert request.query["function"] == "NEWS_SENTIMENT"
-    assert request.query["tickers"] == "AAPL"
-    assert request.query["time_from"] == "20260501T0000"
-    row = result.payload["rows"][0]
-    assert row["dataset"] == "company_news"
-    assert row["source_roles"] == ("paid_data",)
-    assert row["title"] == "Apple news"
-
-
-def test_us_alpha_vantage_missing_credential_fails_closed() -> None:
-    task = FetchTask(
-        batch_id="batch:us-alpha-missing",
-        provider_id="us_alpha_vantage_data",
-        endpoint_id="overview_valuation",
-        market="US",
-        data_type="valuation_metric",
-        granularity="realtime",
-        symbol_ids=("AAPL",),
-        date_range_start=None,
-        date_range_end=None,
-        fields=("pe",),
-        provider_config_version="1.0.0",
-        params={},
-    )
-
-    result = USAlphaVantageDataPlugin().fetch(task, ctx=SimpleNamespace())
-
-    assert result.status.value == "credential_missing"
 
 
 def test_us_finnhub_declares_tradingagents_cn_used_interfaces() -> None:
@@ -2470,48 +2252,6 @@ def test_crypto_coinglass_etf_flow_supports_official_solana_and_hype_paths() -> 
         assert client.requests[0].query == {}
 
 
-def test_crypto_lunarcrush_social_uses_bearer_token_and_topic_slug() -> None:
-    plugin = LunarCrushCryptoSocialPlugin()
-    client = _RecordingHttpClient(
-        _HttpResponse(
-            status_code=200,
-            headers={},
-            text='{"data":{"timestamp":1772236800,"galaxy_score":"72","sentiment":"bullish","social_dominance":"3.5","num_posts":"120","interactions":"5000"}}',
-        )
-    )
-    resolver = SimpleNamespace(
-        get_credential=lambda name: "lunar-token" if name == "data_source:lunarcrush" else None,
-        get_endpoint_url=lambda name: "https://lunar.example/api4" if name == "data_source:lunarcrush" else None,
-    )
-    task = FetchTask(
-        batch_id="batch:lunarcrush",
-        provider_id="crypto_lunarcrush_social",
-        endpoint_id="topic",
-        market="CRYPTO",
-        data_type="social_signal",
-        granularity="event",
-        symbol_ids=("BTC/USDT",),
-        date_range_start=None,
-        date_range_end=None,
-        fields=("source", "timestamp", "score", "sentiment", "social_dominance", "num_posts", "interactions", "symbol_id"),
-        provider_config_version="1.0.0",
-        params={},
-    )
-
-    result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
-
-    assert result.status.value == "success"
-    request = client.requests[0]
-    assert request.host == "https://lunar.example"
-    assert request.path == "/api4/public/topic/bitcoin/v1"
-    assert request.headers["authorization"] == "Bearer lunar-token"
-    row = result.payload["rows"][0]
-    assert row["source"] == "LunarCrush"
-    assert row["score"] == 72.0
-    assert row["social_dominance"] == 3.5
-    assert row["num_posts"] == 120.0
-
-
 def test_crypto_glassnode_deep_onchain_fetches_metric_paths() -> None:
     plugin = GlassnodeCryptoOnchainPlugin()
     client = _RecordingHttpClient(
@@ -2554,47 +2294,6 @@ def test_crypto_glassnode_deep_onchain_fetches_metric_paths() -> None:
     assert all(request.query["api_key"] == "glass-token" for request in client.requests)
     assert {row["source_metric"] for row in result.payload["rows"]} == {"active_addresses", "mvrv", "sth_sopr", "lth_sopr", "nupl"}
     assert {row["value_unit"] for row in result.payload["rows"]} == {"count", "dimensionless"}
-
-
-def test_crypto_token_terminal_protocol_revenue_uses_bearer_token() -> None:
-    plugin = TokenTerminalCryptoFundamentalsPlugin()
-    client = _RecordingHttpClient(
-        _HttpResponse(
-            status_code=200,
-            headers={},
-            text='{"data":[{"date":"2026-03-01","revenue":"12345","fees":"25000"}]}',
-        )
-    )
-    resolver = SimpleNamespace(
-        get_credential=lambda name: "tt-token" if name == "data_source:token_terminal" else None,
-        get_endpoint_url=lambda name: "https://token-terminal.example" if name == "data_source:token_terminal" else None,
-    )
-    task = FetchTask(
-        batch_id="batch:token-terminal",
-        provider_id="crypto_token_terminal_fundamentals",
-        endpoint_id="protocol_revenue",
-        market="CRYPTO",
-        data_type="defi_metric",
-        granularity="daily",
-        symbol_ids=("ETH/USDT",),
-        date_range_start=date(2026, 3, 1),
-        date_range_end=date(2026, 3, 2),
-        fields=("protocol_revenue", "fees", "timestamp", "symbol_id"),
-        provider_config_version="1.0.0",
-        params={},
-    )
-
-    result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
-
-    assert result.status.value == "success"
-    request = client.requests[0]
-    assert request.path == "/v2/metrics/revenue"
-    assert request.query["project_ids"] == "ethereum"
-    assert request.query["start"] == "2026-03-01"
-    assert request.headers["authorization"] == "Bearer tt-token"
-    row = result.payload["rows"][0]
-    assert row["protocol_revenue"] == 12345.0
-    assert row["fees"] == 25000.0
 
 
 def test_crypto_defillama_reads_current_chain_tvls_when_top_level_tvl_missing() -> None:

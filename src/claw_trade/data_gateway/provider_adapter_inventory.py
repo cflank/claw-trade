@@ -71,11 +71,9 @@ _PROVIDER_SOURCE_MAPPINGS: tuple[ProviderSourceMapping, ...] = (
     ProviderSourceMapping("hk_sina_public", ("sina_finance",), "Sina HK public market adapter"),
     ProviderSourceMapping("hk_tushare", ("tushare",), "Tushare HK market and financial adapter"),
     ProviderSourceMapping("hk_yahoo_finance", ("yahoo_finance",), "Yahoo Finance HK adapter"),
-    ProviderSourceMapping("us_alpha_vantage_data", ("alpha_vantage",), "Alpha Vantage US data adapter"),
     ProviderSourceMapping("us_finnhub_data", ("finnhub",), "Finnhub US data adapter"),
     ProviderSourceMapping("us_fred_macro", ("fred",), "FRED macro adapter"),
     ProviderSourceMapping("us_google_news", ("google_news",), "Google News US discovery adapter"),
-    ProviderSourceMapping("us_primary", ("alpha_vantage",), "Alpha Vantage US primary daily bar adapter"),
     ProviderSourceMapping("us_sec_official", ("sec_edgar",), "SEC EDGAR official filing adapter"),
     ProviderSourceMapping("us_stocktwits_social", ("stocktwits",), "Stocktwits social adapter"),
     ProviderSourceMapping("us_yahoo_finance", ("yahoo_finance",), "Yahoo Finance US adapter"),
@@ -86,47 +84,18 @@ _PROVIDER_SOURCE_MAPPINGS: tuple[ProviderSourceMapping, ...] = (
     ProviderSourceMapping("crypto_defillama_defi", ("defillama",), "DeFiLlama protocol adapter"),
     ProviderSourceMapping("crypto_glassnode_onchain", ("glassnode",), "Glassnode on-chain adapter"),
     ProviderSourceMapping("crypto_google_news", ("google_news",), "Google News crypto discovery adapter"),
-    ProviderSourceMapping("crypto_lunarcrush_social", ("lunarcrush",), "LunarCrush social adapter"),
     ProviderSourceMapping("crypto_primary", ("binance",), "Binance spot daily bar adapter"),
     ProviderSourceMapping("crypto_project_official_news", ("project_official",), "Official project release/news adapter"),
-    ProviderSourceMapping("crypto_token_terminal_fundamentals", ("token_terminal",), "Token Terminal fundamentals adapter"),
+    ProviderSourceMapping("official_api_tushare", ("tushare",), "Raw official Tushare API call adapter"),
+    ProviderSourceMapping("official_api_finnhub", ("finnhub",), "Raw official Finnhub API call adapter"),
+    ProviderSourceMapping("official_api_fred", ("fred",), "Raw official FRED API call adapter"),
+    ProviderSourceMapping("official_api_coingecko_pro", ("coingecko_pro",), "Raw official CoinGecko Pro API call adapter"),
+    ProviderSourceMapping("official_api_coinglass", ("coinglass",), "Raw official Coinglass API call adapter"),
+    ProviderSourceMapping("official_api_glassnode", ("glassnode",), "Raw official Glassnode API call adapter"),
 )
 
 
-_KNOWN_MISSING_ADAPTERS: tuple[KnownMissingAdapterCapability, ...] = (
-    KnownMissingAdapterCapability(
-        source_type="tushare",
-        market="CN_A",
-        data_type="quote_snapshot",
-        granularity="realtime",
-        provider_endpoint_hint="realtime_quote",
-        reason="Tushare official realtime quote endpoint exists, but no claw-trade adapter is implemented yet",
-    ),
-    KnownMissingAdapterCapability(
-        source_type="tushare",
-        market="CN_A",
-        data_type="order_book_snapshot",
-        granularity="realtime",
-        provider_endpoint_hint="realtime_quote",
-        reason="Tushare realtime quote includes bid/ask levels, but no claw-trade order-book adapter is implemented yet",
-    ),
-    KnownMissingAdapterCapability(
-        source_type="tushare",
-        market="CN_A",
-        data_type="intraday_bar",
-        granularity="intraday",
-        provider_endpoint_hint="intraday minute/pro_bar",
-        reason="Tushare minute data exists, but no claw-trade intraday adapter is implemented yet",
-    ),
-    KnownMissingAdapterCapability(
-        source_type="mootdx",
-        market="CN_A",
-        data_type="trade_tick",
-        granularity="realtime",
-        provider_endpoint_hint="transaction/transactions",
-        reason="Mootdx tick transaction interfaces are known from project memory, but claw-trade has no normalized adapter schema yet",
-    ),
-)
+_KNOWN_MISSING_ADAPTERS: tuple[KnownMissingAdapterCapability, ...] = ()
 
 
 def iter_internal_source_catalog_entries() -> tuple[SourceCatalogEntry, ...]:

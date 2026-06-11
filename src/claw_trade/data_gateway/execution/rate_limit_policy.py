@@ -14,16 +14,18 @@ _PROVIDER_TO_SOURCE_TYPE: dict[str, str] = {
     "cn_a_primary": "tushare",
     "cn_a_tushare_fundamental": "tushare",
     "hk_tushare": "tushare",
-    "us_primary": "alpha_vantage",
-    "us_alpha_vantage_data": "alpha_vantage",
     "us_finnhub_data": "finnhub",
     "hk_finnhub_data": "finnhub",
     "us_fred_macro": "fred",
     "crypto_coingecko_market": "coingecko_pro",
     "crypto_coinglass_derivatives": "coinglass",
     "crypto_glassnode_onchain": "glassnode",
-    "crypto_lunarcrush_social": "lunarcrush",
-    "crypto_token_terminal_fundamentals": "token_terminal",
+    "official_api_tushare": "tushare",
+    "official_api_finnhub": "finnhub",
+    "official_api_fred": "fred",
+    "official_api_coingecko_pro": "coingecko_pro",
+    "official_api_coinglass": "coinglass",
+    "official_api_glassnode": "glassnode",
 }
 
 class RateLimitPolicyResolver:

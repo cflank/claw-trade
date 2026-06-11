@@ -188,8 +188,8 @@ def final_acceptance_plan() -> FinalAcceptancePlan:
                 entrypoint="US daily_bar provider",
                 runtime_command_template="uv run python <audited US provider smoke>",
                 required_evidence=(
-                    "requires configured data_source:alpha_vantage in Mongo settings",
-                    "must return credential_missing until configured",
+                    "Yahoo Finance public daily-bar source is available without paid credentials",
+                    "Finnhub paid US enhancement must return credential_missing until configured",
                 ),
             ),
             RuntimeProofSlot(

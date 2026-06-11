@@ -121,29 +121,6 @@ def _crypto_source_state_request(
     )
 
 
-def _us_alpha_vantage_request(request_id: str = "req-us-alpha-unconfigured") -> DataRequest:
-    return DataRequest.model_validate(
-        {
-            "request_id": request_id,
-            "market": "US",
-            "symbol_id": "AAPL",
-            "exchange": "NASDAQ",
-            "currency": "USD",
-            "timezone": "America/New_York",
-            "calendar": "US_NYSE_NASDAQ",
-            "data_type": "financial_statement",
-            "granularity": "annual",
-            "fields": ("period", "revenue", "net_income", "assets", "liabilities", "cash_flow"),
-            "date_range_start": date(2025, 1, 1),
-            "date_range_end": date(2026, 6, 7),
-            "freshness_policy": "trading_day",
-            "consumer": "report",
-            "consumer_id": "fundamental_analyst",
-            "as_of": datetime(2026, 6, 7, tzinfo=UTC),
-        }
-    )
-
-
 def _credential_resolver(
     records: tuple[dict[str, object], ...],
     secrets: dict[str | None, str | None] | None = None,
@@ -1568,18 +1545,6 @@ def test_data_service_does_not_report_unconfigured_crypto_paid_sources_as_creden
                 granularity="daily",
                 fields=("timestamp", "metric", "value", "value_unit", "chain", "source_metric"),
             ),
-            _crypto_source_state_request(
-                request_id="req-crypto-token-terminal",
-                data_type="defi_metric",
-                granularity="daily",
-                fields=("protocol_revenue", "fees", "timestamp", "symbol_id"),
-            ),
-            _crypto_source_state_request(
-                request_id="req-crypto-lunarcrush",
-                data_type="social_signal",
-                granularity="event",
-                fields=("source", "timestamp", "score", "sentiment", "social_dominance", "num_posts", "interactions", "symbol_id"),
-            ),
         )
     )
 
@@ -1587,8 +1552,6 @@ def test_data_service_does_not_report_unconfigured_crypto_paid_sources_as_creden
 
     assert {result.request_id for result in results} == {
         "req-crypto-glassnode",
-        "req-crypto-token-terminal",
-        "req-crypto-lunarcrush",
     }
     for result in results:
         assert result.status == DataResultStatus.MISSING
@@ -1606,43 +1569,8 @@ def test_data_service_does_not_report_unconfigured_crypto_paid_sources_as_creden
     }
     assert {
         ("crypto_glassnode_onchain", "deep_onchain_metrics", "source_not_configured", False, ()),
-        ("crypto_token_terminal_fundamentals", "protocol_revenue", "source_not_configured", False, ()),
-        ("crypto_lunarcrush_social", "topic", "source_not_configured", False, ()),
     }.issubset(attempt_statuses)
     assert all(status == "source_not_configured" for _provider, _endpoint, status, _attempted, _gaps in attempt_statuses)
-
-
-def test_data_service_does_not_report_unconfigured_non_crypto_paid_source_as_credential_gap() -> None:
-    repository = DatasetRepository()
-    service = DataService(
-        query_planner=QueryPlanner(),
-        warehouse=_AlwaysMissingWarehouse(),
-        provider_selector=ProviderSelector(
-            build_minimal_provider_registry(),
-            credential_resolver=_credential_resolver(()),
-        ),
-        coalescer=_NoRemoteCoalescer(),
-        batch_planner=_NoRemoteBatchPlanner(),
-        execution_gate=_NoRemoteExecutionGate(),
-        fetch_engine=_NoRemoteFetchEngine(),
-        ingest=_real_ingest(repository),
-    )
-    payload = _us_alpha_vantage_request("req-us-alpha-unconfigured").model_dump()
-    payload["source_role_required"] = "paid_data"
-    request = DataRequest.model_validate(payload)
-
-    [result] = service.get_data_batch((request,))
-
-    assert result.status == DataResultStatus.MISSING
-    assert [gap.reason for gap in result.gaps] == [GapReason.WAREHOUSE_MISSING]
-    attempts = tuple(repository.get_provider_attempt(attempt_ref) for attempt_ref in result.attempt_refs)
-    assert {
-        (attempt["provider"], attempt["status"], attempt["remote_attempted"], attempt["gap_codes"])
-        for attempt in attempts
-        if attempt is not None
-    } == {
-        ("us_alpha_vantage_data", "source_not_configured", False, ()),
-    }
 
 
 class _WaveWarehouse:

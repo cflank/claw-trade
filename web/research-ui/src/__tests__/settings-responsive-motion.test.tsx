@@ -12,7 +12,7 @@ describe('settings-responsive-motion', () => {
 
     expect(css).toMatch(/@media\s*\(max-width:\s*960px\)\s*{[\s\S]*?\.ct-onboarding\s*{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
     expect(css).toMatch(/@media\s*\(max-width:\s*960px\)\s*{[\s\S]*?\.ct-model-grid,\s*\.ct-form-grid\s*{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
-    expect(css).toMatch(/@media\s*\(max-width:\s*960px\)\s*{[\s\S]*?\.ct-source-category-grid\s*{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
+    expect(css).toMatch(/@media\s*\(max-width:\s*960px\)\s*{[\s\S]*?\.ct-source-grid\s*{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
     expect(css).toMatch(/@media\s*\(max-width:\s*560px\)\s*{[\s\S]*?\.ct-settings-wrap,\s*\.ct-onboarding-wrap\s*{[\s\S]*?padding:\s*14px 10px 28px;/);
     expect(css).toMatch(/@media\s*\(max-width:\s*560px\)\s*{[\s\S]*?\.ct-button,\s*\.ct-button-secondary\s*{[\s\S]*?width:\s*100%;/);
     expect(css).toMatch(/@media\s*\(max-width:\s*560px\)\s*{[\s\S]*?\.ct-task-field\s*{[\s\S]*?grid-template-columns:\s*64px minmax\(0,\s*1fr\);/);

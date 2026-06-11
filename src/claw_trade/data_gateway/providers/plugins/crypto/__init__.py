@@ -2062,97 +2062,6 @@ def _set_optional_metric(row: dict[str, Any], field: str, item: Mapping[str, Any
         row[field] = value
 
 
-class LunarCrushCryptoSocialPlugin:
-    plugin_id = "crypto_lunarcrush_social"
-    version = "1.0.0"
-    credential_name = "data_source:lunarcrush"
-
-    def __init__(self) -> None:
-        self._capabilities = ProviderCapabilities(
-            provider_id=self.plugin_id,
-            plugin_version=self.version,
-            endpoints=(
-                endpoint_capability(
-                    endpoint_id="topic",
-                    market="CRYPTO",
-                    data_type="social_signal",
-                    source_role="paid_data",
-                    granularity=("event",),
-                    fields=("source", "timestamp", "score", "sentiment", "social_dominance", "num_posts", "interactions", "symbol_id"),
-                    priority_rank=8,
-                ),
-            ),
-            credential_policy=CredentialPolicy(
-                credential_required=True,
-                credential_names=(self.credential_name,),
-                credential_scope="provider_token",
-                missing_behavior="credential_missing",
-            ),
-            license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
-            default_priority_rank=8,
-        )
-
-    def capabilities(self) -> ProviderCapabilities:
-        return self._capabilities
-
-    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
-        return (batch,)
-
-    def fetch(self, task: Any, ctx: Any) -> FetchResult:
-        token = credential_value(ctx, self.credential_name)
-        if token is None:
-            return FetchResult.from_error(task, status="credential_missing", error=RuntimeError(f"credential_missing:{self.credential_name}"))
-        symbol = first_symbol(task) or "BTC"
-        symbols = resolve_crypto_provider_symbols(symbol)
-        base_asset = symbols.crypto_base_symbol or symbol.upper()
-        quote_asset = symbols.crypto_quote_symbol or "USDT"
-        topic = symbols.coingecko_coin_id or base_asset.lower()
-        host, prefix = endpoint(ctx, self.credential_name, "https://lunarcrush.com/api4")
-        payload, observations, error = send_json_request(
-            task,
-            ctx,
-            HttpRequestSpec(
-                method="GET",
-                host=host,
-                path=f"{prefix}/public/topic/{topic}/v1",
-                headers={"accept": "application/json", "authorization": f"Bearer {token}"},
-                provider_config_version=getattr(task, "provider_config_version", None),
-            ),
-        )
-        if error is not None:
-            return error
-        item = _first_mapping(_provider_data(payload))
-        if not item:
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        row = _crypto_base_row(
-            dataset="social_signal",
-            symbol=symbol,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            provider_id=self.plugin_id,
-            endpoint_id="topic",
-            source_role="paid_data",
-            granularity="event",
-        )
-        timestamp = _safe_parse_datetime(item.get("timestamp") or item.get("time")) or datetime.now(tz=UTC)
-        row.update(
-            {
-                "source": "LunarCrush",
-                "timestamp": timestamp,
-                "score": _first_numeric_metric(item, ("galaxy_score", "galaxyScore", "alt_rank", "altRank", "score")),
-                "sentiment": non_empty(item.get("sentiment") or item.get("sentiment_classification")),
-                "social_dominance": _first_numeric_metric(item, ("social_dominance", "socialDominance")),
-                "num_posts": _first_numeric_metric(item, ("num_posts", "posts", "post_count")),
-                "interactions": _first_numeric_metric(item, ("interactions", "interactions_24h", "social_interactions")),
-            }
-        )
-        _apply_crypto_period(row, timestamp)
-        if not any(row.get(field) is not None for field in ("score", "social_dominance", "num_posts", "interactions")):
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        return FetchResult.from_success(task, payload={"rows": [row]}, row_count=1, http_observations=observations)
-
-
 class GlassnodeCryptoOnchainPlugin:
     plugin_id = "crypto_glassnode_onchain"
     version = "1.0.0"
@@ -2253,88 +2162,6 @@ class GlassnodeCryptoOnchainPlugin:
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=tuple(observations))
 
 
-class TokenTerminalCryptoFundamentalsPlugin:
-    plugin_id = "crypto_token_terminal_fundamentals"
-    version = "1.0.0"
-    credential_name = "data_source:token_terminal"
-
-    def __init__(self) -> None:
-        self._capabilities = ProviderCapabilities(
-            provider_id=self.plugin_id,
-            plugin_version=self.version,
-            endpoints=(
-                endpoint_capability(
-                    endpoint_id="protocol_revenue",
-                    market="CRYPTO",
-                    data_type="defi_metric",
-                    source_role="paid_data",
-                    granularity=("daily",),
-                    fields=("protocol_revenue", "fees", "timestamp", "symbol_id"),
-                    priority_rank=8,
-                ),
-            ),
-            credential_policy=CredentialPolicy(
-                credential_required=True,
-                credential_names=(self.credential_name,),
-                credential_scope="provider_token",
-                missing_behavior="credential_missing",
-            ),
-            license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
-            default_priority_rank=8,
-        )
-
-    def capabilities(self) -> ProviderCapabilities:
-        return self._capabilities
-
-    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
-        return (batch,)
-
-    def fetch(self, task: Any, ctx: Any) -> FetchResult:
-        token = credential_value(ctx, self.credential_name)
-        if token is None:
-            return FetchResult.from_error(task, status="credential_missing", error=RuntimeError(f"credential_missing:{self.credential_name}"))
-        symbol = first_symbol(task) or "BTC"
-        symbols = resolve_crypto_provider_symbols(symbol)
-        base_asset = symbols.crypto_base_symbol or symbol.upper()
-        quote_asset = symbols.crypto_quote_symbol or "USDT"
-        project_id = symbols.defillama_protocol_slug or symbols.coingecko_coin_id or base_asset.lower()
-        host, prefix = endpoint(ctx, self.credential_name, "https://api.tokenterminal.com")
-        query: dict[str, Any] = {"project_ids": project_id}
-        start = _date_text_for_query(getattr(task, "date_range_start", None))
-        end = _date_text_for_query(getattr(task, "date_range_end", None))
-        if start is not None:
-            query["start"] = start
-        if end is not None:
-            query["end"] = end
-        payload, observations, error = send_json_request(
-            task,
-            ctx,
-            HttpRequestSpec(
-                method="GET",
-                host=host,
-                path=f"{prefix}/v2/metrics/revenue",
-                query=query,
-                headers={"accept": "application/json", "authorization": f"Bearer {token}"},
-                provider_config_version=getattr(task, "provider_config_version", None),
-            ),
-        )
-        if error is not None:
-            return error
-        rows = _token_terminal_revenue_rows(
-            payload,
-            task,
-            symbol=symbol,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            provider_id=self.plugin_id,
-            endpoint_id="protocol_revenue",
-        )
-        if not rows:
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
-
-
 def _glassnode_rows(
     payload: Any,
     task: Any,
@@ -2385,43 +2212,6 @@ def _glassnode_value_unit(metric: str) -> str:
     if metric == "active_addresses":
         return "count"
     return "dimensionless"
-
-
-def _token_terminal_revenue_rows(
-    payload: Any,
-    task: Any,
-    *,
-    symbol: str,
-    base_asset: str,
-    quote_asset: str,
-    provider_id: str,
-    endpoint_id: str,
-) -> list[dict[str, Any]]:
-    data = _provider_data(payload)
-    items = data if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray, Mapping)) else (data,)
-    rows: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, Mapping):
-            continue
-        revenue = _first_numeric_metric(item, ("protocol_revenue", "revenue", "value"))
-        fees = _first_numeric_metric(item, ("fees", "total_fees"))
-        if revenue is None and fees is None:
-            continue
-        timestamp = _safe_parse_datetime(item.get("timestamp") or item.get("date")) or datetime.now(tz=UTC)
-        row = _crypto_base_row(
-            dataset="defi_metric",
-            symbol=symbol,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            provider_id=provider_id,
-            endpoint_id=endpoint_id,
-            source_role="paid_data",
-            granularity=str(getattr(task, "granularity", None) or "daily"),
-        )
-        row.update({"timestamp": timestamp, "protocol_revenue": revenue, "fees": fees})
-        _apply_crypto_period(row, timestamp)
-        rows.append(row)
-    return rows
 
 
 def _date_text_for_query(value: Any) -> str | None:
@@ -2678,9 +2468,7 @@ def build_crypto_provider_plugins() -> tuple[object, ...]:
         CoinGeckoCryptoPlugin(),
         DefiLlamaCryptoPlugin(),
         CoinglassCryptoPlugin(),
-        LunarCrushCryptoSocialPlugin(),
         GlassnodeCryptoOnchainPlugin(),
-        TokenTerminalCryptoFundamentalsPlugin(),
         AlternativeMeCryptoSentimentPlugin(),
         CryptoProjectNewsPlugin(),
         CryptoGoogleNewsDiscoveryPlugin(),
@@ -2938,12 +2726,8 @@ def _crypto_exchange_label(provider_id: str) -> str:
         return "DEFILLAMA"
     if "COINGLASS" in token:
         return "COINGLASS"
-    if "LUNARCRUSH" in token:
-        return "LUNARCRUSH"
     if "GLASSNODE" in token:
         return "GLASSNODE"
-    if "TOKEN_TERMINAL" in token:
-        return "TOKEN_TERMINAL"
     if "ALTERNATIVE" in token:
         return "ALTERNATIVE_ME"
     if "PROJECT" in token:
@@ -3061,8 +2845,6 @@ __all__ = [
     "CryptoProjectNewsPlugin",
     "DefiLlamaCryptoPlugin",
     "GlassnodeCryptoOnchainPlugin",
-    "LunarCrushCryptoSocialPlugin",
-    "TokenTerminalCryptoFundamentalsPlugin",
     "build_crypto_provider_plugin",
     "build_crypto_provider_plugins",
 ]

@@ -8,7 +8,6 @@ from xml.etree import ElementTree
 from claw_trade.data_gateway.execution.managed_http import HttpRequestSpec
 from claw_trade.data_gateway.models import FetchResult
 from claw_trade.data_gateway.providers.plugins.common import CredentialPolicy, ProviderCapabilities
-from claw_trade.data_gateway.providers.plugins.http_daily_bar import AlphaVantageDailyBarPlugin
 from claw_trade.data_gateway.providers.plugins.market_http import (
     METADATA_ONLY_LICENSE,
     NO_CREDENTIALS,
@@ -28,7 +27,6 @@ from claw_trade.data_gateway.providers.plugins.market_http import (
 _YAHOO_ENDPOINT = "https://query1.finance.yahoo.com"
 _SEC_ENDPOINT = "https://data.sec.gov"
 _SEC_WWW_ENDPOINT = "https://www.sec.gov"
-_ALPHA_VANTAGE_ENDPOINT = "https://www.alphavantage.co"
 _FINNHUB_ENDPOINT = "https://finnhub.io/api/v1"
 _FRED_ENDPOINT = "https://api.stlouisfed.org"
 _STOCKTWITS_ENDPOINT = "https://api.stocktwits.com"
@@ -341,247 +339,6 @@ class USSECProviderPlugin:
         if not rows:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=tuple(observations))
-
-
-class USAlphaVantageDataPlugin:
-    plugin_id = "us_alpha_vantage_data"
-    version = "1.0.0"
-    credential_name = "data_source:alpha_vantage"
-
-    def __init__(self) -> None:
-        self._capabilities = ProviderCapabilities(
-            provider_id=self.plugin_id,
-            plugin_version=self.version,
-            endpoints=(
-                endpoint_capability(
-                    endpoint_id="overview_valuation",
-                    market="US",
-                    data_type="valuation_metric",
-                    source_role="paid_data",
-                    granularity=("realtime",),
-                    fields=("pe", "pb", "ps", "market_cap"),
-                    priority_rank=15,
-                ),
-                endpoint_capability(
-                    endpoint_id="overview_financial_metric",
-                    market="US",
-                    data_type="financial_metric",
-                    source_role="paid_data",
-                    granularity=("quarterly", "realtime"),
-                    fields=("roe", "gross_margin", "profit_margin", "eps", "revenue_growth"),
-                    priority_rank=15,
-                ),
-                endpoint_capability(
-                    endpoint_id="financial_statement",
-                    market="US",
-                    data_type="financial_statement",
-                    source_role="paid_data",
-                    granularity=("quarterly", "annual"),
-                    fields=("period", "revenue", "net_income", "assets", "liabilities", "cash_flow"),
-                    priority_rank=15,
-                    supports_batch=False,
-                    batch_by="none",
-                ),
-                endpoint_capability(
-                    endpoint_id="news_sentiment",
-                    market="US",
-                    data_type="company_news",
-                    source_role="paid_data",
-                    granularity=("event",),
-                    fields=("title", "published_at", "source", "summary", "url", "symbol_id"),
-                    priority_rank=15,
-                ),
-                endpoint_capability(
-                    endpoint_id="global_news_sentiment",
-                    market="US",
-                    data_type="macro_news",
-                    source_role="paid_data",
-                    granularity=("event",),
-                    fields=("title", "published_at", "source", "summary", "url", "region"),
-                    priority_rank=15,
-                    supports_batch=False,
-                    batch_by="none",
-                ),
-            ),
-            credential_policy=CredentialPolicy(
-                credential_required=True,
-                credential_names=(self.credential_name,),
-                credential_scope="provider_token",
-                missing_behavior="credential_missing",
-            ),
-            license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
-            default_priority_rank=15,
-        )
-
-    def capabilities(self) -> ProviderCapabilities:
-        return self._capabilities
-
-    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
-        return (batch,)
-
-    def fetch(self, task: Any, ctx: Any) -> FetchResult:
-        token = credential_value(ctx, self.credential_name)
-        if token is None:
-            return FetchResult.from_error(task, status="credential_missing", error=RuntimeError(f"credential_missing:{self.credential_name}"))
-        endpoint_id = str(getattr(task, "endpoint_id", ""))
-        if endpoint_id in {"overview_valuation", "overview_financial_metric"}:
-            symbol = first_symbol(task)
-            if symbol is None:
-                return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
-            return self._fetch_overview(task, ctx=ctx, token=token, symbol=symbol, endpoint_id=endpoint_id)
-        if endpoint_id == "financial_statement":
-            symbol = first_symbol(task)
-            if symbol is None:
-                return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
-            return self._fetch_financial_statement(task, ctx=ctx, token=token, symbol=symbol)
-        if endpoint_id == "news_sentiment":
-            symbol = first_symbol(task)
-            if symbol is None:
-                return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
-            return self._fetch_news(task, ctx=ctx, token=token, symbol=symbol, macro=False)
-        if endpoint_id == "global_news_sentiment":
-            return self._fetch_news(task, ctx=ctx, token=token, symbol="US", macro=True)
-        return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
-
-    def _fetch_overview(self, task: Any, *, ctx: Any, token: str, symbol: str, endpoint_id: str) -> FetchResult:
-        payload, observations, error = self._alpha_request(task, ctx=ctx, token=token, function="OVERVIEW", query={"symbol": symbol})
-        if error is not None:
-            return error
-        if not isinstance(payload, Mapping) or _alpha_payload_has_error(payload):
-            return FetchResult.from_error(task, status="error", error=RuntimeError("invalid_provider_payload"), http_observations=observations)
-        dataset = "valuation_metric" if endpoint_id == "overview_valuation" else "financial_metric"
-        row = _base_row(
-            dataset=dataset,
-            market="US",
-            symbol=symbol,
-            provider_id=self.plugin_id,
-            endpoint_id=endpoint_id,
-            source_role="paid_data",
-        )
-        if endpoint_id == "overview_valuation":
-            row.update(
-                {
-                    "pe": decimal_float(payload.get("PERatio")),
-                    "pb": decimal_float(payload.get("PriceToBookRatio")),
-                    "ps": decimal_float(payload.get("PriceToSalesRatioTTM")),
-                    "market_cap": decimal_float(payload.get("MarketCapitalization")),
-                }
-            )
-        else:
-            revenue = decimal_float(payload.get("RevenueTTM"))
-            gross_profit = decimal_float(payload.get("GrossProfitTTM"))
-            row.update(
-                {
-                    "roe": decimal_float(payload.get("ReturnOnEquityTTM")),
-                    "gross_margin": gross_profit / revenue if gross_profit is not None and revenue else None,
-                    "profit_margin": decimal_float(payload.get("ProfitMargin")),
-                    "eps": decimal_float(payload.get("EPS")),
-                    "revenue_growth": decimal_float(payload.get("QuarterlyRevenueGrowthYOY")),
-                }
-            )
-        row["period_start"] = parse_date(payload.get("LatestQuarter")) or row["period_start"]
-        row["period_end"] = row["period_start"]
-        row = {key: value for key, value in row.items() if value is not None}
-        if not any(key in row for key in getattr(task, "fields", ()) or ()):
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        return FetchResult.from_success(task, payload={"rows": [row]}, row_count=1, http_observations=observations)
-
-    def _fetch_financial_statement(self, task: Any, *, ctx: Any, token: str, symbol: str) -> FetchResult:
-        observations: list[Any] = []
-        merged: dict[str, dict[str, Any]] = {}
-        specs = (
-            ("INCOME_STATEMENT", ("revenue", "totalRevenue"), ("net_income", "netIncome")),
-            ("BALANCE_SHEET", ("assets", "totalAssets"), ("liabilities", "totalLiabilities")),
-            ("CASH_FLOW", ("cash_flow", "operatingCashflow")),
-        )
-        for function, *field_specs in specs:
-            payload, next_observations, error = self._alpha_request(task, ctx=ctx, token=token, function=function, query={"symbol": symbol})
-            observations.extend(next_observations)
-            if error is not None:
-                return error
-            reports = payload.get("quarterlyReports") if isinstance(payload, Mapping) else None
-            if not isinstance(reports, Sequence) or isinstance(reports, (str, bytes, bytearray)):
-                return FetchResult.from_error(task, status="error", error=RuntimeError("invalid_provider_payload"), http_observations=tuple(observations))
-            for item in reports:
-                if not isinstance(item, Mapping):
-                    continue
-                period = parse_date(item.get("fiscalDateEnding"))
-                if period is None:
-                    continue
-                key = period.isoformat()
-                row = merged.setdefault(
-                    key,
-                    _base_row(
-                        dataset="financial_statement",
-                        market="US",
-                        symbol=symbol,
-                        provider_id=self.plugin_id,
-                        endpoint_id="financial_statement",
-                        source_role="paid_data",
-                        period=period,
-                    ),
-                )
-                row["period"] = key
-                for output_field, source_field in field_specs:
-                    value = decimal_float(item.get(source_field))
-                    if value is not None:
-                        row[output_field] = value
-        rows = list(merged.values())
-        if not rows:
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations))
-        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=tuple(observations))
-
-    def _fetch_news(self, task: Any, *, ctx: Any, token: str, symbol: str, macro: bool) -> FetchResult:
-        query: dict[str, Any] = {"limit": "50"}
-        if macro:
-            query["topics"] = "financial_markets,economy_macro,economy_monetary"
-        else:
-            query["tickers"] = symbol
-        start = parse_datetime(getattr(task, "date_range_start", None))
-        end = parse_datetime(getattr(task, "date_range_end", None))
-        if start is not None:
-            query["time_from"] = start.strftime("%Y%m%dT%H%M")
-        if end is not None:
-            query["time_to"] = end.strftime("%Y%m%dT%H%M")
-        payload, observations, error = self._alpha_request(task, ctx=ctx, token=token, function="NEWS_SENTIMENT", query=query)
-        if error is not None:
-            return error
-        feed = payload.get("feed") if isinstance(payload, Mapping) else None
-        if not isinstance(feed, Sequence) or isinstance(feed, (str, bytes, bytearray)):
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        rows = _alpha_news_rows(feed, symbol=symbol, provider_id=self.plugin_id, endpoint_id="global_news_sentiment" if macro else "news_sentiment", macro=macro)
-        if not rows:
-            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
-        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
-
-    def _alpha_request(
-        self,
-        task: Any,
-        *,
-        ctx: Any,
-        token: str,
-        function: str,
-        query: Mapping[str, Any],
-    ) -> tuple[Any, tuple[Any, ...], FetchResult | None]:
-        host, prefix = endpoint(ctx, self.credential_name, _ALPHA_VANTAGE_ENDPOINT)
-        payload, observations, error = send_json_request(
-            task,
-            ctx,
-            HttpRequestSpec(
-                method="GET",
-                host=host,
-                path=f"{prefix}/query",
-                query={"function": function, **dict(query), "apikey": token},
-                headers=_HEADERS,
-                provider_config_version=getattr(task, "provider_config_version", None),
-            ),
-        )
-        if error is not None:
-            return payload, observations, error
-        if isinstance(payload, Mapping) and _alpha_payload_has_rate_limit(payload):
-            return payload, observations, FetchResult.from_error(task, status="rate_limited", error=RuntimeError("alpha_vantage_rate_limited"), http_observations=observations)
-        return payload, observations, None
 
 
 class USFinnhubDataPlugin:
@@ -1120,15 +877,13 @@ class USGoogleNewsDiscoveryPlugin:
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
 
 
-def build_us_provider_plugin() -> AlphaVantageDailyBarPlugin:
-    return AlphaVantageDailyBarPlugin()
+def build_us_provider_plugin() -> USYahooFinancePlugin:
+    return USYahooFinancePlugin()
 
 
 def build_us_provider_plugins() -> tuple[object, ...]:
     return (
-        AlphaVantageDailyBarPlugin(),
         USSECProviderPlugin(),
-        USAlphaVantageDataPlugin(),
         USFinnhubDataPlugin(),
         USYahooFinancePlugin(),
         USFREDMacroPlugin(),
@@ -1546,15 +1301,6 @@ def _parse_rss_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _alpha_payload_has_error(payload: Mapping[str, Any]) -> bool:
-    return any(key in payload for key in ("Error Message", "Information"))
-
-
-def _alpha_payload_has_rate_limit(payload: Mapping[str, Any]) -> bool:
-    text = " ".join(str(payload.get(key, "")) for key in ("Note", "Information")).lower()
-    return "frequency" in text or "rate limit" in text or "standard api rate" in text
-
-
 def _finnhub_payload_has_error(payload: Mapping[str, Any]) -> bool:
     return any(non_empty(payload.get(key)) for key in ("error", "Error", "s"))
 
@@ -1573,53 +1319,7 @@ def _date_window(task: Any, *, default_days: int) -> tuple[Any, Any]:
     return start, end
 
 
-def _alpha_news_rows(feed: Sequence[Any], *, symbol: str, provider_id: str, endpoint_id: str, macro: bool) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    dataset = "macro_news" if macro else "company_news"
-    for item in feed:
-        if not isinstance(item, Mapping):
-            continue
-        title = non_empty(item.get("title"))
-        url = non_empty(item.get("url"))
-        if title is None or url is None:
-            continue
-        published = _parse_alpha_news_time(item.get("time_published"))
-        period = published.date() if published else datetime.now(tz=UTC).date()
-        source = non_empty(item.get("source")) or "Alpha Vantage"
-        row = _event_row(
-            dataset=dataset,
-            market="US",
-            symbol="US" if macro else symbol,
-            provider_id=provider_id,
-            endpoint_id=endpoint_id,
-            source_role="paid_data",
-            period=period,
-            source=source,
-            published_at=published,
-            title=title,
-            summary=non_empty(item.get("summary")),
-            url=url,
-        )
-        if macro:
-            row["region"] = "US"
-        rows.append(row)
-    return rows
-
-
-def _parse_alpha_news_time(value: Any) -> datetime | None:
-    text = non_empty(value)
-    if text is None:
-        return None
-    for fmt in ("%Y%m%dT%H%M%S", "%Y%m%dT%H%M"):
-        try:
-            return datetime.strptime(text, fmt).replace(tzinfo=UTC)
-        except ValueError:
-            continue
-    return parse_datetime(text)
-
-
 __all__ = [
-    "USAlphaVantageDataPlugin",
     "USFinnhubDataPlugin",
     "USFREDMacroPlugin",
     "USGoogleNewsDiscoveryPlugin",

@@ -61,11 +61,11 @@ describe('settings forbidden surface', () => {
         return json({
           supportedTypes: [
             'tushare',
-            'alpha_vantage',
             'finnhub',
             'fred',
             'coingecko_pro',
             'coinglass',
+            'glassnode',
           ],
           instances: [
             {
@@ -76,14 +76,6 @@ describe('settings forbidden surface', () => {
               enabled: false,
               state: 'draft',
               endpointUrl: 'https://api.tushare.pro',
-            },
-            {
-              instanceId: 'builtin-alpha-vantage',
-              supportedType: 'alpha_vantage',
-              group: 'global_data',
-              displayName: 'Alpha Vantage',
-              enabled: false,
-              state: 'draft',
             },
             { instanceId: 'builtin-finnhub', supportedType: 'finnhub', group: 'global_data', displayName: 'Finnhub', enabled: false, state: 'draft' },
             { instanceId: 'builtin-fred', supportedType: 'fred', group: 'global_macro', displayName: 'FRED', enabled: false, state: 'draft' },
@@ -96,6 +88,7 @@ describe('settings forbidden surface', () => {
               state: 'draft',
             },
             { instanceId: 'builtin-coinglass', supportedType: 'coinglass', group: 'crypto_data', displayName: 'Coinglass', enabled: false, state: 'draft' },
+            { instanceId: 'builtin-glassnode', supportedType: 'glassnode', group: 'crypto_data', displayName: 'Glassnode', enabled: false, state: 'draft' },
           ],
         });
       }
@@ -110,7 +103,6 @@ describe('settings forbidden surface', () => {
 
     await screen.findByRole('heading', { name: '设置' });
     fireEvent.click(screen.getByRole('tab', { name: '数据源' }));
-    fireEvent.click(screen.getByRole('tab', { name: '加密货币' }));
     const text = (document.body.textContent ?? '').toLowerCase();
     const forbidden = [
       'profile',
@@ -144,7 +136,7 @@ describe('settings forbidden surface', () => {
     for (const item of forbidden) {
       expect(text).not.toContain(item);
     }
-    for (const approved of ['coingecko pro', 'coinglass']) {
+    for (const approved of ['coingecko pro', 'coinglass', 'glassnode']) {
       expect(text).toContain(approved);
     }
     for (const hiddenDefaultOrInternal of [
