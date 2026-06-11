@@ -73,6 +73,7 @@ def test_non_remote_statuses_are_never_remote_success() -> None:
         "rate_limited",
         "cached_empty",
         "cooldown_skipped",
+        "credential_missing",
         "sdk_http_unknown",
     }
 

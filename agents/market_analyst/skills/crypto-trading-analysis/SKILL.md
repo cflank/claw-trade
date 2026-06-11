@@ -117,7 +117,7 @@ data.technical.limitations
 Hard rules:
 
 - AMD/FVG/123/rejection structured conclusions must come from `data.technical.timeframes[*].patterns`.
-- Coinglass, screenshots, browser pages, and user chart descriptions cannot become structured pattern truth.
+- 外部聚合页面、截图、浏览器页面和用户图形描述不能成为结构化形态事实。
 - Browser observations must be labeled `browser_observed`; user chart descriptions must be labeled `user_observed`.
 - Observed evidence cannot close `technical`, `macro`, `onchain`, `liquidation_map`, or `derivatives` gaps.
 - If pattern samples are insufficient, output limited observations and next data actions, not a high-confidence pattern call.
@@ -180,7 +180,7 @@ data-quality state by domain
 open data gaps
 ```
 
-The coverage section must account for each item below with one of `已引用`, `有数据但未构成信号`, `缺失/不可用`, or `不适用`:
+The coverage section must account for each item below with one of `已引用`, `可分析`, `样本限制`, `缺失/不可用`, or `不适用`:
 
 - 布林带
 - 维加斯通道
@@ -195,7 +195,7 @@ The coverage section must account for each item below with one of `已引用`, `
 - TD 9/13
 - 谐波形态
 - 交易密集带/成交量分布
-- 清算地图
+- 清算地图（BTC 专用；非 BTC 写不适用）
 - CVD/主动买卖量
 - 资金费率
 - OI/多空比
@@ -205,7 +205,8 @@ The coverage section must account for each item below with one of `已引用`, `
 
 Rules:
 
-- If a field exists but is neutral or low confidence, say `有数据但未构成信号` instead of omitting it.
+- If a field exists but is neutral or low confidence, say `可分析` or `样本限制` instead of omitting it.
+- If rows exist but the requested date range is only partially covered, analyze the existing rows first and state `样本限制`; do not label it `缺失/不可用`.
 - If `tutorial_coverage` is missing from the envelope, say `coverage matrix missing from MCP output` and lower output confidence one level.
 - If an expected V2 field is missing from `technical.indicators` or `technical.patterns`, do not infer it from prose or tutorial text.
 - Do not repeat ready-domain tool calls only to fill prose. Use the first envelope and report the missing field path.
@@ -222,7 +223,7 @@ Hard rules:
 - If OB has both bullish and bearish zones near price, describe the overlap and explain why it is a decision zone rather than a clean trend signal.
 - If POC or value area is available, identify POC, value-area high, value-area low, and how price location changes the scenario.
 - If TD signals conflict across timeframes, state the conflict and do not treat the lower-timeframe signal as standalone confirmation.
-- If an item is `有数据但未构成信号`, still explain why it does not affect the plan.
+- If an item is `可分析` or `样本限制`, still explain how the returned evidence affects or limits the plan.
 - A full analysis that only lists the coverage matrix but does not expand these tutorial signals into `数据 -> 推导 -> 交易作用 -> 失效` is incomplete.
 
 ## Data-Quality Usage

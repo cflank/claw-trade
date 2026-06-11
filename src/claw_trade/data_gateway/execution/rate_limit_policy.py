@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, Mapping, Protocol
 
@@ -39,9 +37,7 @@ class RateLimitPolicyResolver:
             policy = _policy_from_settings(settings)
             if policy is not None:
                 return policy
-        if source_type is not None:
-            return RateLimitPolicy(window_seconds=60, max_requests=None)
-        return _policy_from_any(default_policy)
+        return _policy_without_hard_limit(default_policy)
 
     def _settings_for_provider(self, provider_id: str) -> Mapping[str, Any] | None:
         if self._data_source_settings is None:
@@ -53,14 +49,6 @@ class RateLimitPolicyResolver:
         if not callable(getter):
             return None
         return getter(f"data_source:{source_type}")
-
-
-def with_rate_limit_anchor(policy: Any | None, run_started_at: datetime) -> RateLimitPolicy:
-    resolved = _policy_from_any(policy)
-    anchor = run_started_at if run_started_at.tzinfo else run_started_at.replace(tzinfo=UTC)
-    if anchor.tzinfo != UTC:
-        anchor = anchor.astimezone(UTC)
-    return replace(resolved, window_anchor=anchor)
 
 
 def _policy_from_settings(settings: Mapping[str, Any]) -> RateLimitPolicy | None:
@@ -91,6 +79,15 @@ def _policy_from_any(raw: Any | None) -> RateLimitPolicy:
         safety_margin=int(_read_attr(raw, "safety_margin", 0) or 0),
         overflow=_overflow(_read_attr(raw, "overflow", "fail_fast")),
         wait_timeout_seconds=int(_read_attr(raw, "wait_timeout_seconds", 0) or 0),
+    )
+
+
+def _policy_without_hard_limit(raw: Any | None) -> RateLimitPolicy:
+    if raw is None:
+        return RateLimitPolicy(window_seconds=60, max_requests=None)
+    return RateLimitPolicy(
+        window_seconds=int(_read_attr(raw, "window_seconds", 60) or 60),
+        max_requests=None,
     )
 
 

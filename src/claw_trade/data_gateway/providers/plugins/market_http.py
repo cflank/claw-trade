@@ -55,7 +55,7 @@ def endpoint_capability(
             mergeable_fields=fields if supports_batch else (),
         ),
         priority_rank=priority_rank,
-        rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+        rate_limit_policy={"window_seconds": 60, "max_calls": None},
         license_policy=METADATA_ONLY_LICENSE,
         can_be_formal_fact_source=can_be_formal_fact_source,
     )

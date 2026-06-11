@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol, Sequence
 
@@ -16,6 +17,44 @@ _SOURCE_ROLE_ORDER = {
     "discovery": 4,
     "event_expectation": 5,
 }
+_STRUCTURAL_FIELDS = frozenset(
+    {
+        "as_of",
+        "calendar",
+        "currency",
+        "date",
+        "exchange",
+        "market",
+        "period_end",
+        "period_start",
+        "source",
+        "symbol_id",
+        "time",
+        "timestamp",
+        "timezone",
+        "unit",
+    }
+)
+
+
+@dataclass(frozen=True)
+class SkippedProviderCandidate:
+    request_id: str
+    provider_id: str
+    endpoint_id: str
+    market: str
+    data_type: str
+    granularity: str
+    source_role: str
+    reason: str
+    remote_attempted: bool
+    credential_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _CredentialSkip:
+    reason: str
+    credential_names: tuple[str, ...]
 
 
 def _read_attr(obj: Any, name: str, default: Any = None) -> Any:
@@ -51,17 +90,24 @@ class ProviderSelector:
     def __init__(self, registry: ProviderRegistry, *, credential_resolver: CredentialResolverLike | None = None) -> None:
         self.registry = registry
         self.credential_resolver = credential_resolver
+        self._skipped_candidates: tuple[SkippedProviderCandidate, ...] = ()
+
+    @property
+    def skipped_candidates(self) -> tuple[SkippedProviderCandidate, ...]:
+        return self._skipped_candidates
 
     def select_candidates(self, gaps: Sequence[Any], plan: Any) -> tuple[ProviderCandidate, ...]:
         selected: list[ProviderCandidate] = []
+        skipped: list[SkippedProviderCandidate] = []
         for gap in gaps:
             request = plan.request_for_gap(gap)
             capabilities = self.registry.list_capabilities(
                 market=_as_string(_read_attr(request, "market")),
                 data_type=_as_string(_read_attr(request, "data_type")),
             )
-            matched = self.filter_by_gap(gap, capabilities, request)
+            matched = self.filter_by_gap(gap, capabilities, request, skipped=skipped)
             selected.extend(self.order_candidates(matched, request))
+        self._skipped_candidates = tuple(skipped)
         return tuple(selected)
 
     def read_capabilities(self, candidates: Sequence[ProviderCandidate]) -> Any:
@@ -73,6 +119,8 @@ class ProviderSelector:
         gap: Any,
         capabilities: Sequence[ProviderCapabilityView],
         request: Any,
+        *,
+        skipped: list[SkippedProviderCandidate] | None = None,
     ) -> tuple[ProviderCandidate, ...]:
         required_granularity = _as_string(_read_attr(request, "granularity"))
         required_fields = set(_as_tuple(_read_attr(request, "fields", ())))
@@ -85,12 +133,30 @@ class ProviderSelector:
                 continue
             if required_granularity not in set(cap.supported_granularities):
                 continue
-            if not required_fields.issubset(set(cap.coverage_fields)):
+            source_role = _as_string(cap.source_role)
+            if required_role_value is not None and source_role != required_role_value:
                 continue
-            if required_role_value is not None and cap.source_role != required_role_value:
+            if not self._matches_required_fields(required_fields, cap):
                 continue
-            if not self._credential_available(cap):
+            credential_skip = self._credential_skip(cap)
+            if credential_skip is not None:
+                if skipped is not None:
+                    skipped.append(
+                        SkippedProviderCandidate(
+                            request_id=str(_read_attr(gap, "request_id")),
+                            provider_id=cap.provider_id,
+                            endpoint_id=cap.endpoint_id,
+                            market=cap.market,
+                            data_type=cap.data_type,
+                            granularity=required_granularity,
+                            source_role=source_role,
+                            reason=credential_skip.reason,
+                            remote_attempted=False,
+                            credential_names=credential_skip.credential_names,
+                        )
+                    )
                 continue
+            configured_paid_data = self._configured_paid_data(cap=cap, source_role=source_role)
             matches.append(
                 ProviderCandidate(
                     request_id=str(_read_attr(gap, "request_id")),
@@ -113,6 +179,7 @@ class ProviderSelector:
                     date_range_end=_as_datetime_or_date(_read_attr(request, "date_range_end", None)),
                     fields=tuple(sorted(required_fields)),
                     required_level=_as_string(_read_attr(gap, "required_level", "required")),
+                    configured_paid_data=configured_paid_data,
                 )
             )
         return tuple(matches)
@@ -126,7 +193,7 @@ class ProviderSelector:
         ordered = sorted(
             filtered,
             key=lambda item: (
-                _SOURCE_ROLE_ORDER.get(item.source_role, 99),
+                self._source_role_rank(item),
                 int(item.priority_rank),
                 item.provider_id,
                 item.endpoint_id,
@@ -134,15 +201,54 @@ class ProviderSelector:
         )
         return tuple(ordered)
 
-    def _credential_available(self, cap: ProviderCapabilityView) -> bool:
+    def _credential_skip(self, cap: ProviderCapabilityView) -> _CredentialSkip | None:
         if not bool(_read_attr(cap, "credential_required", False)):
-            return True
+            return None
         if self.credential_resolver is None:
-            return True
+            return None
         names = tuple(str(name).strip() for name in _as_tuple(_read_attr(cap, "credential_names", ())) if str(name).strip())
         if not names:
-            return False
-        return any(bool(self.credential_resolver.get_credential(name)) for name in names)
+            return _CredentialSkip(reason="credential_missing", credential_names=())
+        status_reader = getattr(self.credential_resolver, "get_credential_status", None)
+        if callable(status_reader):
+            statuses = tuple(status_reader(name) for name in names)
+            if any(bool(_read_attr(status, "available", False)) for status in statuses):
+                return None
+            if any(
+                bool(_read_attr(status, "configured", False)) and bool(_read_attr(status, "enabled", False))
+                for status in statuses
+            ):
+                return _CredentialSkip(reason="credential_missing", credential_names=names)
+            if any(bool(_read_attr(status, "configured", False)) for status in statuses):
+                return _CredentialSkip(reason="source_disabled", credential_names=names)
+            return _CredentialSkip(reason="source_not_configured", credential_names=names)
+        if any(bool(self.credential_resolver.get_credential(name)) for name in names):
+            return None
+        return _CredentialSkip(reason="credential_missing", credential_names=names)
+
+    def _configured_paid_data(self, *, cap: ProviderCapabilityView, source_role: str) -> bool:
+        return (
+            self.credential_resolver is not None
+            and source_role == "paid_data"
+            and bool(_read_attr(cap, "credential_required", False))
+        )
+
+    @staticmethod
+    def _source_role_rank(candidate: ProviderCandidate) -> int:
+        source_role = _as_string(candidate.source_role)
+        if bool(getattr(candidate, "configured_paid_data", False)) and source_role == "paid_data":
+            return -1
+        return _SOURCE_ROLE_ORDER.get(source_role, 99)
+
+    @staticmethod
+    def _matches_required_fields(required_fields: set[Any], cap: ProviderCapabilityView) -> bool:
+        requested = {str(field) for field in required_fields if str(field) not in _STRUCTURAL_FIELDS}
+        if not requested:
+            return True
+        provided = {str(field) for field in _as_tuple(_read_attr(cap, "coverage_fields", _read_attr(cap, "fields", ())))}
+        if not provided:
+            return True
+        return bool(requested & provided)
 
     @staticmethod
     def _is_symbol_request_using_universe_endpoint(*, request: Any, cap: ProviderCapabilityView) -> bool:

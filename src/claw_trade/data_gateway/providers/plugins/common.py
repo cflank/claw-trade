@@ -129,7 +129,7 @@ class MinimalProviderPlugin:
                 redistribution_allowed=False,
                 retention_days=30,
             ),
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=priority_rank,
         )
         self._endpoint_index = {

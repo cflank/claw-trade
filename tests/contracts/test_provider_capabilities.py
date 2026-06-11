@@ -357,6 +357,9 @@ def test_alpha_vantage_daily_bar_uses_full_output_for_long_ranges() -> None:
 
 def test_crypto_plugin_fetches_daily_bar_through_managed_http_without_environment_token() -> None:
     plugin = build_crypto_provider_plugin()
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in plugin.capabilities().endpoints}
+    assert "volume_unit" in endpoints["spot_daily_bar"].fields
+    assert "amount_unit" in endpoints["spot_daily_bar"].fields
     client = _RecordingHttpClient(
         _HttpResponse(
             status_code=200,
@@ -389,6 +392,8 @@ def test_crypto_plugin_fetches_daily_bar_through_managed_http_without_environmen
     assert row["symbol_id"] == "BTCUSDT"
     assert row["base_asset"] == "BTC"
     assert row["quote_asset"] == "USDT"
+    assert row["volume_unit"] == "BTC"
+    assert row["amount_unit"] == "USDT"
     assert row["timezone"] == "UTC"
     assert row["amount"] == 10432100.0
     assert row["universe_ref"] == "binance_spot_all_symbols"
@@ -429,6 +434,9 @@ def test_crypto_plugin_reads_endpoint_from_settings_resolver_without_environment
 
 def test_crypto_spot_intraday_preserves_hour_timestamp_through_managed_http() -> None:
     plugin = BinanceSpotMarketPlugin()
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in plugin.capabilities().endpoints}
+    assert "volume_unit" in endpoints["spot_intraday_bar"].fields
+    assert "amount_unit" in endpoints["spot_intraday_bar"].fields
     client = _RecordingHttpClient(
         _HttpResponse(
             status_code=200,
@@ -461,6 +469,8 @@ def test_crypto_spot_intraday_preserves_hour_timestamp_through_managed_http() ->
     assert row["period_end"] == datetime(2026, 2, 28, 0, 59, 59, 999000, tzinfo=UTC)
     assert row["open_time"] == row["period_start"]
     assert row["close_time"] == row["period_end"]
+    assert row["volume_unit"] == "BTC"
+    assert row["amount_unit"] == "USDT"
 
 
 def test_cn_a_plugin_uses_settings_credential_and_endpoint_through_managed_http() -> None:
@@ -775,7 +785,7 @@ def test_us_hk_crypto_provider_matrices_declare_source_backed_interfaces_without
         ("HK", "daily_bar"): ("hk_tushare", "hk_daily_adj", "paid_data", "managed_http"),
         ("HK", "social_signal"): ("hk_google_news", "social_signal_news_heat", "discovery", "managed_http"),
         ("CRYPTO", "quote_snapshot"): ("crypto_binance_spot_market", "ticker_24hr", "official", "managed_http"),
-        ("CRYPTO", "valuation_metric"): ("crypto_coingecko_market", "coins_markets", "built_in_public", "managed_http"),
+        ("CRYPTO", "valuation_metric"): ("crypto_coinglass_derivatives", "spot_coins_markets", "paid_data", "managed_http"),
         ("CRYPTO", "defi_metric"): ("crypto_defillama_defi", "protocol", "built_in_public", "managed_http"),
         ("CRYPTO", "crypto_derivative_metric"): ("crypto_coinglass_derivatives", "futures_open_interest", "paid_data", "managed_http"),
         ("CRYPTO", "company_news"): ("crypto_project_official_news", "github_releases", "official", "managed_http"),
@@ -863,6 +873,134 @@ def test_crypto_coingecko_market_rows_preserve_quote_and_supply_units() -> None:
     assert row["volume_unit"] == "USD"
     assert row["supply_unit"] == "BTC"
     assert row["price"] == 62000.0
+
+
+def test_crypto_coinglass_valuation_market_rows_are_paid_source() -> None:
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in CoinglassCryptoPlugin().capabilities().endpoints}
+    spot_markets = endpoints["spot_coins_markets"]
+    assert spot_markets.data_type == "valuation_metric"
+    assert spot_markets.source_role == "paid_data"
+    assert {
+        "price",
+        "market_cap",
+        "fdv",
+        "circulating_supply",
+        "total_supply",
+        "volume",
+        "price_unit",
+        "market_cap_unit",
+        "fdv_unit",
+        "supply_unit",
+        "volume_unit",
+    } <= set(spot_markets.fields)
+
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=json.dumps(
+                {
+                    "data": [
+                        {"symbol": "BTC", "current_price": 62000, "market_cap": 1245487746323, "volume_usd_24h": 32016116765},
+                        {
+                            "symbol": "BNB",
+                            "current_price": 640,
+                            "market_cap": 98300000000,
+                            "fully_diluted_valuation": 128000000000,
+                            "circulating_supply": 153000000,
+                            "total_supply": 200000000,
+                            "volume_usd_24h": 1800000000,
+                        },
+                    ]
+                }
+            ),
+        )
+    )
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "coinglass-token" if name == "data_source:coinglass" else None,
+        get_endpoint_url=lambda name: "https://open-api-v4.coinglass.com" if name == "data_source:coinglass" else None,
+    )
+    task = FetchTask(
+        batch_id="batch:coinglass-spot-markets",
+        provider_id="crypto_coinglass_derivatives",
+        endpoint_id="spot_coins_markets",
+        market="CRYPTO",
+        data_type="valuation_metric",
+        granularity="realtime",
+        symbol_ids=("BNBUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("price", "price_unit", "market_cap", "market_cap_unit", "volume", "volume_unit"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = CoinglassCryptoPlugin().fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.path == "/api/spot/coins-markets"
+    assert request.query["per_page"] == "500"
+    row = result.payload["rows"][0]
+    assert row["base_asset"] == "BNB"
+    assert row["price"] == 640.0
+    assert row["market_cap"] == 98300000000.0
+    assert row["market_cap_unit"] == "USD"
+    assert row["fdv"] == 128000000000.0
+    assert row["fdv_unit"] == "USD"
+    assert row["circulating_supply"] == 153000000.0
+    assert row["total_supply"] == 200000000.0
+    assert row["supply_unit"] == "BNB"
+
+
+def test_crypto_coinglass_market_data_history_preserves_supply_units() -> None:
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=json.dumps(
+                {
+                    "data": [
+                        {
+                            "timestamp": 1772236800000,
+                            "price": "640",
+                            "circulating_supply": "153000000",
+                            "market_cap": 97920000000,
+                        }
+                    ]
+                }
+            ),
+        )
+    )
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "coinglass-token" if name == "data_source:coinglass" else None,
+        get_endpoint_url=lambda name: "https://open-api-v4.coinglass.com" if name == "data_source:coinglass" else None,
+    )
+    task = FetchTask(
+        batch_id="batch:coinglass-market-history",
+        provider_id="crypto_coinglass_derivatives",
+        endpoint_id="coin_market_data_history",
+        market="CRYPTO",
+        data_type="valuation_metric",
+        granularity="daily",
+        symbol_ids=("BNBUSDT",),
+        date_range_start=date(2026, 3, 1),
+        date_range_end=date(2026, 3, 2),
+        fields=("price", "price_unit", "market_cap", "market_cap_unit", "circulating_supply", "supply_unit", "timestamp", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = CoinglassCryptoPlugin().fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.path == "/api/coin/market-data-history"
+    assert request.query["symbol"] == "BNB"
+    row = result.payload["rows"][0]
+    assert row["circulating_supply"] == 153000000.0
+    assert row["supply_unit"] == "BNB"
+    assert row["price_unit"] == "USD"
 
 
 def test_hk_tushare_declares_official_documented_hk_market_and_metric_interfaces() -> None:
@@ -1708,6 +1846,78 @@ def test_crypto_coinglass_open_interest_and_funding_keep_unit_metadata() -> None
     assert oi_value_only_row["open_interest_unit"] == "USD"
 
 
+def test_crypto_coinglass_futures_pairs_markets_normalizes_binance_usdt_snapshot() -> None:
+    plugin = CoinglassCryptoPlugin()
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "coinglass-token" if name == "data_source:coinglass" else None,
+        get_endpoint_url=lambda name: "https://open-api-v4.coinglass.com" if name == "data_source:coinglass" else None,
+    )
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=json.dumps(
+                {
+                    "data": [
+                        {
+                            "exchangeName": "OKX",
+                            "instrumentId": "BTC-USDT",
+                            "price": "84001",
+                            "openInterestUsd": "900",
+                        },
+                        {
+                            "exchangeName": "Binance",
+                            "instrumentId": "BTCUSDT",
+                            "price": "84000.5",
+                            "volumeUsd24h": "1000000",
+                            "longVolumeUsd": "560000",
+                            "shortVolumeUsd": "440000",
+                            "openInterestUsd": "123456789",
+                            "fundingRate": "0.004",
+                            "longLiquidationUsd24h": "1000",
+                            "shortLiquidationUsd24h": "2500",
+                            "time": 1772236800000,
+                        },
+                    ]
+                }
+            ),
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:coinglass-pairs-markets",
+        provider_id="crypto_coinglass_derivatives",
+        endpoint_id="futures_pairs_markets",
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="realtime",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("open_interest", "funding_rate", "liquidation_value", "timestamp", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    assert client.requests[0].path == "/api/futures/pairs-markets"
+    assert client.requests[0].query["symbol"] == "BTCUSDT"
+    assert len(result.payload["rows"]) == 1
+    row = result.payload["rows"][0]
+    assert row["symbol_id"] == "BTCUSDT"
+    assert row["price"] == 84000.5
+    assert row["price_unit"] == "USDT"
+    assert row["volume_usd"] == 1000000.0
+    assert row["volume_unit"] == "USD"
+    assert row["open_interest"] == 123456789.0
+    assert row["open_interest_unit"] == "USD"
+    assert row["funding_rate"] == 0.004
+    assert row["funding_rate_unit"] == "percent"
+    assert row["liquidation_value"] == 3500.0
+    assert row["liquidation_value_unit"] == "USD"
+
+
 def test_crypto_coinglass_history_limit_keeps_provider_compatible_default() -> None:
     plugin = CoinglassCryptoPlugin()
     client = _RecordingHttpClient(
@@ -1751,11 +1961,63 @@ def test_crypto_coinglass_history_limit_keeps_provider_compatible_default() -> N
     result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
 
     assert result.status.value == "success"
-    assert len(client.requests) == 3
-    assert {request.query["limit"] for request in client.requests} == {"100"}
+    assert len(client.requests) == 9
+    assert {request.query["limit"] for request in client.requests} == {"1000"}
     assert client.requests[0].query["start_time"] == 1748736000000
     assert client.requests[-1].query["end_time"] == 1780358399999
     assert len(result.payload["rows"]) == 3
+
+
+def test_crypto_coinglass_cvd_uses_official_window_limit_and_chunks_long_ranges() -> None:
+    plugin = CoinglassCryptoPlugin()
+    client = _RecordingHttpClient(
+        [
+            _HttpResponse(
+                status_code=200,
+                headers={},
+                text='{"data":[{"cum_vol_delta":"100","agg_taker_buy_vol":"200","agg_taker_sell_vol":"100","time":1751328000000}]}',
+            ),
+            _HttpResponse(
+                status_code=200,
+                headers={},
+                text='{"data":[{"cum_vol_delta":"150","agg_taker_buy_vol":"250","agg_taker_sell_vol":"100","time":1766880000000}]}',
+            ),
+            _HttpResponse(
+                status_code=200,
+                headers={},
+                text='{"data":[{"cum_vol_delta":"180","agg_taker_buy_vol":"280","agg_taker_sell_vol":"100","time":1772236800000}]}',
+            ),
+        ]
+    )
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "coinglass-token" if name == "data_source:coinglass" else None,
+        get_endpoint_url=lambda name: "https://open-api-v4.coinglass.com" if name == "data_source:coinglass" else None,
+    )
+    task = FetchTask(
+        batch_id="batch:coinglass-cvd-window",
+        provider_id="crypto_coinglass_derivatives",
+        endpoint_id="spot_cvd_history",
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTC/USDT",),
+        date_range_start=date(2025, 6, 1),
+        date_range_end=date(2026, 6, 1),
+        fields=("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "timestamp", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    assert len(client.requests) == 3
+    assert {request.query["limit"] for request in client.requests} == {"4500"}
+    assert {request.query["symbol"] for request in client.requests} == {"BTC"}
+    assert {request.query["exchange_list"] for request in client.requests} == {"Binance,OKX,Bybit"}
+    assert client.requests[0].query["start_time"] == 1748736000000
+    assert client.requests[-1].query["end_time"] == 1780358399999
+    assert [row["cvd"] for row in result.payload["rows"]] == [100.0, 150.0, 180.0]
 
 
 def test_crypto_coinglass_aggregated_coin_endpoints_use_coin_and_exchange_list() -> None:
@@ -1800,13 +2062,48 @@ def test_crypto_coinglass_aggregated_coin_endpoints_use_coin_and_exchange_list()
     assert row["taker_buy_sell_ratio"] == 1.25
 
 
-def test_crypto_coinglass_orderbook_uses_price_level_history_not_aggregate_depth_only() -> None:
+def test_crypto_coinglass_business_error_code_is_not_reported_as_empty_result() -> None:
     plugin = CoinglassCryptoPlugin()
     client = _RecordingHttpClient(
         _HttpResponse(
             status_code=200,
             headers={},
-            text='{"data":[[1772236800000,[[60000,1.2]],[[60010,1.1]]]]}',
+            text='{"code":"400","msg":"Invalid symbol"}',
+        )
+    )
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "coinglass-token" if name == "data_source:coinglass" else None,
+        get_endpoint_url=lambda name: "https://open-api-v4.coinglass.com" if name == "data_source:coinglass" else None,
+    )
+    task = FetchTask(
+        batch_id="batch:coinglass-error-code",
+        provider_id="crypto_coinglass_derivatives",
+        endpoint_id="futures_taker_buy_sell",
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTC/USDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("taker_buy_volume", "taker_sell_volume", "timestamp", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "error"
+    assert result.error_code == "RuntimeError"
+    assert result.error_message == "coinglass_api_400:Invalid symbol"
+
+
+def test_crypto_coinglass_orderbook_uses_official_ask_bids_history() -> None:
+    plugin = CoinglassCryptoPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text='{"data":[{"time":1772236800000,"bids_usd":"1000000","bids_quantity":"16.4","asks_usd":"900000","asks_quantity":"14.6"}]}',
         )
     )
     resolver = SimpleNamespace(
@@ -1823,7 +2120,7 @@ def test_crypto_coinglass_orderbook_uses_price_level_history_not_aggregate_depth
         symbol_ids=("BTC/USDT",),
         date_range_start=None,
         date_range_end=None,
-        fields=("bid_price", "bid_size", "ask_price", "ask_size", "timestamp"),
+        fields=("bids_usd", "bids_quantity", "asks_usd", "asks_quantity", "timestamp"),
         provider_config_version="1.0.0",
         params={},
     )
@@ -1832,12 +2129,15 @@ def test_crypto_coinglass_orderbook_uses_price_level_history_not_aggregate_depth
 
     assert result.status.value == "success"
     request = client.requests[0]
-    assert request.path == "/api/futures/orderbook/history"
+    assert request.path == "/api/futures/orderbook/ask-bids-history"
     assert request.query["exchange"] == "Binance"
     assert request.query["symbol"] == "BTCUSDT"
+    assert request.query["limit"] == "1000"
     row = result.payload["rows"][0]
-    assert row["bid_price"] == 60000.0
-    assert row["ask_size"] == 1.1
+    assert row["bids_usd"] == 1000000.0
+    assert row["bids_quantity"] == 16.4
+    assert row["asks_usd"] == 900000.0
+    assert row["asks_quantity"] == 14.6
 
 
 def test_crypto_coinglass_orderbook_history_keeps_all_rows() -> None:
@@ -1846,7 +2146,7 @@ def test_crypto_coinglass_orderbook_history_keeps_all_rows() -> None:
         _HttpResponse(
             status_code=200,
             headers={},
-            text='{"data":[[1772236800000,[[60000,1.2]],[[60010,1.1]]],[1772240400000,[[60100,1.3]],[[60110,1.4]]]]}',
+            text='{"data":[{"time":1772236800000,"bids_usd":"1000000","bids_quantity":"16.4","asks_usd":"900000","asks_quantity":"14.6"},{"time":1772240400000,"bids_usd":"1100000","bids_quantity":"17.4","asks_usd":"950000","asks_quantity":"15.6"}]}',
         )
     )
     resolver = SimpleNamespace(
@@ -1863,7 +2163,7 @@ def test_crypto_coinglass_orderbook_history_keeps_all_rows() -> None:
         symbol_ids=("BTC/USDT",),
         date_range_start=None,
         date_range_end=None,
-        fields=("bid_price", "bid_size", "ask_price", "ask_size", "timestamp"),
+        fields=("bids_usd", "bids_quantity", "asks_usd", "asks_quantity", "timestamp"),
         provider_config_version="1.0.0",
         params={},
     )
@@ -1872,7 +2172,7 @@ def test_crypto_coinglass_orderbook_history_keeps_all_rows() -> None:
 
     assert result.status.value == "success"
     assert result.row_count == 2
-    assert [row["bid_price"] for row in result.payload["rows"]] == [60000.0, 60100.0]
+    assert [row["bids_usd"] for row in result.payload["rows"]] == [1000000.0, 1100000.0]
 
 
 def test_crypto_coinglass_liquidation_heatmap_fetches_and_normalizes_points() -> None:
@@ -1907,9 +2207,8 @@ def test_crypto_coinglass_liquidation_heatmap_fetches_and_normalizes_points() ->
 
     assert result.status.value == "success"
     request = client.requests[0]
-    assert request.path == "/api/futures/liquidation/heatmap/model1"
-    assert request.query["exchange"] == "Binance"
-    assert request.query["symbol"] == "BTCUSDT"
+    assert request.path == "/api/futures/liquidation/aggregated-heatmap/model1"
+    assert request.query["symbol"] == "BTC"
     row = result.payload["rows"][0]
     assert row["liquidation_price"] == 60000.0
     assert row["liquidation_size"] == 1200.0
@@ -1987,13 +2286,24 @@ def test_crypto_coinglass_liquidation_heatmap_array_payload_does_not_treat_times
     assert row["liquidation_price"] != 1772236800000.0
 
 
-def test_crypto_coinglass_liquidation_heatmap_small_array_value_is_not_1970_timestamp() -> None:
+def test_crypto_coinglass_liquidation_heatmap_official_axis_payload_maps_price_index() -> None:
     plugin = CoinglassCryptoPlugin()
     client = _RecordingHttpClient(
         _HttpResponse(
             status_code=200,
             headers={},
-            text='{"data":[[151,4389152.66,287]]}',
+            text=json.dumps(
+                {
+                    "data": {
+                        "y_axis": [150, 151, 152],
+                        "liquidation_leverage_data": [[1, 1, 4389152.66]],
+                        "price_candlesticks": [
+                            [1772236500, "61486", "61596.4", "61434.4", "61539.9", "63753192.1129"],
+                            [1772236800, "61539.9", "61610.0", "61480.0", "61590.5", "42311820.8720"],
+                        ],
+                    }
+                }
+            ),
         )
     )
     resolver = SimpleNamespace(
@@ -2036,19 +2346,37 @@ def test_crypto_coinglass_options_cvd_and_etf_flow_fetch_and_normalize() -> None
             "crypto_derivative_metric",
             "1h",
             ("options_open_interest", "options_volume", "timestamp", "symbol_id"),
-            '{"data":[{"time":1772236800000,"openInterest":"1000","volume":"25"}]}',
+            [
+                '{"data":{"time_list":[1772323200000,1772409600000],"data_map":{"Deribit":["1000","1100"],"CME":["200",null]}}}',
+                '{"data":{"time_list":[1772323200000,1772409600000],"data_map":{"Deribit":["25","30"],"CME":["5",null]}}}',
+            ],
             "/api/option/exchange-oi-history",
-            {"symbol": "BTC", "unit": "USD"},
-            {"options_open_interest": 1000.0, "options_volume": 25.0},
+            {"symbol": "BTC", "unit": "USD", "range": "all"},
+            {
+                "options_open_interest": 1200.0,
+                "options_open_interest_unit": "USD",
+                "options_volume": 30.0,
+                "options_volume_unit": "USD",
+            },
         ),
         (
             "spot_cvd_history",
             "crypto_derivative_metric",
             "1h",
             ("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "timestamp", "symbol_id"),
-            '{"data":[{"time":1772236800000,"cvd":"-2500","takerBuyVolume":"100","takerSellVolume":"2600"}]}',
-            "/api/spot/cvd/history",
-            {"symbol": "BTCUSDT", "exchange": "Binance", "interval": "1h", "unit": "usd"},
+            '{"data":[{"time":1772236800000,"cum_vol_delta":"-2500","agg_taker_buy_vol":"100","agg_taker_sell_vol":"2600"}]}',
+            "/api/spot/aggregated-cvd/history",
+            {"symbol": "BTC", "exchange_list": "Binance,OKX,Bybit", "interval": "1h", "unit": "usd", "limit": "4500"},
+            {"cvd": -2500.0, "taker_buy_volume": 100.0, "taker_sell_volume": 2600.0, "taker_volume_unit": "USD"},
+        ),
+        (
+            "futures_cvd_history",
+            "crypto_derivative_metric",
+            "1h",
+            ("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "timestamp", "symbol_id"),
+            '{"data":[{"time":1772236800000,"cum_vol_delta":"-2500","agg_taker_buy_vol":"100","agg_taker_sell_vol":"2600"}]}',
+            "/api/futures/aggregated-cvd/history",
+            {"symbol": "BTC", "exchange_list": "Binance,OKX,Bybit", "interval": "1h", "unit": "usd", "limit": "4500"},
             {"cvd": -2500.0, "taker_buy_volume": 100.0, "taker_sell_volume": 2600.0, "taker_volume_unit": "USD"},
         ),
         (
@@ -2056,15 +2384,18 @@ def test_crypto_coinglass_options_cvd_and_etf_flow_fetch_and_normalize() -> None
             "crypto_derivative_metric",
             "daily",
             ("etf_flow_usd", "price", "timestamp", "symbol_id"),
-            '{"data":[{"date":"2026-03-01","changeUsd":"1234","price":"60000"}]}',
+            '{"data":[{"timestamp":1772236800000,"flow_usd":"1234","price_usd":"60000"}]}',
             "/api/etf/bitcoin/flow-history",
-            {"symbol": "BTC"},
+            {},
             {"etf_flow_usd": 1234.0, "price": 60000.0},
         ),
     )
 
     for endpoint_id, data_type, granularity, fields, body, expected_path, expected_query, expected_values in cases:
-        client = _RecordingHttpClient(_HttpResponse(status_code=200, headers={}, text=body))
+        if isinstance(body, list):
+            client = _RecordingHttpClient([_HttpResponse(status_code=200, headers={}, text=item) for item in body])
+        else:
+            client = _RecordingHttpClient(_HttpResponse(status_code=200, headers={}, text=body))
         task = FetchTask(
             batch_id=f"batch:{endpoint_id}",
             provider_id="crypto_coinglass_derivatives",
@@ -2085,11 +2416,58 @@ def test_crypto_coinglass_options_cvd_and_etf_flow_fetch_and_normalize() -> None
         assert result.status.value == "success", endpoint_id
         request = client.requests[0]
         assert request.path == expected_path
+        if endpoint_id == "options_open_interest":
+            assert [item.path for item in client.requests] == [
+                "/api/option/exchange-oi-history",
+                "/api/option/exchange-vol-history",
+            ]
         for key, value in expected_query.items():
             assert request.query[key] == value
+        if endpoint_id == "etf_flow_history":
+            assert request.query == {}
         row = result.payload["rows"][0]
         for key, value in expected_values.items():
             assert row[key] == value
+
+
+def test_crypto_coinglass_etf_flow_supports_official_solana_and_hype_paths() -> None:
+    plugin = CoinglassCryptoPlugin()
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "coinglass-token" if name == "data_source:coinglass" else None,
+        get_endpoint_url=lambda name: "https://open-api-v4.coinglass.com" if name == "data_source:coinglass" else None,
+    )
+
+    for symbol, expected_path in {
+        "SOL/USDT": "/api/etf/solana/flow-history",
+        "HYPE/USDT": "/api/etf/hype/flow-history",
+    }.items():
+        client = _RecordingHttpClient(
+            _HttpResponse(
+                status_code=200,
+                headers={},
+                text='{"data":[{"timestamp":1772236800000,"flow_usd":"1234","price_usd":"150"}]}',
+            )
+        )
+        task = FetchTask(
+            batch_id=f"batch:coinglass-etf:{symbol}",
+            provider_id="crypto_coinglass_derivatives",
+            endpoint_id="etf_flow_history",
+            market="CRYPTO",
+            data_type="crypto_derivative_metric",
+            granularity="daily",
+            symbol_ids=(symbol,),
+            date_range_start=date(2026, 3, 1),
+            date_range_end=date(2026, 3, 2),
+            fields=("etf_flow_usd", "price", "timestamp", "symbol_id"),
+            provider_config_version="1.0.0",
+            params={},
+        )
+
+        result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
+
+        assert result.status.value == "success"
+        assert client.requests[0].path == expected_path
+        assert client.requests[0].query == {}
 
 
 def test_crypto_lunarcrush_social_uses_bearer_token_and_topic_slug() -> None:
@@ -2157,7 +2535,7 @@ def test_crypto_glassnode_deep_onchain_fetches_metric_paths() -> None:
         symbol_ids=("BTC/USDT",),
         date_range_start=date(2026, 3, 1),
         date_range_end=date(2026, 3, 2),
-        fields=("timestamp", "metric", "value", "chain", "source_metric"),
+        fields=("timestamp", "metric", "value", "value_unit", "chain", "source_metric"),
         provider_config_version="1.0.0",
         params={},
     )
@@ -2175,6 +2553,7 @@ def test_crypto_glassnode_deep_onchain_fetches_metric_paths() -> None:
     }
     assert all(request.query["api_key"] == "glass-token" for request in client.requests)
     assert {row["source_metric"] for row in result.payload["rows"]} == {"active_addresses", "mvrv", "sth_sopr", "lth_sopr", "nupl"}
+    assert {row["value_unit"] for row in result.payload["rows"]} == {"count", "dimensionless"}
 
 
 def test_crypto_token_terminal_protocol_revenue_uses_bearer_token() -> None:
@@ -2280,7 +2659,7 @@ def test_crypto_coinglass_exchange_balance_data_map_returns_value_and_source_fie
         _HttpResponse(
             status_code=200,
             headers={},
-            text='{"data":{"data_map":{"Binance":[1000,1250],"OKX":[800]}}}',
+            text='{"data":[{"time_list":[1772150400000,1772236800000],"price_list":[60000,61000],"data_map":{"Binance":[1000,1250],"OKX":[800]}}]}',
         )
     )
     resolver = SimpleNamespace(
@@ -2305,11 +2684,13 @@ def test_crypto_coinglass_exchange_balance_data_map_returns_value_and_source_fie
     result = plugin.fetch(task, ctx=SimpleNamespace(credential_resolver=resolver, managed_http=ManagedHttp(client)))
 
     assert result.status.value == "success"
+    assert client.requests[0].query == {"symbol": "BTC"}
     row = result.payload["rows"][0]
     assert row["metric"] == "exchange_balance"
     assert row["value"] == 1250.0
     assert row["value_unit"] == "BTC"
     assert row["value_source_field"] == "data_map.Binance"
+    assert row["timestamp"] == datetime(2026, 2, 28, tzinfo=UTC)
 
 
 def test_crypto_coinglass_spot_coin_netflow_preserves_usd_unit() -> None:

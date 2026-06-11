@@ -117,6 +117,12 @@ def analyze_technical_patterns(payload: Mapping[str, Any] | None, data: CryptoLe
     vegas = _analyze_vegas(candles)
     double_line = _analyze_double_line_reversal(candles)
     fvg = _analyze_fvg(candles, atr14=atr14)
+    swings = _swing_points(candles)
+    volume_profile = _volume_profile(candles)
+    rule_123 = _rule_123_breakout(candles, swings)
+    order_block = _order_block(candles, swings)
+    amd_smc = _amd_smc(candles, swings, order_block=order_block)
+    harmonic = _harmonic_pattern(swings)
     kd = _kd_9_3_3(candles)
     td = _td_sequential(candles)
     limitations = _technical_limitations(candles, vegas, double_line, kd)
@@ -126,7 +132,10 @@ def analyze_technical_patterns(payload: Mapping[str, Any] | None, data: CryptoLe
         summary = "OHLCV 样本不足（<30），仅保留保守技术描述。"
     else:
         state = _technical_state(base_state, limitations)
-        summary = "技术形态以统一数据层 OHLCV 结构化输入生成，覆盖维加斯通道、双线反转、FVG、KD、TD。"
+        summary = (
+            "技术形态以统一数据层 OHLCV 结构化输入生成，覆盖维加斯通道、双线反转、FVG、KD、TD、"
+            "OB、成交量分布、AMD/SMC、123 和谐波粗筛。"
+        )
         if rsi is not None:
             if rsi >= 70:
                 summary += " RSI 偏高。"
@@ -139,6 +148,11 @@ def analyze_technical_patterns(payload: Mapping[str, Any] | None, data: CryptoLe
         summary += " " + _vegas_summary(vegas)
         summary += " " + _double_line_summary(double_line)
         summary += " " + _fvg_summary(fvg)
+        summary += " " + _volume_profile_summary(volume_profile)
+        summary += " " + _rule_123_summary(rule_123)
+        summary += " " + _order_block_summary(order_block)
+        summary += " " + _amd_smc_summary(amd_smc)
+        summary += " " + _harmonic_summary(harmonic)
         summary += " " + _kd_summary(kd)
         summary += " " + _td_summary(td)
         if len(closes) >= 2:
@@ -158,11 +172,23 @@ def analyze_technical_patterns(payload: Mapping[str, Any] | None, data: CryptoLe
             "vegas": vegas,
             "double_line_reversal": double_line,
             "fvg": fvg,
+            "patterns": {
+                "order_block": order_block,
+                "volume_profile": volume_profile,
+                "amd": amd_smc,
+                "rule_123": rule_123,
+                "harmonic": harmonic,
+            },
             "kd_9_3_3": kd,
             "td_sequential": td,
             "rule_versions": {
                 "vegas": "bb-vegas-v1",
                 "fvg": "bb-fvg-v1",
+                "order_block": "claw-ohlcv-order-block-v1",
+                "volume_profile": "claw-ohlcv-volume-profile-v1",
+                "amd_smc": "claw-ohlcv-amd-smc-v1",
+                "rule_123": "claw-ohlcv-123-v1",
+                "harmonic": "claw-ohlcv-harmonic-v1",
                 "kd": "bb-indicators-v1",
                 "td_sequential": "bb-indicators-v1",
                 "double_line_reversal": "bb-double-line-reversal-v1",
@@ -486,6 +512,246 @@ def _td_sequential(candles: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _swing_points(candles: list[dict[str, Any]], *, window: int = 2) -> list[dict[str, Any]]:
+    sample = _high_low_candles(candles)
+    if len(sample) < window * 2 + 1:
+        return []
+    swings: list[dict[str, Any]] = []
+    for index in range(window, len(sample) - window):
+        candle = sample[index]
+        left = sample[index - window : index]
+        right = sample[index + 1 : index + window + 1]
+        high = candle["high"]
+        low = candle["low"]
+        is_high = all(high > item["high"] for item in left + right)
+        is_low = all(low < item["low"] for item in left + right)
+        if is_high:
+            swings.append(
+                {
+                    "type": "high",
+                    "price": _round(high),
+                    "time": _format_time(candle["time"]),
+                    "index": candle["index"],
+                }
+            )
+        if is_low:
+            swings.append(
+                {
+                    "type": "low",
+                    "price": _round(low),
+                    "time": _format_time(candle["time"]),
+                    "index": candle["index"],
+                }
+            )
+    return sorted(swings, key=lambda item: int(item["index"]))
+
+
+def _volume_profile(candles: list[dict[str, Any]]) -> dict[str, Any]:
+    sample = [candle for candle in _high_low_candles(candles)[-160:] if candle.get("volume") is not None]
+    if len(sample) < 20:
+        return {
+            "status": "insufficient_volume",
+            "sample_count": len(sample),
+            "min_required": 20,
+            "poc": None,
+            "value_area_low": None,
+            "value_area_high": None,
+        }
+    low = min(candle["low"] for candle in sample)
+    high = max(candle["high"] for candle in sample)
+    if high <= low:
+        return {
+            "status": "flat_range",
+            "sample_count": len(sample),
+            "poc": _round(high),
+            "value_area_low": _round(low),
+            "value_area_high": _round(high),
+        }
+    bin_count = min(36, max(12, int(len(sample) ** 0.5) * 2))
+    width = (high - low) / bin_count
+    bins = [{"lower": low + width * index, "upper": low + width * (index + 1), "volume": 0.0} for index in range(bin_count)]
+    for candle in sample:
+        typical = (candle["high"] + candle["low"] + candle["close"]) / 3
+        index = min(bin_count - 1, max(0, int((typical - low) / width)))
+        bins[index]["volume"] += float(candle["volume"] or 0.0)
+    total_volume = sum(item["volume"] for item in bins)
+    sorted_bins = sorted(enumerate(bins), key=lambda item: item[1]["volume"], reverse=True)
+    poc_index, poc_bin = sorted_bins[0]
+    selected = {poc_index}
+    running = poc_bin["volume"]
+    target = total_volume * 0.7
+    for index, item in sorted_bins[1:]:
+        if running >= target:
+            break
+        selected.add(index)
+        running += item["volume"]
+    value_area_low = min(bins[index]["lower"] for index in selected)
+    value_area_high = max(bins[index]["upper"] for index in selected)
+    return {
+        "status": "ready",
+        "sample_count": len(sample),
+        "bin_count": bin_count,
+        "poc": _round((poc_bin["lower"] + poc_bin["upper"]) / 2),
+        "poc_volume": _round(poc_bin["volume"]),
+        "value_area_low": _round(value_area_low),
+        "value_area_high": _round(value_area_high),
+        "total_volume": _round(total_volume),
+        "method": "close_typical_price_volume_buckets",
+    }
+
+
+def _rule_123_breakout(candles: list[dict[str, Any]], swings: list[dict[str, Any]]) -> dict[str, Any]:
+    latest_close = candles[-1]["close"] if candles else None
+    if latest_close is None or len(swings) < 3:
+        return {"status": "insufficient_swings", "swing_count": len(swings), "min_required": 3}
+    for a, b, c in _last_swing_windows(swings, size=3, limit=8):
+        if a["type"] == "low" and b["type"] == "high" and c["type"] == "low" and c["price"] > a["price"]:
+            status = "confirmed_breakout" if latest_close > b["price"] else "pending_breakout"
+            return _rule_123_payload("bullish", a, b, c, latest_close, status)
+        if a["type"] == "high" and b["type"] == "low" and c["type"] == "high" and c["price"] < a["price"]:
+            status = "confirmed_breakdown" if latest_close < b["price"] else "pending_breakdown"
+            return _rule_123_payload("bearish", a, b, c, latest_close, status)
+    return {"status": "no_pattern", "swing_count": len(swings), "latest_close": _round(latest_close)}
+
+
+def _rule_123_payload(
+    direction: str,
+    point1: Mapping[str, Any],
+    point2: Mapping[str, Any],
+    point3: Mapping[str, Any],
+    latest_close: float,
+    status: str,
+) -> dict[str, Any]:
+    breakout_level = float(point2["price"])
+    return {
+        "status": status,
+        "direction": direction,
+        "point1": _pivot_payload(point1),
+        "point2": _pivot_payload(point2),
+        "point3": _pivot_payload(point3),
+        "breakout_level": _round(breakout_level),
+        "latest_close": _round(latest_close),
+        "distance_to_breakout_pct": _percent_distance(latest_close, breakout_level),
+        "method": "last_alternating_three_swing_points",
+    }
+
+
+def _order_block(candles: list[dict[str, Any]], swings: list[dict[str, Any]]) -> dict[str, Any]:
+    sample = _complete_ohlc(candles)
+    if len(sample) < 20 or len(swings) < 2:
+        return {"status": "insufficient_ohlc", "sample_count": len(sample), "swing_count": len(swings)}
+    latest_close = sample[-1]["close"]
+    last_high = _last_swing(swings, "high")
+    last_low = _last_swing(swings, "low")
+    direction = "none"
+    bos_level: float | None = None
+    if last_high and latest_close > float(last_high["price"]):
+        direction = "bullish"
+        bos_level = float(last_high["price"])
+    elif last_low and latest_close < float(last_low["price"]):
+        direction = "bearish"
+        bos_level = float(last_low["price"])
+    else:
+        return {
+            "status": "no_recent_break_of_structure",
+            "latest_close": _round(latest_close),
+            "last_swing_high": _pivot_payload(last_high) if last_high else None,
+            "last_swing_low": _pivot_payload(last_low) if last_low else None,
+        }
+    lookback = sample[-40:]
+    if direction == "bullish":
+        source = _last_matching_candle(lookback, bearish=True)
+        if source is None:
+            return {"status": "no_source_candle", "direction": direction, "bos_level": _round(bos_level)}
+        lower = source["low"]
+        upper = source["open"] if source["open"] is not None else source["high"]
+    else:
+        source = _last_matching_candle(lookback, bearish=False)
+        if source is None:
+            return {"status": "no_source_candle", "direction": direction, "bos_level": _round(bos_level)}
+        lower = source["open"] if source["open"] is not None else source["low"]
+        upper = source["high"]
+    if lower > upper:
+        lower, upper = upper, lower
+    midpoint = (lower + upper) / 2
+    return {
+        "status": "candidate",
+        "direction": direction,
+        "bos_level": _round(bos_level),
+        "zone_low": _round(lower),
+        "zone_high": _round(upper),
+        "mid": _round(midpoint),
+        "source_time": _format_time(source["time"]),
+        "latest_close": _round(latest_close),
+        "distance_from_price_pct": _percent_distance(latest_close, midpoint),
+        "method": "last_opposite_candle_before_recent_structure_break",
+    }
+
+
+def _amd_smc(candles: list[dict[str, Any]], swings: list[dict[str, Any]], *, order_block: Mapping[str, Any]) -> dict[str, Any]:
+    latest_close = candles[-1]["close"] if candles else None
+    if latest_close is None or len(swings) < 4:
+        return {"status": "insufficient_swings", "swing_count": len(swings), "min_required": 4}
+    highs = [item for item in swings if item["type"] == "high"]
+    lows = [item for item in swings if item["type"] == "low"]
+    if not highs or not lows:
+        return {"status": "insufficient_swing_types", "swing_count": len(swings)}
+    recent_high = highs[-1]
+    recent_low = lows[-1]
+    prior_high = highs[-2] if len(highs) >= 2 else None
+    prior_low = lows[-2] if len(lows) >= 2 else None
+    if prior_high and prior_low and recent_high["price"] > prior_high["price"] and recent_low["price"] > prior_low["price"]:
+        structure = "higher_high_higher_low"
+        bias = "bullish_structure"
+    elif prior_high and prior_low and recent_high["price"] < prior_high["price"] and recent_low["price"] < prior_low["price"]:
+        structure = "lower_high_lower_low"
+        bias = "bearish_structure"
+    else:
+        structure = "mixed_range"
+        bias = "range_or_transition"
+    phase = "markup" if bias == "bullish_structure" else "markdown" if bias == "bearish_structure" else "accumulation_or_distribution_unconfirmed"
+    return {
+        "status": "ready",
+        "structure": structure,
+        "phase_proxy": phase,
+        "bias": bias,
+        "buy_side_liquidity": _pivot_payload(recent_high),
+        "sell_side_liquidity": _pivot_payload(recent_low),
+        "latest_close": _round(latest_close),
+        "order_block_status": order_block.get("status"),
+        "method": "swing_structure_and_liquidity_pool_proxy",
+        "limitation": "AMD/SMC 为OHLCV结构代理，不含逐笔订单流确认",
+    }
+
+
+def _harmonic_pattern(swings: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(swings) < 5:
+        return {"status": "insufficient_swings", "swing_count": len(swings), "min_required": 5}
+    pivots = swings[-5:]
+    prices = [float(item["price"]) for item in pivots]
+    xa = abs(prices[1] - prices[0])
+    ab = abs(prices[2] - prices[1])
+    bc = abs(prices[3] - prices[2])
+    cd = abs(prices[4] - prices[3])
+    if min(xa, ab, bc) == 0:
+        return {"status": "invalid_pivot_geometry", "pivots": [_pivot_payload(item) for item in pivots]}
+    ratios = {
+        "ab_xa": _round(ab / xa),
+        "bc_ab": _round(bc / ab),
+        "cd_bc": _round(cd / bc),
+    }
+    pattern = _classify_harmonic(ratios)
+    direction = "bullish" if pivots[-1]["type"] == "low" else "bearish" if pivots[-1]["type"] == "high" else "unknown"
+    return {
+        "status": "candidate" if pattern != "none" else "no_candidate",
+        "pattern": pattern,
+        "direction": direction,
+        "pivots": [_pivot_payload(item) for item in pivots],
+        "ratios": ratios,
+        "method": "last_five_swing_ratio_screen",
+    }
+
+
 def _td_price_sequence(setup_direction: str) -> str:
     if setup_direction == "bullish_reversal":
         return "closes_below_four_bars_ago"
@@ -511,6 +777,64 @@ def _td_interpretation(setup_direction: str, *, countdown_count: int, setup_coun
     return "无有效 TD setup/countdown"
 
 
+def _last_swing_windows(swings: list[dict[str, Any]], *, size: int, limit: int) -> list[tuple[dict[str, Any], ...]]:
+    windows: list[tuple[dict[str, Any], ...]] = []
+    start = max(0, len(swings) - size - limit + 1)
+    for index in range(start, len(swings) - size + 1):
+        windows.append(tuple(swings[index : index + size]))
+    return list(reversed(windows))
+
+
+def _pivot_payload(pivot: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if pivot is None:
+        return None
+    return {
+        "type": pivot.get("type"),
+        "price": pivot.get("price"),
+        "time": pivot.get("time"),
+        "index": pivot.get("index"),
+    }
+
+
+def _last_swing(swings: list[dict[str, Any]], swing_type: str) -> dict[str, Any] | None:
+    for item in reversed(swings):
+        if item.get("type") == swing_type:
+            return item
+    return None
+
+
+def _last_matching_candle(candles: list[dict[str, Any]], *, bearish: bool) -> dict[str, Any] | None:
+    for candle in reversed(candles):
+        open_value = candle.get("open")
+        close_value = candle.get("close")
+        if open_value is None or close_value is None:
+            continue
+        if bearish and close_value < open_value:
+            return candle
+        if not bearish and close_value > open_value:
+            return candle
+    return None
+
+
+def _classify_harmonic(ratios: Mapping[str, float]) -> str:
+    ab_xa = ratios["ab_xa"]
+    bc_ab = ratios["bc_ab"]
+    cd_bc = ratios["cd_bc"]
+    if _near(ab_xa, 0.618, tolerance=0.12) and 0.382 <= bc_ab <= 0.886 and 1.13 <= cd_bc <= 1.75:
+        return "gartley_like"
+    if 0.382 <= ab_xa <= 0.55 and 0.382 <= bc_ab <= 0.886 and 1.50 <= cd_bc <= 2.80:
+        return "bat_like"
+    if 0.70 <= ab_xa <= 0.88 and 0.382 <= bc_ab <= 0.886 and 1.27 <= cd_bc <= 2.40:
+        return "butterfly_like"
+    if 0.382 <= ab_xa <= 0.70 and 0.382 <= bc_ab <= 0.886 and 2.20 <= cd_bc <= 3.80:
+        return "crab_like"
+    return "none"
+
+
+def _near(value: float, target: float, *, tolerance: float) -> bool:
+    return target - tolerance <= value <= target + tolerance
+
+
 def _technical_limitations(
     candles: list[dict[str, Any]],
     vegas: Mapping[str, Any],
@@ -519,7 +843,7 @@ def _technical_limitations(
 ) -> list[str]:
     limitations: list[str] = []
     if candles and len(_high_low_candles(candles)) != len(candles):
-        limitations.append("K线缺少 high/low，KD、FVG、TD countdown 只能部分覆盖")
+        limitations.append("K线缺少最高价/最低价，KD、FVG、TD倒数计数只能部分覆盖")
     if len(candles) < _VEGAS_BLUE_BAND_MIN_CANDLES:
         limitations.append(f"维加斯蓝带需要 {_VEGAS_BLUE_BAND_MIN_CANDLES} 根K线，当前 {len(candles)} 根")
     elif vegas.get("sample_status") != "ok":
@@ -536,8 +860,8 @@ def _vegas_summary(vegas: Mapping[str, Any]) -> str:
         return "维加斯通道：蓝带样本不足。"
     return (
         "维加斯通道："
-        f"位置={vegas.get('band_position')}，"
-        f"主趋势={vegas.get('major_trend')}，"
+        f"位置={_reader_label(vegas.get('band_position'))}，"
+        f"主趋势={_reader_label(vegas.get('major_trend'))}，"
         f"距蓝带中线={_format_optional_pct(vegas.get('distance_to_blue_band_pct'))}。"
     )
 
@@ -547,7 +871,7 @@ def _double_line_summary(double_line: Mapping[str, Any]) -> str:
         return "双线反转：样本不足。"
     return (
         "双线反转："
-        f"EMA20/EMA50 状态={double_line.get('state')}，"
+        f"EMA20/EMA50 状态={_reader_label(double_line.get('state'))}，"
         f"EMA20={_format_optional_number(double_line.get('fast_value'))}，"
         f"EMA50={_format_optional_number(double_line.get('slow_value'))}。"
     )
@@ -565,6 +889,62 @@ def _fvg_summary(fvg: Mapping[str, Any]) -> str:
     return f"FVG：候选 {candidate_count} 个，开放 {open_count} 个，当前无近端未回补缺口。"
 
 
+def _volume_profile_summary(volume_profile: Mapping[str, Any]) -> str:
+    if volume_profile.get("status") != "ready":
+        return f"成交量分布：样本不足，当前样本 {volume_profile.get('sample_count')}。"
+    return (
+        "成交量分布："
+        f"POC={_format_optional_number(volume_profile.get('poc'))}，"
+        f"价值区间={_format_optional_number(volume_profile.get('value_area_low'))}-"
+        f"{_format_optional_number(volume_profile.get('value_area_high'))}。"
+    )
+
+
+def _rule_123_summary(rule_123: Mapping[str, Any]) -> str:
+    status = str(rule_123.get("status") or "unknown")
+    if status.startswith("insufficient"):
+        return f"123：样本不足，摆动点数量={rule_123.get('swing_count')}。"
+    if status == "no_pattern":
+        return "123：当前未检测到有效三点突破结构。"
+    return (
+        "123："
+        f"方向={_reader_label(rule_123.get('direction'))}，"
+        f"状态={_reader_label(status)}，"
+        f"突破位={_format_optional_number(rule_123.get('breakout_level'))}。"
+    )
+
+
+def _order_block_summary(order_block: Mapping[str, Any]) -> str:
+    status = str(order_block.get("status") or "unknown")
+    if status != "candidate":
+        return f"OB：{_reader_label(status)}。"
+    return (
+        "OB："
+        f"方向={_reader_label(order_block.get('direction'))}，"
+        f"区间={_format_optional_number(order_block.get('zone_low'))}-"
+        f"{_format_optional_number(order_block.get('zone_high'))}。"
+    )
+
+
+def _amd_smc_summary(amd_smc: Mapping[str, Any]) -> str:
+    if amd_smc.get("status") != "ready":
+        return f"AMD/SMC：样本不足，摆动点数量={amd_smc.get('swing_count')}。"
+    return (
+        "AMD/SMC："
+        f"结构={_reader_label(amd_smc.get('structure'))}，"
+        f"阶段={_reader_label(amd_smc.get('phase_proxy'))}。"
+    )
+
+
+def _harmonic_summary(harmonic: Mapping[str, Any]) -> str:
+    status = str(harmonic.get("status") or "unknown")
+    if status.startswith("insufficient"):
+        return f"谐波：样本不足，摆动点数量={harmonic.get('swing_count')}。"
+    if status == "no_candidate":
+        return "谐波：最近五个摆动点未匹配常见比例。"
+    return f"谐波：{_reader_label(harmonic.get('pattern'))} 候选，方向={_reader_label(harmonic.get('direction'))}。"
+
+
 def _kd_summary(kd: Mapping[str, Any]) -> str:
     if kd.get("k") is None or kd.get("d") is None:
         return "KD(9,3,3)：样本不足。"
@@ -573,19 +953,70 @@ def _kd_summary(kd: Mapping[str, Any]) -> str:
         f"K={_format_optional_number(kd.get('k'))}，"
         f"D={_format_optional_number(kd.get('d'))}，"
         f"J={_format_optional_number(kd.get('j'))}。"
-        f"状态：K={kd.get('k_state')}，D={kd.get('d_state')}。"
+        f"状态：K={_reader_label(kd.get('k_state'))}，D={_reader_label(kd.get('d_state'))}。"
     )
 
 
 def _td_summary(td: Mapping[str, Any]) -> str:
     return (
         "TD Sequential："
-        f"方向={td.get('setup_direction')}，"
-        f"setup={td.get('setup_count')}，"
-        f"countdown={td.get('countdown_count')}，"
-        f"信号={td.get('signal')}，"
+        f"方向={_reader_label(td.get('setup_direction'))}，"
+        f"启动计数={td.get('setup_count')}，"
+        f"倒数计数={td.get('countdown_count')}，"
+        f"信号={_reader_label(td.get('signal'))}，"
         f"解释={td.get('interpretation')}。"
     )
+
+
+def _reader_label(value: object) -> str:
+    raw = str(value or "").strip()
+    labels = {
+        "unknown": "未确认",
+        "none": "无信号",
+        "open": "未回补",
+        "filled": "已回补",
+        "partially_filled": "部分回补",
+        "bullish": "看涨",
+        "bearish": "看跌",
+        "bullish_reversal": "看涨反转",
+        "bearish_reversal": "看跌反转",
+        "bullish_reversal_countdown_13": "TD看涨反转13计数完成",
+        "bearish_reversal_countdown_13": "TD看跌反转13计数完成",
+        "bullish_reversal_setup_9": "TD看涨反转9计数完成",
+        "bearish_reversal_setup_9": "TD看跌反转9计数完成",
+        "below_blue_band": "价格在蓝带下方",
+        "inside_blue_band": "价格位于蓝带内",
+        "above_blue_band": "价格在蓝带上方",
+        "major_trend_bullish": "长期趋势偏多",
+        "major_trend_bearish": "长期趋势偏空",
+        "bullish_cross": "向上交叉",
+        "bearish_cross": "向下交叉",
+        "above_lines": "价格在双线上方",
+        "below_lines": "价格在双线下方",
+        "between_lines": "价格位于双线之间",
+        "pending_breakout": "上破待确认",
+        "confirmed_breakout": "上破已确认",
+        "pending_breakdown": "下破待确认",
+        "confirmed_breakdown": "下破已确认",
+        "no_recent_break_of_structure": "近期没有确认的结构突破",
+        "no_source_candle": "未找到结构突破前的来源K线",
+        "higher_high_higher_low": "高点抬高、低点抬高",
+        "lower_high_lower_low": "高点下移、低点下移",
+        "mixed_range": "区间震荡或结构转换",
+        "markup": "上行推进阶段",
+        "markdown": "下跌推进阶段",
+        "accumulation_or_distribution_unconfirmed": "吸筹/派发阶段未确认",
+        "near_oversold": "接近超卖",
+        "oversold": "超卖",
+        "near_overbought": "接近超买",
+        "overbought": "超买",
+        "neutral": "中性",
+    }
+    if raw in labels:
+        return labels[raw]
+    if "_" in raw:
+        return "未识别状态"
+    return raw or "未取得"
 
 
 def _fvg_passes_threshold(

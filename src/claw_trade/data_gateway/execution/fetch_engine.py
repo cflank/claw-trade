@@ -6,7 +6,8 @@ from typing import Any, Protocol
 
 from claw_trade.data_gateway.models import FetchResult
 
-from .managed_http import ManagedHttp, UrllibHttpClient
+from .managed_http import HttpObservation, HttpRequestSpec, HttpResponseCapture, ManagedHttp, UrllibHttpClient, _redact_headers
+from .rate_limiter import RateLimiter
 
 
 class CredentialMissingError(Exception):
@@ -74,10 +75,12 @@ class FetchEngine:
         registry: ProviderRegistry,
         managed_http: ManagedHttp | None = None,
         credential_resolver: Any | None = None,
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self._registry = registry
         self._managed_http = managed_http or ManagedHttp(UrllibHttpClient())
         self._credential_resolver = credential_resolver
+        self._rate_limiter = rate_limiter
 
     def fetch(self, batch: Any) -> FetchResult:
         plugin = self._registry.get(batch.provider_id)
@@ -86,7 +89,7 @@ class FetchEngine:
             return plugin.fetch(
                 task,
                 FetchContext(
-                    managed_http=self._managed_http,
+                    managed_http=self._managed_http_for_batch(batch),
                     credential_resolver=self._credential_resolver,
                 ),
             )
@@ -99,9 +102,59 @@ class FetchEngine:
         except Exception as exc:
             return FetchResult.from_error(batch, status="error", error=exc)
 
+    def _managed_http_for_batch(self, batch: Any) -> ManagedHttp:
+        if self._rate_limiter is None or not _rate_limit_at_http(batch):
+            return self._managed_http
+        rate_limit_key = str(getattr(batch, "rate_limit_key", "") or "")
+        rate_limit_policy = getattr(batch, "rate_limit_policy", None)
+        if not rate_limit_key or rate_limit_policy is None:
+            return self._managed_http
+        return _RateLimitedManagedHttp(
+            inner=self._managed_http,
+            rate_limiter=self._rate_limiter,
+            rate_limit_key=rate_limit_key,
+            rate_limit_policy=rate_limit_policy,
+        )
+
 
 def _as_string(value: Any) -> str:
     enum_value = getattr(value, "value", None)
     if isinstance(enum_value, str):
         return enum_value
     return str(value)
+
+
+class _RateLimitedManagedHttp:
+    def __init__(self, *, inner: ManagedHttp, rate_limiter: RateLimiter, rate_limit_key: str, rate_limit_policy: Any) -> None:
+        self._inner = inner
+        self._rate_limiter = rate_limiter
+        self._rate_limit_key = rate_limit_key
+        self._rate_limit_policy = rate_limit_policy
+
+    def stable_key(self, request: HttpRequestSpec) -> str:
+        return self._inner.stable_key(request)
+
+    def send(self, request: HttpRequestSpec) -> HttpObservation:
+        return self.send_capture(request).observation
+
+    def send_capture(self, request: HttpRequestSpec) -> HttpResponseCapture:
+        decision = self._rate_limiter.reserve(self._rate_limit_key, self._rate_limit_policy)
+        if not decision.allowed:
+            return HttpResponseCapture(
+                observation=HttpObservation(
+                    request_key=self._inner.stable_key(request),
+                    method=request.method.upper(),
+                    host=request.host,
+                    path=request.path,
+                    request_headers_redacted=_redact_headers(request.headers),
+                    status_code=None,
+                    response_headers_redacted={},
+                    elapsed_ms=0,
+                    quota_signal="local_rate_limited",
+                )
+            )
+        return self._inner.send_capture(request)
+
+
+def _rate_limit_at_http(batch: Any) -> bool:
+    return _as_string(getattr(batch, "http_visibility", "") or "") == "managed_http"

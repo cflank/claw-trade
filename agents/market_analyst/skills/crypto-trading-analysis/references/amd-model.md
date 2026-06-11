@@ -120,7 +120,7 @@ Hard limits:
 
 - Do not call AMD confirmed from a sideways range alone.
 - Do not use tutorial prices as current support, resistance, stop, or target.
-- Do not use Coinglass or browser visual evidence as the AMD source of truth.
+- Do not use external aggregation pages or browser visual evidence as the AMD source of truth.
 - Do not close non-technical gaps with technical pattern evidence.
 
 ## Teaching Example Boundary

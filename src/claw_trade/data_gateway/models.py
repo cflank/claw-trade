@@ -388,6 +388,7 @@ class ProviderCandidate(BaseModel):
     date_range_end: date | datetime | None = None
     fields: tuple[str, ...]
     required_level: RequiredLevel
+    configured_paid_data: bool = False
 
 
 class MergeItem(BaseModel):
@@ -451,12 +452,15 @@ class ProviderBatchPlan(BaseModel):
     base_asset: str | None = None
     quote_asset: str | None = None
     fields_union: tuple[str, ...]
+    capability_fields: tuple[str, ...] = ()
     params_redacted: dict[str, Any]
     priority_rank: int
     required_level: RequiredLevel
     cache_key: str
     rate_limit_key: str
+    cooldown_key: str | None = None
     rate_limit_policy: Any | None = None
+    http_visibility: HttpVisibility = HttpVisibility.MANAGED_HTTP
     single_flight_key: str
     lease_ttl_seconds: int = 30
     wait_timeout_seconds: int = 1
@@ -479,6 +483,7 @@ class ProviderBatchPlan(BaseModel):
 
 class HttpObservation(BaseModel):
     request_key: str
+    sent_at: datetime | None = None
     status_code: int | None = None
     error_code: str | None = None
     elapsed_ms: int | None = None
@@ -784,6 +789,7 @@ def _coerce_http_observations(raw: tuple[Any, ...]) -> tuple[HttpObservation, ..
         observations.append(
             HttpObservation(
                 request_key=str(getattr(item, "request_key", "")),
+                sent_at=getattr(item, "sent_at", None),
                 status_code=getattr(item, "status_code", None),
                 error_code=getattr(item, "error_code", None),
                 elapsed_ms=getattr(item, "elapsed_ms", None),

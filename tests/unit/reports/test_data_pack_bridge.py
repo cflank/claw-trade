@@ -11,6 +11,7 @@ from claw_trade.reports.data_pack_bridge import (
     _build_requests,
     _filter_crypto_market_bars,
     _model_visible_text,
+    _report_prefetch_domain_timeout_seconds,
     _validate_report_data_results,
     run_frontline_data_pack,
     run_report_data_prefetch,
@@ -67,6 +68,12 @@ def test_model_visible_text_hides_machine_fields_from_worker_prompt() -> None:
         assert token not in text
 
 
+def test_report_prefetch_domain_timeout_is_disabled_by_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("CLAW_TRADE_REPORT_PREFETCH_DOMAIN_TIMEOUT_SECONDS", raising=False)
+
+    assert _report_prefetch_domain_timeout_seconds() == 0.0
+
+
 def test_crypto_social_model_visible_text_includes_score_and_sentiment() -> None:
     as_of = datetime(2026, 6, 9, tzinfo=UTC)
     result = DataResult(
@@ -111,7 +118,7 @@ def test_crypto_market_domain_timeout_text_does_not_claim_all_sources_unavailabl
                 market=Market.CRYPTO,
                 data_type="daily_bar",
                 granularity="daily",
-                message="report_prefetch_domain_timeout:market:90s",
+                message="report_prefetch_domain_timeout:market:0.2s",
                 as_of=as_of,
             ),
         ),
@@ -625,8 +632,15 @@ def test_crypto_report_requests_do_not_force_realtime_provider_data_to_history_w
     def _first(requests, data_type: str, granularity: str):
         return next(item for item in requests if item.data_type == data_type and item.granularity == granularity)
 
+    def _all(requests, data_type: str, granularity: str):
+        return [item for item in requests if item.data_type == data_type and item.granularity == granularity]
+
     assert _first(market_requests, "daily_bar", "daily").date_range_start == date(2025, 6, 1)
     assert _first(market_requests, "intraday_bar", "1h").date_range_end == date(2026, 6, 6)
+    assert "volume_unit" in _first(market_requests, "daily_bar", "daily").fields
+    assert "amount_unit" in _first(market_requests, "daily_bar", "daily").fields
+    assert "volume_unit" in _first(market_requests, "intraday_bar", "1h").fields
+    assert "amount_unit" in _first(market_requests, "intraday_bar", "1h").fields
     assert _first(market_requests, "quote_snapshot", "realtime").date_range_start is None
     assert _first(market_requests, "order_book_snapshot", "realtime").date_range_end is None
     assert _first(market_requests, "order_book_snapshot", "1h").date_range_start == date(2025, 6, 1)
@@ -639,16 +653,47 @@ def test_crypto_report_requests_do_not_force_realtime_provider_data_to_history_w
     assert "value_unit" in _first(market_requests, "crypto_onchain_metric", "realtime").fields
     assert "value_unit" in _first(market_requests, "crypto_onchain_metric", "daily").fields
 
-    valuation_fields = _first(fundamental_requests, "valuation_metric", "realtime").fields
+    valuation_realtime_requests = _all(fundamental_requests, "valuation_metric", "realtime")
+    valuation_fields = valuation_realtime_requests[0].fields
     assert _first(fundamental_requests, "valuation_metric", "realtime").date_range_start is None
     assert "price_unit" in valuation_fields
     assert "market_cap_unit" in valuation_fields
-    assert "fdv_unit" in valuation_fields
-    assert "supply_unit" in valuation_fields
     assert "volume_unit" in valuation_fields
+    assert "supply_unit" in _first(fundamental_requests, "valuation_metric", "daily").fields
+    assert any("fdv_unit" in item.fields for item in valuation_realtime_requests)
+    assert any("total_supply" in item.fields for item in valuation_realtime_requests)
     assert _first(fundamental_requests, "defi_metric", "realtime").date_range_end is None
     assert _first(news_requests, "company_news", "event").date_range_start == date(2025, 6, 1)
     assert _first(social_requests, "social_signal", "event").date_range_start is None
+
+
+def test_non_btc_crypto_report_requests_skip_btc_only_liquidation_datasets() -> None:
+    market_requests = _build_requests(
+        tool_input={
+            "ticker": "BNB",
+            "market": "CRYPTO",
+            "currency": "USDT",
+            "start_date": "2025-06-01",
+            "end_date": "2026-06-06",
+            "current_date": "2026-06-06",
+        },
+        runtime_context={
+            "run_id": "run-crypto",
+            "call_id": "report-prefetch",
+            "pack_domain": "market",
+            "worker_id": "market_analyst",
+        },
+        market=Market.CRYPTO,
+        domain="market",
+    )
+
+    derivative_fields = [
+        set(request.fields)
+        for request in market_requests
+        if request.data_type == "crypto_derivative_metric"
+    ]
+    assert not any({"long_liquidation", "short_liquidation", "liquidation_value"} & fields for fields in derivative_fields)
+    assert not any({"liquidation_price", "liquidation_size"} & fields for fields in derivative_fields)
 
 
 def test_cn_a_report_requests_do_not_force_snapshots_to_history_window() -> None:
@@ -975,6 +1020,7 @@ def test_model_visible_text_summarizes_rows_in_chinese_labels() -> None:
                     "period_start": "2026-05-31",
                     "close": 104000,
                     "volume": 1200,
+                    "volume_unit": "BTC",
                     "provider_lineage": {"provider": "binance"},
                     "source_raw_refs": ("raw:1",),
                 },
@@ -997,7 +1043,7 @@ def test_model_visible_text_summarizes_rows_in_chinese_labels() -> None:
 
     assert "日线行情" in text
     assert "收盘价 104000" in text
-    assert "成交量 1200" in text
+    assert "成交量 1200 BTC" in text
     for token in ("daily_bar", "period_start", "close=", "volume=", "source_raw_refs", "provider_lineage"):
         assert token not in text
 
@@ -1128,6 +1174,8 @@ def test_crypto_frontline_requests_use_crypto_datasets_instead_of_stock_fundamen
     request_keys = [(request.data_type, request.granularity) for request in requests]
     assert request_keys == [
         ("valuation_metric", "realtime"),
+        ("valuation_metric", "daily"),
+        ("valuation_metric", "realtime"),
         ("defi_metric", "realtime"),
         ("defi_metric", "daily"),
         ("crypto_derivative_metric", "daily"),
@@ -1169,7 +1217,7 @@ def test_crypto_market_pack_requests_coinglass_derivative_and_onchain_capabiliti
     assert (
         "order_book_snapshot",
         "1h",
-        ("bid_price", "bid_size", "ask_price", "ask_size", "timestamp"),
+        ("bids_usd", "bids_quantity", "asks_usd", "asks_quantity", "timestamp", "symbol_id"),
     ) in request_fields
     assert (
         "crypto_onchain_metric",
@@ -1188,6 +1236,353 @@ def test_crypto_market_pack_requests_coinglass_derivative_and_onchain_capabiliti
     ) in request_fields
 
 
+def test_crypto_model_visible_text_labels_derivative_gaps_by_metric() -> None:
+    as_of = datetime(2026, 6, 9, tzinfo=UTC)
+    results = (
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:6:crypto_derivative_metric",
+            status=DataResultStatus.READY,
+            rows=(
+                {
+                    "funding_rate": 0.0001,
+                    "funding_rate_unit": "percent",
+                    "timestamp": "2026-06-09T00:00:00Z",
+                    "symbol_id": "BTCUSDT",
+                },
+            ),
+            dataset_refs=("dataset:funding",),
+            attempt_refs=("attempt:funding",),
+            as_of=as_of,
+        ),
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:8:crypto_derivative_metric",
+            status=DataResultStatus.READY,
+            rows=(
+                {
+                    "taker_buy_volume": 1200.0,
+                    "taker_sell_volume": 900.0,
+                    "taker_volume_unit": "USD",
+                    "taker_buy_sell_ratio": 1.3333,
+                    "timestamp": "2026-06-09T00:00:00Z",
+                    "symbol_id": "BTCUSDT",
+                },
+            ),
+            dataset_refs=("dataset:taker",),
+            attempt_refs=("attempt:taker",),
+            as_of=as_of,
+        ),
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:10:crypto_derivative_metric",
+            status=DataResultStatus.PARTIAL,
+            rows=(
+                {
+                    "liquidation_price": 68000.0,
+                    "liquidation_price_unit": "USDT",
+                    "liquidation_size": 1200000.0,
+                    "liquidation_size_unit": "USD",
+                    "side": "long",
+                    "timestamp": "2026-06-09T00:00:00Z",
+                    "symbol_id": "BTCUSDT",
+                },
+            ),
+            gaps=(
+                DataGap.by_reason(
+                    "date_range_missing",
+                    request_id="run-crypto:report-prefetch:market:10:crypto_derivative_metric",
+                    market=Market.CRYPTO,
+                    data_type="crypto_derivative_metric",
+                    granularity="1h",
+                    message="date_range_missing",
+                    as_of=as_of,
+                ),
+                DataGap.by_reason(
+                    "empty_result",
+                    request_id="run-crypto:report-prefetch:market:10:crypto_derivative_metric",
+                    market=Market.CRYPTO,
+                    data_type="crypto_derivative_metric",
+                    granularity="1h",
+                    message="empty_result",
+                    as_of=as_of,
+                ),
+            ),
+            as_of=as_of,
+        ),
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:11:crypto_derivative_metric",
+            status=DataResultStatus.MISSING,
+            gaps=(
+                DataGap.by_reason(
+                    "rate_limited",
+                    request_id="run-crypto:report-prefetch:market:11:crypto_derivative_metric",
+                    market=Market.CRYPTO,
+                    data_type="crypto_derivative_metric",
+                    granularity="1h",
+                    evidence_refs=("attempt:options",),
+                    message="rate_limited",
+                    as_of=as_of,
+                ),
+            ),
+            as_of=as_of,
+        ),
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:12:crypto_derivative_metric",
+            status=DataResultStatus.MISSING,
+            gaps=(
+                DataGap.by_reason(
+                    "field_missing",
+                    request_id="run-crypto:report-prefetch:market:12:crypto_derivative_metric",
+                    market=Market.CRYPTO,
+                    data_type="crypto_derivative_metric",
+                    granularity="1h",
+                    required_fields=("cvd",),
+                    message="field_missing",
+                    as_of=as_of,
+                ),
+            ),
+            as_of=as_of,
+        ),
+    )
+
+    text = _model_visible_text(
+        tool_input={"ticker": "BTC", "market": "CRYPTO"},
+        runtime_context={"pack_domain": "market", "run_id": "run-crypto", "call_id": "report-prefetch"},
+        market=Market.CRYPTO,
+        domain="market",
+        status="partial",
+        results=results,
+    )
+
+    assert "字段覆盖 资金费率" in text
+    assert "样本限制：" in text
+    assert "清算热力图：已有 1 行，覆盖 2026-06-09 至 2026-06-09，样本或来源限制：未覆盖完整分析区间、来源返回为空；先分析现有样本" in text
+    assert "清算热力图：未覆盖完整分析区间" not in text
+    assert "清算热力图：来源返回为空" not in text
+    assert "没有可用数据集时" not in text
+    assert "期权未平仓量/成交量：来源限流" in text
+    assert "标准 CVD：标准 CVD 序列未返回；已有主动买卖量代理 1 行，覆盖 2026-06-09 至 2026-06-09，可先分析主动买卖量差额" in text
+    assert "标准 CVD：必需字段缺失" not in text
+    assert "衍生品数据：未覆盖完整分析区间" not in text
+    assert "衍生品数据：来源限流" not in text
+
+
+def test_non_btc_crypto_liquidation_is_btc_only_not_missing_gap() -> None:
+    as_of = datetime(2026, 6, 9, tzinfo=UTC)
+    results = (
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:1:daily_bar",
+            status=DataResultStatus.READY,
+            rows=(
+                {
+                    "date": "2026-06-09",
+                    "open": 600.0,
+                    "high": 620.0,
+                    "low": 590.0,
+                    "close": 610.0,
+                    "volume": 1000.0,
+                    "volume_unit": "BNB",
+                    "amount": 610000.0,
+                    "amount_unit": "USDT",
+                    "symbol_id": "BNBUSDT",
+                },
+            ),
+            dataset_refs=("dataset:daily_bar:CRYPTO:spot:BNBUSDT",),
+            as_of=as_of,
+        ),
+        DataResult(
+            request_id="run-crypto:report-prefetch:market:10:crypto_derivative_metric",
+            status=DataResultStatus.MISSING,
+            gaps=(
+                DataGap.by_reason(
+                    "warehouse_missing",
+                    request_id="run-crypto:report-prefetch:market:10:crypto_derivative_metric",
+                    market=Market.CRYPTO,
+                    data_type="crypto_derivative_metric",
+                    granularity="1h",
+                    required_fields=("liquidation_price", "liquidation_size"),
+                    message="warehouse_missing",
+                    as_of=as_of,
+                ),
+            ),
+            as_of=as_of,
+        ),
+    )
+    crypto_lens_payload = {
+        "crypto_lens_status": "ready",
+        "crypto_lens_analysis": {
+            "status": "partial",
+            "technical_patterns": {"evidence": {}},
+            "derivatives_context": {"evidence": {}},
+            "liquidation_context": {"evidence": {}},
+            "onchain_context": {"evidence": {}},
+            "ahr999_context": {"evidence": {}},
+        },
+    }
+
+    text = _model_visible_text(
+        tool_input={"ticker": "BNB", "market": "CRYPTO", "currency": "USDT"},
+        runtime_context={"pack_domain": "market", "run_id": "run-crypto", "call_id": "report-prefetch"},
+        market=Market.CRYPTO,
+        domain="market",
+        status="partial",
+        results=results,
+        crypto_lens_payload=crypto_lens_payload,
+    )
+
+    assert "| 清算地图 | 不适用 | BNB 不写清算地图；当前清算地图按 BTC 专用口径使用 |" in text
+    assert "| AHR999 | 不适用 | BNB 不写 AHR999；该指标按 BTC 估值指数使用 |" in text
+    assert "清算热力图：仓库没有可用记录" not in text
+    assert "清算热力图：必需字段缺失" not in text
+    assert "数据缺口：" not in text
+
+
+def test_btc_market_pack_does_not_claim_ahr999_globally_missing_when_domain_has_no_ahr999() -> None:
+    as_of = datetime(2026, 6, 9, tzinfo=UTC)
+    result = DataResult(
+        request_id="run-crypto:report-prefetch:market:1:daily_bar",
+        status=DataResultStatus.READY,
+        rows=(
+            {
+                "date": "2026-06-09",
+                "close": 104000.0,
+                "volume": 1200.0,
+                "volume_unit": "BTC",
+                "symbol_id": "BTCUSDT",
+            },
+        ),
+        dataset_refs=("dataset:daily_bar:CRYPTO:spot:BTCUSDT",),
+        as_of=as_of,
+    )
+    crypto_lens_payload = {
+        "crypto_lens_status": "ready",
+        "crypto_lens_analysis": {
+            "status": "partial",
+            "technical_patterns": {"evidence": {}},
+            "derivatives_context": {"evidence": {}},
+            "liquidation_context": {"evidence": {}},
+            "onchain_context": {"evidence": {}},
+            "ahr999_context": {"evidence": {}},
+        },
+    }
+
+    text = _model_visible_text(
+        tool_input={"ticker": "BTC", "market": "CRYPTO", "currency": "USDT"},
+        runtime_context={"pack_domain": "market", "run_id": "run-crypto", "call_id": "report-prefetch"},
+        market=Market.CRYPTO,
+        domain="market",
+        status="partial",
+        results=(result,),
+        crypto_lens_payload=crypto_lens_payload,
+    )
+
+    assert "| AHR999 | 由基本面/链上资料包负责 | 行情资料包未取得 AHR999；如基本面资料包有读数，以基本面资料包为准 |" in text
+    assert "| AHR999 | 缺失/不可用 |" not in text
+
+
+def test_crypto_lens_model_visible_text_translates_internal_statuses() -> None:
+    payload = {
+        "crypto_lens_status": "ready",
+        "crypto_lens_analysis": {
+            "status": "ready",
+            "technical_patterns": {
+                "evidence": {
+                    "vegas": {
+                        "band_position": "below_blue_band",
+                        "major_trend": "major_trend_bearish",
+                        "ema144": 100.0,
+                        "ema169": 101.0,
+                        "distance_to_blue_band_pct": -1.2,
+                    },
+                    "double_line_reversal": {
+                        "state": "below_lines",
+                        "fast_value": 98.0,
+                        "slow_value": 102.0,
+                        "confidence": "low",
+                    },
+                    "fvg": {
+                        "candidates": ({"status": "partially_filled", "mid": 99.0},),
+                        "open_count": 1,
+                        "nearest_above": {"mid": 104.0},
+                    },
+                    "kd_9_3_3": {
+                        "k": 19.0,
+                        "d": 22.0,
+                        "j": 14.0,
+                        "k_state": "near_oversold",
+                        "d_state": "neutral",
+                    },
+                    "td_sequential": {
+                        "setup_direction": "bearish_reversal",
+                        "setup_count": 9,
+                        "countdown_count": 13,
+                        "signal": "bearish_reversal_countdown_13",
+                        "confidence": "medium",
+                    },
+                    "patterns": {
+                        "amd": {
+                            "status": "ready",
+                            "structure": "lower_high_lower_low",
+                            "phase_proxy": "markdown",
+                            "buy_side_liquidity": {"price": 110.0, "time": "2026-06-01T00:00:00Z"},
+                            "sell_side_liquidity": {"price": 90.0, "time": "2026-06-02T00:00:00Z"},
+                        },
+                        "rule_123": {"status": "pending_breakdown", "direction": "bearish", "breakout_level": 92.0},
+                        "order_block": {"status": "no_recent_break_of_structure"},
+                        "harmonic": {
+                            "status": "no_candidate",
+                            "pattern": "none",
+                            "direction": "unknown",
+                            "ratios": {"ab_xa": 0.5, "bc_ab": 0.6, "cd_bc": 1.2},
+                        },
+                        "volume_profile": {
+                            "status": "ready",
+                            "poc": 96.0,
+                            "value_area_low": 91.0,
+                            "value_area_high": 103.0,
+                            "sample_count": 160,
+                        },
+                    },
+                },
+            },
+            "derivatives_context": {"evidence": {}},
+            "liquidation_context": {"evidence": {}},
+            "onchain_context": {"evidence": {}},
+            "ahr999_context": {"evidence": {}},
+        },
+    }
+
+    text = _model_visible_text(
+        tool_input={"ticker": "BTC", "market": "CRYPTO"},
+        runtime_context={"tool_name": "claw_get_market_pack"},
+        market=Market.CRYPTO,
+        domain="market",
+        status="ready",
+        results=(),
+        crypto_lens_payload=payload,
+        chart_payload={},
+    )
+
+    assert "价格在蓝带下方" in text
+    assert "价格在双线下方" in text
+    assert "TD 看跌反转 13 计数完成" in text
+    assert "近期没有确认的结构突破" in text
+    assert "高点下移、低点下移" in text
+    assert "下跌推进阶段" in text
+    assert "下破待确认" in text
+    assert "未匹配到有效候选" in text
+    for token in (
+        "technical_patterns.evidence",
+        "below_blue_band",
+        "below_lines",
+        "bearish_reversal_countdown_13",
+        "lower_high_lower_low",
+        "markdown",
+        "pending_breakdown",
+        "no_recent_break_of_structure",
+        "no_candidate",
+    ):
+        assert token not in text
+
+
 def test_crypto_market_pack_adds_crypto_lens_indicator_coverage_from_prefetch(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     as_of = datetime(2026, 6, 2, tzinfo=UTC)
     manifest_path = tmp_path / "data-layer" / "report-prefetch.json"
@@ -1200,7 +1595,9 @@ def test_crypto_market_pack_adds_crypto_lens_indicator_coverage_from_prefetch(mo
             "low": 99.0 + index,
             "close": 101.0 + index,
             "volume": 1000.0 + index,
+            "volume_unit": "BTC",
             "amount": 100000.0 + index,
+            "amount_unit": "USDT",
             "symbol_id": "BTCUSDT",
             "source_market_segment": "spot",
         }
@@ -1224,7 +1621,9 @@ def test_crypto_market_pack_adds_crypto_lens_indicator_coverage_from_prefetch(mo
                     "change": 1.0,
                     "change_pct": 0.5,
                     "volume": 1000.0,
+                    "volume_unit": "BTC",
                     "amount": 281000.0,
+                    "amount_unit": "USDT",
                     "timestamp": "2026-06-02T00:00:00Z",
                     "symbol_id": "BTCUSDT",
                 },
@@ -1363,11 +1762,32 @@ def test_crypto_market_pack_adds_crypto_lens_indicator_coverage_from_prefetch(mo
     assert "拥挤度参考" not in text
     assert "动量过热/过冷参考" not in text
     assert "衰竭/反转计数参考" not in text
+    assert "清算热力图样本 1" in text
+    assert "清算热力图有效样本 1" in text
+    assert "普通强平额样本 1" in text
+    assert "未平仓量 1000000.0 USD（单位已明示：USD）" in text
+    assert "sample_count" not in text
     for label in ("维加斯通道", "FVG", "KD", "TD 9/13", "CVD代理/主动买卖量", "资金费率", "OI/多空比", "清算地图", "链上", "AHR999"):
         assert label in text
-    for missing_label in ("AMD/SMC", "123 突破", "OB 订单块", "谐波形态", "交易密集带/成交量分布"):
-        assert missing_label in text
-    assert "未覆盖/未实现" in text
+    for local_pattern_label in ("AMD/SMC", "123 突破", "OB 订单块", "谐波形态", "交易密集带/成交量分布"):
+        assert local_pattern_label in text
+        pattern_line = next(line for line in text.splitlines() if line.startswith(f"| {local_pattern_label} |"))
+        assert "不要编造" not in pattern_line
+        assert "胜率" not in pattern_line
+        assert "目标价" not in pattern_line
+        assert "交易动作" not in pattern_line
+        assert "概率" not in pattern_line
+    assert "未覆盖/未实现" not in text
+    assert "technical_patterns.evidence" not in text
+    assert "lower_high_lower_low" not in text
+    assert "pending_breakdown" not in text
+    assert "no_recent_break_of_structure" not in text
+    assert "no_candidate" not in text
+    assert "bearish_reversal_countdown_13" not in text
+    assert "below_lines" not in text
+    assert "markdown" not in text
+    assert "输出三点结构状态和突破位；只反映最近摆动结构" in text
+    assert "输出候选订单块区间和结构突破位；不包含成交确认或支撑强度评级" in text
     assert "300.0" in text
     evidence_paths = payload["crypto_lens_evidence_paths"]
     assert evidence_paths
@@ -1384,6 +1804,13 @@ def test_crypto_market_pack_adds_crypto_lens_indicator_coverage_from_prefetch(mo
     assert derivatives["oi_unit"] == "USD"
     assert derivatives["cvd_proxy_unit"] == "USD"
     liquidation = analysis["liquidation_context"]["evidence"]
+    patterns = analysis["technical_patterns"]["evidence"]["patterns"]
+    assert patterns["volume_profile"]["status"] == "ready"
+    assert patterns["volume_profile"]["poc"] is not None
+    assert patterns["amd"]["status"] in {"ready", "insufficient_swings"}
+    assert patterns["rule_123"]["status"] in {"no_pattern", "pending_breakout", "confirmed_breakout", "pending_breakdown", "confirmed_breakdown", "insufficient_swings"}
+    assert patterns["order_block"]["status"] in {"candidate", "no_recent_break_of_structure", "insufficient_ohlc", "no_source_candle"}
+    assert patterns["harmonic"]["status"] in {"candidate", "no_candidate", "insufficient_swings", "invalid_pivot_geometry"}
     assert liquidation["largest_cluster_price"] == 260.0
     assert liquidation["largest_cluster_size"] == 25000.0
     assert liquidation["largest_cluster_price_unit"] == "USDT"

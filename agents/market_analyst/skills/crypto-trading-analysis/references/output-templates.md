@@ -75,7 +75,7 @@ Every market analysis must include this section. Use the first `build_trade_cont
 指标覆盖：
 | 模块 | 状态 | 结构化路径/数值 | 对结论的影响 |
 |---|---|---|---|
-| 布林带 | 已引用/有数据但未构成信号/缺失/不可用/不适用 | data.technical.timeframes[*].indicators.bollinger_bands_20_2 | ... |
+| 布林带 | 已引用/可分析/样本限制/缺失/不可用/不适用 | data.technical.timeframes[*].indicators.bollinger_bands_20_2 | ... |
 | 维加斯通道 | ... | data.technical.timeframes[*].vegas | ... |
 | 双线反转 | ... | data.technical.timeframes[*].patterns.double_line_reversal | ... |
 | AMD/SMC | ... | data.technical.timeframes[*].patterns.amd | ... |
@@ -88,7 +88,7 @@ Every market analysis must include this section. Use the first `build_trade_cont
 | TD 9/13 | ... | data.technical.timeframes[*].indicators.td_sequential | ... |
 | 谐波形态 | ... | data.technical.timeframes[*].patterns.harmonic | ... |
 | 交易密集带/成交量分布 | ... | data.technical.timeframes[*].patterns.volume_profile | ... |
-| 清算地图 | ... | data.liquidation_map | ... |
+| 清算地图 | BTC 用已引用/可分析/样本限制；非 BTC 用不适用 | data.liquidation_map | ... |
 | CVD/主动买卖量 | ... | data.derivatives.cvd_proxy 或 data.derivatives.taker_buy_sell | ... |
 | 资金费率 | ... | data.derivatives.funding_rates | ... |
 | OI/多空比 | ... | data.derivatives.open_interest / long_short_ratio | ... |
@@ -100,8 +100,9 @@ Every market analysis must include this section. Use the first `build_trade_cont
 Status rules:
 
 - `已引用`: field exists and materially affects the conclusion.
-- `有数据但未构成信号`: field exists but is neutral, low confidence, conflicting, or not decisive.
-- `缺失/不可用`: field missing, provider failed, rate-limited, sample insufficient, or not exposed in the MCP envelope.
+- `可分析`: field exists and can support the current analysis, even if it is neutral, low confidence, conflicting, or not decisive.
+- `样本限制`: rows exist but the history span, frequency, or sample count is narrower than requested; analyze the returned rows first and state the limitation.
+- `缺失/不可用`: field missing, provider failed with no usable rows, or not exposed in the MCP envelope.
 - `不适用`: structurally not applicable, for example AHR999 on non-BTC.
 
 If `data.technical.tutorial_coverage` is absent, explicitly write: `coverage matrix missing from MCP output`, lower confidence one level, and list the missing field paths.

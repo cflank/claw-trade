@@ -1,0 +1,32 @@
+{
+  "active_stage": null,
+  "completed_workers": [],
+  "created_at": "2026-06-11T06:55:18Z",
+  "failed_workers": [],
+  "failure_reason": null,
+  "last_decision_path": "/home/frank/src/claw-trade/runs/run-20260611-065518-58ca4f7a/decisions/20260611T071039484977Z-complete.json",
+  "openviking_namespace": "workflow/run-20260611-065518-58ca4f7a",
+  "request": {
+    "company_name": "BNB",
+    "currency": "USDT",
+    "currency_symbol": "USDT",
+    "current_date": "2026-06-11",
+    "data_gateway": "data_gateway",
+    "end_date": "2026-06-11",
+    "entry_point": "report_command",
+    "frontline_execution_mode": "serial",
+    "market": "CRYPTO",
+    "max_debate_rounds": 1,
+    "max_risk_discuss_rounds": 1,
+    "profile": "CRYPTO",
+    "start_date": "2025-06-11",
+    "stop_point": "none",
+    "target_stage": null,
+    "target_worker_id": null,
+    "ticker": "BNB"
+  },
+  "run_dir": "/home/frank/src/claw-trade/runs/run-20260611-065518-58ca4f7a",
+  "run_id": "run-20260611-065518-58ca4f7a",
+  "status": "completed",
+  "updated_at": "2026-06-11T07:10:39Z"
+}

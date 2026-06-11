@@ -84,7 +84,7 @@ class USYahooFinancePlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=10,
         )
 
@@ -231,7 +231,7 @@ class USSECProviderPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 10},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=0,
         )
 
@@ -981,7 +981,7 @@ class USStocktwitsSocialPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=10,
         )
 
@@ -1074,7 +1074,7 @@ class USGoogleNewsDiscoveryPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=50,
         )
 

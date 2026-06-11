@@ -24,6 +24,7 @@ _CRYPTO_BASE_SYMBOLS = {
 _CRYPTO_QUOTE_SYMBOLS = ("USDT", "USDC", "USD", "BTC", "ETH")
 _CRYPTO_COINGECKO_IDS = {
     "AR": "arweave",
+    "BNB": "binancecoin",
     "BTC": "bitcoin",
     "DOGE": "dogecoin",
     "ETH": "ethereum",
@@ -138,6 +139,7 @@ def crypto_display_name(ticker: str) -> str | None:
         return None
     names = {
         "AR": "Arweave",
+        "BNB": "BNB",
         "BTC": "Bitcoin",
         "DOGE": "Dogecoin",
         "ETH": "Ethereum",

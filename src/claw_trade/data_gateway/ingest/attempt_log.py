@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
@@ -70,6 +70,48 @@ class AttemptLog:
                 "gap_codes": tuple(getattr(code, "value", str(code)) for code in record.gap_codes),
                 "owner_attempt_ref": record.owner_attempt_ref,
                 "created_at": getattr(fetch_result, "fetched_at", None),
+                "error_code": getattr(fetch_result, "error_code", None),
+                "error_message": getattr(fetch_result, "error_message", None),
+                **_http_observation_summary(fetch_result),
+            }
+        )
+        return (persisted_ref,)
+
+    def record_selector_skip(
+        self,
+        *,
+        batch: Any,
+        selector_skip: Any,
+        gaps: tuple[DataGap, ...] = (),
+    ) -> tuple[str, ...]:
+        raw_status = getattr(selector_skip, "reason", "credential_missing") or "credential_missing"
+        status = str(getattr(raw_status, "value", raw_status))
+        attempt_ref = f"attempt:{batch.provider_id}:{batch.endpoint_id}:{uuid4().hex[:12]}"
+        record = AttemptRecord(
+            attempt_ref=attempt_ref,
+            provider_id=batch.provider_id,
+            endpoint_id=batch.endpoint_id,
+            status=status,
+            remote_attempted=bool(getattr(selector_skip, "remote_attempted", False)),
+            remote_success=False,
+            dataset_refs=(),
+            raw_refs=(),
+            gap_codes=tuple(gap.reason for gap in gaps),
+            owner_attempt_ref=None,
+        )
+        persisted_ref = self._repository.insert_provider_attempt(
+            {
+                "attempt_ref": record.attempt_ref,
+                "provider": record.provider_id,
+                "endpoint": record.endpoint_id,
+                "status": record.status,
+                "remote_attempted": record.remote_attempted,
+                "remote_success": record.remote_success,
+                "dataset_refs": record.dataset_refs,
+                "raw_refs": record.raw_refs,
+                "gap_codes": tuple(getattr(code, "value", str(code)) for code in record.gap_codes),
+                "owner_attempt_ref": record.owner_attempt_ref,
+                "created_at": None,
             }
         )
         return (persisted_ref,)
@@ -87,3 +129,62 @@ class AttemptLog:
         if status == "error":
             return "provider_error"
         return status
+
+
+def _http_observation_summary(fetch_result: Any | None) -> dict[str, Any]:
+    observations = tuple(getattr(fetch_result, "http_observations", ()) or ()) if fetch_result is not None else ()
+    if not observations:
+        return {
+            "http_observations": (),
+            "http_status_codes": (),
+            "quota_signals": (),
+            "rate_limit_origin": None,
+        }
+    serialized = tuple(_serialize_http_observation(observation) for observation in observations)
+    status_codes = tuple(
+        item["status_code"]
+        for item in serialized
+        if item.get("status_code") is not None
+    )
+    quota_signals = tuple(
+        item["quota_signal"]
+        for item in serialized
+        if item.get("quota_signal")
+    )
+    return {
+        "http_observations": serialized,
+        "http_status_codes": status_codes,
+        "quota_signals": quota_signals,
+        "rate_limit_origin": _rate_limit_origin(serialized),
+    }
+
+
+def _serialize_http_observation(observation: Any) -> Mapping[str, Any]:
+    return {
+        "request_key": getattr(observation, "request_key", None),
+        "sent_at": getattr(observation, "sent_at", None),
+        "method": getattr(observation, "method", None),
+        "host": getattr(observation, "host", None),
+        "path": getattr(observation, "path", None),
+        "status_code": getattr(observation, "status_code", None),
+        "quota_signal": getattr(observation, "quota_signal", None),
+        "error_code": getattr(observation, "error_code", None),
+        "elapsed_ms": getattr(observation, "elapsed_ms", None),
+        "response_headers_redacted": dict(getattr(observation, "response_headers_redacted", None) or {}),
+    }
+
+
+def _rate_limit_origin(observations: tuple[Mapping[str, Any], ...]) -> str | None:
+    local = any(item.get("quota_signal") == "local_rate_limited" for item in observations)
+    remote = any(
+        item.get("status_code") == 429
+        or (item.get("quota_signal") not in {None, "", "local_rate_limited"})
+        for item in observations
+    )
+    if local and remote:
+        return "mixed"
+    if local:
+        return "local"
+    if remote:
+        return "remote"
+    return None

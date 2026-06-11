@@ -9,6 +9,7 @@ from claw_trade.data_gateway.execution.gate import ExecutionGate
 from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimitPolicy
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
 from claw_trade.data_gateway.ingest import DataGap, IngestResult
+from claw_trade.data_gateway.models import HttpVisibility
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
 
@@ -16,7 +17,9 @@ from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 class _Batch:
     cache_key: str = "cache:key"
     rate_limit_key: str = "rl:key"
+    cooldown_key: str | None = None
     rate_limit_policy: RateLimitPolicy = RateLimitPolicy(window_seconds=60, max_requests=10)
+    http_visibility: str = "sdk_internal_unknown"
     single_flight_key: str = "sf:key"
     lease_ttl_seconds: int = 30
     wait_timeout_seconds: int = 1
@@ -103,6 +106,46 @@ def test_gate_returns_rate_limited_when_quota_blocked() -> None:
     assert decision.kind == "rate_limited"
 
 
+def test_gate_skips_source_quota_for_managed_http_batches() -> None:
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1, overflow="fail_fast")
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+    first = _Batch(
+        cache_key="cache:first",
+        single_flight_key="sf:first",
+        rate_limit_policy=policy,
+        http_visibility="managed_http",
+    )
+    second = _Batch(
+        cache_key="cache:second",
+        single_flight_key="sf:second",
+        rate_limit_policy=policy,
+        http_visibility="managed_http",
+    )
+
+    assert gate.enter(first).kind == "owner"
+    assert gate.enter(second).kind == "owner"
+
+
+def test_gate_skips_source_quota_for_managed_http_enum_batches() -> None:
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1, overflow="fail_fast")
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+    first = _Batch(
+        cache_key="cache:first",
+        single_flight_key="sf:first",
+        rate_limit_policy=policy,
+        http_visibility=HttpVisibility.MANAGED_HTTP,
+    )
+    second = _Batch(
+        cache_key="cache:second",
+        single_flight_key="sf:second",
+        rate_limit_policy=policy,
+        http_visibility=HttpVisibility.MANAGED_HTTP,
+    )
+
+    assert gate.enter(first).kind == "owner"
+    assert gate.enter(second).kind == "owner"
+
+
 def test_gate_marks_cooldown_after_provider_429_fetch_result() -> None:
     batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10))
     gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
@@ -122,6 +165,95 @@ def test_gate_marks_cooldown_after_provider_429_fetch_result() -> None:
     decision = gate.enter(batch)
     assert decision.kind == "cooldown_skipped"
     assert decision.retry_after is not None
+
+
+def test_gate_does_not_mark_provider_cooldown_for_local_rate_limit() -> None:
+    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10))
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+    owner = gate.enter(batch)
+    assert owner.kind == "owner"
+
+    gate.mark_cooldown_after_fetch(
+        batch,
+        SimpleNamespace(
+            status="rate_limited",
+            http_observations=(
+                SimpleNamespace(status_code=None, quota_signal="local_rate_limited", response_headers_redacted={}),
+            ),
+        ),
+    )
+
+    next_batch = _Batch(cache_key="cache:next", single_flight_key="sf:next", rate_limit_policy=batch.rate_limit_policy)
+    assert gate.enter(next_batch).kind == "owner"
+
+
+def test_gate_waits_after_provider_429_when_policy_allows_wait() -> None:
+    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10, overflow="wait", wait_timeout_seconds=60))
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+
+    should_retry = gate.wait_after_rate_limited_fetch(
+        batch,
+        SimpleNamespace(
+            status="rate_limited",
+            http_observations=(
+                SimpleNamespace(status_code=429, response_headers_redacted={"retry-after": "0"}),
+            ),
+        ),
+    )
+
+    assert should_retry is True
+
+
+def test_gate_does_not_wait_after_provider_429_without_wait_policy() -> None:
+    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10, overflow="fail_fast"))
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+
+    should_retry = gate.wait_after_rate_limited_fetch(
+        batch,
+        SimpleNamespace(
+            status="rate_limited",
+            http_observations=(
+                SimpleNamespace(status_code=429, response_headers_redacted={"retry-after": "0"}),
+            ),
+        ),
+    )
+
+    assert should_retry is False
+
+
+def test_gate_scopes_provider_429_cooldown_to_endpoint_key_not_source_quota() -> None:
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+    source_key = "ratelimit:coinglass"
+    first_endpoint = _Batch(
+        cache_key="cache:first",
+        rate_limit_key=source_key,
+        cooldown_key="cooldown:coinglass:futures_open_interest",
+        single_flight_key="sf:first",
+    )
+    other_endpoint = _Batch(
+        cache_key="cache:other",
+        rate_limit_key=source_key,
+        cooldown_key="cooldown:coinglass:futures_funding_rate",
+        single_flight_key="sf:other",
+    )
+
+    owner = gate.enter(first_endpoint)
+    assert owner.kind == "owner"
+    gate.mark_cooldown_after_fetch(
+        first_endpoint,
+        SimpleNamespace(
+            status="rate_limited",
+            http_observations=(
+                SimpleNamespace(response_headers_redacted={"retry-after": "120"}),
+            ),
+        ),
+    )
+
+    same_endpoint = gate.enter(first_endpoint)
+    assert same_endpoint.kind == "cooldown_skipped"
+
+    other_owner = gate.enter(other_endpoint)
+    assert other_owner.kind == "owner"
 
 
 def test_gate_uses_single_flight_shared_result_for_waiter() -> None:

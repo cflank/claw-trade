@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
+from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
 from claw_trade.data_gateway.coordination.service import DataService
+from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
+from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
+from claw_trade.data_gateway.ingest.normalizer import Normalizer
+from claw_trade.data_gateway.ingest.pipeline import IngestPipeline
+from claw_trade.data_gateway.ingest.raw_store import RawStore
 from claw_trade.data_gateway.models import (
     DataGap,
     DataRequest,
@@ -19,6 +26,18 @@ from claw_trade.data_gateway.models import (
     RequiredLevel,
     WarehouseResult,
 )
+from claw_trade.data_gateway.providers import build_minimal_provider_registry
+from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
+from claw_trade.data_gateway.warehouse import DatasetRepository
+
+
+def test_data_service_wave_key_promotes_configured_paid_data_only() -> None:
+    official = SimpleNamespace(source_role="official", priority_rank=1)
+    compatible_paid = SimpleNamespace(source_role="paid_data", priority_rank=1, configured_paid_data=False)
+    configured_paid = SimpleNamespace(source_role="paid_data", priority_rank=100, configured_paid_data=True)
+
+    assert DataService._candidate_wave_key(configured_paid) < DataService._candidate_wave_key(official)
+    assert DataService._candidate_wave_key(official) < DataService._candidate_wave_key(compatible_paid)
 
 
 def _request(request_id: str = "req-service-1") -> DataRequest:
@@ -68,6 +87,80 @@ def _crypto_request(request_id: str = "req-crypto-service-1") -> DataRequest:
             "consumer_id": "market_analyst",
             "as_of": datetime(2026, 6, 7, tzinfo=UTC),
         }
+    )
+
+
+def _crypto_source_state_request(
+    *,
+    request_id: str,
+    data_type: str,
+    granularity: str,
+    fields: tuple[str, ...],
+) -> DataRequest:
+    return DataRequest.model_validate(
+        {
+            "request_id": request_id,
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "exchange": "BINANCE",
+            "currency": "USDT",
+            "timezone": "UTC",
+            "calendar": "CRYPTO_24_7",
+            "base_asset": "BTC",
+            "quote_asset": "USDT",
+            "data_type": data_type,
+            "granularity": granularity,
+            "fields": fields,
+            "date_range_start": date(2026, 6, 1),
+            "date_range_end": date(2026, 6, 7),
+            "freshness_policy": "calendar_day",
+            "consumer": "report",
+            "consumer_id": "market_analyst",
+            "as_of": datetime(2026, 6, 7, tzinfo=UTC),
+        }
+    )
+
+
+def _us_alpha_vantage_request(request_id: str = "req-us-alpha-unconfigured") -> DataRequest:
+    return DataRequest.model_validate(
+        {
+            "request_id": request_id,
+            "market": "US",
+            "symbol_id": "AAPL",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "timezone": "America/New_York",
+            "calendar": "US_NYSE_NASDAQ",
+            "data_type": "financial_statement",
+            "granularity": "annual",
+            "fields": ("period", "revenue", "net_income", "assets", "liabilities", "cash_flow"),
+            "date_range_start": date(2025, 1, 1),
+            "date_range_end": date(2026, 6, 7),
+            "freshness_policy": "trading_day",
+            "consumer": "report",
+            "consumer_id": "fundamental_analyst",
+            "as_of": datetime(2026, 6, 7, tzinfo=UTC),
+        }
+    )
+
+
+def _credential_resolver(
+    records: tuple[dict[str, object], ...],
+    secrets: dict[str | None, str | None] | None = None,
+) -> DataSourceCredentialResolver:
+    secret_values = secrets or {}
+    return DataSourceCredentialResolver(
+        data_source_store=SimpleNamespace(list_instances=lambda: records),
+        secret_store=SimpleNamespace(get=lambda ref: secret_values.get(ref)),
+    )
+
+
+def _real_ingest(repository: DatasetRepository) -> IngestPipeline:
+    return IngestPipeline(
+        raw_store=RawStore(repository=repository),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repository),
+        attempt_log=AttemptLog(repository=repository),
     )
 
 
@@ -142,6 +235,57 @@ class _Warehouse:
             dataset_refs=("dataset:recheck",),
             freshness={"policy": "trading_day"},
         )
+
+
+class _AlwaysMissingWarehouse:
+    def check(self, checks, coverage) -> WarehouseResult:
+        del coverage
+        return WarehouseResult(
+            satisfied=False,
+            gaps=tuple(
+                DataGap.by_reason(
+                    "warehouse_missing",
+                    request_id=check.request_id,
+                    market=check.market,
+                    data_type=check.data_type,
+                    granularity=check.granularity,
+                    symbol_id=check.symbol_id,
+                    as_of=datetime(2026, 6, 7, tzinfo=UTC),
+                )
+                for check in checks
+            ),
+        )
+
+    def recheck(self, checks, coverage) -> WarehouseResult:
+        return self.check(checks, coverage)
+
+
+class _NoRemoteCoalescer:
+    def coalesce(self, gaps, candidates, capabilities):
+        del gaps, candidates, capabilities
+        raise AssertionError("unconfigured credential source must not reach coalescer")
+
+
+class _NoRemoteBatchPlanner:
+    def build_batches(self, groups, capabilities):
+        del groups, capabilities
+        raise AssertionError("unconfigured credential source must not reach batch planner")
+
+
+class _NoRemoteExecutionGate:
+    def enter(self, batch):
+        del batch
+        raise AssertionError("unconfigured credential source must not reach execution gate")
+
+    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: IngestResult) -> None:
+        del single_flight_key, owner_token, ingest
+        raise AssertionError("unconfigured credential source must not publish shared result")
+
+
+class _NoRemoteFetchEngine:
+    def fetch(self, batch):
+        del batch
+        raise AssertionError("unconfigured credential source must not fetch")
 
 
 class _CryptoLocalEmptyWarehouse:
@@ -491,6 +635,14 @@ class _ExecutionGate:
         self._events.append("execution_gate.publish_shared_result")
 
 
+class _RetryAfterRateLimitExecutionGate(_ExecutionGate):
+    def wait_after_rate_limited_fetch(self, batch, fetch_result):
+        del batch
+        status = getattr(getattr(fetch_result, "status", None), "value", getattr(fetch_result, "status", None))
+        self._events.append("execution_gate.wait_after_rate_limited_fetch")
+        return status == "rate_limited"
+
+
 class _FetchEngine:
     def __init__(self, events: list[str]) -> None:
         self._events = events
@@ -514,6 +666,8 @@ class _FetchEngine:
 class _Ingest:
     def __init__(self, events: list[str]) -> None:
         self._events = events
+        self.selector_skip_ingests: list[IngestResult] = []
+        self.selector_skips: list[tuple[object, object]] = []
 
     def ingest(self, result, batch):
         self._events.append("ingest.ingest")
@@ -538,6 +692,30 @@ class _Ingest:
             remote_success=False,
             created_at=datetime(2026, 5, 31, tzinfo=UTC),
         )
+
+    def record_selector_skip(self, batch, selector_skip):
+        self._events.append("ingest.record_selector_skip")
+        result = IngestResult(
+            ingest_id=f"ingest-skip-{batch.provider_id}",
+            batch_id=batch.batch_id,
+            status="non_remote_recorded",
+            attempt_refs=(f"attempt:skip:{batch.provider_id}",),
+            gaps=(
+                DataGap.by_reason(
+                    "credential_missing",
+                    request_id=batch.request_ids[0],
+                    market=batch.market,
+                    data_type=batch.data_type,
+                    granularity=batch.granularity,
+                    symbol_id=batch.symbol_ids[0] if batch.symbol_ids else None,
+                ),
+            ),
+            remote_success=False,
+            created_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+        self.selector_skips.append((batch, selector_skip))
+        self.selector_skip_ingests.append(result)
+        return result
 
 
 class _IngestWithSupersededGap(_Ingest):
@@ -889,7 +1067,7 @@ def test_data_service_ready_result_drops_superseded_ingest_gaps() -> None:
     assert result.gaps == ()
 
 
-def test_data_service_preserves_crypto_local_empty_gap_after_provider_fill() -> None:
+def test_data_service_drops_crypto_local_empty_gap_after_provider_fill() -> None:
     events: list[str] = []
     service = DataService(
         query_planner=_Planner(events),
@@ -907,12 +1085,7 @@ def test_data_service_preserves_crypto_local_empty_gap_after_provider_fill() -> 
     assert result.status == DataResultStatus.READY
     assert result.dataset_refs == ("dataset:daily_bar:CRYPTO:SOLUSDT:2026-06-01:2026-06-07",)
     assert result.attempt_refs == ("attempt:local-seed", "attempt:1")
-    assert [gap.reason for gap in result.gaps] == [GapReason.WAREHOUSE_MISSING]
-    assert result.gaps[0].severity == GapSeverity.WARN
-    assert result.gaps[0].market == Market.CRYPTO
-    assert result.gaps[0].symbol_id == "SOLUSDT"
-    assert result.gaps[0].provider_ids_tried == ("local_crypto_prepackaged",)
-    assert "local_warehouse_empty" in result.gaps[0].human_readable
+    assert result.gaps == ()
 
 
 def test_data_service_drops_crypto_date_range_gap_after_provider_fill() -> None:
@@ -1025,6 +1198,23 @@ def test_data_service_dedupes_identical_gaps() -> None:
     assert DataService._dedupe_gaps((gap, duplicate)) == [gap]
 
 
+def test_data_service_coerces_data_gap_request_id_to_target_result() -> None:
+    original = DataGap.by_reason(
+        "empty_result",
+        request_id="batch:req",
+        market=Market.CRYPTO,
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        symbol_id="SOLUSDT",
+    )
+
+    coerced = DataService._coerce_gap(original, request_id="result:req")
+
+    assert coerced.request_id == "result:req"
+    assert coerced.gap_id.startswith("gap:result:req:empty_result:")
+    assert original.request_id == "batch:req"
+
+
 def test_data_service_drops_field_missing_gap_when_final_rows_have_required_fields() -> None:
     gap = DataGap.by_reason(
         "field_missing",
@@ -1051,6 +1241,43 @@ def test_data_service_drops_field_missing_gap_when_final_rows_have_required_fiel
             },
         ),
     ) == []
+
+
+def test_data_service_drops_field_missing_gap_when_no_rows_and_concrete_provider_gap_exists() -> None:
+    field_gap = DataGap.by_reason(
+        "field_missing",
+        request_id="req-taker",
+        market=Market.CRYPTO,
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        required_fields=("taker_buy_sell_ratio",),
+        symbol_id="SOLUSDT",
+    )
+    rate_limited = DataGap.by_reason(
+        "rate_limited",
+        request_id="req-taker",
+        market=Market.CRYPTO,
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        symbol_id="SOLUSDT",
+        evidence_refs=("rate_limit:coinglass",),
+    )
+
+    assert DataService._drop_shadowed_field_missing_gaps((field_gap, rate_limited), ()) == [rate_limited]
+
+
+def test_data_service_keeps_field_missing_gap_when_it_is_the_only_evidence() -> None:
+    field_gap = DataGap.by_reason(
+        "field_missing",
+        request_id="req-taker",
+        market=Market.CRYPTO,
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        required_fields=("taker_buy_sell_ratio",),
+        symbol_id="SOLUSDT",
+    )
+
+    assert DataService._drop_shadowed_field_missing_gaps((field_gap,), ()) == [field_gap]
 
 
 def test_data_service_drops_local_warehouse_empty_gap_when_rows_are_filled() -> None:
@@ -1241,6 +1468,183 @@ def test_data_service_rechecks_between_provider_priority_waves_and_skips_slow_fa
     assert "fetch:provider-slow" not in events
 
 
+def test_data_service_tries_next_provider_after_remote_rate_limit_without_user_limit() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_WaveWarehouse(events),
+        provider_selector=_FallbackSelector(events),
+        coalescer=_PassThroughCoalescer(events),
+        batch_planner=_CandidateBatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_RateLimitThenSuccessFetchEngine(events),
+        ingest=_RateLimitAwareIngest(events),
+    )
+
+    [result] = service.get_data_batch((_request("req-rate-limit-next-provider"),))
+
+    assert result.status == DataResultStatus.READY
+    assert result.dataset_refs == ("dataset:wave",)
+    assert "fetch:provider-fast" in events
+    assert "fetch:provider-slow" in events
+    assert events.index("fetch:provider-fast") < events.index("fetch:provider-slow")
+
+
+def test_data_service_retries_same_provider_after_remote_rate_limit_when_user_policy_waits() -> None:
+    events: list[str] = []
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_WaveWarehouse(events),
+        provider_selector=_FallbackSelector(events),
+        coalescer=_PassThroughCoalescer(events),
+        batch_planner=_CandidateBatchPlanner(events),
+        execution_gate=_RetryAfterRateLimitExecutionGate(events),
+        fetch_engine=_RateLimitThenRetrySuccessFetchEngine(events),
+        ingest=_RateLimitAwareIngest(events),
+    )
+
+    [result] = service.get_data_batch((_request("req-rate-limit-retry-provider"),))
+
+    assert result.status == DataResultStatus.READY
+    assert result.dataset_refs == ("dataset:wave",)
+    assert events.count("fetch:provider-fast") == 2
+    assert "execution_gate.wait_after_rate_limited_fetch" in events
+    assert "fetch:provider-slow" not in events
+
+
+def test_data_service_records_credential_missing_selector_skip_when_public_provider_succeeds() -> None:
+    events: list[str] = []
+    ingest = _Ingest(events)
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_Warehouse(events, satisfied_on_check=False),
+        provider_selector=_CredentialSkipSelector(events),
+        coalescer=_PassThroughCoalescer(events),
+        batch_planner=_CandidateBatchPlanner(events),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=_ProviderTrackingFetchEngine(events),
+        ingest=ingest,
+    )
+
+    result = service.get_data(_request("req-credential-skip"))
+
+    assert result.status == DataResultStatus.READY
+    assert result.attempt_refs == ("attempt:skip:paid-provider", "attempt:1")
+    assert "fetch:paid-provider" not in events
+    assert "fetch:public-provider" in events
+    assert "ingest.record_selector_skip" in events
+    assert events.index("ingest.record_selector_skip") < events.index("provider_selector.read_capabilities")
+    assert len(ingest.selector_skip_ingests) == 1
+    skip_ingest = ingest.selector_skip_ingests[0]
+    assert skip_ingest.status == "non_remote_recorded"
+    assert skip_ingest.remote_success is False
+    assert [gap.reason for gap in skip_ingest.gaps] == [GapReason.CREDENTIAL_MISSING]
+    skip_batch, selector_skip = ingest.selector_skips[0]
+    assert skip_batch.provider_id == "paid-provider"
+    assert selector_skip.remote_attempted is False
+
+
+def test_data_service_does_not_report_unconfigured_crypto_paid_sources_as_credential_gaps() -> None:
+    repository = DatasetRepository()
+    service = DataService(
+        query_planner=QueryPlanner(),
+        warehouse=_AlwaysMissingWarehouse(),
+        provider_selector=ProviderSelector(
+            build_minimal_provider_registry(),
+            credential_resolver=_credential_resolver(()),
+        ),
+        coalescer=_NoRemoteCoalescer(),
+        batch_planner=_NoRemoteBatchPlanner(),
+        execution_gate=_NoRemoteExecutionGate(),
+        fetch_engine=_NoRemoteFetchEngine(),
+        ingest=_real_ingest(repository),
+    )
+    requests = tuple(
+        DataRequest.model_validate({**request.model_dump(), "source_role_required": "paid_data"})
+        for request in (
+            _crypto_source_state_request(
+                request_id="req-crypto-glassnode",
+                data_type="crypto_onchain_metric",
+                granularity="daily",
+                fields=("timestamp", "metric", "value", "value_unit", "chain", "source_metric"),
+            ),
+            _crypto_source_state_request(
+                request_id="req-crypto-token-terminal",
+                data_type="defi_metric",
+                granularity="daily",
+                fields=("protocol_revenue", "fees", "timestamp", "symbol_id"),
+            ),
+            _crypto_source_state_request(
+                request_id="req-crypto-lunarcrush",
+                data_type="social_signal",
+                granularity="event",
+                fields=("source", "timestamp", "score", "sentiment", "social_dominance", "num_posts", "interactions", "symbol_id"),
+            ),
+        )
+    )
+
+    results = service.get_data_batch(requests)
+
+    assert {result.request_id for result in results} == {
+        "req-crypto-glassnode",
+        "req-crypto-token-terminal",
+        "req-crypto-lunarcrush",
+    }
+    for result in results:
+        assert result.status == DataResultStatus.MISSING
+        assert [gap.reason for gap in result.gaps] == [GapReason.WAREHOUSE_MISSING]
+        assert result.attempt_refs
+    attempts = tuple(
+        repository.get_provider_attempt(attempt_ref)
+        for result in results
+        for attempt_ref in result.attempt_refs
+    )
+    attempt_statuses = {
+        (attempt["provider"], attempt["endpoint"], attempt["status"], attempt["remote_attempted"], attempt["gap_codes"])
+        for attempt in attempts
+        if attempt is not None
+    }
+    assert {
+        ("crypto_glassnode_onchain", "deep_onchain_metrics", "source_not_configured", False, ()),
+        ("crypto_token_terminal_fundamentals", "protocol_revenue", "source_not_configured", False, ()),
+        ("crypto_lunarcrush_social", "topic", "source_not_configured", False, ()),
+    }.issubset(attempt_statuses)
+    assert all(status == "source_not_configured" for _provider, _endpoint, status, _attempted, _gaps in attempt_statuses)
+
+
+def test_data_service_does_not_report_unconfigured_non_crypto_paid_source_as_credential_gap() -> None:
+    repository = DatasetRepository()
+    service = DataService(
+        query_planner=QueryPlanner(),
+        warehouse=_AlwaysMissingWarehouse(),
+        provider_selector=ProviderSelector(
+            build_minimal_provider_registry(),
+            credential_resolver=_credential_resolver(()),
+        ),
+        coalescer=_NoRemoteCoalescer(),
+        batch_planner=_NoRemoteBatchPlanner(),
+        execution_gate=_NoRemoteExecutionGate(),
+        fetch_engine=_NoRemoteFetchEngine(),
+        ingest=_real_ingest(repository),
+    )
+    payload = _us_alpha_vantage_request("req-us-alpha-unconfigured").model_dump()
+    payload["source_role_required"] = "paid_data"
+    request = DataRequest.model_validate(payload)
+
+    [result] = service.get_data_batch((request,))
+
+    assert result.status == DataResultStatus.MISSING
+    assert [gap.reason for gap in result.gaps] == [GapReason.WAREHOUSE_MISSING]
+    attempts = tuple(repository.get_provider_attempt(attempt_ref) for attempt_ref in result.attempt_refs)
+    assert {
+        (attempt["provider"], attempt["status"], attempt["remote_attempted"], attempt["gap_codes"])
+        for attempt in attempts
+        if attempt is not None
+    } == {
+        ("us_alpha_vantage_data", "source_not_configured", False, ()),
+    }
+
+
 class _WaveWarehouse:
     def __init__(self, events: list[str]) -> None:
         self._events = events
@@ -1303,6 +1707,49 @@ class _FallbackSelector:
         return {"count": len(candidates)}
 
 
+class _CredentialSkipSelector:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self.skipped_candidates: tuple[SimpleNamespace, ...] = ()
+
+    def select_candidates(self, gaps, plan):
+        del plan
+        self._events.append("provider_selector.select_candidates")
+        request_id = gaps[0].request_id
+        self.skipped_candidates = (
+            SimpleNamespace(
+                request_id=request_id,
+                provider_id="paid-provider",
+                endpoint_id="daily",
+                market=Market.CN_A,
+                data_type="daily_bar",
+                granularity="daily",
+                source_role="paid_data",
+                reason="credential_missing",
+                remote_attempted=False,
+                credential_names=("data_source:paid",),
+            ),
+        )
+        return (
+            {
+                "request_id": request_id,
+                "provider_id": "public-provider",
+                "endpoint_id": "daily",
+                "market": Market.CN_A,
+                "data_type": "daily_bar",
+                "granularity": "daily",
+                "source_role": "built_in_public",
+                "priority_rank": 10,
+                "symbol_id": "600519.SH",
+                "fields": ("close",),
+            },
+        )
+
+    def read_capabilities(self, candidates):
+        self._events.append("provider_selector.read_capabilities")
+        return {"count": len(candidates)}
+
+
 class _PassThroughCoalescer:
     def __init__(self, events: list[str]) -> None:
         self._events = events
@@ -1350,4 +1797,108 @@ class _ProviderTrackingFetchEngine:
             payload={"rows": [{"close": 9.0}]},
             row_count=1,
             fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+
+class _RateLimitThenSuccessFetchEngine:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def fetch(self, batch):
+        self._events.append(f"fetch:{batch.provider_id}")
+        if batch.provider_id == "provider-fast":
+            return FetchResult(
+                fetch_id=f"fetch:{batch.provider_id}",
+                batch_id=batch.batch_id,
+                provider_id=batch.provider_id,
+                endpoint_id=batch.endpoint_id,
+                market=batch.market,
+                symbol_ids=batch.symbol_ids,
+                status=FetchStatus.RATE_LIMITED,
+                error_code="http_429",
+                error_message="rate_limited",
+                fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
+            )
+        return FetchResult(
+            fetch_id=f"fetch:{batch.provider_id}",
+            batch_id=batch.batch_id,
+            provider_id=batch.provider_id,
+            endpoint_id=batch.endpoint_id,
+            market=batch.market,
+            symbol_ids=batch.symbol_ids,
+            status=FetchStatus.SUCCESS,
+            payload={"rows": [{"close": 9.0}]},
+            row_count=1,
+            fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+
+class _RateLimitThenRetrySuccessFetchEngine:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+        self._attempts_by_provider: dict[str, int] = {}
+
+    def fetch(self, batch):
+        self._events.append(f"fetch:{batch.provider_id}")
+        attempt = self._attempts_by_provider.get(batch.provider_id, 0)
+        self._attempts_by_provider[batch.provider_id] = attempt + 1
+        if batch.provider_id == "provider-fast" and attempt == 0:
+            return FetchResult(
+                fetch_id=f"fetch:{batch.provider_id}:rate-limited",
+                batch_id=batch.batch_id,
+                provider_id=batch.provider_id,
+                endpoint_id=batch.endpoint_id,
+                market=batch.market,
+                symbol_ids=batch.symbol_ids,
+                status=FetchStatus.RATE_LIMITED,
+                error_code="http_429",
+                error_message="rate_limited",
+                fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
+            )
+        return FetchResult(
+            fetch_id=f"fetch:{batch.provider_id}:success",
+            batch_id=batch.batch_id,
+            provider_id=batch.provider_id,
+            endpoint_id=batch.endpoint_id,
+            market=batch.market,
+            symbol_ids=batch.symbol_ids,
+            status=FetchStatus.SUCCESS,
+            payload={"rows": [{"close": 9.0}]},
+            row_count=1,
+            fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+
+class _RateLimitAwareIngest(_Ingest):
+    def ingest(self, result, batch):
+        self._events.append("ingest.ingest")
+        if result.status == FetchStatus.RATE_LIMITED:
+            return IngestResult(
+                ingest_id=f"ingest:{batch.provider_id}",
+                batch_id=batch.batch_id,
+                status="failed",
+                attempt_refs=(f"attempt:{batch.provider_id}",),
+                gaps=(
+                    DataGap.by_reason(
+                        "rate_limited",
+                        request_id=batch.request_ids[0],
+                        market=batch.market,
+                        data_type=batch.data_type,
+                        granularity=batch.granularity,
+                        symbol_id=batch.symbol_ids[0] if batch.symbol_ids else None,
+                        evidence_refs=(f"attempt:{batch.provider_id}",),
+                    ),
+                ),
+                remote_success=False,
+                created_at=datetime(2026, 5, 31, tzinfo=UTC),
+            )
+        return IngestResult(
+            ingest_id=f"ingest:{batch.provider_id}",
+            batch_id=batch.batch_id,
+            status="ingested",
+            dataset_refs=(f"dataset:{batch.provider_id}",),
+            raw_refs=(f"raw:{batch.provider_id}",),
+            attempt_refs=(f"attempt:{batch.provider_id}",),
+            remote_success=True,
+            created_at=datetime(2026, 5, 31, tzinfo=UTC),
         )

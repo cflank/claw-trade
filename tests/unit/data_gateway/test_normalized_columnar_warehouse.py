@@ -91,6 +91,145 @@ def _daily_row_for_day(day_offset: int, symbol: str = "600519.SH") -> dict[str, 
     return row
 
 
+def _crypto_quote_row(*, dataset_ref: str, day: str, price: float) -> dict[str, object]:
+    return {
+        "dataset_ref": dataset_ref,
+        "dataset": "quote_snapshot",
+        "market": "CRYPTO",
+        "symbol_id": "SOLUSDT",
+        "universe_ref": None,
+        "granularity": "realtime",
+        "period_start": day,
+        "period_end": day,
+        "as_of": datetime.fromisoformat(f"{day}T00:00:00+00:00"),
+        "fresh_until": datetime.fromisoformat(f"{day}T00:05:00+00:00"),
+        "source_roles": ("official",),
+        "exchange": "BINANCE",
+        "currency": "USDT",
+        "timezone": "UTC",
+        "calendar": "CRYPTO_24_7",
+        "base_asset": "SOL",
+        "quote_asset": "USDT",
+        "provider_lineage": {"provider_id": "crypto_binance_spot_market", "endpoint_id": "ticker_24hr"},
+        "schema_id": "quote_snapshot.v1",
+        "quality_flags": (),
+        "price": price,
+        "price_unit": "USDT",
+        "timestamp": datetime.fromisoformat(f"{day}T00:00:00+00:00"),
+    }
+
+
+def _crypto_derivative_row(
+    *,
+    dataset_ref: str,
+    endpoint_id: str,
+    fields: Mapping[str, object],
+) -> dict[str, object]:
+    base: dict[str, object] = {
+        "dataset_ref": dataset_ref,
+        "dataset": "crypto_derivative_metric",
+        "market": "CRYPTO",
+        "symbol_id": "SOLUSDT",
+        "universe_ref": None,
+        "granularity": "1h",
+        "period_start": "2026-06-10",
+        "period_end": "2026-06-10",
+        "as_of": datetime(2026, 6, 10, tzinfo=UTC),
+        "fresh_until": datetime(2026, 6, 10, 1, tzinfo=UTC),
+        "source_roles": ("paid_data",),
+        "exchange": "COINGLASS",
+        "currency": "USDT",
+        "timezone": "UTC",
+        "calendar": "CRYPTO_24_7",
+        "base_asset": "SOL",
+        "quote_asset": "USDT",
+        "provider_lineage": {"provider_id": "crypto_coinglass_derivatives", "endpoint_id": endpoint_id},
+        "schema_id": "crypto_derivative_metric.v1",
+        "quality_flags": (),
+        "source_raw_refs": (f"raw:{endpoint_id}",),
+        "timestamp": datetime(2026, 6, 10, tzinfo=UTC),
+    }
+    base.update(fields)
+    base["field_set"] = tuple(sorted(key for key in base if key not in {"dataset_ref", "field_set"}))
+    return base
+
+
+def _crypto_valuation_row(
+    *,
+    dataset_ref: str,
+    source_role: str,
+    provider_id: str,
+    endpoint_id: str,
+    fields: Mapping[str, object],
+) -> dict[str, object]:
+    base: dict[str, object] = {
+        "dataset_ref": dataset_ref,
+        "dataset": "valuation_metric",
+        "market": "CRYPTO",
+        "symbol_id": "BNBUSDT",
+        "universe_ref": None,
+        "granularity": "realtime",
+        "period_start": "2026-06-10",
+        "period_end": "2026-06-10",
+        "as_of": datetime(2026, 6, 10, tzinfo=UTC),
+        "fresh_until": datetime(2026, 6, 10, 1, tzinfo=UTC),
+        "source_roles": (source_role,),
+        "exchange": "CRYPTO",
+        "currency": "USDT",
+        "timezone": "UTC",
+        "calendar": "CRYPTO_24_7",
+        "base_asset": "BNB",
+        "quote_asset": "USDT",
+        "provider_lineage": {"provider_id": provider_id, "endpoint_id": endpoint_id},
+        "schema_id": "valuation_metric.v1",
+        "quality_flags": (),
+        "timestamp": datetime(2026, 6, 10, tzinfo=UTC),
+    }
+    base.update(fields)
+    base["field_set"] = tuple(sorted(key for key in base if key not in {"dataset_ref", "field_set"}))
+    return base
+
+
+def _crypto_intraday_row(*, hour: int, close: float) -> dict[str, object]:
+    start = datetime(2026, 6, 10, hour, tzinfo=UTC)
+    end = start + timedelta(minutes=59, seconds=59, milliseconds=999)
+    start_ref = start.isoformat().replace("+00:00", "Z")
+    end_ref = end.isoformat().replace("+00:00", "Z")
+    return {
+        "dataset_ref": f"dataset:intraday_bar:CRYPTO:spot:BTCUSDT:1h:{start_ref}:{end_ref}",
+        "dataset": "intraday_bar",
+        "market": "CRYPTO",
+        "symbol_id": "BTCUSDT",
+        "universe_ref": "binance_spot_all_symbols",
+        "granularity": "1h",
+        "period_start": start,
+        "period_end": end,
+        "field_set": ("open", "high", "low", "close", "volume", "amount", "open_time", "close_time"),
+        "as_of": end,
+        "fresh_until": end + timedelta(hours=1),
+        "source_roles": ("official",),
+        "exchange": "BINANCE",
+        "currency": "USDT",
+        "timezone": "UTC",
+        "calendar": "CRYPTO_24_7",
+        "base_asset": "BTC",
+        "quote_asset": "USDT",
+        "provider_lineage": {"provider_id": "crypto_binance_spot_market", "endpoint_id": "spot_intraday_bar"},
+        "schema_id": "intraday_bar.v1",
+        "quality_flags": (),
+        "open": close - 1.0,
+        "high": close + 2.0,
+        "low": close - 2.0,
+        "close": close,
+        "volume": 10.0 + hour,
+        "volume_unit": "BTC",
+        "amount": (10.0 + hour) * close,
+        "amount_unit": "USDT",
+        "open_time": start,
+        "close_time": end,
+    }
+
+
 def _warehouse_check(symbol: str = "600519.SH") -> WarehouseCheck:
     return WarehouseCheck(
         request_id=f"req-parquet:{symbol}",
@@ -278,6 +417,103 @@ def test_columnar_batch_upsert_dedupes_duplicate_dataset_refs_before_writing(tmp
     assert result.rows[0]["close"] == 12.5
 
 
+def test_realtime_columnar_upsert_supersedes_stale_same_symbol_manifest(tmp_path) -> None:
+    repository = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    repository.upsert_normalized_documents(
+        (_crypto_quote_row(dataset_ref="dataset:quote_snapshot:CRYPTO:old-short-ref", day="2026-06-09", price=100.0),)
+    )
+    old_manifest = repository.list_dataset_manifests()[0]
+    Path(str(old_manifest["path"])).unlink()
+
+    repository.upsert_normalized_documents(
+        (_crypto_quote_row(dataset_ref="dataset:quote_snapshot:CRYPTO:new-short-ref", day="2026-06-10", price=110.0),)
+    )
+
+    manifests = {str(item["manifest_ref"]): item for item in repository.list_dataset_manifests()}
+    old_manifest_after = manifests[str(old_manifest["manifest_ref"])]
+    assert old_manifest_after["status"] == "superseded"
+    result = Warehouse(repository).check(
+        (
+            WarehouseCheck(
+                request_id="req-parquet:SOLUSDT:quote",
+                market=Market.CRYPTO,
+                symbol_id="SOLUSDT",
+                universe_ref=None,
+                data_type="quote_snapshot",
+                granularity="realtime",
+                fields=("price", "timestamp", "symbol_id"),
+                date_range_start=datetime(2026, 6, 9, tzinfo=UTC),
+                date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+                freshness_policy="realtime",
+                timezone="UTC",
+                calendar="CRYPTO_24_7",
+            ),
+        ),
+        CoverageRequirement(
+            request_ids=("req-parquet:SOLUSDT:quote",),
+            expected_outputs=("quote_snapshot",),
+            required_fields_by_request={"req-parquet:SOLUSDT:quote": ("price", "timestamp", "symbol_id")},
+        ),
+    )
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["price"] == 110.0
+    assert not any(gap.reason == GapReason.DATA_INTEGRITY_FAILED for gap in result.gaps)
+
+
+def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> None:
+    repository = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+
+    repository.upsert_normalized_documents((_crypto_intraday_row(hour=0, close=100.0),))
+    repository.upsert_normalized_documents((_crypto_intraday_row(hour=1, close=101.0),))
+
+    active_manifests = tuple(
+        manifest
+        for manifest in repository.list_dataset_manifests()
+        if manifest["dataset"] == "intraday_bar" and manifest["status"] == "active"
+    )
+    rows = repository.query_normalized(
+        dataset="intraday_bar",
+        market="CRYPTO",
+        symbol_id="BTCUSDT",
+        universe_ref="binance_spot_all_symbols",
+        date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+        date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+        require_integrity_metadata=True,
+        include_row=True,
+        fields=("close", "volume"),
+    )
+    coverage = repository.aggregate_normalized_coverage(
+        dataset="intraday_bar",
+        market="CRYPTO",
+        symbol_id="BTCUSDT",
+        universe_ref="binance_spot_all_symbols",
+        date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+        date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+        require_integrity_metadata=True,
+    )
+
+    assert len(active_manifests) == 2
+    assert sorted(str(manifest["period_start_min"]) for manifest in active_manifests) == [
+        "2026-06-10T00:00:00+00:00",
+        "2026-06-10T01:00:00+00:00",
+    ]
+    assert len(rows) == 2
+    assert {record.period_start for record in rows} == {
+        "2026-06-10T00:00:00+00:00",
+        "2026-06-10T01:00:00+00:00",
+    }
+    assert {record.row["close"] for record in rows} == {100.0, 101.0}
+    assert coverage is not None
+    assert coverage.record_count == 2
+
+
 def test_columnar_manifest_lookup_uses_targeted_query_not_full_scan(tmp_path) -> None:
     collections: dict[str, object] = _collections()
     manifest_collection = _ManifestCollection()
@@ -307,7 +543,7 @@ def test_columnar_manifest_lookup_uses_targeted_query_not_full_scan(tmp_path) ->
     assert query_call["status"] == "active"
     assert query_call["dataset"] == "daily_bar"
     assert query_call["market"] == "CN_A"
-    assert query_call["period_start_min"] == {"$lte": "2026-06-04"}
+    assert query_call["period_start_min"] == {"$lte": "2026-06-04T23:59:59.999999"}
     assert query_call["period_end_max"] == {"$gte": "2026-06-04"}
 
 
@@ -326,6 +562,287 @@ def test_warehouse_reads_normalized_rows_from_parquet(tmp_path) -> None:
     assert result.rows[0]["volume"] == 1000
     assert "high" not in result.rows[0]
     assert result.dataset_refs
+
+
+def test_metric_columnar_manifests_with_different_fields_do_not_supersede_each_other(tmp_path) -> None:
+    collections = _collections()
+    repository = DatasetRepository(
+        collections=collections,
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    repository.upsert_normalized_documents(
+        (
+            _crypto_derivative_row(
+                dataset_ref="dataset:crypto_derivative_metric:CRYPTO:SOLUSDT:funding:2026-06-10",
+                endpoint_id="futures_funding_rate",
+                fields={"funding_rate": 0.0001, "funding_rate_unit": "ratio"},
+            ),
+        )
+    )
+    repository.upsert_normalized_documents(
+        (
+            _crypto_derivative_row(
+                dataset_ref="dataset:crypto_derivative_metric:CRYPTO:SOLUSDT:long-short:2026-06-10",
+                endpoint_id="futures_long_short_ratio",
+                fields={"long_short_ratio": 1.25},
+            ),
+        )
+    )
+
+    active_manifests = [
+        item
+        for item in collections["dataset_manifests"].values()
+        if item["dataset"] == "crypto_derivative_metric" and item["status"] == "active"
+    ]
+    assert len(active_manifests) == 2
+
+    warehouse = Warehouse(repository)
+    funding_result = warehouse.check(
+        (
+            WarehouseCheck(
+                request_id="req-sol-funding",
+                market=Market.CRYPTO,
+                symbol_id="SOLUSDT",
+                universe_ref=None,
+                data_type="crypto_derivative_metric",
+                granularity="1h",
+                fields=("funding_rate", "funding_rate_unit"),
+                date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+                date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+                freshness_policy="trading_day",
+                timezone="UTC",
+                calendar="CRYPTO_24_7",
+                source_role_required="paid_data",
+                as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
+            ),
+        ),
+        None,
+    )
+    long_short_result = warehouse.check(
+        (
+            WarehouseCheck(
+                request_id="req-sol-long-short",
+                market=Market.CRYPTO,
+                symbol_id="SOLUSDT",
+                universe_ref=None,
+                data_type="crypto_derivative_metric",
+                granularity="1h",
+                fields=("long_short_ratio",),
+                date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+                date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+                freshness_policy="trading_day",
+                timezone="UTC",
+                calendar="CRYPTO_24_7",
+                source_role_required="paid_data",
+                as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
+            ),
+        ),
+        None,
+    )
+
+    assert funding_result.satisfied is True
+    assert len(funding_result.rows) == 1
+    assert funding_result.rows[0]["funding_rate"] == 0.0001
+    assert long_short_result.satisfied is True
+    assert len(long_short_result.rows) == 1
+    assert long_short_result.rows[0]["long_short_ratio"] == 1.25
+
+
+def test_metric_columnar_manifests_keep_cvd_when_taker_fields_overlap(tmp_path) -> None:
+    collections = _collections()
+    repository = DatasetRepository(
+        collections=collections,
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    repository.upsert_normalized_documents(
+        (
+            _crypto_derivative_row(
+                dataset_ref="dataset:crypto_derivative_metric:CRYPTO:SOLUSDT:cvd:2026-06-10",
+                endpoint_id="futures_cvd_history",
+                fields={
+                    "cvd": 100.0,
+                    "taker_buy_volume": 60.0,
+                    "taker_sell_volume": 40.0,
+                    "taker_volume_unit": "USD",
+                },
+            ),
+        )
+    )
+    repository.upsert_normalized_documents(
+        (
+            _crypto_derivative_row(
+                dataset_ref="dataset:crypto_derivative_metric:CRYPTO:SOLUSDT:taker:2026-06-10",
+                endpoint_id="futures_taker_buy_sell",
+                fields={
+                    "taker_buy_volume": 70.0,
+                    "taker_sell_volume": 30.0,
+                    "taker_buy_sell_ratio": 2.3333333333,
+                    "taker_volume_unit": "USD",
+                },
+            ),
+        )
+    )
+
+    active_manifests = [
+        item
+        for item in collections["dataset_manifests"].values()
+        if item["dataset"] == "crypto_derivative_metric" and item["status"] == "active"
+    ]
+    assert len(active_manifests) == 2
+
+    cvd_result = Warehouse(repository).check(
+        (
+            WarehouseCheck(
+                request_id="req-sol-cvd",
+                market=Market.CRYPTO,
+                symbol_id="SOLUSDT",
+                universe_ref=None,
+                data_type="crypto_derivative_metric",
+                granularity="1h",
+                fields=("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit"),
+                date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+                date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+                freshness_policy="trading_day",
+                timezone="UTC",
+                calendar="CRYPTO_24_7",
+                source_role_required="paid_data",
+                as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
+            ),
+        ),
+        None,
+    )
+
+    assert cvd_result.satisfied is True
+    assert len(cvd_result.rows) == 1
+    assert cvd_result.rows[0]["cvd"] == 100.0
+
+
+def test_public_valuation_manifest_does_not_supersede_paid_manifest(tmp_path) -> None:
+    collections = _collections()
+    repository = DatasetRepository(
+        collections=collections,
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    dataset_ref = "dataset:valuation_metric:CRYPTO:BNBUSDT:realtime:2026-06-10:2026-06-10"
+    repository.upsert_normalized_documents(
+        (
+            _crypto_valuation_row(
+                dataset_ref=dataset_ref,
+                source_role="paid_data",
+                provider_id="crypto_coinglass_derivatives",
+                endpoint_id="spot_coins_markets",
+                fields={
+                    "price": 650.0,
+                    "price_unit": "USD",
+                    "market_cap": 95000000000.0,
+                    "market_cap_unit": "USD",
+                    "fdv": 96000000000.0,
+                    "fdv_unit": "USD",
+                    "total_supply": 147000000.0,
+                    "supply_unit": "BNB",
+                },
+            ),
+        )
+    )
+    paid_manifest_ref = repository.list_dataset_manifests()[0]["manifest_ref"]
+    repository.upsert_normalized_documents(
+        (
+            _crypto_valuation_row(
+                dataset_ref=dataset_ref,
+                source_role="built_in_public",
+                provider_id="crypto_coingecko_market",
+                endpoint_id="coins_markets",
+                fields={
+                    "price": 640.0,
+                    "price_unit": "USD",
+                    "market_cap": 94000000000.0,
+                    "market_cap_unit": "USD",
+                },
+            ),
+        )
+    )
+
+    manifests = {str(item["manifest_ref"]): item for item in repository.list_dataset_manifests()}
+    assert manifests[str(paid_manifest_ref)]["status"] == "active"
+
+    rows = repository.query_normalized(
+        dataset="valuation_metric",
+        market="CRYPTO",
+        symbol_id="BNBUSDT",
+        universe_ref=None,
+        date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+        date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+        require_integrity_metadata=True,
+        include_row=True,
+        fields=("price", "market_cap", "fdv", "total_supply"),
+    )
+    assert len(rows) == 1
+    assert rows[0].source_roles == ("paid_data",)
+    assert rows[0].row["fdv"] == 96000000000.0
+
+
+def test_warehouse_prefers_required_paid_source_role_when_public_rows_also_exist(tmp_path) -> None:
+    repository = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    repository.upsert_normalized_documents(
+        (
+            _crypto_valuation_row(
+                dataset_ref="dataset:valuation_metric:CRYPTO:BNBUSDT:realtime:2026-06-10:2026-06-10",
+                source_role="paid_data",
+                provider_id="crypto_coinglass_derivatives",
+                endpoint_id="spot_coins_markets",
+                fields={
+                    "price": 650.0,
+                    "price_unit": "USD",
+                    "market_cap": 95000000000.0,
+                    "market_cap_unit": "USD",
+                    "fdv": 96000000000.0,
+                    "fdv_unit": "USD",
+                },
+            ),
+            _crypto_valuation_row(
+                dataset_ref="dataset:valuation_metric:CRYPTO:BNBUSDT:realtime:2026-06-10T00:01:00:2026-06-10T00:01:00",
+                source_role="built_in_public",
+                provider_id="crypto_coingecko_market",
+                endpoint_id="coins_markets",
+                fields={
+                    "price": 640.0,
+                    "price_unit": "USD",
+                    "market_cap": 94000000000.0,
+                    "market_cap_unit": "USD",
+                },
+            ),
+        )
+    )
+
+    result = Warehouse(repository).check(
+        (
+            WarehouseCheck(
+                request_id="req-bnb-paid-valuation",
+                market=Market.CRYPTO,
+                symbol_id="BNBUSDT",
+                universe_ref=None,
+                data_type="valuation_metric",
+                granularity="realtime",
+                fields=("price", "market_cap", "fdv"),
+                date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+                date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+                freshness_policy="ttl_1h",
+                timezone="UTC",
+                calendar="CRYPTO_24_7",
+                source_role_required="paid_data",
+                as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
+            ),
+        ),
+        None,
+    )
+
+    assert result.satisfied is True
+    assert len(result.rows) == 1
+    assert result.rows[0]["price"] == 650.0
+    assert result.rows[0]["fdv"] == 96000000000.0
 
 
 def test_repository_projects_requested_fields_from_columnar_rows(tmp_path) -> None:

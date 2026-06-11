@@ -57,7 +57,7 @@ class Normalizer:
             _normalize_temporal_fields(next_row)
             mapped_rows.append(next_row)
 
-        required = tuple(getattr(batch, "fields_union", ()) or getattr(batch, "required_fields", ()))
+        required = _normalization_required_fields(batch)
         missing = tuple(field for field in required if not any(field in row and row[field] is not None for row in mapped_rows))
         if missing:
             gaps.append(
@@ -107,6 +107,15 @@ def _coerce_rows(payload: Any) -> tuple[dict[str, Any], ...]:
     if isinstance(payload, list):
         return tuple(dict(item) for item in payload if isinstance(item, dict))
     return ()
+
+
+def _normalization_required_fields(batch: Any) -> tuple[str, ...]:
+    requested = tuple(str(field).strip() for field in tuple(getattr(batch, "fields_union", ()) or getattr(batch, "required_fields", ())) if str(field).strip())
+    capability_fields = tuple(str(field).strip() for field in tuple(getattr(batch, "capability_fields", ()) or ()) if str(field).strip())
+    if not requested or not capability_fields:
+        return requested
+    capability_set = set(capability_fields)
+    return tuple(field for field in requested if field in capability_set)
 
 
 def _map_field_aliases(row: dict[str, Any]) -> dict[str, Any]:

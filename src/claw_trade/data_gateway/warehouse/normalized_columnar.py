@@ -90,8 +90,9 @@ class NormalizedColumnarWarehouse:
             "symbol_ids": tuple(dict.fromkeys(str(record.get("symbol_id")) for record in records if record.get("symbol_id"))),
             "universe_refs": tuple(dict.fromkeys(str(record.get("universe_ref")) for record in records if record.get("universe_ref"))),
             "field_set": tuple(sorted({field for record in records for field in tuple(record.get("field_set", ()) or ())})),
-            "period_start_min": min((_date_text(record.get("period_start")) or "") for record in records),
-            "period_end_max": max((_date_text(record.get("period_end")) or "") for record in records),
+            "source_roles": tuple(sorted({str(role) for record in records for role in tuple(record.get("source_roles", ()) or ()) if str(role)})),
+            "period_start_min": min((_period_text(record.get("period_start")) or "") for record in records),
+            "period_end_max": max((_period_text(record.get("period_end")) or "") for record in records),
             "sha256": file_sha256,
             "hash_algorithm": "sha256",
             "created_at": datetime.now(tz=UTC).isoformat(),
@@ -118,13 +119,13 @@ class NormalizedColumnarWarehouse:
             market=market,
             symbol_id=symbol_id,
             universe_ref=universe_ref,
-            start=_date_text(date_range_start),
-            end=_date_text(date_range_end),
+            start=_range_start_text(date_range_start),
+            end=_range_end_text(date_range_end),
         )
         if not selected_manifests:
             return ()
-        start = _date_text(date_range_start)
-        end = _date_text(date_range_end)
+        start = _range_start_text(date_range_start)
+        end = _range_end_text(date_range_end)
         rows = tuple(
             self.iter_documents(
                 dataset=dataset,
@@ -149,11 +150,12 @@ class NormalizedColumnarWarehouse:
         market = str(kwargs["market"])
         symbol_id = kwargs.get("symbol_id")
         universe_ref = kwargs.get("universe_ref")
-        start = _date_text(kwargs.get("date_range_start"))
-        end = _date_text(kwargs.get("date_range_end"))
+        start = _range_start_text(kwargs.get("date_range_start"))
+        end = _range_end_text(kwargs.get("date_range_end"))
         require_integrity_metadata = bool(kwargs.get("require_integrity_metadata", False))
         include_row = bool(kwargs.get("include_row", True))
-        fields = _projected_fields(kwargs.get("fields"))
+        requested_fields = _requested_fields(kwargs.get("fields"))
+        fields = _projected_fields(requested_fields)
         selected_manifests = (
             manifests
             if already_selected
@@ -190,6 +192,8 @@ class NormalizedColumnarWarehouse:
                     fields=fields,
                 )
                 for row in rows:
+                    if requested_fields and not _document_has_requested_fields(row, requested_fields):
+                        continue
                     ref = str(row.get("dataset_ref"))
                     if ref in seen_refs:
                         continue
@@ -210,8 +214,8 @@ class NormalizedColumnarWarehouse:
             market=str(kwargs["market"]),
             symbol_id=kwargs.get("symbol_id"),
             universe_ref=kwargs.get("universe_ref"),
-            start=_date_text(kwargs.get("date_range_start")),
-            end=_date_text(kwargs.get("date_range_end")),
+            start=_range_start_text(kwargs.get("date_range_start")),
+            end=_range_end_text(kwargs.get("date_range_end")),
         )
         total = 0
         for manifest in selected_manifests:
@@ -223,8 +227,8 @@ class NormalizedColumnarWarehouse:
                 market=str(kwargs["market"]),
                 symbol_id=kwargs.get("symbol_id"),
                 universe_ref=kwargs.get("universe_ref"),
-                start=_date_text(kwargs.get("date_range_start")),
-                end=_date_text(kwargs.get("date_range_end")),
+                start=_range_start_text(kwargs.get("date_range_start")),
+                end=_range_end_text(kwargs.get("date_range_end")),
                 require_integrity_metadata=bool(kwargs.get("require_integrity_metadata", False)),
             )
         return total
@@ -242,8 +246,8 @@ class NormalizedColumnarWarehouse:
         manifests: Sequence[Mapping[str, Any]] = (),
         sample_limit: int = 50,
     ) -> dict[str, Any] | None:
-        start = _date_text(date_range_start)
-        end = _date_text(date_range_end)
+        start = _range_start_text(date_range_start)
+        end = _range_end_text(date_range_end)
         selected_manifests = self._selected_manifests(
             manifests,
             dataset=dataset,
@@ -555,8 +559,8 @@ class NormalizedColumnarWarehouse:
         universe_refs = tuple(str(item) for item in tuple(manifest.get("universe_refs", ()) or ()))
         if universe_ref and universe_refs and universe_ref not in universe_refs:
             return False
-        manifest_start = _date_text(manifest.get("period_start_min"))
-        manifest_end = _date_text(manifest.get("period_end_max"))
+        manifest_start = _period_text(manifest.get("period_start_min"))
+        manifest_end = _range_end_text(manifest.get("period_end_max"))
         if end and manifest_start and manifest_start > end:
             return False
         if start and manifest_end and manifest_end < start:
@@ -622,8 +626,8 @@ def _parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
         "symbol_id": _optional_text(record.get("symbol_id")),
         "universe_ref": _optional_text(record.get("universe_ref")),
         "granularity": str(record.get("granularity") or ""),
-        "period_start": _date_text(record.get("period_start")),
-        "period_end": _date_text(record.get("period_end")),
+        "period_start": _period_text(record.get("period_start")),
+        "period_end": _period_text(record.get("period_end")),
         "field_set_json": json.dumps(field_set, ensure_ascii=False, default=str),
         "as_of": _datetime_text(record.get("as_of")),
         "fresh_until": _datetime_text(record.get("fresh_until")),
@@ -700,6 +704,14 @@ def _document_from_parquet_row(row: Mapping[str, Any], *, include_row: bool, fie
     return document
 
 
+def _document_has_requested_fields(document: Mapping[str, Any], fields: Sequence[str]) -> bool:
+    field_set = {str(field) for field in tuple(document.get("field_set", ()) or ())}
+    row = document.get("row")
+    row_fields = set(row) if isinstance(row, Mapping) else set()
+    document_fields = set(document)
+    return all(str(field) in field_set or str(field) in row_fields or str(field) in document_fields for field in fields)
+
+
 def _invalid_manifest_document(manifest: Mapping[str, Any], reason: str) -> dict[str, Any]:
     manifest_ref = str(manifest.get("manifest_ref") or manifest.get("path") or "manifest:unknown")
     dataset_refs = tuple(str(item) for item in tuple(manifest.get("dataset_refs", ()) or ()) if str(item).strip())
@@ -710,8 +722,8 @@ def _invalid_manifest_document(manifest: Mapping[str, Any], reason: str) -> dict
         "symbol_id": None,
         "universe_ref": None,
         "granularity": str(manifest.get("granularity") or ""),
-        "period_start": _date_text(manifest.get("period_start_min")),
-        "period_end": _date_text(manifest.get("period_end_max")),
+        "period_start": _period_text(manifest.get("period_start_min")),
+        "period_end": _period_text(manifest.get("period_end_max")),
         "field_set": tuple(manifest.get("field_set", ()) or ()),
         "as_of": None,
         "fresh_until": None,
@@ -742,6 +754,13 @@ _STRUCTURAL_ROW_FIELDS: tuple[str, ...] = ("open_time", "close_time", "timestamp
 
 
 def _projected_fields(value: Any) -> tuple[str, ...]:
+    requested = _requested_fields(value)
+    if not requested:
+        return ()
+    return tuple(dict.fromkeys((*requested, *_STRUCTURAL_ROW_FIELDS)))
+
+
+def _requested_fields(value: Any) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
@@ -750,8 +769,7 @@ def _projected_fields(value: Any) -> tuple[str, ...]:
         candidates = tuple(value)
     else:
         return ()
-    requested = tuple(str(field).strip() for field in candidates if str(field).strip())
-    return tuple(dict.fromkeys((*requested, *_STRUCTURAL_ROW_FIELDS)))
+    return tuple(str(field).strip() for field in candidates if str(field).strip())
 
 
 def _json_path_for_field(field: str) -> str:
@@ -777,15 +795,67 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
-def _date_text(value: Any) -> str | None:
+def _period_text(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value.date().isoformat()
+        return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
     text = str(value).strip()
-    return text[:10] if text else None
+    return text or None
+
+
+def _range_start_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat() if _is_midnight_datetime(value) else value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:10] if _is_date_only_text(text) or _is_midnight_text(text) else text
+
+
+def _range_end_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if _is_midnight_datetime(value):
+            return _end_of_day_text(value.date().isoformat())
+        return value.isoformat()
+    if isinstance(value, date):
+        return _end_of_day_text(value.isoformat())
+    text = str(value).strip()
+    if not text:
+        return None
+    if _is_date_only_text(text) or _is_midnight_text(text):
+        return _end_of_day_text(text[:10])
+    return text
+
+
+def _is_midnight_datetime(value: datetime) -> bool:
+    return value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0
+
+
+def _is_date_only_text(text: str) -> bool:
+    return len(text) == 10 and text[4:5] == "-" and text[7:8] == "-"
+
+
+def _is_midnight_text(text: str) -> bool:
+    if "T" not in text and " " not in text:
+        return False
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return _is_midnight_datetime(parsed)
+
+
+def _end_of_day_text(day: str) -> str:
+    return f"{day}T23:59:59.999999"
 
 
 def _datetime_text(value: Any) -> str | None:

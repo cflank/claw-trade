@@ -3,6 +3,7 @@
 Rule version: `bb-liquidity-derivatives-skill-v1`.
 
 Liquidation and derivatives data describe current levels, units, crowding readings, and sample limits. They do not prove direction, targets, or execution paths unless upstream evidence provides statistics or execution-mechanism proof.
+Liquidation map is BTC-only in the current claw-trade CRYPTO profile. For non-BTC assets, mark liquidation map as not applicable instead of treating it as a data gap.
 
 ## Required Inputs
 
@@ -92,7 +93,7 @@ Limits:
 ## Missing Data Behavior
 
 - Missing `derivatives`: do not conclude from funding, OI, CVD, or long/short ratio.
-- Missing `liquidation_map`: do not output liquidation cluster targets.
+- Missing `liquidation_map`: do not output liquidation cluster targets. For non-BTC assets, write BTC-only/not applicable rather than a missing-data conclusion.
 - `partial` derivatives: use as a risk filter only.
 - Browser-observed heatmap: label `browser_observed`; it cannot close `liquidation_map` gaps.
 

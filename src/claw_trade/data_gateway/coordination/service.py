@@ -4,6 +4,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from time import monotonic
+from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -70,6 +71,8 @@ class ExecutionGateLike(Protocol):
 
     def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: IngestResult) -> None: ...
 
+    def wait_after_rate_limited_fetch(self, batch: Any, fetch_result: Any) -> bool: ...
+
 
 class FetchEngineLike(Protocol):
     def fetch(self, batch: Any) -> Any: ...
@@ -79,6 +82,8 @@ class IngestLike(Protocol):
     def ingest(self, result: Any, batch: Any) -> IngestResult: ...
 
     def record_gate_result(self, batch: Any, gate: GateDecision) -> IngestResult: ...
+
+    def record_selector_skip(self, batch: Any, selector_skip: Any) -> IngestResult: ...
 
 
 class DataService:
@@ -260,12 +265,19 @@ class DataService:
 
         ingest_results: list[tuple[Any, IngestResult]] = []
         attempted_candidate_keys: set[tuple[Any, ...]] = set()
+        recorded_selector_skip_keys: set[tuple[Any, ...]] = set()
         final = initial
         while not final.satisfied:
             stage_started = monotonic()
+            selected_candidates = self.provider_selector.select_candidates(final.gaps, query_plan)
+            self._record_selector_skips(
+                query_plan=query_plan,
+                recorded_selector_skip_keys=recorded_selector_skip_keys,
+                ingest_results=ingest_results,
+            )
             candidates = tuple(
                 candidate
-                for candidate in self.provider_selector.select_candidates(final.gaps, query_plan)
+                for candidate in selected_candidates
                 if self._candidate_attempt_key(candidate) not in attempted_candidate_keys
             )
             self._log_data_service_event(
@@ -340,6 +352,18 @@ class DataService:
                     fetch_rows=self._safe_len(getattr(fetch_result, "rows", None)),
                     **batch_context,
                 )
+                retry_waiter = getattr(self.execution_gate, "wait_after_rate_limited_fetch", None)
+                if callable(retry_waiter) and retry_waiter(batch, fetch_result):
+                    stage_started = monotonic()
+                    self._log_data_service_event("fetch_retry_after_rate_limit_start", run_id=run_id, **batch_context)
+                    fetch_result = self.fetch_engine.fetch(batch)
+                    self._log_data_service_event(
+                        "fetch_retry_after_rate_limit_done",
+                        run_id=run_id,
+                        elapsed_ms=self._elapsed_ms(stage_started),
+                        fetch_rows=self._safe_len(getattr(fetch_result, "rows", None)),
+                        **batch_context,
+                    )
                 cooldown_marker = getattr(self.execution_gate, "mark_cooldown_after_fetch", None)
                 if callable(cooldown_marker):
                     cooldown_marker(batch, fetch_result)
@@ -433,9 +457,88 @@ class DataService:
     @staticmethod
     def _candidate_wave_key(candidate: Any) -> tuple[Any, ...]:
         source_role = str(DataService._read_any_attr(candidate, "source_role", ""))
+        if source_role == "paid_data" and bool(DataService._read_any_attr(candidate, "configured_paid_data", False)):
+            source_rank = -1
+        else:
+            source_rank = DataService._SOURCE_ROLE_ORDER.get(source_role, 99)
         return (
-            DataService._SOURCE_ROLE_ORDER.get(source_role, 99),
+            source_rank,
             int(DataService._read_any_attr(candidate, "priority_rank", 100)),
+        )
+
+    def _record_selector_skips(
+        self,
+        *,
+        query_plan: QueryPlan,
+        recorded_selector_skip_keys: set[tuple[Any, ...]],
+        ingest_results: list[tuple[Any, IngestResult]],
+    ) -> None:
+        skipped_candidates = tuple(getattr(self.provider_selector, "skipped_candidates", ()) or ())
+        if not skipped_candidates:
+            return
+        recorder = getattr(self.ingest, "record_selector_skip", None)
+        if not callable(recorder):
+            raise RuntimeError("ingest_record_selector_skip_missing")
+        for selector_skip in skipped_candidates:
+            key = self._selector_skip_key(selector_skip)
+            if key in recorded_selector_skip_keys:
+                continue
+            recorded_selector_skip_keys.add(key)
+            batch = self._selector_skip_batch(selector_skip, query_plan)
+            ingest_results.append((batch, recorder(batch, selector_skip)))
+
+    @staticmethod
+    def _selector_skip_key(selector_skip: Any) -> tuple[Any, ...]:
+        return (
+            DataService._read_any_attr(selector_skip, "request_id"),
+            DataService._read_any_attr(selector_skip, "provider_id"),
+            DataService._read_any_attr(selector_skip, "endpoint_id"),
+            DataService._read_any_attr(selector_skip, "market"),
+            DataService._read_any_attr(selector_skip, "data_type"),
+            DataService._read_any_attr(selector_skip, "granularity"),
+            DataService._read_any_attr(selector_skip, "reason"),
+        )
+
+    @staticmethod
+    def _selector_skip_batch(selector_skip: Any, query_plan: QueryPlan) -> SimpleNamespace:
+        request = query_plan.request_for_gap(selector_skip)
+        request_id = str(DataService._read_any_attr(selector_skip, "request_id", request.request_id))
+        provider_id = str(DataService._read_any_attr(selector_skip, "provider_id", "unknown_provider"))
+        endpoint_id = str(DataService._read_any_attr(selector_skip, "endpoint_id", "unknown_endpoint"))
+        symbol_id = request.symbol_id
+        return SimpleNamespace(
+            batch_id=f"selector-skip:{request_id}:{provider_id}:{endpoint_id}",
+            plan_id="selector-skip",
+            provider_id=provider_id,
+            endpoint_id=endpoint_id,
+            market=request.market,
+            data_type=request.data_type,
+            granularity=request.granularity,
+            request_ids=(request_id,),
+            symbol_ids=(symbol_id,) if symbol_id else (),
+            universe_ref=request.universe_ref,
+            date_range_start=request.date_range_start,
+            date_range_end=request.date_range_end,
+            exchange=request.exchange,
+            currency=request.currency,
+            timezone=request.timezone,
+            calendar=request.calendar,
+            base_asset=request.base_asset,
+            quote_asset=request.quote_asset,
+            fields_union=tuple(request.fields),
+            params_redacted={"selector_skip_reason": DataService._read_any_attr(selector_skip, "reason", "credential_missing")},
+            priority_rank=100,
+            required_level="required",
+            cache_key=f"selector-skip:{request_id}:{provider_id}:{endpoint_id}",
+            rate_limit_key=f"selector-skip:{provider_id}:{endpoint_id}",
+            cooldown_key=None,
+            rate_limit_policy=None,
+            single_flight_key=f"selector-skip:{request_id}:{provider_id}:{endpoint_id}",
+            lease_ttl_seconds=30,
+            wait_timeout_seconds=0,
+            provider_config_version="selector-skip",
+            license_policy=None,
+            as_of=datetime.now(tz=UTC),
         )
 
     @staticmethod
@@ -573,6 +676,7 @@ class DataService:
         gaps = self._drop_satisfied_date_range_missing_gaps(gaps, final_warehouse.satisfied)
         gaps = self._drop_filled_local_warehouse_empty_gaps(gaps, final_warehouse.rows)
         gaps = self._drop_satisfied_field_missing_gaps(gaps, final_warehouse.rows)
+        gaps = self._drop_shadowed_field_missing_gaps(gaps, final_warehouse.rows)
         gaps = self._dedupe_gaps(gaps)
         status = self._resolve_status(final_warehouse.satisfied, dataset_refs, gaps)
         return DataResult(
@@ -633,6 +737,32 @@ class DataService:
         return filtered
 
     @staticmethod
+    def _drop_shadowed_field_missing_gaps(gaps: Sequence[DataGap], rows: Sequence[Mapping[str, Any]]) -> list[DataGap]:
+        if rows:
+            return list(gaps)
+        concrete_reasons = {
+            GapReason.CREDENTIAL_MISSING,
+            GapReason.EMPTY_RESULT,
+            GapReason.RATE_LIMITED,
+            GapReason.COOLDOWN_SKIPPED,
+            GapReason.NOT_APPLICABLE,
+            GapReason.WAREHOUSE_MISSING,
+        }
+        has_concrete_gap_by_request: set[str] = {
+            gap.request_id
+            for gap in gaps
+            if gap.reason in concrete_reasons
+        }
+        return [
+            gap
+            for gap in gaps
+            if not (
+                gap.reason == GapReason.FIELD_MISSING
+                and gap.request_id in has_concrete_gap_by_request
+            )
+        ]
+
+    @staticmethod
     def _drop_satisfied_date_range_missing_gaps(gaps: Sequence[DataGap], satisfied: bool) -> list[DataGap]:
         if not satisfied:
             return list(gaps)
@@ -647,7 +777,7 @@ class DataService:
             for gap in gaps
             if not (
                 gap.reason == GapReason.WAREHOUSE_MISSING
-                and str(gap.human_readable).startswith("local_warehouse_empty")
+                and "local_warehouse_empty" in str(gap.human_readable)
             )
         ]
 
@@ -683,7 +813,15 @@ class DataService:
     @staticmethod
     def _coerce_gap(gap: Any, *, request_id: str) -> DataGap:
         if isinstance(gap, DataGap):
-            return gap
+            if gap.request_id == request_id:
+                return gap
+            reason = getattr(gap.reason, "value", gap.reason)
+            return gap.model_copy(
+                update={
+                    "request_id": request_id,
+                    "gap_id": f"gap:{request_id}:{reason}:{uuid4().hex[:10]}",
+                }
+            )
         if isinstance(gap, dict):
             reason = gap.get("reason", GapReason.PROVIDER_ERROR.value)
             message = str(gap.get("human_readable") or reason)

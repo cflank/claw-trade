@@ -97,14 +97,14 @@
 
 这些源不直接证明事实，只用于发现链接、补充覆盖和多语言搜索。
 
-| 环境变量 | provider | 放入资料包 | 用途 | 缺 key 行为 |
+| 环境变量 | provider | 放入资料包 | 用途 | 凭证行为 |
 |---|---|---|---|---|
-| `BRAVE_SEARCH_API_KEY` | Brave Search | news/social | 英文网页和新闻搜索 | 记录 `credential_missing`，不调用 |
-| `BOCHA_API_KEY` | Bocha | news/social | 中文/多语言搜索 | 记录 `credential_missing`，不调用 |
-| `NEWSAPI_API_KEY` | NewsAPI | news | 新闻检索 | 记录 `credential_missing`，不调用 |
-| `SERPAPI_API_KEY` | SerpAPI | news/social | Google / 新闻 / 网页搜索 | 记录 `credential_missing`，不调用 |
-| `TAVILY_API_KEY` | Tavily | news/social | AI search / 网页搜索 | 记录 `credential_missing`，不调用 |
-| `EXA_API_KEY` | Exa | news/social | 网页搜索 | 记录 `credential_missing`，不调用 |
+| `BRAVE_SEARCH_API_KEY` | Brave Search | news/social | 英文网页和新闻搜索 | 未配置/禁用则跳过且不生成用户缺口；启用但缺 key 才记录 `credential_missing`，不调用 |
+| `BOCHA_API_KEY` | Bocha | news/social | 中文/多语言搜索 | 未配置/禁用则跳过且不生成用户缺口；启用但缺 key 才记录 `credential_missing`，不调用 |
+| `NEWSAPI_API_KEY` | NewsAPI | news | 新闻检索 | 未配置/禁用则跳过且不生成用户缺口；启用但缺 key 才记录 `credential_missing`，不调用 |
+| `SERPAPI_API_KEY` | SerpAPI | news/social | Google / 新闻 / 网页搜索 | 未配置/禁用则跳过且不生成用户缺口；启用但缺 key 才记录 `credential_missing`，不调用 |
+| `TAVILY_API_KEY` | Tavily | news/social | AI search / 网页搜索 | 未配置/禁用则跳过且不生成用户缺口；启用但缺 key 才记录 `credential_missing`，不调用 |
+| `EXA_API_KEY` | Exa | news/social | 网页搜索 | 未配置/禁用则跳过且不生成用户缺口；启用但缺 key 才记录 `credential_missing`，不调用 |
 
 注意：
 

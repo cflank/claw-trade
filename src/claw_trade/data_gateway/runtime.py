@@ -67,6 +67,7 @@ def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
         normalized_store=NormalizedStore(repository=repository),
         attempt_log=AttemptLog(repository=repository),
     )
+    rate_limiter = RateLimiter(repository)
     service = DataService(
         query_planner=QueryPlanner(),
         warehouse=Warehouse(repository),
@@ -77,10 +78,10 @@ def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
         ),
         execution_gate=ExecutionGate(
             cache=ProviderResultCache(repository),
-            rate_limiter=RateLimiter(repository),
+            rate_limiter=rate_limiter,
             single_flight=SingleFlight(repository),
         ),
-        fetch_engine=FetchEngine(registry, credential_resolver=credential_resolver),
+        fetch_engine=FetchEngine(registry, credential_resolver=credential_resolver, rate_limiter=rate_limiter),
         ingest=ingest,
     )
     return DataGatewayRuntime(

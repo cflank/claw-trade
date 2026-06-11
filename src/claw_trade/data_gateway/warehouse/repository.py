@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from threading import RLock
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
@@ -58,6 +58,46 @@ REQUIRED_MULTI_MARKET_FIELDS: tuple[str, ...] = (
     "quality_flags",
 )
 STRUCTURAL_ROW_FIELDS: tuple[str, ...] = ("open_time", "close_time", "timestamp", "time")
+_COLUMNAR_ROW_REPLACEMENT_DATASETS: frozenset[str] = frozenset(
+    {"daily_bar", "intraday_bar", "quote_snapshot", "order_book_snapshot"}
+)
+_COLUMNAR_METRIC_STRUCTURAL_FIELDS: frozenset[str] = frozenset(
+    {
+        "as_of",
+        "base_asset",
+        "calendar",
+        "currency",
+        "dataset",
+        "date",
+        "exchange",
+        "fresh_until",
+        "granularity",
+        "market",
+        "period_end",
+        "period_start",
+        "provider_lineage",
+        "quality_flags",
+        "quote_asset",
+        "schema_id",
+        "source_raw_refs",
+        "source_roles",
+        "symbol_id",
+        "time",
+        "timestamp",
+        "timestamp_utc",
+        "timezone",
+        "universe_ref",
+    }
+)
+_SOURCE_ROLE_READ_PRIORITY: dict[str, int] = {
+    "local_seed": 0,
+    "official": 1,
+    "paid_data": 2,
+    "built_in_public": 20,
+    "sentiment": 30,
+    "discovery": 40,
+    "event_expectation": 50,
+}
 
 _PROVIDER_NAME_PREFIXES: tuple[str, ...] = (
     "tushare",
@@ -495,6 +535,58 @@ def _date_query_text(value: Any) -> str | None:
     return text[:10]
 
 
+def _columnar_range_start_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat() if _is_midnight_datetime(value) else value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:10] if _is_date_only_text(text) or _is_midnight_text(text) else text
+
+
+def _columnar_range_end_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if _is_midnight_datetime(value):
+            return _end_of_day_text(value.date().isoformat())
+        return value.isoformat()
+    if isinstance(value, date):
+        return _end_of_day_text(value.isoformat())
+    text = str(value).strip()
+    if not text:
+        return None
+    if _is_date_only_text(text) or _is_midnight_text(text):
+        return _end_of_day_text(text[:10])
+    return text
+
+
+def _is_midnight_datetime(value: datetime) -> bool:
+    return value.hour == 0 and value.minute == 0 and value.second == 0 and value.microsecond == 0
+
+
+def _is_date_only_text(text: str) -> bool:
+    return len(text) == 10 and text[4:5] == "-" and text[7:8] == "-"
+
+
+def _is_midnight_text(text: str) -> bool:
+    if "T" not in text and " " not in text:
+        return False
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return _is_midnight_datetime(parsed)
+
+
+def _end_of_day_text(day: str) -> str:
+    return f"{day}T23:59:59.999999"
+
+
 def _date_query_datetime_start(value: Any) -> datetime | None:
     parsed = _coerce_query_datetime(value)
     if parsed is not None:
@@ -805,11 +897,12 @@ class DatasetRepository:
                 existing_ref = str(existing.get("manifest_ref") or "").strip()
                 if not existing_ref or existing_ref == manifest_ref:
                     continue
-                existing_dataset_refs = {str(ref) for ref in tuple(existing.get("dataset_refs", ()) or ())}
-                existing_prefixes = {str(ref) for ref in tuple(existing.get("dataset_ref_prefixes", ()) or ())}
-                ref_overlap = bool(incoming_refs.intersection(existing_dataset_refs))
-                prefix_overlap = bool(incoming_prefixes and existing_prefixes and incoming_prefixes.intersection(existing_prefixes))
-                if not ref_overlap and not prefix_overlap:
+                if not self._columnar_manifest_should_supersede_existing(
+                    new_manifest,
+                    existing,
+                    incoming_refs=incoming_refs,
+                    incoming_prefixes=incoming_prefixes,
+                ):
                     continue
                 updated = dict(existing)
                 updated["status"] = "superseded"
@@ -822,6 +915,97 @@ class DatasetRepository:
                 new_manifest["supersedes_manifest_refs"] = tuple(superseded_refs)
             collection.set(manifest_ref, new_manifest)
 
+    @staticmethod
+    def _columnar_manifest_should_supersede_existing(
+        incoming: Mapping[str, Any],
+        existing: Mapping[str, Any],
+        *,
+        incoming_refs: set[str],
+        incoming_prefixes: set[str],
+    ) -> bool:
+        existing_dataset_refs = {str(ref) for ref in tuple(existing.get("dataset_refs", ()) or ())}
+        if incoming_refs.intersection(existing_dataset_refs):
+            return not DatasetRepository._incoming_manifest_has_lower_source_priority(incoming, existing)
+
+        existing_prefixes = {str(ref) for ref in tuple(existing.get("dataset_ref_prefixes", ()) or ())}
+        if (
+            incoming_prefixes
+            and existing_prefixes
+            and incoming_prefixes.intersection(existing_prefixes)
+            and DatasetRepository._manifest_prefix_supersession_allowed(incoming, existing)
+        ):
+            return not DatasetRepository._incoming_manifest_has_lower_source_priority(incoming, existing)
+
+        if str(incoming.get("granularity") or "") != str(existing.get("granularity") or ""):
+            return False
+        if not DatasetRepository._manifest_identity_overlaps(incoming, existing):
+            return False
+        if not DatasetRepository._manifest_replacement_scope_overlaps(incoming, existing):
+            return False
+        if DatasetRepository._incoming_manifest_has_lower_source_priority(incoming, existing):
+            return False
+        if str(incoming.get("granularity") or "") == "realtime":
+            return True
+        return DatasetRepository._manifest_date_range_overlaps(incoming, existing)
+
+    @staticmethod
+    def _incoming_manifest_has_lower_source_priority(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
+        return DatasetRepository._manifest_source_role_rank(incoming) > DatasetRepository._manifest_source_role_rank(existing)
+
+    @staticmethod
+    def _manifest_source_role_rank(manifest: Mapping[str, Any]) -> int:
+        roles = tuple(str(role) for role in tuple(manifest.get("source_roles", ()) or ()) if str(role).strip())
+        if not roles:
+            return 100
+        return min(_SOURCE_ROLE_READ_PRIORITY.get(role, 60) for role in roles)
+
+    @staticmethod
+    def _manifest_prefix_supersession_allowed(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
+        if str(incoming.get("granularity") or "") != str(existing.get("granularity") or ""):
+            return False
+        return str(incoming.get("granularity") or "") == "realtime"
+
+    @staticmethod
+    def _manifest_replacement_scope_overlaps(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
+        dataset = str(incoming.get("dataset") or "")
+        if dataset in _COLUMNAR_ROW_REPLACEMENT_DATASETS:
+            return True
+        incoming_fields = DatasetRepository._manifest_metric_fields(incoming)
+        existing_fields = DatasetRepository._manifest_metric_fields(existing)
+        return bool(incoming_fields and existing_fields and incoming_fields.issuperset(existing_fields))
+
+    @staticmethod
+    def _manifest_metric_fields(manifest: Mapping[str, Any]) -> set[str]:
+        return {
+            str(field)
+            for field in tuple(manifest.get("field_set", ()) or ())
+            if str(field).strip() and str(field) not in _COLUMNAR_METRIC_STRUCTURAL_FIELDS
+        }
+
+    @staticmethod
+    def _manifest_identity_overlaps(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
+        incoming_symbols = {str(item) for item in tuple(incoming.get("symbol_ids", ()) or ()) if str(item)}
+        existing_symbols = {str(item) for item in tuple(existing.get("symbol_ids", ()) or ()) if str(item)}
+        if incoming_symbols or existing_symbols:
+            return bool(incoming_symbols and existing_symbols and incoming_symbols.intersection(existing_symbols))
+
+        incoming_universes = {str(item) for item in tuple(incoming.get("universe_refs", ()) or ()) if str(item)}
+        existing_universes = {str(item) for item in tuple(existing.get("universe_refs", ()) or ()) if str(item)}
+        if incoming_universes or existing_universes:
+            return bool(incoming_universes and existing_universes and incoming_universes.intersection(existing_universes))
+
+        return False
+
+    @staticmethod
+    def _manifest_date_range_overlaps(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
+        incoming_start = _columnar_range_start_text(incoming.get("period_start_min"))
+        incoming_end = _columnar_range_end_text(incoming.get("period_end_max"))
+        existing_start = _columnar_range_start_text(existing.get("period_start_min"))
+        existing_end = _columnar_range_end_text(existing.get("period_end_max"))
+        if not incoming_start or not incoming_end or not existing_start or not existing_end:
+            return False
+        return incoming_start <= existing_end and existing_start <= incoming_end
+
     def _normalized_columnar_manifests(
         self,
         *,
@@ -832,8 +1016,8 @@ class DatasetRepository:
         date_range_start: Any | None,
         date_range_end: Any | None,
     ) -> tuple[dict[str, Any], ...]:
-        start = _date_query_text(date_range_start)
-        end = _date_query_text(date_range_end)
+        start = _columnar_range_start_text(date_range_start)
+        end = _columnar_range_end_text(date_range_end)
         criteria = self._columnar_manifest_query_criteria(
             dataset=dataset,
             market=market,
@@ -842,7 +1026,7 @@ class DatasetRepository:
         )
         with self._lock:
             manifests = self._collection("dataset_manifests").find(criteria)
-        return tuple(
+        matched = tuple(
             manifest
             for manifest in manifests
             if self._columnar_manifest_matches(
@@ -854,6 +1038,15 @@ class DatasetRepository:
                 start=start,
                 end=end,
             )
+        )
+        return tuple(sorted(matched, key=self._columnar_manifest_read_sort_key))
+
+    @staticmethod
+    def _columnar_manifest_read_sort_key(manifest: Mapping[str, Any]) -> tuple[Any, ...]:
+        return (
+            DatasetRepository._manifest_source_role_rank(manifest),
+            str(manifest.get("created_at") or ""),
+            str(manifest.get("manifest_ref") or ""),
         )
 
     @staticmethod
@@ -902,8 +1095,8 @@ class DatasetRepository:
         universe_refs = tuple(str(item) for item in tuple(manifest.get("universe_refs", ()) or ()))
         if universe_ref and universe_refs and universe_ref not in universe_refs:
             return False
-        manifest_start = _date_query_text(manifest.get("period_start_min"))
-        manifest_end = _date_query_text(manifest.get("period_end_max"))
+        manifest_start = _columnar_range_start_text(manifest.get("period_start_min"))
+        manifest_end = _columnar_range_end_text(manifest.get("period_end_max"))
         if end and manifest_start and manifest_start > end:
             return False
         if start and manifest_end and manifest_end < start:
@@ -1391,7 +1584,6 @@ class DatasetRepository:
                 universe_ref=None,
                 require_integrity_metadata=True,
                 include_row=True,
-                fields=_COMPANY_NAME_ROW_FIELDS,
             )
             sorted_records = sorted(
                 records,
@@ -1602,6 +1794,83 @@ class DatasetRepository:
             row["updated_at"] = datetime.now(tz=window_start.tzinfo or UTC)
             collection.set(doc_id, row)
             return True
+
+    def reserve_sliding_rate_limit(
+        self,
+        *,
+        rate_limit_key: str,
+        now: datetime,
+        window_seconds: int,
+        max_requests: int,
+        safety_margin: int,
+        overflow_policy: str,
+        cost: int,
+    ) -> dict[str, Any]:
+        now = self._aware_datetime(now)
+        cutoff = now - timedelta(seconds=window_seconds)
+        effective_limit = max(max_requests - safety_margin, 0)
+        doc_id = f"{rate_limit_key}:sliding"
+        with self._lock:
+            collection = self._collection("provider_rate_limits")
+            row = collection.get(doc_id)
+            if row is None:
+                row = {
+                    "rate_limit_ref": doc_id,
+                    "rate_key_hash": rate_limit_key,
+                    "window_mode": "sliding",
+                    "window_start": cutoff,
+                    "window_seconds": window_seconds,
+                    "max_requests": max_requests,
+                    "used_requests": 0,
+                    "safety_margin": safety_margin,
+                    "overflow_policy": overflow_policy,
+                    "cooldown_until": None,
+                    "version": 1,
+                    "request_timestamps": (),
+                }
+
+            timestamps = tuple(
+                timestamp
+                for timestamp in (
+                    self._optional_datetime(raw)
+                    for raw in row.get("request_timestamps", ())
+                )
+                if timestamp is not None and self._aware_datetime(timestamp, reference=now) > cutoff
+            )
+            timestamps = tuple(self._aware_datetime(timestamp, reference=now) for timestamp in timestamps)
+            allowed = len(timestamps) + cost <= effective_limit
+            retry_after = None
+            if allowed:
+                timestamps = (*timestamps, *((now,) * cost))
+            elif timestamps:
+                retry_after = min(timestamps) + timedelta(seconds=window_seconds)
+            else:
+                retry_after = now + timedelta(seconds=window_seconds)
+
+            row.update(
+                {
+                    "rate_limit_ref": doc_id,
+                    "rate_key_hash": rate_limit_key,
+                    "window_mode": "sliding",
+                    "window_start": cutoff,
+                    "window_seconds": window_seconds,
+                    "max_requests": max_requests,
+                    "used_requests": len(timestamps),
+                    "safety_margin": safety_margin,
+                    "overflow_policy": overflow_policy,
+                    "effective_limit": effective_limit,
+                    "request_timestamps": timestamps,
+                    "retry_after": retry_after,
+                    "updated_at": now,
+                    "version": int(row.get("version", 0)) + 1,
+                }
+            )
+            collection.set(doc_id, row)
+            return {
+                **self._normalize_rate_limit_row(row),
+                "allowed": allowed,
+                "retry_after": retry_after,
+            }
 
     def mark_rate_limit_cooldown(
         self,
@@ -1828,6 +2097,13 @@ class DatasetRepository:
             reference = normalized.get("window_start")
             normalized["cooldown_until"] = cls._aware_datetime(
                 cooldown_until,
+                reference=reference if isinstance(reference, datetime) else None,
+            )
+        retry_after = normalized.get("retry_after")
+        if isinstance(retry_after, datetime):
+            reference = normalized.get("window_start")
+            normalized["retry_after"] = cls._aware_datetime(
+                retry_after,
                 reference=reference if isinstance(reference, datetime) else None,
             )
         return normalized

@@ -295,7 +295,11 @@ class ProviderBatchPlanner:
         granularity = _as_string(_read_attr(group, "granularity"))
         plan_id = str(_read_attr(group, "plan_id", "plan-unknown"))
         provider_config_version = str(_read_attr(cap, "plugin_version", "unknown"))
+        capability_fields = tuple(str(field) for field in _as_tuple(_read_attr(cap, "fields", ())) if str(field).strip())
         as_of = datetime.now(UTC)
+        http_visibility = _as_string(_read_attr(cap, "http_visibility", "managed_http"))
+        rate_limit_key = f"ratelimit:{provider_rate_limit_namespace(provider_id)}"
+        cooldown_key = rate_limit_key if http_visibility == "managed_http" else f"cooldown:{provider_id}:{endpoint_id}"
 
         key_material = {
             "provider": provider_id,
@@ -335,17 +339,20 @@ class ProviderBatchPlanner:
             "base_asset": _read_attr(group, "base_asset", None),
             "quote_asset": _read_attr(group, "quote_asset", None),
             "fields_union": tuple(fields_union),
+            "capability_fields": capability_fields,
             "params_redacted": {"key_material_redacted": key_material},
             "priority_rank": int(_read_attr(group, "priority_rank", _read_attr(cap, "priority_rank", 100))),
             "required_level": required_level,
             "cache_key": f"cache:{short_hash}",
-            "rate_limit_key": f"ratelimit:{provider_rate_limit_namespace(provider_id)}",
+            "rate_limit_key": rate_limit_key,
+            "cooldown_key": cooldown_key,
             "rate_limit_policy": policy_to_namespace(
                 self._rate_limit_policy_resolver.resolve(
                     provider_id=provider_id,
                     default_policy=_rate_limit_policy(cap),
                 )
             ),
+            "http_visibility": http_visibility,
             "single_flight_key": f"singleflight:{short_hash}",
             "lease_ttl_seconds": _DEFAULT_LEASE_TTL_SECONDS,
             "wait_timeout_seconds": _DEFAULT_WAIT_TIMEOUT_SECONDS,

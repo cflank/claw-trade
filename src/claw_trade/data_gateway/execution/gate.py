@@ -12,7 +12,9 @@ from .single_flight import SingleFlight
 class GateBatchPlan(Protocol):
     cache_key: str
     rate_limit_key: str
+    cooldown_key: str | None
     rate_limit_policy: Any
+    http_visibility: Any
     single_flight_key: str
     lease_ttl_seconds: int
     wait_timeout_seconds: int
@@ -37,11 +39,18 @@ class ExecutionGate:
         if cache_lookup.state == "fresh_empty" and cache_lookup.entry is not None:
             return GateDecision.cached_empty(cache_lookup.entry.refs)
 
-        quota = self.rate_limiter.reserve(batch.rate_limit_key, batch.rate_limit_policy)
-        if not quota.allowed:
-            if quota.reason == "cooldown_skipped":
-                return GateDecision.cooldown_skipped(quota.retry_after, quota.reason or "cooldown_skipped")
-            return GateDecision.rate_limited(quota.retry_after, quota.reason or "rate_limited")
+        cooldown_key = _cooldown_key(batch)
+        if cooldown_key != batch.rate_limit_key or _rate_limit_at_http(batch):
+            cooldown = self.rate_limiter.check_cooldown(cooldown_key, batch.rate_limit_policy)
+            if not cooldown.allowed:
+                return GateDecision.cooldown_skipped(cooldown.retry_after, cooldown.reason or "cooldown_skipped")
+
+        if not _rate_limit_at_http(batch):
+            quota = self.rate_limiter.reserve(batch.rate_limit_key, batch.rate_limit_policy)
+            if not quota.allowed:
+                if quota.reason == "cooldown_skipped":
+                    return GateDecision.cooldown_skipped(quota.retry_after, quota.reason or "cooldown_skipped")
+                return GateDecision.rate_limited(quota.retry_after, quota.reason or "rate_limited")
 
         flight = self.single_flight.acquire(batch.single_flight_key, batch.lease_ttl_seconds)
         if flight.kind == "shared" and flight.published is not None:
@@ -92,17 +101,54 @@ class ExecutionGate:
             return
         now = datetime.now(UTC)
         until = _cooldown_until(fetch_result=fetch_result, batch=batch, now=now)
-        self.rate_limiter.mark_cooldown(batch.rate_limit_key, until=until, reason="provider_429")
+        if until is not None:
+            self.rate_limiter.mark_cooldown(_cooldown_key(batch), until=until, reason="provider_429")
+
+    def wait_after_rate_limited_fetch(self, batch: GateBatchPlan, fetch_result: Any) -> bool:
+        status = getattr(getattr(fetch_result, "status", None), "value", getattr(fetch_result, "status", None))
+        if status != "rate_limited":
+            return False
+        policy = getattr(batch, "rate_limit_policy", None)
+        if getattr(policy, "overflow", "fail_fast") != "wait":
+            return False
+        now = datetime.now(UTC)
+        until = _cooldown_until(fetch_result=fetch_result, batch=batch, now=now)
+        if until is None:
+            return False
+        self.rate_limiter.mark_cooldown(_cooldown_key(batch), until=until, reason="provider_429")
+        return self.rate_limiter.check_cooldown(_cooldown_key(batch), policy).allowed
 
 
-def _cooldown_until(*, fetch_result: Any, batch: GateBatchPlan, now: datetime) -> datetime:
+def _cooldown_key(batch: GateBatchPlan) -> str:
+    return str(getattr(batch, "cooldown_key", None) or batch.rate_limit_key)
+
+
+def _rate_limit_at_http(batch: GateBatchPlan) -> bool:
+    return _as_string(getattr(batch, "http_visibility", "") or "") == "managed_http"
+
+
+def _as_string(value: Any) -> str:
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        return enum_value
+    return str(value)
+
+
+def _cooldown_until(*, fetch_result: Any, batch: GateBatchPlan, now: datetime) -> datetime | None:
+    saw_provider_quota_signal = False
     for observation in tuple(getattr(fetch_result, "http_observations", ()) or ()):
+        if getattr(observation, "quota_signal", None) == "local_rate_limited":
+            continue
+        if getattr(observation, "status_code", None) == 429 or getattr(observation, "quota_signal", None):
+            saw_provider_quota_signal = True
         headers = getattr(observation, "response_headers_redacted", None)
         if not isinstance(headers, dict):
             continue
         retry_after = _retry_after_until(headers.get("retry-after"), now=now)
         if retry_after is not None:
             return retry_after
+    if not saw_provider_quota_signal:
+        return None
     window_seconds = int(getattr(getattr(batch, "rate_limit_policy", None), "window_seconds", 60) or 60)
     return now + timedelta(seconds=max(window_seconds, 1))
 

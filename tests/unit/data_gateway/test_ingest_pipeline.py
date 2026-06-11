@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
+
+import pytest
 
 from claw_trade.data_gateway.execution import GateDecision, ResultRefs
 from claw_trade.data_gateway.execution.fetch_engine import FetchResult
+from claw_trade.data_gateway.models import DataGap
 from claw_trade.data_gateway.ingest import IngestResult
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
 from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
@@ -21,6 +25,7 @@ class _Batch:
     data_type: str = "daily_bar"
     granularity: str = "daily"
     fields_union: tuple[str, ...] = ("close",)
+    capability_fields: tuple[str, ...] = ()
     exchange: str | None = "SSE"
     currency: str | None = "CNY"
     timezone: str | None = "Asia/Shanghai"
@@ -41,6 +46,58 @@ class _BrokenAttemptLog(AttemptLog):
         raise RuntimeError("write failed")
 
 
+def test_attempt_log_rejects_credential_missing_remote_success() -> None:
+    attempt_log = AttemptLog()
+    batch = _Batch(provider_id="paid-provider", endpoint_id="daily")
+    fetch_result = SimpleNamespace(status="credential_missing", fetched_at=datetime(2026, 6, 9, tzinfo=UTC))
+
+    with pytest.raises(ValueError, match="credential_missing must not be marked remote_success"):
+        attempt_log.record(batch=batch, fetch_result=fetch_result, remote_success=True)
+
+
+def test_attempt_log_records_http_rate_limit_origin() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    attempt_log = AttemptLog(repository=repo)
+    batch = _Batch(provider_id="crypto_coinglass_derivatives", endpoint_id="futures_funding_rate")
+    sent_at = datetime(2026, 6, 9, 12, 0, tzinfo=UTC)
+    fetch_result = SimpleNamespace(
+        status="rate_limited",
+        fetched_at=datetime(2026, 6, 9, tzinfo=UTC),
+        error_code="RuntimeError",
+        error_message="http_429",
+        http_observations=(
+            SimpleNamespace(
+                request_key="http:req",
+                sent_at=sent_at,
+                method="GET",
+                host="proxy.keystore.com.cn",
+                path="/api/futures/funding-rate/history",
+                status_code=429,
+                quota_signal="http_429",
+                error_code=None,
+                elapsed_ms=120,
+                response_headers_redacted={"retry-after": "60"},
+            ),
+        ),
+    )
+
+    (attempt_ref,) = attempt_log.record(
+        batch=batch,
+        fetch_result=fetch_result,
+        gaps=(DataGap.by_reason("rate_limited", evidence_refs=("http:req",)),),
+    )
+    record = repo.get_provider_attempt(attempt_ref)
+
+    assert record is not None
+    assert record["http_status_codes"] == (429,)
+    assert record["quota_signals"] == ("http_429",)
+    assert record["rate_limit_origin"] == "remote"
+    assert record["http_observations"][0]["sent_at"] == sent_at
+    assert record["http_observations"][0]["response_headers_redacted"] == {"retry-after": "60"}
+
+
 def test_ingest_pipeline_success_writes_raw_normalized_attempt_refs() -> None:
     pipeline = IngestPipeline(
         raw_store=RawStore(),
@@ -56,6 +113,49 @@ def test_ingest_pipeline_success_writes_raw_normalized_attempt_refs() -> None:
     assert ingest.raw_refs
     assert ingest.dataset_refs
     assert ingest.attempt_refs
+
+
+def test_ingest_pipeline_checks_only_fields_declared_by_endpoint_capability() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        fields_union=("funding_rate", "taker_buy_volume", "taker_sell_volume"),
+        capability_fields=("funding_rate", "timestamp", "symbol_id"),
+        exchange="COINGLASS",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="SOL",
+        quote_asset="USDT",
+        request_ids=("req-funding",),
+        symbol_ids=("SOLUSDT",),
+        date_range_start=date(2026, 6, 10),
+        date_range_end=date(2026, 6, 10),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[
+            {
+                "dataset": "crypto_derivative_metric",
+                "symbol_id": "SOLUSDT",
+                "funding_rate": 0.0001,
+                "timestamp": datetime(2026, 6, 10, 0, 0, tzinfo=UTC),
+            }
+        ],
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.status == "ingested"
+    field_missing = [gap for gap in ingest.gaps if gap.reason == "field_missing"]
+    assert not field_missing
 
 
 def test_normalized_store_writes_one_checksum_for_batch() -> None:
@@ -647,6 +747,84 @@ def test_ingest_pipeline_rate_limited_gate_keeps_batch_context() -> None:
     assert gap.symbol_id == "BNBUSDT"
     assert gap.request_id == "run:test:report-prefetch:market:13:crypto_derivative_metric"
     assert gap.data_type == "crypto_derivative_metric"
+
+
+def test_ingest_pipeline_records_selector_credential_skip_as_non_remote_attempt() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="paid-provider",
+        endpoint_id="daily",
+        market="US",
+        request_ids=("req-paid",),
+        symbol_ids=("AAPL",),
+    )
+    selector_skip = SimpleNamespace(
+        reason="credential_missing",
+        remote_attempted=False,
+        credential_names=("data_source:paid",),
+    )
+
+    ingest = pipeline.record_selector_skip(batch, selector_skip)
+
+    assert ingest.status == "non_remote_recorded"
+    assert ingest.remote_success is False
+    assert ingest.attempt_refs
+    assert [gap.reason for gap in ingest.gaps] == ["credential_missing"]
+    assert ingest.gaps[0].human_readable == "credential_missing:data_source:paid"
+    attempt = repo.get_provider_attempt(ingest.attempt_refs[0])
+    assert attempt is not None
+    assert attempt["provider"] == "paid-provider"
+    assert attempt["endpoint"] == "daily"
+    assert attempt["status"] == "credential_missing"
+    assert attempt["remote_attempted"] is False
+    assert attempt["remote_success"] is False
+    assert attempt["gap_codes"] == ("credential_missing",)
+
+
+def test_ingest_pipeline_records_unconfigured_selector_skip_without_user_gap() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="crypto_glassnode_onchain",
+        endpoint_id="deep_onchain_metrics",
+        market="CRYPTO",
+        data_type="crypto_onchain_metric",
+        granularity="daily",
+        request_ids=("req-glassnode",),
+        symbol_ids=("BTCUSDT",),
+    )
+    selector_skip = SimpleNamespace(
+        reason="source_not_configured",
+        remote_attempted=False,
+        credential_names=("data_source:glassnode",),
+    )
+
+    ingest = pipeline.record_selector_skip(batch, selector_skip)
+
+    assert ingest.status == "non_remote_recorded"
+    assert ingest.remote_success is False
+    assert ingest.gaps == ()
+    attempt = repo.get_provider_attempt(ingest.attempt_refs[0])
+    assert attempt is not None
+    assert attempt["status"] == "source_not_configured"
+    assert attempt["remote_attempted"] is False
+    assert attempt["remote_success"] is False
+    assert attempt["gap_codes"] == ()
 
 
 def test_ingest_pipeline_evidence_write_failed_is_fail_closed() -> None:

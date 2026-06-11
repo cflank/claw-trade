@@ -1,0 +1,2657 @@
+{
+  "coinglass_batch_count": 13,
+  "coinglass_batches": [
+    {
+      "batch_id": "batch-721527b1f6450c2f2fabe308-001",
+      "data_type": "valuation_metric",
+      "endpoint_id": "spot_coins_markets",
+      "fields_union": [
+        "circulating_supply",
+        "fdv",
+        "market_cap",
+        "price",
+        "total_supply",
+        "volume"
+      ],
+      "granularity": "realtime",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:01:spot_markets"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-584d1e136e9380e6bfa5db66-001",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_funding_rate",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-d325f1e5ccce21a46bf16510-002",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_long_short_ratio",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-a43d12a5730cb4de27316129-003",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_open_interest",
+      "fields_union": [
+        "open_interest",
+        "open_interest_unit",
+        "symbol_id",
+        "timestamp"
+      ],
+      "granularity": "realtime",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-11418a10c78e594fa8566387-001",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_cvd_history",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-a148369009371b877340d469-002",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_liquidation_heatmap",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-a857fb375767014e86ea50aa-003",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "options_open_interest",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-5c3e38775a2044aebd48d999-004",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "spot_cvd_history",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-534adac9e75c0234236b9ce3-001",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_liquidation",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-a29aabd7dc09b072459ebbe4-002",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_taker_buy_sell",
+      "fields_union": [
+        "funding_rate",
+        "funding_rate_unit",
+        "symbol_id",
+        "timestamp",
+        "long_short_ratio",
+        "taker_buy_sell_ratio",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "cvd"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+        "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+        "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+        "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+        "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+        "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+        "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-40176f8a52e6b9090a0fd0ee-001",
+      "data_type": "crypto_derivative_metric",
+      "endpoint_id": "futures_coin_netflow",
+      "fields_union": [
+        "open_interest",
+        "open_interest_unit",
+        "symbol_id",
+        "timestamp"
+      ],
+      "granularity": "realtime",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-2a9f6efd88b1134e97b93f68-001",
+      "data_type": "order_book_snapshot",
+      "endpoint_id": "futures_order_book",
+      "fields_union": [
+        "asks_quantity",
+        "asks_usd",
+        "bids_quantity",
+        "bids_usd",
+        "symbol_id",
+        "timestamp"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    },
+    {
+      "batch_id": "batch-87b5452ecd9b2caa713efd88-002",
+      "data_type": "order_book_snapshot",
+      "endpoint_id": "spot_order_book",
+      "fields_union": [
+        "asks_quantity",
+        "asks_usd",
+        "bids_quantity",
+        "bids_usd",
+        "symbol_id",
+        "timestamp"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "provider_id": "crypto_coinglass_derivatives",
+      "request_ids": [
+        "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book"
+      ],
+      "symbol_ids": [
+        "BTCUSDT"
+      ]
+    }
+  ],
+  "coinglass_http_error_code_counts": {
+    "None": 13
+  },
+  "coinglass_http_quota_signal_counts": {
+    "None": 13
+  },
+  "coinglass_http_request_count": 13,
+  "coinglass_http_requests": [
+    {
+      "at": "2026-06-11T00:56:03.433160+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/spot/coins-markets",
+      "query_keys": [
+        "page",
+        "per_page"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:05.694063+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/funding-rate/oi-weight-history",
+      "query_keys": [
+        "end_time",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:06.815241+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/global-long-short-account-ratio/history",
+      "query_keys": [
+        "end_time",
+        "exchange",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:07.772718+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/open-interest/exchange-list",
+      "query_keys": [
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:08.758770+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/aggregated-cvd/history",
+      "query_keys": [
+        "end_time",
+        "exchange_list",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol",
+        "unit"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:10.028985+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/liquidation/aggregated-heatmap/model1",
+      "query_keys": [
+        "range",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:15.298936+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/option/exchange-oi-history",
+      "query_keys": [
+        "range",
+        "symbol",
+        "unit"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:56:16.689440+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/spot/aggregated-cvd/history",
+      "query_keys": [
+        "end_time",
+        "exchange_list",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol",
+        "unit"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:57:03.414961+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/liquidation/aggregated-history",
+      "query_keys": [
+        "end_time",
+        "exchange_list",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:57:05.698326+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/aggregated-taker-buy-sell-volume/history",
+      "query_keys": [
+        "end_time",
+        "exchange_list",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:57:06.816648+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/coin/netflow",
+      "query_keys": [
+        "exchange_list",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:57:09.175725+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/orderbook/ask-bids-history",
+      "query_keys": [
+        "end_time",
+        "exchange",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    },
+    {
+      "at": "2026-06-11T00:57:10.149013+00:00",
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/spot/orderbook/ask-bids-history",
+      "query_keys": [
+        "end_time",
+        "exchange",
+        "interval",
+        "limit",
+        "start_time",
+        "symbol"
+      ],
+      "step": "managed_http.request"
+    }
+  ],
+  "coinglass_http_response_count": 13,
+  "coinglass_http_responses": [
+    {
+      "at": "2026-06-11T00:56:05.534434+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/spot/coins-markets",
+      "quota_signal": null,
+      "request_key": "http:sha256:079eaf7f103dd398eaf91f8235cf6a5e01d53ccff8a460dda719433d277d9b37",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:06.755969+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/funding-rate/oi-weight-history",
+      "quota_signal": null,
+      "request_key": "http:sha256:3660995ed6578c59c6ccb03319f7525779be8783870a0137c3e5a55fe11a9d0b",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:07.713386+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/global-long-short-account-ratio/history",
+      "quota_signal": null,
+      "request_key": "http:sha256:851fff8345be353d6ff4c9e8c606e422a4074cc95f8381e5fe519dd8b91ab354",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:08.624666+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/open-interest/exchange-list",
+      "quota_signal": null,
+      "request_key": "http:sha256:f187022cd9fa97cb6b9a277152ef4acb79024698ca56764753375b5ad443260a",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:09.969135+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/aggregated-cvd/history",
+      "quota_signal": null,
+      "request_key": "http:sha256:2705fadb462f889a8d640c921635f6d43c6f6d21ffc62d410d0051db36acb3e5",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:11.985742+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/liquidation/aggregated-heatmap/model1",
+      "quota_signal": null,
+      "request_key": "http:sha256:072a981d8af0fa218437551241fe0855cb94af69d86486177d7b8b4d5f40ac79",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:16.617587+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/option/exchange-oi-history",
+      "quota_signal": null,
+      "request_key": "http:sha256:d73657c940c24be7853943ea90a286badf3543a78bf13cd0211302b15009ae97",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:56:17.285781+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/spot/aggregated-cvd/history",
+      "quota_signal": null,
+      "request_key": "http:sha256:c580dcd365d619dab84eca3627e15ddf4edddec9a7e9bcf578c7aaf93711ba2b",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:57:04.375303+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/liquidation/aggregated-history",
+      "quota_signal": null,
+      "request_key": "http:sha256:b98e93eb7c2e5e0979767c20b5ae1efe92134d00a8892343ff2053bf4d0302e6",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:57:06.335765+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/aggregated-taker-buy-sell-volume/history",
+      "quota_signal": null,
+      "request_key": "http:sha256:ca94ce69d466dcdf501eb746349b40bd91c84a92f77c773c09017a7f46b8cecf",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:57:09.040584+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/coin/netflow",
+      "quota_signal": null,
+      "request_key": "http:sha256:9bf6f1ff775c2fda8d47d03cdf1eaf275e7fa13d0914bcf7accae20bd636cf14",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:57:10.087518+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/futures/orderbook/ask-bids-history",
+      "quota_signal": null,
+      "request_key": "http:sha256:853ef6a3a206e0e442c161376e5f55798c1fab0cb5d2df38bbd8210c6bfe31a3",
+      "status_code": 200,
+      "step": "managed_http.response"
+    },
+    {
+      "at": "2026-06-11T00:57:10.819752+00:00",
+      "error_code": null,
+      "host": "https://proxy.keystore.com.cn",
+      "method": "GET",
+      "path": "/api/v1/proxy/coinglass/v4/api/spot/orderbook/ask-bids-history",
+      "quota_signal": null,
+      "request_key": "http:sha256:b4e5b43205af6e903e9294aec734042a6fb892356d6ed1d4c6b4e2b9395a47f1",
+      "status_code": 200,
+      "step": "managed_http.response"
+    }
+  ],
+  "coinglass_http_status_counts": {
+    "200": 13
+  },
+  "collection_counts": {
+    "dataset_manifests": 0,
+    "maintenance_jobs": 0,
+    "normalized_datasets": 25,
+    "provider_attempts": 13,
+    "provider_rate_limits": 1,
+    "provider_result_cache": 13,
+    "raw_payloads": 12,
+    "single_flight_calls": 13
+  },
+  "configured_coinglass_source": {
+    "enabled": true,
+    "endpoint_url": "https://proxy.keystore.com.cn/api/v1/proxy/coinglass",
+    "has_credential_ref": true,
+    "header_name": "X-Api-Key",
+    "rate_limit_max_calls": 9,
+    "rate_limit_overflow": "wait",
+    "rate_limit_safety_margin": 1,
+    "rate_limit_wait_timeout_seconds": 75,
+    "rate_limit_window_seconds": 60,
+    "supported_type": "coinglass"
+  },
+  "elapsed_seconds": 68.202,
+  "fetch_ends": [
+    {
+      "at": "2026-06-11T00:56:05.557888+00:00",
+      "batch": {
+        "batch_id": "batch-721527b1f6450c2f2fabe308-001",
+        "data_type": "valuation_metric",
+        "endpoint_id": "spot_coins_markets",
+        "fields_union": [
+          "circulating_supply",
+          "fdv",
+          "market_cap",
+          "price",
+          "total_supply",
+          "volume"
+        ],
+        "granularity": "realtime",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:01:spot_markets"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 1,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:06.765774+00:00",
+      "batch": {
+        "batch_id": "batch-584d1e136e9380e6bfa5db66-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_funding_rate",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:07.724577+00:00",
+      "batch": {
+        "batch_id": "batch-d325f1e5ccce21a46bf16510-002",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_long_short_ratio",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:08.633025+00:00",
+      "batch": {
+        "batch_id": "batch-a43d12a5730cb4de27316129-003",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_open_interest",
+        "fields_union": [
+          "open_interest",
+          "open_interest_unit",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "realtime",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 25,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:09.981945+00:00",
+      "batch": {
+        "batch_id": "batch-11418a10c78e594fa8566387-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_cvd_history",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:13.888240+00:00",
+      "batch": {
+        "batch_id": "batch-a148369009371b877340d469-002",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_liquidation_heatmap",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 25577,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:16.626804+00:00",
+      "batch": {
+        "batch_id": "batch-a857fb375767014e86ea50aa-003",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "options_open_interest",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "empty_result",
+        "http_observation_count": 1,
+        "row_count": 0,
+        "status": "empty"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:56:17.299030+00:00",
+      "batch": {
+        "batch_id": "batch-5c3e38775a2044aebd48d999-004",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "spot_cvd_history",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:57:04.389608+00:00",
+      "batch": {
+        "batch_id": "batch-534adac9e75c0234236b9ce3-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_liquidation",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:57:06.349189+00:00",
+      "batch": {
+        "batch_id": "batch-a29aabd7dc09b072459ebbe4-002",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_taker_buy_sell",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:57:09.049677+00:00",
+      "batch": {
+        "batch_id": "batch-40176f8a52e6b9090a0fd0ee-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_coin_netflow",
+        "fields_union": [
+          "open_interest",
+          "open_interest_unit",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "realtime",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 1,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:57:10.100384+00:00",
+      "batch": {
+        "batch_id": "batch-2a9f6efd88b1134e97b93f68-001",
+        "data_type": "order_book_snapshot",
+        "endpoint_id": "futures_order_book",
+        "fields_union": [
+          "asks_quantity",
+          "asks_usd",
+          "bids_quantity",
+          "bids_usd",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    },
+    {
+      "at": "2026-06-11T00:57:10.833101+00:00",
+      "batch": {
+        "batch_id": "batch-87b5452ecd9b2caa713efd88-002",
+        "data_type": "order_book_snapshot",
+        "endpoint_id": "spot_order_book",
+        "fields_union": [
+          "asks_quantity",
+          "asks_usd",
+          "bids_quantity",
+          "bids_usd",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "result": {
+        "error": "",
+        "error_message": "",
+        "http_observation_count": 1,
+        "row_count": 49,
+        "status": "success"
+      },
+      "step": "fetch.end"
+    }
+  ],
+  "fetch_status_counts": {
+    "empty": 1,
+    "success": 12
+  },
+  "gate_counts": {
+    "owner": 13
+  },
+  "gate_decisions": [
+    {
+      "at": "2026-06-11T00:56:03.382873+00:00",
+      "batch": {
+        "batch_id": "batch-721527b1f6450c2f2fabe308-001",
+        "data_type": "valuation_metric",
+        "endpoint_id": "spot_coins_markets",
+        "fields_union": [
+          "circulating_supply",
+          "fdv",
+          "market_cap",
+          "price",
+          "total_supply",
+          "volume"
+        ],
+        "granularity": "realtime",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:01:spot_markets"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:05.661179+00:00",
+      "batch": {
+        "batch_id": "batch-584d1e136e9380e6bfa5db66-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_funding_rate",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:06.781599+00:00",
+      "batch": {
+        "batch_id": "batch-d325f1e5ccce21a46bf16510-002",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_long_short_ratio",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:07.739416+00:00",
+      "batch": {
+        "batch_id": "batch-a43d12a5730cb4de27316129-003",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_open_interest",
+        "fields_union": [
+          "open_interest",
+          "open_interest_unit",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "realtime",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:08.727995+00:00",
+      "batch": {
+        "batch_id": "batch-11418a10c78e594fa8566387-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_cvd_history",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:09.997637+00:00",
+      "batch": {
+        "batch_id": "batch-a148369009371b877340d469-002",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_liquidation_heatmap",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:15.260406+00:00",
+      "batch": {
+        "batch_id": "batch-a857fb375767014e86ea50aa-003",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "options_open_interest",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:56:16.657138+00:00",
+      "batch": {
+        "batch_id": "batch-5c3e38775a2044aebd48d999-004",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "spot_cvd_history",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:57:03.383908+00:00",
+      "batch": {
+        "batch_id": "batch-534adac9e75c0234236b9ce3-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_liquidation",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:57:05.666473+00:00",
+      "batch": {
+        "batch_id": "batch-a29aabd7dc09b072459ebbe4-002",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_taker_buy_sell",
+        "fields_union": [
+          "funding_rate",
+          "funding_rate_unit",
+          "symbol_id",
+          "timestamp",
+          "long_short_ratio",
+          "taker_buy_sell_ratio",
+          "taker_buy_volume",
+          "taker_sell_volume",
+          "taker_volume_unit",
+          "liquidation_value",
+          "liquidation_value_unit",
+          "long_liquidation",
+          "short_liquidation",
+          "liquidation_price",
+          "liquidation_price_unit",
+          "liquidation_size",
+          "liquidation_size_unit",
+          "side",
+          "cvd"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:57:06.784528+00:00",
+      "batch": {
+        "batch_id": "batch-40176f8a52e6b9090a0fd0ee-001",
+        "data_type": "crypto_derivative_metric",
+        "endpoint_id": "futures_coin_netflow",
+        "fields_union": [
+          "open_interest",
+          "open_interest_unit",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "realtime",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:57:09.144955+00:00",
+      "batch": {
+        "batch_id": "batch-2a9f6efd88b1134e97b93f68-001",
+        "data_type": "order_book_snapshot",
+        "endpoint_id": "futures_order_book",
+        "fields_union": [
+          "asks_quantity",
+          "asks_usd",
+          "bids_quantity",
+          "bids_usd",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    },
+    {
+      "at": "2026-06-11T00:57:10.116476+00:00",
+      "batch": {
+        "batch_id": "batch-87b5452ecd9b2caa713efd88-002",
+        "data_type": "order_book_snapshot",
+        "endpoint_id": "spot_order_book",
+        "fields_union": [
+          "asks_quantity",
+          "asks_usd",
+          "bids_quantity",
+          "bids_usd",
+          "symbol_id",
+          "timestamp"
+        ],
+        "granularity": "1h",
+        "market": "CRYPTO",
+        "provider_id": "crypto_coinglass_derivatives",
+        "request_ids": [
+          "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book"
+        ],
+        "symbol_ids": [
+          "BTCUSDT"
+        ]
+      },
+      "evidence_refs": [],
+      "kind": "owner",
+      "owner_token": true,
+      "step": "execution_gate.decision"
+    }
+  ],
+  "generated_at": "2026-06-11T00:57:10.932966+00:00",
+  "rate_limit_rows": [
+    {
+      "cooldown_until": null,
+      "effective_limit": 8,
+      "max_requests": 9,
+      "overflow_policy": "wait",
+      "rate_key_hash": "ratelimit:coinglass",
+      "rate_limit_ref": "ratelimit:coinglass:sliding",
+      "request_timestamps": [
+        "2026-06-11 00:56:15.255000",
+        "2026-06-11 00:56:16.653000",
+        "2026-06-11 00:57:03.379000",
+        "2026-06-11 00:57:05.661000",
+        "2026-06-11 00:57:06.780000",
+        "2026-06-11 00:57:09.140000",
+        "2026-06-11 00:57:10.112000"
+      ],
+      "request_timestamps_count": 7,
+      "retry_after": null,
+      "safety_margin": 1,
+      "updated_at": "2026-06-11 00:57:10.112000",
+      "used_requests": 7,
+      "version": 18,
+      "window_mode": "sliding",
+      "window_seconds": 60,
+      "window_start": "2026-06-11 00:56:10.112000"
+    }
+  ],
+  "request_count": 10,
+  "requests": [
+    {
+      "data_type": "valuation_metric",
+      "fields": [
+        "price",
+        "market_cap",
+        "fdv",
+        "circulating_supply",
+        "total_supply",
+        "volume"
+      ],
+      "granularity": "realtime",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:01:spot_markets",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "open_interest",
+        "open_interest_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "realtime",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "funding_rate",
+        "funding_rate_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "long_short_ratio",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "taker_buy_sell_ratio",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_value",
+        "liquidation_value_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "liquidation_price",
+        "liquidation_price_unit",
+        "liquidation_size",
+        "liquidation_size_unit",
+        "side",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "cvd",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "crypto_derivative_metric",
+      "fields": [
+        "cvd",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_volume_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd",
+      "symbol_id": "BTCUSDT"
+    },
+    {
+      "data_type": "order_book_snapshot",
+      "fields": [
+        "bids_usd",
+        "bids_quantity",
+        "asks_usd",
+        "asks_quantity",
+        "timestamp",
+        "symbol_id"
+      ],
+      "granularity": "1h",
+      "market": "CRYPTO",
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book",
+      "symbol_id": "BTCUSDT"
+    }
+  ],
+  "results": [
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:spot_coins_markets:dd39e754fee2"
+      ],
+      "dataset_refs": [
+        "dataset:valuation_metric:CRYPTO:72016c4b4117ece1"
+      ],
+      "gaps": [
+        {
+          "data_type": "valuation_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:01:spot_markets",
+          "required_fields": [
+            "price",
+            "market_cap",
+            "fdv",
+            "circulating_supply",
+            "total_supply",
+            "volume"
+          ]
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:6205369af66d"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:01:spot_markets",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_open_interest:c74665590248",
+        "attempt:crypto_coinglass_derivatives:futures_coin_netflow:475e1a1ba557"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:09a2d0fcf8661fa1",
+        "dataset:crypto_derivative_metric:CRYPTO:b3d4cf4aa32550a4"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest",
+          "required_fields": [
+            "open_interest",
+            "open_interest_unit",
+            "timestamp",
+            "symbol_id"
+          ]
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:4b27aec2a2ae",
+        "raw:CRYPTO:crypto_coinglass_derivatives:8e5a38ef26cd"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:02:open_interest",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "required_fields": [
+            "funding_rate",
+            "funding_rate_unit",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:03:funding_rate",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "required_fields": [
+            "long_short_ratio",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:04:long_short",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "required_fields": [
+            "taker_buy_volume",
+            "taker_sell_volume",
+            "taker_volume_unit",
+            "taker_buy_sell_ratio",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:05:taker",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "required_fields": [
+            "long_liquidation",
+            "short_liquidation",
+            "liquidation_value",
+            "liquidation_value_unit",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:06:liquidation",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "required_fields": [
+            "liquidation_price",
+            "liquidation_price_unit",
+            "liquidation_size",
+            "liquidation_size_unit",
+            "side",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:07:heatmap",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "required_fields": [
+            "cvd",
+            "taker_buy_volume",
+            "taker_sell_volume",
+            "taker_volume_unit",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:08:spot_cvd",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_funding_rate:371c5b14c012",
+        "attempt:crypto_coinglass_derivatives:futures_long_short_ratio:255eb6a8e701",
+        "attempt:crypto_coinglass_derivatives:futures_cvd_history:ccdaf8315b29",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation_heatmap:acb59bedfc24",
+        "attempt:crypto_coinglass_derivatives:options_open_interest:4e2ec804b205",
+        "attempt:crypto_coinglass_derivatives:spot_cvd_history:41c51ba913c4",
+        "attempt:crypto_coinglass_derivatives:futures_liquidation:572be2a58506",
+        "attempt:crypto_coinglass_derivatives:futures_taker_buy_sell:39fdf32c7bdb"
+      ],
+      "dataset_refs": [
+        "dataset:crypto_derivative_metric:CRYPTO:b63c754b29f6d98c",
+        "dataset:crypto_derivative_metric:CRYPTO:bf0871858dc3862f",
+        "dataset:crypto_derivative_metric:CRYPTO:394582c8d3bd82f7",
+        "dataset:crypto_derivative_metric:CRYPTO:ad35fb5967248d2c",
+        "dataset:crypto_derivative_metric:CRYPTO:3572ce5e871058a5",
+        "dataset:crypto_derivative_metric:CRYPTO:bbed7abf35979718",
+        "dataset:crypto_derivative_metric:CRYPTO:769e9ceea7390ef4",
+        "dataset:crypto_derivative_metric:CRYPTO:9173b962cd1efd1a",
+        "dataset:crypto_derivative_metric:CRYPTO:03178a93cc47584b",
+        "dataset:crypto_derivative_metric:CRYPTO:6890868d2fdeb386",
+        "dataset:crypto_derivative_metric:CRYPTO:f93d939f0eeb0990",
+        "dataset:crypto_derivative_metric:CRYPTO:851581b0e056cc62",
+        "dataset:crypto_derivative_metric:CRYPTO:6cc323adbf4eb56a",
+        "dataset:crypto_derivative_metric:CRYPTO:eed1c39bb471cf3d",
+        "dataset:crypto_derivative_metric:CRYPTO:2d4abd54a067c34b",
+        "dataset:crypto_derivative_metric:CRYPTO:fd2cda753a4fba3c",
+        "dataset:crypto_derivative_metric:CRYPTO:a56e09c0320f18ed",
+        "dataset:crypto_derivative_metric:CRYPTO:da45ba21c9f19b9e",
+        "dataset:crypto_derivative_metric:CRYPTO:dfe5e50d79ef3393"
+      ],
+      "gaps": [
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd",
+          "required_fields": [
+            "cvd",
+            "taker_buy_volume",
+            "taker_sell_volume",
+            "taker_volume_unit",
+            "timestamp",
+            "symbol_id"
+          ]
+        },
+        {
+          "data_type": "crypto_derivative_metric",
+          "message": "empty_result",
+          "reason": "empty_result",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd",
+          "required_fields": []
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:2cc41b4461e8",
+        "raw:CRYPTO:crypto_coinglass_derivatives:839e915a5c08",
+        "raw:CRYPTO:crypto_coinglass_derivatives:52a3abd68947",
+        "raw:CRYPTO:crypto_coinglass_derivatives:2e1e3db36f0e",
+        "raw:CRYPTO:crypto_coinglass_derivatives:bae87e3c4978",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e109f27cb763",
+        "raw:CRYPTO:crypto_coinglass_derivatives:e2fa1aa6c040"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:09:futures_cvd",
+      "row_count": 0,
+      "status": "partial"
+    },
+    {
+      "attempt_refs": [
+        "attempt:crypto_coinglass_derivatives:futures_order_book:7097ebc9486e",
+        "attempt:crypto_coinglass_derivatives:spot_order_book:aae1667a269d"
+      ],
+      "dataset_refs": [
+        "dataset:order_book_snapshot:CRYPTO:94f9df883b9e91f6",
+        "dataset:order_book_snapshot:CRYPTO:bccb2828fc03ed13",
+        "dataset:order_book_snapshot:CRYPTO:c1e644d5049e8c8f"
+      ],
+      "gaps": [
+        {
+          "data_type": "order_book_snapshot",
+          "message": "warehouse_missing",
+          "reason": "warehouse_missing",
+          "request_id": "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book",
+          "required_fields": [
+            "bids_usd",
+            "bids_quantity",
+            "asks_usd",
+            "asks_quantity",
+            "timestamp",
+            "symbol_id"
+          ]
+        }
+      ],
+      "raw_refs": [
+        "raw:CRYPTO:crypto_coinglass_derivatives:bdfdbc218add",
+        "raw:CRYPTO:crypto_coinglass_derivatives:4608ebea69bb"
+      ],
+      "request_id": "coinglass-rate-limit-probe-20260611T005602Z:10:futures_order_book",
+      "row_count": 0,
+      "status": "partial"
+    }
+  ],
+  "run_id": "coinglass-rate-limit-probe-20260611T005602Z",
+  "schema_version": "coinglass-rate-limit-probe-v1",
+  "scratch_database": "claw_trade_coinglass_rate_limit_probe_20260611t005602z"
+}

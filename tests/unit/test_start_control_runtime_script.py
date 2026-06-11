@@ -206,6 +206,21 @@ def test_start_control_runtime_script_removes_stale_runtime_env_before_service_c
     assert rm_index < cleanup_index
 
 
+def test_start_control_runtime_script_invalidates_missing_runtime_columnar_manifests_after_cleanup() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert "prune_missing_runtime_columnar_manifests() {" in text
+    assert "missing_columnar_file_after_runtime_cleanup" in text
+    assert '"status": "invalid"' in text
+    assert "运行时列式 manifest 清理失败，停止启动" in text
+    assert "运行时列式 manifest 清理失败，继续启动" not in text
+    delete_index = text.index('find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1')
+    mongo_index = text.index("\nstart_local_mongodb_if_needed\n")
+    prune_index = text.index("\nprune_missing_runtime_columnar_manifests\n")
+    openviking_index = text.index("\nconfigure_openviking_embedding_runtime_flags\n")
+    assert delete_index < mongo_index < prune_index < openviking_index
+
+
 def test_start_control_runtime_script_gateway_run_uses_local_state_and_dev_mode() -> None:
     text = _script_path().read_text(encoding="utf-8")
 
@@ -465,6 +480,9 @@ def test_start_control_runtime_script_loads_mongo_ui_settings_before_runtime_con
 
     assert "load_mongo_ui_settings_into_process_env() {" in text
     assert "uv run python -m claw_trade.runtime.settings_projection" in text
+    assert 'local import_env_data_sources="${CLAW_TRADE_IMPORT_ENV_DATA_SOURCES:-}"' in text
+    assert 'if [[ -z "${import_env_data_sources}" && ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then' in text
+    assert 'CLAW_TRADE_IMPORT_ENV_DATA_SOURCES="${import_env_data_sources}" uv run python -m claw_trade.runtime.settings_projection' in text
     assert "CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE" in text
     assert "resolveMongoReportModelConfig() || resolveProjectLlmConfig()" in text
     mongo_index = text.index("load_mongo_ui_settings_into_process_env")

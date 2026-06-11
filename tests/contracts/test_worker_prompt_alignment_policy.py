@@ -940,6 +940,44 @@ def test_crypto_model_visible_prompts_do_not_seed_internal_or_unverified_literal
             assert token not in text, f"{prompt_path} seeds literal token {token!r}"
 
 
+def test_worker_visible_prompt_and_skill_text_do_not_hardcode_provider_brands() -> None:
+    paths = [
+        *Path("agents").glob("*/prompts/*.md"),
+        *Path("agents").glob("*/skills/*/SKILL.md"),
+        *Path("agents").glob("*/skills/*/references/*.md"),
+    ]
+    provider_brands = (
+        "CoinGecko",
+        "Coinglass",
+        "DefiLlama",
+        "Token Terminal",
+        "Glassnode",
+        "LunarCrush",
+        "Polymarket",
+        "Alternative.me",
+        "Google News",
+        "Brave Search",
+        "Bocha",
+        "NewsAPI",
+        "SerpAPI",
+        "Tavily",
+        "Exa",
+        "AkShare",
+        "Tushare",
+        "EastMoney",
+        "East Money",
+        "Yahoo",
+        "Alpha Vantage",
+        "FRED",
+    )
+
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for brand in provider_brands:
+            pattern = rf"(?<![A-Za-z0-9]){re.escape(brand)}(?![A-Za-z0-9])"
+            assert re.search(pattern, text, flags=re.IGNORECASE) is None, f"{path} hardcodes provider brand {brand!r}"
+
+
 def test_report_polisher_prompts_support_sectioned_generation_without_protocol_leakage() -> None:
     prompt_paths = (
         Path("agents") / "report_polisher" / "prompts" / "US.md",

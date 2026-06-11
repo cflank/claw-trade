@@ -61,6 +61,7 @@ def test_managed_http_maps_429_to_rate_limit_signal() -> None:
     assert obs.status_code == 429
     assert obs.quota_signal == "http_429"
     assert obs.error_code is None
+    assert obs.sent_at is not None
 
 
 def test_managed_http_timeout_returns_observation_error() -> None:
@@ -68,6 +69,7 @@ def test_managed_http_timeout_returns_observation_error() -> None:
     obs = http.send(HttpRequestSpec(method="GET", host="api.example.com", path="/daily"))
     assert obs.status_code is None
     assert obs.error_code == "timeout"
+    assert obs.sent_at is not None
 
 
 def test_managed_http_connection_closed_returns_specific_observation_error() -> None:

@@ -144,7 +144,7 @@ def test_batch_planner_merges_symbols_when_batch_supported() -> None:
     batches = planner.build_batches(groups, snapshot)
     assert len(batches) == 2
     assert sum(len(getattr(batch, "symbol_ids")) for batch in batches) == 3
-    assert getattr(batches[0], "rate_limit_policy").max_requests == 20
+    assert getattr(batches[0], "rate_limit_policy").max_requests is None
     assert getattr(batches[0], "lease_ttl_seconds") == 30
     assert getattr(batches[0], "wait_timeout_seconds") == 1
     assert getattr(batches[0], "license_policy") == {"raw_storage_mode": "metadata_only"}
@@ -152,6 +152,7 @@ def test_batch_planner_merges_symbols_when_batch_supported() -> None:
     assert getattr(batches[0], "currency") == "USD"
     assert getattr(batches[0], "timezone") == "America/New_York"
     assert getattr(batches[0], "calendar") == "US_NYSE_NASDAQ"
+    assert getattr(batches[0], "http_visibility") == "managed_http"
 
 
 def test_batch_planner_splits_to_single_when_batch_not_supported() -> None:
@@ -191,7 +192,7 @@ def test_batch_planner_splits_to_single_when_batch_not_supported() -> None:
     assert [getattr(batch, "request_ids") for batch in batches] == [("req-1",), ("req-2",)]
 
 
-def test_batch_planner_uses_provider_source_rate_limit_key_not_endpoint_key() -> None:
+def test_batch_planner_uses_source_quota_key_and_shared_managed_http_cooldown_key() -> None:
     planner = ProviderBatchPlanner()
     snapshot = CapabilitySnapshot.from_capabilities(
         (
@@ -229,6 +230,7 @@ def test_batch_planner_uses_provider_source_rate_limit_key_not_endpoint_key() ->
     )
 
     assert getattr(batches[0], "rate_limit_key") == "ratelimit:coinglass"
+    assert getattr(batches[0], "cooldown_key") == "ratelimit:coinglass"
 
 
 def test_batch_planner_preserves_universe_ref_for_date_batch() -> None:

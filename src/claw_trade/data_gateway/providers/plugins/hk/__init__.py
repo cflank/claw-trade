@@ -58,7 +58,7 @@ class HKSinaDailyBarPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=25,
         )
 
@@ -134,7 +134,7 @@ class HKYahooFinancePlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=5,
         )
 
@@ -620,7 +620,7 @@ class HKAkShareFundamentalPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=20,
         )
 
@@ -772,7 +772,7 @@ class HKEXNewsProviderPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=0,
         )
 
@@ -859,7 +859,7 @@ class HKGoogleNewsDiscoveryPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=50,
         )
 

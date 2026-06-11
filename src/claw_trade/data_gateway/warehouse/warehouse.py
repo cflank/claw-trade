@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Any, Mapping, Sequence
 
@@ -18,6 +19,17 @@ from .repository import DatasetCoverageSummary, DatasetRecord, DatasetRepository
 
 _DEFAULT_MARKET = Market.CN_A
 _METADATA_REF_SAMPLE_LIMIT = 50
+_SOURCE_ROLE_READ_PRIORITY: dict[str, int] = {
+    "local_seed": 0,
+    "official": 1,
+    "paid_data": 2,
+    "built_in_public": 20,
+    "sentiment": 30,
+    "discovery": 40,
+    "event_expectation": 50,
+}
+_SOURCE_PRIORITY_IDENTITY_FIELDS = ("dataset", "market", "symbol_id", "universe_ref", "granularity")
+_SOURCE_PRIORITY_PERIOD_FIELDS = ("period_start", "period_end")
 
 
 class Warehouse:
@@ -115,6 +127,7 @@ class Warehouse:
                     freshness["policy"] = check.freshness_policy
                 freshness.setdefault("checked_requests", []).append(check.request_id)
                 continue
+            records_for_check = tuple(self._record_with_crypto_bar_unit_fields(record) for record in records_for_check)
             batch_count_gaps = self._batch_count_integrity_gaps(check, records_for_check)
             if batch_count_gaps:
                 gaps.extend(batch_count_gaps)
@@ -155,7 +168,11 @@ class Warehouse:
         if coverage_by_request:
             freshness["coverage_by_request"] = tuple(coverage_by_request)
 
-        unique_rows, dataset_refs_for_rows = self._dedupe_rows_with_dataset_refs(rows, dataset_refs)
+        unique_rows, dataset_refs_for_rows = self._dedupe_rows_with_dataset_refs(
+            rows,
+            dataset_refs,
+            preserve_refs_without_rows=not include_rows,
+        )
         attempt_refs_by_dataset_ref = (
             self._repository.find_provider_attempt_refs_by_dataset_ref(dataset_refs_for_rows)
             if dataset_refs_for_rows
@@ -581,13 +598,44 @@ class Warehouse:
                     row.setdefault("date", record.period_start)
             if record.period_end is not None:
                 row.setdefault("period_end", record.period_end)
+            Warehouse._add_crypto_bar_units(row)
             rows.append(row)
         return tuple(rows)
+
+    @staticmethod
+    def _add_crypto_bar_units(row: dict[str, Any]) -> None:
+        if row.get("market") != "CRYPTO" or row.get("dataset") not in {"daily_bar", "intraday_bar"}:
+            return
+        symbol_id = row.get("symbol_id")
+        if not isinstance(symbol_id, str) or not symbol_id.strip():
+            return
+        base_asset = row.get("base_asset")
+        quote_asset = row.get("quote_asset")
+        if not isinstance(base_asset, str) or not isinstance(quote_asset, str) or not base_asset or not quote_asset:
+            inferred_base, inferred_quote = Warehouse._split_crypto_pair(symbol_id)
+            base_asset = base_asset if isinstance(base_asset, str) and base_asset else inferred_base
+            quote_asset = quote_asset if isinstance(quote_asset, str) and quote_asset else inferred_quote
+        if base_asset:
+            row.setdefault("base_asset", base_asset)
+            row.setdefault("volume_unit", base_asset)
+        if quote_asset:
+            row.setdefault("quote_asset", quote_asset)
+            row.setdefault("amount_unit", quote_asset)
+
+    @staticmethod
+    def _split_crypto_pair(symbol_id: str) -> tuple[str | None, str | None]:
+        normalized = symbol_id.strip().upper().replace("/", "")
+        for quote in ("USDT", "USDC", "FDUSD", "BUSD", "BTC", "ETH", "USD"):
+            if normalized.endswith(quote) and len(normalized) > len(quote):
+                return normalized[: -len(quote)], quote
+        return None, None
 
     @staticmethod
     def _dedupe_rows_with_dataset_refs(
         rows: Sequence[dict[str, Any]],
         dataset_refs: Sequence[str],
+        *,
+        preserve_refs_without_rows: bool = False,
     ) -> tuple[tuple[dict[str, Any], ...], tuple[str, ...]]:
         deduped_rows: list[dict[str, Any]] = []
         deduped_refs: list[str] = []
@@ -600,7 +648,7 @@ class Warehouse:
             deduped_rows.append(row)
             if index < len(dataset_refs):
                 deduped_refs.append(str(dataset_refs[index]))
-        if len(dataset_refs) > len(rows):
+        if preserve_refs_without_rows and len(dataset_refs) > len(rows):
             deduped_refs.extend(str(ref) for ref in dataset_refs[len(rows) :])
         return tuple(deduped_rows), tuple(dict.fromkeys(deduped_refs))
 
@@ -737,11 +785,23 @@ class Warehouse:
         scoped = granularity_matches if granularity_matches else tuple(records)
         if not granularity_matches:
             return scoped
+        source_role_matches = self._records_with_required_source_role(scoped, check)
+        if source_role_matches:
+            scoped = source_role_matches
         field_matches = self._records_with_requested_fields(scoped, check)
         if field_matches:
             scoped = field_matches
         overlap_matches = tuple(record for record in scoped if self._record_overlaps_request(record, check))
-        return overlap_matches or scoped
+        scoped = overlap_matches or scoped
+        return self._prefer_highest_priority_source_records(scoped, check)
+
+    @staticmethod
+    def _records_with_required_source_role(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
+        required = check.source_role_required
+        if not required:
+            return ()
+        required_text = str(getattr(required, "value", required))
+        return tuple(record for record in records if required_text in {str(role) for role in record.source_roles})
 
     @staticmethod
     def _records_with_requested_fields(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
@@ -751,8 +811,38 @@ class Warehouse:
         return tuple(
             record
             for record in records
-            if all(field in record.field_set or field in record.row for field in requested)
+            if all(field in Warehouse._effective_field_set(record) or field in record.row for field in requested)
         )
+
+    @staticmethod
+    def _prefer_highest_priority_source_records(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
+        if not records or check.source_role_required:
+            return tuple(records)
+        selected: list[DatasetRecord] = []
+        for group in _group_records_by_request_identity(records).values():
+            selected.extend(_source_priority_records_for_group(group, check))
+        return tuple(selected)
+
+    @staticmethod
+    def _record_with_crypto_bar_unit_fields(record: DatasetRecord) -> DatasetRecord:
+        effective = Warehouse._effective_field_set(record)
+        if effective == set(record.field_set):
+            return record
+        return replace(record, field_set=tuple(sorted(effective)))
+
+    @staticmethod
+    def _effective_field_set(record: DatasetRecord) -> set[str]:
+        fields = set(record.field_set)
+        if record.market != "CRYPTO" or record.dataset not in {"daily_bar", "intraday_bar"}:
+            return fields
+        symbol_id = record.symbol_id or record.row.get("symbol_id")
+        if not isinstance(symbol_id, str) or not Warehouse._split_crypto_pair(symbol_id)[1]:
+            return fields
+        if "volume" in fields or "volume" in record.row:
+            fields.add("volume_unit")
+        if "amount" in fields or "amount" in record.row:
+            fields.add("amount_unit")
+        return fields
 
     def _records_passing_integrity_check(
         self,
@@ -1102,3 +1192,55 @@ class Warehouse:
             return GapReason(str(reason))
         except ValueError:
             return GapReason.WAREHOUSE_MISSING
+
+
+def _group_records_by_request_identity(records: Sequence[DatasetRecord]) -> dict[tuple[Any, ...], list[DatasetRecord]]:
+    groups: dict[tuple[Any, ...], list[DatasetRecord]] = {}
+    for record in records:
+        key = tuple(_source_record_key_value(record, field) for field in _SOURCE_PRIORITY_IDENTITY_FIELDS + _SOURCE_PRIORITY_PERIOD_FIELDS)
+        groups.setdefault(key, []).append(record)
+    return groups
+
+
+def _source_priority_records_for_group(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
+    ordered = sorted(records, key=_source_role_rank)
+    requested = {str(field).strip() for field in check.fields if str(field).strip()}
+    selected: list[DatasetRecord] = []
+    covered_fields: set[str] = set()
+    for record in ordered:
+        fields = _source_record_fields(record)
+        if not selected:
+            selected.append(record)
+            covered_fields.update(fields)
+            continue
+        missing_requested = requested - covered_fields if requested else set()
+        if missing_requested and fields & missing_requested:
+            selected.append(record)
+            covered_fields.update(fields)
+            continue
+        if not requested and fields - covered_fields:
+            selected.append(record)
+            covered_fields.update(fields)
+    return tuple(selected)
+
+
+def _source_record_key_value(record: DatasetRecord, field: str) -> Any:
+    value = getattr(record, field)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def _source_record_fields(record: DatasetRecord) -> set[str]:
+    fields = set(Warehouse._effective_field_set(record))
+    fields.update(str(key) for key in record.row.keys())
+    return fields
+
+
+def _source_role_rank(record: DatasetRecord) -> int:
+    roles = tuple(str(role) for role in record.source_roles if str(role).strip())
+    if not roles:
+        return 99
+    return min(_SOURCE_ROLE_READ_PRIORITY.get(role, 99) for role in roles)

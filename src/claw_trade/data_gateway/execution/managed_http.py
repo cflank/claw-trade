@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from http.client import RemoteDisconnected
 from time import monotonic
+from datetime import UTC, datetime
 from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -46,6 +47,7 @@ class HttpObservation:
     host: str
     path: str
     request_headers_redacted: dict[str, str]
+    sent_at: datetime | None = None
     status_code: int | None = None
     response_headers_redacted: dict[str, str] | None = None
     response_body_hash: str | None = None
@@ -128,6 +130,7 @@ class ManagedHttp:
     def send_capture(self, request: HttpRequestSpec) -> HttpResponseCapture:
         request_key = self.stable_key(request)
         started = monotonic()
+        sent_at = datetime.now(tz=UTC)
         headers = _redact_headers(request.headers)
         try:
             response = self._client.send(request)
@@ -139,6 +142,7 @@ class ManagedHttp:
                     host=request.host,
                     path=request.path,
                     request_headers_redacted=headers,
+                    sent_at=sent_at,
                     elapsed_ms=_elapsed_ms(started),
                     error_code="timeout",
                 )
@@ -151,6 +155,7 @@ class ManagedHttp:
                     host=request.host,
                     path=request.path,
                     request_headers_redacted=headers,
+                    sent_at=sent_at,
                     elapsed_ms=_elapsed_ms(started),
                     error_code=_transport_error_code(exc),
                 )
@@ -168,6 +173,7 @@ class ManagedHttp:
                 host=request.host,
                 path=request.path,
                 request_headers_redacted=headers,
+                sent_at=sent_at,
                 status_code=status_code,
                 response_headers_redacted=response_headers,
                 response_body_hash=_hash_text(body_text) if body_text else None,

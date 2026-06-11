@@ -696,7 +696,7 @@ class AkShareSocialNewsPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=30,
         )
 
@@ -974,7 +974,7 @@ class AStockSignalSocialPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=25,
         )
 
@@ -1133,7 +1133,7 @@ class EastMoneyCNEventsPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=10,
         )
 
@@ -1320,7 +1320,7 @@ class EastMoneyCNMarketDataPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=20,
         )
 
@@ -1902,7 +1902,7 @@ class BaostockCNProviderPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=30,
         )
 
@@ -2267,7 +2267,7 @@ class MootdxCNProviderPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=25,
         )
 
@@ -2533,7 +2533,7 @@ class CNInfoEventsPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=5,
         )
 
@@ -2591,7 +2591,7 @@ class GoogleNewsDiscoveryPlugin:
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=50,
         )
 
@@ -2694,7 +2694,7 @@ def _endpoint(
             mergeable_fields=mergeable_fields if supports_batch else (),
         ),
         priority_rank=priority_rank,
-        rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+        rate_limit_policy={"window_seconds": 60, "max_calls": None},
         license_policy=_CN_A_LICENSE,
         can_be_formal_fact_source=can_be_formal_fact_source,
     )

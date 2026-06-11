@@ -9,6 +9,8 @@ from .normalized_store import NormalizedStore
 from .normalizer import Normalizer
 from .raw_store import RawStore
 
+_SELECTOR_SKIP_ATTEMPT_ONLY_REASONS = frozenset({"source_not_configured", "source_disabled"})
+
 
 class IngestPipeline:
     def __init__(
@@ -145,6 +147,30 @@ class IngestPipeline:
             cache_key=getattr(batch, "cache_key", None),
         )
 
+    def record_selector_skip(self, batch: Any, selector_skip: Any) -> IngestResult:
+        reason = _selector_skip_reason(selector_skip)
+        if reason in _SELECTOR_SKIP_ATTEMPT_ONLY_REASONS:
+            gaps: tuple[DataGap, ...] = ()
+        else:
+            gaps = (_batch_gap(batch, reason, message=_selector_skip_message(selector_skip)),)
+        try:
+            attempt_refs = self.attempt_log.record_selector_skip(
+                batch=batch,
+                selector_skip=selector_skip,
+                gaps=gaps,
+            )
+        except Exception:
+            return IngestResult.failed("evidence_write_failed")
+
+        return IngestResult(
+            batch_id=str(getattr(batch, "batch_id", "batch:unknown")),
+            status="non_remote_recorded",
+            attempt_refs=attempt_refs,
+            gaps=gaps,
+            remote_success=False,
+            cache_key=getattr(batch, "cache_key", None),
+        )
+
 
 def gaps_from_fetch_result(result: Any, batch: Any) -> tuple[DataGap, ...]:
     status = _fetch_status(result)
@@ -184,6 +210,19 @@ def _batch_gap(
         message=message,
         symbol_id=_first_symbol_id(batch),
     )
+
+
+def _selector_skip_message(selector_skip: Any) -> str:
+    reason = _selector_skip_reason(selector_skip)
+    names = tuple(str(name) for name in getattr(selector_skip, "credential_names", ()) or () if str(name))
+    if names:
+        return f"{reason}:{','.join(names)}"
+    return reason
+
+
+def _selector_skip_reason(selector_skip: Any) -> str:
+    raw_reason = getattr(selector_skip, "reason", "credential_missing") or "credential_missing"
+    return str(getattr(raw_reason, "value", raw_reason))
 
 
 def _replace_fetch_status(result: Any, status: str) -> Any:
@@ -234,6 +273,15 @@ def _rate_limit_evidence_refs(batch: Any, gate: Any, refs: _GateRefs) -> tuple[s
     gate_evidence = tuple(getattr(gate, "evidence_refs", ()) or ())
     if gate_evidence:
         return gate_evidence
+    if getattr(gate, "kind", None) == "cooldown_skipped":
+        return _derived_cooldown_evidence_refs(batch)
+    return _derived_rate_limit_evidence_refs(batch)
+
+
+def _derived_cooldown_evidence_refs(batch: Any) -> tuple[str, ...]:
+    cooldown_key = getattr(batch, "cooldown_key", None)
+    if cooldown_key:
+        return (f"rate_limit:{cooldown_key}",)
     return _derived_rate_limit_evidence_refs(batch)
 
 

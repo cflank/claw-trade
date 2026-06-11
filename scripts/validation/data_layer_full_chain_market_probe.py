@@ -24,6 +24,7 @@ from claw_trade.data_gateway.execution import ProviderResultCache
 from claw_trade.data_gateway.execution.fetch_engine import FetchEngine
 from claw_trade.data_gateway.execution.gate import ExecutionGate
 from claw_trade.data_gateway.execution.managed_http import ManagedHttp, UrllibHttpClient
+from claw_trade.data_gateway.execution.rate_limit_policy import RateLimitPolicyResolver
 from claw_trade.data_gateway.execution.rate_limiter import RateLimiter
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
@@ -73,23 +74,39 @@ def main() -> int:
         data_source_store=MongoDataSourceStore(main_db[UI_DATA_SOURCE_SETTINGS_COLLECTION]),
         secret_store=MongoSecretStore(main_db[UI_SECRET_SETTINGS_COLLECTION]),
     )
+    rate_limiter = RateLimiter(repository)
     service = DataService(
         query_planner=RecordingQueryPlanner(QueryPlanner(), recorder),
         warehouse=RecordingWarehouse(Warehouse(repository), recorder),
-        provider_selector=RecordingProviderSelector(ProviderSelector(registry), registry, recorder),
+        provider_selector=RecordingProviderSelector(
+            ProviderSelector(registry, credential_resolver=credential_resolver),
+            registry,
+            recorder,
+        ),
         coalescer=RecordingCoalescer(RequestCoalescer(), recorder),
-        batch_planner=RecordingBatchPlanner(ProviderBatchPlanner(), recorder),
+        batch_planner=RecordingBatchPlanner(
+            ProviderBatchPlanner(
+                rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
+            ),
+            recorder,
+        ),
         execution_gate=RecordingExecutionGate(
             ExecutionGate(
                 cache=ProviderResultCache(repository),
-                rate_limiter=RateLimiter(repository),
+                rate_limiter=rate_limiter,
                 single_flight=SingleFlight(repository),
             ),
             recorder,
         ),
         fetch_engine=RecordingFetchEngine(
-            FetchEngine(registry, managed_http=managed_http, credential_resolver=credential_resolver),
+            FetchEngine(
+                registry,
+                managed_http=managed_http,
+                credential_resolver=credential_resolver,
+                rate_limiter=rate_limiter,
+            ),
             recorder,
+            rate_limit_db_name=scratch_db_name,
         ),
         ingest=RecordingIngest(
             IngestPipeline(
@@ -287,9 +304,10 @@ class RecordingExecutionGate:
 
 
 class RecordingFetchEngine:
-    def __init__(self, inner: FetchEngine, recorder: Recorder) -> None:
+    def __init__(self, inner: FetchEngine, recorder: Recorder, *, rate_limit_db_name: str) -> None:
         self._inner = inner
         self._recorder = recorder
+        self._rate_limit_db_name = rate_limit_db_name
 
     def fetch(self, batch: Any) -> Any:
         self._recorder.record("fetch.start", batch=_batch_summary(batch))
@@ -299,6 +317,7 @@ class RecordingFetchEngine:
             timeout_seconds=timeout_seconds,
             run_id=self._recorder.run_id,
             market=self._recorder.market,
+            rate_limit_db_name=self._rate_limit_db_name,
         )
         self._recorder.events.extend(child_events)
         if timeout_error is not None:
@@ -307,12 +326,19 @@ class RecordingFetchEngine:
         return result
 
 
-def _fetch_in_child_process(batch: Any, *, timeout_seconds: float, run_id: str, market: str) -> tuple[FetchResult, list[dict[str, Any]], str | None]:
+def _fetch_in_child_process(
+    batch: Any,
+    *,
+    timeout_seconds: float,
+    run_id: str,
+    market: str,
+    rate_limit_db_name: str,
+) -> tuple[FetchResult, list[dict[str, Any]], str | None]:
     if timeout_seconds <= 0:
         return FetchResult.from_error(batch, status="error", error=TimeoutError(_timeout_message("provider_probe_timeout", batch))), [], _timeout_message("provider_probe_timeout", batch)
     ctx = mp.get_context("fork")
     result_queue: mp.Queue[Any] = ctx.Queue(maxsize=1)
-    process = ctx.Process(target=_fetch_child_entrypoint, args=(batch, run_id, market, result_queue))
+    process = ctx.Process(target=_fetch_child_entrypoint, args=(batch, run_id, market, rate_limit_db_name, result_queue))
     process.start()
     deadline = monotonic() + timeout_seconds
     payload: Any | None = None
@@ -347,7 +373,7 @@ def _fetch_in_child_process(batch: Any, *, timeout_seconds: float, run_id: str, 
     return FetchResult.from_error(batch, status="error", error=RuntimeError(message)), events, message
 
 
-def _fetch_child_entrypoint(batch: Any, run_id: str, market: str, result_queue: Any) -> None:
+def _fetch_child_entrypoint(batch: Any, run_id: str, market: str, rate_limit_db_name: str, result_queue: Any) -> None:
     recorder = Recorder(run_id=run_id, market=market)
     try:
         main_db = _mongo_db()
@@ -357,7 +383,13 @@ def _fetch_child_entrypoint(batch: Any, run_id: str, market: str, result_queue: 
             data_source_store=MongoDataSourceStore(main_db[UI_DATA_SOURCE_SETTINGS_COLLECTION]),
             secret_store=MongoSecretStore(main_db[UI_SECRET_SETTINGS_COLLECTION]),
         )
-        result = FetchEngine(registry, managed_http=managed_http, credential_resolver=credential_resolver).fetch(batch)
+        repository = DatasetRepository.from_database(_mongo_client()[rate_limit_db_name])
+        result = FetchEngine(
+            registry,
+            managed_http=managed_http,
+            credential_resolver=credential_resolver,
+            rate_limiter=RateLimiter(repository),
+        ).fetch(batch)
         result_queue.put({"ok": True, "result": result.model_dump(mode="python"), "events": recorder.events})
     except Exception as exc:  # noqa: BLE001
         result_queue.put({"ok": False, "error": f"{type(exc).__name__}:{exc}", "events": recorder.events})

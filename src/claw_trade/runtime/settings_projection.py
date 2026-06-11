@@ -214,7 +214,7 @@ def _should_import_env_data_sources(env: Mapping[str, str]) -> bool:
     explicit = _optional_str(env.get("CLAW_TRADE_IMPORT_ENV_DATA_SOURCES"))
     if explicit is not None:
         return _truthy_env(explicit)
-    return True
+    return False
 
 
 def _truthy_env(value: object) -> bool:

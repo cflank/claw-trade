@@ -92,12 +92,16 @@ load_runtime_env_files_into_process_env
 
 load_mongo_ui_settings_into_process_env() {
   local exported_count=0
+  local import_env_data_sources="${CLAW_TRADE_IMPORT_ENV_DATA_SOURCES:-}"
+  if [[ -z "${import_env_data_sources}" && ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then
+    import_env_data_sources=1
+  fi
   while IFS= read -r -d '' key && IFS= read -r -d '' value; do
     export "${key}=${value}"
     exported_count=$(( exported_count + 1 ))
   done < <(
     cd "${ROOT_DIR}"
-    uv run python -m claw_trade.runtime.settings_projection
+    CLAW_TRADE_IMPORT_ENV_DATA_SOURCES="${import_env_data_sources}" uv run python -m claw_trade.runtime.settings_projection
   )
   printf '[INFO] 已加载 Mongo UI 设置：%s 项\n' "${exported_count}"
 }
@@ -361,6 +365,91 @@ while time.monotonic() < deadline:
 print(f"MongoDB ping failed: {last_error}", file=sys.stderr)
 sys.exit(1)
 PY
+}
+
+prune_missing_runtime_columnar_manifests() {
+  local runtime_columnar_root="${RUNTIME_DIR}/data-gateway/normalized"
+  local result
+  if ! result="$(
+    RUNTIME_COLUMNAR_ROOT_VALUE="${runtime_columnar_root}" \
+    ROOT_DIR_VALUE="${ROOT_DIR}" \
+    DATA_GATEWAY_MONGODB_URI_VALUE="${DATA_GATEWAY_MONGODB_URI}" \
+    DATA_GATEWAY_MONGODB_DATABASE_VALUE="${DATA_GATEWAY_MONGODB_DATABASE}" \
+      uv run python - <<'PY'
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import urlparse
+
+from pymongo import MongoClient
+
+root_dir = Path(os.environ["ROOT_DIR_VALUE"]).resolve()
+runtime_root = Path(os.environ["RUNTIME_COLUMNAR_ROOT_VALUE"]).resolve()
+mongo_uri = os.environ["DATA_GATEWAY_MONGODB_URI_VALUE"]
+database_name = os.environ.get("DATA_GATEWAY_MONGODB_DATABASE_VALUE", "").strip()
+if not database_name:
+    database_name = urlparse(mongo_uri).path.strip("/").split("/", 1)[0]
+if not database_name:
+    raise RuntimeError("DATA_GATEWAY_MONGODB_DATABASE is required")
+
+
+def candidate_paths(manifest):
+    paths = []
+    raw_path = str(manifest.get("path") or "").strip()
+    if raw_path:
+        path = Path(raw_path)
+        paths.append(path if path.is_absolute() else root_dir / path)
+    relative_path = str(manifest.get("relative_path") or "").strip()
+    if relative_path:
+        paths.append(runtime_root / relative_path)
+    return tuple(dict.fromkeys(path.resolve() for path in paths))
+
+
+def under_runtime_root(path):
+    try:
+        path.relative_to(runtime_root)
+    except ValueError:
+        return False
+    return True
+
+
+client = MongoClient(mongo_uri, serverSelectionTimeoutMS=3000)
+try:
+    collection = client[database_name]["dataset_manifests"]
+    checked = 0
+    invalidated = 0
+    now = datetime.now(tz=UTC)
+    for manifest in collection.find({"storage": "parquet", "status": "active"}):
+        manifest_ref = str(manifest.get("manifest_ref") or "").strip()
+        if not manifest_ref:
+            continue
+        runtime_paths = tuple(path for path in candidate_paths(manifest) if under_runtime_root(path))
+        if not runtime_paths:
+            continue
+        checked += 1
+        if any(path.exists() for path in runtime_paths):
+            continue
+        result = collection.update_one(
+            {"manifest_ref": manifest_ref, "status": "active"},
+            {
+                "$set": {
+                    "status": "invalid",
+                    "invalid_reason": "missing_columnar_file_after_runtime_cleanup",
+                    "invalidated_at": now,
+                    "invalidated_by": "scripts/start-control-runtime.sh",
+                }
+            },
+        )
+        invalidated += int(result.modified_count or 0)
+    print(f"checked={checked} invalidated={invalidated}")
+finally:
+    client.close()
+PY
+  )"; then
+    log_error "运行时列式 manifest 清理失败，停止启动：${result}"
+    exit 1
+  fi
+  log_info "运行时列式 manifest 清理：${result}"
 }
 
 start_local_mongodb_if_needed() {
@@ -1414,6 +1503,7 @@ mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 start_local_mongodb_if_needed
 load_mongo_ui_settings_into_process_env
+prune_missing_runtime_columnar_manifests
 configure_openviking_embedding_runtime_flags
 ensure_openclaw_control_ui_assets
 ensure_openclaw_weixin_plugin_ready

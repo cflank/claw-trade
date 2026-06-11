@@ -80,6 +80,16 @@ def test_crypto_pair_identity_normalizes_user_input_to_slash_pair(raw_ticker: st
     assert identity.provider_symbols.official_repo == "ArweaveTeam/arweave"
 
 
+def test_bnb_crypto_identity_uses_provider_specific_coin_ids() -> None:
+    identity = resolve_instrument_identity("BNBUSDT")
+
+    assert identity.ticker == "BNB/USDT"
+    assert identity.profile == "CRYPTO"
+    assert identity.provider_symbols.coinglass_asset_symbol == "BNB"
+    assert identity.provider_symbols.coinglass_contract_symbol == "BNBUSDT"
+    assert identity.provider_symbols.coingecko_coin_id == "binancecoin"
+
+
 def test_bare_ar_without_crypto_pair_remains_us_equity() -> None:
     identity = resolve_instrument_identity("AR")
 

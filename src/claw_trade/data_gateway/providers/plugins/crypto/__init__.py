@@ -54,7 +54,7 @@ class BinanceSpotDailyBarPlugin:
                     data_type="daily_bar",
                     source_role="official",
                     granularity=("daily",),
-                    fields=("open", "high", "low", "close", "volume", "amount"),
+                    fields=("open", "high", "low", "close", "volume", "volume_unit", "amount", "amount_unit"),
                     freshness_supported=("trading_day",),
                     http_visibility="managed_http",
                     batch_policy=BatchPolicy(
@@ -62,10 +62,10 @@ class BinanceSpotDailyBarPlugin:
                         batch_by="symbol",
                         max_symbols_per_call=20,
                         max_days_per_call=1000,
-                        mergeable_fields=("open", "high", "low", "close", "volume", "amount"),
+                        mergeable_fields=("open", "high", "low", "close", "volume", "volume_unit", "amount", "amount_unit"),
                     ),
                     priority_rank=20,
-                    rate_limit_policy={"window_seconds": 60, "max_calls": 60},
+                    rate_limit_policy={"window_seconds": 60, "max_calls": None},
                     license_policy=license_policy,
                 ),
             ),
@@ -76,7 +76,7 @@ class BinanceSpotDailyBarPlugin:
                 missing_behavior="credential_missing",
             ),
             license_policy=license_policy,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 60},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=20,
         )
 
@@ -181,13 +181,13 @@ class BinanceSpotMarketPlugin:
                     data_type="intraday_bar",
                     source_role="official",
                     granularity=("1h", "1m"),
-                    fields=("open", "high", "low", "close", "volume", "amount"),
+                    fields=("open", "high", "low", "close", "volume", "volume_unit", "amount", "amount_unit"),
                     priority_rank=15,
                 ),
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 60},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=10,
         )
 
@@ -467,7 +467,7 @@ class DefiLlamaCryptoPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 30},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=20,
         )
 
@@ -527,6 +527,43 @@ class CoinglassCryptoPlugin:
     credential_name = "data_source:coinglass"
     _endpoint_specs: tuple[dict[str, Any], ...] = (
         {
+            "endpoint_id": "spot_coins_markets",
+            "data_type": "valuation_metric",
+            "source_role": "paid_data",
+            "granularity": ("realtime",),
+            "fields": (
+                "price",
+                "price_unit",
+                "market_cap",
+                "market_cap_unit",
+                "fdv",
+                "fdv_unit",
+                "circulating_supply",
+                "total_supply",
+                "supply_unit",
+                "volume",
+                "volume_unit",
+            ),
+            "priority_rank": 8,
+            "path": "/api/spot/coins-markets",
+            "symbol_mode": "none",
+            "requires_market_page": True,
+            "sends_time_bounds": False,
+            "metric_kind": "spot_coins_markets",
+        },
+        {
+            "endpoint_id": "coin_market_data_history",
+            "data_type": "valuation_metric",
+            "source_role": "paid_data",
+            "granularity": ("daily",),
+            "fields": ("price", "price_unit", "market_cap", "market_cap_unit", "circulating_supply", "supply_unit", "timestamp", "symbol_id"),
+            "priority_rank": 8,
+            "path": "/api/coin/market-data-history",
+            "symbol_mode": "asset",
+            "sends_time_bounds": False,
+            "metric_kind": "coin_market_data_history",
+        },
+        {
             "endpoint_id": "futures_open_interest",
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
@@ -535,6 +572,7 @@ class CoinglassCryptoPlugin:
             "priority_rank": 10,
             "path": "/api/futures/open-interest/exchange-list",
             "symbol_mode": "asset",
+            "sends_time_bounds": False,
             "metric_keys": (
                 "open_interest_usd",
                 "sumOpenInterestValue",
@@ -547,6 +585,60 @@ class CoinglassCryptoPlugin:
                 "openInterest",
                 "sumOpenInterest",
                 "oi",
+                "close",
+                "value",
+            ),
+            "metric_field": "open_interest",
+            "metric_unit": "USD",
+        },
+        {
+            "endpoint_id": "futures_pairs_markets",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("realtime",),
+            "fields": (
+                "price",
+                "price_unit",
+                "volume_usd",
+                "volume_unit",
+                "long_volume_usd",
+                "short_volume_usd",
+                "open_interest",
+                "open_interest_unit",
+                "funding_rate",
+                "funding_rate_unit",
+                "long_liquidation",
+                "short_liquidation",
+                "liquidation_value",
+                "liquidation_value_unit",
+                "timestamp",
+                "symbol_id",
+            ),
+            "priority_rank": 7,
+            "path": "/api/futures/pairs-markets",
+            "symbol_mode": "contract",
+            "sends_time_bounds": False,
+            "metric_kind": "futures_pairs_markets",
+        },
+        {
+            "endpoint_id": "futures_open_interest_aggregated_history",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("1h", "daily"),
+            "fields": ("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+            "priority_rank": 9,
+            "path": "/api/futures/open-interest/aggregated-history",
+            "symbol_mode": "asset",
+            "requires_exchange_list": True,
+            "requires_interval": True,
+            "requires_unit": True,
+            "metric_keys": (
+                "open_interest_usd",
+                "openInterestUsd",
+                "open_interest_value",
+                "openInterestValue",
+                "open_interest",
+                "openInterest",
                 "close",
                 "value",
             ),
@@ -623,10 +715,10 @@ class CoinglassCryptoPlugin:
             "granularity": ("1h",),
             "fields": ("liquidation_price", "liquidation_price_unit", "liquidation_size", "liquidation_size_unit", "side", "timestamp", "symbol_id"),
             "priority_rank": 11,
-            "path": "/api/futures/liquidation/heatmap/model1",
-            "symbol_mode": "contract",
-            "requires_exchange": True,
+            "path": "/api/futures/liquidation/aggregated-heatmap/model1",
+            "symbol_mode": "asset",
             "requires_range": True,
+            "sends_time_bounds": False,
             "metric_kind": "liquidation_heatmap",
         },
         {
@@ -637,8 +729,10 @@ class CoinglassCryptoPlugin:
             "fields": ("options_open_interest", "options_volume", "timestamp", "symbol_id"),
             "priority_rank": 11,
             "path": "/api/option/exchange-oi-history",
+            "volume_path": "/api/option/exchange-vol-history",
             "symbol_mode": "asset",
             "requires_range": True,
+            "sends_time_bounds": False,
             "metric_kind": "options",
         },
         {
@@ -648,9 +742,23 @@ class CoinglassCryptoPlugin:
             "granularity": ("1h",),
             "fields": ("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "timestamp", "symbol_id"),
             "priority_rank": 11,
-            "path": "/api/spot/cvd/history",
-            "symbol_mode": "contract",
-            "requires_exchange": True,
+            "path": "/api/spot/aggregated-cvd/history",
+            "symbol_mode": "asset",
+            "requires_exchange_list": True,
+            "requires_interval": True,
+            "requires_unit": True,
+            "metric_kind": "cvd",
+        },
+        {
+            "endpoint_id": "futures_cvd_history",
+            "data_type": "crypto_derivative_metric",
+            "source_role": "paid_data",
+            "granularity": ("1h",),
+            "fields": ("cvd", "taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "timestamp", "symbol_id"),
+            "priority_rank": 10,
+            "path": "/api/futures/aggregated-cvd/history",
+            "symbol_mode": "asset",
+            "requires_exchange_list": True,
             "requires_interval": True,
             "requires_unit": True,
             "metric_kind": "cvd",
@@ -662,8 +770,15 @@ class CoinglassCryptoPlugin:
             "granularity": ("daily",),
             "fields": ("etf_flow_usd", "price", "timestamp", "symbol_id"),
             "priority_rank": 11,
-            "path_by_asset": {"BTC": "/api/etf/bitcoin/flow-history", "ETH": "/api/etf/ethereum/flow-history", "XRP": "/api/etf/xrp/flow-history"},
-            "symbol_mode": "asset",
+            "path_by_asset": {
+                "BTC": "/api/etf/bitcoin/flow-history",
+                "ETH": "/api/etf/ethereum/flow-history",
+                "XRP": "/api/etf/xrp/flow-history",
+                "SOL": "/api/etf/solana/flow-history",
+                "HYPE": "/api/etf/hype/flow-history",
+            },
+            "symbol_mode": "none",
+            "sends_time_bounds": False,
             "metric_kind": "etf_flow",
         },
         {
@@ -671,7 +786,7 @@ class CoinglassCryptoPlugin:
             "data_type": "daily_bar",
             "source_role": "paid_data",
             "granularity": ("daily",),
-            "fields": ("open", "high", "low", "close", "volume", "amount"),
+            "fields": ("open", "high", "low", "close", "amount", "amount_unit"),
             "priority_rank": 35,
             "path": "/api/futures/price/history",
             "symbol_mode": "contract",
@@ -683,7 +798,7 @@ class CoinglassCryptoPlugin:
             "data_type": "daily_bar",
             "source_role": "paid_data",
             "granularity": ("daily",),
-            "fields": ("open", "high", "low", "close", "volume", "amount"),
+            "fields": ("open", "high", "low", "close", "amount", "amount_unit"),
             "priority_rank": 35,
             "path": "/api/spot/price/history",
             "symbol_mode": "contract",
@@ -695,9 +810,9 @@ class CoinglassCryptoPlugin:
             "data_type": "order_book_snapshot",
             "source_role": "paid_data",
             "granularity": ("1h",),
-            "fields": ("bid_price", "bid_size", "ask_price", "ask_size", "timestamp"),
+            "fields": ("bids_usd", "bids_quantity", "asks_usd", "asks_quantity", "timestamp", "symbol_id"),
             "priority_rank": 20,
-            "path": "/api/futures/orderbook/history",
+            "path": "/api/futures/orderbook/ask-bids-history",
             "symbol_mode": "contract",
             "requires_exchange": True,
             "requires_interval": True,
@@ -707,9 +822,9 @@ class CoinglassCryptoPlugin:
             "data_type": "order_book_snapshot",
             "source_role": "paid_data",
             "granularity": ("1h",),
-            "fields": ("bid_price", "bid_size", "ask_price", "ask_size", "timestamp"),
+            "fields": ("bids_usd", "bids_quantity", "asks_usd", "asks_quantity", "timestamp", "symbol_id"),
             "priority_rank": 20,
-            "path": "/api/spot/orderbook/history",
+            "path": "/api/spot/orderbook/ask-bids-history",
             "symbol_mode": "contract",
             "requires_exchange": True,
             "requires_interval": True,
@@ -723,6 +838,7 @@ class CoinglassCryptoPlugin:
             "priority_rank": 12,
             "path": "/api/exchange/balance/chart",
             "symbol_mode": "asset",
+            "sends_time_bounds": False,
             "metric": "exchange_balance",
             "metric_keys": ("balance", "value", "amount"),
         },
@@ -748,6 +864,8 @@ class CoinglassCryptoPlugin:
             "path": "/api/spot/coin/netflow",
             "symbol_mode": "asset",
             "requires_exchange_list": True,
+            "default_exchange_list": "Binance,Bybit,OKX,Bitget,Gate",
+            "sends_time_bounds": False,
             "metric": "spot_coin_netflow",
             "metric_keys": (
                 "net_inflow",
@@ -769,6 +887,8 @@ class CoinglassCryptoPlugin:
             "path": "/api/futures/coin/netflow",
             "symbol_mode": "asset",
             "requires_exchange_list": True,
+            "default_exchange_list": "Binance,Bybit,OKX,Bitget,Gate",
+            "sends_time_bounds": False,
             "metric_keys": (
                 "net_inflow",
                 "netInflow",
@@ -790,6 +910,7 @@ class CoinglassCryptoPlugin:
             "priority_rank": 18,
             "path": "/api/index/ahr999",
             "symbol_mode": "btc_only",
+            "sends_time_bounds": False,
             "metric": "ahr999",
             "metric_unit": "dimensionless",
             "metric_keys": ("ahr999", "ahr999Index", "ahr999_value", "index", "current_value", "value"),
@@ -870,16 +991,50 @@ class CoinglassCryptoPlugin:
             observations_list.extend(observations)
             if error is not None:
                 return error
-            rows_list.extend(
-                _coinglass_rows_from_payload(
-                    payload,
+            api_error = _coinglass_api_error_result(task, payload, observations=tuple(observations_list))
+            if api_error is not None:
+                return api_error
+            if spec.get("metric_kind") == "options" and spec.get("volume_path"):
+                volume_payload, volume_observations, volume_error = send_json_request(
                     task,
-                    spec=spec,
-                    symbol=symbol or contract or asset,
-                    asset=asset,
-                    quote_asset=symbols.crypto_quote_symbol or "USDT",
+                    ctx,
+                    HttpRequestSpec(
+                        method="GET",
+                        host=host,
+                        path=f"{prefix}{spec['volume_path']}",
+                        query=query,
+                        headers={"accept": "application/json", header_name: token},
+                        provider_config_version=getattr(task, "provider_config_version", None),
+                    ),
                 )
-            )
+                observations_list.extend(volume_observations)
+                if volume_error is not None:
+                    return volume_error
+                volume_api_error = _coinglass_api_error_result(task, volume_payload, observations=tuple(observations_list))
+                if volume_api_error is not None:
+                    return volume_api_error
+                rows_list.extend(
+                    _coinglass_options_rows_from_payloads(
+                        payload,
+                        volume_payload,
+                        task,
+                        spec=spec,
+                        symbol=symbol or contract or asset,
+                        asset=asset,
+                        quote_asset=symbols.crypto_quote_symbol or "USDT",
+                    )
+                )
+            else:
+                rows_list.extend(
+                    _coinglass_rows_from_payload(
+                        payload,
+                        task,
+                        spec=spec,
+                        symbol=symbol or contract or asset,
+                        asset=asset,
+                        quote_asset=symbols.crypto_quote_symbol or "USDT",
+                    )
+                )
         rows = _dedupe_coinglass_rows(rows_list)
         if not rows:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations_list))
@@ -911,6 +1066,22 @@ def _is_keystore_coinglass_proxy(host: str, prefix: str) -> bool:
     return "proxy.keystore.com.cn" in target and "/proxy/coinglass" in target
 
 
+def _coinglass_api_error_result(task: Any, payload: Any, *, observations: tuple[Any, ...]) -> FetchResult | None:
+    if not isinstance(payload, Mapping) or "code" not in payload:
+        return None
+    code = str(payload.get("code") or "").strip()
+    if code in {"", "0"}:
+        return None
+    message = non_empty(payload.get("msg") or payload.get("message")) or "provider_error"
+    status = "rate_limited" if code == "429" or "rate limit" in message.lower() else "error"
+    return FetchResult.from_error(
+        task,
+        status=status,
+        error=RuntimeError(f"coinglass_api_{code}:{message}"),
+        http_observations=observations,
+    )
+
+
 def _coinglass_path(spec: Mapping[str, Any], *, asset: str) -> str | None:
     path_by_asset = spec.get("path_by_asset")
     if isinstance(path_by_asset, Mapping):
@@ -929,23 +1100,27 @@ def _coinglass_query(task: Any, *, spec: Mapping[str, Any], asset: str, contract
     if spec.get("requires_exchange"):
         query["exchange"] = non_empty(params.get("exchange")) or "Binance"
     if spec.get("requires_exchange_list"):
-        query["exchange_list"] = non_empty(params.get("exchange_list")) or "Binance,OKX,Bybit"
+        query["exchange_list"] = non_empty(params.get("exchange_list")) or non_empty(spec.get("default_exchange_list")) or "Binance,OKX,Bybit"
     if spec.get("requires_interval"):
         query["interval"] = _coinglass_interval(task)
     if spec.get("requires_range"):
-        query["range"] = non_empty(params.get("range")) or _coinglass_range(task)
+        query["range"] = non_empty(params.get("range")) or _coinglass_range(task, spec=spec)
     if spec.get("requires_unit"):
         query["unit"] = non_empty(params.get("unit")) or "usd"
+    if spec.get("requires_market_page"):
+        query["per_page"] = non_empty(params.get("per_page")) or "500"
+        query["page"] = non_empty(params.get("page")) or "1"
     if spec.get("metric_kind") == "options":
         query["unit"] = non_empty(params.get("unit")) or ("USD" if asset.upper() in {"BTC", "ETH"} else "USD")
-    start_ms = _start_millis(getattr(task, "date_range_start", None))
-    end_ms = _end_millis(getattr(task, "date_range_end", None))
-    if start_ms is not None:
-        query["start_time"] = start_ms
-    if end_ms is not None:
-        query["end_time"] = end_ms
+    if spec.get("sends_time_bounds", True):
+        start_ms = _start_millis(getattr(task, "date_range_start", None))
+        end_ms = _end_millis(getattr(task, "date_range_end", None))
+        if start_ms is not None:
+            query["start_time"] = start_ms
+        if end_ms is not None:
+            query["end_time"] = end_ms
     if spec.get("requires_interval"):
-        query["limit"] = non_empty(params.get("limit")) or _coinglass_limit(task)
+        query["limit"] = non_empty(params.get("limit")) or _coinglass_limit(task, spec=spec)
     return query
 
 
@@ -959,8 +1134,9 @@ def _coinglass_queries(task: Any, *, spec: Mapping[str, Any], asset: str, contra
         return (query,)
     queries: list[dict[str, Any]] = []
     chunk_start = start
+    chunk_days = _coinglass_chunk_days(task, spec=spec)
     while chunk_start <= end:
-        chunk_end = min(chunk_start + timedelta(days=179), end)
+        chunk_end = min(chunk_start + timedelta(days=chunk_days - 1), end)
         chunk_query = dict(query)
         chunk_query["start_time"] = _start_millis(chunk_start)
         chunk_query["end_time"] = _end_millis(chunk_end)
@@ -972,28 +1148,53 @@ def _coinglass_queries(task: Any, *, spec: Mapping[str, Any], asset: str, contra
 def _coinglass_should_chunk(task: Any, *, spec: Mapping[str, Any]) -> bool:
     if not spec.get("requires_interval"):
         return False
-    endpoint_id = str(spec.get("endpoint_id") or "")
-    if endpoint_id not in {
-        "futures_funding_rate",
-        "futures_long_short_ratio",
-        "futures_taker_buy_sell",
-        "futures_liquidation",
-    }:
+    if not spec.get("sends_time_bounds", True):
         return False
     params = getattr(task, "params", {}) if isinstance(getattr(task, "params", {}), Mapping) else {}
     if non_empty(params.get("limit")) or non_empty(params.get("start_time")) or non_empty(params.get("end_time")):
         return False
     start = _as_date(getattr(task, "date_range_start", None))
     end = _as_date(getattr(task, "date_range_end", None))
-    return start is not None and end is not None and (end - start).days + 1 > 180
+    return start is not None and end is not None and (end - start).days + 1 > _coinglass_chunk_days(task, spec=spec)
 
 
-def _coinglass_limit(task: Any) -> str:
+def _coinglass_limit(task: Any, *, spec: Mapping[str, Any]) -> str:
     del task
-    return "100"
+    if str(spec.get("metric_kind") or "") == "cvd":
+        return "4500"
+    return "1000"
 
 
-def _coinglass_range(task: Any) -> str:
+def _coinglass_chunk_days(task: Any, *, spec: Mapping[str, Any]) -> int:
+    try:
+        limit = int(_coinglass_limit(task, spec=spec))
+    except ValueError:
+        limit = 1000
+    interval = _coinglass_interval(task)
+    rows_per_day = _coinglass_rows_per_day(interval)
+    days = max(limit // rows_per_day, 1)
+    if str(spec.get("metric_kind") or "") == "cvd":
+        return min(days, 180)
+    return days
+
+
+def _coinglass_rows_per_day(interval: str) -> int:
+    normalized = interval.strip().lower()
+    if normalized.endswith("m") and normalized[:-1].isdigit():
+        minutes = max(int(normalized[:-1]), 1)
+        return max((24 * 60 + minutes - 1) // minutes, 1)
+    if normalized.endswith("h") and normalized[:-1].isdigit():
+        hours = max(int(normalized[:-1]), 1)
+        return max((24 + hours - 1) // hours, 1)
+    if normalized in {"1d", "d", "daily"}:
+        return 1
+    return 24
+
+
+def _coinglass_range(task: Any, *, spec: Mapping[str, Any]) -> str:
+    endpoint_id = str(spec.get("endpoint_id") or "")
+    if endpoint_id == "options_open_interest":
+        return "all"
     granularity = str(getattr(task, "granularity", "") or "").lower()
     if granularity == "daily":
         return "all"
@@ -1002,7 +1203,7 @@ def _coinglass_range(task: Any) -> str:
     if start is not None and end is not None:
         span_days = max((end - start).days + 1, 1)
         if span_days <= 1:
-            return "1d"
+            return "24h"
         if span_days <= 3:
             return "3d"
         if span_days <= 7:
@@ -1043,6 +1244,29 @@ def _coinglass_rows_from_payload(
 ) -> tuple[dict[str, Any], ...]:
     dataset = str(spec["data_type"])
     metric_kind = str(spec.get("metric_kind") or "")
+    if dataset == "valuation_metric" and metric_kind == "spot_coins_markets":
+        data = _provider_data(payload)
+        items = data if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray, Mapping)) else (data,)
+        rows: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            item_symbol = non_empty(item.get("symbol") or item.get("base_asset") or item.get("baseAsset"))
+            if item_symbol and item_symbol.upper() != asset.upper():
+                continue
+            row = _coinglass_row_from_payload(
+                {"data": item},
+                task,
+                spec=spec,
+                symbol=symbol,
+                asset=asset,
+                quote_asset=quote_asset,
+            )
+            if row is not None:
+                rows.append(row)
+        return tuple(rows)
+    if dataset == "crypto_derivative_metric" and metric_kind == "futures_pairs_markets":
+        return _coinglass_futures_pairs_market_rows(payload, task, spec=spec, symbol=symbol, asset=asset, quote_asset=quote_asset)
     if dataset == "crypto_derivative_metric" and metric_kind == "liquidation_heatmap":
         return _coinglass_heatmap_metric_rows(payload, task, spec=spec, symbol=symbol, asset=asset, quote_asset=quote_asset)
     if dataset == "crypto_derivative_metric" and metric_kind in {"options", "cvd", "etf_flow"}:
@@ -1104,6 +1328,215 @@ def _dedupe_coinglass_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[dict[str,
     return tuple(deduped)
 
 
+def _coinglass_futures_pairs_market_rows(
+    payload: Any,
+    task: Any,
+    *,
+    spec: Mapping[str, Any],
+    symbol: str,
+    asset: str,
+    quote_asset: str,
+) -> tuple[dict[str, Any], ...]:
+    data = _provider_data(payload)
+    items = data if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray, Mapping)) else (data,)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        pair_symbol = _coinglass_pair_symbol(item, fallback_symbol=symbol, asset=asset, quote_asset=quote_asset)
+        if pair_symbol is None:
+            continue
+        if not _coinglass_pair_matches_request(pair_symbol=pair_symbol, item=item, symbol=symbol, asset=asset, quote_asset=quote_asset):
+            continue
+        row = _crypto_base_row(
+            dataset="crypto_derivative_metric",
+            symbol=pair_symbol,
+            base_asset=asset,
+            quote_asset=quote_asset,
+            provider_id=CoinglassCryptoPlugin.plugin_id,
+            endpoint_id=str(spec["endpoint_id"]),
+            source_role=str(spec["source_role"]),
+            granularity=str(getattr(task, "granularity", None) or tuple(spec["granularity"])[0]),
+        )
+        _set_optional_metric(row, "price", item, ("price", "current_price", "currentPrice", "last", "last_price", "lastPrice", "close"))
+        _set_optional_metric(row, "volume_usd", item, ("volume_usd", "volumeUsd", "volume_usd_24h", "volumeUsd24h", "volume", "turnover_usd", "turnoverUsd"))
+        _set_optional_metric(row, "long_volume_usd", item, ("long_volume_usd", "longVolumeUsd", "long_vol_usd", "longVolUsd", "buy_volume_usd", "buyVolumeUsd"))
+        _set_optional_metric(row, "short_volume_usd", item, ("short_volume_usd", "shortVolumeUsd", "short_vol_usd", "shortVolUsd", "sell_volume_usd", "sellVolumeUsd"))
+        _set_optional_metric(row, "open_interest", item, ("open_interest_usd", "openInterestUsd", "open_interest_value", "openInterestValue", "open_interest", "openInterest", "oi_usd", "oiUsd"))
+        _set_optional_metric(row, "funding_rate", item, ("funding_rate", "fundingRate", "rate"))
+        _set_optional_metric(row, "long_liquidation", item, ("long_liquidation_usd_24h", "longLiquidationUsd24h", "long_liquidation", "longLiquidation", "longVolUsd"))
+        _set_optional_metric(row, "short_liquidation", item, ("short_liquidation_usd_24h", "shortLiquidationUsd24h", "short_liquidation", "shortLiquidation", "shortVolUsd"))
+
+        long_liquidation = row.get("long_liquidation")
+        short_liquidation = row.get("short_liquidation")
+        _set_optional_metric(row, "liquidation_value", item, ("liquidation_usd_24h", "liquidationUsd24h", "liquidation_value", "liquidationValue", "liquidation"))
+        if row.get("liquidation_value") is None and long_liquidation is not None and short_liquidation is not None:
+            row["liquidation_value"] = long_liquidation + short_liquidation
+
+        timestamp = _coinglass_timestamp_or_none(item) or datetime.now(tz=UTC)
+        row["timestamp"] = timestamp
+        if row.get("price") is not None:
+            row["price_unit"] = quote_asset
+        if any(row.get(field) is not None for field in ("volume_usd", "long_volume_usd", "short_volume_usd")):
+            row["volume_unit"] = "USD"
+        if row.get("open_interest") is not None:
+            row["open_interest_unit"] = "USD"
+        if row.get("funding_rate") is not None:
+            row["funding_rate_unit"] = "percent"
+        if any(row.get(field) is not None for field in ("long_liquidation", "short_liquidation", "liquidation_value")):
+            row["liquidation_value_unit"] = "USD"
+        _apply_crypto_period(row, timestamp)
+        if any(row.get(field) is not None for field in tuple(spec["fields"]) if field not in {"timestamp", "symbol_id"}):
+            rows.append(row)
+    return tuple(rows)
+
+
+def _coinglass_options_rows_from_payloads(
+    oi_payload: Any,
+    volume_payload: Any,
+    task: Any,
+    *,
+    spec: Mapping[str, Any],
+    symbol: str,
+    asset: str,
+    quote_asset: str,
+) -> tuple[dict[str, Any], ...]:
+    oi_by_time = _coinglass_series_from_exchange_data_map(oi_payload)
+    volume_by_time = _coinglass_series_from_exchange_data_map(volume_payload)
+    rows: list[dict[str, Any]] = []
+    for timestamp in sorted(set(oi_by_time) | set(volume_by_time)):
+        if not _timestamp_in_task_date_range(timestamp, task):
+            continue
+        row = _crypto_base_row(
+            dataset="crypto_derivative_metric",
+            symbol=symbol,
+            base_asset=asset,
+            quote_asset=quote_asset,
+            provider_id=CoinglassCryptoPlugin.plugin_id,
+            endpoint_id=str(spec["endpoint_id"]),
+            source_role=str(spec["source_role"]),
+            granularity=str(getattr(task, "granularity", None) or tuple(spec["granularity"])[0]),
+        )
+        row["timestamp"] = timestamp
+        if timestamp in oi_by_time:
+            row["options_open_interest"] = oi_by_time[timestamp]
+            row["options_open_interest_unit"] = "USD"
+        if timestamp in volume_by_time:
+            row["options_volume"] = volume_by_time[timestamp]
+            row["options_volume_unit"] = "USD"
+        _apply_crypto_period(row, timestamp)
+        if row.get("options_open_interest") is not None or row.get("options_volume") is not None:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _coinglass_series_from_exchange_data_map(payload: Any) -> dict[datetime, float]:
+    data = _provider_data(payload)
+    if not isinstance(data, Mapping):
+        return {}
+    times = data.get("time_list") or data.get("timeList")
+    data_map = data.get("data_map") or data.get("dataMap")
+    if not isinstance(times, Sequence) or isinstance(times, (str, bytes, bytearray, Mapping)):
+        return {}
+    if not isinstance(data_map, Mapping):
+        return {}
+    result: dict[datetime, float] = {}
+    for index, raw_timestamp in enumerate(times):
+        timestamp = parse_datetime(raw_timestamp)
+        if timestamp is None:
+            continue
+        total = 0.0
+        seen = False
+        for series in data_map.values():
+            if not isinstance(series, Sequence) or isinstance(series, (str, bytes, bytearray, Mapping)):
+                continue
+            if index >= len(series):
+                continue
+            value = _decimal_float(series[index])
+            if value is None:
+                continue
+            total += value
+            seen = True
+        if seen:
+            result[timestamp] = total
+    return result
+
+
+def _timestamp_in_task_date_range(timestamp: datetime, task: Any) -> bool:
+    day = timestamp.astimezone(UTC).date() if timestamp.tzinfo else timestamp.date()
+    start = _as_date(getattr(task, "date_range_start", None))
+    end = _as_date(getattr(task, "date_range_end", None))
+    if start is not None and day < start:
+        return False
+    if end is not None and day > end:
+        return False
+    return True
+
+
+def _coinglass_pair_symbol(
+    item: Mapping[str, Any],
+    *,
+    fallback_symbol: str,
+    asset: str,
+    quote_asset: str,
+) -> str | None:
+    symbol_fallback: str | None = None
+    for key in ("instrument_id", "instrumentId", "pair", "contract", "base_quote"):
+        value = non_empty(item.get(key))
+        if value:
+            normalized = _normalize_crypto_pair_symbol(value)
+            if normalized:
+                return normalized
+    value = non_empty(item.get("symbol"))
+    if value:
+        normalized = _normalize_crypto_pair_symbol(value)
+        if normalized:
+            base, quote = _split_symbol(normalized)
+            if base is not None and quote is not None:
+                return normalized
+            symbol_fallback = normalized
+    item_base = non_empty(item.get("base_asset") or item.get("baseAsset") or item.get("base"))
+    item_quote = non_empty(item.get("quote_asset") or item.get("quoteAsset") or item.get("quote"))
+    if item_base and item_quote:
+        return f"{item_base.upper()}{item_quote.upper()}"
+    if symbol_fallback:
+        return symbol_fallback
+    normalized_fallback = _normalize_crypto_pair_symbol(fallback_symbol)
+    if normalized_fallback:
+        return normalized_fallback
+    return f"{asset.upper()}{quote_asset.upper()}" if asset and quote_asset else None
+
+
+def _coinglass_pair_matches_request(
+    *,
+    pair_symbol: str,
+    item: Mapping[str, Any],
+    symbol: str,
+    asset: str,
+    quote_asset: str,
+) -> bool:
+    exchange = non_empty(item.get("exchange") or item.get("exchange_name") or item.get("exchangeName"))
+    if exchange is not None and exchange.upper() != "BINANCE":
+        return False
+    target_symbol = _normalize_crypto_pair_symbol(symbol)
+    if target_symbol and pair_symbol == target_symbol:
+        return True
+    base, quote = _split_symbol(pair_symbol)
+    if base is None or quote is None:
+        return False
+    if base.upper() != asset.upper() or quote.upper() != quote_asset.upper():
+        return False
+    return True
+
+
+def _normalize_crypto_pair_symbol(value: Any) -> str | None:
+    token = str(value or "").strip().upper()
+    if not token:
+        return None
+    token = token.replace("/", "").replace("-", "").replace("_", "").replace(":", "")
+    return token or None
+
+
 def _coinglass_row_from_payload(
     payload: Any,
     task: Any,
@@ -1136,6 +1569,34 @@ def _coinglass_row_from_payload(
             row["timestamp"] = timestamp
             _apply_crypto_period(row, timestamp)
         return row
+    if dataset == "valuation_metric":
+        price = _first_numeric_metric(item, ("price", "current_price", "currentPrice", "close", "value"))
+        market_cap = _first_numeric_metric(item, ("market_cap", "marketCap", "market_capitalization"))
+        fdv = _first_numeric_metric(item, ("fdv", "fully_diluted_valuation", "fullyDilutedValuation", "fully_diluted_market_cap", "fullyDilutedMarketCap"))
+        volume = _first_numeric_metric(item, ("volume", "volume_usd_24h", "total_volume", "volumeUsd24h", "volume_usd_1d"))
+        circulating_supply = _first_numeric_metric(item, ("circulating_supply", "circulatingSupply"))
+        total_supply = _first_numeric_metric(item, ("total_supply", "totalSupply", "max_supply", "maxSupply"))
+        if price is None and market_cap is None and fdv is None and volume is None and circulating_supply is None and total_supply is None:
+            return None
+        timestamp = _coinglass_timestamp(item)
+        row.update(
+            {
+                "timestamp": timestamp,
+                "price": price,
+                "price_unit": "USD" if price is not None else None,
+                "market_cap": market_cap,
+                "market_cap_unit": "USD" if market_cap is not None else None,
+                "fdv": fdv,
+                "fdv_unit": "USD" if fdv is not None else None,
+                "volume": volume,
+                "volume_unit": "USD" if volume is not None else None,
+                "circulating_supply": circulating_supply,
+                "total_supply": total_supply,
+                "supply_unit": asset.upper() if circulating_supply is not None or total_supply is not None else None,
+            }
+        )
+        _apply_crypto_period(row, timestamp)
+        return {key: value for key, value in row.items() if value is not None}
     if dataset == "order_book_snapshot":
         levels = _coinglass_order_book_values_from_payload(payload)
         if levels is None:
@@ -1168,14 +1629,14 @@ def _coinglass_row_from_payload(
             _set_optional_metric(row, "options_open_interest", item, ("options_open_interest", "open_interest", "openInterest", "oi", "sumOpenInterest", "value"))
             _set_optional_metric(row, "options_volume", item, ("options_volume", "volume", "vol", "sumVolume"))
         elif spec.get("metric_kind") == "cvd":
-            _set_optional_metric(row, "cvd", item, ("cvd", "cumulativeVolumeDelta", "cumulative_volume_delta", "delta", "value", "close"))
-            _set_optional_metric(row, "taker_buy_volume", item, ("taker_buy_volume", "takerBuyVolume", "buy_volume", "buyVolume", "buy"))
-            _set_optional_metric(row, "taker_sell_volume", item, ("taker_sell_volume", "takerSellVolume", "sell_volume", "sellVolume", "sell"))
+            _set_optional_metric(row, "cvd", item, ("cvd", "cum_vol_delta", "cumulativeVolumeDelta", "cumulative_volume_delta", "delta", "value", "close"))
+            _set_optional_metric(row, "taker_buy_volume", item, ("taker_buy_volume", "agg_taker_buy_vol", "takerBuyVolume", "buy_volume", "buyVolume", "buy"))
+            _set_optional_metric(row, "taker_sell_volume", item, ("taker_sell_volume", "agg_taker_sell_vol", "takerSellVolume", "sell_volume", "sellVolume", "sell"))
             if any(row.get(field) is not None for field in ("cvd", "taker_buy_volume", "taker_sell_volume")):
                 row["taker_volume_unit"] = "USD"
         elif spec.get("metric_kind") == "etf_flow":
-            _set_optional_metric(row, "etf_flow_usd", item, ("etf_flow_usd", "changeUsd", "change_usd", "netFlow", "net_flow", "flow", "value"))
-            _set_optional_metric(row, "price", item, ("price", "closePrice", "close_price", "close"))
+            _set_optional_metric(row, "etf_flow_usd", item, ("flow_usd", "etf_flow_usd", "changeUsd", "change_usd", "netFlow", "net_flow", "flow", "value"))
+            _set_optional_metric(row, "price", item, ("price_usd", "price", "closePrice", "close_price", "close"))
         elif spec.get("metric_kind") == "taker":
             _set_optional_metric(
                 row,
@@ -1303,9 +1764,64 @@ def _coinglass_heatmap_metric_rows(
 
 
 def _coinglass_heatmap_points(value: Any) -> tuple[dict[str, Any], ...]:
+    official_points = _coinglass_official_heatmap_points(value)
+    if official_points:
+        return official_points
     points: list[dict[str, Any]] = []
     _collect_coinglass_heatmap_points(value, points)
     return tuple(points)
+
+
+def _coinglass_official_heatmap_points(value: Any) -> tuple[dict[str, Any], ...]:
+    data = _provider_data(value)
+    if not isinstance(data, Mapping):
+        return ()
+    y_axis = data.get("y_axis") or data.get("yAxis")
+    leverage_data = data.get("liquidation_leverage_data") or data.get("liquidationLeverageData")
+    if not isinstance(y_axis, Sequence) or isinstance(y_axis, (str, bytes, bytearray, Mapping)):
+        return ()
+    if not isinstance(leverage_data, Sequence) or isinstance(leverage_data, (str, bytes, bytearray, Mapping)):
+        return ()
+    candlesticks = data.get("price_candlesticks") or data.get("priceCandlesticks")
+    points: list[dict[str, Any]] = []
+    for item in leverage_data:
+        if not isinstance(item, Sequence) or isinstance(item, (str, bytes, bytearray)) or len(item) < 3:
+            continue
+        x_index = _coinglass_int_index(item[0])
+        y_index = _coinglass_int_index(item[1])
+        size = _decimal_float(item[2])
+        if y_index is None or y_index < 0 or y_index >= len(y_axis) or size is None:
+            continue
+        price = _decimal_float(y_axis[y_index])
+        if price is None:
+            continue
+        point: dict[str, Any] = {"liquidation_price": price, "liquidation_size": size}
+        timestamp = _coinglass_heatmap_candlestick_timestamp(candlesticks, x_index)
+        if timestamp is not None:
+            point["timestamp"] = timestamp
+        points.append(point)
+    return tuple(points)
+
+
+def _coinglass_int_index(value: Any) -> int | None:
+    numeric = _decimal_float(value)
+    if numeric is None:
+        return None
+    integer = int(numeric)
+    return integer if numeric == integer else None
+
+
+def _coinglass_heatmap_candlestick_timestamp(value: Any, index: int | None) -> datetime | None:
+    if index is None:
+        return None
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray, Mapping)):
+        return None
+    if index < 0 or index >= len(value):
+        return None
+    candle = value[index]
+    if not isinstance(candle, Sequence) or isinstance(candle, (str, bytes, bytearray)) or not candle:
+        return None
+    return _safe_parse_plausible_datetime(candle[0])
 
 
 def _collect_coinglass_heatmap_points(value: Any, points: list[dict[str, Any]]) -> None:
@@ -1380,12 +1896,27 @@ def _coinglass_ohlc_values(item: Mapping[str, Any]) -> dict[str, Any] | None:
     low = _first_numeric_metric(item, ("low", "l"))
     close = _first_numeric_metric(item, ("close", "c", "price", "value"))
     volume = _first_numeric_metric(item, ("volume", "vol", "v"))
+    amount = _first_numeric_metric(item, ("amount", "turnover", "quoteVolume", "quote_volume", "volume_usd", "volumeUsd"))
     if None in {open_price, high, low, close}:
         return None
-    return {"open": open_price, "high": high, "low": low, "close": close, "volume": volume, "amount": _first_numeric_metric(item, ("amount", "turnover", "quoteVolume"))}
+    values: dict[str, Any] = {"open": open_price, "high": high, "low": low, "close": close, "volume": volume, "amount": amount}
+    if amount is not None:
+        values["amount_unit"] = "USD"
+    return values
 
 
 def _coinglass_order_book_values(item: Mapping[str, Any]) -> dict[str, Any] | None:
+    bids_usd = _first_numeric_metric(item, ("bids_usd", "bidsUsd", "bidsUSD", "bid_usd", "bidUsd"))
+    bids_quantity = _first_numeric_metric(item, ("bids_quantity", "bidsQuantity", "bid_quantity", "bidQuantity"))
+    asks_usd = _first_numeric_metric(item, ("asks_usd", "asksUsd", "asksUSD", "ask_usd", "askUsd"))
+    asks_quantity = _first_numeric_metric(item, ("asks_quantity", "asksQuantity", "ask_quantity", "askQuantity"))
+    if any(value is not None for value in (bids_usd, bids_quantity, asks_usd, asks_quantity)):
+        return {
+            "bids_usd": bids_usd,
+            "bids_quantity": bids_quantity,
+            "asks_usd": asks_usd,
+            "asks_quantity": asks_quantity,
+        }
     bid = _first_level(item.get("bids") or item.get("bid") or item.get("buy"))
     ask = _first_level(item.get("asks") or item.get("ask") or item.get("sell"))
     if bid is None and ask is None:
@@ -1453,6 +1984,16 @@ def _coinglass_timestamp_or_none(item: Mapping[str, Any]) -> datetime | None:
                     return parsed
         except (TypeError, ValueError):
             continue
+    for key in ("time_list", "timeList", "date_list", "dateList"):
+        value = item.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray, Mapping)):
+            for candidate in reversed(value):
+                try:
+                    parsed = parse_datetime(candidate)
+                except (TypeError, ValueError):
+                    continue
+                if parsed is not None:
+                    return parsed
     return None
 
 
@@ -1476,17 +2017,19 @@ def _coinglass_onchain_value_with_key(payload: Any, item: Mapping[str, Any], *, 
     endpoint_id = str(spec.get("endpoint_id", ""))
     if endpoint_id == "onchain_exchange_balance":
         data = _provider_data(payload)
-        if isinstance(data, Mapping):
-            data_map = data.get("data_map")
-            if isinstance(data_map, Mapping):
-                preferred_series = data_map.get("Binance") or data_map.get("binance")
-                value = _last_numeric_from_series(preferred_series)
+        containers = (data,) if isinstance(data, Mapping) else tuple(item for item in data if isinstance(item, Mapping)) if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray)) else ()
+        for container in containers:
+            data_map = container.get("data_map")
+            if not isinstance(data_map, Mapping):
+                continue
+            preferred_series = data_map.get("Binance") or data_map.get("binance")
+            value = _last_numeric_from_series(preferred_series)
+            if value is not None:
+                return value, "data_map.Binance"
+            for series in data_map.values():
+                value = _last_numeric_from_series(series)
                 if value is not None:
-                    return value, "data_map.Binance"
-                for series in data_map.values():
-                    value = _last_numeric_from_series(series)
-                    if value is not None:
-                        return value, "data_map"
+                    return value, "data_map"
     return _first_numeric_metric_with_key(_provider_data(payload), tuple(spec.get("metric_keys", ("value", "amount", "balance", "total", "close"))))
 
 
@@ -1633,7 +2176,7 @@ class GlassnodeCryptoOnchainPlugin:
                     data_type="crypto_onchain_metric",
                     source_role="paid_data",
                     granularity=("daily",),
-                    fields=("timestamp", "metric", "value", "chain", "source_metric"),
+                    fields=("timestamp", "metric", "value", "value_unit", "chain", "source_metric"),
                     priority_rank=8,
                 ),
             ),
@@ -1823,10 +2366,25 @@ def _glassnode_rows(
             source_role="paid_data",
             granularity=str(getattr(task, "granularity", None) or "daily"),
         )
-        row.update({"timestamp": timestamp, "metric": metric, "source_metric": metric, "value": value, "chain": base_asset.upper()})
+        row.update(
+            {
+                "timestamp": timestamp,
+                "metric": metric,
+                "source_metric": metric,
+                "value": value,
+                "value_unit": _glassnode_value_unit(metric),
+                "chain": base_asset.upper(),
+            }
+        )
         _apply_crypto_period(row, timestamp)
         rows.append(row)
     return rows
+
+
+def _glassnode_value_unit(metric: str) -> str:
+    if metric == "active_addresses":
+        return "count"
+    return "dimensionless"
 
 
 def _token_terminal_revenue_rows(
@@ -1896,7 +2454,7 @@ class AlternativeMeCryptoSentimentPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=20,
         )
 
@@ -1974,7 +2532,7 @@ class CryptoProjectNewsPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=0,
         )
 
@@ -2064,7 +2622,7 @@ class CryptoGoogleNewsDiscoveryPlugin:
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
-            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
             default_priority_rank=50,
         )
 
@@ -2206,7 +2764,9 @@ def _kline_to_row(
         "low": low,
         "close": close,
         "volume": volume,
+        "volume_unit": base_asset,
         "amount": amount,
+        "amount_unit": quote_asset,
         "exchange": "BINANCE",
         "currency": quote_asset,
         "timezone": "UTC",

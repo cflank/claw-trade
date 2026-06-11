@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 from claw_trade.data_gateway.models import Market, WarehouseCheck
 from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
@@ -135,6 +136,27 @@ def test_warehouse_dedupes_equivalent_rows_without_collapsing_distinct_hours() -
     assert refs == ("dataset:daily:1", "dataset:hour:0", "dataset:hour:1")
 
 
+def test_warehouse_deduped_data_rows_do_not_keep_refs_without_rows() -> None:
+    rows, refs = Warehouse._dedupe_rows_with_dataset_refs(
+        (),
+        ("dataset:metric:1", "dataset:metric:2"),
+    )
+
+    assert rows == ()
+    assert refs == ()
+
+
+def test_warehouse_coverage_deduping_can_keep_refs_without_rows() -> None:
+    rows, refs = Warehouse._dedupe_rows_with_dataset_refs(
+        (),
+        ("dataset:metric:1", "dataset:metric:2"),
+        preserve_refs_without_rows=True,
+    )
+
+    assert rows == ()
+    assert refs == ("dataset:metric:1", "dataset:metric:2")
+
+
 def _universe_warehouse_check() -> WarehouseCheck:
     return WarehouseCheck(
         request_id="req-universe-coverage",
@@ -214,6 +236,58 @@ def test_warehouse_materialized_rows_preserve_scope_metadata_for_report_charts()
     assert result.rows[0]["granularity"] == "daily"
 
 
+def test_warehouse_materialized_crypto_bar_rows_infer_units_from_usdt_pair() -> None:
+    record = _base_record()
+    record["dataset"] = "daily_bar"
+    record["market"] = "CRYPTO"
+    record["symbol_id"] = "BNBUSDT"
+    record["universe_ref"] = "binance_spot_all_symbols"
+    record["granularity"] = "daily"
+    record["period_start"] = date(2026, 6, 1)
+    record["period_end"] = date(2026, 6, 1)
+    record["field_set"] = ("date", "open", "high", "low", "close", "volume", "amount")
+    record["timezone"] = "UTC"
+    record["calendar"] = "CRYPTO_24_7"
+    record["exchange"] = "BINANCE"
+    record["currency"] = "USDT"
+    record["base_asset"] = "BNB"
+    record["quote_asset"] = "USDT"
+    record["row"] = {
+        "date": "2026-06-01",
+        "open": 600.0,
+        "high": 620.0,
+        "low": 590.0,
+        "close": 610.0,
+        "volume": 134449.34,
+        "amount": 82014097.4,
+    }
+    repo = DatasetRepository(records=[record])
+
+    result = Warehouse(repo).query(
+        _request(
+            dataset="daily_bar",
+            market="CRYPTO",
+            symbol_id="BNBUSDT",
+            universe_ref="binance_spot_all_symbols",
+            granularity="daily",
+            fields=("date", "close", "volume", "volume_unit", "amount", "amount_unit"),
+            date_range_start=date(2026, 6, 1),
+            date_range_end=date(2026, 6, 1),
+            freshness_policy="immutable_seed",
+            source_role_required="official",
+            timezone="UTC",
+            calendar="CRYPTO_24_7",
+            as_of=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+    )
+
+    assert result.status == "ready"
+    assert result.rows[0]["base_asset"] == "BNB"
+    assert result.rows[0]["quote_asset"] == "USDT"
+    assert result.rows[0]["volume_unit"] == "BNB"
+    assert result.rows[0]["amount_unit"] == "USDT"
+
+
 def test_warehouse_intraday_rows_use_row_open_close_time_from_columnar(tmp_path) -> None:
     repo = DatasetRepository(
         collections=_collections(),
@@ -270,6 +344,69 @@ def test_warehouse_intraday_rows_use_row_open_close_time_from_columnar(tmp_path)
     assert result.status == "ready"
     assert result.rows[0]["period_start"] == "2026-06-01 01:00:00+00:00"
     assert result.rows[0]["period_end"] == "2026-06-01 01:59:59.999000+00:00"
+
+
+def test_columnar_realtime_manifest_supersedes_stale_same_symbol_snapshot(tmp_path) -> None:
+    collections = _collections()
+    repo = DatasetRepository(
+        collections=collections,
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    base_record = {
+        "dataset": "quote_snapshot",
+        "market": "CRYPTO",
+        "symbol_id": "SOLUSDT",
+        "universe_ref": None,
+        "granularity": "realtime",
+        "period_start": date(2026, 6, 9),
+        "period_end": date(2026, 6, 9),
+        "field_set": ("price", "timestamp", "symbol_id"),
+        "as_of": datetime(2026, 6, 9, tzinfo=UTC),
+        "fresh_until": datetime(2026, 6, 10, tzinfo=UTC),
+        "source_roles": ("official",),
+        "exchange": "BINANCE",
+        "currency": "USDT",
+        "timezone": "UTC",
+        "calendar": "CRYPTO_24_7",
+        "base_asset": "SOL",
+        "quote_asset": "USDT",
+        "provider_lineage": {"provider": "crypto_binance_spot_market", "endpoint": "ticker_24hr"},
+        "schema_id": "quote_snapshot.v1",
+        "quality_flags": (),
+        "row": {"price": 150.0, "timestamp": "2026-06-09T00:00:00Z", "symbol_id": "SOLUSDT"},
+    }
+    repo.upsert_normalized_documents((base_record,))
+    old_manifest_ref, old_manifest = next(iter(collections["dataset_manifests"].items()))
+    Path(str(old_manifest["path"])).unlink()
+
+    next_record = dict(base_record)
+    next_record["period_start"] = date(2026, 6, 10)
+    next_record["period_end"] = date(2026, 6, 10)
+    next_record["as_of"] = datetime(2026, 6, 10, tzinfo=UTC)
+    next_record["fresh_until"] = datetime(2026, 6, 11, tzinfo=UTC)
+    next_record["field_set"] = ("price", "change_pct", "timestamp", "symbol_id")
+    next_record["row"] = {"price": 160.0, "change_pct": 0.05, "timestamp": "2026-06-10T00:00:00Z", "symbol_id": "SOLUSDT"}
+    repo.upsert_normalized_documents((next_record,))
+
+    assert collections["dataset_manifests"][old_manifest_ref]["status"] == "superseded"
+    result = Warehouse(repo).query(
+        _request(
+            dataset="quote_snapshot",
+            market="CRYPTO",
+            symbol_id="SOLUSDT",
+            granularity="realtime",
+            fields=("price", "timestamp", "symbol_id"),
+            date_range_start=None,
+            date_range_end=None,
+            source_role_required="official",
+            timezone="UTC",
+            calendar="CRYPTO_24_7",
+        )
+    )
+
+    assert result.status == "ready"
+    assert result.rows[0]["price"] == 160.0
+    assert not any(gap.reason.value == "data_integrity_failed" for gap in result.gaps)
 
 
 def test_warehouse_intraday_rows_restore_hour_from_dataset_ref_when_row_time_missing() -> None:
@@ -937,6 +1074,25 @@ def test_warehouse_respects_official_source_role_requirement() -> None:
 
     assert result.status == "partial"
     assert any(gap.reason.value == "warehouse_missing" for gap in result.gaps)
+
+
+def test_warehouse_prefers_paid_source_over_public_duplicate_when_no_role_required() -> None:
+    paid = _base_record()
+    paid["source_roles"] = ("paid_data",)
+    paid["provider_lineage"] = {"provider": "coinglass", "endpoint": "coin_market_data_history"}
+    paid["row"] = {"date": "2026-05-31", "close": 1530.25, "source": "coinglass"}
+
+    public = _base_record()
+    public["source_roles"] = ("built_in_public",)
+    public["provider_lineage"] = {"provider": "coingecko", "endpoint": "coins_markets"}
+    public["row"] = {"date": "2026-05-31", "close": 1529.99, "source": "coingecko"}
+
+    repo = DatasetRepository(records=[public, paid])
+    result = Warehouse(repo).query(_request(source_role_required=None))
+
+    assert result.status == "ready"
+    assert len(result.rows) == 1
+    assert result.rows[0]["close"] == 1530.25
 
 
 def test_cn_a_daily_bar_does_not_satisfy_news_dataset_request() -> None:
