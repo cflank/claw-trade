@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 from claw_trade.data_gateway.models import EndpointBatchPolicy
 from claw_trade.data_gateway.official_catalog.models import OfficialEndpoint
+from claw_trade.data_gateway.providers import build_minimal_provider_registry
+from claw_trade.data_gateway.providers.plugins.official_api import OFFICIAL_API_DATA_TYPE
 
 FORBIDDEN_CATALOG_KEYS = {
     "allowed_worker",
@@ -144,6 +146,18 @@ def test_official_catalog_rejects_nested_business_scope_metadata() -> None:
             http_visibility="managed_http",
             request_template={"params": {"allowed_worker": "market_analyst"}},
         )
+
+
+def test_official_provider_capabilities_are_catalog_endpoint_granular() -> None:
+    catalog_endpoint_ids = {str(_read_attr(endpoint, "endpoint_id")) for endpoint in _iter_official_catalog_endpoints()}
+    registry = build_minimal_provider_registry()
+
+    official_capabilities = [cap for cap in registry.list_all_capabilities() if cap.data_type == OFFICIAL_API_DATA_TYPE]
+
+    assert official_capabilities
+    assert all(cap.endpoint_id != "official_api_call" for cap in official_capabilities)
+    assert {cap.endpoint_id for cap in official_capabilities} <= catalog_endpoint_ids
+    assert {"tushare.daily", "finnhub.quote", "coinglass.futures_open_interest"} <= {cap.endpoint_id for cap in official_capabilities}
 
 
 def _iter_official_catalog_endpoints() -> Iterable[Any]:
