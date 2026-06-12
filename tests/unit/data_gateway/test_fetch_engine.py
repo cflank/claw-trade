@@ -105,7 +105,8 @@ def test_fetch_engine_rate_limits_each_managed_http_send_and_waits(http_visibili
         params={},
         http_visibility=http_visibility,
         rate_limit_key="ratelimit:test",
-        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=2, overflow="wait", wait_timeout_seconds=120),
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=2),
+        deadline_at=clock.now + timedelta(seconds=120),
     )
     plugin = _ThreeHttpCallsPlugin()
     engine = FetchEngine(
@@ -119,4 +120,40 @@ def test_fetch_engine_rate_limits_each_managed_http_send_and_waits(http_visibili
     assert result.status == FetchStatus.SUCCESS
     assert plugin.managed_http_type_names == ["_RateLimitedManagedHttp"]
     assert len(client.requests) == 3
-    assert sleep_calls == [30.0, 30.0]
+    assert sleep_calls == [60.0]
+
+
+def test_fetch_engine_managed_http_does_not_send_when_deadline_cannot_wait() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    client = _HttpClient()
+    limiter = RateLimiter(now_fn=clock)
+    batch = SimpleNamespace(
+        batch_id="batch:1",
+        provider_id="provider",
+        endpoint_id="endpoint",
+        market="CRYPTO",
+        data_type="derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields_union=("cvd",),
+        provider_config_version="test",
+        params={},
+        http_visibility="managed_http",
+        rate_limit_key="ratelimit:test",
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=1),
+        deadline_at=clock.now + timedelta(seconds=30),
+    )
+    plugin = _ThreeHttpCallsPlugin()
+    engine = FetchEngine(
+        _Registry(plugin),
+        managed_http=ManagedHttp(client),
+        rate_limiter=limiter,
+    )
+
+    result = engine.fetch(batch)
+
+    assert result.status == FetchStatus.RATE_LIMITED
+    assert len(client.requests) == 1
+    assert result.error_message == "rate_limited_by_tool_budget"

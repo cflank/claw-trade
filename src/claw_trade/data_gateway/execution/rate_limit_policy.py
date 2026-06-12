@@ -57,16 +57,12 @@ def _policy_from_settings(settings: Mapping[str, Any]) -> RateLimitPolicy | None
     max_calls = _optional_int(settings.get("rate_limit_max_calls"))
     window_seconds = _optional_int(settings.get("rate_limit_window_seconds"))
     safety_margin = _optional_int(settings.get("rate_limit_safety_margin")) or 0
-    overflow = _overflow(settings.get("rate_limit_overflow"))
-    wait_timeout = _optional_int(settings.get("rate_limit_wait_timeout_seconds")) or 0
     if max_calls is None and window_seconds is None:
         return None
     return RateLimitPolicy(
         window_seconds=window_seconds or 60,
         max_requests=max_calls,
         safety_margin=safety_margin,
-        overflow=overflow,
-        wait_timeout_seconds=wait_timeout,
     )
 
 
@@ -79,8 +75,6 @@ def _policy_from_any(raw: Any | None) -> RateLimitPolicy:
         window_seconds=int(_read_attr(raw, "window_seconds", 60) or 60),
         max_requests=_optional_int(_read_attr(raw, "max_requests", _read_attr(raw, "max_calls", None))),
         safety_margin=int(_read_attr(raw, "safety_margin", 0) or 0),
-        overflow=_overflow(_read_attr(raw, "overflow", "fail_fast")),
-        wait_timeout_seconds=int(_read_attr(raw, "wait_timeout_seconds", 0) or 0),
     )
 
 
@@ -112,19 +106,10 @@ def _optional_int(value: Any) -> int | None:
     return int(text)
 
 
-def _overflow(value: Any) -> str:
-    text = str(value or "fail_fast").strip().lower()
-    if text == "wait":
-        return "wait"
-    return "fail_fast"
-
-
 def policy_to_namespace(policy: RateLimitPolicy) -> Any:
     return SimpleNamespace(
         window_seconds=policy.window_seconds,
         max_requests=policy.max_requests,
         safety_margin=policy.safety_margin,
-        overflow=policy.overflow,
-        wait_timeout_seconds=policy.wait_timeout_seconds,
         window_anchor=policy.window_anchor,
     )

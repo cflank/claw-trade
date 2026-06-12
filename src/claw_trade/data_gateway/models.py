@@ -123,7 +123,6 @@ class RateLimitPolicy(BaseModel):
     max_requests: int | None = None
     window_seconds: int = 60
     safety_margin: int = 0
-    overflow: Literal["wait", "fail_fast"] = "fail_fast"
 
 
 class LicensePolicy(BaseModel):
@@ -154,6 +153,7 @@ class DataRequest(BaseModel):
     consumer: Literal["report", "select", "ui_probe", "price_alert", "maintenance"]
     consumer_id: str
     as_of: datetime
+    deadline_at: datetime | None = None
 
     @model_validator(mode="after")
     def validate_contract(self) -> "DataRequest":
@@ -171,6 +171,8 @@ class DataRequest(BaseModel):
             raise ValueError("CRYPTO 必须提供 base_asset 和 quote_asset")
         if self.market != Market.CRYPTO and (self.base_asset or self.quote_asset):
             raise ValueError("非 CRYPTO 不允许 base_asset 或 quote_asset")
+        if self.deadline_at is not None and (self.deadline_at.tzinfo is None or self.deadline_at.utcoffset() is None):
+            raise ValueError("deadline_at 必须有 timezone")
         return self
 
 
@@ -199,8 +201,8 @@ class DataGap(BaseModel):
     def validate_gap(self) -> "DataGap":
         if self.reason == GapReason.FIELD_MISSING and not self.required_fields:
             raise ValueError("field_missing 必须提供 required_fields")
-        if self.reason in {GapReason.RATE_LIMITED, GapReason.COOLDOWN_SKIPPED} and not self.evidence_refs:
-            raise ValueError("rate_limited/cooldown_skipped 必须提供 evidence_refs")
+        if self.reason in {GapReason.RATE_LIMITED, GapReason.RATE_LIMITED_BY_TOOL_BUDGET, GapReason.COOLDOWN_SKIPPED} and not self.evidence_refs:
+            raise ValueError("rate_limited/rate_limited_by_tool_budget/cooldown_skipped 必须提供 evidence_refs")
         return self
 
     @classmethod
@@ -394,6 +396,7 @@ class ProviderCandidate(BaseModel):
     fields: tuple[str, ...]
     required_level: RequiredLevel
     configured_paid_data: bool = False
+    deadline_at: datetime | None = None
 
 
 class MergeItem(BaseModel):
@@ -410,6 +413,7 @@ class MergeItem(BaseModel):
     calendar: str | None = None
     base_asset: str | None = None
     quote_asset: str | None = None
+    deadline_at: datetime | None = None
 
 
 class MergeGroup(BaseModel):
@@ -435,6 +439,7 @@ class MergeGroup(BaseModel):
     required_level: RequiredLevel = RequiredLevel.REQUIRED
     items: tuple[MergeItem, ...]
     plan_id: str = "plan-unknown"
+    deadline_at: datetime | None = None
 
 
 class ProviderBatchPlan(BaseModel):
@@ -469,6 +474,7 @@ class ProviderBatchPlan(BaseModel):
     single_flight_key: str
     lease_ttl_seconds: int = 30
     wait_timeout_seconds: int = 1
+    deadline_at: datetime | None = None
     provider_config_version: str
     license_policy: Any | None = None
     as_of: datetime
@@ -483,6 +489,8 @@ class ProviderBatchPlan(BaseModel):
             raise ValueError("lease_ttl_seconds 必须大于 0")
         if self.wait_timeout_seconds < 0:
             raise ValueError("wait_timeout_seconds 必须大于等于 0")
+        if self.deadline_at is not None and (self.deadline_at.tzinfo is None or self.deadline_at.utcoffset() is None):
+            raise ValueError("deadline_at 必须有 timezone")
         return self
 
 

@@ -8,6 +8,8 @@ from . import GateDecision, ProviderResultCache, ResultRefs
 from .rate_limiter import RateLimiter
 from .single_flight import SingleFlight
 
+_LOCAL_QUOTA_SIGNALS = {"local_rate_limited", "rate_limited_by_tool_budget"}
+
 
 class GateBatchPlan(Protocol):
     cache_key: str
@@ -18,6 +20,7 @@ class GateBatchPlan(Protocol):
     single_flight_key: str
     lease_ttl_seconds: int
     wait_timeout_seconds: int
+    deadline_at: datetime | None
 
 
 class ExecutionGate:
@@ -39,14 +42,30 @@ class ExecutionGate:
         if cache_lookup.state == "fresh_empty" and cache_lookup.entry is not None:
             return GateDecision.cached_empty(cache_lookup.entry.refs)
 
+        scheduler_skip_reason = getattr(batch, "scheduler_skip_reason", None)
+        if scheduler_skip_reason:
+            retry_after = getattr(batch, "scheduler_retry_after", None)
+            return GateDecision.rate_limited(
+                retry_after if isinstance(retry_after, datetime) else None,
+                str(scheduler_skip_reason),
+            )
+
         cooldown_key = _cooldown_key(batch)
         if cooldown_key != batch.rate_limit_key or _rate_limit_at_http(batch):
-            cooldown = self.rate_limiter.check_cooldown(cooldown_key, batch.rate_limit_policy)
+            cooldown = self.rate_limiter.check_cooldown(
+                cooldown_key,
+                batch.rate_limit_policy,
+                deadline_at=_deadline_at(batch),
+            )
             if not cooldown.allowed:
                 return GateDecision.cooldown_skipped(cooldown.retry_after, cooldown.reason or "cooldown_skipped")
 
         if not _rate_limit_at_http(batch):
-            quota = self.rate_limiter.reserve(batch.rate_limit_key, batch.rate_limit_policy)
+            quota = self.rate_limiter.reserve(
+                batch.rate_limit_key,
+                batch.rate_limit_policy,
+                deadline_at=_deadline_at(batch),
+            )
             if not quota.allowed:
                 if quota.reason == "cooldown_skipped":
                     return GateDecision.cooldown_skipped(quota.retry_after, quota.reason or "cooldown_skipped")
@@ -109,14 +128,15 @@ class ExecutionGate:
         if status != "rate_limited":
             return False
         policy = getattr(batch, "rate_limit_policy", None)
-        if getattr(policy, "overflow", "fail_fast") != "wait":
-            return False
         now = datetime.now(UTC)
         until = _cooldown_until(fetch_result=fetch_result, batch=batch, now=now)
         if until is None:
             return False
+        deadline_at = _deadline_at(batch)
+        if deadline_at is None or until > deadline_at:
+            return False
         self.rate_limiter.mark_cooldown(_cooldown_key(batch), until=until, reason="provider_429")
-        return self.rate_limiter.check_cooldown(_cooldown_key(batch), policy).allowed
+        return self.rate_limiter.check_cooldown(_cooldown_key(batch), policy, deadline_at=deadline_at).allowed
 
 
 def _cooldown_key(batch: GateBatchPlan) -> str:
@@ -125,6 +145,11 @@ def _cooldown_key(batch: GateBatchPlan) -> str:
 
 def _rate_limit_at_http(batch: GateBatchPlan) -> bool:
     return _as_string(getattr(batch, "http_visibility", "") or "") == "managed_http"
+
+
+def _deadline_at(batch: GateBatchPlan) -> datetime | None:
+    value = getattr(batch, "deadline_at", None)
+    return value if isinstance(value, datetime) else None
 
 
 def _as_string(value: Any) -> str:
@@ -137,7 +162,7 @@ def _as_string(value: Any) -> str:
 def _cooldown_until(*, fetch_result: Any, batch: GateBatchPlan, now: datetime) -> datetime | None:
     saw_provider_quota_signal = False
     for observation in tuple(getattr(fetch_result, "http_observations", ()) or ()):
-        if getattr(observation, "quota_signal", None) == "local_rate_limited":
+        if getattr(observation, "quota_signal", None) in _LOCAL_QUOTA_SIGNALS:
             continue
         if getattr(observation, "status_code", None) == 429 or getattr(observation, "quota_signal", None):
             saw_provider_quota_signal = True

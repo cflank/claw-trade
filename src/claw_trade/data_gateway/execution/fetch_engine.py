@@ -36,6 +36,7 @@ class FetchTask:
     fields: tuple[str, ...]
     provider_config_version: str | None
     params: dict[str, Any]
+    deadline_at: datetime | None
 
     @classmethod
     def from_batch(cls, batch: Any) -> "FetchTask":
@@ -52,6 +53,7 @@ class FetchTask:
             fields=tuple(str(item) for item in tuple(getattr(batch, "fields_union", ()) or ())),
             provider_config_version=getattr(batch, "provider_config_version", None),
             params=dict(getattr(batch, "params", {}) or getattr(batch, "params_redacted", {}) or {}),
+            deadline_at=_deadline_at(batch),
         )
 
 
@@ -114,6 +116,7 @@ class FetchEngine:
             rate_limiter=self._rate_limiter,
             rate_limit_key=rate_limit_key,
             rate_limit_policy=rate_limit_policy,
+            deadline_at=_deadline_at(batch),
         )
 
 
@@ -125,11 +128,20 @@ def _as_string(value: Any) -> str:
 
 
 class _RateLimitedManagedHttp:
-    def __init__(self, *, inner: ManagedHttp, rate_limiter: RateLimiter, rate_limit_key: str, rate_limit_policy: Any) -> None:
+    def __init__(
+        self,
+        *,
+        inner: ManagedHttp,
+        rate_limiter: RateLimiter,
+        rate_limit_key: str,
+        rate_limit_policy: Any,
+        deadline_at: datetime | None,
+    ) -> None:
         self._inner = inner
         self._rate_limiter = rate_limiter
         self._rate_limit_key = rate_limit_key
         self._rate_limit_policy = rate_limit_policy
+        self._deadline_at = deadline_at
 
     def stable_key(self, request: HttpRequestSpec) -> str:
         return self._inner.stable_key(request)
@@ -138,8 +150,13 @@ class _RateLimitedManagedHttp:
         return self.send_capture(request).observation
 
     def send_capture(self, request: HttpRequestSpec) -> HttpResponseCapture:
-        decision = self._rate_limiter.reserve(self._rate_limit_key, self._rate_limit_policy)
+        decision = self._rate_limiter.reserve(
+            self._rate_limit_key,
+            self._rate_limit_policy,
+            deadline_at=self._deadline_at,
+        )
         if not decision.allowed:
+            quota_signal = decision.reason or "local_rate_limited"
             return HttpResponseCapture(
                 observation=HttpObservation(
                     request_key=self._inner.stable_key(request),
@@ -150,7 +167,7 @@ class _RateLimitedManagedHttp:
                     status_code=None,
                     response_headers_redacted={},
                     elapsed_ms=0,
-                    quota_signal="local_rate_limited",
+                    quota_signal=quota_signal,
                 )
             )
         return self._inner.send_capture(request)
@@ -158,3 +175,8 @@ class _RateLimitedManagedHttp:
 
 def _rate_limit_at_http(batch: Any) -> bool:
     return _as_string(getattr(batch, "http_visibility", "") or "") == "managed_http"
+
+
+def _deadline_at(batch: Any) -> datetime | None:
+    value = getattr(batch, "deadline_at", None)
+    return value if isinstance(value, datetime) else None

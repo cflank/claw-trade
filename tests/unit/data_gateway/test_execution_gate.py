@@ -13,6 +13,17 @@ from claw_trade.data_gateway.models import HttpVisibility
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
 
+class _Clock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+    def tick(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
 @dataclass(frozen=True)
 class _Batch:
     cache_key: str = "cache:key"
@@ -27,6 +38,7 @@ class _Batch:
     endpoint_id: str = "endpoint"
     market: str = "CN_A"
     data_type: str = "daily_bar"
+    deadline_at: datetime | None = None
 
 
 def test_gate_returns_cache_hit_before_rate_limit_or_single_flight() -> None:
@@ -97,7 +109,7 @@ def test_cache_accepts_naive_cached_datetime_when_now_is_aware() -> None:
 
 
 def test_gate_returns_rate_limited_when_quota_blocked() -> None:
-    policy = RateLimitPolicy(window_seconds=60, max_requests=1, overflow="fail_fast")
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
     batch = _Batch(rate_limit_policy=policy)
     limiter = RateLimiter()
     assert limiter.reserve(batch.rate_limit_key, policy).allowed is True
@@ -106,8 +118,42 @@ def test_gate_returns_rate_limited_when_quota_blocked() -> None:
     assert decision.kind == "rate_limited"
 
 
+def test_gate_uses_batch_deadline_for_non_managed_http_quota_wait() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    sleep_calls: list[float] = []
+
+    def _sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        clock.tick(seconds)
+
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
+    batch = _Batch(rate_limit_policy=policy, deadline_at=clock.now + timedelta(seconds=90))
+    limiter = RateLimiter(now_fn=clock, sleep_fn=_sleep)
+    assert limiter.reserve(batch.rate_limit_key, policy).allowed is True
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=limiter, single_flight=SingleFlight())
+
+    decision = gate.enter(batch)
+
+    assert decision.kind == "owner"
+    assert sleep_calls == [60.0]
+
+
+def test_gate_returns_tool_budget_rate_limit_when_deadline_too_short() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
+    batch = _Batch(rate_limit_policy=policy, deadline_at=clock.now + timedelta(seconds=30))
+    limiter = RateLimiter(now_fn=clock)
+    assert limiter.reserve(batch.rate_limit_key, policy).allowed is True
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=limiter, single_flight=SingleFlight())
+
+    decision = gate.enter(batch)
+
+    assert decision.kind == "rate_limited"
+    assert decision.reason == "rate_limited_by_tool_budget"
+
+
 def test_gate_skips_source_quota_for_managed_http_batches() -> None:
-    policy = RateLimitPolicy(window_seconds=60, max_requests=1, overflow="fail_fast")
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
     gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
     first = _Batch(
         cache_key="cache:first",
@@ -127,7 +173,7 @@ def test_gate_skips_source_quota_for_managed_http_batches() -> None:
 
 
 def test_gate_skips_source_quota_for_managed_http_enum_batches() -> None:
-    policy = RateLimitPolicy(window_seconds=60, max_requests=1, overflow="fail_fast")
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
     gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
     first = _Batch(
         cache_key="cache:first",
@@ -187,8 +233,31 @@ def test_gate_does_not_mark_provider_cooldown_for_local_rate_limit() -> None:
     assert gate.enter(next_batch).kind == "owner"
 
 
-def test_gate_waits_after_provider_429_when_policy_allows_wait() -> None:
-    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10, overflow="wait", wait_timeout_seconds=60))
+def test_gate_does_not_mark_provider_cooldown_for_tool_budget_rate_limit() -> None:
+    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10))
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+    owner = gate.enter(batch)
+    assert owner.kind == "owner"
+
+    gate.mark_cooldown_after_fetch(
+        batch,
+        SimpleNamespace(
+            status="rate_limited",
+            http_observations=(
+                SimpleNamespace(status_code=None, quota_signal="rate_limited_by_tool_budget", response_headers_redacted={}),
+            ),
+        ),
+    )
+
+    next_batch = _Batch(cache_key="cache:next", single_flight_key="sf:next", rate_limit_policy=batch.rate_limit_policy)
+    assert gate.enter(next_batch).kind == "owner"
+
+
+def test_gate_waits_after_provider_429_when_deadline_allows_wait() -> None:
+    batch = _Batch(
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10),
+        deadline_at=datetime.now(UTC) + timedelta(seconds=60),
+    )
     gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
 
     should_retry = gate.wait_after_rate_limited_fetch(
@@ -204,8 +273,8 @@ def test_gate_waits_after_provider_429_when_policy_allows_wait() -> None:
     assert should_retry is True
 
 
-def test_gate_does_not_wait_after_provider_429_without_wait_policy() -> None:
-    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10, overflow="fail_fast"))
+def test_gate_does_not_wait_after_provider_429_when_deadline_is_missing() -> None:
+    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10), deadline_at=None)
     gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
 
     should_retry = gate.wait_after_rate_limited_fetch(
@@ -214,6 +283,26 @@ def test_gate_does_not_wait_after_provider_429_without_wait_policy() -> None:
             status="rate_limited",
             http_observations=(
                 SimpleNamespace(status_code=429, response_headers_redacted={"retry-after": "0"}),
+            ),
+        ),
+    )
+
+    assert should_retry is False
+
+
+def test_gate_does_not_wait_after_provider_429_when_deadline_is_too_short() -> None:
+    batch = _Batch(
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10),
+        deadline_at=datetime.now(UTC) + timedelta(seconds=5),
+    )
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+
+    should_retry = gate.wait_after_rate_limited_fetch(
+        batch,
+        SimpleNamespace(
+            status="rate_limited",
+            http_observations=(
+                SimpleNamespace(status_code=429, response_headers_redacted={"retry-after": "60"}),
             ),
         ),
     )

@@ -132,6 +132,9 @@ def test_data_gap_reason_specific_validator() -> None:
     with pytest.raises(ValueError, match="evidence_refs"):
         _gap(reason=GapReason.RATE_LIMITED)
 
+    with pytest.raises(ValueError, match="evidence_refs"):
+        _gap(reason=GapReason.RATE_LIMITED_BY_TOOL_BUDGET)
+
     ok = _gap(
         reason=GapReason.FIELD_MISSING,
         required_fields=("close",),
@@ -458,6 +461,19 @@ def test_need_planner_models_are_lightweight_contracts() -> None:
     assert plan.planned_calls[0].batch_key == "coinglass:funding:symbol"
     assert plan.scheduled_calls[0].priority == NeedPriority.REQUIRED
     assert plan.skipped_needs[0].reason == GapReason.RESOLVER_MAPPING_MISSING
+
+
+def test_data_need_gap_requires_evidence_for_tool_budget_rate_limit() -> None:
+    with pytest.raises(ValueError, match="evidence_refs"):
+        DataNeedGap(need_id="need-1", reason=GapReason.RATE_LIMITED_BY_TOOL_BUDGET)
+
+    gap = DataNeedGap(
+        need_id="need-1",
+        reason=GapReason.RATE_LIMITED_BY_TOOL_BUDGET,
+        evidence_refs=("rate_limit:ratelimit:coinglass",),
+    )
+
+    assert gap.evidence_refs == ("rate_limit:ratelimit:coinglass",)
 
 
 def test_scheduled_call_validates_identity_need_ids_and_time_budget() -> None:

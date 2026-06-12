@@ -112,8 +112,8 @@ def test_export_runtime_settings_imports_provider_rate_limit_env_to_mongo(monkey
     assert source_record["rate_limit_max_calls"] == 9
     assert source_record["rate_limit_window_seconds"] == 60
     assert source_record["rate_limit_safety_margin"] == 1
-    assert source_record["rate_limit_overflow"] == "wait"
-    assert source_record["rate_limit_wait_timeout_seconds"] == 75
+    assert "rate_limit_overflow" not in source_record
+    assert "rate_limit_wait_timeout_seconds" not in source_record
 
 
 def test_export_runtime_settings_imports_all_catalog_data_source_env_keys(monkeypatch) -> None:  # type: ignore[no-untyped-def]

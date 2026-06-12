@@ -143,6 +143,12 @@ class DataNeedGap(BaseModel):
     human_readable: str | None = None
     provider_ids_tried: tuple[str, ...] = ()
 
+    @model_validator(mode="after")
+    def validate_gap(self) -> "DataNeedGap":
+        if self.reason == GapReason.RATE_LIMITED_BY_TOOL_BUDGET and not self.evidence_refs:
+            raise ValueError("rate_limited_by_tool_budget 必须提供 evidence_refs")
+        return self
+
 
 class MergeEvidence(BaseModel):
     batch_key: str

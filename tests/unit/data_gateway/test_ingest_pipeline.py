@@ -98,6 +98,46 @@ def test_attempt_log_records_http_rate_limit_origin() -> None:
     assert record["http_observations"][0]["response_headers_redacted"] == {"retry-after": "60"}
 
 
+def test_attempt_log_treats_tool_budget_rate_limit_as_local() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    attempt_log = AttemptLog(repository=repo)
+    batch = _Batch(provider_id="crypto_coinglass_derivatives", endpoint_id="futures_funding_rate")
+    fetch_result = SimpleNamespace(
+        status="rate_limited",
+        fetched_at=datetime(2026, 6, 9, tzinfo=UTC),
+        error_code="RuntimeError",
+        error_message="rate_limited_by_tool_budget",
+        http_observations=(
+            SimpleNamespace(
+                request_key="http:req",
+                sent_at=datetime(2026, 6, 9, 12, 0, tzinfo=UTC),
+                method="GET",
+                host="proxy.keystore.com.cn",
+                path="/api/futures/funding-rate/history",
+                status_code=None,
+                quota_signal="rate_limited_by_tool_budget",
+                error_code=None,
+                elapsed_ms=0,
+                response_headers_redacted={},
+            ),
+        ),
+    )
+
+    (attempt_ref,) = attempt_log.record(
+        batch=batch,
+        fetch_result=fetch_result,
+        gaps=(DataGap.by_reason("rate_limited_by_tool_budget", evidence_refs=("http:req",)),),
+    )
+    record = repo.get_provider_attempt(attempt_ref)
+
+    assert record is not None
+    assert record["quota_signals"] == ("rate_limited_by_tool_budget",)
+    assert record["rate_limit_origin"] == "local"
+    assert record["remote_attempted"] is False
+
+
 def test_ingest_pipeline_success_writes_raw_normalized_attempt_refs() -> None:
     pipeline = IngestPipeline(
         raw_store=RawStore(),
@@ -720,6 +760,48 @@ def test_ingest_pipeline_rate_limited_gate_does_not_crash_and_is_non_remote() ->
     assert ingest.attempt_refs
     assert ingest.gaps
     assert ingest.gaps[0].reason == "rate_limited"
+
+
+def test_ingest_pipeline_rate_limited_gate_preserves_tool_budget_reason() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch()
+    gate = GateDecision(kind="rate_limited", reason="rate_limited_by_tool_budget", evidence_refs=("attempt:rate",))
+
+    ingest = pipeline.record_gate_result(batch, gate)
+
+    assert ingest.status == "non_remote_recorded"
+    assert ingest.remote_success is False
+    assert ingest.gaps
+    assert ingest.gaps[0].reason == "rate_limited_by_tool_budget"
+
+
+def test_ingest_pipeline_fetch_rate_limit_preserves_tool_budget_reason() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch()
+    result = SimpleNamespace(
+        status="rate_limited",
+        fetched_at=datetime(2026, 6, 9, tzinfo=UTC),
+        error_message="rate_limited_by_tool_budget",
+        http_observations=(
+            SimpleNamespace(request_key="http:req", quota_signal="rate_limited_by_tool_budget"),
+        ),
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.remote_success is False
+    assert ingest.gaps
+    assert ingest.gaps[0].reason == "rate_limited_by_tool_budget"
 
 
 def test_ingest_pipeline_rate_limited_gate_keeps_batch_context() -> None:

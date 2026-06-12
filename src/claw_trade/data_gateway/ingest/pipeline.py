@@ -116,7 +116,8 @@ class IngestPipeline:
         elif gate.kind == "cached_empty":
             gaps = (DataGap.by_reason("cached_empty", evidence_refs=tuple(refs.attempt_refs)),)
         elif gate.kind == "rate_limited":
-            gaps = (_batch_gap(batch, "rate_limited", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
+            reason = _rate_limited_gap_reason(gate)
+            gaps = (_batch_gap(batch, reason, evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
         elif gate.kind == "cooldown_skipped":
             gaps = (_batch_gap(batch, "cooldown_skipped", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
         elif gate.kind == "shared_result":
@@ -180,7 +181,7 @@ def gaps_from_fetch_result(result: Any, batch: Any) -> tuple[DataGap, ...]:
         evidence_refs = tuple(getattr(obs, "request_key", "") for obs in getattr(result, "http_observations", ()) if getattr(obs, "request_key", ""))
         if not evidence_refs:
             evidence_refs = _derived_rate_limit_evidence_refs(batch)
-        return (_batch_gap(batch, "rate_limited", evidence_refs=evidence_refs),)
+        return (_batch_gap(batch, _rate_limited_gap_reason(result), evidence_refs=evidence_refs),)
     if status == "empty":
         return (_batch_gap(batch, "empty_result"),)
     if status == "sdk_http_unknown":
@@ -223,6 +224,17 @@ def _selector_skip_message(selector_skip: Any) -> str:
 def _selector_skip_reason(selector_skip: Any) -> str:
     raw_reason = getattr(selector_skip, "reason", "credential_missing") or "credential_missing"
     return str(getattr(raw_reason, "value", raw_reason))
+
+
+def _rate_limited_gap_reason(source: Any) -> str:
+    raw_reason = getattr(source, "reason", None)
+    reason = str(getattr(raw_reason, "value", raw_reason or "")).strip()
+    if reason == "rate_limited_by_tool_budget":
+        return reason
+    for observation in tuple(getattr(source, "http_observations", ()) or ()):
+        if getattr(observation, "quota_signal", None) == "rate_limited_by_tool_budget":
+            return "rate_limited_by_tool_budget"
+    return "rate_limited"
 
 
 def _replace_fetch_status(result: Any, status: str) -> Any:

@@ -47,15 +47,11 @@ def _rate_limit_policy(cap: Any) -> Any:
             window_seconds=60,
             max_requests=None,
             safety_margin=0,
-            overflow="fail_fast",
-            wait_timeout_seconds=0,
         )
     return SimpleNamespace(
         window_seconds=int(_read_attr(raw, "window_seconds", 60)),
         max_requests=_read_optional_int(raw, "max_requests", alias_key="max_calls"),
         safety_margin=int(_read_attr(raw, "safety_margin", 0) or 0),
-        overflow=str(_read_attr(raw, "overflow", "fail_fast")),
-        wait_timeout_seconds=int(_read_attr(raw, "wait_timeout_seconds", 0) or 0),
     )
 
 
@@ -356,6 +352,7 @@ class ProviderBatchPlanner:
             "single_flight_key": f"singleflight:{short_hash}",
             "lease_ttl_seconds": _DEFAULT_LEASE_TTL_SECONDS,
             "wait_timeout_seconds": _DEFAULT_WAIT_TIMEOUT_SECONDS,
+            "deadline_at": _read_attr(group, "deadline_at", None),
             "provider_config_version": provider_config_version,
             "license_policy": _read_attr(cap, "license_policy", None),
             "as_of": as_of,

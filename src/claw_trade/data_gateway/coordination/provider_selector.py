@@ -154,6 +154,7 @@ class ProviderSelector:
                     fields=tuple(sorted(required_fields)),
                     required_level=_as_string(_read_attr(gap, "required_level", "required")),
                     configured_paid_data=configured_paid_data,
+                    deadline_at=_as_datetime_or_date(_read_attr(request, "deadline_at", None)),
                 )
             )
         return tuple(matches)

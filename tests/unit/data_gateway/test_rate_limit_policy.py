@@ -41,8 +41,8 @@ def test_rate_limit_policy_resolver_uses_enabled_provider_settings() -> None:
     assert policy.max_requests == 9
     assert policy.window_seconds == 60
     assert policy.safety_margin == 1
-    assert policy.overflow == "wait"
-    assert policy.wait_timeout_seconds == 75
+    assert not hasattr(policy, "overflow")
+    assert not hasattr(policy, "wait_timeout_seconds")
 
 
 def test_rate_limit_policy_resolver_uses_settings_for_any_mapped_source() -> None:
@@ -75,7 +75,7 @@ def test_rate_limit_policy_resolver_does_not_apply_provider_hard_limit_without_s
     )
 
     assert policy.max_requests is None
-    assert policy.overflow == "fail_fast"
+    assert not hasattr(policy, "overflow")
 
 
 def test_rate_limit_policy_resolver_does_not_apply_provider_hard_limit_for_api_source_without_limit_settings() -> None:
@@ -95,7 +95,7 @@ def test_rate_limit_policy_resolver_does_not_apply_provider_hard_limit_for_api_s
     )
 
     assert policy.max_requests is None
-    assert policy.overflow == "fail_fast"
+    assert not hasattr(policy, "overflow")
 
 
 def test_rate_limit_policy_resolver_ignores_provider_max_calls_without_user_settings() -> None:
@@ -110,6 +110,8 @@ def test_rate_limit_policy_resolver_ignores_provider_max_calls_without_user_sett
 
 
 def test_rate_limit_namespace_uses_final_data_source_not_endpoint() -> None:
+    assert provider_rate_limit_namespace("cn_a_primary") == "tushare"
+    assert provider_rate_limit_namespace("cn_a_tushare_fundamental") == "tushare"
     assert provider_rate_limit_namespace("crypto_coinglass_derivatives") == "coinglass"
     assert provider_rate_limit_namespace("official_api_coinglass") == "coinglass"
     assert provider_rate_limit_namespace("official_api_tushare") == "tushare"

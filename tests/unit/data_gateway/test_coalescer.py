@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
 from claw_trade.data_gateway.coordination.coalescer import RequestCoalescer
@@ -21,6 +21,7 @@ def _candidate(
     fields: tuple[str, ...] = ("close",),
     start: date | None = None,
     end: date | None = None,
+    deadline_at: datetime | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         request_id=request_id,
@@ -41,6 +42,7 @@ def _candidate(
         timezone="America/New_York",
         calendar="US_NYSE_NASDAQ",
         required_level="required",
+        deadline_at=deadline_at,
     )
 
 
@@ -110,3 +112,21 @@ def test_coalescer_splits_different_source_roles() -> None:
     )
     assert len(groups) == 2
     assert {group.source_role for group in groups} == {"official", "discovery"}
+
+
+def test_coalescer_merges_to_earliest_deadline() -> None:
+    coalescer = RequestCoalescer()
+    early = datetime(2026, 6, 12, 12, 1, tzinfo=UTC)
+    late = datetime(2026, 6, 12, 12, 5, tzinfo=UTC)
+
+    groups = coalescer.coalesce(
+        (),
+        (
+            _candidate(request_id="req-1", deadline_at=late),
+            _candidate(request_id="req-2", fields=("volume",), deadline_at=early),
+        ),
+        capabilities=None,
+    )
+
+    assert len(groups) == 1
+    assert groups[0].deadline_at == early

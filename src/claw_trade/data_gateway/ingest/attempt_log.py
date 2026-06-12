@@ -8,6 +8,8 @@ from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
 from . import NON_REMOTE_ATTEMPT_STATUSES, DataGap
 
+_LOCAL_QUOTA_SIGNALS = {"local_rate_limited", "rate_limited_by_tool_budget"}
+
 
 @dataclass(frozen=True)
 class AttemptRecord:
@@ -50,7 +52,7 @@ class AttemptLog:
             provider_id=batch.provider_id,
             endpoint_id=batch.endpoint_id,
             status=status,
-            remote_attempted=fetch_result is not None,
+            remote_attempted=_remote_attempted(fetch_result),
             remote_success=remote_success,
             dataset_refs=tuple(dataset_refs),
             raw_refs=tuple(raw_refs),
@@ -175,10 +177,10 @@ def _serialize_http_observation(observation: Any) -> Mapping[str, Any]:
 
 
 def _rate_limit_origin(observations: tuple[Mapping[str, Any], ...]) -> str | None:
-    local = any(item.get("quota_signal") == "local_rate_limited" for item in observations)
+    local = any(item.get("quota_signal") in _LOCAL_QUOTA_SIGNALS for item in observations)
     remote = any(
         item.get("status_code") == 429
-        or (item.get("quota_signal") not in {None, "", "local_rate_limited"})
+        or (item.get("quota_signal") not in {None, "", *_LOCAL_QUOTA_SIGNALS})
         for item in observations
     )
     if local and remote:
@@ -188,3 +190,16 @@ def _rate_limit_origin(observations: tuple[Mapping[str, Any], ...]) -> str | Non
     if remote:
         return "remote"
     return None
+
+
+def _remote_attempted(fetch_result: Any | None) -> bool:
+    if fetch_result is None:
+        return False
+    observations = tuple(getattr(fetch_result, "http_observations", ()) or ())
+    if not observations:
+        return True
+    return any(
+        getattr(observation, "status_code", None) is not None
+        or getattr(observation, "quota_signal", None) not in _LOCAL_QUOTA_SIGNALS
+        for observation in observations
+    )

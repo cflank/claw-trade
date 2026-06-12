@@ -93,6 +93,7 @@ class RequestCoalescer:
                     "calendar": None,
                     "base_asset": None,
                     "quote_asset": None,
+                    "deadline_at": None,
                     "items": OrderedDict(),
                 },
             )
@@ -115,6 +116,7 @@ class RequestCoalescer:
                 calendar=_read_attr(candidate, "calendar", None),
                 base_asset=_read_attr(candidate, "base_asset", None),
                 quote_asset=_read_attr(candidate, "quote_asset", None),
+                deadline_at=_read_attr(candidate, "deadline_at", None),
             )
 
             if request_id not in bucket["items"]:
@@ -134,6 +136,7 @@ class RequestCoalescer:
             bucket["date_range_end"] = _merge_end(bucket["date_range_end"], item.date_range_end)
             for dimension in ("exchange", "currency", "timezone", "calendar", "base_asset", "quote_asset"):
                 bucket[dimension] = bucket[dimension] or getattr(item, dimension)
+            bucket["deadline_at"] = _merge_deadline(bucket["deadline_at"], item.deadline_at)
 
         groups: list[MergeGroup] = []
         for key, bucket in grouped.items():
@@ -162,6 +165,7 @@ class RequestCoalescer:
                     fields_union=tuple(bucket["fields"].keys()),
                     required_level=required_level,
                     items=tuple(bucket["items"].values()),
+                    deadline_at=bucket["deadline_at"],
                 )
             )
 
@@ -195,3 +199,11 @@ class RequestCoalescer:
         if RequiredLevel.OPTIONAL in normalized:
             return RequiredLevel.OPTIONAL
         return RequiredLevel.NOT_APPLICABLE
+
+
+def _merge_deadline(current: datetime | None, nxt: datetime | None) -> datetime | None:
+    if nxt is None:
+        return current
+    if current is None:
+        return nxt
+    return min(current, nxt)

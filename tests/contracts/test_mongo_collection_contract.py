@@ -168,7 +168,6 @@ def test_each_authorized_collection_has_repository_access_contract() -> None:
         window_seconds=60,
         max_requests=10,
         safety_margin=0,
-        overflow_policy="fail_fast",
     )
     assert repository.get_latest_rate_limit_record(rate_limit_key="rl:key") is not None
 

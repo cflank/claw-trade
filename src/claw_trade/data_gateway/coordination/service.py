@@ -101,6 +101,7 @@ class DataService:
         "cache_hit",
         "shared_result",
         "rate_limited",
+        "rate_limited_by_tool_budget",
         "cached_empty",
         "cooldown_skipped",
         "sdk_http_unknown",

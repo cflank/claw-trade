@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
@@ -76,6 +76,7 @@ def _group(
     universe_ref: str | None = None,
     start: date = date(2026, 5, 1),
     end: date = date(2026, 5, 31),
+    deadline_at: datetime | None = None,
 ) -> MergeGroup:
     return MergeGroup(
         provider_id=provider_id,
@@ -96,6 +97,7 @@ def _group(
         calendar="US_NYSE_NASDAQ",
         fields_union=("close", "volume"),
         items=items,
+        deadline_at=deadline_at,
     )
 
 
@@ -153,6 +155,36 @@ def test_batch_planner_merges_symbols_when_batch_supported() -> None:
     assert getattr(batches[0], "timezone") == "America/New_York"
     assert getattr(batches[0], "calendar") == "US_NYSE_NASDAQ"
     assert getattr(batches[0], "http_visibility") == "managed_http"
+
+
+def test_batch_planner_carries_group_deadline_to_batch() -> None:
+    planner = ProviderBatchPlanner()
+    snapshot = CapabilitySnapshot.from_capabilities(
+        (
+            _capability(
+                BatchPolicy(
+                    supports_batch=True,
+                    batch_by="symbol",
+                    max_symbols_per_call=2,
+                    mergeable_fields=("close", "volume"),
+                )
+            ),
+        )
+    )
+    deadline_at = datetime(2026, 6, 12, 12, 1, tzinfo=UTC)
+    item = MergeItem(
+        request_id="req-1",
+        symbol_ids=("AAPL",),
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+        fields=("close",),
+        required_level="required",
+        deadline_at=deadline_at,
+    )
+
+    batches = planner.build_batches((_group(("AAPL",), (item,), deadline_at=deadline_at),), snapshot)
+
+    assert getattr(batches[0], "deadline_at") == deadline_at
 
 
 def test_batch_planner_splits_to_single_when_batch_not_supported() -> None:

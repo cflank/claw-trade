@@ -10,6 +10,7 @@ from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlan
 from claw_trade.data_gateway.coordination.coalescer import RequestCoalescer
 from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
 from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
+from claw_trade.data_gateway.coordination.scheduler import DataRunScheduler
 from claw_trade.data_gateway.coordination.service import DataService
 from claw_trade.data_gateway.execution import ProviderResultCache
 from claw_trade.data_gateway.execution.fetch_engine import FetchEngine
@@ -83,6 +84,7 @@ def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
         ),
         fetch_engine=FetchEngine(registry, credential_resolver=credential_resolver, rate_limiter=rate_limiter),
         ingest=ingest,
+        scheduler=DataRunScheduler(rate_limiter=rate_limiter),
     )
     return DataGatewayRuntime(
         data_api=DataAPI(service),

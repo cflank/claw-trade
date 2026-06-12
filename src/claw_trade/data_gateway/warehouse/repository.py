@@ -1751,7 +1751,6 @@ class DatasetRepository:
         window_seconds: int,
         max_requests: int | None,
         safety_margin: int,
-        overflow_policy: str,
     ) -> dict[str, Any]:
         doc_id = self._rate_limit_doc_id(rate_limit_key, window_start)
         with self._lock:
@@ -1766,7 +1765,6 @@ class DatasetRepository:
                     "max_requests": max_requests,
                     "used_requests": 0,
                     "safety_margin": safety_margin,
-                    "overflow_policy": overflow_policy,
                     "cooldown_until": None,
                     "version": 1,
                 }
@@ -1803,7 +1801,6 @@ class DatasetRepository:
         window_seconds: int,
         max_requests: int,
         safety_margin: int,
-        overflow_policy: str,
         cost: int,
     ) -> dict[str, Any]:
         now = self._aware_datetime(now)
@@ -1823,7 +1820,6 @@ class DatasetRepository:
                     "max_requests": max_requests,
                     "used_requests": 0,
                     "safety_margin": safety_margin,
-                    "overflow_policy": overflow_policy,
                     "cooldown_until": None,
                     "version": 1,
                     "request_timestamps": (),
@@ -1857,7 +1853,6 @@ class DatasetRepository:
                     "max_requests": max_requests,
                     "used_requests": len(timestamps),
                     "safety_margin": safety_margin,
-                    "overflow_policy": overflow_policy,
                     "effective_limit": effective_limit,
                     "request_timestamps": timestamps,
                     "retry_after": retry_after,
@@ -1888,7 +1883,6 @@ class DatasetRepository:
                 window_seconds=60,
                 max_requests=None,
                 safety_margin=0,
-                overflow_policy="fail_fast",
             )
         doc_id = str(latest["rate_limit_ref"])
         with self._lock:

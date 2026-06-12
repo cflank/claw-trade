@@ -3,8 +3,15 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
+from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
+from claw_trade.data_gateway.coordination.coalescer import RequestCoalescer
 from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
 from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
+from claw_trade.data_gateway.coordination.scheduler import DataRunScheduler
+from claw_trade.data_gateway.execution import ProviderResultCache
+from claw_trade.data_gateway.execution.gate import ExecutionGate
+from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimitPolicy
+from claw_trade.data_gateway.execution.single_flight import SingleFlight
 from claw_trade.data_gateway.coordination.service import DataService
 from claw_trade.data_gateway.ingest.attempt_log import AttemptLog
 from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
@@ -589,6 +596,26 @@ class _BatchPlanner:
         return (_batch_plan(groups[0]["request_id"]),)
 
 
+class _SchedulerSkipBatchPlanner(_BatchPlanner):
+    def __init__(self, events: list[str], *, deadline_at: datetime) -> None:
+        super().__init__(events)
+        self.deadline_at = deadline_at
+
+    def build_batches(self, groups, capabilities):
+        self._events.append("batch_planner.build_batches")
+        assert capabilities["count"] == 1
+        batch = _batch_plan(groups[0]["request_id"])
+        return (
+            batch.model_copy(
+                update={
+                    "deadline_at": self.deadline_at,
+                    "rate_limit_key": "ratelimit:test",
+                    "rate_limit_policy": RateLimitPolicy(window_seconds=60, max_requests=1, safety_margin=1),
+                }
+            ),
+        )
+
+
 class _Scheduler:
     def __init__(self, events: list[str]) -> None:
         self._events = events
@@ -638,6 +665,16 @@ class _FetchEngine:
             row_count=1,
             fetched_at=datetime(2026, 5, 31, tzinfo=UTC),
         )
+
+
+class _DeadlineRecordingFetchEngine(_FetchEngine):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(events)
+        self.deadline_at = None
+
+    def fetch(self, batch):
+        self.deadline_at = getattr(batch, "deadline_at", None)
+        return super().fetch(batch)
 
 
 class _Ingest:
@@ -1349,6 +1386,56 @@ def test_data_service_execute_plan_passes_plan_start_to_scheduler() -> None:
         "execution_gate.publish_shared_result",
         "warehouse.recheck",
     ]
+
+
+def test_data_service_carries_request_deadline_to_real_provider_batch() -> None:
+    events: list[str] = []
+    deadline_at = datetime(2026, 5, 31, 12, 1, tzinfo=UTC)
+    fetch_engine = _DeadlineRecordingFetchEngine(events)
+    service = DataService(
+        query_planner=QueryPlanner(),
+        warehouse=_Warehouse(events, satisfied_on_check=False),
+        provider_selector=ProviderSelector(build_minimal_provider_registry()),
+        coalescer=RequestCoalescer(),
+        batch_planner=ProviderBatchPlanner(),
+        execution_gate=_ExecutionGate(events),
+        fetch_engine=fetch_engine,
+        ingest=_Ingest(events),
+    )
+    request = DataRequest.model_validate({**_request("req-deadline").model_dump(), "deadline_at": deadline_at})
+
+    service.get_data(request)
+
+    assert fetch_engine.deadline_at == deadline_at
+
+
+def test_data_service_scheduler_skips_legacy_batch_when_budget_cannot_fit() -> None:
+    events: list[str] = []
+    repository = DatasetRepository()
+    deadline_at = datetime(2026, 5, 31, 12, 1, tzinfo=UTC)
+    rate_limiter = RateLimiter(repository)
+    service = DataService(
+        query_planner=_Planner(events),
+        warehouse=_Warehouse(events, satisfied_on_check=False),
+        provider_selector=_Selector(events),
+        coalescer=_Coalescer(events),
+        batch_planner=_SchedulerSkipBatchPlanner(events, deadline_at=deadline_at),
+        scheduler=DataRunScheduler(rate_limiter=rate_limiter),
+        execution_gate=ExecutionGate(
+            cache=ProviderResultCache(repository),
+            rate_limiter=rate_limiter,
+            single_flight=SingleFlight(repository),
+        ),
+        fetch_engine=_NoRemoteFetchEngine(),
+        ingest=_real_ingest(repository),
+    )
+    plan = service.plan_batch((_request("req-scheduler-budget"),))
+
+    results = service.execute_plan(plan)
+
+    assert "fetch_engine.fetch" not in events
+    assert results[0].status == DataResultStatus.MISSING
+    assert GapReason.RATE_LIMITED_BY_TOOL_BUDGET in {gap.reason for gap in results[0].gaps}
 
 
 def test_data_service_batch_slices_recheck_dataset_refs_per_request() -> None:

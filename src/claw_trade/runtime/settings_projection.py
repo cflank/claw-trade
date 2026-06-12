@@ -85,8 +85,6 @@ def _import_env_data_sources(database: Any, env: Mapping[str, str]) -> int:
         rate_limit_max_calls = _first_env_value(env, _profile_env_keys(profile, "rate_limit_max_calls"))
         rate_limit_window_seconds = _first_env_value(env, _profile_env_keys(profile, "rate_limit_window_seconds"))
         rate_limit_safety_margin = _first_env_value(env, _profile_env_keys(profile, "rate_limit_safety_margin"))
-        rate_limit_overflow = _first_env_value(env, _profile_env_keys(profile, "rate_limit_overflow"))
-        rate_limit_wait_timeout_seconds = _first_env_value(env, _profile_env_keys(profile, "rate_limit_wait_timeout_seconds"))
         existing = _data_source_record(database, profile.supported_type)
         existing_credential_ref = _optional_str(existing.get("credential_ref")) if existing else None
         if (
@@ -97,8 +95,6 @@ def _import_env_data_sources(database: Any, env: Mapping[str, str]) -> int:
             and not rate_limit_max_calls
             and not rate_limit_window_seconds
             and not rate_limit_safety_margin
-            and not rate_limit_overflow
-            and not rate_limit_wait_timeout_seconds
         ):
             continue
 
@@ -146,14 +142,6 @@ def _import_env_data_sources(database: Any, env: Mapping[str, str]) -> int:
             record["rate_limit_safety_margin"] = int(rate_limit_safety_margin)
         else:
             record.setdefault("rate_limit_safety_margin", None)
-        if rate_limit_overflow:
-            record["rate_limit_overflow"] = rate_limit_overflow
-        else:
-            record.setdefault("rate_limit_overflow", None)
-        if rate_limit_wait_timeout_seconds:
-            record["rate_limit_wait_timeout_seconds"] = int(rate_limit_wait_timeout_seconds)
-        else:
-            record.setdefault("rate_limit_wait_timeout_seconds", None)
         record.setdefault("last_success_at", None)
         database[UI_DATA_SOURCE_SETTINGS_COLLECTION].replace_one(
             {"_id": profile.supported_type},
