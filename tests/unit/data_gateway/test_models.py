@@ -23,6 +23,17 @@ from claw_trade.data_gateway.models import (
     RequiredLevel,
     SourceRole,
 )
+from claw_trade.data_gateway.needs import (
+    DataNeed,
+    DataNeedGap,
+    MergeEvidence,
+    NeedInstrument,
+    NeedPlan,
+    NeedPriority,
+    ProviderCallSpec,
+    RateLimitEvidence,
+    ScheduledCall,
+)
 
 
 def _request(**overrides: object) -> DataRequest:
@@ -292,4 +303,192 @@ def test_ingest_result_contract_validator() -> None:
             attempt_refs=("attempt:1",),
             remote_success=True,
             created_at=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+
+def test_data_need_accepts_strings_and_defaults() -> None:
+    need = DataNeed.model_validate(
+        {
+            "need_id": "need-1",
+            "need_kind": "capital_flow",
+            "market": "CN_A",
+            "instrument": "600519.SH",
+            "time_range_start": date(2026, 5, 1),
+            "time_range_end": date(2026, 5, 31),
+            "requested_by_worker": "market_analyst",
+            "purpose": "market_analysis",
+            "deadline_at": datetime(2026, 5, 31, 12, 0, tzinfo=UTC),
+        }
+    )
+
+    assert need.need_kind == "capital_flow"
+    assert need.priority == NeedPriority.NORMAL
+    assert need.consumer == "report"
+
+
+def test_data_need_validates_required_fields_deadline_and_range() -> None:
+    base = {
+        "need_id": "need-1",
+        "need_kind": "funding_rate",
+        "market": Market.CRYPTO,
+        "instrument": "BTC/USDT",
+        "time_range_start": date(2026, 6, 1),
+        "time_range_end": date(2026, 6, 10),
+        "requested_by_worker": "market_analyst",
+        "purpose": "derivatives_crowding",
+        "deadline_at": datetime(2026, 6, 10, 12, 0, tzinfo=UTC),
+    }
+
+    with pytest.raises(ValueError, match="need_id 不能为空"):
+        DataNeed.model_validate({**base, "need_id": " "})
+
+    with pytest.raises(ValueError, match="deadline_at 必须有 timezone"):
+        DataNeed.model_validate({**base, "deadline_at": datetime(2026, 6, 10, 12, 0)})
+
+    with pytest.raises(ValueError, match="time_range_start"):
+        DataNeed.model_validate(
+            {
+                **base,
+                "time_range_start": date(2026, 6, 11),
+                "time_range_end": date(2026, 6, 10),
+            }
+        )
+
+    with pytest.raises(ValueError, match="time_range_start"):
+        DataNeed.model_validate(
+            {
+                **base,
+                "granularity": "hourly",
+                "time_range_start": datetime(2026, 6, 10, 23, 0, tzinfo=UTC),
+                "time_range_end": datetime(2026, 6, 10, 1, 0, tzinfo=UTC),
+            }
+        )
+
+
+def test_provider_call_spec_contract_validator() -> None:
+    base = {
+        "call_id": "call-1",
+        "method": "GET",
+        "provider_id": "tushare",
+        "catalog_endpoint_id": "tushare.daily",
+        "official_path_or_api_name": "daily",
+        "params": {"ts_code": "600519.SH"},
+        "auth_scope": "tushare:token",
+        "rate_limit_bucket": "ratelimit:tushare",
+        "http_visibility": "managed_http",
+        "parser_status": "normalized",
+        "batch_key": "tushare:daily:ts_code",
+        "official_doc_ref": "https://tushare.pro/document/2?doc_id=27",
+        "deadline_at": datetime(2026, 5, 31, 12, 0, tzinfo=UTC),
+        "need_ids": ("need-1",),
+    }
+
+    spec = ProviderCallSpec.model_validate(base)
+    assert spec.provider_id == "tushare"
+    assert spec.need_ids == ("need-1",)
+
+    with pytest.raises(ValueError, match="need_ids 不能为空"):
+        ProviderCallSpec.model_validate({**base, "need_ids": ()})
+
+    with pytest.raises(ValueError, match="provider_id 不能为空"):
+        ProviderCallSpec.model_validate({**base, "provider_id": ""})
+
+    with pytest.raises(ValueError, match="deadline_at 必须有 timezone"):
+        ProviderCallSpec.model_validate({**base, "deadline_at": datetime(2026, 5, 31, 12, 0)})
+
+
+def test_need_planner_models_are_lightweight_contracts() -> None:
+    deadline = datetime(2026, 5, 31, 12, 0, tzinfo=UTC)
+    call = ProviderCallSpec(
+        call_id="call-1",
+        provider_id="coinglass",
+        catalog_endpoint_id="coinglass.funding",
+        official_path_or_api_name="/api/funding",
+        params={"symbol": "BTC"},
+        auth_scope="coinglass:pro",
+        rate_limit_bucket="ratelimit:coinglass",
+        http_visibility="managed_http",
+        parser_status="parser_missing",
+        batch_key="coinglass:funding:symbol",
+        official_doc_ref="https://docs.coinglass.com/reference/funding",
+        deadline_at=deadline,
+        need_ids=("need-1",),
+    )
+    scheduled = ScheduledCall(
+        call_id="call-1",
+        need_ids=("need-1",),
+        provider_id="coinglass",
+        catalog_endpoint_id="coinglass.funding",
+        params={"symbol": "BTC"},
+        batch_key="coinglass:funding:symbol",
+        rate_limit_bucket="ratelimit:coinglass",
+        earliest_start_at=deadline,
+        deadline_at=deadline,
+        priority="required",
+    )
+
+    instrument = NeedInstrument(symbol="BTC/USDT", base_asset="BTC", quote_asset="USDT")
+    need = DataNeed(
+        need_id="need-1",
+        need_kind="funding_rate",
+        market=Market.CRYPTO,
+        instrument=instrument.symbol,
+        requested_by_worker="market_analyst",
+        purpose="derivatives_crowding",
+        deadline_at=deadline,
+    )
+    gap = DataNeedGap(need_id="need-2", reason=GapReason.RESOLVER_MAPPING_MISSING)
+    merge = MergeEvidence(batch_key="coinglass:funding:symbol", need_ids=("need-1",), merged=False)
+    rate_limit = RateLimitEvidence(
+        rate_limit_bucket="ratelimit:coinglass",
+        provider_id="coinglass",
+        outcome="reserved",
+    )
+    plan = NeedPlan(
+        plan_id="plan-1",
+        needs=(need,),
+        planned_calls=(call,),
+        scheduled_calls=(scheduled,),
+        skipped_needs=(gap,),
+        merge_evidence=(merge,),
+        rate_limit_evidence=(rate_limit,),
+        created_at=deadline,
+    )
+
+    assert plan.planned_calls[0].batch_key == "coinglass:funding:symbol"
+    assert plan.scheduled_calls[0].priority == NeedPriority.REQUIRED
+    assert plan.skipped_needs[0].reason == GapReason.RESOLVER_MAPPING_MISSING
+
+
+def test_scheduled_call_validates_identity_need_ids_and_time_budget() -> None:
+    deadline = datetime(2026, 5, 31, 12, 0, tzinfo=UTC)
+    base = {
+        "call_id": "call-1",
+        "need_ids": ("need-1",),
+        "provider_id": "coinglass",
+        "catalog_endpoint_id": "coinglass.funding",
+        "params": {"symbol": "BTC"},
+        "batch_key": "coinglass:funding:symbol",
+        "rate_limit_bucket": "ratelimit:coinglass",
+        "earliest_start_at": deadline,
+        "deadline_at": deadline,
+        "priority": "required",
+    }
+
+    with pytest.raises(ValueError, match="call_id 不能为空"):
+        ScheduledCall.model_validate({**base, "call_id": " "})
+
+    with pytest.raises(ValueError, match="need_ids 不能为空"):
+        ScheduledCall.model_validate({**base, "need_ids": ()})
+
+    with pytest.raises(ValueError, match="earliest_start_at 必须有 timezone"):
+        ScheduledCall.model_validate({**base, "earliest_start_at": datetime(2026, 5, 31, 12, 0)})
+
+    with pytest.raises(ValueError, match="earliest_start_at"):
+        ScheduledCall.model_validate(
+            {
+                **base,
+                "earliest_start_at": datetime(2026, 5, 31, 12, 1, tzinfo=UTC),
+                "deadline_at": deadline,
+            }
         )

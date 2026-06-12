@@ -31,8 +31,12 @@ class GapSeverity(str, Enum):
 
 class GapReason(str, Enum):
     CREDENTIAL_MISSING = "credential_missing"
+    PERMISSION_DENIED = "permission_denied"
     RATE_LIMITED = "rate_limited"
+    RATE_LIMITED_BY_TOOL_BUDGET = "rate_limited_by_tool_budget"
     PROVIDER_ERROR = "provider_error"
+    PROVIDER_EMPTY = "provider_empty"
+    PARSER_MISSING = "parser_missing"
     EMPTY_RESULT = "empty_result"
     WAREHOUSE_MISSING = "warehouse_missing"
     WAREHOUSE_STALE = "warehouse_stale"
@@ -46,6 +50,7 @@ class GapReason(str, Enum):
     SHARED_RESULT = "shared_result"
     CACHED_EMPTY = "cached_empty"
     COOLDOWN_SKIPPED = "cooldown_skipped"
+    RESOLVER_MAPPING_MISSING = "resolver_mapping_missing"
     NOT_APPLICABLE = "not_applicable"
     INVALID_REQUEST = "invalid_request"
     SDK_HTTP_UNKNOWN = "sdk_http_unknown"

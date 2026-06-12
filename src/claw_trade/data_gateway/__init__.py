@@ -12,6 +12,18 @@ from .models import (
     ProviderBatchPlan,
     ProviderCapability,
 )
+from .needs import (
+    DataNeed,
+    DataNeedGap,
+    MergeEvidence,
+    NeedInstrument,
+    NeedKind,
+    NeedPlan,
+    NeedPriority,
+    ProviderCallSpec,
+    RateLimitEvidence,
+    ScheduledCall,
+)
 
 __all__ = [
     "DataAPI",
@@ -25,4 +37,14 @@ __all__ = [
     "IngestResult",
     "DataService",
     "QueryPlanner",
+    "DataNeed",
+    "NeedKind",
+    "NeedPriority",
+    "NeedInstrument",
+    "ProviderCallSpec",
+    "NeedPlan",
+    "ScheduledCall",
+    "DataNeedGap",
+    "MergeEvidence",
+    "RateLimitEvidence",
 ]
