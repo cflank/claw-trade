@@ -17,26 +17,6 @@ _SOURCE_ROLE_ORDER = {
     "discovery": 4,
     "event_expectation": 5,
 }
-_STRUCTURAL_FIELDS = frozenset(
-    {
-        "as_of",
-        "calendar",
-        "currency",
-        "date",
-        "exchange",
-        "market",
-        "period_end",
-        "period_start",
-        "source",
-        "symbol_id",
-        "time",
-        "timestamp",
-        "timezone",
-        "unit",
-    }
-)
-
-
 @dataclass(frozen=True)
 class SkippedProviderCandidate:
     request_id: str
@@ -124,8 +104,6 @@ class ProviderSelector:
     ) -> tuple[ProviderCandidate, ...]:
         required_granularity = _as_string(_read_attr(request, "granularity"))
         required_fields = set(_as_tuple(_read_attr(request, "fields", ())))
-        required_role = _read_attr(request, "source_role_required", None)
-        required_role_value = _as_string(required_role) if required_role is not None else None
 
         matches: list[ProviderCandidate] = []
         for cap in capabilities:
@@ -134,10 +112,6 @@ class ProviderSelector:
             if required_granularity not in set(cap.supported_granularities):
                 continue
             source_role = _as_string(cap.source_role)
-            if required_role_value is not None and source_role != required_role_value:
-                continue
-            if not self._matches_required_fields(required_fields, cap):
-                continue
             credential_skip = self._credential_skip(cap)
             if credential_skip is not None:
                 if skipped is not None:
@@ -239,16 +213,6 @@ class ProviderSelector:
         if bool(getattr(candidate, "configured_paid_data", False)) and source_role == "paid_data":
             return -1
         return _SOURCE_ROLE_ORDER.get(source_role, 99)
-
-    @staticmethod
-    def _matches_required_fields(required_fields: set[Any], cap: ProviderCapabilityView) -> bool:
-        requested = {str(field) for field in required_fields if str(field) not in _STRUCTURAL_FIELDS}
-        if not requested:
-            return True
-        provided = {str(field) for field in _as_tuple(_read_attr(cap, "coverage_fields", _read_attr(cap, "fields", ())))}
-        if not provided:
-            return True
-        return bool(requested & provided)
 
     @staticmethod
     def _is_symbol_request_using_universe_endpoint(*, request: Any, cap: ProviderCapabilityView) -> bool:

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from claw_trade.data_gateway import _selection_batch as selection_batch_bridge
 from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
 from claw_trade.data_gateway.providers import build_minimal_provider_registry
+from claw_trade.data_gateway.providers.base import validate_provider_capabilities
 from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
 from claw_trade.data_gateway.providers.registry import ProviderRegistry
 from claw_trade.reports import data_pack_bridge as report_data_pack_bridge
@@ -101,6 +102,41 @@ class FakeCredentialResolver:
 
     def get_credential(self, name: str) -> str | None:
         return self._values.get(name)
+
+
+def test_provider_capability_allows_empty_coverage_fields_as_metadata_only() -> None:
+    validate_provider_capabilities(
+        ProviderCapabilities(
+            provider_id="metadata_only_provider",
+            plugin_version="1.0.0",
+            endpoints=(
+                EndpointCapability(
+                    endpoint_id="raw_endpoint",
+                    market="US",
+                    data_type="daily_bar",
+                    source_role="built_in_public",
+                    supported_granularities=("daily",),
+                    coverage_fields=(),
+                    freshness_supported=("trading_day",),
+                    http_visibility="managed_http",
+                    batch_policy=BatchPolicy(supports_batch=False, batch_by="none"),
+                ),
+            ),
+            credentials=CredentialPolicy(
+                credential_required=False,
+                credential_names=(),
+                credential_scope=None,
+                missing_behavior="credential_missing",
+            ),
+            license_policy=LicensePolicy(
+                raw_storage_mode="metadata_only",
+                normalized_storage_allowed=True,
+                redistribution_allowed=False,
+                retention_days=30,
+            ),
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": 20},
+        )
+    )
 
 
 def _resolver(
@@ -227,226 +263,12 @@ def _cn_a_realtime_quote_request(*, consumer: str) -> SimpleNamespace:
     )
 
 
-_IMPORTANT_FIELD_FILTER_SOURCE_ROLES = frozenset({"official", "paid_data"})
 _SYMBOL_BY_MARKET = {
     "CN_A": "600519.SH",
     "US": "AAPL",
     "HK": "00700.HK",
     "CRYPTO": "BTCUSDT",
 }
-
-_INTENTIONAL_PRODUCT_REQUEST_FIELD_EXCLUSIONS = {
-    (
-        "report",
-        "US",
-        "market",
-        "quote_snapshot",
-        "realtime",
-        ("price", "change", "change_pct", "volume", "timestamp", "symbol_id"),
-        "us_finnhub_data",
-        "quote",
-        ("volume",),
-    ): "Finnhub quote does not expose volume in the normalized quote row.",
-    (
-        "report",
-        "US",
-        "fundamental",
-        "financial_metric",
-        "quarterly",
-        ("roe", "gross_margin", "profit_margin", "eps", "revenue_growth"),
-        "us_finnhub_data",
-        "stock_metric_financial",
-        ("gross_margin", "revenue_growth"),
-    ): "Finnhub stock metric exposes ROE/ROA/profit margin/EPS, not gross margin or revenue growth.",
-    (
-        "report",
-        "HK",
-        "fundamental",
-        "financial_metric",
-        "quarterly",
-        ("roe", "gross_margin", "eps"),
-        "hk_finnhub_data",
-        "stock_metric_financial",
-        ("gross_margin",),
-    ): "Finnhub stock metric does not expose gross margin.",
-    (
-        "report",
-        "HK",
-        "fundamental",
-        "financial_metric",
-        "quarterly",
-        ("roe", "gross_margin", "eps"),
-        "hk_tushare",
-        "hk_fina_indicator",
-        ("gross_margin",),
-    ): "HK Tushare indicator exposes gross profit, not gross margin.",
-    (
-        "report",
-        "HK",
-        "fundamental",
-        "financial_metric",
-        "quarterly",
-        ("roe", "eps", "gross_profit"),
-        "hk_finnhub_data",
-        "stock_metric_financial",
-        ("gross_profit",),
-    ): "Finnhub stock metric does not expose gross profit.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "realtime",
-        ("open_interest", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_coin_netflow",
-        ("open_interest",),
-    ): "Coinglass netflow and open-interest are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("funding_rate", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_long_short_ratio",
-        ("funding_rate",),
-    ): "Coinglass funding rate and long/short ratio are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("funding_rate", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_liquidation",
-        ("funding_rate",),
-    ): "Coinglass funding rate and liquidation are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("funding_rate", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_taker_buy_sell",
-        ("funding_rate",),
-    ): "Coinglass funding rate and taker buy/sell are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("long_short_ratio", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_funding_rate",
-        ("long_short_ratio",),
-    ): "Coinglass long/short ratio and funding rate are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("long_short_ratio", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_liquidation",
-        ("long_short_ratio",),
-    ): "Coinglass long/short ratio and liquidation are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("long_short_ratio", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_taker_buy_sell",
-        ("long_short_ratio",),
-    ): "Coinglass long/short ratio and taker buy/sell are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_funding_rate",
-        ("taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"),
-    ): "Coinglass taker buy/sell and funding rate are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_long_short_ratio",
-        ("taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"),
-    ): "Coinglass taker buy/sell and long/short ratio are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("taker_buy_volume", "taker_sell_volume", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_liquidation",
-        ("taker_buy_sell_ratio", "taker_buy_volume", "taker_sell_volume"),
-    ): "Coinglass taker buy/sell and liquidation are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_funding_rate",
-        ("liquidation_value", "long_liquidation", "short_liquidation"),
-    ): "Coinglass liquidation and funding rate are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_long_short_ratio",
-        ("liquidation_value", "long_liquidation", "short_liquidation"),
-    ): "Coinglass liquidation and long/short ratio are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "1h",
-        ("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_taker_buy_sell",
-        ("liquidation_value", "long_liquidation", "short_liquidation"),
-    ): "Coinglass liquidation and taker buy/sell are separate endpoints.",
-    (
-        "report",
-        "CRYPTO",
-        "market",
-        "crypto_derivative_metric",
-        "realtime",
-        ("net_inflow", "timestamp", "symbol_id"),
-        "crypto_coinglass_derivatives",
-        "futures_open_interest",
-        ("net_inflow",),
-    ): "Coinglass netflow and open-interest are separate endpoints.",
-}
-
 
 def _product_request_specs() -> tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...]:
     specs: list[tuple[str, str, str, str, str, tuple[str, ...]]] = []
@@ -567,7 +389,7 @@ def test_selector_orders_official_source_first_without_dropping_later_candidates
     assert getattr(candidates[0], "timezone") == "America/New_York"
 
 
-def test_selector_filters_by_required_source_role_but_not_required_fields() -> None:
+def test_selector_keeps_source_role_required_as_non_denying_metadata() -> None:
     registry = ProviderRegistry()
     registry.register(_plugin("sentiment_feed", "sentiment", 5))
     registry.register(_plugin("official_feed", "official", 1))
@@ -588,11 +410,11 @@ def test_selector_filters_by_required_source_role_but_not_required_fields() -> N
     selector = ProviderSelector(registry)
     candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
 
-    assert [getattr(candidate, "provider_id") for candidate in candidates] == ["sentiment_feed"]
-    assert candidates[0].fields == ("amount", "close")
+    assert [getattr(candidate, "provider_id") for candidate in candidates] == ["official_feed", "sentiment_feed"]
+    assert [candidate.fields for candidate in candidates] == [("amount", "close"), ("amount", "close")]
 
 
-def test_selector_filters_same_data_type_candidates_by_requested_metric_fields() -> None:
+def test_selector_keeps_same_data_type_candidates_even_when_fields_differ() -> None:
     registry = ProviderRegistry()
     registry.register(
         FakePlugin(
@@ -658,6 +480,7 @@ def test_selector_filters_same_data_type_candidates_by_requested_metric_fields()
     candidates = selector.select_candidates((gap,), FakeQueryPlan(request))
 
     assert [(candidate.provider_id, candidate.endpoint_id) for candidate in candidates] == [
+        ("paid_metrics", "cvd"),
         ("paid_metrics", "long_short"),
     ]
 
@@ -1182,7 +1005,7 @@ def test_selector_with_migrated_us_hk_crypto_matrices_picks_domain_providers() -
         assert set(expected_provider_ids).issubset(actual_provider_ids)
 
 
-def test_product_request_provider_candidates_remain_available_with_field_filter() -> None:
+def test_product_request_provider_candidates_remain_available_without_field_filter() -> None:
     registry = build_minimal_provider_registry()
     selector = ProviderSelector(registry)
     gap = SimpleNamespace(request_id="product-request-field-filter", symbol_id="product", required_level="required")
@@ -1191,35 +1014,6 @@ def test_product_request_provider_candidates_remain_available_with_field_filter(
         request = _request(market=market, data_type=data_type, granularity=granularity, fields=fields)
         selected = _selected_provider_endpoints(selector, gap, request)
         assert selected, (origin, market, domain, data_type, granularity, fields)
-        requested = set(fields) - {"as_of", "calendar", "currency", "date", "exchange", "market", "period_end", "period_start", "source", "symbol_id", "time", "timestamp", "timezone", "unit"}
-        if not requested:
-            continue
-        capabilities = {
-            (cap.provider_id, cap.endpoint_id): set(cap.fields)
-            for cap in registry.list_capabilities(market=market, data_type=data_type)
-        }
-        for provider_id, endpoint_id in selected:
-            assert requested & capabilities[(provider_id, endpoint_id)], (
-                origin,
-                market,
-                domain,
-                data_type,
-                granularity,
-                fields,
-                provider_id,
-                endpoint_id,
-            )
-
-
-def _is_known_crypto_metric_endpoint_split(key: tuple[object, ...]) -> bool:
-    origin, market, _domain, data_type, _granularity, _fields, provider_id, _endpoint_id, _missing = key
-    return (
-        origin == "report"
-        and market == "CRYPTO"
-        and provider_id == "crypto_coinglass_derivatives"
-        and data_type in {"crypto_derivative_metric", "crypto_onchain_metric", "daily_bar", "valuation_metric"}
-    )
-
 
 def test_product_request_provider_candidates_do_not_depend_on_consumer_label() -> None:
     registry = build_minimal_provider_registry()

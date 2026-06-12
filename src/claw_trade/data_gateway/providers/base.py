@@ -90,9 +90,6 @@ def validate_provider_capabilities(caps: Any) -> None:
         supported_granularities = _as_tuple(_read_attr(endpoint, "supported_granularities", ()))
         if not supported_granularities:
             supported_granularities = _as_tuple(_read_attr(endpoint, "granularity", ()))
-        coverage_fields = _as_tuple(_read_attr(endpoint, "coverage_fields", ()))
-        if not coverage_fields:
-            coverage_fields = _as_tuple(_read_attr(endpoint, "fields", ()))
         http_visibility = _read_attr(endpoint, "http_visibility", None)
         batch_policy = _read_attr(endpoint, "batch_policy", None)
         can_be_formal_fact_source = _read_attr(endpoint, "can_be_formal_fact_source", None)
@@ -107,8 +104,6 @@ def validate_provider_capabilities(caps: Any) -> None:
             raise CapabilityError(f"endpoint {endpoint_id} source_role 不能为空")
         if not supported_granularities:
             raise CapabilityError(f"endpoint {endpoint_id} supported_granularities 不能为空")
-        if not coverage_fields:
-            raise CapabilityError(f"endpoint {endpoint_id} coverage_fields 不能为空")
         if http_visibility not in {"managed_http", "sdk_internal_unknown", "no_http"}:
             raise CapabilityError(f"endpoint {endpoint_id} http_visibility 非法: {http_visibility}")
         if batch_policy is None:
