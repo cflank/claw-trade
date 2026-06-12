@@ -5,6 +5,10 @@ import importlib.util
 from collections.abc import Iterable
 from typing import Any
 
+import pytest
+from claw_trade.data_gateway.models import EndpointBatchPolicy
+from claw_trade.data_gateway.official_catalog.models import OfficialEndpoint
+
 FORBIDDEN_CATALOG_KEYS = {
     "allowed_worker",
     "allowed_domain",
@@ -49,6 +53,51 @@ REQUIRED_NON_EMPTY_KEYS = {
 VALID_METHODS = {"GET", "POST"}
 VALID_PARSER_STATUSES = {"normalized", "raw_only", "parser_missing"}
 VALID_HTTP_VISIBILITY = {"managed_http", "sdk_internal_unknown", "no_http"}
+REQUIRED_SOURCE_TYPES = {
+    "tushare",
+    "coinglass",
+    "finnhub",
+    "fred",
+    "glassnode",
+    "coingecko_pro",
+    "akshare",
+    "eastmoney",
+    "mootdx",
+    "baostock",
+    "cninfo",
+    "yahoo_finance",
+    "binance",
+    "sec",
+}
+REQUIRED_ENDPOINT_IDS = {
+    "tushare.daily",
+    "tushare.daily_basic",
+    "tushare.moneyflow",
+    "tushare.fina_indicator",
+    "tushare.income",
+    "tushare.balancesheet",
+    "tushare.cashflow",
+    "tushare.anns_d",
+    "coinglass.futures_funding_rate",
+    "coinglass.futures_open_interest",
+    "coinglass.futures_long_short_ratio",
+    "coinglass.futures_liquidation",
+    "coinglass.options_open_interest",
+    "coinglass.futures_coin_netflow",
+    "coinglass.spot_coin_netflow",
+    "finnhub.quote",
+    "finnhub.stock_candle",
+    "finnhub.company_news",
+    "finnhub.stock_metric",
+    "fred.series_observations",
+    "glassnode.addresses_active_count",
+    "coingecko_pro.coins_markets",
+    "akshare.stock_zh_a_hist",
+    "eastmoney.push2his.daily_bar",
+    "mootdx.daily_bar",
+    "yahoo_finance.chart_daily",
+    "binance.spot_intraday_bar",
+}
 
 
 def test_official_catalog_has_endpoint_granularity_and_no_business_scope() -> None:
@@ -57,7 +106,11 @@ def test_official_catalog_has_endpoint_granularity_and_no_business_scope() -> No
 
     endpoints = tuple(_iter_official_catalog_endpoints())
     assert endpoints, "official catalog must expose at least one endpoint"
-    assert {str(_read_attr(endpoint, "endpoint_id")) for endpoint in endpoints} != {"official_api_call"}
+    endpoint_ids = [str(_read_attr(endpoint, "endpoint_id")) for endpoint in endpoints]
+    assert set(endpoint_ids) != {"official_api_call"}
+    assert len(endpoint_ids) == len(set(endpoint_ids))
+    assert REQUIRED_ENDPOINT_IDS <= set(endpoint_ids)
+    assert REQUIRED_SOURCE_TYPES <= {str(_read_attr(endpoint, "source_type")) for endpoint in endpoints}
 
     for endpoint in endpoints:
         endpoint_id = str(_read_attr(endpoint, "endpoint_id"))
@@ -72,6 +125,25 @@ def test_official_catalog_has_endpoint_granularity_and_no_business_scope() -> No
         assert _value(_read_attr(endpoint, "parser_status")) in VALID_PARSER_STATUSES, endpoint_id
         assert _value(_read_attr(endpoint, "http_visibility")) in VALID_HTTP_VISIBILITY, endpoint_id
         assert _read_attr(endpoint, "batch_policy") is not None, endpoint_id
+
+
+def test_official_catalog_rejects_nested_business_scope_metadata() -> None:
+    with pytest.raises(ValueError, match="业务范围字段"):
+        OfficialEndpoint(
+            provider_id="official_api_tushare",
+            source_type="tushare",
+            endpoint_id="tushare.test_nested_scope",
+            official_path_or_api_name="daily",
+            method="POST",
+            required_params=("ts_code",),
+            auth="tushare_body_token",
+            rate_limit_bucket="ratelimit:tushare",
+            batch_policy=EndpointBatchPolicy(supports_batch=False, batch_by="none"),
+            parser_status="normalized",
+            official_doc_ref="https://tushare.pro/document/2",
+            http_visibility="managed_http",
+            request_template={"params": {"allowed_worker": "market_analyst"}},
+        )
 
 
 def _iter_official_catalog_endpoints() -> Iterable[Any]:
