@@ -208,6 +208,7 @@ class UiHttpServices:
     price_alert_service: PriceAlertService
     settings_service: SettingsService
     selection_confirmation: SelectionConfirmationController
+    selection_controller: SelectionController
     selection_refresh_service: SelectionDataRefreshService
 
 
@@ -281,6 +282,12 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         load_approved_strategy_config_ref=load_cn_a_selection_v1_strategy_config_ref,
         build_data_need_audit=build_selection_data_need_audit,
     )
+    selection_controller = SelectionController(
+        store=selection_store,
+        openclaw=workflow_runner.selection_openclaw_client(),
+        scheduler_enqueue=selection_refresh_service.request_refresh,
+        default_trade_date_resolver=resolve_cn_a_closed_trade_date_for_scheduler,
+    )
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(rpc_client),
         recognizer=IntentRecognizer(),
@@ -288,12 +295,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         queue=queue,
         settings=report_settings,
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
-        selection_controller=SelectionController(
-            store=selection_store,
-            openclaw=workflow_runner.selection_openclaw_client(),
-            scheduler_enqueue=selection_refresh_service.request_refresh,
-            default_trade_date_resolver=resolve_cn_a_closed_trade_date_for_scheduler,
-        ),
+        selection_controller=selection_controller,
     )
     selection_confirmation = SelectionConfirmationController(
         store=selection_store,
@@ -363,6 +365,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         price_alert_service=price_alert_service,
         settings_service=settings_service,
         selection_confirmation=selection_confirmation,
+        selection_controller=selection_controller,
         selection_refresh_service=selection_refresh_service,
     )
 

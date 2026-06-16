@@ -171,15 +171,16 @@ function localSelectPendingMessages(text: string): ChatMessageForUser[] {
 }
 
 function runningSelectionProgress(command: string): SelectionProgressForUser {
+  const [firstWorker, ...waitingWorkers] = SELECTION_WORKER_LABELS;
   return {
     kind: 'selection_workflow',
     status: 'running',
     statusLabel: '选股中',
     command,
     stageLabel: '选股工作流执行中',
-    currentAction: '已启动选股工作流，正在等待 4 位选股评审返回结果。',
-    percent: 35,
-    workerStatusLabels: SELECTION_WORKER_LABELS.map((label) => `${label}：已纳入本轮选股流程`),
+    currentAction: `正在运行${firstWorker}。`,
+    percent: 25,
+    workerStatusLabels: [`${firstWorker}：执行中`, ...waitingWorkers.map((label) => `${label}：等待启动`)],
     startedAt: new Date().toISOString(),
     finishedAt: null,
     workflowRunId: null,
@@ -339,6 +340,9 @@ export function HomePage() {
   const applySelectionRefreshSnapshot = useCallback((snapshot: { selectionProgress?: SelectionProgressForUser | null } | null) => {
     if (snapshot?.selectionProgress) {
       setSelectionProgress(snapshot.selectionProgress);
+      return;
+    }
+    if (selectionRequestInFlightRef.current) {
       return;
     }
     setSelectionProgress(null);

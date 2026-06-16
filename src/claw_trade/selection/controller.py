@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from enum import StrEnum
 from pathlib import Path
+from threading import Lock
 from typing import Any, Callable, Mapping
 
 from claw_trade.runtime.openclaw_client import OpenClawClient
@@ -350,6 +351,15 @@ _REFRESHABLE_UNAVAILABLE_CODES = frozenset(
     }
 )
 
+_SELECTION_WORKER_LABELS: dict[SelectionWorkerId, str] = {
+    SelectionWorkerId.STRATEGIST: "策略评审",
+    SelectionWorkerId.SKEPTIC: "反方评审",
+    SelectionWorkerId.MANAGER: "整合排序",
+    SelectionWorkerId.PORTFOLIO_MANAGER: "组合经理",
+}
+
+_SELECTION_WORKER_ORDER = tuple(_SELECTION_WORKER_LABELS)
+
 
 class SelectionController:
     """
@@ -377,6 +387,8 @@ class SelectionController:
         self._scheduler_enqueue = scheduler_enqueue
         self._data_job_runner = data_job_runner
         self._default_trade_date_resolver = default_trade_date_resolver
+        self._progress_lock = Lock()
+        self._active_progress: dict[str, object] | None = None
 
     def load_latest_completed_for_select(self, request: SelectRequest) -> SelectReadGateResult:
         resolved = resolve_latest_terminal_selection_run(
@@ -426,90 +438,117 @@ class SelectionController:
         workflow_run_id = _build_select_workflow_run_id(request_id=request.request_id, now_fn=self._now_fn)
         evidence_dir = self._workflow_evidence_root / workflow_run_id
         evidence_dir.mkdir(parents=True, exist_ok=True)
+        self._publish_workflow_progress(
+            command=raw_text.strip(),
+            workflow_run_id=workflow_run_id,
+            running_worker=None,
+            completed_workers=frozenset(),
+            started_at=request.created_at,
+        )
 
-        if request.force_refresh:
-            payload = _base_workflow_evidence_payload(
-                request=request,
-                workflow_run_id=workflow_run_id,
-                status="force_refresh_requested",
-                selection_run_id=None,
-                reason="force_refresh_requested",
-            )
-            refresh_result = self._request_data_refresh_if_needed(
-                request=request,
-                unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
-                workflow_run_id=workflow_run_id,
-                force_refresh=True,
-            )
-            if refresh_result is not None:
-                payload["data_refresh"] = _data_refresh_payload(refresh_result)
-                evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
-                if refresh_result.status in {"started", "already_running"}:
+        try:
+            if request.force_refresh:
+                payload = _base_workflow_evidence_payload(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    status="force_refresh_requested",
+                    selection_run_id=None,
+                    reason="force_refresh_requested",
+                )
+                refresh_result = self._request_data_refresh_if_needed(
+                    request=request,
+                    unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                    workflow_run_id=workflow_run_id,
+                    force_refresh=True,
+                )
+                if refresh_result is not None:
+                    payload["data_refresh"] = _data_refresh_payload(refresh_result)
+                    evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                    if refresh_result.status in {"started", "already_running"}:
+                        return SelectCommandResult(
+                            code=SelectCommandCode.DATA_REFRESH_REQUESTED,
+                            chat_text=_data_refresh_chat_text(refresh_result),
+                            select_workflow_run_id=workflow_run_id,
+                            evidence_path=evidence_path,
+                            unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                            data_refresh=refresh_result,
+                        )
                     return SelectCommandResult(
-                        code=SelectCommandCode.DATA_REFRESH_REQUESTED,
-                        chat_text=_data_refresh_chat_text(refresh_result),
+                        code=SelectCommandCode.UNAVAILABLE,
+                        chat_text=_data_refresh_unavailable_chat_text(
+                            SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                            refresh_result,
+                        ),
                         select_workflow_run_id=workflow_run_id,
                         evidence_path=evidence_path,
                         unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                        failure_reason=refresh_result.error_code or refresh_result.reason,
                         data_refresh=refresh_result,
                     )
-                return SelectCommandResult(
-                    code=SelectCommandCode.UNAVAILABLE,
-                    chat_text=_data_refresh_unavailable_chat_text(
-                        SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
-                        refresh_result,
-                    ),
-                    select_workflow_run_id=workflow_run_id,
-                    evidence_path=evidence_path,
-                    unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
-                    failure_reason=refresh_result.error_code or refresh_result.reason,
-                    data_refresh=refresh_result,
-                )
 
-        gate = self.load_latest_completed_for_select(request)
-        if not gate.is_available:
-            assert gate.unavailable_code is not None
-            payload = _base_workflow_evidence_payload(
-                request=request,
-                workflow_run_id=workflow_run_id,
-                status=gate.unavailable_code.value,
-                selection_run_id=None,
-                reason=gate.unavailable_code.value,
-            )
-            refresh_result = self._request_data_refresh_if_needed(
-                request=request,
-                unavailable_code=gate.unavailable_code,
-                workflow_run_id=workflow_run_id,
-            )
-            if refresh_result is not None:
-                payload["data_refresh"] = _data_refresh_payload(refresh_result)
-                evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
-                if refresh_result.status in {"started", "already_running"}:
+            gate = self.load_latest_completed_for_select(request)
+            if not gate.is_available:
+                assert gate.unavailable_code is not None
+                payload = _base_workflow_evidence_payload(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    status=gate.unavailable_code.value,
+                    selection_run_id=None,
+                    reason=gate.unavailable_code.value,
+                )
+                refresh_result = self._request_data_refresh_if_needed(
+                    request=request,
+                    unavailable_code=gate.unavailable_code,
+                    workflow_run_id=workflow_run_id,
+                )
+                if refresh_result is not None:
+                    payload["data_refresh"] = _data_refresh_payload(refresh_result)
+                    evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                    if refresh_result.status in {"started", "already_running"}:
+                        return SelectCommandResult(
+                            code=SelectCommandCode.DATA_REFRESH_REQUESTED,
+                            chat_text=_data_refresh_chat_text(refresh_result),
+                            select_workflow_run_id=workflow_run_id,
+                            evidence_path=evidence_path,
+                            unavailable_code=gate.unavailable_code,
+                            data_refresh=refresh_result,
+                        )
                     return SelectCommandResult(
-                        code=SelectCommandCode.DATA_REFRESH_REQUESTED,
-                        chat_text=_data_refresh_chat_text(refresh_result),
+                        code=SelectCommandCode.UNAVAILABLE,
+                        chat_text=_data_refresh_unavailable_chat_text(gate.unavailable_code, refresh_result),
                         select_workflow_run_id=workflow_run_id,
                         evidence_path=evidence_path,
                         unavailable_code=gate.unavailable_code,
+                        failure_reason=refresh_result.error_code or refresh_result.reason,
                         data_refresh=refresh_result,
                     )
+                evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
                 return SelectCommandResult(
                     code=SelectCommandCode.UNAVAILABLE,
-                    chat_text=_data_refresh_unavailable_chat_text(gate.unavailable_code, refresh_result),
+                    chat_text=_unavailable_chat_text(gate.unavailable_code),
                     select_workflow_run_id=workflow_run_id,
                     evidence_path=evidence_path,
                     unavailable_code=gate.unavailable_code,
-                    failure_reason=refresh_result.error_code or refresh_result.reason,
-                    data_refresh=refresh_result,
                 )
-            evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
-            return SelectCommandResult(
-                code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(gate.unavailable_code),
-                select_workflow_run_id=workflow_run_id,
-                evidence_path=evidence_path,
-                unavailable_code=gate.unavailable_code,
+            return self._run_available_select_workflow(
+                request=request,
+                raw_text=raw_text,
+                workflow_run_id=workflow_run_id,
+                evidence_dir=evidence_dir,
+                gate=gate,
             )
+        finally:
+            self._clear_workflow_progress(workflow_run_id)
+
+    def _run_available_select_workflow(
+        self,
+        *,
+        request: SelectRequest,
+        raw_text: str,
+        workflow_run_id: str,
+        evidence_dir: Path,
+        gate: SelectReadGateResult,
+    ) -> SelectCommandResult:
 
         latest = gate.latest_completed_run
         assert latest is not None
@@ -595,8 +634,16 @@ class SelectionController:
         }
         dispatch_results: list[dict[str, str]] = []
         pm_raw_text: str | None = None
+        completed_workers: set[SelectionWorkerId] = set()
 
         for worker_id in selection_dispatch_worker_order():
+            self._publish_workflow_progress(
+                command=raw_text.strip(),
+                workflow_run_id=workflow_run_id,
+                running_worker=worker_id,
+                completed_workers=frozenset(completed_workers),
+                started_at=request.created_at,
+            )
             dispatches = self.build_fixed_selection_dispatches(
                 request=request,
                 select_workflow_run_id=workflow_run_id,
@@ -650,6 +697,14 @@ class SelectionController:
                 pm_raw_text = worker_output
             else:
                 approved_l1[worker_id] = worker_output
+            completed_workers.add(worker_id)
+            self._publish_workflow_progress(
+                command=raw_text.strip(),
+                workflow_run_id=workflow_run_id,
+                running_worker=None,
+                completed_workers=frozenset(completed_workers),
+                started_at=request.created_at,
+            )
 
         if pm_raw_text is None:
             return _failed_result(
@@ -743,6 +798,66 @@ class SelectionController:
             reader_report_markdown=reader_report_markdown,
             reader_report_path=reader_report_path,
         )
+
+    def latest_progress_for_user(self) -> dict[str, object]:
+        with self._progress_lock:
+            progress = dict(self._active_progress) if self._active_progress is not None else None
+        return {"selectionProgress": progress}
+
+    def _publish_workflow_progress(
+        self,
+        *,
+        command: str,
+        workflow_run_id: str,
+        running_worker: SelectionWorkerId | None,
+        completed_workers: frozenset[SelectionWorkerId],
+        started_at: str,
+    ) -> None:
+        completed_count = len(completed_workers)
+        running_offset = 1 if running_worker is not None else 0
+        percent = min(95, 15 + completed_count * 20 + running_offset * 10)
+        if running_worker is None:
+            current_action = "正在准备选股评审。" if completed_count == 0 else "正在整理上一位选股评审的结果。"
+        else:
+            current_action = f"正在运行{_SELECTION_WORKER_LABELS[running_worker]}。"
+        worker_status_labels = []
+        for worker_id in _SELECTION_WORKER_ORDER:
+            label = _SELECTION_WORKER_LABELS[worker_id]
+            if worker_id in completed_workers:
+                status = "已完成"
+            elif worker_id == running_worker:
+                status = "执行中"
+            else:
+                status = "等待启动"
+            worker_status_labels.append(f"{label}：{status}")
+        completed_labels = [_SELECTION_WORKER_LABELS[worker_id] for worker_id in _SELECTION_WORKER_ORDER if worker_id in completed_workers]
+        waiting_labels = [
+            _SELECTION_WORKER_LABELS[worker_id]
+            for worker_id in _SELECTION_WORKER_ORDER
+            if worker_id not in completed_workers and worker_id != running_worker
+        ]
+        progress = {
+            "kind": "selection_workflow",
+            "status": "running",
+            "statusLabel": "选股中",
+            "command": command or "/select",
+            "stageLabel": "选股工作流执行中",
+            "currentAction": current_action,
+            "percent": percent,
+            "workerStatusLabels": worker_status_labels,
+            "completedRoleLabels": completed_labels,
+            "waitingRoleLabels": waiting_labels,
+            "startedAt": started_at,
+            "finishedAt": None,
+            "workflowRunId": workflow_run_id,
+        }
+        with self._progress_lock:
+            self._active_progress = progress
+
+    def _clear_workflow_progress(self, workflow_run_id: str) -> None:
+        with self._progress_lock:
+            if self._active_progress and self._active_progress.get("workflowRunId") == workflow_run_id:
+                self._active_progress = None
 
     def _request_data_refresh_if_needed(
         self,

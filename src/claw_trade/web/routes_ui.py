@@ -297,6 +297,9 @@ def get_report_queue_snapshot(request: Request) -> JSONResponse:
 def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
     services = _services(request)
     try:
+        workflow_snapshot = services.selection_controller.latest_progress_for_user()
+        if workflow_snapshot.get("selectionProgress"):
+            return _success_response(workflow_snapshot)
         return _success_response(services.selection_refresh_service.latest_progress_for_user())
     except Exception as exc:
         return _exception_response(exc)

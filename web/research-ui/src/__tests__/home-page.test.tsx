@@ -1169,8 +1169,8 @@ describe('home page', () => {
     expect(screen.getByRole('button', { name: '选股中' })).toBeDisabled();
     expect(screen.getByText('选股任务进度')).toBeInTheDocument();
     expect(screen.getByText('选股工作流执行中')).toBeInTheDocument();
-    expect(screen.getByText('策略评审：已纳入本轮选股流程')).toBeInTheDocument();
-    expect(screen.getByText('组合经理：已纳入本轮选股流程')).toBeInTheDocument();
+    expect(screen.getByText('策略评审：执行中')).toBeInTheDocument();
+    expect(screen.getByText('组合经理：等待启动')).toBeInTheDocument();
 
     await act(async () => {
       resolveSelect(
@@ -1230,6 +1230,95 @@ describe('home page', () => {
     expect(selectionReport).toHaveTextContent('600519.SH');
     expect(selectionReport).not.toHaveTextContent('策略配置版本');
     expect(selectionReport).not.toHaveTextContent('权重版本');
+  });
+
+  it('keeps local select worker progress when polling returns empty progress mid-run', async () => {
+    let resolveSelect!: (response: Response) => void;
+    const selectSendResponse = new Promise<Response>((resolve) => {
+      resolveSelect = resolve;
+    });
+    let selectionRefreshCalls = 0;
+    const intervalCallbacks: Array<() => void> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    const mocked = mockWorkspaceFetch({
+      selectSendResponse,
+      selectionRefreshSnapshot: () => {
+        selectionRefreshCalls += 1;
+        return { selectionProgress: null };
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    const refreshCallsAfterLoad = selectionRefreshCalls;
+    fireEvent.change(input, { target: { value: '/select' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('选股任务进度')).toBeInTheDocument();
+    expect(screen.getByText('策略评审：执行中')).toBeInTheDocument();
+    expect(intervalCallbacks.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    await waitFor(() => expect(selectionRefreshCalls).toBeGreaterThan(refreshCallsAfterLoad));
+
+    expect(screen.getByText('选股任务进度')).toBeInTheDocument();
+    expect(screen.getByText('策略评审：执行中')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSelect(
+        json({
+          context: {
+            contextId: 'normal-chat',
+            kind: 'normal_chat',
+            title: '普通聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: [
+            {
+              messageId: 'msg-select-user-empty-progress',
+              contextKind: 'normal_chat',
+              actor: 'user',
+              kind: 'plain',
+              text: '/select',
+              createdAt: '2026-05-19T10:08:00.000Z',
+            },
+            {
+              messageId: 'msg-select-result-empty-progress',
+              contextKind: 'normal_chat',
+              actor: 'system',
+              kind: 'selection_result',
+              text: '`/select` 已完成，本轮仅进入等待确认，不会自动启动 `/report`。',
+              createdAt: '2026-05-19T10:09:00.000Z',
+            },
+          ],
+          selection: {
+            code: 'completed',
+            workflowRunId: 'select-test-run-empty-progress',
+            evidencePath: 'runs/selection/workflows/select-test-run-empty-progress/selection-workflow-evidence.json',
+            unavailableCode: null,
+            failureReason: null,
+            readerReportMarkdown: null,
+          },
+        }),
+      );
+      await selectSendResponse;
+    });
   });
 
   it('renders confirmation card and supports confirm/cancel actions', async () => {

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
@@ -246,6 +247,20 @@ class _FakeSelectionOpenClawRunner:
         }
 
 
+class _BlockingSelectionOpenClawRunner(_FakeSelectionOpenClawRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.worker_started = Event()
+        self.release_worker = Event()
+
+    def run_worker(self, payload: dict[str, object]) -> dict[str, object]:
+        if str(payload.get("worker_id") or "") == "selection_strategist":
+            self.worker_started.set()
+            if not self.release_worker.wait(timeout=5):
+                raise TimeoutError("test did not release blocked selection worker")
+        return super().run_worker(payload)
+
+
 def _worker_output(worker_id: str) -> str:
     if worker_id == "selection_strategist":
         return "策略评审：优先关注 600519.SH 与 000858.SZ。Strategist 依据 slope_10d、low_atr、ma30_growth_30d、return_120d、limit_up_count_20d、industry_theme_score 和 cn_a.selection_strategy.v1。"
@@ -429,6 +444,7 @@ def _selection_controller_with_completed_run(
     empty_output_worker_id: str | None = None,
     legacy_summary: bool = False,
     raw_complete_summary: bool = False,
+    selection_runner: _FakeSelectionOpenClawRunner | None = None,
 ) -> tuple[SelectionController, _FakeSelectionOpenClawRunner]:
     store = SelectionRunStore()
     summary_path = tmp_path / "candidate-cache-summary.md"
@@ -740,7 +756,7 @@ def _selection_controller_with_completed_run(
             ),
         )
     )
-    selection_runner = _FakeSelectionOpenClawRunner(
+    resolved_selection_runner = selection_runner or _FakeSelectionOpenClawRunner(
         pm_output=pm_output,
         fail_worker_id=fail_worker_id,
         empty_output_worker_id=empty_output_worker_id,
@@ -748,10 +764,10 @@ def _selection_controller_with_completed_run(
     selection_controller = SelectionController(
         store=store,
         now_fn=lambda: datetime.fromisoformat("2026-05-26T10:00:00+00:00").astimezone(UTC),
-        openclaw=OpenClawClient(selection_runner),
+        openclaw=OpenClawClient(resolved_selection_runner),
         workflow_evidence_root=tmp_path / "selection-workflows",
     )
-    return selection_controller, selection_runner
+    return selection_controller, resolved_selection_runner
 
 
 @pytest.mark.integration
@@ -936,6 +952,48 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
     assert result["context"]["kind"] == "normal_chat"
+
+
+@pytest.mark.integration
+def test_select_command_exposes_current_worker_progress_while_running(tmp_path: Path) -> None:
+    blocking_runner = _BlockingSelectionOpenClawRunner()
+    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, selection_runner=blocking_runner)
+    result_holder: dict[str, object] = {}
+    errors: list[BaseException] = []
+
+    def _run_select() -> None:
+        try:
+            result_holder["result"] = selection_controller.handle_select_command(
+                raw_text="/select",
+                request_id="sel-08-progress",
+                user_id="ctx-progress",
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced by assertions below
+            errors.append(exc)
+
+    thread = Thread(target=_run_select, daemon=True)
+    thread.start()
+    assert blocking_runner.worker_started.wait(timeout=2)
+
+    snapshot = selection_controller.latest_progress_for_user()
+    progress = snapshot["selectionProgress"]
+    assert isinstance(progress, dict)
+    assert progress["kind"] == "selection_workflow"
+    assert progress["statusLabel"] == "选股中"
+    assert progress["workerStatusLabels"] == [
+        "策略评审：执行中",
+        "反方评审：等待启动",
+        "整合排序：等待启动",
+        "组合经理：等待启动",
+    ]
+
+    blocking_runner.release_worker.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert errors == []
+    result = result_holder["result"]
+    assert getattr(result, "code").value == "completed"
+    assert selection_controller.latest_progress_for_user() == {"selectionProgress": None}
 
 
 @pytest.mark.integration
