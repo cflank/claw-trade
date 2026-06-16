@@ -104,7 +104,21 @@ def send_json_request(task: Any, ctx: Any, request: HttpRequestSpec) -> tuple[An
 
 def result_from_capture_error(task: Any, capture: Any, observations: tuple[Any, ...]) -> FetchResult | None:
     observation = capture.observation
+    if observation.status_code in {401, 403}:
+        return FetchResult.from_error(
+            task,
+            status="permission_denied",
+            error=RuntimeError(f"http_{observation.status_code}"),
+            http_observations=observations,
+        )
     if observation.error_code:
+        if _permission_denied_error_code(observation.error_code):
+            return FetchResult.from_error(
+                task,
+                status="permission_denied",
+                error=RuntimeError(observation.error_code),
+                http_observations=observations,
+            )
         return FetchResult.from_error(
             task,
             status="error",
@@ -126,6 +140,11 @@ def result_from_capture_error(task: Any, capture: Any, observations: tuple[Any, 
             http_observations=observations,
         )
     return None
+
+
+def _permission_denied_error_code(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return any(token in text for token in ("401", "403", "permission", "forbidden", "unauthorized", "denied"))
 
 
 def first_symbol(task: Any) -> str | None:

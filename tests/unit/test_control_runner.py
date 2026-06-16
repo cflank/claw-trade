@@ -194,20 +194,8 @@ class _RunnerHarness:
         )
 
 
-class _DataPrefetcher:
-    def __init__(self, result: dict[str, object]) -> None:
-        self.result = result
-        self.calls: list[WorkflowState] = []
-
-    def prefetch_report(self, state: WorkflowState):
-        self.calls.append(state)
-        return self.result
-
-
-def test_report_command_prefetches_data_before_controller_dispatch(monkeypatch, tmp_path: Path) -> None:
+def test_report_command_does_not_prefetch_data_before_controller_dispatch(monkeypatch, tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
-    prefetcher = _DataPrefetcher({"ok": True, "evidence_paths": (str(tmp_path / "prefetch.json"),)})
-    harness.runner.data_prefetcher = prefetcher
 
     def _wait_after_prefetch(input) -> Decision:  # type: ignore[no-untyped-def]
         del input
@@ -218,46 +206,11 @@ def test_report_command_prefetches_data_before_controller_dispatch(monkeypatch, 
     state = harness.runner.run(replace(_request(), entry_point=WorkflowEntryPoint.REPORT_COMMAND))
 
     assert state.status == RunStatus.CREATED
-    assert len(prefetcher.calls) == 1
-    assert prefetcher.calls[0].run_id == state.run_id
     assert harness.openviking.ensure_namespace_calls == [state.openviking_namespace]
+    assert not (state.run_dir / "data-layer" / "report-prefetch.json").exists()
 
 
-def test_report_command_prefetch_failure_fails_before_worker_dispatch(monkeypatch, tmp_path: Path) -> None:
-    harness = _RunnerHarness(tmp_path)
-    prefetch_path = tmp_path / "prefetch-failed.json"
-    prefetcher = _DataPrefetcher(
-        {
-            "ok": False,
-            "category": "data_prefetch",
-            "reason": "rate_limited",
-            "evidence_paths": (str(prefetch_path),),
-        }
-    )
-    harness.runner.data_prefetcher = prefetcher
-    controller_calls = 0
-
-    def _controller_should_not_run(input) -> Decision:  # type: ignore[no-untyped-def]
-        nonlocal controller_calls
-        controller_calls += 1
-        del input
-        return Decision(kind=DecisionKind.WAIT)
-
-    monkeypatch.setattr("claw_trade.workflow.runner.decide_next", _controller_should_not_run)
-
-    state = harness.runner.run(replace(_request(), entry_point=WorkflowEntryPoint.REPORT_COMMAND))
-
-    assert state.status == RunStatus.FAILED
-    assert "data_prefetch: rate_limited" in (state.failure_reason or "")
-    assert len(prefetcher.calls) == 1
-    assert controller_calls == 0
-    failure_files = sorted((state.run_dir / "failures").glob("*.json"))
-    assert len(failure_files) == 1
-    failure_payload = json.loads(failure_files[0].read_text(encoding="utf-8"))
-    assert failure_payload["evidence_paths"] == [str(prefetch_path)]
-
-
-def test_crypto_market_worker_reaches_openclaw_with_compact_market_pack(tmp_path: Path) -> None:
+def test_crypto_market_worker_reaches_openclaw_with_compact_market_data_result(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
     request = replace(
         _request(profile="CRYPTO"),
@@ -278,7 +231,7 @@ def test_crypto_market_worker_reaches_openclaw_with_compact_market_pack(tmp_path
     assert len(call_results) == 1
     call_payload = json.loads((call_results[0].parent / "call.json").read_text(encoding="utf-8"))
     assert call_payload["profile"] == "CRYPTO"
-    assert call_payload["allowed_tools"] == ["claw_get_market_pack"]
+    assert call_payload["allowed_tools"] == ["claw_request_data"]
     assert harness.openviking.ensure_namespace_calls == [state.openviking_namespace]
 
 
@@ -490,7 +443,7 @@ def test_frontline_stage_batch_defaults_to_serial(tmp_path: Path) -> None:
     assert max_active == 1
 
 
-def test_report_frontline_worker_calls_receive_prefetch_manifest_path(tmp_path: Path) -> None:
+def test_report_frontline_worker_calls_do_not_receive_prefetch_manifest_path(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
     state = harness.store.create_run(replace(_request(), entry_point=WorkflowEntryPoint.REPORT_COMMAND))
     batch = StageBatch(
@@ -521,9 +474,8 @@ def test_report_frontline_worker_calls_receive_prefetch_manifest_path(tmp_path: 
     result = harness.runner.run_stage_batch(state, batch)
 
     assert result.failures == ()
-    expected_path = str(state.run_dir / "data-layer" / "report-prefetch.json")
     assert {call.worker_id for call in calls_seen} == set(batch.worker_ids)
-    assert all(call.prompt_runtime_vars["report_prefetch_manifest_path"] == expected_path for call in calls_seen)
+    assert all("report_prefetch_manifest_path" not in call.prompt_runtime_vars for call in calls_seen)
 
 
 def test_generic_frontline_worker_calls_do_not_receive_prefetch_manifest_path(tmp_path: Path) -> None:
@@ -732,21 +684,36 @@ def test_report_polisher_receives_report_data_evidence_summary(monkeypatch, tmp_
     )
     state = harness.store.create_run(request)
     _seed_final_report_upstream_manifest(harness, state)
-    prefetch_path = state.run_dir / "data-layer" / "report-prefetch.json"
-    prefetch_path.parent.mkdir(parents=True, exist_ok=True)
-    prefetch_path.write_text(
+    data_need_result_path = (
+        state.run_dir
+        / "calls"
+        / "call-financial"
+        / "data-need-tool-evidence"
+        / "data-layer"
+        / "data-need-results"
+        / state.run_id
+        / "call-financial"
+        / "result.json"
+    )
+    data_need_result_path.parent.mkdir(parents=True, exist_ok=True)
+    data_need_result_path.write_text(
         json.dumps(
             {
                 "ok": True,
-                "schema_version": "report_data_prefetch.v1",
-                "run_id": state.run_id,
-                "market": "CN_A",
-                "status": "partial",
+                "schema_version": "data_need_tool_evidence.v1",
+                "status": "ready",
+                "provider_attempts_summary": [
+                    {
+                        "remote_attempted": True,
+                        "remote_success": True,
+                        "gap_reasons": [],
+                    }
+                ],
                 "data_results": [
                     {
-                        "request_id": f"{state.run_id}:report-prefetch:fundamental:1:financial_statement",
+                        "request_id": "data_need:call:fundamental:1:financial_statement",
                         "status": "ready",
-                        "rows": [
+                        "sample_rows": [
                             {
                                 "period": "2026-03-31",
                                 "revenue": 35277000000.0,
@@ -798,6 +765,8 @@ def test_report_polisher_receives_report_data_evidence_summary(monkeypatch, tmp_
     summary = calls_seen[0].prompt_runtime_vars["data_evidence_summary"]
     assert "财务报表最新记录" in summary
     assert "收入 35277000000.0" in summary
+    assert "数据源调用证据" not in summary
+    assert "候选尝试" not in summary
     assert "本次调用未注入数据层证据摘要" not in summary
 
 
@@ -886,6 +855,101 @@ def test_trader_and_portfolio_manager_receive_report_data_evidence_summary(tmp_p
         summary = calls_seen[0].prompt_runtime_vars["data_evidence_summary"]
         assert "财务报表最新记录" in summary
         assert "收入 35277000000.0" in summary
+        assert "本次调用未注入数据层证据摘要" not in summary
+
+
+def test_risk_workers_receive_report_data_evidence_summary(tmp_path: Path) -> None:
+    for worker_id in ("risk_challenger", "risk_guardian", "risk_moderator"):
+        harness = _RunnerHarness(tmp_path / worker_id)
+        request = replace(
+            _request(profile="CN_A"),
+            ticker="000001.SZ",
+            company_name="平安银行",
+            market="CN_A",
+            currency="CNY",
+            currency_symbol="¥",
+            entry_point=WorkflowEntryPoint.REPORT_COMMAND,
+        )
+        state = harness.store.create_run(request)
+        for upstream_worker in (
+            "market_analyst",
+            "fundamental_analyst",
+            "news_analyst",
+            "social_analyst",
+            "policy_analyst",
+            "hot_money_tracker",
+            "lockup_watcher",
+        ):
+            _seed_material(harness, state, upstream_worker, Stage.FRONTLINE, f"# {upstream_worker}\napproved")
+        _seed_material(harness, state, "trader", Stage.TRADE_DECISION, "# trader\napproved")
+        prefetch_path = state.run_dir / "data-layer" / "report-prefetch.json"
+        prefetch_path.parent.mkdir(parents=True, exist_ok=True)
+        prefetch_path.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "schema_version": "report_data_prefetch.v1",
+                    "run_id": state.run_id,
+                    "market": "CN_A",
+                    "status": "partial",
+                    "data_results": [
+                        {
+                            "request_id": f"{state.run_id}:report-prefetch:fundamental:1:financial_metric",
+                            "status": "ready",
+                            "rows": [
+                                {
+                                    "period": "2026-03-31",
+                                    "roe": 10.57,
+                                    "roa": 9.03,
+                                    "gross_margin": 89.76,
+                                    "debt_ratio": 12.12,
+                                    "eps": 21.76,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        batch = StageBatch(
+            run_id=state.run_id,
+            stage=Stage.RISK_DEBATE,
+            worker_ids=(worker_id,),
+            scope=BatchScope.FULL_STAGE,
+            collect_first=False,
+            stop_point=StopPoint.NONE,
+        )
+        calls_seen: list[WorkerCall] = []
+
+        def _run(call: WorkerCall) -> WorkerResult:
+            calls_seen.append(call)
+            return WorkerResult(
+                run_id=call.run_id,
+                call_id=call.call_id,
+                worker_id=call.worker_id,
+                stage=call.stage,
+                status=WorkerStatus.SUCCEEDED,
+                openclaw_result_path=call.evidence_dir / "openclaw-result.json",
+                approved_material_id=f"mat-{worker_id}",
+                failure=None,
+                turn_index=call.turn_index,
+                round_index=call.round_index,
+                role_turn_index=call.role_turn_index,
+            )
+
+        harness.runner.run_single_worker = _run  # type: ignore[method-assign]
+
+        result = harness.runner.run_stage_batch(state, batch)
+
+        assert result.failures == ()
+        assert calls_seen
+        summary = calls_seen[0].prompt_runtime_vars["data_evidence_summary"]
+        assert "财务指标最新记录" in summary
+        assert "EPS 21.76" in summary
+        assert "EPS/PE口径" in summary
+        assert "不得直接用季度EPS计算全年、TTM或静态PE" in summary
         assert "本次调用未注入数据层证据摘要" not in summary
 
 

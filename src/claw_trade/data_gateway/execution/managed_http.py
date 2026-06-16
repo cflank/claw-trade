@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gzip
 import json
+import zlib
 from dataclasses import dataclass
 from hashlib import sha256
 from http.client import RemoteDisconnected
@@ -10,6 +12,8 @@ from typing import Any, Mapping, Protocol
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+import requests
 
 SECRET_KEYS = frozenset(
     {
@@ -105,6 +109,30 @@ class UrllibHttpClient:
                 headers=dict(exc.headers.items()),
                 content=exc.read(),
             )
+
+
+class RequestsHttpClient:
+    def send(self, request: HttpRequestSpec) -> _UrllibResponse:
+        method = request.method.upper()
+        target = _url_from_request(request)
+        body: bytes | str | None = None
+        if request.body is not None:
+            if isinstance(request.body, (bytes, str)):
+                body = request.body
+            else:
+                body = urlencode(dict(request.body))
+        response = requests.request(
+            method,
+            target,
+            data=body,
+            headers=dict(request.headers or {}),
+            timeout=request.timeout_seconds,
+        )
+        return _UrllibResponse(
+            status_code=int(response.status_code),
+            headers=dict(response.headers.items()),
+            content=response.content,
+        )
 
 
 class ManagedHttp:
@@ -215,6 +243,7 @@ def _response_body_bytes(response: Any) -> bytes:
 
 
 def _decode_body(body: bytes, headers: Mapping[str, str]) -> str:
+    body = _decompress_body(body, str(headers.get("content-encoding", "") or ""))
     content_type = headers.get("content-type", "")
     charset = _charset_from_content_type(content_type)
     if charset:
@@ -228,12 +257,28 @@ def _decode_body(body: bytes, headers: Mapping[str, str]) -> str:
         return body.decode("gb18030", errors="replace")
 
 
+def _decompress_body(body: bytes, content_encoding: str) -> bytes:
+    encoding = content_encoding.strip().lower()
+    try:
+        if "gzip" in encoding:
+            return gzip.decompress(body)
+        if "deflate" in encoding:
+            return zlib.decompress(body)
+    except (OSError, zlib.error):
+        return body
+    return body
+
+
 def _transport_error_code(exc: Exception) -> str:
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "timeout"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return "connection_error"
     if isinstance(exc, RemoteDisconnected):
         return "connection_closed"
     if isinstance(exc, ConnectionResetError):
         return "connection_reset"
-    return "request_error"
+    return f"request_error:{type(exc).__name__}"
 
 
 def _charset_from_content_type(content_type: str) -> str | None:

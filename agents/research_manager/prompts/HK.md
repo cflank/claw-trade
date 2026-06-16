@@ -45,6 +45,8 @@ stage: investment_decision
 
 基本面分析：{fundamentals_report}
 
+数据证据边界（裁决数据冲突前必须先核对）：{data_evidence_summary}
+
 以下是辩论：
 辩论历史：
 {history}

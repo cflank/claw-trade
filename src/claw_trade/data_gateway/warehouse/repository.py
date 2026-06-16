@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 from uuid import uuid4
@@ -31,11 +32,14 @@ SUPPORTED_UNIFIED_DATASETS: tuple[str, ...] = (
     "financial_metric",
     "valuation_metric",
     "official_filing",
+    "company_profile",
     "company_news",
     "macro_news",
     "social_signal",
     "event_calendar",
     "capital_flow",
+    "northbound_flow",
+    "margin_trading",
     "sector_snapshot",
     "hot_money_event",
     "lockup_event",
@@ -923,8 +927,16 @@ class DatasetRepository:
         incoming_refs: set[str],
         incoming_prefixes: set[str],
     ) -> bool:
+        incoming_granularity = str(incoming.get("granularity") or "")
+        existing_granularity = str(existing.get("granularity") or "")
         existing_dataset_refs = {str(ref) for ref in tuple(existing.get("dataset_refs", ()) or ())}
         if incoming_refs.intersection(existing_dataset_refs):
+            if (
+                incoming_granularity != "realtime"
+                and existing_dataset_refs.difference(incoming_refs)
+                and not DatasetRepository._manifest_date_range_covers(incoming, existing)
+            ):
+                return False
             return not DatasetRepository._incoming_manifest_has_lower_source_priority(incoming, existing)
 
         existing_prefixes = {str(ref) for ref in tuple(existing.get("dataset_ref_prefixes", ()) or ())}
@@ -936,7 +948,7 @@ class DatasetRepository:
         ):
             return not DatasetRepository._incoming_manifest_has_lower_source_priority(incoming, existing)
 
-        if str(incoming.get("granularity") or "") != str(existing.get("granularity") or ""):
+        if incoming_granularity != existing_granularity:
             return False
         if not DatasetRepository._manifest_identity_overlaps(incoming, existing):
             return False
@@ -944,9 +956,9 @@ class DatasetRepository:
             return False
         if DatasetRepository._incoming_manifest_has_lower_source_priority(incoming, existing):
             return False
-        if str(incoming.get("granularity") or "") == "realtime":
+        if incoming_granularity == "realtime":
             return True
-        return DatasetRepository._manifest_date_range_overlaps(incoming, existing)
+        return DatasetRepository._manifest_date_range_covers(incoming, existing)
 
     @staticmethod
     def _incoming_manifest_has_lower_source_priority(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
@@ -1005,6 +1017,16 @@ class DatasetRepository:
         if not incoming_start or not incoming_end or not existing_start or not existing_end:
             return False
         return incoming_start <= existing_end and existing_start <= incoming_end
+
+    @staticmethod
+    def _manifest_date_range_covers(incoming: Mapping[str, Any], existing: Mapping[str, Any]) -> bool:
+        incoming_start = _columnar_range_start_text(incoming.get("period_start_min"))
+        incoming_end = _columnar_range_end_text(incoming.get("period_end_max"))
+        existing_start = _columnar_range_start_text(existing.get("period_start_min"))
+        existing_end = _columnar_range_end_text(existing.get("period_end_max"))
+        if not incoming_start or not incoming_end or not existing_start or not existing_end:
+            return False
+        return incoming_start <= existing_start and incoming_end >= existing_end
 
     def _normalized_columnar_manifests(
         self,
@@ -1737,6 +1759,41 @@ class DatasetRepository:
     def delete_provider_result_cache(self, cache_key: str) -> None:
         with self._lock:
             self._collection("provider_result_cache").pop(cache_key)
+
+    def normalized_refs_have_readable_storage(self, dataset_refs: Sequence[str]) -> bool:
+        refs = {str(ref).strip() for ref in dataset_refs if str(ref).strip()}
+        if not refs:
+            return True
+        with self._lock:
+            normalized = self._collection("normalized_datasets")
+            if any(normalized.get(ref) is not None for ref in refs):
+                return True
+            manifests = self._collection("dataset_manifests").find({"storage": "parquet", "status": "active"})
+        for manifest in manifests:
+            if not self._manifest_has_any_dataset_ref(manifest, refs):
+                continue
+            path = str(manifest.get("path") or "").strip()
+            if path and Path(path).exists():
+                return True
+        return False
+
+    @staticmethod
+    def _manifest_has_any_dataset_ref(manifest: Mapping[str, Any], refs: set[str]) -> bool:
+        manifest_refs = {
+            str(ref).strip()
+            for ref in (
+                *tuple(manifest.get("dataset_refs", ()) or ()),
+                *tuple(manifest.get("dataset_refs_sample", ()) or ()),
+            )
+            if str(ref).strip()
+        }
+        if manifest_refs & refs:
+            return True
+        dataset = str(manifest.get("dataset") or "").strip()
+        market = str(manifest.get("market") or "").strip()
+        if not dataset or not market:
+            return False
+        return any(ref.startswith(f"dataset:{dataset}:{market}:") for ref in refs)
 
     def delete_normalized_documents_for_maintenance(self, criteria: Mapping[str, Any]) -> int:
         with self._lock:

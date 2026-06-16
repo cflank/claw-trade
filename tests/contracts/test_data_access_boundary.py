@@ -23,7 +23,6 @@ DATA_LAYER_BUSINESS_REF_RATCHET_FILES = (
 )
 
 ALLOWED_DATA_LAYER_IMPORTS = {
-    "claw_trade.data_gateway.agent_tools",
     "claw_trade.data_gateway.api",
     "claw_trade.data_gateway.models",
     "claw_trade.data_gateway.refs",
@@ -133,7 +132,7 @@ def test_selection_batch_fetcher_is_private_implementation() -> None:
 
     checked_paths = (
         REPO_ROOT / "src/claw_trade/web/state.py",
-        REPO_ROOT / "src/claw_trade/selection/provider_batch.py",
+        REPO_ROOT / "src/claw_trade/selection/data_need_refresh.py",
         REPO_ROOT / "src/claw_trade/data_gateway/selection_api.py",
     )
     for path in checked_paths:
@@ -152,14 +151,14 @@ def test_selection_batch_fetcher_is_private_implementation() -> None:
         imported_names = {alias.name for alias in node.names}
         if node.module == "claw_trade.data_gateway.selection_api":
             selection_api_imports.update(imported_names)
-        if node.module == "claw_trade.selection.provider_batch":
+        if node.module == "claw_trade.selection.data_need_refresh":
             provider_batch_imports.update(imported_names)
 
-    provider_fetch_names = {
-        "build_selection_provider_batch_plan",
+    data_need_fetch_names = {
+        "build_selection_data_need_audit",
         "fetch_selection_batch_from_data_gateway",
     }
-    assert provider_fetch_names <= selection_api_imports
+    assert data_need_fetch_names <= selection_api_imports
     assert not provider_batch_imports
 
 
@@ -191,6 +190,15 @@ def test_normalized_mongo_row_access_is_maintenance_only() -> None:
                     hits.append(f"{rel}: {token}")
 
     assert not hits, "Normalized Mongo row access must stay inside maintenance modules:\n" + "\n".join(hits)
+
+
+def test_market_probe_validation_script_uses_public_request_not_legacy_data_request_remote() -> None:
+    script_text = (REPO_ROOT / "scripts/validation/data_layer_full_chain_market_probe.py").read_text(encoding="utf-8")
+
+    assert "api.request_data(" in script_text
+    assert "api.get_data_needs(" not in script_text
+    assert "api.get_data_batch(" not in script_text
+    assert "DataAPI -> DataService.plan_batch" not in script_text
 
 
 def test_data_access_boundary_fixture_has_removal_plan() -> None:
@@ -447,7 +455,7 @@ def _default_phase(hit: BoundaryHit) -> str:
         if hit.category in {"selection_columnar_import", "selection_columnar_storage_call", "columnar_full_materialization"}:
             return "phase_2"
         return "phase_3"
-    if hit.path == "src/claw_trade/reports/data_pack_bridge.py":
+    if hit.path == "src/claw_trade/reports/data_need_bridge.py":
         return "phase_1"
     if hit.path == "src/claw_trade/data_gateway/_selection_batch.py":
         return "phase_3"

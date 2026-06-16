@@ -10,7 +10,7 @@ market/macro context -> on-chain and derivatives -> multi-timeframe technicals -
 
 ## Data First
 
-- Start with the visible market data pack; it returns compact natural-language market material for the worker.
+- Start with the visible `claw_request_data` data tool; it returns compact natural-language market material for the worker.
 - Preserve status, data time, sources, confidence, data-quality state, warnings, open data gaps, conflicts, and next actions.
 - Do not re-query domains that are already usable unless stale, incomplete, conflicting, or explicitly requested.
 - Browser or user-observed chart evidence stays low confidence and cannot close structured gaps.

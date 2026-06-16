@@ -514,6 +514,36 @@ def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> 
     assert coverage.record_count == 2
 
 
+def test_columnar_daily_small_window_does_not_supersede_larger_history(tmp_path) -> None:
+    repository = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+
+    repository.upsert_normalized_documents(tuple(_daily_row_for_day(index) for index in range(10)))
+    large_manifest = repository.list_dataset_manifests()[0]
+
+    repository.upsert_normalized_documents((_daily_row_for_day(0), _daily_row_for_day(1)))
+
+    manifests = {str(item["manifest_ref"]): item for item in repository.list_dataset_manifests()}
+    active_manifests = [item for item in manifests.values() if item["dataset"] == "daily_bar" and item["status"] == "active"]
+    rows = repository.query_normalized(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_id="600519.SH",
+        universe_ref=None,
+        date_range_start=datetime(2026, 1, 1, tzinfo=UTC),
+        date_range_end=datetime(2026, 1, 10, tzinfo=UTC),
+        require_integrity_metadata=True,
+        include_row=True,
+    )
+
+    assert manifests[str(large_manifest["manifest_ref"])]["status"] == "active"
+    assert len(active_manifests) == 2
+    assert len(rows) == 10
+    assert {record.period_start for record in rows} == {f"2026-01-{day:02d}" for day in range(1, 11)}
+
+
 def test_columnar_manifest_lookup_uses_targeted_query_not_full_scan(tmp_path) -> None:
     collections: dict[str, object] = _collections()
     manifest_collection = _ManifestCollection()
@@ -612,7 +642,6 @@ def test_metric_columnar_manifests_with_different_fields_do_not_supersede_each_o
                 freshness_policy="trading_day",
                 timezone="UTC",
                 calendar="CRYPTO_24_7",
-                source_role_required="paid_data",
                 as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
             ),
         ),
@@ -633,7 +662,6 @@ def test_metric_columnar_manifests_with_different_fields_do_not_supersede_each_o
                 freshness_policy="trading_day",
                 timezone="UTC",
                 calendar="CRYPTO_24_7",
-                source_role_required="paid_data",
                 as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
             ),
         ),
@@ -705,7 +733,6 @@ def test_metric_columnar_manifests_keep_cvd_when_taker_fields_overlap(tmp_path) 
                 freshness_policy="trading_day",
                 timezone="UTC",
                 calendar="CRYPTO_24_7",
-                source_role_required="paid_data",
                 as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
             ),
         ),
@@ -832,7 +859,6 @@ def test_warehouse_prefers_required_paid_source_role_when_public_rows_also_exist
                 freshness_policy="ttl_1h",
                 timezone="UTC",
                 calendar="CRYPTO_24_7",
-                source_role_required="paid_data",
                 as_of=datetime(2026, 6, 10, 0, 30, tzinfo=UTC),
             ),
         ),

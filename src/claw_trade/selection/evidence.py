@@ -22,15 +22,15 @@ _FORBIDDEN_PROTOCOL_TERMS = (
     "refs",
     "runtime wrapper",
 )
-_CANDIDATE_PACK_BODY_MARKERS = (
-    "# A股候选事实包",
-    "# 候选池事实包",
+_CANDIDATE_CACHE_BODY_MARKERS = (
+    "# A股候选缓存",
+    "# 候选池数据缓存",
     "## 本轮范围",
     "## 候选事实表",
     "| 排名 | 股票代码 | 股票名称",
     "| 排名 | 代码 | 公司",
 )
-_CANDIDATE_PACK_TOOL_REQUIRED_LABELS = (
+_CANDIDATE_CACHE_TOOL_REQUIRED_LABELS = (
     "总分",
     "分项得分",
     "策略来源",
@@ -47,13 +47,13 @@ _SKEPTIC_PROMPT_MATERIAL_MARKERS = ("【approved_strategist_l1】",)
 _MANAGER_PROMPT_MATERIAL_MARKERS = (
     "【approved_strategist_l1】",
     "【approved_skeptic_l1】",
-    "【candidate_pack_summary】",
+    "【candidate_cache_summary】",
 )
 _PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS = (
     "【approved_manager_l1】",
     "【approved_strategist_l1】",
     "【approved_skeptic_l1】",
-    "【candidate_pack_summary】",
+    "【candidate_cache_summary】",
 )
 
 
@@ -340,11 +340,11 @@ def _validate_material_boundary(
     text = "\n".join(_flatten_message_text(messages))
     normalized_text = _normalize_whitespace(text)
     if dispatch.worker_id == SelectionWorkerId.STRATEGIST:
-        for marker in _CANDIDATE_PACK_BODY_MARKERS:
+        for marker in _CANDIDATE_CACHE_BODY_MARKERS:
             if marker in text:
                 return _validation_failed(
                     category="selection_provider_payload",
-                    reason="strategist/skeptic first prompt preloaded full candidate pack body",
+                    reason="strategist/skeptic first prompt preloaded full candidate cache body",
                     paths=(provider_request_path,),
                 )
         return _validation_passed("selection_provider_payload")
@@ -435,11 +435,11 @@ def _validate_provider_request_sequence_boundary(evidence: SelectionDispatchEvid
             )
         text = "\n".join(_flatten_message_text(messages))
         if evidence.dispatch.worker_id == SelectionWorkerId.STRATEGIST and _sequence_number(entry) == 1:
-            for marker in _CANDIDATE_PACK_BODY_MARKERS:
+            for marker in _CANDIDATE_CACHE_BODY_MARKERS:
                 if marker in text:
                     return _validation_failed(
                         category="selection_provider_payload",
-                        reason="strategist first sequence preloaded full candidate pack body",
+                        reason="strategist first sequence preloaded full candidate cache body",
                         paths=(path,),
                     )
         if evidence.dispatch.worker_id in {SelectionWorkerId.MANAGER, SelectionWorkerId.PORTFOLIO_MANAGER}:
@@ -451,15 +451,15 @@ def _validate_provider_request_sequence_boundary(evidence: SelectionDispatchEvid
                         paths=(path,),
                     )
         if evidence.dispatch.worker_id in {SelectionWorkerId.STRATEGIST, SelectionWorkerId.SKEPTIC}:
-            for tool_text in _candidate_pack_tool_result_texts(messages):
+            for tool_text in _candidate_cache_tool_result_texts(messages):
                 saw_tool_result = True
-                tool_result = _validate_candidate_pack_tool_result_text(tool_text, path=path)
+                tool_result = _validate_candidate_cache_tool_result_text(tool_text, path=path)
                 if not tool_result.ok:
                     return tool_result
     if evidence.dispatch.worker_id in {SelectionWorkerId.STRATEGIST, SelectionWorkerId.SKEPTIC} and len(entries) > 1 and not saw_tool_result:
         return _validation_failed(
             category="selection_provider_payload",
-            reason="strategist/skeptic provider sequence missing candidate pack tool result",
+            reason="strategist/skeptic provider sequence missing candidate cache tool result",
             paths=(path,),
         )
     return _validation_passed("selection_provider_payload")
@@ -540,36 +540,36 @@ def _sequence_number(entry: dict[str, object]) -> int | None:
     return None
 
 
-def _candidate_pack_tool_result_texts(messages: list[object]) -> tuple[str, ...]:
+def _candidate_cache_tool_result_texts(messages: list[object]) -> tuple[str, ...]:
     texts: list[str] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
         role = message.get("role")
         content_text = "\n".join(_flatten_text_value(message.get("content")))
-        if role == "tool" and _contains_candidate_pack_body_marker(content_text):
+        if role == "tool" and _contains_candidate_cache_body_marker(content_text):
             texts.append(content_text)
     return tuple(texts)
 
 
-def _contains_candidate_pack_body_marker(text: str) -> bool:
-    return any(marker in text for marker in _CANDIDATE_PACK_BODY_MARKERS)
+def _contains_candidate_cache_body_marker(text: str) -> bool:
+    return any(marker in text for marker in _CANDIDATE_CACHE_BODY_MARKERS)
 
 
-def _validate_candidate_pack_tool_result_text(text: str, *, path: Path) -> SelectionEvidenceValidationResult:
+def _validate_candidate_cache_tool_result_text(text: str, *, path: Path) -> SelectionEvidenceValidationResult:
     lowered = text.lower()
     for forbidden in _FORBIDDEN_PROTOCOL_TERMS:
         if forbidden.lower() in lowered:
             return _validation_failed(
                 category="selection_provider_payload",
-                reason=f"candidate pack tool result contains forbidden protocol text: {forbidden}",
+                reason=f"candidate cache tool result contains forbidden protocol text: {forbidden}",
                 paths=(path,),
             )
-    for label in _CANDIDATE_PACK_TOOL_REQUIRED_LABELS:
+    for label in _CANDIDATE_CACHE_TOOL_REQUIRED_LABELS:
         if label not in text:
             return _validation_failed(
                 category="selection_provider_payload",
-                reason=f"candidate pack tool result missing required model-visible field: {label}",
+                reason=f"candidate cache tool result missing required model-visible field: {label}",
                 paths=(path,),
             )
     return _validation_passed("selection_provider_payload")

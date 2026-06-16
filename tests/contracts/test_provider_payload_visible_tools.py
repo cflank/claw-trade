@@ -11,13 +11,13 @@ from claw_trade.workflow.models import Stage
 from claw_trade.workflow.workers import all_worker_ids
 
 _CN_A_FRONTLINE_EXPECTED = {
-    "market_analyst": ("claw_get_market_pack",),
-    "fundamental_analyst": ("claw_get_fundamental_pack",),
-    "news_analyst": ("claw_get_news_pack",),
-    "social_analyst": ("claw_get_social_pack",),
-    "policy_analyst": ("claw_get_policy_pack",),
-    "hot_money_tracker": ("claw_get_hot_money_pack",),
-    "lockup_watcher": ("claw_get_lockup_pack",),
+    "market_analyst": ("claw_request_data",),
+    "fundamental_analyst": ("claw_request_data",),
+    "news_analyst": ("claw_request_data",),
+    "social_analyst": ("claw_request_data",),
+    "policy_analyst": ("claw_request_data",),
+    "hot_money_tracker": ("claw_request_data",),
+    "lockup_watcher": ("claw_request_data",),
 }
 
 _FORBIDDEN_US_ATOMICS = {
@@ -29,26 +29,6 @@ _FORBIDDEN_US_ATOMICS = {
     "get_income_statement",
     "get_news",
     "get_global_news",
-}
-
-_FORBIDDEN_LEGACY_ALIASES = {
-    "market_market_data_pack",
-    "us_market_data_pack",
-    "cn_a_market_data_pack",
-    "crypto_market_data_pack",
-    "fundamental_fundamentals_data_pack",
-    "us_fundamentals_data_pack",
-    "cn_a_fundamentals_data_pack",
-    "crypto_fundamental_data_pack",
-    "news_news_data_pack",
-    "us_news_data_pack",
-    "cn_a_news_data_pack",
-    "crypto_news_data_pack",
-    "social_social_sentiment_pack",
-    "us_social_sentiment_pack",
-    "cn_a_social_sentiment_pack",
-    "crypto_social_sentiment_pack",
-    "bb_crypto_data",
 }
 
 _FORBIDDEN_LEGACY_TOOL_PATTERNS = (
@@ -68,14 +48,14 @@ _FORBIDDEN_LEGACY_TOOL_PATTERNS = (
 )
 
 _FORBIDDEN_MODEL_MESSAGE_PHRASES = (
-    "资料包工具已返回",
-    "资料就绪状态为",
+    "数据工具已返回",
+    "数据就绪状态为",
     "这只证明工具调用完成",
     "不证明资料覆盖完成",
 )
 
 
-def test_cn_a_frontline_visible_tools_are_exactly_one_canonical_pack() -> None:
+def test_cn_a_frontline_visible_tools_are_exactly_one_data_need_tool() -> None:
     registry_result = load_tool_registry()
     assert registry_result.ok is True and registry_result.registry is not None
     registry = registry_result.registry
@@ -128,8 +108,8 @@ def test_non_cn_a_runtime_stage_membership_excludes_new_frontline_workers() -> N
                 )
 
 
-@pytest.mark.parametrize("forbidden", sorted(_FORBIDDEN_US_ATOMICS | _FORBIDDEN_LEGACY_ALIASES))
-def test_payload_scan_rejects_legacy_or_atomic_tools(forbidden: str) -> None:
+@pytest.mark.parametrize("forbidden", sorted(_FORBIDDEN_US_ATOMICS))
+def test_payload_scan_rejects_atomic_tools(forbidden: str) -> None:
     payload = _payload("market_analyst", (forbidden,))
     with pytest.raises(ValueError, match="forbidden tool"):
         _scan_openclaw_llm_provider_payload(payload)
@@ -157,9 +137,9 @@ def test_payload_scan_rejects_legacy_admin_discovery_cache_and_alias(forbidden: 
 def test_provider_requests_jsonl_sequence_2_scan_rejects_runtime_wrapper_message_text() -> None:
     jsonl = "\n".join(
         [
-            json.dumps(_payload("policy_analyst", ("claw_get_policy_pack",)) | {"sequence": 1}),
+            json.dumps(_payload("policy_analyst", ("claw_request_data",)) | {"sequence": 1}),
             json.dumps(
-                _payload("policy_analyst", ("claw_get_policy_pack",))
+                _payload("policy_analyst", ("claw_request_data",))
                 | {
                     "sequence": 2,
                     "payload": {
@@ -168,14 +148,14 @@ def test_provider_requests_jsonl_sequence_2_scan_rejects_runtime_wrapper_message
                             {
                                 "role": "tool",
                                 "content": (
-                                    "资料包工具已返回，但资料就绪状态为 partial；"
+                                    "数据工具已返回，但数据就绪状态为 partial；"
                                     "这只证明工具调用完成，不证明资料覆盖完成。\n"
-                                    "## 政策资料包\n资料缺口：官方原文暂缺。"
+                                    "## 政策数据结果\n资料缺口：官方原文暂缺。"
                                 ),
                             },
                         ],
                         "tools": [
-                            {"type": "function", "function": {"name": "claw_get_policy_pack"}},
+                            {"type": "function", "function": {"name": "claw_request_data"}},
                         ],
                     },
                 },
@@ -189,7 +169,7 @@ def test_provider_requests_jsonl_sequence_2_scan_rejects_runtime_wrapper_message
 
 
 def test_provider_requests_jsonl_sequence_2_scan_accepts_natural_model_visible_message_text() -> None:
-    payload = _payload("policy_analyst", ("claw_get_policy_pack",)) | {
+    payload = _payload("policy_analyst", ("claw_request_data",)) | {
         "sequence": 2,
         "payload": {
             "messages": [
@@ -197,18 +177,18 @@ def test_provider_requests_jsonl_sequence_2_scan_accepts_natural_model_visible_m
                 {
                     "role": "tool",
                     "content": (
-                        "## 政策资料包\n"
-                        "资料就绪度：部分覆盖。\n"
+                        "## 政策数据\n"
+                        "数据状态：部分覆盖。\n"
                         "核心事实：已取得政策新闻线索；官方原文暂缺。\n"
                         "资料缺口：缺少官方原文，不能把新闻线索写成已核验政策事实。"
                     ),
                 },
             ],
-            "tools": [{"type": "function", "function": {"name": "claw_get_policy_pack"}}],
+            "tools": [{"type": "function", "function": {"name": "claw_request_data"}}],
         },
     }
     assert _scan_provider_requests_jsonl_sequence_2(json.dumps(payload, ensure_ascii=False)) == (
-        "claw_get_policy_pack",
+        "claw_request_data",
     )
 
 
@@ -245,7 +225,7 @@ def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str
         raise ValueError("payload.tools must be list")
 
     visible: list[str] = []
-    forbidden_exact = _FORBIDDEN_US_ATOMICS | _FORBIDDEN_LEGACY_ALIASES
+    forbidden_exact = _FORBIDDEN_US_ATOMICS
     for item in tools:
         if not isinstance(item, dict):
             raise ValueError("invalid tool item in payload.tools")
@@ -261,7 +241,7 @@ def _scan_openclaw_llm_provider_payload(payload: dict[str, object]) -> tuple[str
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {tool_name}")
         if any(pattern in tool_name for pattern in _FORBIDDEN_LEGACY_TOOL_PATTERNS):
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {tool_name}")
-        if not (tool_name.startswith("claw_get_") and tool_name.endswith("_pack")):
+        if tool_name != "claw_request_data":
             raise ValueError(f"forbidden tool in openclaw_llm_provider_payload: {tool_name}")
 
         visible.append(tool_name)

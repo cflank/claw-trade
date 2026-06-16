@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
-from claw_trade.selection.data_job import SelectionDataJob, SelectionProviderBatchResult
+from claw_trade.selection.data_job import SelectionDataJob, SelectionDataNeedResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
 from claw_trade.selection.models import (
     SelectionBatchScope,
@@ -16,7 +16,7 @@ from claw_trade.selection.models import (
     SelectionDataRunStatus,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
     SelectionTriggerSource,
 )
@@ -38,14 +38,14 @@ def _plan() -> SelectionRunPlan:
         trade_date="2026-05-26",
         lookback_trading_days=120,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://cn-a-2026-05-26",
+        data_need_audit_ref="plan://cn-a-2026-05-26",
         approved_strategy_config_ref="config://cn-a-approved-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
 
 
-def _provider_batch_plan(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionProviderBatchPlan:
-    return SelectionProviderBatchPlan(
+def _data_need_audit(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionDataNeedAudit:
+    return SelectionDataNeedAudit(
         plan_id=plan_id,
         scope=SelectionBatchScope.SELECTION_BATCH,
         market=SelectionMarket.CN_A,
@@ -54,7 +54,6 @@ def _provider_batch_plan(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionPr
         lookback_trading_days=120,
         universe_scope="all_a_shares",
         coverage_groups=("universe", "daily", "fundamental"),
-        provider_candidates=("akshare", "eastmoney"),
         ttl_policy_ref="ttl://daily",
         lineage_root_ref="lineage://selection/2026-05-26",
     )
@@ -66,7 +65,7 @@ def _approved_strategy() -> ApprovedSelectionStrategy:
     return strategy
 
 
-def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchResult:
+def _provider_result_success(plan: SelectionRunPlan) -> SelectionDataNeedResult:
     rows = []
     normalized_refs: list[str] = []
     for idx in range(20):
@@ -98,8 +97,8 @@ def _provider_result_success(plan: SelectionRunPlan) -> SelectionProviderBatchRe
                 "source_ref": ref,
             }
         )
-    result = SelectionProviderBatchResult(
-        provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+    result = SelectionDataNeedResult(
+        data_need_audit=_data_need_audit(plan.data_need_audit_ref),
         attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
         normalized_refs=tuple(normalized_refs),
         rows=tuple(rows),
@@ -236,13 +235,13 @@ def test_restore_selection_store_from_persisted_record_roundtrip(tmp_path: Path)
 
 
 @pytest.mark.integration
-def test_restore_detects_missing_candidate_pack_body_file(tmp_path: Path) -> None:
+def test_restore_detects_missing_candidate_cache_body_file(tmp_path: Path) -> None:
     selection_run_id = _run_successful_data_job(tmp_path=tmp_path, persisted=True)
     persisted_path = tmp_path / "store" / "data-runs" / f"{selection_run_id}.json"
     payload = json.loads(persisted_path.read_text(encoding="utf-8"))
     body_path = _selection_artifact_path(
         tmp_path / "artifacts",
-        payload["data_run"]["candidate_pack_ref"]["l1_uri"],
+        payload["data_run"]["candidate_cache_ref"]["l1_uri"],
     )
     body_path.unlink()
 
@@ -256,17 +255,17 @@ def test_restore_detects_missing_candidate_pack_body_file(tmp_path: Path) -> Non
     )
 
     assert result.is_available is False
-    assert result.unavailable_code == SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+    assert result.unavailable_code == SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
 
 
 @pytest.mark.integration
-def test_restore_detects_candidate_pack_body_hash_mismatch(tmp_path: Path) -> None:
+def test_restore_detects_candidate_cache_body_hash_mismatch(tmp_path: Path) -> None:
     selection_run_id = _run_successful_data_job(tmp_path=tmp_path, persisted=True)
     persisted_path = tmp_path / "store" / "data-runs" / f"{selection_run_id}.json"
     payload = json.loads(persisted_path.read_text(encoding="utf-8"))
     body_path = _selection_artifact_path(
         tmp_path / "artifacts",
-        payload["data_run"]["candidate_pack_ref"]["l1_uri"],
+        payload["data_run"]["candidate_cache_ref"]["l1_uri"],
     )
     body_path.write_text(f"{body_path.read_text(encoding='utf-8')}\n# corrupt\n", encoding="utf-8")
 
@@ -280,7 +279,7 @@ def test_restore_detects_candidate_pack_body_hash_mismatch(tmp_path: Path) -> No
     )
 
     assert result.is_available is False
-    assert result.unavailable_code == SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+    assert result.unavailable_code == SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
 
 
 @pytest.mark.integration
@@ -365,24 +364,24 @@ def test_restore_marks_persisted_active_data_run_failed_when_owner_restarts(tmp_
     ("mutator", "expected_code"),
     [
         (
-            lambda payload: payload["data_run"]["candidate_pack_ref"].__setitem__("expires_at", "2026-05-26T08:59:59Z"),
+            lambda payload: payload["data_run"]["candidate_cache_ref"].__setitem__("expires_at", "2026-05-26T08:59:59Z"),
             SelectUnavailableCode.STALE_SELECTION_RUN,
         ),
         (
-            lambda payload: payload["manifest"].__setitem__("pack_body_sha256", "f" * 64),
-            SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH,
+            lambda payload: payload["manifest"].__setitem__("cache_body_sha256", "f" * 64),
+            SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH,
         ),
         (
             lambda payload: payload["integrity"].__setitem__("readback_verified", False),
-            SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED,
+            SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
         ),
         (
             lambda payload: payload["integrity"].__setitem__("lineage_complete", False),
-            SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE,
+            SelectUnavailableCode.CANDIDATE_CACHE_LINEAGE_INCOMPLETE,
         ),
         (
             lambda payload: payload.__setitem__("manifest", None),
-            SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED,
+            SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
         ),
     ],
 )

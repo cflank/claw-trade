@@ -9,7 +9,7 @@ Human-approved rule:
 - `/report`, `/select`, UI, workers, tools, and upper Python orchestration must not directly read market/fundamental/news/social data from Mongo, Parquet, DuckDB, provider SDKs, provider HTTP, or local data files.
 - They must request data through the unified data layer interface.
 - Mongo, Parquet, DuckDB, provider SDKs, provider HTTP, dataset manifests, file hashes, and backfill logic are data-layer internals.
-- OpenViking materials are not market-data storage. Worker outputs, approved reports, candidate-pack materials, PDFs, charts, and evidence files may be read through approved material/report interfaces.
+- OpenViking materials are not market-data storage. Worker outputs, approved reports, candidate-cache materials, PDFs, charts, and evidence files may be read through approved material/report interfaces.
 
 In plain terms: callers say what data they need; the data layer decides where it lives, whether it is missing, how to backfill it, and how to verify it.
 
@@ -27,15 +27,15 @@ These paths currently touch data storage details from outside the unified data l
 
 | Path | Current behavior | Evidence |
 | --- | --- | --- |
-| `src/claw_trade/reports/data_pack_bridge.py` | Calls `data_gateway.runtime.build_data_api_from_env()` and no longer opens Mongo or constructs warehouse/provider internals directly. | Covered by `tests/contracts/test_data_access_boundary.py`; old report-bridge fixture entries were removed. |
+| `src/claw_trade/reports/data_need_bridge.py` | Calls `data_gateway.runtime.build_data_api_from_env()` and no longer opens Mongo or constructs warehouse/provider internals directly. | Covered by `tests/contracts/test_data_access_boundary.py`; old report-bridge fixture entries were removed. |
 | `src/claw_trade/data_gateway/selection_api.py` / `src/claw_trade/data_gateway/_selection_batch.py` | Public callers use `selection_api`; the private implementation calls `data_gateway.runtime.build_data_gateway_runtime_from_env()` and no longer opens Mongo or constructs DataService/provider internals directly. | Covered by focused selection tests after this phase; storage-specific refs are blocked by `tests/contracts/test_data_access_boundary.py`. |
 | `src/claw_trade/data_gateway/warehouse/selection_columnar.py` | Owns selection columnar DuckDB/Parquet reads, writes, manifest and SHA-256 checks. | Moved from `src/claw_trade/selection/columnar_warehouse.py`; `selection/data_job.py` and `selection/store.py` now call the data-layer `selection_integrity` validation facade. |
-| Selection dataset/attempt lineage refs | Normal selection code now uses `dataset://normalized/...` and `attempt://data-provider/...` through `data_gateway.refs`. | `candidate_pack`, `data_job`, `store`, and private selection batch implementation old Mongo-shaped ref fixture entries were removed after focused tests passed. |
-| `src/claw_trade/selection/provider_batch.py` | CLI/date helper module now imports stable `data_gateway.selection_api` instead of the private selection batch implementation. | Old fixture entry removed after contract tests passed. |
+| Selection dataset/attempt lineage refs | Normal selection code now uses `dataset://normalized/...` and `attempt://data-provider/...` through `data_gateway.refs`. | `candidate_cache`, `data_job`, `store`, and private selection batch implementation old Mongo-shaped ref fixture entries were removed after focused tests passed. |
+| `src/claw_trade/selection/data_need_refresh.py` | CLI/date helper module now imports stable `data_gateway.selection_api` instead of the private selection batch implementation. | Old fixture entry removed after contract tests passed. |
 | `src/claw_trade/ui_backend/report_context.py` | Calls `data_gateway.report_evidence.summarize_data_refs(...)` for data evidence summaries. | UI no longer opens Mongo or names warehouse collections directly. |
 | `src/claw_trade/data_gateway/source_probe.py` | Owns provider SDK/HTTP connection probes for settings-page tests. | `ui_backend/data_source_runtime_checks.py` is now a thin compatibility wrapper that imports only data-layer probe facades. |
 | `src/claw_trade/data_gateway/settings_store.py` | Owns UI settings/secret Mongo store classes and `build_data_source_settings_stores(...)`. | `web/state.py` no longer imports `ui_backend.mongo_settings_store` or constructs `MongoDataSourceStore`/`MongoSecretStore` directly. |
-| `src/claw_trade/data_gateway/agent_tools.py` | Provides worker skill facades for ticker search, price rows, fundamentals, news pack, and social pack. | `alphaear-stock` and `alphaear-techlab` scripts no longer import provider SDKs, provider HTTP clients, SQLite, or dynamically load legacy stock data tools. |
+| `claw_request_data` frontline tool | Owns worker-visible data access for frontline market/fundamental/news/social workers. | Legacy `src/claw_trade/data_gateway/agent_tools.py`, `alphaear-stock`, and `alphaear-techlab` were removed; indicator/chart calculation lives in `src/claw_trade/reports/market_indicators.py` and `src/claw_trade/reports/market_charts.py` and consumes existing rows only. |
 
 ### A.2 Closed Migration / Deletion Gate
 
@@ -66,8 +66,8 @@ These are not market-data warehouse reads. They are worker/report material, evid
 
 | Path | Current role |
 | --- | --- |
-| `src/claw_trade/selection/tools.py` | Reads approved selection candidate-pack files for selection workers. This is material access, not market-data access. |
-| `src/claw_trade/selection/artifacts.py` | Writes/reads selection candidate-pack artifacts. Target should clarify OpenViking vs local evidence role. |
+| `src/claw_trade/selection/tools.py` | Reads approved selection candidate-cache files for selection workers. This is material access, not market-data access. |
+| `src/claw_trade/selection/artifacts.py` | Writes/reads selection candidate-cache artifacts. Target should clarify OpenViking vs local evidence role. |
 | `src/claw_trade/selection/controller.py` | Reads selection workflow raw outputs and PM decision artifacts. This is workflow material/evidence. |
 | `src/claw_trade/workflow/runner.py` | Reads worker raw outputs and manifests. This is workflow material/evidence. |
 | `src/claw_trade/reports/exporter.py` | Reads approved worker/report materials and chart assets for export. |
@@ -92,7 +92,7 @@ Do these in order.
    - `/select` should continue converging on data-layer methods such as "get selection feature rows" or "validate dataset ref", not DuckDB/Parquet directly.
 
 3. Create one DataAPI/DataService factory inside the data layer.
-   - `reports/data_pack_bridge.py` now calls `data_gateway.runtime.build_data_api_from_env()`.
+   - `reports/data_need_bridge.py` now calls `data_gateway.runtime.build_data_api_from_env()`.
    - Public selection data callers use `data_gateway/selection_api.py`.
    - `data_gateway/_selection_batch.py` is a private data-layer implementation that calls `data_gateway.runtime.build_data_gateway_runtime_from_env()` instead of constructing DataService/provider internals itself.
 
@@ -103,7 +103,7 @@ Do these in order.
 5. Move UI probes, web settings stores, and worker skill data access behind data-layer facades.
    - `data_gateway/source_probe.py` owns provider connection probes.
    - `data_gateway/settings_store.py` owns data-source settings/secret store construction.
-   - `data_gateway/agent_tools.py` owns worker skill data access.
+   - Frontline worker data access is `claw_request_data`; legacy `data_gateway/agent_tools.py` has been removed.
    - Boundary fixture is empty after this step.
 
 6. Migrate normalized datasets from Mongo rows to Parquet/DuckDB.

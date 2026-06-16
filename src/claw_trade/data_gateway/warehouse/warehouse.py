@@ -562,7 +562,6 @@ class Warehouse:
             freshness_policy=self._value(request, "freshness_policy", "trading_day"),
             timezone=timezone,
             calendar=calendar,
-            source_role_required=self._value(request, "source_role_required"),
             as_of=self._value(request, "as_of"),
         )
         return self.check((check,), None)
@@ -785,23 +784,12 @@ class Warehouse:
         scoped = granularity_matches if granularity_matches else tuple(records)
         if not granularity_matches:
             return scoped
-        source_role_matches = self._records_with_required_source_role(scoped, check)
-        if source_role_matches:
-            scoped = source_role_matches
         field_matches = self._records_with_requested_fields(scoped, check)
         if field_matches:
             scoped = field_matches
         overlap_matches = tuple(record for record in scoped if self._record_overlaps_request(record, check))
         scoped = overlap_matches or scoped
         return self._prefer_highest_priority_source_records(scoped, check)
-
-    @staticmethod
-    def _records_with_required_source_role(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
-        required = check.source_role_required
-        if not required:
-            return ()
-        required_text = str(getattr(required, "value", required))
-        return tuple(record for record in records if required_text in {str(role) for role in record.source_roles})
 
     @staticmethod
     def _records_with_requested_fields(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
@@ -816,7 +804,7 @@ class Warehouse:
 
     @staticmethod
     def _prefer_highest_priority_source_records(records: Sequence[DatasetRecord], check: WarehouseCheck) -> tuple[DatasetRecord, ...]:
-        if not records or check.source_role_required:
+        if not records:
             return tuple(records)
         selected: list[DatasetRecord] = []
         for group in _group_records_by_request_identity(records).values():

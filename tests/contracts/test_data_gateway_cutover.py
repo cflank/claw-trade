@@ -77,16 +77,18 @@ def _install_legacy_import_blocker(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, module_name, _TrapModule(module_name))
 
 
-def _load_data_api_symbols() -> tuple[type[Any], Any, Any]:
+def _load_data_api_symbols() -> type[Any]:
     module = importlib.import_module("claw_trade.data_gateway.api")
     data_api_cls = getattr(module, "DataAPI", None)
     if data_api_cls is None:
         pytest.fail("DLT-13 blocked: claw_trade.data_gateway.api exists but DataAPI class is missing")
-    get_data = getattr(data_api_cls, "get_data", None)
-    get_data_batch = getattr(data_api_cls, "get_data_batch", None)
-    if get_data is None or get_data_batch is None:
-        pytest.fail("DLT-13 blocked: DataAPI must provide get_data/get_data_batch")
-    return data_api_cls, get_data, get_data_batch
+    if not callable(getattr(data_api_cls, "request_data", None)):
+        pytest.fail("DLT-13 blocked: DataAPI must provide request_data")
+    if hasattr(data_api_cls, "get_data_needs"):
+        pytest.fail("DLT-13 violation: DataAPI must not expose legacy get_data_needs")
+    if hasattr(data_api_cls, "get_data") or hasattr(data_api_cls, "get_data_batch"):
+        pytest.fail("DLT-13 violation: DataAPI must not expose get_data/get_data_batch")
+    return data_api_cls
 
 
 def _instantiate_data_api(data_api_cls: type[Any]) -> Any:
@@ -121,26 +123,13 @@ def test_cutover_requires_new_data_api_surface() -> None:
         pytest.fail(f"DLT-13 blocked: missing new module claw_trade.data_gateway.api ({exc})")
 
 
-def test_get_data_and_batch_do_not_import_legacy_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_data_api_does_not_expose_legacy_data_request_methods(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_legacy_import_blocker(monkeypatch)
-    data_api_cls, _, _ = _load_data_api_symbols()
+    data_api_cls = _load_data_api_symbols()
     api = _instantiate_data_api(data_api_cls)
 
-    try:
-        one = api.get_data({"contract_probe": "dlt13"})
-        _assert_no_legacy_success(one)
-    except (TypeError, ValueError, RuntimeError, NotImplementedError):
-        pass
-
-    try:
-        many = api.get_data_batch(({"contract_probe": "dlt13-batch"},))
-        if isinstance(many, (list, tuple)):
-            for item in many:
-                _assert_no_legacy_success(item)
-        else:
-            _assert_no_legacy_success(many)
-    except (TypeError, ValueError, RuntimeError, NotImplementedError):
-        pass
+    assert not hasattr(api, "get_data")
+    assert not hasattr(api, "get_data_batch")
 
 
 def test_new_data_gateway_source_does_not_reference_legacy_paths() -> None:

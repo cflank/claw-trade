@@ -33,20 +33,23 @@ APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     # Guard source: human-approved 2026-05-22 P1-10 change, scoped to market-aware stage membership wiring only.
     "artifact_flow.py": "52658f5bd6f8ce082f1294c8d6c911dc61f46cb63d12a30483d3862a3ff69255",
     "common.py": "38491c28306cf1845dc245f7257d2a24d195d6b82a46fa6d2c0595d6bba4f803",
-    "export_claims.py": "944ddf521f8f2cd5f8e0755fe6acb57d4a8a8ee73c0a6fd45096859f8e280e6d",
+    # Guard source: committed import-order-only formatting; no guard behavior change.
+    "export_claims.py": "c0209d12530df09d78008d747358c536c08a64a14a73e9fca08f3a6657eaca19",
     "fundamental_claim_dictionaries_v1.json": "027155d4d98f87ca93453bd1c3a0bd7706cd141b5329deb8b40291d52e76b88d",
-    "fundamental_claim_gate.py": "e0fdcb9011985a564ecd5df624c88963371c819f9fa6656cfd1f66728a2c1762",
+    # Guard source: docs/限流重组.md data evidence migration; input uses evidence_path.
+    "fundamental_claim_gate.py": "a2a78cef450d970a9c959a98c394d65e90a0050c6e884be76f07e269381281ca",
     "fundamental_claim_rules.py": "ba1d62c0c8808e13921202ab2f11d9052d8546d88f6c005b0b56fdcb4077ca28",
-    "fundamental_gate_inputs.py": "a76c2bfffc1c476fa6f8103299df981aac2261ccb4c59fa054f49dbc86b6a0f0",
+    # Guard source: docs/限流重组.md data evidence migration; input uses evidence_path.
+    "fundamental_gate_inputs.py": "d0de7a0efe457a42fcc6e502effb2ed7f2347aa885229cd23683abc4ad9ab675",
     "fundamental_gate_outcome.py": "5b72c9d4f3f7464b380fa8256204f355b8c7e1fb8ec0235177e452ddb7dccd83",
     "l1_l2.py": "c409bf6c0f3f66e619d0677328a272d45417abba599e9042c81cd0b69599f551",
     # Guard source: human-approved 2026-05-22 P1-10 change, scoped to market-aware stage membership wiring only.
     "openviking_access.py": "4248c2f0be83ffdaccdcb5ee7fe1cc7ab2c5f259331382d15b5ea34996551d3c",
     "openviking_receipt.py": "50cb4f10d40fd9a387073f44bcaf09d915937adb469f4636d00e0bcc3e9ec634",
     "provider_request.py": "cce82afc14107ea55a344c5677a5efb3d15bfd2c20db29a0c0856f5f9a028ab4",
-    # Guard source: AGENTS Truthfulness Hard Gates; human-approved 2026-06-01
-    # fix to fail failed frontline data-pack tool calls instead of exporting fake success.
-    "tool_calls.py": "6571b1ac8c30c4769d632cccaa16adab90f97e76e6aea6631d680f38a8e1d2e4",
+    # Guard source: human-approved 2026-06-16 removal of frontline data-tool
+    # error-as-hard-stop behavior; tool-call provenance and required-call checks remain.
+    "tool_calls.py": "ecb326a15127d0fb83e00c16bd4f274105ec40a8c282c14078c9a1d733850d16",
     "visible_tools.py": "0b18078feda9cb416e05ad4d6bbf8dacbc3118c895cf8947c84a5f7dc61695a5",
     "workspace_evidence.py": "332420a1ebac0af35fac0101a0c8d5814e57888a39dd84440e80f75f409319ab",
 }

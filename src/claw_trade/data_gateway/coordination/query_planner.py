@@ -83,7 +83,6 @@ class QueryPlanner:
                 freshness_policy=req.freshness_policy,
                 timezone=req.timezone,
                 calendar=req.calendar,
-                source_role_required=req.source_role_required,
                 as_of=req.as_of,
             )
             for req in requests

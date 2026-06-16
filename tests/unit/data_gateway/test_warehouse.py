@@ -62,7 +62,6 @@ def _warehouse_check() -> WarehouseCheck:
         freshness_policy="trading_day",
         timezone="Asia/Shanghai",
         calendar="CN_A_SSE_SZSE",
-        source_role_required="official",
         as_of=datetime(2026, 5, 31, 18, 0, tzinfo=UTC),
     )
 
@@ -171,7 +170,6 @@ def _universe_warehouse_check() -> WarehouseCheck:
         freshness_policy="trading_day",
         timezone="Asia/Shanghai",
         calendar="CN_A_SSE_SZSE",
-        source_role_required="official",
         as_of=datetime(2026, 5, 31, 18, 0, tzinfo=UTC),
     )
 
@@ -187,7 +185,6 @@ def _request(**overrides: object) -> dict[str, object]:
         "date_range_start": date(2026, 5, 1),
         "date_range_end": date(2026, 5, 31),
         "freshness_policy": "trading_day",
-        "source_role_required": "official",
         "timezone": "Asia/Shanghai",
         "calendar": "CN_A_SSE_SZSE",
         "as_of": datetime(2026, 5, 31, 18, 0, tzinfo=UTC),
@@ -274,7 +271,6 @@ def test_warehouse_materialized_crypto_bar_rows_infer_units_from_usdt_pair() -> 
             date_range_start=date(2026, 6, 1),
             date_range_end=date(2026, 6, 1),
             freshness_policy="immutable_seed",
-            source_role_required="official",
             timezone="UTC",
             calendar="CRYPTO_24_7",
             as_of=datetime(2026, 6, 1, tzinfo=UTC),
@@ -335,7 +331,6 @@ def test_warehouse_intraday_rows_use_row_open_close_time_from_columnar(tmp_path)
             fields=("open", "close"),
             date_range_start=date(2026, 6, 1),
             date_range_end=date(2026, 6, 1),
-            source_role_required="official",
             timezone="UTC",
             calendar="CRYPTO_24_7",
         )
@@ -398,7 +393,6 @@ def test_columnar_realtime_manifest_supersedes_stale_same_symbol_snapshot(tmp_pa
             fields=("price", "timestamp", "symbol_id"),
             date_range_start=None,
             date_range_end=None,
-            source_role_required="official",
             timezone="UTC",
             calendar="CRYPTO_24_7",
         )
@@ -445,7 +439,6 @@ def test_warehouse_intraday_rows_restore_hour_from_dataset_ref_when_row_time_mis
             fields=("open", "close"),
             date_range_start=date(2026, 6, 1),
             date_range_end=date(2026, 6, 1),
-            source_role_required="official",
             timezone="UTC",
             calendar="CRYPTO_24_7",
         )
@@ -1066,16 +1059,6 @@ def test_warehouse_rejects_stale_data_for_ttl_policy() -> None:
     assert any(gap.reason.value == "warehouse_stale" for gap in result.gaps)
 
 
-def test_warehouse_respects_official_source_role_requirement() -> None:
-    record = _base_record()
-    record["source_roles"] = ("discovery",)
-    repo = DatasetRepository(records=[record])
-    result = Warehouse(repo).query(_request(source_role_required="official"))
-
-    assert result.status == "partial"
-    assert any(gap.reason.value == "warehouse_missing" for gap in result.gaps)
-
-
 def test_warehouse_prefers_paid_source_over_public_duplicate_when_no_role_required() -> None:
     paid = _base_record()
     paid["source_roles"] = ("paid_data",)
@@ -1088,7 +1071,7 @@ def test_warehouse_prefers_paid_source_over_public_duplicate_when_no_role_requir
     public["row"] = {"date": "2026-05-31", "close": 1529.99, "source": "coingecko"}
 
     repo = DatasetRepository(records=[public, paid])
-    result = Warehouse(repo).query(_request(source_role_required=None))
+    result = Warehouse(repo).query(_request())
 
     assert result.status == "ready"
     assert len(result.rows) == 1

@@ -15,7 +15,7 @@ from claw_trade.config.report_workflow_settings import (
     load_report_workflow_settings,
 )
 from claw_trade.data_gateway.selection_api import (
-    build_selection_provider_batch_plan,
+    build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
     load_cn_a_selection_v1_strategy,
     load_cn_a_selection_v1_strategy_config_ref,
@@ -279,7 +279,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         run_data_check=selection_data_job.run,
         resolve_closed_trade_date=resolve_cn_a_closed_trade_date_for_scheduler,
         load_approved_strategy_config_ref=load_cn_a_selection_v1_strategy_config_ref,
-        build_provider_batch_plan=build_selection_provider_batch_plan,
+        build_data_need_audit=build_selection_data_need_audit,
     )
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(rpc_client),

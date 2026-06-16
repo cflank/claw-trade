@@ -36,6 +36,8 @@ class _Batch:
     request_ids: tuple[str, ...] = ()
     symbol_ids: tuple[str, ...] = ()
     raw_storage_mode: str = "store_full"
+    http_visibility: str = "managed_http"
+    parser_status: str | None = None
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
     license_policy: dict[str, object] | None = None
@@ -155,6 +157,268 @@ def test_ingest_pipeline_success_writes_raw_normalized_attempt_refs() -> None:
     assert ingest.attempt_refs
 
 
+def test_ingest_pipeline_normalizes_official_rows_even_when_batch_uses_raw_shape() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="official_api_coinglass",
+        endpoint_id="coinglass.futures_open_interest",
+        market="CRYPTO",
+        data_type="official_api_response",
+        granularity="realtime",
+        fields_union=("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+        capability_fields=("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+        exchange="COINGLASS",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTC/USDT",),
+        parser_status="parser_missing",
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload={
+            "rows": [
+                {
+                    "dataset": "crypto_derivative_metric",
+                    "market": "CRYPTO",
+                    "symbol_id": "BTC/USDT",
+                    "granularity": "realtime",
+                    "timestamp": datetime(2026, 6, 12, 12, 0, tzinfo=UTC),
+                    "open_interest": 123.4,
+                    "open_interest_unit": "USD",
+                    "base_asset": "BTC",
+                    "quote_asset": "USDT",
+                }
+            ]
+        },
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "parser_missing" for gap in ingest.gaps)
+    stored = repo.get_normalized_document_for_maintenance(ingest.dataset_refs[0])
+    assert stored is not None
+    assert stored["dataset"] == "crypto_derivative_metric"
+
+
+def test_ingest_pipeline_normalizes_tuple_rows_from_provider_payload() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="crypto_binance_spot_market",
+        endpoint_id="futures_open_interest",
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="realtime",
+        fields_union=("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+        capability_fields=("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+        exchange="BINANCE",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTCUSDT",),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload={
+            "rows": (
+                {
+                    "dataset": "crypto_derivative_metric",
+                    "market": "CRYPTO",
+                    "symbol_id": "BTCUSDT",
+                    "granularity": "realtime",
+                    "timestamp": datetime(2026, 6, 12, 12, 0, tzinfo=UTC),
+                    "open_interest": 123.4,
+                    "open_interest_unit": "BTC",
+                    "exchange": "BINANCE",
+                    "currency": "USDT",
+                    "timezone": "UTC",
+                    "calendar": "CRYPTO_24_7",
+                    "base_asset": "BTC",
+                    "quote_asset": "USDT",
+                },
+            )
+        },
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "field_missing" for gap in ingest.gaps)
+    stored = repo.get_normalized_document_for_maintenance(ingest.dataset_refs[0])
+    assert stored is not None
+    assert stored["open_interest"] == 123.4
+
+
+def test_ingest_pipeline_allows_project_company_profile_rows() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="crypto_coingecko_market",
+        endpoint_id="coins_id",
+        market="CRYPTO",
+        data_type="company_profile",
+        granularity="event",
+        fields_union=("name", "symbol"),
+        capability_fields=("name", "symbol", "description", "homepage", "market_cap_rank", "symbol_id"),
+        exchange="BINANCE",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTC/USDT",),
+        request_ids=("request:company-profile",),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload={
+            "rows": [
+                {
+                    "dataset": "company_profile",
+                    "market": "CRYPTO",
+                    "symbol_id": "BTC/USDT",
+                    "granularity": "event",
+                    "name": "Bitcoin",
+                    "symbol": "btc",
+                    "description": "Bitcoin profile",
+                    "homepage": "https://bitcoin.org",
+                    "market_cap_rank": 1,
+                    "timestamp": datetime(2026, 6, 15, tzinfo=UTC),
+                    "base_asset": "BTC",
+                    "quote_asset": "USDT",
+                }
+            ]
+        },
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.status == "ingested"
+    assert ingest.remote_success is True
+    assert ingest.raw_refs
+    assert ingest.dataset_refs
+    stored = repo.get_normalized_document_for_maintenance(ingest.dataset_refs[0])
+    assert stored is not None
+    assert stored["dataset"] == "company_profile"
+    assert stored["row"]["name"] == "Bitcoin"
+
+
+def test_ingest_pipeline_keeps_raw_only_official_response_as_parser_missing() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        provider_id="official_api_coinglass",
+        endpoint_id="coinglass.raw_user_account_subscription",
+        market="CRYPTO",
+        data_type="official_api_response",
+        granularity="event",
+        fields_union=("provider_endpoint", "raw_payload"),
+        parser_status="parser_missing",
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload={
+            "rows": [
+                {
+                    "provider_id": "official_api_coinglass",
+                    "provider_endpoint": "/api/user/account/subscription",
+                    "raw_payload": {"code": "0", "data": {"plan": "pro"}},
+                }
+            ]
+        },
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.status == "partial"
+    assert ingest.remote_success is True
+    assert ingest.dataset_refs == ()
+    assert ingest.raw_refs
+    assert ingest.attempt_refs
+    assert any(gap.reason == "parser_missing" for gap in ingest.gaps)
+
+
+def test_ingest_pipeline_marks_sdk_internal_success_as_unaudited_remote() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    pipeline = IngestPipeline(
+        raw_store=RawStore(repository=repo),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(repository=repo),
+        attempt_log=AttemptLog(repository=repo),
+    )
+    batch = _Batch(
+        provider_id="cn_a_tushare_realtime",
+        endpoint_id="realtime_quote",
+        data_type="quote_snapshot",
+        granularity="realtime",
+        fields_union=("price", "timestamp", "symbol_id"),
+        symbol_ids=("600519.SH",),
+        http_visibility="sdk_internal_unknown",
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[
+            {
+                "dataset": "quote_snapshot",
+                "market": "CN_A",
+                "symbol_id": "600519.SH",
+                "granularity": "realtime",
+                "period_start": date(2026, 6, 12),
+                "period_end": date(2026, 6, 12),
+                "price": 1291.91,
+                "timestamp": datetime(2026, 6, 12, 15, 0, tzinfo=UTC),
+            }
+        ],
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.status == "ingested"
+    assert ingest.remote_success is False
+    assert ingest.raw_refs
+    assert ingest.dataset_refs
+    assert ingest.attempt_refs
+    attempt = repo.get_provider_attempt(ingest.attempt_refs[0])
+    assert attempt is not None
+    assert attempt["http_visibility"] == "sdk_internal_unknown"
+    assert attempt["http_audit_status"] == "sdk_internal_unknown"
+    assert attempt["remote_success"] is False
+
+
 def test_ingest_pipeline_checks_only_fields_declared_by_endpoint_capability() -> None:
     pipeline = IngestPipeline(
         raw_store=RawStore(),
@@ -254,6 +518,59 @@ def test_normalized_store_writes_one_checksum_for_batch() -> None:
         document is not None and document["dataset_checksum_scope"] == "normalized-batch-v1"
         for document in documents
     )
+
+
+def test_normalized_store_accepts_cn_a_northbound_and_margin_datasets() -> None:
+    from claw_trade.data_gateway.warehouse import DatasetRepository
+
+    repo = DatasetRepository()
+    refs = NormalizedStore(repository=repo).upsert(
+        (
+            {
+                "dataset": "northbound_flow",
+                "market": "CN_A",
+                "symbol_id": "600519.SH",
+                "granularity": "realtime",
+                "period_start": date(2026, 6, 14),
+                "period_end": date(2026, 6, 14),
+                "timestamp": datetime(2026, 6, 14, 10, 0, tzinfo=UTC),
+                "hgt_net": 1.0,
+                "sgt_net": 2.0,
+                "northbound_net": 3.0,
+                "exchange": "SSE",
+                "currency": "CNY",
+                "timezone": "Asia/Shanghai",
+                "calendar": "CN_A_SSE_SZSE",
+                "base_asset": None,
+                "quote_asset": None,
+                "provider_lineage": {"provider_id": "cn_a_astock_signal_social", "endpoint_id": "northbound_flow"},
+                "schema_id": "northbound_flow.v1",
+                "quality_flags": (),
+            },
+            {
+                "dataset": "margin_trading",
+                "market": "CN_A",
+                "symbol_id": "600519.SH",
+                "granularity": "daily",
+                "period_start": date(2026, 6, 12),
+                "period_end": date(2026, 6, 12),
+                "financing_balance": 100.0,
+                "margin_balance": 120.0,
+                "exchange": "SSE",
+                "currency": "CNY",
+                "timezone": "Asia/Shanghai",
+                "calendar": "CN_A_SSE_SZSE",
+                "base_asset": None,
+                "quote_asset": None,
+                "provider_lineage": {"provider_id": "cn_a_eastmoney_market_data", "endpoint_id": "margin_trading_detail"},
+                "schema_id": "margin_trading.v1",
+                "quality_flags": (),
+            },
+        )
+    )
+
+    assert refs[0].startswith("dataset:northbound_flow:CN_A:")
+    assert refs[1].startswith("dataset:margin_trading:CN_A:")
 
 
 def test_ingest_pipeline_normalizes_trade_date_and_returns_auditable_dataset_ref() -> None:
@@ -393,6 +710,167 @@ def test_ingest_pipeline_stores_partial_rows_when_provider_date_range_is_short()
     assert ingest.remote_success is False
     assert ingest.dataset_refs
     assert any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+
+
+def test_ingest_pipeline_does_not_apply_daily_range_gap_to_quarterly_financial_rows() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        data_type="financial_metric",
+        granularity="quarterly",
+        fields_union=("roe",),
+        date_range_start=date(2025, 6, 13),
+        date_range_end=date(2026, 6, 13),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[{"dataset": "financial_metric", "symbol_id": "600519.SH", "period": "2026-03-31", "roe": 10.57}],
+    )
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.remote_success is True
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+
+
+def test_ingest_pipeline_allows_non_crypto_daily_end_date_to_land_on_non_trading_day() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        date_range_start=date(2026, 6, 12),
+        date_range_end=date(2026, 6, 13),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[{"dataset": "daily_bar", "symbol_id": "000001.SZ", "date": "2026-06-12", "close": 10.2}],
+    )
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.remote_success is True
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+
+
+def test_ingest_pipeline_crypto_daily_keeps_strict_date_range_for_24_7_calendar() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        market="CRYPTO",
+        data_type="daily_bar",
+        exchange="BINANCE",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=date(2026, 6, 12),
+        date_range_end=date(2026, 6, 13),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[{"dataset": "daily_bar", "symbol_id": "BTCUSDT", "date": "2026-06-12", "close": 10.2}],
+    )
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.remote_success is False
+    assert ingest.dataset_refs
+    assert any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+
+
+def test_ingest_pipeline_crypto_onchain_allows_latest_confirmed_daily_lag() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        market="CRYPTO",
+        data_type="crypto_onchain_metric",
+        fields_union=("metric", "value", "timestamp"),
+        exchange="COINGLASS",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTC/USDT",),
+        date_range_start=date(2025, 6, 16),
+        date_range_end=date(2026, 6, 16),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[
+            {
+                "dataset": "crypto_onchain_metric",
+                "symbol_id": "BTC/USDT",
+                "metric": "exchange_balance",
+                "value": 2510672.94,
+                "timestamp": "2026-06-15T02:00:00Z",
+            }
+        ],
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.remote_success is True
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "date_range_missing" for gap in ingest.gaps)
+
+
+def test_ingest_pipeline_crypto_onchain_event_rows_do_not_fail_granularity() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        market="CRYPTO",
+        data_type="crypto_onchain_metric",
+        granularity="event",
+        fields_union=("whale_transfer", "timestamp"),
+        exchange="COINGLASS",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTC/USDT",),
+        date_range_start=date(2025, 6, 16),
+        date_range_end=date(2026, 6, 16),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[
+            {
+                "dataset": "crypto_onchain_metric",
+                "symbol_id": "BTC/USDT",
+                "granularity": "event",
+                "whale_transfer": 18403606.87,
+                "timestamp": "2026-06-15T02:00:00Z",
+            }
+        ],
+    )
+
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.remote_success is True
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "granularity_mismatch" for gap in ingest.gaps)
 
 
 def test_crypto_provider_event_period_comes_from_published_at_not_fetch_day() -> None:
@@ -614,6 +1092,44 @@ def test_ingest_pipeline_rejects_provider_granularity_mismatch() -> None:
     assert any(gap.reason == "granularity_mismatch" for gap in ingest.gaps)
 
 
+def test_ingest_accepts_hourly_crypto_metric_for_realtime_analysis_request() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="realtime",
+        fields_union=("funding_rate", "timestamp", "symbol_id"),
+        exchange="COINGLASS_AGGREGATED",
+        currency="USDT",
+        timezone="UTC",
+        calendar="CRYPTO_24_7",
+        base_asset="BTC",
+        quote_asset="USDT",
+        symbol_ids=("BTC/USDT",),
+    )
+    result = FetchResult.from_success(
+        batch,
+        payload=[
+            {
+                "dataset": "crypto_derivative_metric",
+                "symbol_id": "BTC/USDT",
+                "granularity": "hourly",
+                "timestamp": datetime(2026, 6, 15, 12, 0, tzinfo=UTC),
+                "funding_rate": 0.001,
+            }
+        ],
+    )
+    ingest = pipeline.ingest(result, batch)
+
+    assert ingest.dataset_refs
+    assert not any(gap.reason == "granularity_mismatch" for gap in ingest.gaps)
+
+
 def test_ingest_pipeline_missing_market_dimensions_produce_datagap() -> None:
     pipeline = IngestPipeline(
         raw_store=RawStore(),
@@ -760,6 +1276,88 @@ def test_ingest_pipeline_rate_limited_gate_does_not_crash_and_is_non_remote() ->
     assert ingest.attempt_refs
     assert ingest.gaps
     assert ingest.gaps[0].reason == "rate_limited"
+
+
+def test_ingest_pipeline_cached_empty_gate_uses_current_batch_gap_context() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        request_ids=("req-lockup",),
+        symbol_ids=("600519.SH",),
+        data_type="lockup_event",
+        granularity="event",
+    )
+    gate = GateDecision.cached_empty(ResultRefs(attempt_refs=("attempt:empty",)))
+
+    ingest = pipeline.record_gate_result(batch, gate)
+
+    assert ingest.status == "non_remote_recorded"
+    assert ingest.remote_success is False
+    assert ingest.gaps
+    gap = ingest.gaps[0]
+    assert gap.reason == "cached_empty"
+    assert gap.request_id == "req-lockup"
+    assert gap.data_type == "lockup_event"
+    assert gap.symbol_id == "600519.SH"
+
+
+def test_ingest_pipeline_shared_error_result_uses_current_batch_gap_context() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        request_ids=("req-sector",),
+        symbol_ids=("600519.SH",),
+        data_type="sector_snapshot",
+        granularity="event",
+    )
+    gate = GateDecision(kind="shared_result", refs=ResultRefs(attempt_refs=("attempt:failed",)), reason="provider_error")
+
+    ingest = pipeline.record_gate_result(batch, gate)
+
+    assert ingest.status == "non_remote_recorded"
+    assert ingest.remote_success is False
+    assert ingest.gaps
+    gap = ingest.gaps[0]
+    assert gap.reason == "provider_error"
+    assert gap.request_id == "req-sector"
+    assert gap.data_type == "sector_snapshot"
+    assert gap.evidence_refs == ("attempt:failed",)
+
+
+def test_ingest_pipeline_shared_result_with_refs_preserves_material_gap() -> None:
+    pipeline = IngestPipeline(
+        raw_store=RawStore(),
+        normalizer=Normalizer(),
+        normalized_store=NormalizedStore(),
+        attempt_log=AttemptLog(),
+    )
+    batch = _Batch(
+        request_ids=("req-cvd",),
+        symbol_ids=("BTC/USDT",),
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="hourly",
+    )
+    gate = GateDecision(
+        kind="shared_result",
+        refs=ResultRefs(dataset_refs=("dataset:partial",), raw_refs=("raw:partial",), attempt_refs=("attempt:partial",)),
+        reason="field_missing",
+    )
+
+    ingest = pipeline.record_gate_result(batch, gate)
+
+    assert ingest.status == "non_remote_recorded"
+    assert ingest.dataset_refs == ("dataset:partial",)
+    assert ingest.gaps
+    assert ingest.gaps[0].reason == "field_missing"
 
 
 def test_ingest_pipeline_rate_limited_gate_preserves_tool_budget_reason() -> None:

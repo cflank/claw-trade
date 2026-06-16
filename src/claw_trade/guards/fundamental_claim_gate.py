@@ -132,7 +132,7 @@ def parse_report_claims_by_rules_v1(report_text: str) -> tuple[FundamentalReport
 
 def unsupported_reasons_for_claim_v1(
     claim: FundamentalReportClaim,
-    pack: dict[str, Any],
+    evidence: dict[str, Any],
 ) -> tuple[str, ...]:
     reasons: list[str] = []
 
@@ -141,11 +141,11 @@ def unsupported_reasons_for_claim_v1(
         if field_path is None:
             reasons.append("metric_mapping_missing")
         else:
-            if not _has_non_empty_fact(pack, field_path):
+            if not _has_non_empty_fact(evidence, field_path):
                 reasons.append("required_fact_missing")
-            if not _has_field_source(pack, field_path):
+            if not _has_field_source(evidence, field_path):
                 reasons.append("field_source_missing")
-        if claim.needs_trend and _capability_status(pack, "financial_trend") != "available":
+        if claim.needs_trend and _capability_status(evidence, "financial_trend") != "available":
             reasons.append("financial_trend_unavailable")
 
     if claim.claim_type == "conclusion":
@@ -153,7 +153,7 @@ def unsupported_reasons_for_claim_v1(
         # 2026-05-20 human approval removed runtime expression gates for ratings,
         # buy/sell direction, and broad valuation wording; only concrete target
         # price assertions remain hard-gated here.
-        if claim.claim_key == "target_price" and _is_capability_blocked(pack, "target_price"):
+        if claim.claim_key == "target_price" and _is_capability_blocked(evidence, "target_price"):
             reasons.append("target_price_blocked")
 
     if claim.claim_type == "narrative":
@@ -167,19 +167,19 @@ def unsupported_reasons_for_claim_v1(
 
 def is_claim_unbacked_by_evidence_v1(
     claim: FundamentalReportClaim,
-    pack: dict[str, Any],
+    evidence: dict[str, Any],
 ) -> bool:
-    return len(unsupported_reasons_for_claim_v1(claim, pack)) > 0
+    return len(unsupported_reasons_for_claim_v1(claim, evidence)) > 0
 
 
 def evaluate_fundamental_report_claims_v1(
     report_text: str,
-    pack: dict[str, Any],
+    evidence: dict[str, Any],
 ) -> FundamentalClaimGateEvaluation:
     claims = parse_report_claims_by_rules_v1(report_text)
     unsupported: list[UnsupportedClaim] = []
     for claim in claims:
-        reason_codes = unsupported_reasons_for_claim_v1(claim, pack)
+        reason_codes = unsupported_reasons_for_claim_v1(claim, evidence)
         if reason_codes:
             unsupported.append(UnsupportedClaim(claim=claim, reason_codes=reason_codes))
 
@@ -204,13 +204,13 @@ def evaluate_fundamental_report_claims_v1(
 
 def evaluate_fundamental_report_claims_from_paths_v1(
     report_path: Path,
-    pack_path: Path,
+    evidence_path: Path,
 ) -> FundamentalClaimGateEvaluation:
     report_text = report_path.read_text(encoding="utf-8")
-    pack_raw = json.loads(pack_path.read_text(encoding="utf-8"))
-    if not isinstance(pack_raw, dict):
-        raise ValueError("fundamental pack 必须是 JSON 对象")
-    return evaluate_fundamental_report_claims_v1(report_text=report_text, pack=pack_raw)
+    evidence_raw = json.loads(evidence_path.read_text(encoding="utf-8"))
+    if not isinstance(evidence_raw, dict):
+        raise ValueError("fundamental evidence 必须是 JSON 对象")
+    return evaluate_fundamental_report_claims_v1(report_text=report_text, evidence=evidence_raw)
 
 
 def _add_unique_claim(
@@ -273,8 +273,8 @@ def _sentence_window(text: str, start: int, end: int) -> str:
     return text[left:right]
 
 
-def _capability_status(pack: dict[str, Any], capability_key: str) -> str:
-    capabilities = pack.get("evidence_capabilities")
+def _capability_status(evidence: dict[str, Any], capability_key: str) -> str:
+    capabilities = evidence.get("evidence_capabilities")
     if not isinstance(capabilities, dict):
         return "unknown"
     payload = capabilities.get(capability_key)
@@ -286,34 +286,34 @@ def _capability_status(pack: dict[str, Any], capability_key: str) -> str:
     return "unknown"
 
 
-def _is_capability_blocked(pack: dict[str, Any], capability_key: str) -> bool:
-    status = _capability_status(pack, capability_key)
+def _is_capability_blocked(evidence: dict[str, Any], capability_key: str) -> bool:
+    status = _capability_status(evidence, capability_key)
     return status in {"blocked", "禁写"}
 
 
-def _has_non_empty_fact(pack: dict[str, Any], field_path: str) -> bool:
-    facts = pack.get("facts")
+def _has_non_empty_fact(evidence: dict[str, Any], field_path: str) -> bool:
+    facts = evidence.get("facts")
     if not isinstance(facts, dict):
         return False
     value = _value_at_path(facts, field_path)
     return _is_non_empty_value(value)
 
 
-def _has_field_source(pack: dict[str, Any], field_path: str) -> bool:
-    field_sources = pack.get("field_sources")
+def _has_field_source(evidence: dict[str, Any], field_path: str) -> bool:
+    field_sources = evidence.get("field_sources")
     if not isinstance(field_sources, dict):
         return False
     return field_path in field_sources or f"facts.{field_path}" in field_sources
 
 
-def _has_business_segments_evidence(pack: dict[str, Any]) -> bool:
-    facts = pack.get("facts")
+def _has_business_segments_evidence(evidence: dict[str, Any]) -> bool:
+    facts = evidence.get("facts")
     if not isinstance(facts, dict):
         return False
     business_segments = facts.get("business_segments")
     if not isinstance(business_segments, list) or not business_segments:
         return False
-    field_sources = pack.get("field_sources")
+    field_sources = evidence.get("field_sources")
     if not isinstance(field_sources, dict):
         return False
     for key in field_sources.keys():

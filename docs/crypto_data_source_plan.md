@@ -14,11 +14,18 @@ CRYPTO 数据源不应依赖单一免费项目，也不应把一堆原子 MCP �
 - 商业搜索与官方公告源做新闻事件层。
 - LunarCrush / Polymarket 做舆情和事件预期层。
 - OpenViking 继续做 approved material、L1/L2 报告和证据存储，不当作行情、新闻、舆情或链上数据源。
-- OpenClaw worker 只看到按 worker 分域封装后的资料包工具，不直接看到一堆底层 provider 原子接口。
+- OpenClaw worker 只看到按 worker 分域封装后的数据结果工具，不直接看到一堆底层 provider 原子接口。
 
-最新人类决策：正式 12 个 CRYPTO TradingAgents worker 和 `report_polisher` 全部打开。当前统一入口是 `claw_get_market_pack`、`claw_get_fundamental_pack`、`claw_get_news_pack`、`claw_get_social_pack`。`market_analyst` 只通过 `claw_get_market_pack` 获取自然语言市场资料包；CRYPTO 市场资料包由 data_gateway 取数、归一化，再交给 CryptoLens 做离线指标分析。新闻/舆情资料包若缺 key、失败、返回空或覆盖不足，worker 必须在自己的 L1 报告中直接说明缺哪些资料。`report_polisher` 只能整理已批准上游报告，不能补写新闻、舆情、基本面事实或投资结论。Python 不补写新闻、舆情或基本面事实，也不静默 fallback。
+最新人类决策：正式 12 个 CRYPTO TradingAgents worker 和 `report_polisher` 全部打开。当前统一入口是 `claw_request_data`。`market_analyst` 只通过 `claw_request_data` 获取自然语言市场数据结果；CRYPTO 市场数据结果由 data_gateway 取数、归一化，再交给 CryptoLens 做离线指标分析。新闻/舆情数据结果若缺 key、失败、返回空或覆盖不足，worker 必须在自己的 L1 报告中直接说明缺哪些资料。`report_polisher` 只能整理已批准上游报告，不能补写新闻、舆情、基本面事实或投资结论。Python 不补写新闻、舆情或基本面事实，也不静默 fallback。
 
-新闻与舆情资料包的详细实现边界见 [CRYPTO 新闻与舆情资料包详细设计](crypto_news_social_data_pack_design.md)。
+2026-06-15 当前实现状态：
+
+- 已接入免费 HTTP 兜底：Binance public futures/options 覆盖资金费率、OI、多空比、主动买卖量差、CVD proxy、期权 OI、期权成交量；CoinGecko public 覆盖币种估值和项目基础资料。
+- 已有付费主源/补充源：CoinGlass 覆盖清算、清算热力图、ETF flow、借贷利率、交易所净流入、交易所余额、巨鲸转账、AHR999；Glassnode 覆盖链上指标、交易所净流入、清算/衍生品等部分指标。
+- 当前免费 HTTP 源仍没有等价接口：清算热力图、交易所净流入、ETF flow、借贷利率、交易所余额、巨鲸转账、AHR999、BTC 深度链上指标。Binance 有清算 WebSocket 流，但当前 data_gateway 执行层是 managed HTTP，不把 WebSocket 流伪装成 HTTP 历史数据。
+- CoinGecko public 可以无 key 低频调用；配置 Demo/Pro key 只用于额度和稳定性，不是项目资料/估值兜底的硬前置。
+
+新闻与舆情数据结果的详细实现边界见 [CRYPTO 新闻与舆情数据结果详细设计](crypto_news_social_data_result_design.md)。
 
 CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](CryptoLens接入方案.md)。
 
@@ -31,11 +38,11 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 2. 免费源只能做补充。
    - 免费源可以提高覆盖面，但不能被当成交易级稳定主源。
-   - 免费源失败、限流、字段缺失或口径冲突，必须进入资料包的 `provider_attempts`、`data_gaps` 或 `conflicts`。
+   - 免费源失败、限流、字段缺失或口径冲突，必须进入数据结果的 `provider_attempts`、`data_gaps` 或 `conflicts`。
 
 3. 不做静默 fallback。
    - 可以有主源、备源和补充源，但报告必须知道用了什么、失败了什么、缺了什么。
-   - 资料包可以标记 `ready`、`partial`、`insufficient`，但这不是新增 runtime gate，只是给 worker 的数据质量材料。
+   - 数据结果可以标记 `ready`、`partial`、`insufficient`，但这不是新增 runtime gate，只是给 worker 的数据质量材料。
 
 4. 不让 Python 代替 worker 分析。
    - Python 负责调度、工具封装、provider 调用和证据保存。
@@ -81,8 +88,8 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 接入建议：
 
-- `market_analyst` 只看到 `claw_get_market_pack`。
-- `claw_get_market_pack` 内部通过 data_gateway 执行 CoinGlass、Binance、Bybit、FRED 等 approved provider plugin/adapter，并写 data_gateway attempt/raw/normalized evidence。
+- `market_analyst` 只看到 `claw_request_data`。
+- `claw_request_data` 内部通过 data_gateway 执行 CoinGlass、Binance、Bybit、FRED 等 approved provider plugin/adapter，并写 data_gateway attempt/raw/normalized evidence。
 - CryptoLens 只读取 data_gateway normalized crypto bundle 做离线分析，输出指标解释、条件场景、失效条件和数据缺口。
 - 禁止任何 worker 直接调用旧 BB MCP、CryptoLens raw tool 或 legacy 已删除数据网关 atomic provider tool。下游 worker 默认读取前线已批准报告。
 
@@ -107,8 +114,8 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 接入建议：
 
-- 放入 `claw_get_fundamental_pack`。
-- 对于没有 DeFi 经营数据的资产，CoinGecko 只能提供基础资料补充；资料包必须同时标明 DeFi/链上经营数据覆盖不足，不能把 CoinGecko 基础资料写成完整基本面。
+- 放入 `claw_request_data`。
+- 对于没有 DeFi 经营数据的资产，CoinGecko 只能提供基础资料补充；数据结果必须同时标明 DeFi/链上经营数据覆盖不足，不能把 CoinGecko 基础资料写成完整基本面。
 
 ### 4.3 DefiLlama
 
@@ -135,9 +142,9 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 接入建议：
 
-- 放入 `claw_get_fundamental_pack`。
+- 放入 `claw_request_data`。
 - 对 DeFi 协议、公链生态、L2、DEX、借贷、稳定币和桥类项目优先使用。
-- 对非 DeFi 资产，资料包必须明确说明 DefiLlama 覆盖不足。
+- 对非 DeFi 资产，数据结果必须明确说明 DefiLlama 覆盖不足。
 
 ### 4.4 legacy 已删除数据网关
 
@@ -189,8 +196,8 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 接入建议：
 
-- 放入 `claw_get_news_pack`。
-- 允许用户按需填写 `BRAVE_SEARCH_API_KEY`、`BOCHA_API_KEY`、`NEWSAPI_API_KEY`、`SERPAPI_API_KEY`、`TAVILY_API_KEY`、`EXA_API_KEY`；未填写的 provider 不发起请求，但必须写入 `provider_attempts` / `data_gaps`，不能从资料包里静默消失。
+- 放入 `claw_request_data`。
+- 允许用户按需填写 `BRAVE_SEARCH_API_KEY`、`BOCHA_API_KEY`、`NEWSAPI_API_KEY`、`SERPAPI_API_KEY`、`TAVILY_API_KEY`、`EXA_API_KEY`；未填写的 provider 不发起请求，但必须写入 `provider_attempts` / `data_gaps`，不能从数据结果里静默消失。
 - 每条新闻必须记录来源、时间、标题、URL、摘要、证据强度和是否官方确认。
 - 官方公告、交易所公告、监管源、商业搜索结果和社区/KOL 传闻必须分层展示；商业搜索只能做发现入口，不能把搜索摘要直接当成事实。
 
@@ -207,13 +214,13 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 风险：
 
-- 具体原帖和语义细节可能需要额外数据。
+- 具体原帖和上下文细节可能需要额外数据。
 - 商业 API / MCP 成本和额度需要确认。
 - 社交热度容易受机器人、空投、交易所活动影响。
 
 接入建议：
 
-- 放入 `claw_get_social_pack`。
+- 放入 `claw_request_data`。
 - 社交指标必须和价格、成交量、OI、清算等市场结构交叉验证。
 - LunarCrush 适合作为聚合指标源；X / Reddit / Telegram / Discord 适合作为原帖与社区样本源；Polymarket 只能表达事件预期或盘口概率，不能写成社交共识或新闻事实。
 
@@ -235,7 +242,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 
 接入建议：
 
-- 放入 `claw_get_news_pack` 或 `claw_get_social_pack` 的辅助域。
+- 放入 `claw_request_data` 或 `claw_request_data` 的辅助域。
 - 报告中应写成“事件盘口预期”，不要写成已发生事实。
 
 ### 4.8 daily_stock_analysis / Awesome-finance-skills
@@ -268,21 +275,21 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - 新闻、舆情、基本面资料采集。
 - 作为无回测证明的交易建议主依据。
 
-## 5. 建议暴露给 worker 的四个资料包
+## 5. 建议暴露给 worker 的四个数据结果
 
-### 5.1 `claw_get_market_pack`
+### 5.1 `claw_request_data`
 
 第一阶段 CRYPTO 市场分析只有一个 worker 可见工具：
 
-- `claw_get_market_pack`。它是 market worker 的统一资料包入口，不是数据源、不是 CryptoLens、不是 legacy 已删除数据网关 本体。
-- CRYPTO 下的内部链路是：`claw_get_market_pack -> data_gateway 取数 -> normalized crypto bundle -> CryptoLens analysis engine -> reader_brief`。
-- worker 只看到资料包的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；provider raw payload、CryptoLens raw result、Mongo raw/cache object 都不得成为 worker 主材料。
+- `claw_request_data`。它是 market worker 的统一数据结果入口，不是数据源、不是 CryptoLens、不是 legacy 已删除数据网关 本体。
+- CRYPTO 下的内部链路是：`claw_request_data -> data_gateway 取数 -> normalized crypto bundle -> CryptoLens analysis engine -> reader_brief`。
+- worker 只看到数据结果的自然语言 `reader_brief`、紧凑数据摘要、`provider_attempts`、`data_gaps`、`conflicts` 和 `readiness`；provider raw payload、CryptoLens raw result、Mongo raw/cache object 都不得成为 worker 主材料。
 
 注册边界：
 
 - `bb_crypto_data__build_trade_context` 不暴露给 `market_analyst` 的 CRYPTO stage，避免 worker 直接接收旧 BB 原始大 JSON。
-- 旧 `crypto_market_data_pack` 只作为历史实现/迁移 alias 讨论；目标态不得作为 data_gateway 失败后的 fallback。
-- `claw_get_market_pack` 不能把缺失的 OI、资金费率、清算、多空比、主动买卖、期权、ETF 或链上周期指标补写成已覆盖；缺失必须进入 `data_gaps`。
+- 旧 `claw_request_data` 只作为历史实现/迁移 alias 讨论；目标态不得作为 data_gateway 失败后的 fallback。
+- `claw_request_data` 不能把缺失的 OI、资金费率、清算、多空比、主动买卖、期权、ETF 或链上周期指标补写成已覆盖；缺失必须进入 `data_gaps`。
 - CRYPTO market stage 是否真实可用，必须看 fresh provider payload 中的 visible tool schema 和真实 tool call 证据，不能只看静态合同。
 
 目标覆盖：
@@ -296,15 +303,15 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - 主动买卖。
 - ETF。
 - 链上周期指标。
-- 图表资产：目标态由 `claw_get_market_pack` 的 data_gateway market pack 生成真实 OHLCV 衍生技术图表，供最终报告复制图片时使用；旧 `crypto_market_data_pack` 只作为历史实现说明。
+- 图表资产：目标态由 `claw_request_data` 触发的 DataNeed 数据结果生成真实 OHLCV 衍生技术图表，供最终报告复制图片时使用；旧历史数据入口路径只作为历史实现说明。
 
-### 5.2 `claw_get_fundamental_pack`
+### 5.2 `claw_request_data`
 
 当前实现状态：
 
-- 目标 worker-visible 工具名是 `claw_get_fundamental_pack`；旧 `crypto_fundamental_data_pack` 只作为历史实现路径和迁移对象。
-- 当前实现接入 CoinGecko 与 DefiLlama：CoinGecko 负责币种基础资料、市值、FDV、供应量和价格快照；DefiLlama 负责 DeFi 协议 TVL 与 fees/revenue。
-- CoinGecko 必须配置 `COINGECKO_DEMO_API_KEY` 或 `COINGECKO_PRO_API_KEY`；缺 key 时资料包记录 credential missing，不走 public no-key 静默 fallback。DefiLlama 免费 API 可无 key，`DEFILLAMA_API_KEY` 只用于 Pro 路径。
+- 目标 worker-visible 工具名是 `claw_request_data`；旧历史数据入口工具只作为历史实现路径和迁移对象。
+- 当前实现接入 Binance public futures/options、CoinGecko public、DefiLlama free、Alternative.me、GitHub releases、Google News RSS，并可在配置 key 后优先使用 CoinGlass、Glassnode、CoinGecko Pro 等付费源。
+- CoinGecko public 可无 key 低频兜底；`COINGECKO_DEMO_API_KEY` 或 `COINGECKO_PRO_API_KEY` 用于提升额度和稳定性。DefiLlama 免费 API 可无 key，`DEFILLAMA_API_KEY` 只用于 Pro 路径。
 - `fundamental_analyst` 的 CRYPTO stage 仍不应仅凭静态工具注册打开；打开前还需要 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告证据。
 
 底层候选：
@@ -325,7 +332,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - hacks / unlocks / treasuries。
 - 生态和竞争格局。
 
-### 5.3 `claw_get_news_pack`
+### 5.3 `claw_request_data`
 
 底层候选：
 
@@ -346,7 +353,7 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - ETF / 机构资金新闻。
 - 安全事件和黑客攻击。
 
-### 5.4 `claw_get_social_pack`
+### 5.4 `claw_request_data`
 
 底层候选：
 
@@ -364,9 +371,9 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - 机器人 / 空投噪音。
 - 短期情绪对价格和成交量的影响。
 
-## 6. 统一资料包返回结构
+## 6. 统一数据结果返回结构
 
-建议所有 CRYPTO 资料包返回同一类 envelope：
+建议所有 CRYPTO 数据结果返回同一类 envelope：
 
 ```json
 {
@@ -392,16 +399,16 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 - `provider_attempts`：每个底层 provider 的请求状态、失败原因、限流、认证缺失。
 - `data_gaps`：缺失的数据域。
 - `conflicts`：不同 provider 之间的口径冲突。
-- `readiness`：资料包对 worker 的数据质量说明，不是新增 runtime gate。
+- `readiness`：数据结果对 worker 的数据质量说明，不是新增 runtime gate。
 
 ## 7. Stage 打开策略
 
 ### 7.1 已打开
 
-- `market_analyst` / CRYPTO：只挂 `claw_get_market_pack`。data_gateway 负责所有外部 provider 取数，CryptoLens 负责对 normalized bundle 做离线指标分析。
-- `fundamental_analyst` / CRYPTO：只挂 `claw_get_fundamental_pack`，当前目标覆盖 CoinGecko 与 DefiLlama 边界。
-- `news_analyst` / CRYPTO：只挂 `claw_get_news_pack`；该包覆盖官方公告/RSS/页面、GitHub releases、交易所公告配置源、监管 feed、DefiLlama 安全/融资背景、Polymarket 事件预期和商业搜索发现。
-- `social_analyst` / CRYPTO：只挂 `claw_get_social_pack`；该包覆盖 Alternative.me、LunarCrush、X、Reddit、Telegram、Discord、Polymarket 和公开讨论搜索发现。只有真实 provider payload 返回的平台才算覆盖。
+- `market_analyst` / CRYPTO：只挂 `claw_request_data`。data_gateway 负责所有外部 provider 取数，CryptoLens 负责对 normalized bundle 做离线指标分析。
+- `fundamental_analyst` / CRYPTO：只挂 `claw_request_data`，当前目标覆盖 CoinGecko 与 DefiLlama 边界。
+- `news_analyst` / CRYPTO：只挂 `claw_request_data`；该包覆盖官方公告/RSS/页面、GitHub releases、交易所公告配置源、监管 feed、DefiLlama 安全/融资背景、Polymarket 事件预期和商业搜索发现。
+- `social_analyst` / CRYPTO：只挂 `claw_request_data`；该包覆盖 Alternative.me、LunarCrush、X、Reddit、Telegram、Discord、Polymarket 和公开讨论搜索发现。只有真实 provider payload 返回的平台才算覆盖。
 - 下游 8 个正式 worker：`bull_researcher`、`bear_researcher`、`research_manager`、`trader`、`risk_challenger`、`risk_guardian`、`risk_moderator`、`portfolio_manager` 均打开，但不挂外部数据工具，只读取上游 approved L1 报告并对缺口做条件化推理。
 
 ### 7.2 下游纯推理 worker 边界
@@ -420,32 +427,32 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 运行时需要确认：
 
 - CRYPTO prompt 已存在并通过 prompt 合同。
-- `market_research_report`、`fundamentals_report`、`news_report`、`sentiment_report` 都来自真实 worker 的 approved L1 自然语言报告。若新闻/舆情资料包返回 `partial`、`insufficient`、缺 key 或调用失败，下游必须把该缺口作为材料边界，不能用空字符串、占位材料、模型常识或 Python 摘要代替。
+- `market_research_report`、`fundamentals_report`、`news_report`、`sentiment_report` 都来自真实 worker 的 approved L1 自然语言报告。若新闻/舆情数据结果返回 `partial`、`insufficient`、缺 key 或调用失败，下游必须把该缺口作为材料边界，不能用空字符串、占位材料、模型常识或 Python 摘要代替。
 - 不新增 fallback prompt。
 - 不新增 runtime gate。
 - provider payload 证明这些 worker 没看到不该看的工具。
-- 如果某个前线资料包返回 `partial` 或 `insufficient`，下游可以基于已批准报告做条件化推理；但不能把缺失的基本面、新闻或舆情补写成事实。
+- 如果某个前线数据结果返回 `partial` 或 `insufficient`，下游可以基于已批准报告做条件化推理；但不能把缺失的基本面、新闻或舆情补写成事实。
 
-### 7.3 覆盖不足的前线资料包
+### 7.3 覆盖不足的前线数据结果
 
-这些 worker 已打开，且已挂真实资料包，但当前覆盖边界如下：
+这些 worker 已打开，且已挂真实数据结果，但当前覆盖边界如下：
 
-- `news_analyst`：必须调用 `claw_get_news_pack`；如果只得到搜索发现、Polymarket 或 DefiLlama 背景，必须写明缺少官方公告、GitHub、交易所公告和监管原始源。
-- `social_analyst`：必须调用 `claw_get_social_pack`；如果只得到 Alternative.me、Polymarket 或搜索发现，必须写明缺少真实社交平台原始舆情覆盖。
+- `news_analyst`：必须调用 `claw_request_data`；如果只得到搜索发现、Polymarket 或 DefiLlama 背景，必须写明缺少官方公告、GitHub、交易所公告和监管原始源。
+- `social_analyst`：必须调用 `claw_request_data`；如果只得到 Alternative.me、Polymarket 或搜索发现，必须写明缺少真实社交平台原始舆情覆盖。
 
 原因：
 
-- 新决策要求正式 worker 参与链路；资料包覆盖不足时必须由 worker 自己暴露资料缺口。
+- 新决策要求正式 worker 参与链路；数据结果覆盖不足时必须由 worker 自己暴露资料缺口。
 - 这避免 Python 补写事实、静默 fallback 或新增 runtime gate / guard。
 
 ## 8. Worker 工具挂载建议
 
 | worker | CRYPTO 工具策略 |
 |---|---|
-| `market_analyst` | 只挂 `claw_get_market_pack`；工具内部经 data_gateway 获取 CRYPTO 市场资料，再调用 CryptoLens 离线分析引擎生成自然语言资料包 |
-| `fundamental_analyst` | 只挂 `claw_get_fundamental_pack`；缺 key、失败、partial 或 insufficient 必须写入 L1 缺口 |
-| `news_analyst` | 只挂 `claw_get_news_pack`；搜索发现、Polymarket 和 DefiLlama 背景不能被写成新闻事实，缺原始源必须上报 |
-| `social_analyst` | 只挂 `claw_get_social_pack`；Alternative.me / Polymarket / 搜索发现不能被写成完整社交舆情，缺原始平台必须上报 |
+| `market_analyst` | 只挂 `claw_request_data`；工具内部经 data_gateway 获取 CRYPTO 市场资料，再调用 CryptoLens 离线分析引擎生成自然语言数据结果 |
+| `fundamental_analyst` | 只挂 `claw_request_data`；缺 key、失败、partial 或 insufficient 必须写入 L1 缺口 |
+| `news_analyst` | 只挂 `claw_request_data`；搜索发现、Polymarket 和 DefiLlama 背景不能被写成新闻事实，缺原始源必须上报 |
+| `social_analyst` | 只挂 `claw_request_data`；Alternative.me / Polymarket / 搜索发现不能被写成完整社交舆情，缺原始平台必须上报 |
 | `bull_researcher` | 不挂外部数据工具；读四份前线 approved L1 报告，缺口必须条件化处理 |
 | `bear_researcher` | 不挂外部数据工具；读四份前线报告和 bull 发言，缺口必须条件化处理 |
 | `research_manager` | 不挂外部数据工具；读前线报告和牛熊辩论，不能替缺失前线材料补事实 |
@@ -479,11 +486,11 @@ CryptoLens 迁入口径和 data_gateway 边界见 [CryptoLens 接入方案](Cryp
 ## 10. 推荐实施顺序
 
 1. 保持正式 12 个 CRYPTO worker 与 `report_polisher` 打开；当前能力标记为“CRYPTO 全链路，新闻/舆情覆盖不完整”，不声称完整新闻或完整社交舆情覆盖。
-2. 用 fresh provider payload 证明 `market_analyst` 实际只看到 `claw_get_market_pack`，并由该资料包内部真实调用 data_gateway provider plugins/adapters 产出市场结构材料，再由 CryptoLens 生成指标分析材料。
-3. 对 `claw_get_fundamental_pack` 做 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告验证。
-4. 为 `claw_get_news_pack` 配置项目官方公告 / GitHub releases / 交易所公告 / 监管源，并验证 provider attempts 与 source URL。
-5. 为 `claw_get_social_pack` 配置 LunarCrush、X、Reddit、Telegram、Discord 等真实社交源，并验证 provider attempts 与平台覆盖状态。
-6. 每接一个资料包，就更新对应 CRYPTO prompt 的“可用工具 / 先调用工具”段落。
+2. 用 fresh provider payload 证明 `market_analyst` 实际只看到 `claw_request_data`，并由该数据结果内部真实调用 data_gateway provider plugins/adapters 产出市场结构材料，再由 CryptoLens 生成指标分析材料。
+3. 对 `claw_request_data` 做 fresh provider payload、真实 tool call、provider attempts / data gaps / conflicts、approved L1 报告验证。
+4. 为 `claw_request_data` 配置项目官方公告 / GitHub releases / 交易所公告 / 监管源，并验证 provider attempts 与 source URL。
+5. 为 `claw_request_data` 配置 LunarCrush、X、Reddit、Telegram、Discord 等真实社交源，并验证 provider attempts 与平台覆盖状态。
+6. 每接一个数据结果，就更新对应 CRYPTO prompt 的“可用工具 / 先调用工具”段落。
 7. 每打开或调整一个 worker 的 CRYPTO stage，都要用 provider payload 证明：
    - 模型实际看到的工具集合正确。
    - 工具调用真实发生或纯推理 worker 不暴露工具。

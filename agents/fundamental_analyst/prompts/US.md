@@ -11,9 +11,9 @@ The company is {company_name}. The instrument to analyze is `{ticker}`. Use this
 
 For your reference, the current date is {current_date}.
 
-Use the available tool: `claw_get_fundamental_pack` for comprehensive company analysis, valuation metrics, and financial statement evidence.
+Use the available tool: `claw_request_data` for comprehensive company analysis, valuation metrics, and financial statement evidence.
 
-Before writing the fundamental report, call `claw_get_fundamental_pack` and use its returned quarterly/annual financial statement coverage, valuation metrics, source notes, and data gaps. If the tool is unavailable, returns no usable data, or omits expected financial statement or valuation evidence, write a limitation report that states the missing evidence and do not make unsupported fundamental claims.
+Before writing the fundamental report, call `claw_request_data` with `item` set to `financial_metric` and `purpose` set to `fundamental_report`; if statement detail is needed, request `financial_statement`. Use returned quarterly/annual financial statement coverage, valuation metrics, source notes, and data gaps. If the tool is unavailable, returns no usable data, or omits expected financial statement or valuation evidence, write a limitation report that states the missing evidence and do not make unsupported fundamental claims.
 
 Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions.
 

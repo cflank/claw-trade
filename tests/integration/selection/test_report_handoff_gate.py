@@ -13,9 +13,9 @@ from claw_trade.selection.confirmation import (
     SelectionConfirmRequest,
 )
 from claw_trade.selection.models import (
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
@@ -54,7 +54,7 @@ class _FakeWorkflowRunner:
 def _build_store(
     *,
     expires_at: str = "2026-05-27T09:00:00+00:00",
-    pack_sha: str = "c" * 64,
+    cache_sha: str = "c" * 64,
     manifest_sha: str | None = None,
     source_lineage_refs: tuple[str, ...] = ("lineage://a",),
     integrity: SelectionRunIntegrity | None = None,
@@ -62,21 +62,21 @@ def _build_store(
 ) -> SelectionRunStore:
     store = SelectionRunStore()
     run_id = "sel-run-09-gate"
-    final_manifest_sha = manifest_sha if manifest_sha is not None else pack_sha
+    final_manifest_sha = manifest_sha if manifest_sha is not None else cache_sha
     manifest = (
-        CandidatePackManifest(
-            schema_version="sel-04-candidate-pack-v1",
+        CandidateCacheManifest(
+            schema_version="sel-04-candidate-cache-v1",
             selection_run_id=run_id,
             market=SelectionMarket.CN_A,
             profile=SelectionProfile.CN_A,
             trade_date="2026-05-26",
             candidate_count=20,
             source_lineage_refs=source_lineage_refs,
-            pack_body_sha256=final_manifest_sha,
+            cache_body_sha256=final_manifest_sha,
             strategy_config_ref="config://approved",
-            readback_status=CandidatePackReadbackStatus.VERIFIED,
-            stage="approving_candidate_pack",
-            target="candidate_pack",
+            readback_status=CandidateCacheReadbackStatus.VERIFIED,
+            stage="approving_candidate_cache",
+            target="candidate_cache",
         )
         if include_manifest
         else None
@@ -90,22 +90,22 @@ def _build_store(
                 trade_date="2026-05-26",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://sel-run-09-gate",
+                data_need_audit_ref="plan://sel-run-09-gate",
                 approved_strategy_config_ref="config://approved",
                 trigger_source=SelectionTriggerSource.SCHEDULED,
             ),
             data_run=SelectionDataRun(
                 selection_run_id=run_id,
                 status=SelectionDataRunStatus.COMPLETED,
-                candidate_pack_ref=CandidatePackRef(
+                candidate_cache_ref=CandidateCacheRef(
                     selection_run_id=run_id,
-                    material_id="selection-candidate-pack-sel-run-09-gate",
+                    material_id="selection-candidate-cache-sel-run-09-gate",
                     l1_uri="ov://selection/sel-run-09-gate/l1",
-                    content_sha256=pack_sha,
+                    content_sha256=cache_sha,
                     manifest_ref="ov://selection/sel-run-09-gate/manifest",
                     approved_at="2026-05-26T09:00:00+00:00",
                     expires_at=expires_at,
-                    pack_summary_ref="ov://selection/sel-run-09-gate/summary",
+                    cache_summary_ref="ov://selection/sel-run-09-gate/summary",
                 ),
                 completed_at="2026-05-26T09:01:00+00:00",
             ),
@@ -246,7 +246,7 @@ def test_watch_or_reject_ticker_cannot_trigger_report(tmp_path: Path) -> None:
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
 
-def test_confirmation_revalidates_candidate_pack_freshness(tmp_path: Path) -> None:
+def test_confirmation_revalidates_candidate_cache_freshness(tmp_path: Path) -> None:
     stale_store = _build_store(expires_at="2026-05-25T09:00:00+00:00")
     controller, runner, queue = _controller_with_queue(tmp_path, store=stale_store)
     with pytest.raises(SelectionConfirmationError) as exc:
@@ -263,9 +263,9 @@ def test_confirmation_revalidates_candidate_pack_freshness(tmp_path: Path) -> No
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
 
-def test_confirmation_rejects_when_candidate_pack_hash_mismatch(tmp_path: Path) -> None:
+def test_confirmation_rejects_when_candidate_cache_hash_mismatch(tmp_path: Path) -> None:
     mismatch_store = _build_store(
-        pack_sha="c" * 64,
+        cache_sha="c" * 64,
         manifest_sha="d" * 64,
     )
     controller, runner, queue = _controller_with_queue(tmp_path, store=mismatch_store)
@@ -278,7 +278,7 @@ def test_confirmation_rejects_when_candidate_pack_hash_mismatch(tmp_path: Path) 
                 ticker="600519.SH",
             )
         )
-    assert exc.value.code == "candidate_pack_hash_mismatch"
+    assert exc.value.code == "candidate_cache_hash_mismatch"
     assert runner.create_calls == 0
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
@@ -299,7 +299,7 @@ def test_confirmation_rejects_when_readback_not_verified(tmp_path: Path) -> None
                 ticker="600519.SH",
             )
         )
-    assert exc.value.code == "candidate_pack_integrity_failed"
+    assert exc.value.code == "candidate_cache_integrity_failed"
     assert runner.create_calls == 0
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
@@ -316,7 +316,7 @@ def test_confirmation_rejects_when_lineage_complete_flag_is_false(tmp_path: Path
                 ticker="600519.SH",
             )
         )
-    assert exc.value.code == "candidate_pack_lineage_incomplete"
+    assert exc.value.code == "candidate_cache_lineage_incomplete"
     assert runner.create_calls == 0
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
@@ -337,7 +337,7 @@ def test_confirmation_rejects_when_source_lineage_refs_is_empty(tmp_path: Path) 
                 ticker="600519.SH",
             )
         )
-    assert exc.value.code == "candidate_pack_lineage_incomplete"
+    assert exc.value.code == "candidate_cache_lineage_incomplete"
     assert runner.create_calls == 0
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
@@ -356,7 +356,7 @@ def test_confirmation_rejects_when_manifest_missing(tmp_path: Path) -> None:
                 ticker="600519.SH",
             )
         )
-    assert exc.value.code == "candidate_pack_integrity_failed"
+    assert exc.value.code == "candidate_cache_integrity_failed"
     assert runner.create_calls == 0
     _assert_queue_has_no_enqueued_or_started_report_task(queue)
 
@@ -421,11 +421,11 @@ def test_confirmation_rejects_when_pm_decision_not_approved_or_not_bound(tmp_pat
     assert runner.create_calls == 0
 
 
-def test_confirmation_rejects_candidate_pack_material_even_if_marked_as_pm_decision(tmp_path: Path) -> None:
+def test_confirmation_rejects_candidate_cache_material_even_if_marked_as_pm_decision(tmp_path: Path) -> None:
     controller, runner = _controller_with_workflow_evidence(
         tmp_path,
         store=_build_store(),
-        approved_material_id="selection-candidate-pack-sel-run-09-gate",
+        approved_material_id="selection-candidate-cache-sel-run-09-gate",
         approval_status="approved",
         decision_workflow_run_id="select-20260526T130000-req-gate",
         decision_material_target="selection_portfolio_decision",
@@ -434,8 +434,8 @@ def test_confirmation_rejects_candidate_pack_material_even_if_marked_as_pm_decis
     with pytest.raises(SelectionConfirmationError) as exc:
         controller.confirm(
             SelectionConfirmRequest(
-                confirmation_id="cfm-candidate-pack-id",
-                idempotency_key="select-20260526T130000-req-gate:600519.SH:cfm-candidate-pack-id",
+                confirmation_id="cfm-candidate-cache-id",
+                idempotency_key="select-20260526T130000-req-gate:600519.SH:cfm-candidate-cache-id",
                 select_workflow_run_id="select-20260526T130000-req-gate",
                 ticker="600519.SH",
             )

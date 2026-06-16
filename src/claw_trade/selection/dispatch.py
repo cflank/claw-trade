@@ -18,7 +18,7 @@ from claw_trade.selection.evidence import (
     validate_selection_dispatch_evidence,
 )
 from claw_trade.selection.models import (
-    CandidatePackRef,
+    CandidateCacheRef,
     SelectionStage,
     SelectionSystemContextPolicy,
     SelectionWorkerDispatch,
@@ -26,7 +26,7 @@ from claw_trade.selection.models import (
     SelectRequest,
 )
 
-_SELECTION_CANDIDATE_PACK_TOOL = "claw_get_selection_candidate_pack"
+_SELECTION_CANDIDATE_CACHE_TOOL = "claw_get_selection_candidate_cache"
 _SELECTION_DISPATCH_WORKER_ORDER = (
     SelectionWorkerId.STRATEGIST,
     SelectionWorkerId.SKEPTIC,
@@ -40,8 +40,8 @@ _SELECTION_DISPATCH_STAGE_BY_WORKER: dict[SelectionWorkerId, SelectionStage] = {
     SelectionWorkerId.PORTFOLIO_MANAGER: SelectionStage.SELECTION_PORTFOLIO_DECISION,
 }
 _SELECTION_DISPATCH_TOOLS_BY_WORKER: dict[SelectionWorkerId, tuple[str, ...]] = {
-    SelectionWorkerId.STRATEGIST: (_SELECTION_CANDIDATE_PACK_TOOL,),
-    SelectionWorkerId.SKEPTIC: (_SELECTION_CANDIDATE_PACK_TOOL,),
+    SelectionWorkerId.STRATEGIST: (_SELECTION_CANDIDATE_CACHE_TOOL,),
+    SelectionWorkerId.SKEPTIC: (_SELECTION_CANDIDATE_CACHE_TOOL,),
     SelectionWorkerId.MANAGER: (),
     SelectionWorkerId.PORTFOLIO_MANAGER: (),
 }
@@ -50,13 +50,13 @@ _SKEPTIC_PROMPT_MATERIAL_MARKERS = ("approved_strategist_l1",)
 _MANAGER_PROMPT_MATERIAL_MARKERS = (
     "approved_strategist_l1",
     "approved_skeptic_l1",
-    "candidate_pack_summary",
+    "candidate_cache_summary",
 )
 _PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS = (
     "approved_manager_l1",
     "approved_strategist_l1",
     "approved_skeptic_l1",
-    "candidate_pack_summary",
+    "candidate_cache_summary",
 )
 
 
@@ -77,7 +77,7 @@ def build_fixed_selection_dispatches(
     select_workflow_run_id: str,
     selection_run_id: str,
     evidence_root: Path,
-    candidate_pack_summary_md: str,
+    candidate_cache_summary_md: str,
     approved_l1_materials: Mapping[SelectionWorkerId, str],
 ) -> tuple[SelectionWorkerDispatch, ...]:
     dispatches: list[SelectionWorkerDispatch] = []
@@ -90,7 +90,7 @@ def build_fixed_selection_dispatches(
                 evidence_root=evidence_root,
                 dispatch_index=index,
                 worker_id=worker_id,
-                candidate_pack_summary_md=candidate_pack_summary_md,
+                candidate_cache_summary_md=candidate_cache_summary_md,
                 approved_l1_materials=approved_l1_materials,
             )
         )
@@ -101,7 +101,7 @@ def execute_selection_dispatches(
     *,
     openclaw: OpenClawClient,
     dispatches: tuple[SelectionWorkerDispatch, ...],
-    candidate_pack_ref: CandidatePackRef,
+    candidate_cache_ref: CandidateCacheRef,
     profile: str = "CN_A",
     selection_artifact_root: Path | None = None,
 ) -> tuple[SelectionDispatchExecution, ...]:
@@ -109,7 +109,7 @@ def execute_selection_dispatches(
     for dispatch in dispatches:
         command = build_openclaw_command_for_selection_dispatch(
             dispatch=dispatch,
-            candidate_pack_ref=candidate_pack_ref,
+            candidate_cache_ref=candidate_cache_ref,
             profile=profile,
             selection_artifact_root=selection_artifact_root,
         )
@@ -157,18 +157,19 @@ def execute_selection_dispatches(
 def build_openclaw_command_for_selection_dispatch(
     *,
     dispatch: SelectionWorkerDispatch,
-    candidate_pack_ref: CandidatePackRef,
+    candidate_cache_ref: CandidateCacheRef,
     profile: str = "CN_A",
     selection_artifact_root: Path | None = None,
 ) -> OpenClawCommand:
     runtime_vars: dict[str, object] = dict(dispatch.prompt_runtime_vars)
-    runtime_vars["select_workflow_run_id"] = _prompt_context_with_model_visible_materials(dispatch)
-    runtime_vars["candidate_pack_ref"] = _serialize_candidate_pack_ref_runtime_var(candidate_pack_ref)
+    runtime_vars["select_workflow_run_id"] = dispatch.select_workflow_run_id
+    runtime_vars["selection_prompt_context"] = _prompt_context_with_model_visible_materials(dispatch)
+    runtime_vars["candidate_cache_ref"] = _serialize_candidate_cache_ref_runtime_var(candidate_cache_ref)
     if selection_artifact_root is not None:
         runtime_vars["selection_artifact_root"] = str(selection_artifact_root)
     upstream_materials = _build_upstream_material_refs(
         dispatch=dispatch,
-        candidate_pack_ref=candidate_pack_ref,
+        candidate_cache_ref=candidate_cache_ref,
     )
 
     return OpenClawCommand(
@@ -217,7 +218,7 @@ def _build_single_dispatch(
     evidence_root: Path,
     dispatch_index: int,
     worker_id: SelectionWorkerId,
-    candidate_pack_summary_md: str,
+    candidate_cache_summary_md: str,
     approved_l1_materials: Mapping[SelectionWorkerId, str],
 ) -> SelectionWorkerDispatch:
     stage = _SELECTION_DISPATCH_STAGE_BY_WORKER[worker_id]
@@ -227,7 +228,7 @@ def _build_single_dispatch(
         raise ValueError("request.trade_date is required for selection dispatch runtime vars")
     model_materials = _model_visible_materials_for_worker(
         worker_id=worker_id,
-        candidate_pack_summary_md=candidate_pack_summary_md,
+        candidate_cache_summary_md=candidate_cache_summary_md,
         approved_l1_materials=approved_l1_materials,
     )
     return SelectionWorkerDispatch(
@@ -252,11 +253,11 @@ def _build_single_dispatch(
 def _model_visible_materials_for_worker(
     *,
     worker_id: SelectionWorkerId,
-    candidate_pack_summary_md: str,
+    candidate_cache_summary_md: str,
     approved_l1_materials: Mapping[SelectionWorkerId, str],
 ) -> tuple[str, ...]:
-    if not candidate_pack_summary_md.strip():
-        raise ValueError("candidate_pack_summary_md must be non-empty")
+    if not candidate_cache_summary_md.strip():
+        raise ValueError("candidate_cache_summary_md must be non-empty")
 
     if worker_id == SelectionWorkerId.STRATEGIST:
         return (_RUNTIME_CONTEXT_PLACEHOLDER,)
@@ -266,12 +267,12 @@ def _model_visible_materials_for_worker(
     if worker_id == SelectionWorkerId.MANAGER:
         strategist_l1 = _required_upstream_l1(approved_l1_materials, SelectionWorkerId.STRATEGIST)
         skeptic_l1 = _required_upstream_l1(approved_l1_materials, SelectionWorkerId.SKEPTIC)
-        return (strategist_l1, skeptic_l1, candidate_pack_summary_md)
+        return (strategist_l1, skeptic_l1, candidate_cache_summary_md)
     if worker_id == SelectionWorkerId.PORTFOLIO_MANAGER:
         strategist_l1 = _required_upstream_l1(approved_l1_materials, SelectionWorkerId.STRATEGIST)
         skeptic_l1 = _required_upstream_l1(approved_l1_materials, SelectionWorkerId.SKEPTIC)
         manager_l1 = _required_upstream_l1(approved_l1_materials, SelectionWorkerId.MANAGER)
-        return (manager_l1, strategist_l1, skeptic_l1, candidate_pack_summary_md)
+        return (manager_l1, strategist_l1, skeptic_l1, candidate_cache_summary_md)
     raise ValueError(f"unsupported selection worker: {worker_id}")
 
 
@@ -316,16 +317,16 @@ def _write_selection_dispatch_command_snapshot(
     return command_snapshot
 
 
-def _serialize_candidate_pack_ref_runtime_var(candidate_pack_ref: CandidatePackRef) -> str:
+def _serialize_candidate_cache_ref_runtime_var(candidate_cache_ref: CandidateCacheRef) -> str:
     payload = {
-        "selection_run_id": candidate_pack_ref.selection_run_id,
-        "material_id": candidate_pack_ref.material_id,
-        "l1_uri": candidate_pack_ref.l1_uri,
-        "content_sha256": candidate_pack_ref.content_sha256,
-        "manifest_ref": candidate_pack_ref.manifest_ref,
-        "approved_at": candidate_pack_ref.approved_at,
-        "expires_at": candidate_pack_ref.expires_at,
-        "pack_summary_ref": candidate_pack_ref.pack_summary_ref,
+        "selection_run_id": candidate_cache_ref.selection_run_id,
+        "material_id": candidate_cache_ref.material_id,
+        "l1_uri": candidate_cache_ref.l1_uri,
+        "content_sha256": candidate_cache_ref.content_sha256,
+        "manifest_ref": candidate_cache_ref.manifest_ref,
+        "approved_at": candidate_cache_ref.approved_at,
+        "expires_at": candidate_cache_ref.expires_at,
+        "cache_summary_ref": candidate_cache_ref.cache_summary_ref,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -364,18 +365,18 @@ def _prompt_material_sections(dispatch: SelectionWorkerDispatch) -> tuple[tuple[
 
 def _candidate_checklist_from_material_sections(sections: tuple[tuple[str, str], ...]) -> str:
     for marker, material in sections:
-        if marker == "candidate_pack_summary":
+        if marker == "candidate_cache_summary":
             return _candidate_checklist_from_summary(material)
     return ""
 
 
-def _candidate_checklist_from_summary(candidate_pack_summary_md: str) -> str:
+def _candidate_checklist_from_summary(candidate_cache_summary_md: str) -> str:
     rows: list[tuple[str, str, str]] = []
     rank_index: int | None = None
     ticker_index: int | None = None
     company_index: int | None = None
 
-    for line in candidate_pack_summary_md.splitlines():
+    for line in candidate_cache_summary_md.splitlines():
         cells = _markdown_table_cells(line)
         if not cells:
             continue
@@ -439,9 +440,9 @@ def _looks_like_ticker(value: str) -> bool:
 def _build_upstream_material_refs(
     *,
     dispatch: SelectionWorkerDispatch,
-    candidate_pack_ref: CandidatePackRef,
+    candidate_cache_ref: CandidateCacheRef,
 ) -> tuple[dict[str, str | None], ...]:
-    upstream_sources = _upstream_material_sources(dispatch=dispatch, candidate_pack_ref=candidate_pack_ref)
+    upstream_sources = _upstream_material_sources(dispatch=dispatch, candidate_cache_ref=candidate_cache_ref)
     if not upstream_sources:
         return ()
 
@@ -469,7 +470,7 @@ def _build_upstream_material_refs(
 def _upstream_material_sources(
     *,
     dispatch: SelectionWorkerDispatch,
-    candidate_pack_ref: CandidatePackRef,
+    candidate_cache_ref: CandidateCacheRef,
 ) -> tuple[tuple[str, str, str, str, str], ...]:
     materials = dispatch.model_visible_materials
     if dispatch.worker_id == SelectionWorkerId.STRATEGIST:
@@ -517,10 +518,10 @@ def _upstream_material_sources(
             ),
             (
                 materials[2],
-                "selection_candidate_pack_summary",
+                "selection_candidate_cache_summary",
                 dispatch.stage.value,
-                f"{dispatch.select_workflow_run_id}-candidate-pack-summary",
-                candidate_pack_ref.pack_summary_ref,
+                f"{dispatch.select_workflow_run_id}-candidate-cache-summary",
+                candidate_cache_ref.cache_summary_ref,
             ),
         )
     if dispatch.worker_id == SelectionWorkerId.PORTFOLIO_MANAGER:
@@ -563,10 +564,10 @@ def _upstream_material_sources(
             ),
             (
                 materials[3],
-                "selection_candidate_pack_summary",
+                "selection_candidate_cache_summary",
                 dispatch.stage.value,
-                f"{dispatch.select_workflow_run_id}-candidate-pack-summary",
-                candidate_pack_ref.pack_summary_ref,
+                f"{dispatch.select_workflow_run_id}-candidate-cache-summary",
+                candidate_cache_ref.cache_summary_ref,
             ),
         )
     raise ValueError(f"unsupported selection worker: {dispatch.worker_id.value}")

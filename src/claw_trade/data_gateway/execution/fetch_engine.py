@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from claw_trade.data_gateway.models import FetchResult
 
-from .managed_http import HttpObservation, HttpRequestSpec, HttpResponseCapture, ManagedHttp, UrllibHttpClient, _redact_headers
+from .managed_http import HttpObservation, HttpRequestSpec, HttpResponseCapture, ManagedHttp, RequestsHttpClient, _redact_headers
 from .rate_limiter import RateLimiter
 
 
@@ -36,7 +36,7 @@ class FetchTask:
     fields: tuple[str, ...]
     provider_config_version: str | None
     params: dict[str, Any]
-    deadline_at: datetime | None
+    deadline_at: datetime | None = None
 
     @classmethod
     def from_batch(cls, batch: Any) -> "FetchTask":
@@ -80,7 +80,7 @@ class FetchEngine:
         rate_limiter: RateLimiter | None = None,
     ) -> None:
         self._registry = registry
-        self._managed_http = managed_http or ManagedHttp(UrllibHttpClient())
+        self._managed_http = managed_http or ManagedHttp(RequestsHttpClient())
         self._credential_resolver = credential_resolver
         self._rate_limiter = rate_limiter
 
@@ -117,6 +117,7 @@ class FetchEngine:
             rate_limit_key=rate_limit_key,
             rate_limit_policy=rate_limit_policy,
             deadline_at=_deadline_at(batch),
+            pre_reserved=_rate_limit_pre_reserved(batch),
         )
 
 
@@ -136,12 +137,14 @@ class _RateLimitedManagedHttp:
         rate_limit_key: str,
         rate_limit_policy: Any,
         deadline_at: datetime | None,
+        pre_reserved: bool,
     ) -> None:
         self._inner = inner
         self._rate_limiter = rate_limiter
         self._rate_limit_key = rate_limit_key
         self._rate_limit_policy = rate_limit_policy
         self._deadline_at = deadline_at
+        self._pre_reserved = pre_reserved
 
     def stable_key(self, request: HttpRequestSpec) -> str:
         return self._inner.stable_key(request)
@@ -150,6 +153,18 @@ class _RateLimitedManagedHttp:
         return self.send_capture(request).observation
 
     def send_capture(self, request: HttpRequestSpec) -> HttpResponseCapture:
+        if self._pre_reserved:
+            self._pre_reserved = False
+            capture = self._inner.send_capture(request)
+            if not _should_retry_managed_http_request(request, capture):
+                return capture
+            return self._retry_after_reserve(request, fallback=capture)
+        capture = self._send_after_reserve(request)
+        if not _should_retry_managed_http_request(request, capture):
+            return capture
+        return self._retry_after_reserve(request, fallback=capture)
+
+    def _send_after_reserve(self, request: HttpRequestSpec) -> HttpResponseCapture:
         decision = self._rate_limiter.reserve(
             self._rate_limit_key,
             self._rate_limit_policy,
@@ -172,6 +187,12 @@ class _RateLimitedManagedHttp:
             )
         return self._inner.send_capture(request)
 
+    def _retry_after_reserve(self, request: HttpRequestSpec, *, fallback: HttpResponseCapture) -> HttpResponseCapture:
+        retry_capture = self._send_after_reserve(request)
+        if retry_capture.observation.quota_signal:
+            return fallback
+        return retry_capture
+
 
 def _rate_limit_at_http(batch: Any) -> bool:
     return _as_string(getattr(batch, "http_visibility", "") or "") == "managed_http"
@@ -180,3 +201,13 @@ def _rate_limit_at_http(batch: Any) -> bool:
 def _deadline_at(batch: Any) -> datetime | None:
     value = getattr(batch, "deadline_at", None)
     return value if isinstance(value, datetime) else None
+
+
+def _rate_limit_pre_reserved(batch: Any) -> bool:
+    return isinstance(getattr(batch, "rate_limit_reserved_at", None), datetime)
+
+
+def _should_retry_managed_http_request(request: HttpRequestSpec, capture: HttpResponseCapture) -> bool:
+    if request.method.upper() not in {"GET", "POST"}:
+        return False
+    return capture.observation.error_code in {"timeout", "connection_error", "connection_closed", "connection_reset"}

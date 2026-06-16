@@ -14,7 +14,7 @@ profiles:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - claw_get_hot_money_pack
+      - cn_a_hot_money_data
     openviking_access: none
   HK:
     approved: false

@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from claw_trade.selection.models import (
     CandidateFactRow,
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     DataGapRef,
     DataGapSeverity,
     DecisionTicker,
@@ -20,7 +20,7 @@ from claw_trade.selection.models import (
     SelectionDecision,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
     SelectionStage,
     SelectionSystemContextPolicy,
@@ -46,16 +46,16 @@ def _request() -> SelectRequest:
     )
 
 
-def _pack_ref(run_id: str = "sel-run-1") -> CandidatePackRef:
-    return CandidatePackRef(
+def _cache_ref(run_id: str = "sel-run-1") -> CandidateCacheRef:
+    return CandidateCacheRef(
         selection_run_id=run_id,
         material_id="mat-1",
-        l1_uri="ov://selection/pack/1",
+        l1_uri="ov://selection/candidate-cache/1",
         content_sha256="a" * 64,
-        manifest_ref="manifest://pack-1",
+        manifest_ref="manifest://candidate-cache-1",
         approved_at="2026-05-26T12:00:00+00:00",
         expires_at="2026-05-27T12:00:00+00:00",
-        pack_summary_ref="summary://pack-1",
+        cache_summary_ref="summary://candidate-cache-1",
     )
 
 
@@ -116,7 +116,7 @@ def test_selection_run_plan_validates_rerun_supersede_and_trade_date() -> None:
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://1",
+        data_need_audit_ref="plan://1",
         approved_strategy_config_ref="config://approved",
         trigger_source=SelectionTriggerSource.MANUAL_RERUN,
         supersedes_run_id="sel-run-0",
@@ -130,15 +130,15 @@ def test_selection_run_plan_validates_rerun_supersede_and_trade_date() -> None:
             trade_date="2026-05-26",
             lookback_trading_days=260,
             universe_scope="all_a_shares",
-            provider_batch_plan_ref="plan://1",
+            data_need_audit_ref="plan://1",
             approved_strategy_config_ref="config://approved",
             trigger_source=SelectionTriggerSource.SCHEDULED,
             supersedes_run_id="sel-run-1",
         )
 
 
-def test_candidate_pack_manifest_enforces_top20_and_verified_readback() -> None:
-    CandidatePackManifest(
+def test_candidate_cache_manifest_enforces_top20_and_verified_readback() -> None:
+    CandidateCacheManifest(
         schema_version="v1",
         selection_run_id="sel-run-1",
         market=SelectionMarket.CN_A,
@@ -146,13 +146,13 @@ def test_candidate_pack_manifest_enforces_top20_and_verified_readback() -> None:
         trade_date="2026-05-26",
         candidate_count=20,
         source_lineage_refs=("lineage://1",),
-        pack_body_sha256="b" * 64,
+        cache_body_sha256="b" * 64,
         strategy_config_ref="config://approved",
-        readback_status=CandidatePackReadbackStatus.VERIFIED,
+        readback_status=CandidateCacheReadbackStatus.VERIFIED,
     )
 
     with pytest.raises(ValueError, match="candidate_count must be in \\[1, 20\\]"):
-        CandidatePackManifest(
+        CandidateCacheManifest(
             schema_version="v1",
             selection_run_id="sel-run-1",
             market=SelectionMarket.CN_A,
@@ -160,13 +160,13 @@ def test_candidate_pack_manifest_enforces_top20_and_verified_readback() -> None:
             trade_date="2026-05-26",
             candidate_count=0,
             source_lineage_refs=("lineage://1",),
-            pack_body_sha256="b" * 64,
+            cache_body_sha256="b" * 64,
             strategy_config_ref="config://approved",
-            readback_status=CandidatePackReadbackStatus.VERIFIED,
+            readback_status=CandidateCacheReadbackStatus.VERIFIED,
         )
 
     with pytest.raises(ValueError, match="candidate_count must be in \\[1, 20\\]"):
-        CandidatePackManifest(
+        CandidateCacheManifest(
             schema_version="v1",
             selection_run_id="sel-run-1",
             market=SelectionMarket.CN_A,
@@ -174,14 +174,14 @@ def test_candidate_pack_manifest_enforces_top20_and_verified_readback() -> None:
             trade_date="2026-05-26",
             candidate_count=21,
             source_lineage_refs=("lineage://1",),
-            pack_body_sha256="b" * 64,
+            cache_body_sha256="b" * 64,
             strategy_config_ref="config://approved",
-            readback_status=CandidatePackReadbackStatus.VERIFIED,
+            readback_status=CandidateCacheReadbackStatus.VERIFIED,
         )
 
 
-def test_selection_provider_batch_plan_scope_is_selection_batch_only() -> None:
-    SelectionProviderBatchPlan(
+def test_selection_data_need_audit_scope_is_selection_batch_only() -> None:
+    SelectionDataNeedAudit(
         plan_id="plan-1",
         scope=SelectionBatchScope.SELECTION_BATCH,
         market=SelectionMarket.CN_A,
@@ -190,13 +190,12 @@ def test_selection_provider_batch_plan_scope_is_selection_batch_only() -> None:
         lookback_trading_days=260,
         universe_scope="all_a_shares",
         coverage_groups=("market", "fundamental", "news"),
-        provider_candidates=("tushare",),
         ttl_policy_ref="ttl://policy-1",
         lineage_root_ref="lineage://root-1",
     )
 
     with pytest.raises(ValueError, match="scope must be SelectionBatchScope"):
-        SelectionProviderBatchPlan(
+        SelectionDataNeedAudit(
             plan_id="plan-2",
             scope="ticker_batch",
             market=SelectionMarket.CN_A,
@@ -205,7 +204,6 @@ def test_selection_provider_batch_plan_scope_is_selection_batch_only() -> None:
             lookback_trading_days=260,
             universe_scope="all_a_shares",
             coverage_groups=("market",),
-            provider_candidates=("tushare",),
             ttl_policy_ref="ttl://policy-1",
             lineage_root_ref="lineage://root-1",
         )
@@ -218,7 +216,7 @@ def test_selection_worker_dispatch_rejects_handoff_stage_and_missing_runtime_key
             select_workflow_run_id="wf-1",
             worker_id=SelectionWorkerId.STRATEGIST,
             stage=SelectionStage.SELECTION_REPORT_HANDOFF,
-            allowed_tools=("claw_get_selection_candidate_pack",),
+            allowed_tools=("claw_get_selection_candidate_cache",),
             prompt_runtime_vars={
                 "market": "CN_A",
                 "profile": "CN_A",
@@ -226,7 +224,7 @@ def test_selection_worker_dispatch_rejects_handoff_stage_and_missing_runtime_key
                 "selection_run_id": "sel-run-1",
                 "select_workflow_run_id": "wf-1",
             },
-            model_visible_materials=("candidate_pack_summary",),
+            model_visible_materials=("candidate_cache_summary",),
             evidence_dir=Path("runs/wf-1/calls/disp-1"),
         )
 
@@ -236,9 +234,9 @@ def test_selection_worker_dispatch_rejects_handoff_stage_and_missing_runtime_key
             select_workflow_run_id="wf-1",
             worker_id=SelectionWorkerId.STRATEGIST,
             stage=SelectionStage.SELECTION_REVIEW,
-            allowed_tools=("claw_get_selection_candidate_pack",),
+            allowed_tools=("claw_get_selection_candidate_cache",),
             prompt_runtime_vars={"market": "CN_A"},
-            model_visible_materials=("candidate_pack_summary",),
+            model_visible_materials=("candidate_cache_summary",),
             evidence_dir=Path("runs/wf-1/calls/disp-2"),
         )
 
@@ -261,7 +259,7 @@ def test_selection_data_run_requires_explicit_failed_and_completed_fields() -> N
             failure_reason="missing code",
         )
 
-    with pytest.raises(ValueError, match="candidate_pack_ref is required"):
+    with pytest.raises(ValueError, match="candidate_cache_ref is required"):
         SelectionDataRun(
             selection_run_id="sel-run-3",
             status=SelectionDataRunStatus.COMPLETED,
@@ -274,11 +272,11 @@ def test_selection_data_run_requires_explicit_failed_and_completed_fields() -> N
         completed_at="2026-05-26T13:00:00+00:00",
     )
 
-    with pytest.raises(ValueError, match="no_candidate run cannot include candidate_pack_ref"):
+    with pytest.raises(ValueError, match="no_candidate run cannot include candidate_cache_ref"):
         SelectionDataRun(
             selection_run_id="sel-run-5",
             status=SelectionDataRunStatus.NO_CANDIDATE,
-            candidate_pack_ref=_pack_ref("sel-run-5"),
+            candidate_cache_ref=_cache_ref("sel-run-5"),
             completed_at="2026-05-26T13:00:00+00:00",
         )
 
@@ -319,7 +317,7 @@ def test_selection_workflow_run_keeps_select_semantics_and_decision_requirement(
         selection_run_id="sel-run-1",
         status=SelectionWorkflowStatus.WAITING_REPORT_CONFIRMATION,
         request=request,
-        candidate_pack_ref=_pack_ref(),
+        candidate_cache_ref=_cache_ref(),
         decision=_decision(),
         created_at="2026-05-26T12:10:00+00:00",
         updated_at="2026-05-26T12:20:00+00:00",
@@ -332,7 +330,7 @@ def test_selection_workflow_run_keeps_select_semantics_and_decision_requirement(
             selection_run_id="sel-run-1",
             status=SelectionWorkflowStatus.WAITING_REPORT_CONFIRMATION,
             request=request,
-            candidate_pack_ref=_pack_ref(),
+            candidate_cache_ref=_cache_ref(),
             decision=None,
             created_at="2026-05-26T12:10:00+00:00",
             updated_at="2026-05-26T12:20:00+00:00",
@@ -355,7 +353,7 @@ def test_selection_workflow_run_created_updated_are_required_and_non_empty() -> 
             selection_run_id="sel-run-1",
             status=SelectionWorkflowStatus.RECEIVED,
             request=request,
-            candidate_pack_ref=_pack_ref(),
+            candidate_cache_ref=_cache_ref(),
         )
 
     with pytest.raises(ValueError, match="created_at must be non-empty"):
@@ -364,7 +362,7 @@ def test_selection_workflow_run_created_updated_are_required_and_non_empty() -> 
             selection_run_id="sel-run-1",
             status=SelectionWorkflowStatus.RECEIVED,
             request=request,
-            candidate_pack_ref=_pack_ref(),
+            candidate_cache_ref=_cache_ref(),
             created_at="",
             updated_at="2026-05-26T12:20:00+00:00",
         )
@@ -375,7 +373,7 @@ def test_selection_workflow_run_created_updated_are_required_and_non_empty() -> 
             selection_run_id="sel-run-1",
             status=SelectionWorkflowStatus.RECEIVED,
             request=request,
-            candidate_pack_ref=_pack_ref(),
+            candidate_cache_ref=_cache_ref(),
             created_at="2026-05-26T12:10:00+00:00",
             updated_at="  ",
         )

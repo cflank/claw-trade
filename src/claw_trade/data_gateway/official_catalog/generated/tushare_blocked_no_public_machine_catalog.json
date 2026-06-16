@@ -1,0 +1,25 @@
+{
+  "current_catalog_status": "manual_official_subset",
+  "evidence": [
+    {
+      "result": "official page returns a JavaScript shell, not a machine-readable endpoint catalog",
+      "source": "https://tushare.pro/document/2"
+    },
+    {
+      "result": "referenced SPA asset returns 404 during catalog generation checks",
+      "source": "https://tushare.pro/js/app.9e6e5488.js"
+    },
+    {
+      "result": "installed SDK uses dynamic __getattr__ and does not ship a full Pro endpoint registry",
+      "source": "tushare.pro.client.DataApi"
+    },
+    {
+      "result": "public repository points Pro users to tushare.pro and does not ship a current Pro endpoint catalog",
+      "source": "https://github.com/waditu/tushare"
+    }
+  ],
+  "official_doc_ref": "https://tushare.pro/document/2",
+  "provider": "tushare",
+  "required_to_unblock": "provide an official machine-readable Tushare Pro endpoint export or a working official docs/API endpoint that lists all Pro api_name entries with params",
+  "status": "blocked_no_public_machine_catalog"
+}

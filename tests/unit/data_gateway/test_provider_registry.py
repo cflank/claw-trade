@@ -42,7 +42,7 @@ class EndpointCapability:
     data_type: str
     source_role: str
     supported_granularities: tuple[str, ...]
-    coverage_fields: tuple[str, ...]
+    fields: tuple[str, ...]
     freshness_supported: tuple[str, ...]
     http_visibility: str
     batch_policy: BatchPolicy
@@ -93,7 +93,7 @@ def _plugin(*, provider_id: str = "official_feed", endpoint_id: str = "daily", m
                 data_type=data_type,
                 source_role="official",
                 supported_granularities=("daily",),
-                coverage_fields=("close", "volume"),
+                fields=("close", "volume"),
                 freshness_supported=("trading_day",),
                 http_visibility="managed_http",
                 priority_rank=priority_rank,

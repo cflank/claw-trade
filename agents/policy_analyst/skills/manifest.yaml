@@ -6,4 +6,4 @@ skills:
     workers:
       - policy_analyst
     tool_exports:
-      - claw_get_policy_pack
+      - claw_request_data

@@ -14,7 +14,7 @@ profiles:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - claw_get_policy_pack
+      - cn_a_policy_data
     openviking_access: none
   HK:
     approved: false

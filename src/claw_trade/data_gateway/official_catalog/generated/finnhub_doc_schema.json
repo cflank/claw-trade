@@ -1,0 +1,3122 @@
+[
+  {
+    "description": "The Flight Ticket Price Index API provides comprehensive data on airline ticket prices, including the average daily ticket price and its percentage change (price index). This data, collected weekly and projected two weeks ahead, aggregates daily prices and indexes from the 50 busiest and largest airports across the USA. The dataset includes detailed information on airlines, dates, and average ticket prices, offering valuable insights for market analysis and pricing strategies. The price index is calculated as percentage change of average daily ticket price from the previous weekly reading. Raw ticket prices data is available for Enterprise users. Contact us to inquire about the raw price data.",
+    "endpoint_id": "finnhub.raw_airline_price_index",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/airline-price-index",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/airline/price-index",
+    "required_params": [
+      "airline",
+      "from",
+      "to"
+    ],
+    "response_fields": [
+      "airline",
+      "dailyAvgPrice",
+      "data",
+      "date",
+      "from",
+      "priceIndex",
+      "to"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Airline Price Index"
+  },
+  {
+    "description": "Retrieve list of US bank branches information for a given symbol.",
+    "endpoint_id": "finnhub.raw_bank_branch",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/bank-branch-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/bank-branch",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "address",
+      "branchId",
+      "data",
+      "date",
+      "state",
+      "symbol",
+      "zipCode"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Bank Branch List"
+  },
+  {
+    "description": "Get bond's price data. The following datasets are supported: Exchange Segment Delay US Government Bonds Government Bonds End-of-day FINRA Trace BTDS: US Corporate Bonds Delayed 4h FINRA Trace 144A Bonds Delayed 4h International Bonds International Bonds End-of-day",
+    "endpoint_id": "finnhub.raw_bond_price",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/bond-price",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/bond/price",
+    "required_params": [
+      "from",
+      "isin",
+      "to"
+    ],
+    "response_fields": [
+      "c",
+      "s",
+      "t"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Bond price data"
+  },
+  {
+    "description": "Get general information of a bond. You can query by FIGI, ISIN or CUSIP. A list of supported bonds can be found here .",
+    "endpoint_id": "finnhub.raw_bond_profile",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/bond-profile",
+    "optional_params": [
+      "cusip",
+      "figi",
+      "isin"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/bond/profile",
+    "required_params": [],
+    "response_fields": [
+      "amountOutstanding",
+      "asset",
+      "assetType",
+      "bondType",
+      "callable",
+      "coupon",
+      "couponType",
+      "cusip",
+      "datedDate",
+      "dayCount",
+      "debtType",
+      "figi",
+      "firstCouponDate",
+      "industryGroup",
+      "industrySubGroup",
+      "isin",
+      "issueDate",
+      "maturityDate",
+      "offeringPrice",
+      "originalOffering",
+      "paymentFrequency",
+      "securityLevel"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Bond Profile"
+  },
+  {
+    "description": "Get trade-level data for bonds. The following datasets are supported: Exchange Segment Delay FINRA Trace BTDS: US Corporate Bonds Delayed 4h FINRA Trace 144A Bonds Delayed 4h",
+    "endpoint_id": "finnhub.raw_bond_tick",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/bond-tick",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/bond/tick",
+    "required_params": [
+      "date",
+      "exchange",
+      "isin",
+      "limit",
+      "skip"
+    ],
+    "response_fields": [
+      "ats",
+      "c",
+      "count",
+      "cp",
+      "p",
+      "rp",
+      "si",
+      "skip",
+      "t",
+      "total",
+      "v",
+      "y"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Bond Tick Data"
+  },
+  {
+    "description": "Get yield curve data for Treasury bonds.",
+    "endpoint_id": "finnhub.raw_bond_yield_curve",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/bond-yield-curve",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/bond/yield-curve",
+    "required_params": [
+      "code"
+    ],
+    "response_fields": [
+      "code",
+      "d",
+      "data",
+      "v"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Bond Yield Curve"
+  },
+  {
+    "description": "Get a list of ISIN changes for EU-listed securities. Limit to 2000 events at a time.",
+    "endpoint_id": "finnhub.raw_ca_isin_change",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/isin-change",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/ca/isin-change",
+    "required_params": [
+      "from",
+      "to"
+    ],
+    "response_fields": [
+      "atDate",
+      "data",
+      "fromDate",
+      "newIsin",
+      "oldIsin",
+      "toDate"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "ISIN Change"
+  },
+  {
+    "description": "Get a list of symbol changes for US-listed, EU-listed, NSE and ASX securities. Limit to 2000 events at a time.",
+    "endpoint_id": "finnhub.raw_ca_symbol_change",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/symbol-change",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/ca/symbol-change",
+    "required_params": [
+      "from",
+      "to"
+    ],
+    "response_fields": [
+      "atDate",
+      "data",
+      "fromDate",
+      "newSymbol",
+      "oldSymbol",
+      "toDate"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Symbol Change"
+  },
+  {
+    "description": "Get historical and coming earnings release. EPS and Revenue in this endpoint are non-GAAP, which means they are adjusted to exclude some one-time or unusual items. This is the same data investors usually react to and talked about on the media. Estimates are sourced from both sell-side and buy-side analysts.",
+    "endpoint_id": "finnhub.raw_calendar_earnings",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/earnings-calendar",
+    "optional_params": [
+      "from",
+      "international",
+      "symbol",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/calendar/earnings",
+    "required_params": [],
+    "response_fields": [
+      "date",
+      "earningsCalendar",
+      "epsActual",
+      "epsEstimate",
+      "hour",
+      "quarter",
+      "revenueActual",
+      "revenueEstimate",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Earnings Calendar"
+  },
+  {
+    "description": "Get recent and upcoming economic releases. Historical events and surprises are available for Enterprise clients.",
+    "endpoint_id": "finnhub.raw_calendar_economic",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/economic-calendar",
+    "optional_params": [
+      "from",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/calendar/economic",
+    "required_params": [],
+    "response_fields": [
+      "actual",
+      "country",
+      "economicCalendar",
+      "estimate",
+      "event",
+      "impact",
+      "prev",
+      "time",
+      "unit"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Economic Calendar"
+  },
+  {
+    "description": "Get recent and upcoming IPO.",
+    "endpoint_id": "finnhub.raw_calendar_ipo",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/ipo-calendar",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/calendar/ipo",
+    "required_params": [
+      "from",
+      "to"
+    ],
+    "response_fields": [
+      "date",
+      "exchange",
+      "ipoCalendar",
+      "name",
+      "numberOfShares",
+      "price",
+      "status",
+      "symbol",
+      "totalSharesValue"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "IPO Calendar"
+  },
+  {
+    "description": "List latest company news by symbol. This endpoint is only available for North American companies.",
+    "endpoint_id": "finnhub.raw_company_news",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-news",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/company-news",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "category",
+      "datetime",
+      "headline",
+      "id",
+      "image",
+      "related",
+      "source",
+      "summary",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company News"
+  },
+  {
+    "description": "List all countries and metadata.",
+    "endpoint_id": "finnhub.raw_country",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/country",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/country",
+    "required_params": [],
+    "response_fields": [
+      "code2",
+      "code3",
+      "codeNo",
+      "country",
+      "countryRiskPremium",
+      "currency",
+      "currencyCode",
+      "defaultSpread",
+      "equityRiskPremium",
+      "logo",
+      "rating",
+      "region",
+      "subRegion"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Country Metadata"
+  },
+  {
+    "description": "Get real-time updates on the number of COVID-19 (Corona virus) cases in the US with a state-by-state breakdown. Data is sourced from CDC and reputable sources. You can also access this API here",
+    "endpoint_id": "finnhub.raw_covid19_us",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/covid-19",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/covid19/us",
+    "required_params": [],
+    "response_fields": [
+      "case",
+      "death",
+      "state",
+      "updated"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "COVID-19"
+  },
+  {
+    "description": "Get candlestick data for crypto symbols.",
+    "endpoint_id": "finnhub.raw_crypto_candle",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/crypto-candles",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/crypto/candle",
+    "required_params": [
+      "from",
+      "resolution",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "c",
+      "h",
+      "l",
+      "o",
+      "s",
+      "t",
+      "v"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Crypto Candles"
+  },
+  {
+    "description": "List supported crypto exchanges",
+    "endpoint_id": "finnhub.raw_crypto_exchange",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/crypto-exchanges",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/crypto/exchange",
+    "required_params": [],
+    "response_fields": [],
+    "source": "finnhub_doc_schema",
+    "summary": "Crypto Exchanges"
+  },
+  {
+    "description": "Get crypto's profile.",
+    "endpoint_id": "finnhub.raw_crypto_profile",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/crypto-profile",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/crypto/profile",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "circulatingSupply",
+      "description",
+      "launchDate",
+      "logo",
+      "longName",
+      "marketCap",
+      "maxSupply",
+      "name",
+      "proofType",
+      "totalSupply",
+      "website"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Crypto Profile"
+  },
+  {
+    "description": "List supported crypto symbols by exchange",
+    "endpoint_id": "finnhub.raw_crypto_symbol",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/crypto-symbols",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/crypto/symbol",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "description",
+      "displaySymbol",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Crypto Symbol"
+  },
+  {
+    "description": "Get economic data.",
+    "endpoint_id": "finnhub.raw_economic",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/economic-data",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/economic",
+    "required_params": [
+      "code"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "date",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Economic Data"
+  },
+  {
+    "description": "List codes of supported economic data.",
+    "endpoint_id": "finnhub.raw_economic_code",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/economic-code",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/economic/code",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "country",
+      "name",
+      "unit"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Economic Code"
+  },
+  {
+    "description": "Get ETF equity allocation based on the characteristics of the holdings.",
+    "endpoint_id": "finnhub.raw_etf_allocation",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/etfs-allocation",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/etf/allocation",
+    "required_params": [],
+    "response_fields": [
+      "data",
+      "largeBlend",
+      "largeGrowth",
+      "largeValue",
+      "midBlend",
+      "midGrowth",
+      "midValue",
+      "smallBlend",
+      "smallGrowth",
+      "smallValue",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "ETFs Equity Allocation"
+  },
+  {
+    "description": "Get ETF country exposure data.",
+    "endpoint_id": "finnhub.raw_etf_country",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/etfs-country-exposure",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/etf/country",
+    "required_params": [],
+    "response_fields": [
+      "country",
+      "countryExposure",
+      "exposure",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "ETFs Country Exposure"
+  },
+  {
+    "description": "Get full ETF holdings/constituents. This endpoint has global coverage. Widget only shows top 10 holdings. A list of supported ETFs can be found here .",
+    "endpoint_id": "finnhub.raw_etf_holdings",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/etfs-holdings",
+    "optional_params": [
+      "date",
+      "isin",
+      "skip",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/etf/holdings",
+    "required_params": [],
+    "response_fields": [
+      "assetType",
+      "atDate",
+      "cusip",
+      "holdings",
+      "isin",
+      "name",
+      "numberOfHoldings",
+      "percent",
+      "share",
+      "symbol",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "ETFs Holdings"
+  },
+  {
+    "description": "Get ETF profile information. This endpoint has global coverage. A list of supported ETFs can be found here .",
+    "endpoint_id": "finnhub.raw_etf_profile",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/etfs-profile",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/etf/profile",
+    "required_params": [],
+    "response_fields": [
+      "assetClass",
+      "aum",
+      "avgVolume",
+      "cusip",
+      "description",
+      "dividendYield",
+      "domicile",
+      "etfCompany",
+      "expenseRatio",
+      "inceptionDate",
+      "investmentSegment",
+      "isInverse",
+      "isLeveraged",
+      "isin",
+      "leverageFactor",
+      "logo",
+      "name",
+      "nav",
+      "navCurrency",
+      "priceToBook",
+      "priceToEarnings",
+      "profile",
+      "symbol",
+      "trackingIndex",
+      "website"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "ETFs Profile"
+  },
+  {
+    "description": "Get ETF sector exposure data.",
+    "endpoint_id": "finnhub.raw_etf_sector",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/etfs-sector-exposure",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/etf/sector",
+    "required_params": [],
+    "response_fields": [
+      "exposure",
+      "industry",
+      "sectorExposure",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "ETFs Sector Exposure"
+  },
+  {
+    "description": "FDA's advisory committees are established to provide functions which support the agency's mission of protecting and promoting the public health, while meeting the requirements set forth in the Federal Advisory Committee Act. Committees are either mandated by statute or established at the discretion of the Department of Health and Human Services. Each committee is subject to renewal at two-year intervals unless the committee charter states otherwise.",
+    "endpoint_id": "finnhub.raw_fda_advisory_committee_calendar",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/fda-committee-meeting-calendar",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/fda-advisory-committee-calendar",
+    "required_params": [],
+    "response_fields": [
+      "eventDescription",
+      "fromDate",
+      "toDate",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "FDA Committee Meeting Calendar"
+  },
+  {
+    "description": "Get candlestick data for forex symbols.",
+    "endpoint_id": "finnhub.raw_forex_candle",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/forex-candles",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/forex/candle",
+    "required_params": [
+      "from",
+      "resolution",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "c",
+      "h",
+      "l",
+      "o",
+      "s",
+      "t",
+      "v"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Forex Candles"
+  },
+  {
+    "description": "List supported forex exchanges",
+    "endpoint_id": "finnhub.raw_forex_exchange",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/forex-exchanges",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/forex/exchange",
+    "required_params": [],
+    "response_fields": [],
+    "source": "finnhub_doc_schema",
+    "summary": "Forex Exchanges"
+  },
+  {
+    "description": "Get rates for all forex pairs. Ideal for currency conversion",
+    "endpoint_id": "finnhub.raw_forex_rates",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/forex-rates",
+    "optional_params": [
+      "base",
+      "date"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/forex/rates",
+    "required_params": [],
+    "response_fields": [
+      "AED",
+      "AFN",
+      "ALL",
+      "AMD",
+      "CAD",
+      "CDF",
+      "CHF",
+      "CNY",
+      "COP",
+      "CRC",
+      "CUC",
+      "CUP",
+      "CVE",
+      "CZK",
+      "DJF",
+      "DKK",
+      "DOP",
+      "DZD",
+      "EGP",
+      "ERN",
+      "ETB",
+      "EUR",
+      "GBP",
+      "JPY",
+      "MDL",
+      "MGA",
+      "USD",
+      "base",
+      "quote"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Forex rates"
+  },
+  {
+    "description": "List supported forex symbols.",
+    "endpoint_id": "finnhub.raw_forex_symbol",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/forex-symbols",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/forex/symbol",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "description",
+      "displaySymbol",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Forex Symbol"
+  },
+  {
+    "description": "Download filings using document ids.",
+    "endpoint_id": "finnhub.raw_global_filings_download",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/global-filings-download",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/global-filings/download",
+    "required_params": [
+      "documentId"
+    ],
+    "response_fields": [],
+    "source": "finnhub_doc_schema",
+    "summary": "Download Filings"
+  },
+  {
+    "description": "Get available values for each filter in search body.",
+    "endpoint_id": "finnhub.raw_global_filings_filter",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/global-filings-search-filter",
+    "optional_params": [
+      "source"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/global-filings/filter",
+    "required_params": [
+      "field"
+    ],
+    "response_fields": [
+      "id",
+      "name"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Search Filter"
+  },
+  {
+    "description": "Get a list of index's constituents. A list of supported indices for this endpoint can be found here .",
+    "endpoint_id": "finnhub.raw_index_constituents",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/indices-constituents",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/index/constituents",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "constituents",
+      "constituentsBreakdown",
+      "cusip",
+      "isin",
+      "name",
+      "shareClassFIGI",
+      "symbol",
+      "weight"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Indices Constituents"
+  },
+  {
+    "description": "Get full history of index's constituents including symbols and dates of joining and leaving the Index. A list of supported indices for this endpoint can be found here .",
+    "endpoint_id": "finnhub.raw_index_historical_constituents",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/indices-historical-constituents",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/index/historical-constituents",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "action",
+      "date",
+      "historicalConstituents",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Indices Historical Constituents"
+  },
+  {
+    "description": "Return technical indicator with price data. List of supported indicators can be found here .",
+    "endpoint_id": "finnhub.raw_indicator",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/technical-indicator",
+    "optional_params": [
+      "indicator_fields"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/indicator",
+    "required_params": [
+      "from",
+      "indicator",
+      "resolution",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "sma",
+      "t"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Technical Indicators"
+  },
+  {
+    "description": "Get a list institutional investors' positions for a particular stock overtime. Data from 13-F filings. Limit to 1 year of data at a time.",
+    "endpoint_id": "finnhub.raw_institutional_ownership",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/institutional-ownership",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/institutional/ownership",
+    "required_params": [
+      "cusip",
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "change",
+      "cik",
+      "cusip",
+      "data",
+      "name",
+      "noVoting",
+      "ownership",
+      "percentage",
+      "putCall",
+      "reportDate",
+      "share",
+      "sharedVoting",
+      "soleVoting",
+      "symbol",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Institutional Ownership"
+  },
+  {
+    "description": "Get the holdings/portfolio data of institutional investors from 13-F filings. Limit to 1 year of data at a time. You can get a list of supported CIK here .",
+    "endpoint_id": "finnhub.raw_institutional_portfolio",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/institutional-portfolio-13f",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/institutional/portfolio",
+    "required_params": [
+      "cik",
+      "from",
+      "to"
+    ],
+    "response_fields": [
+      "change",
+      "cik",
+      "data",
+      "filingDate",
+      "name",
+      "noVoting",
+      "percentage",
+      "portfolio",
+      "putCall",
+      "reportDate",
+      "share",
+      "sharedVoting",
+      "soleVoting",
+      "symbol",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Institutional Portfolio"
+  },
+  {
+    "description": "Get a list of well-known institutional investors. Currently support 60+ profiles.",
+    "endpoint_id": "finnhub.raw_institutional_profile",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/institutional-profile",
+    "optional_params": [
+      "cik"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/institutional/profile",
+    "required_params": [],
+    "response_fields": [
+      "cik",
+      "data",
+      "firmType",
+      "manager",
+      "philosophy",
+      "profile",
+      "profileImg"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Institutional Profile"
+  },
+  {
+    "description": "Get Mutual Funds country exposure data.",
+    "endpoint_id": "finnhub.raw_mutual_fund_country",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/mutual-fund-country-exposure",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/mutual-fund/country",
+    "required_params": [],
+    "response_fields": [
+      "country",
+      "countryExposure",
+      "exposure",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Mutual Funds Country Exposure"
+  },
+  {
+    "description": "Get EET data for EU funds. For PAIs data, please see the EET PAI endpoint.",
+    "endpoint_id": "finnhub.raw_mutual_fund_eet",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/mutual-fund-eet",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/mutual-fund/eet",
+    "required_params": [
+      "isin"
+    ],
+    "response_fields": [
+      "boardGenderDiversityConsidered",
+      "carbonFootprintScope123Considered",
+      "carbonFootprintScope12Considered",
+      "clientSustainabilityPreferencesConsidered",
+      "controversialWeaponsConsidered",
+      "data",
+      "energyConsumptionIntensityNACEAConsidered",
+      "exposuretoEnergyEfficientRealEstateAssetsConsidered",
+      "exposuretoFossilFuelSectorConsidered",
+      "exposuretoFossilFuelsExtractionStorageTransportManufactureConsidered",
+      "greenhouseGasEmissionsScope1Considered",
+      "greenhouseGasEmissionsScope2Considered",
+      "greenhouseGasEmissionsScope3Considered",
+      "isin"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Mutual Funds EET"
+  },
+  {
+    "description": "Get EET PAI data for EU funds.",
+    "endpoint_id": "finnhub.raw_mutual_fund_eet_pai",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/mutual-fund-eet-pai",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/mutual-fund/eet-pai",
+    "required_params": [
+      "isin"
+    ],
+    "response_fields": [
+      "airPollutantEmissionsCoveredHoldings",
+      "airPollutantEmissionsEligibleHoldings",
+      "airPollutantEmissionsNumberHoldingsCovered",
+      "airPollutantEmissionsPctPortfolioCoverage",
+      "airPollutantEmissionsPctPortfolioEligibleAssets",
+      "airPollutantEmissionsTonnesPerEURm",
+      "antiHumanTraffickingNumberHoldingsCovered",
+      "data",
+      "isin"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Mutual Funds EET PAI"
+  },
+  {
+    "description": "Get full Mutual Funds holdings/constituents. This endpoint covers both US and global mutual funds. For international funds, you must query the data using ISIN. A list of supported funds can be found here .",
+    "endpoint_id": "finnhub.raw_mutual_fund_holdings",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/mutual-fund-holdings",
+    "optional_params": [
+      "isin",
+      "skip",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/mutual-fund/holdings",
+    "required_params": [],
+    "response_fields": [
+      "assetType",
+      "atDate",
+      "cusip",
+      "holdings",
+      "isin",
+      "name",
+      "numberOfHoldings",
+      "percent",
+      "share",
+      "symbol",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Mutual Funds Holdings"
+  },
+  {
+    "description": "Get mutual funds profile information. This endpoint covers both US and global mutual funds. For international funds, you must query the data using ISIN. A list of supported funds can be found here .",
+    "endpoint_id": "finnhub.raw_mutual_fund_profile",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/mutual-fund-profile",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/mutual-fund/profile",
+    "required_params": [],
+    "response_fields": [
+      "benchmark",
+      "beta",
+      "category",
+      "classId",
+      "className",
+      "currency",
+      "cusip",
+      "deferredLoad",
+      "description",
+      "expenseRatio",
+      "fee12b1",
+      "frontLoad",
+      "fundCompany",
+      "fundFamily",
+      "inceptionDate",
+      "investmentSegment",
+      "iraMinInvestment",
+      "isin",
+      "manager",
+      "maxRedemptionFee",
+      "name",
+      "profile",
+      "seriesId",
+      "seriesName",
+      "sfdrClassification",
+      "standardMinInvestment",
+      "status",
+      "symbol",
+      "totalNav",
+      "turnover"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Mutual Funds Profile"
+  },
+  {
+    "description": "Get Mutual Funds sector exposure data.",
+    "endpoint_id": "finnhub.raw_mutual_fund_sector",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/mutual-fund-sector-exposure",
+    "optional_params": [
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/mutual-fund/sector",
+    "required_params": [],
+    "response_fields": [
+      "exposure",
+      "sector",
+      "sectorExposure",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Mutual Funds Sector Exposure"
+  },
+  {
+    "description": "Get latest market news.",
+    "endpoint_id": "finnhub.raw_news",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/market-news",
+    "optional_params": [
+      "minId"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/news",
+    "required_params": [
+      "category"
+    ],
+    "response_fields": [
+      "category",
+      "datetime",
+      "headline",
+      "id",
+      "image",
+      "related",
+      "source",
+      "summary",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Market News"
+  },
+  {
+    "description": "Get company's news sentiment and statistics. This endpoint is only available for US companies.",
+    "endpoint_id": "finnhub.raw_news_sentiment",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/news-sentiment",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/news-sentiment",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "articlesInLastWeek",
+      "bearishPercent",
+      "bullishPercent",
+      "buzz",
+      "companyNewsScore",
+      "sectorAverageBullishPercent",
+      "sectorAverageNewsScore",
+      "sentiment",
+      "symbol",
+      "weeklyAverage"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "News Sentiment"
+  },
+  {
+    "description": "Get latest major press releases of a company. This data can be used to highlight the most significant events comprised of mostly press releases sourced from the exchanges, BusinessWire, AccessWire, GlobeNewswire, Newsfile, and PRNewswire. Full-text press releases data is available for Enterprise clients. Contact Us to learn more.",
+    "endpoint_id": "finnhub.raw_press_releases",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/press-releases",
+    "optional_params": [
+      "from",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/press-releases",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "datetime",
+      "description",
+      "headline",
+      "majorDevelopment",
+      "symbol",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Major Press Releases"
+  },
+  {
+    "description": "Get real-time quote data for US stocks. Constant polling is not recommended. Use websocket if you need real-time updates. Real-time stock prices for international markets are supported for Enterprise clients via our partner's feed. Contact Us to learn more.",
+    "endpoint_id": "finnhub.raw_quote",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/quote",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/quote",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "c",
+      "d",
+      "dp",
+      "h",
+      "l",
+      "o",
+      "pc",
+      "t"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Quote"
+  },
+  {
+    "description": "Run pattern recognition algorithm on a symbol. Support double top/bottom, triple top/bottom, head and shoulders, triangle, wedge, channel, flag, and candlestick patterns.",
+    "endpoint_id": "finnhub.raw_scan_pattern",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/pattern-recognition",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/scan/pattern",
+    "required_params": [
+      "resolution",
+      "symbol"
+    ],
+    "response_fields": [
+      "aprice",
+      "atime",
+      "bprice",
+      "btime",
+      "cprice",
+      "ctime",
+      "dprice",
+      "dtime",
+      "end_price",
+      "end_time",
+      "entry",
+      "eprice",
+      "etime",
+      "mature",
+      "patternname",
+      "patterntype",
+      "points",
+      "profit1",
+      "profit2",
+      "przmax",
+      "przmin",
+      "rrratio",
+      "sortTime",
+      "start_price",
+      "start_time",
+      "status",
+      "stoploss",
+      "symbol",
+      "terminal",
+      "xprice",
+      "xtime"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Pattern Recognition"
+  },
+  {
+    "description": "Get support and resistance levels for a symbol.",
+    "endpoint_id": "finnhub.raw_scan_support_resistance",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/support-resistance",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/scan/support-resistance",
+    "required_params": [
+      "resolution",
+      "symbol"
+    ],
+    "response_fields": [
+      "levels"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Support/Resistance"
+  },
+  {
+    "description": "Get aggregate signal of multiple technical indicators such as MACD, RSI, Moving Average v.v. A full list of indicators can be found here .",
+    "endpoint_id": "finnhub.raw_scan_technical_indicator",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/aggregate-indicator",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/scan/technical-indicator",
+    "required_params": [
+      "resolution",
+      "symbol"
+    ],
+    "response_fields": [
+      "adx",
+      "buy",
+      "count",
+      "neutral",
+      "sell",
+      "signal",
+      "technicalAnalysis",
+      "trend",
+      "trending"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Aggregate Indicators"
+  },
+  {
+    "description": "Search for best-matching symbols based on your query. You can input anything from symbol, security's name to ISIN and Cusip.",
+    "endpoint_id": "finnhub.raw_search",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/symbol-search",
+    "optional_params": [
+      "exchange"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/search",
+    "required_params": [
+      "q"
+    ],
+    "response_fields": [
+      "count",
+      "description",
+      "displaySymbol",
+      "result",
+      "symbol",
+      "type"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Symbol Lookup"
+  },
+  {
+    "description": "Get ratios for different sectors and regions/indices.",
+    "endpoint_id": "finnhub.raw_sector_metrics",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/sector-metrics",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/sector/metrics",
+    "required_params": [
+      "region"
+    ],
+    "response_fields": [
+      "a",
+      "assetTurnoverAnnual",
+      "assetTurnoverTTM",
+      "currentDividendYieldTTM",
+      "data",
+      "m",
+      "metrics",
+      "region",
+      "sector"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Sector Metrics"
+  },
+  {
+    "description": "Get historical best bid and offer for US stocks, LSE, TSX, Euronext and Deutsche Borse. For US market, this endpoint only serves historical NBBO from the beginning of 2023. To download more historical data, please visit our bulk download page in the Dashboard here .",
+    "endpoint_id": "finnhub.raw_stock_bbo",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-nbbo",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/bbo",
+    "required_params": [
+      "date",
+      "limit",
+      "skip",
+      "symbol"
+    ],
+    "response_fields": [
+      "a",
+      "av",
+      "ax",
+      "b",
+      "bv",
+      "bx",
+      "c",
+      "count",
+      "s",
+      "skip",
+      "t",
+      "total"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Historical NBBO"
+  },
+  {
+    "description": "Get last bid/ask data for US stocks.",
+    "endpoint_id": "finnhub.raw_stock_bidask",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-bidask",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/bidask",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "a",
+      "av",
+      "b",
+      "bv",
+      "t"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Last Bid-Ask"
+  },
+  {
+    "description": "Get candlestick data (OHLCV) for stocks. Daily data will be adjusted for Splits. Intraday data will remain unadjusted. Only 1 month of intraday will be returned at a time. If you need more historical intraday data, please use the from and to params iteratively to request more data.",
+    "endpoint_id": "finnhub.raw_stock_candle",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-candles",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/candle",
+    "required_params": [
+      "from",
+      "resolution",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "c",
+      "h",
+      "l",
+      "o",
+      "s",
+      "t",
+      "v"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Stock Candles"
+  },
+  {
+    "description": "Get stock trades data disclosed by members of congress.",
+    "endpoint_id": "finnhub.raw_stock_congressional_trading",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/congressional-trading",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/congressional-trading",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "amountFrom",
+      "amountTo",
+      "assetName",
+      "data",
+      "filingDate",
+      "name",
+      "ownerType",
+      "position",
+      "symbol",
+      "transactionDate",
+      "transactionType"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Congressional Trading"
+  },
+  {
+    "description": "Get dividends data for common stocks going back 30 years.",
+    "endpoint_id": "finnhub.raw_stock_dividend",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-dividends",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/dividend",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "adjustedAmount",
+      "amount",
+      "currency",
+      "date",
+      "declarationDate",
+      "freq",
+      "payDate",
+      "recordDate",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Dividends"
+  },
+  {
+    "description": "Get global dividends data.",
+    "endpoint_id": "finnhub.raw_stock_dividend2",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-basic-dividends",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/dividend2",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "amount",
+      "data",
+      "exDate",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Dividends 2 (Basic)"
+  },
+  {
+    "description": "Get company's Dividend per Share estimates.",
+    "endpoint_id": "finnhub.raw_stock_dps_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-dps-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/dps-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "dpsAvg",
+      "dpsHigh",
+      "dpsLow",
+      "freq",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "DPS Estimates"
+  },
+  {
+    "description": "Get company historical quarterly earnings surprise going back to 2000.",
+    "endpoint_id": "finnhub.raw_stock_earnings",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-earnings",
+    "optional_params": [
+      "limit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/earnings",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "actual",
+      "estimate",
+      "period",
+      "quarter",
+      "surprise",
+      "surprisePercent",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Earnings Surprises"
+  },
+  {
+    "description": "Stream live earnings calls with data provided in the calendar. The data will be available in m3u8 format. mp3 files will be available once the calls finish in the recording field.",
+    "endpoint_id": "finnhub.raw_stock_earnings_call_live",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/earnings-call-live-api",
+    "optional_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/earnings-call-live",
+    "required_params": [],
+    "response_fields": [
+      "event",
+      "liveAudio",
+      "quarter",
+      "recording",
+      "symbol",
+      "time",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Earnings Call Audio Live"
+  },
+  {
+    "description": "This endpoint provides Earnings Quality Score for global companies. Earnings quality refers to the extent to which current earnings predict future earnings. \"High-quality\" earnings are expected to persist, while \"low-quality\" earnings do not. A higher score means a higher earnings quality Finnhub uses a proprietary model which takes into consideration 4 criteria: Profitability Growth Cash Generation & Capital Allocation Leverage We then compare the metrics of each company in each category against its peers in the same industry to gauge how quality its earnings is.",
+    "endpoint_id": "finnhub.raw_stock_earnings_quality_score",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-earnings-quality-score-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/earnings-quality-score",
+    "required_params": [
+      "freq",
+      "symbol"
+    ],
+    "response_fields": [
+      "capitalAllocation",
+      "cashGenerationCapitalAllocation",
+      "data",
+      "freq",
+      "growth",
+      "letterScore",
+      "leverage",
+      "period",
+      "profitability",
+      "score",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company Earnings Quality Score"
+  },
+  {
+    "description": "Get company's ebit estimates.",
+    "endpoint_id": "finnhub.raw_stock_ebit_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-ebit-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/ebit-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "ebitAvg",
+      "ebitHigh",
+      "ebitLow",
+      "freq",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "EBIT Estimates"
+  },
+  {
+    "description": "Get company's ebitda estimates.",
+    "endpoint_id": "finnhub.raw_stock_ebitda_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-ebitda-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/ebitda-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "ebitdaAvg",
+      "ebitdaHigh",
+      "ebitdaLow",
+      "freq",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "EBITDA Estimates"
+  },
+  {
+    "description": "Get company's EPS estimates.",
+    "endpoint_id": "finnhub.raw_stock_eps_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-eps-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/eps-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "epsAvg",
+      "epsHigh",
+      "epsLow",
+      "freq",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Earnings Estimates"
+  },
+  {
+    "description": "This endpoint provides the latest ESG scores and important indicators for 7000+ global companies. The data is collected through company's public ESG disclosure and public sources. Our ESG scoring models takes into account more than 150 different inputs to calculate the level of ESG risks and how well a company is managing them. A higher score means lower ESG risk or better ESG management. ESG scores are in the the range of 0-100. Some key indicators might contain letter-grade score from C- to A+ with C- is the lowest score and A+ is the highest score.",
+    "endpoint_id": "finnhub.raw_stock_esg",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-esg-score-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/esg",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "adultContent",
+      "alcoholic",
+      "animalTesting",
+      "antitrust",
+      "asianEmployeePercentage",
+      "asianManagementPercentage",
+      "blackEmployeePercentage",
+      "blackManagementPercentage",
+      "carbonReductionPolicy",
+      "catholic",
+      "climateStrategy",
+      "co2EmissionScope1",
+      "co2EmissionScope2",
+      "co2EmissionScope3",
+      "co2EmissionTotal",
+      "coalEnergy",
+      "data",
+      "ecofriendlyPackaging",
+      "environmentScore",
+      "environmentalReporting",
+      "firearms",
+      "fuelEfficiencyConsumption",
+      "furLeather",
+      "gambling",
+      "gmo",
+      "governanceScore",
+      "hazardousSubstances",
+      "hispanicLatinoEmployeePercentage",
+      "hispanicLatinoManagementPercentage",
+      "humanRightsPolicy",
+      "militaryContract",
+      "nuclear",
+      "palmOil",
+      "pesticides",
+      "privacyPolicy",
+      "recallPolicySafety",
+      "recyclingPolicy",
+      "socialScore",
+      "stakeholderEngagement",
+      "sustainableForestryPolicy",
+      "symbol",
+      "tobacco",
+      "totalESGScore",
+      "totalWomenPercentage",
+      "waterEfficiencyConsumption",
+      "weapons",
+      "whiteEmployeePercentage",
+      "whiteManagementPercentage",
+      "womenManagementPercentage",
+      "workplaceHealthSafety"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company ESG Scores"
+  },
+  {
+    "description": "Get a list of company's executives and members of the Board.",
+    "endpoint_id": "finnhub.raw_stock_executive",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-executive",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/executive",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "age",
+      "compensation",
+      "currency",
+      "executive",
+      "name",
+      "position",
+      "sex",
+      "since",
+      "symbol",
+      "title"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company Executive"
+  },
+  {
+    "description": "List company's filing. Limit to 250 documents at a time. This data is available for bulk download on Kaggle SEC Filings database .",
+    "endpoint_id": "finnhub.raw_stock_filings",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/filings",
+    "optional_params": [
+      "accessNumber",
+      "cik",
+      "form",
+      "from",
+      "symbol",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/filings",
+    "required_params": [],
+    "response_fields": [
+      "acceptedDate",
+      "accessNumber",
+      "cik",
+      "filedDate",
+      "filingUrl",
+      "form",
+      "reportUrl",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "SEC Filings"
+  },
+  {
+    "description": "Get sentiment analysis of 10-K and 10-Q filings from SEC. An abnormal increase in the number of positive/negative words in filings can signal a significant change in the company's stock price in the upcoming 4 quarters. We make use of Loughran and McDonald Sentiment Word Lists to calculate the sentiment for each filing.",
+    "endpoint_id": "finnhub.raw_stock_filings_sentiment",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/filings-sentiment",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/filings-sentiment",
+    "required_params": [
+      "accessNumber"
+    ],
+    "response_fields": [
+      "accessNumber",
+      "cik",
+      "constraining",
+      "litigious",
+      "modal-moderate",
+      "modal-strong",
+      "modal-weak",
+      "negative",
+      "polarity",
+      "positive",
+      "sentiment",
+      "symbol",
+      "uncertainty"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "SEC Sentiment Analysis"
+  },
+  {
+    "description": "Get standardized balance sheet, income statement and cash flow for global companies going back 30+ years. Data is sourced from original filings most of which made available through SEC Filings and International Filings endpoints. Set preliminary param to true for faster updates for US companies. Wondering why our standardized data is different from Bloomberg, Reuters, Factset, S&P or Yahoo Finance ? Check out our FAQ page to learn more",
+    "endpoint_id": "finnhub.raw_stock_financials",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/financials",
+    "optional_params": [
+      "preliminary"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/financials",
+    "required_params": [
+      "freq",
+      "statement",
+      "symbol"
+    ],
+    "response_fields": [
+      "costOfGoodsSold",
+      "ebit",
+      "financials",
+      "grossIncome",
+      "interestExpense",
+      "netIncome",
+      "netIncomeAfterTaxes",
+      "period",
+      "pretaxIncome",
+      "provisionforIncomeTaxes",
+      "researchDevelopment",
+      "revenue",
+      "sgaExpense",
+      "symbol",
+      "totalOperatingExpense",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Financial Statements"
+  },
+  {
+    "description": "Get financials as reported. This data is available for bulk download on Kaggle SEC Financials database .",
+    "endpoint_id": "finnhub.raw_stock_financials_reported",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/financials-reported",
+    "optional_params": [
+      "accessNumber",
+      "cik",
+      "freq",
+      "from",
+      "symbol",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/financials-reported",
+    "required_params": [],
+    "response_fields": [
+      "Assets",
+      "GrossProfit",
+      "InterestPaidNet",
+      "InventoryNet",
+      "Liabilities",
+      "NetIncomeLoss",
+      "OperatingExpenses",
+      "acceptedDate",
+      "accessNumber",
+      "bs",
+      "cf",
+      "cik",
+      "data",
+      "endDate",
+      "filedDate",
+      "form",
+      "ic",
+      "quarter",
+      "report",
+      "startDate",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Financials As Reported"
+  },
+  {
+    "description": "Get a full list fund and institutional investors of a company in descending order of the number of shares held. Data is sourced from 13F form , Schedule 13D and 13G for US market, UK Share Register for UK market, SEDI for Canadian market and equivalent filings for other international markets.",
+    "endpoint_id": "finnhub.raw_stock_fund_ownership",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/fund-ownership",
+    "optional_params": [
+      "limit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/fund-ownership",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "change",
+      "filingDate",
+      "name",
+      "ownership",
+      "portfolioPercent",
+      "share",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Fund Ownership"
+  },
+  {
+    "description": "Get company's gross income estimates.",
+    "endpoint_id": "finnhub.raw_stock_gross_income_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-gross-income-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/gross-income-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "freq",
+      "grossIncomeAvg",
+      "grossIncomeHigh",
+      "grossIncomeLow",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Gross Income Estimates"
+  },
+  {
+    "description": "Get historical employee count for global companies.",
+    "endpoint_id": "finnhub.raw_stock_historical_employee_count",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/historical-employee-count",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/historical-employee-count",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "atDate",
+      "data",
+      "employee",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Historical Employee Count"
+  },
+  {
+    "description": "This endpoint provides historical ESG scores and important indicators for 7000+ global companies. The data is collected through company's public ESG disclosure and public sources. Our ESG scoring models takes into account more than 150 different inputs to calculate the level of ESG risks and how well a company is managing them. A higher score means lower ESG risk or better ESG management. ESG scores are in the the range of 0-100. Some key indicators might contain letter-grade score from C- to A+ with C- is the lowest score and A+ is the highest score.",
+    "endpoint_id": "finnhub.raw_stock_historical_esg",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-historical-esg-score-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/historical-esg",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "adultContent",
+      "alcoholic",
+      "animalTesting",
+      "antitrust",
+      "asianEmployeePercentage",
+      "asianManagementPercentage",
+      "blackEmployeePercentage",
+      "blackManagementPercentage",
+      "carbonReductionPolicy",
+      "catholic",
+      "co2EmissionScope1",
+      "co2EmissionScope2",
+      "co2EmissionScope3",
+      "co2EmissionTotal",
+      "coalEnergy",
+      "data",
+      "environmentScore",
+      "governanceScore",
+      "period",
+      "socialScore",
+      "symbol",
+      "totalESGScore"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Historical ESG Scores"
+  },
+  {
+    "description": "Get historical market cap data for global companies.",
+    "endpoint_id": "finnhub.raw_stock_historical_market_cap",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/historical-market-cap",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/historical-market-cap",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "atDate",
+      "currency",
+      "data",
+      "marketCapitalization",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Historical Market Cap"
+  },
+  {
+    "description": "Get insider sentiment data for US companies calculated using method discussed here . The MSPR ranges from -100 for the most negative to 100 for the most positive which can signal price changes in the coming 30-90 days.",
+    "endpoint_id": "finnhub.raw_stock_insider_sentiment",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/insider-sentiment",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/insider-sentiment",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "change",
+      "data",
+      "month",
+      "mspr",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Insider Sentiment"
+  },
+  {
+    "description": "Company insider transactions data sourced from Form 3,4,5 , SEDI and relevant companies' filings. This endpoint covers US, UK, Canada, Australia, India, and all major EU markets. Limit to 100 transactions per API call.",
+    "endpoint_id": "finnhub.raw_stock_insider_transactions",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/insider-transactions",
+    "optional_params": [
+      "from",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/insider-transactions",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "change",
+      "data",
+      "filingDate",
+      "name",
+      "share",
+      "symbol",
+      "transactionCode",
+      "transactionDate",
+      "transactionPrice"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Insider Transactions"
+  },
+  {
+    "description": "List filings for international companies. Limit to 500 documents at a time. These are the documents we use to source our fundamental data. Enterprise clients who need access to the full filings for global markets should contact us for the access.",
+    "endpoint_id": "finnhub.raw_stock_international_filings",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/international-filings",
+    "optional_params": [
+      "country",
+      "from",
+      "symbol",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/international-filings",
+    "required_params": [],
+    "response_fields": [
+      "category",
+      "companyName",
+      "country",
+      "description",
+      "filedDate",
+      "language",
+      "symbol",
+      "title",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "International Filings"
+  },
+  {
+    "description": "Thematic investing involves creating a portfolio (or portion of a portfolio) by gathering together a collection of companies involved in certain areas that you predict will generate above-market returns over the long term. Themes can be based on a concept such as ageing populations or a sub-sector such as robotics, and drones. Thematic investing focuses on predicted long-term trends rather than specific companies or sectors, enabling investors to access structural, one-off shifts that can change an entire industry. This endpoint will help you get portfolios of different investment themes that are changing our life and are the way of the future. A full list of themes supported can be found here . The theme coverage and portfolios are updated bi-weekly by our analysts. Our approach excludes penny, super-small cap and illiquid stocks.",
+    "endpoint_id": "finnhub.raw_stock_investment_theme",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/investment-themes-thematic-investing",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/investment-theme",
+    "required_params": [
+      "theme"
+    ],
+    "response_fields": [
+      "data",
+      "symbol",
+      "theme"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Investment Themes (Thematic Investing)"
+  },
+  {
+    "description": "Get a list of reported lobbying activities in the Senate and the House.",
+    "endpoint_id": "finnhub.raw_stock_lobbying",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-lobbying",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/lobbying",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "clientId",
+      "country",
+      "data",
+      "date",
+      "description",
+      "documentUrl",
+      "dtPosted",
+      "expenses",
+      "houseRegistrantId",
+      "houseregistrantId",
+      "income",
+      "name",
+      "period",
+      "postedName",
+      "registrantId",
+      "senateId",
+      "symbol",
+      "type",
+      "uuid",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Senate Lobbying"
+  },
+  {
+    "description": "Get a list of holidays for global exchanges.",
+    "endpoint_id": "finnhub.raw_stock_market_holiday",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/market-holiday",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/market-holiday",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "atDate",
+      "data",
+      "eventName",
+      "exchange",
+      "timezone",
+      "tradingHour"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Market Holiday"
+  },
+  {
+    "description": "Get current market status for global exchanges (whether exchanges are open or close).",
+    "endpoint_id": "finnhub.raw_stock_market_status",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/market-status",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/market-status",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "exchange",
+      "holiday",
+      "isOpen",
+      "session",
+      "t",
+      "timezone"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Market Status"
+  },
+  {
+    "description": "Get company basic financials such as margin, P/E ratio, 52-week high/low etc.",
+    "endpoint_id": "finnhub.raw_stock_metric",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-basic-financials",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/metric",
+    "required_params": [
+      "metric",
+      "symbol"
+    ],
+    "response_fields": [
+      "annual",
+      "beta",
+      "currentRatio",
+      "metric",
+      "metricType",
+      "netMargin",
+      "period",
+      "salesPerShare",
+      "series",
+      "symbol",
+      "v"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Basic Financials"
+  },
+  {
+    "description": "Get company's net income estimates.",
+    "endpoint_id": "finnhub.raw_stock_net_income_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-net-income-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/net-income-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "freq",
+      "netIncomeAvg",
+      "netIncomeHigh",
+      "netIncomeLow",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Net Income Estimates"
+  },
+  {
+    "description": "Get latest articles posted directly on the companies' newsroom and investor relations page. Newsroom API along with the Press Releases API provide a comprehensive text-based dataset directly from the company. We currently cover 1,250 US Companies with this dataset.",
+    "endpoint_id": "finnhub.raw_stock_newsroom",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-newsroom",
+    "optional_params": [
+      "from",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/newsroom",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "atDate",
+      "data",
+      "fullText",
+      "symbol",
+      "title",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Newsroom"
+  },
+  {
+    "description": "Get a full list of shareholders of a company in descending order of the number of shares held. Data is sourced from 13F form , Schedule 13D and 13G for US market, UK Share Register for UK market, SEDI for Canadian market and equivalent filings for other international markets.",
+    "endpoint_id": "finnhub.raw_stock_ownership",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/ownership",
+    "optional_params": [
+      "limit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/ownership",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "change",
+      "filingDate",
+      "name",
+      "ownership",
+      "share",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Ownership"
+  },
+  {
+    "description": "Get company peers. Return a list of peers operating in the same country and sector/industry.",
+    "endpoint_id": "finnhub.raw_stock_peers",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-peers",
+    "optional_params": [
+      "grouping"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/peers",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [],
+    "source": "finnhub_doc_schema",
+    "summary": "Peers"
+  },
+  {
+    "description": "Get presentations/slides data in PDF format that are usually used during earnings calls. You can get a list of supported symbols here",
+    "endpoint_id": "finnhub.raw_stock_presentation",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-presentation-slide-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/presentation",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "atTime",
+      "quarter",
+      "res",
+      "symbol",
+      "title",
+      "url",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company Presentation"
+  },
+  {
+    "description": "Get company's pretax income estimates.",
+    "endpoint_id": "finnhub.raw_stock_pretax_income_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-pretax-income-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/pretax-income-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "freq",
+      "numberAnalysts",
+      "period",
+      "pretaxIncomeAvg",
+      "pretaxIncomeHigh",
+      "pretaxIncomeLow",
+      "quarter",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Pretax Income Estimates"
+  },
+  {
+    "description": "Get company price performance statistics such as 52-week high/low, YTD return and much more.",
+    "endpoint_id": "finnhub.raw_stock_price_metric",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/price-metrics",
+    "optional_params": [
+      "date"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/price-metric",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "atDate",
+      "data",
+      "symbol",
+      "ytdPriceReturn"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Price Metrics"
+  },
+  {
+    "description": "Get latest price target consensus.",
+    "endpoint_id": "finnhub.raw_stock_price_target",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/price-target",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/price-target",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "lastUpdated",
+      "numberAnalysts",
+      "symbol",
+      "targetHigh",
+      "targetLow",
+      "targetMean",
+      "targetMedian"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Price Target"
+  },
+  {
+    "description": "Get general information of a company. You can query by symbol, ISIN or CUSIP",
+    "endpoint_id": "finnhub.raw_stock_profile",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-profile",
+    "optional_params": [
+      "cusip",
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/profile",
+    "required_params": [],
+    "response_fields": [
+      "address",
+      "alias",
+      "city",
+      "country",
+      "currency",
+      "cusip",
+      "description",
+      "employeeTotal",
+      "estimateCurrency",
+      "exchange",
+      "finnhubIndustry",
+      "ggroup",
+      "gind",
+      "gsector",
+      "gsubind",
+      "ipo",
+      "irUrl",
+      "isin",
+      "lei",
+      "logo",
+      "marketCapCurrency",
+      "marketCapitalization",
+      "naics",
+      "naicsNationalIndustry",
+      "naicsSector",
+      "naicsSubsector",
+      "name",
+      "phone",
+      "sedol",
+      "shareOutstanding",
+      "state",
+      "ticker",
+      "weburl"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company Profile"
+  },
+  {
+    "description": "Get general information of a company. You can query by symbol, ISIN or CUSIP. This is the free version of Company Profile .",
+    "endpoint_id": "finnhub.raw_stock_profile2",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-profile2",
+    "optional_params": [
+      "cusip",
+      "isin",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/profile2",
+    "required_params": [],
+    "response_fields": [
+      "country",
+      "currency",
+      "exchange",
+      "finnhubIndustry",
+      "ipo",
+      "logo",
+      "marketCapitalization",
+      "name",
+      "phone",
+      "shareOutstanding",
+      "ticker",
+      "weburl"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Company Profile 2"
+  },
+  {
+    "description": "Get latest analyst recommendation trends for a company.",
+    "endpoint_id": "finnhub.raw_stock_recommendation",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/recommendation-trends",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/recommendation",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "buy",
+      "hold",
+      "period",
+      "sell",
+      "strongBuy",
+      "strongSell",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Recommendation Trends"
+  },
+  {
+    "description": "Get revenue breakdown as-reporetd by product and geography. Users on personal plans can access data for US companies which disclose their revenue breakdown in the annual or quarterly reports. Global standardized revenue breakdown/segments data is available for Enterprise users. Contact us to inquire about the access for Global standardized data.",
+    "endpoint_id": "finnhub.raw_stock_revenue_breakdown",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/revenue-breakdown",
+    "optional_params": [
+      "cik",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/revenue-breakdown",
+    "required_params": [],
+    "response_fields": [
+      "accessNumber",
+      "axis",
+      "breakdown",
+      "cik",
+      "concept",
+      "data",
+      "endDate",
+      "label",
+      "member",
+      "percentage",
+      "revenueBreakdown",
+      "startDate",
+      "symbol",
+      "unit",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Revenue Breakdown"
+  },
+  {
+    "description": "Get standardized revenue breakdown and KPIs data for 30,000+ global companies.",
+    "endpoint_id": "finnhub.raw_stock_revenue_breakdown2",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/revenue-breakdown-kpi-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/revenue-breakdown2",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "annual",
+      "currency",
+      "data",
+      "label",
+      "period",
+      "quarterly",
+      "revenue_by_geography",
+      "revenue_by_product",
+      "symbol",
+      "value"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Revenue Breakdown & KPI"
+  },
+  {
+    "description": "Get company's revenue estimates.",
+    "endpoint_id": "finnhub.raw_stock_revenue_estimate",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/company-revenue-estimates",
+    "optional_params": [
+      "freq"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/revenue-estimate",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "data",
+      "freq",
+      "numberAnalysts",
+      "period",
+      "quarter",
+      "revenueAvg",
+      "revenueHigh",
+      "revenueLow",
+      "symbol",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Revenue Estimates"
+  },
+  {
+    "description": "Calculate the textual difference between a company's 10-K / 10-Q reports and the same type of report in the previous year using Cosine Similarity. For example, this endpoint compares 2019's 10-K with 2018's 10-K. Companies breaking from its routines in disclosure of financial condition and risk analysis section can signal a significant change in the company's stock price in the upcoming 4 quarters.",
+    "endpoint_id": "finnhub.raw_stock_similarity_index",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/similarity-index",
+    "optional_params": [
+      "cik",
+      "freq",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/similarity-index",
+    "required_params": [],
+    "response_fields": [
+      "acceptedDate",
+      "accessNumber",
+      "cik",
+      "filedDate",
+      "filingUrl",
+      "form",
+      "item1",
+      "item1a",
+      "item2",
+      "item7",
+      "item7a",
+      "reportUrl",
+      "similarity",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Similarity Index"
+  },
+  {
+    "description": "Get social sentiment for stocks on Reddit and Twitter.",
+    "endpoint_id": "finnhub.raw_stock_social_sentiment",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/social-sentiment",
+    "optional_params": [
+      "from",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/social-sentiment",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "atTime",
+      "data",
+      "mention",
+      "negativeMention",
+      "negativeScore",
+      "positiveMention",
+      "positiveScore",
+      "score",
+      "symbol"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Social Sentiment"
+  },
+  {
+    "description": "Get splits data for stocks.",
+    "endpoint_id": "finnhub.raw_stock_split",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-splits",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/split",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "date",
+      "fromFactor",
+      "symbol",
+      "toFactor"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Splits"
+  },
+  {
+    "description": "This endpoint provides an overall map of public companies' key customers and suppliers. The data offers a deeper look into a company's supply chain and how products are created. The data will help investors manage risk, limit exposure or generate alpha-generating ideas and trading insights.",
+    "endpoint_id": "finnhub.raw_stock_supply_chain",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/supply-chain-relationships",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/supply-chain",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "country",
+      "customer",
+      "data",
+      "industry",
+      "name",
+      "oneMonthCorrelation",
+      "oneYearCorrelation",
+      "sixMonthCorrelation",
+      "supplier",
+      "symbol",
+      "threeMonthCorrelation",
+      "twoWeekCorrelation",
+      "twoYearCorrelation"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Supply Chain Relationships"
+  },
+  {
+    "description": "List supported stocks. We use the following symbology to identify stocks on Finnhub Exchange_Ticker.Exchange_Code . A list of supported exchange codes can be found here .",
+    "endpoint_id": "finnhub.raw_stock_symbol",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-symbols",
+    "optional_params": [
+      "currency",
+      "mic",
+      "securityType"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/symbol",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "currency",
+      "description",
+      "displaySymbol",
+      "figi",
+      "isin",
+      "mic",
+      "shareClassFIGI",
+      "symbol",
+      "symbol2",
+      "type"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Stock Symbol"
+  },
+  {
+    "description": "Get historical tick data for global exchanges. For more historical tick data, you can visit our bulk download page in the Dashboard here to speed up the download process. Exchange Segment Delay US CTA/UTP Full SIP End-of-day TSX TSX TSX Venture Index End-of-day LSE London Stock Exchange (L) LSE International (L) LSE European (L) 15 minute Euronext Euronext Paris (PA) Euronext Amsterdam (AS) Euronext Lisbon (LS) Euronext Brussels (BR) Euronext Oslo (OL) Euronext London (LN) Euronext Dublin (IR) Index Warrant End-of-day Deutsche B\u00f6rse Frankfurt (F) Xetra (DE) Duesseldorf (DU) Hamburg (HM) Berlin (BE) Hanover (HA) Stoxx (SX) TradeGate (TG) Zertifikate (SC) Index Warrant End-of-day",
+    "endpoint_id": "finnhub.raw_stock_tick",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-tick",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/tick",
+    "required_params": [
+      "date",
+      "limit",
+      "skip",
+      "symbol"
+    ],
+    "response_fields": [
+      "c",
+      "count",
+      "p",
+      "s",
+      "skip",
+      "t",
+      "total",
+      "v",
+      "x"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Tick Data"
+  },
+  {
+    "description": "Get earnings call transcripts, audio and participants' list. Data is available for US, UK, European, Australian and Canadian companies. 15+ years of data is available with 220,000+ audio which add up to 7TB in size.",
+    "endpoint_id": "finnhub.raw_stock_transcripts",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/earnings-call-transcripts-api",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/transcripts",
+    "required_params": [
+      "id"
+    ],
+    "response_fields": [
+      "audio",
+      "description",
+      "id",
+      "name",
+      "participant",
+      "quarter",
+      "role",
+      "session",
+      "speech",
+      "symbol",
+      "time",
+      "title",
+      "transcript",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Earnings Call Transcripts"
+  },
+  {
+    "description": "List earnings call transcripts' metadata. This endpoint is available for Global companies. You can get a list of supported symbols here",
+    "endpoint_id": "finnhub.raw_stock_transcripts_list",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/transcripts-list",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/transcripts/list",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "id",
+      "quarter",
+      "symbol",
+      "time",
+      "title",
+      "transcripts",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Earnings Call Transcripts List"
+  },
+  {
+    "description": "Get latest stock upgrade and downgrade.",
+    "endpoint_id": "finnhub.raw_stock_upgrade_downgrade",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/upgrade-downgrade",
+    "optional_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/stock/upgrade-downgrade",
+    "required_params": [],
+    "response_fields": [
+      "action",
+      "company",
+      "fromGrade",
+      "gradeTime",
+      "symbol",
+      "toGrade"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Stock Upgrade/Downgrade"
+  },
+  {
+    "description": "Get a list of government's spending activities from USASpending dataset for public companies. This dataset can help you identify companies that win big government contracts which is extremely important for industries such as Defense, Aerospace, and Education. Only recent data is available via the API. For historical data, you can download it here: Pre-2021 , 2021 , 2022 , 2023 , 2024",
+    "endpoint_id": "finnhub.raw_stock_usa_spending",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-usa-spending",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/usa-spending",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "actionDate",
+      "awardDescription",
+      "awardingAgencyName",
+      "awardingOfficeName",
+      "awardingSubAgencyName",
+      "country",
+      "data",
+      "naicsCode",
+      "performanceCity",
+      "performanceCongressionalDistrict",
+      "performanceCountry",
+      "performanceCounty",
+      "performanceEndDate",
+      "performanceStartDate",
+      "performanceState",
+      "performanceZipCode",
+      "permalink",
+      "recipientName",
+      "recipientParentName",
+      "symbol",
+      "totalValue"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "USA Spending"
+  },
+  {
+    "description": "List USPTO patents for companies. Limit to 250 records per API call.",
+    "endpoint_id": "finnhub.raw_stock_uspto_patent",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-uspto-patent",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/uspto-patent",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "applicationNumber",
+      "companyFilingName",
+      "data",
+      "description",
+      "filingDate",
+      "filingStatus",
+      "patentNumber",
+      "patentType",
+      "publicationDate",
+      "symbol",
+      "type",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "USPTO Patents"
+  },
+  {
+    "description": "Get a list of H1-B and Permanent visa applications for companies from the DOL. The data is updated quarterly.",
+    "endpoint_id": "finnhub.raw_stock_visa_application",
+    "method": "GET",
+    "official_doc_ref": "https://finnhub.io/docs/api/stock-visa-application",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/stock/visa-application",
+    "required_params": [
+      "from",
+      "symbol",
+      "to"
+    ],
+    "response_fields": [
+      "beginDate",
+      "caseNumber",
+      "caseStatus",
+      "data",
+      "employerName",
+      "endDate",
+      "fullTimePosition",
+      "h1bDependent",
+      "jobTitle",
+      "quarter",
+      "receivedDate",
+      "socCode",
+      "symbol",
+      "visaClass",
+      "wageLevel",
+      "wageRangeFrom",
+      "wageRangeTo",
+      "wageUnitOfPay",
+      "worksiteAddress",
+      "worksiteCity",
+      "worksiteCounty",
+      "worksitePostalCode",
+      "worksiteState",
+      "year"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "H1-B Visa Application"
+  },
+  {
+    "description": "Chat with our AI copilot trained on the extensive Finnhub's global data. You can ask it any finance-related questions just like with other LLM models and receive results in texts and widgets.",
+    "endpoint_id": "finnhub.raw_ai_chat",
+    "method": "POST",
+    "official_doc_ref": "https://finnhub.io/docs/api/ai-copilot-llm",
+    "optional_params": [
+      "search"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/ai-chat",
+    "required_params": [],
+    "response_fields": [
+      "chatId",
+      "content",
+      "link",
+      "priceCurrency",
+      "querySummary",
+      "relatedQueries",
+      "reportingCurrency",
+      "shortURL",
+      "snippet",
+      "sources",
+      "ticker",
+      "tickers",
+      "title",
+      "websiteName",
+      "widgets"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "AI Copilot"
+  },
+  {
+    "description": "Search for best-matched filings across global companies' filings, transcripts and press releases. You can filter by anything from symbol, ISIN to form type, and document sources. This endpoint will return a list of documents that match your search criteria. If you would like to get the excerpts as well, please set highlighted to true . Once you have the list of documents, you can get a list of excerpts and positions to highlight the document using the /search-in-filing endpoint",
+    "endpoint_id": "finnhub.raw_global_filings_search",
+    "method": "POST",
+    "official_doc_ref": "https://finnhub.io/docs/api/global-filings-search",
+    "optional_params": [
+      "search"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/global-filings/search",
+    "required_params": [],
+    "response_fields": [
+      "acceptanceDate",
+      "amend",
+      "count",
+      "documentCount",
+      "filedDate",
+      "filerId",
+      "filingId",
+      "filings",
+      "form",
+      "name",
+      "page",
+      "pageCount",
+      "reportDate",
+      "reportPeriod",
+      "source",
+      "symbol",
+      "symbols",
+      "title",
+      "took",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Global Filings Search"
+  },
+  {
+    "description": "Get a list of excerpts and highlight positions within a document using your query.",
+    "endpoint_id": "finnhub.raw_global_filings_search_in_filing",
+    "method": "POST",
+    "official_doc_ref": "https://finnhub.io/docs/api/search-in-filing",
+    "optional_params": [
+      "search"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/global-filings/search-in-filing",
+    "required_params": [],
+    "response_fields": [
+      "acceptanceDate",
+      "amend",
+      "content",
+      "documentCount",
+      "documentId",
+      "documents",
+      "endOffset",
+      "excerpts",
+      "filedDate",
+      "filerId",
+      "filingId",
+      "form",
+      "format",
+      "hits",
+      "name",
+      "pageCount",
+      "reportDate",
+      "reportPeriod",
+      "snippetId",
+      "source",
+      "startOffset",
+      "symbol",
+      "symbols",
+      "title",
+      "url"
+    ],
+    "source": "finnhub_doc_schema",
+    "summary": "Search In Filing"
+  }
+]

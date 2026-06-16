@@ -11,14 +11,14 @@ from typing import Callable, Mapping
 from claw_trade.selection.models import (
     DEFAULT_SELECTION_STRATEGY_CONFIG_VERSION,
     DEFAULT_SELECTION_WEIGHT_VERSION,
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionMarket,
     SelectionProfile,
 )
 
-_SELECTION_TOOL_NAME = "claw_get_selection_candidate_pack"
+_SELECTION_TOOL_NAME = "claw_get_selection_candidate_cache"
 _ALLOWED_WORKERS = frozenset({"selection_strategist", "selection_skeptic"})
 _REQUIRED_STAGE = "selection_review"
 _DEFAULT_ARTIFACT_ROOT = Path("runs/selection/artifacts")
@@ -102,7 +102,7 @@ class SelectionToolError(ValueError):
 @dataclass(frozen=True)
 class SelectionPackReadResult:
     body_md: str
-    pack_body_sha256: str
+    cache_body_sha256: str
     candidate_count: int
     selection_run_id: str
     select_workflow_run_id: str
@@ -111,7 +111,7 @@ class SelectionPackReadResult:
     trade_date: str
 
 
-def load_selection_candidate_pack_from_runtime_context(
+def load_selection_candidate_cache_from_runtime_context(
     runtime_context: Mapping[str, object],
     *,
     now_fn: Callable[[], datetime] | None = None,
@@ -133,62 +133,62 @@ def load_selection_candidate_pack_from_runtime_context(
             f"worker={worker_id} stage={stage} is not allowed for {_SELECTION_TOOL_NAME}",
         )
 
-    candidate_pack_ref = _load_candidate_pack_ref(runtime_context, runtime_vars, selection_run_id=selection_run_id)
-    if candidate_pack_ref.selection_run_id != selection_run_id:
+    candidate_cache_ref = _load_candidate_cache_ref(runtime_context, runtime_vars, selection_run_id=selection_run_id)
+    if candidate_cache_ref.selection_run_id != selection_run_id:
         raise SelectionToolError(
             "selection_run_missing",
-            "selection_run_id does not match candidate_pack_ref.selection_run_id",
+            "selection_run_id does not match candidate_cache_ref.selection_run_id",
         )
 
     artifact_root = _artifact_root(runtime_context, runtime_vars)
-    body_path = _resolve_ref_to_path(candidate_pack_ref.l1_uri, artifact_root=artifact_root)
-    manifest_path = _resolve_ref_to_path(candidate_pack_ref.manifest_ref, artifact_root=artifact_root)
+    body_path = _resolve_ref_to_path(candidate_cache_ref.l1_uri, artifact_root=artifact_root)
+    manifest_path = _resolve_ref_to_path(candidate_cache_ref.manifest_ref, artifact_root=artifact_root)
 
     body_text = _read_text(body_path)
     body_sha = sha256(body_text.encode("utf-8")).hexdigest()
-    if body_sha != candidate_pack_ref.content_sha256:
-        raise SelectionToolError("candidate_pack_integrity_failed", "candidate pack body sha256 mismatch")
+    if body_sha != candidate_cache_ref.content_sha256:
+        raise SelectionToolError("candidate_cache_integrity_failed", "candidate cache body sha256 mismatch")
 
     manifest_text = _read_text(manifest_path)
     manifest_sha = sha256(manifest_text.encode("utf-8")).hexdigest()
-    manifest_payload = _load_json(manifest_text, code="candidate_pack_integrity_failed", target="manifest")
+    manifest_payload = _load_json(manifest_text, code="candidate_cache_integrity_failed", target="manifest")
     manifest = _parse_manifest(manifest_payload)
 
     if manifest.selection_run_id != selection_run_id:
         raise SelectionToolError(
-            "candidate_pack_integrity_failed",
+            "candidate_cache_integrity_failed",
             "manifest.selection_run_id does not match runtime context",
         )
-    if manifest.pack_body_sha256 != candidate_pack_ref.content_sha256:
+    if manifest.cache_body_sha256 != candidate_cache_ref.content_sha256:
         raise SelectionToolError(
-            "candidate_pack_integrity_failed",
-            "manifest.pack_body_sha256 does not match candidate_pack_ref.content_sha256",
+            "candidate_cache_integrity_failed",
+            "manifest.cache_body_sha256 does not match candidate_cache_ref.content_sha256",
         )
-    if manifest.readback_status != CandidatePackReadbackStatus.VERIFIED:
-        raise SelectionToolError("candidate_pack_integrity_failed", "manifest.readback_status is not verified")
+    if manifest.readback_status != CandidateCacheReadbackStatus.VERIFIED:
+        raise SelectionToolError("candidate_cache_integrity_failed", "manifest.readback_status is not verified")
     if not manifest.source_lineage_refs:
-        raise SelectionToolError("candidate_pack_lineage_incomplete", "manifest.source_lineage_refs is empty")
-    if manifest.stage != "approving_candidate_pack" or manifest.target != "candidate_pack":
+        raise SelectionToolError("candidate_cache_lineage_incomplete", "manifest.source_lineage_refs is empty")
+    if manifest.stage != "approving_candidate_cache" or manifest.target != "candidate_cache":
         raise SelectionToolError(
-            "candidate_pack_integrity_failed",
-            "manifest stage/target is not approving_candidate_pack/candidate_pack",
+            "candidate_cache_integrity_failed",
+            "manifest stage/target is not approving_candidate_cache/candidate_cache",
         )
 
     _validate_readback_verify_log(
         data_path=body_path,
-        expected_sha256=candidate_pack_ref.content_sha256,
-        code="candidate_pack_integrity_failed",
+        expected_sha256=candidate_cache_ref.content_sha256,
+        code="candidate_cache_integrity_failed",
     )
     _validate_readback_verify_log(
         data_path=manifest_path,
         expected_sha256=manifest_sha,
-        code="candidate_pack_integrity_failed",
+        code="candidate_cache_integrity_failed",
     )
 
     now = (now_fn or _utc_now)()
-    expires_at = _parse_iso_timestamp(candidate_pack_ref.expires_at)
+    expires_at = _parse_iso_timestamp(candidate_cache_ref.expires_at)
     if expires_at <= now:
-        raise SelectionToolError("candidate_pack_stale", "candidate pack has expired")
+        raise SelectionToolError("candidate_cache_stale", "candidate cache has expired")
 
     runtime_market = _text(runtime_vars, "market")
     runtime_profile = _text(runtime_vars, "profile")
@@ -200,8 +200,8 @@ def load_selection_candidate_pack_from_runtime_context(
     if runtime_trade_date is not None and runtime_trade_date != manifest.trade_date:
         raise SelectionToolError("selection_run_missing", "runtime trade_date does not match manifest")
 
-    model_visible_body = _model_visible_candidate_pack_body(
-        candidate_pack_ref=candidate_pack_ref,
+    model_visible_body = _model_visible_candidate_cache_body(
+        candidate_cache_ref=candidate_cache_ref,
         artifact_root=artifact_root,
         fallback_body=body_text,
         manifest=manifest,
@@ -209,7 +209,7 @@ def load_selection_candidate_pack_from_runtime_context(
     _validate_model_visible_body(model_visible_body)
     return SelectionPackReadResult(
         body_md=model_visible_body,
-        pack_body_sha256=body_sha,
+        cache_body_sha256=body_sha,
         candidate_count=manifest.candidate_count,
         selection_run_id=selection_run_id,
         select_workflow_run_id=select_workflow_run_id,
@@ -219,7 +219,7 @@ def load_selection_candidate_pack_from_runtime_context(
     )
 
 
-def execute_selection_candidate_pack_tool(payload: Mapping[str, object]) -> dict[str, object]:
+def execute_selection_candidate_cache_tool(payload: Mapping[str, object]) -> dict[str, object]:
     runtime_context = _mapping(payload, "runtime_context")
     params = payload.get("tool_input", {})
     if not isinstance(params, dict):
@@ -227,14 +227,14 @@ def execute_selection_candidate_pack_tool(payload: Mapping[str, object]) -> dict
     if params:
         raise SelectionToolError(
             "selection_runtime_context_missing",
-            "claw_get_selection_candidate_pack does not accept business params",
+            "claw_get_selection_candidate_cache does not accept business params",
         )
-    result = load_selection_candidate_pack_from_runtime_context(runtime_context)
+    result = load_selection_candidate_cache_from_runtime_context(runtime_context)
     return {
         "ok": True,
         "tool_name": _SELECTION_TOOL_NAME,
         "reader_brief_md": result.body_md,
-        "pack_body_sha256": result.pack_body_sha256,
+        "cache_body_sha256": result.cache_body_sha256,
         "candidate_count": result.candidate_count,
         "selection_run_meta": {
             "selection_run_id": result.selection_run_id,
@@ -246,36 +246,36 @@ def execute_selection_candidate_pack_tool(payload: Mapping[str, object]) -> dict
     }
 
 
-def _load_candidate_pack_ref(
+def _load_candidate_cache_ref(
     runtime_context: Mapping[str, object],
     runtime_vars: Mapping[str, object],
     *,
     selection_run_id: str,
-) -> CandidatePackRef:
-    raw = runtime_context.get("candidate_pack_ref")
+) -> CandidateCacheRef:
+    raw = runtime_context.get("candidate_cache_ref")
     if not isinstance(raw, (dict, str)):
-        raw = runtime_vars.get("candidate_pack_ref")
-    payload = _candidate_pack_ref_payload(raw)
+        raw = runtime_vars.get("candidate_cache_ref")
+    payload = _candidate_cache_ref_payload(raw)
     if payload is None:
-        raise SelectionToolError("candidate_pack_not_approved", "candidate_pack_ref is missing")
+        raise SelectionToolError("candidate_cache_not_approved", "candidate_cache_ref is missing")
 
     payload.setdefault("selection_run_id", selection_run_id)
     try:
-        return CandidatePackRef(
-            selection_run_id=_required_text(payload, "selection_run_id", code="candidate_pack_not_approved"),
-            material_id=_required_text(payload, "material_id", code="candidate_pack_not_approved"),
-            l1_uri=_required_text(payload, "l1_uri", code="candidate_pack_not_approved"),
-            content_sha256=_required_text(payload, "content_sha256", code="candidate_pack_not_approved"),
-            manifest_ref=_required_text(payload, "manifest_ref", code="candidate_pack_not_approved"),
-            approved_at=_required_text(payload, "approved_at", code="candidate_pack_not_approved"),
-            expires_at=_required_text(payload, "expires_at", code="candidate_pack_not_approved"),
-            pack_summary_ref=_required_text(payload, "pack_summary_ref", code="candidate_pack_not_approved"),
+        return CandidateCacheRef(
+            selection_run_id=_required_text(payload, "selection_run_id", code="candidate_cache_not_approved"),
+            material_id=_required_text(payload, "material_id", code="candidate_cache_not_approved"),
+            l1_uri=_required_text(payload, "l1_uri", code="candidate_cache_not_approved"),
+            content_sha256=_required_text(payload, "content_sha256", code="candidate_cache_not_approved"),
+            manifest_ref=_required_text(payload, "manifest_ref", code="candidate_cache_not_approved"),
+            approved_at=_required_text(payload, "approved_at", code="candidate_cache_not_approved"),
+            expires_at=_required_text(payload, "expires_at", code="candidate_cache_not_approved"),
+            cache_summary_ref=_required_text(payload, "cache_summary_ref", code="candidate_cache_not_approved"),
         )
     except ValueError as exc:
-        raise SelectionToolError("candidate_pack_not_approved", str(exc)) from exc
+        raise SelectionToolError("candidate_cache_not_approved", str(exc)) from exc
 
 
-def _candidate_pack_ref_payload(raw: object) -> dict[str, object] | None:
+def _candidate_cache_ref_payload(raw: object) -> dict[str, object] | None:
     if isinstance(raw, dict):
         return dict(raw)
     if isinstance(raw, str):
@@ -285,9 +285,9 @@ def _candidate_pack_ref_payload(raw: object) -> dict[str, object] | None:
         try:
             decoded = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise SelectionToolError("candidate_pack_not_approved", "candidate_pack_ref is not valid JSON") from exc
+            raise SelectionToolError("candidate_cache_not_approved", "candidate_cache_ref is not valid JSON") from exc
         if not isinstance(decoded, dict):
-            raise SelectionToolError("candidate_pack_not_approved", "candidate_pack_ref JSON must be object")
+            raise SelectionToolError("candidate_cache_not_approved", "candidate_cache_ref JSON must be object")
         return dict(decoded)
     return None
 
@@ -305,7 +305,7 @@ def _resolve_ref_to_path(ref: str, *, artifact_root: Path) -> Path:
         relative = ref[len(prefix) :].strip("/")
         segments = [part for part in relative.split("/") if part]
         if not segments or ".." in segments:
-            raise SelectionToolError("candidate_pack_integrity_failed", f"unsafe local selection uri: {ref}")
+            raise SelectionToolError("candidate_cache_integrity_failed", f"unsafe local selection uri: {ref}")
         return artifact_root / Path(*segments)
     return Path(ref)
 
@@ -333,30 +333,30 @@ def _readback_verify_path(path: Path) -> Path:
     return path.with_suffix(f"{suffix}.readback-verify.json")
 
 
-def _parse_manifest(payload: Mapping[str, object]) -> CandidatePackManifest:
+def _parse_manifest(payload: Mapping[str, object]) -> CandidateCacheManifest:
     try:
-        return CandidatePackManifest(
-            schema_version=_required_text(payload, "schema_version", code="candidate_pack_integrity_failed"),
-            selection_run_id=_required_text(payload, "selection_run_id", code="candidate_pack_integrity_failed"),
-            market=SelectionMarket(_required_text(payload, "market", code="candidate_pack_integrity_failed")),
-            profile=SelectionProfile(_required_text(payload, "profile", code="candidate_pack_integrity_failed")),
-            trade_date=_required_text(payload, "trade_date", code="candidate_pack_integrity_failed"),
+        return CandidateCacheManifest(
+            schema_version=_required_text(payload, "schema_version", code="candidate_cache_integrity_failed"),
+            selection_run_id=_required_text(payload, "selection_run_id", code="candidate_cache_integrity_failed"),
+            market=SelectionMarket(_required_text(payload, "market", code="candidate_cache_integrity_failed")),
+            profile=SelectionProfile(_required_text(payload, "profile", code="candidate_cache_integrity_failed")),
+            trade_date=_required_text(payload, "trade_date", code="candidate_cache_integrity_failed"),
             candidate_count=int(payload.get("candidate_count")),
             source_lineage_refs=tuple(_string_tuple(payload.get("source_lineage_refs"))),
-            pack_body_sha256=_required_text(payload, "pack_body_sha256", code="candidate_pack_integrity_failed"),
-            strategy_config_ref=_required_text(payload, "strategy_config_ref", code="candidate_pack_integrity_failed"),
-            readback_status=CandidatePackReadbackStatus(
-                _required_text(payload, "readback_status", code="candidate_pack_integrity_failed")
+            cache_body_sha256=_required_text(payload, "cache_body_sha256", code="candidate_cache_integrity_failed"),
+            strategy_config_ref=_required_text(payload, "strategy_config_ref", code="candidate_cache_integrity_failed"),
+            readback_status=CandidateCacheReadbackStatus(
+                _required_text(payload, "readback_status", code="candidate_cache_integrity_failed")
             ),
             strategy_config_version=_text(payload, "strategy_config_version") or "cn_a.selection_strategy.v1",
             weight_version=_text(payload, "weight_version") or "cn_a.selection_weights.v1",
             candidate_scores_ref=_text(payload, "candidate_scores_ref"),
             stable_top20_rule=_optional_mapping(payload.get("stable_top20_rule")),
-            stage=_required_text(payload, "stage", code="candidate_pack_integrity_failed"),
-            target=_required_text(payload, "target", code="candidate_pack_integrity_failed"),
+            stage=_required_text(payload, "stage", code="candidate_cache_integrity_failed"),
+            target=_required_text(payload, "target", code="candidate_cache_integrity_failed"),
         )
     except (TypeError, ValueError) as exc:
-        raise SelectionToolError("candidate_pack_integrity_failed", str(exc)) from exc
+        raise SelectionToolError("candidate_cache_integrity_failed", str(exc)) from exc
 
 
 def _validate_model_visible_body(body_md: str) -> None:
@@ -364,39 +364,39 @@ def _validate_model_visible_body(body_md: str) -> None:
     for token in _FORBIDDEN_MODEL_VISIBLE_TERMS:
         if token.lower() in lowered:
             raise SelectionToolError(
-                "candidate_pack_forbidden_material",
-                f"candidate pack body contains forbidden protocol token: {token}",
+                "candidate_cache_forbidden_material",
+                f"candidate cache body contains forbidden protocol token: {token}",
             )
     raw_field = _reader_visible_raw_field_name(body_md)
     if raw_field is not None:
         raise SelectionToolError(
-            "candidate_pack_forbidden_material",
-            f"candidate pack body contains reader-visible raw field name: {raw_field}",
+            "candidate_cache_forbidden_material",
+            f"candidate cache body contains reader-visible raw field name: {raw_field}",
         )
     for label in _REQUIRED_MODEL_VISIBLE_LABELS:
         if label not in body_md:
             raise SelectionToolError(
-                "candidate_pack_integrity_failed",
-                f"candidate pack body missing model-visible label: {label}",
+                "candidate_cache_integrity_failed",
+                f"candidate cache body missing model-visible label: {label}",
             )
 
 
-def _model_visible_candidate_pack_body(
+def _model_visible_candidate_cache_body(
     *,
-    candidate_pack_ref: CandidatePackRef,
+    candidate_cache_ref: CandidateCacheRef,
     artifact_root: Path,
     fallback_body: str,
-    manifest: CandidatePackManifest,
+    manifest: CandidateCacheManifest,
 ) -> str:
     if _has_required_model_visible_labels(fallback_body):
         return fallback_body
-    summary_path = _resolve_ref_to_path(candidate_pack_ref.pack_summary_ref, artifact_root=artifact_root)
+    summary_path = _resolve_ref_to_path(candidate_cache_ref.cache_summary_ref, artifact_root=artifact_root)
     if summary_path.exists():
         summary_text = _read_text(summary_path)
         if _has_required_model_visible_labels(summary_text):
             return summary_text
-    rebuilt = _rebuild_candidate_pack_body_from_json(
-        candidate_pack_ref=candidate_pack_ref,
+    rebuilt = _rebuild_candidate_cache_body_from_json(
+        candidate_cache_ref=candidate_cache_ref,
         artifact_root=artifact_root,
         manifest=manifest,
     )
@@ -415,17 +415,17 @@ def _reader_visible_raw_field_name(body_md: str) -> str | None:
     return None
 
 
-def _rebuild_candidate_pack_body_from_json(
+def _rebuild_candidate_cache_body_from_json(
     *,
-    candidate_pack_ref: CandidatePackRef,
+    candidate_cache_ref: CandidateCacheRef,
     artifact_root: Path,
-    manifest: CandidatePackManifest,
+    manifest: CandidateCacheManifest,
 ) -> str | None:
-    json_path = _candidate_pack_json_path(candidate_pack_ref, artifact_root=artifact_root)
+    json_path = _candidate_cache_json_path(candidate_cache_ref, artifact_root=artifact_root)
     if json_path is None:
         return None
     try:
-        payload = _load_json(_read_text(json_path), code="candidate_pack_integrity_failed", target="candidate pack json")
+        payload = _load_json(_read_text(json_path), code="candidate_cache_integrity_failed", target="candidate cache json")
     except SelectionToolError:
         return None
     candidates = payload.get("candidates")
@@ -447,7 +447,7 @@ def _rebuild_candidate_pack_body_from_json(
     market = _first_text(payload.get("market"), manifest.market.value)
     candidate_count = _first_text(payload.get("candidate_count"), manifest.candidate_count, len(candidates))
     lines = [
-        "# A股候选事实包",
+        "# A股候选缓存",
         "",
         "## 本轮范围",
         f"- 交易日：{trade_date}",
@@ -489,20 +489,20 @@ def _rebuild_candidate_pack_body_from_json(
             "",
             "## 数据质量摘要",
             _reader_friendly_summary_text(
-                _first_text(payload.get("data_quality_summary"), "数据质量：候选包未提供汇总文本。")
+                _first_text(payload.get("data_quality_summary"), "数据质量：候选缓存未提供汇总文本。")
             ),
             "",
             "## 来源摘要",
-            _reader_friendly_summary_text(_first_text(payload.get("source_summary"), "来源摘要：候选包未提供汇总文本。")),
+            _reader_friendly_summary_text(_first_text(payload.get("source_summary"), "来源摘要：候选缓存未提供汇总文本。")),
         )
     )
     return "\n".join(lines).strip()
 
 
-def _candidate_pack_json_path(candidate_pack_ref: CandidatePackRef, *, artifact_root: Path) -> Path | None:
+def _candidate_cache_json_path(candidate_cache_ref: CandidateCacheRef, *, artifact_root: Path) -> Path | None:
     paths = (
-        _resolve_ref_to_path(candidate_pack_ref.pack_summary_ref, artifact_root=artifact_root).with_name("candidate-pack.json"),
-        _resolve_ref_to_path(candidate_pack_ref.l1_uri, artifact_root=artifact_root).with_name("candidate-pack.json"),
+        _resolve_ref_to_path(candidate_cache_ref.cache_summary_ref, artifact_root=artifact_root).with_name("candidate-cache.json"),
+        _resolve_ref_to_path(candidate_cache_ref.l1_uri, artifact_root=artifact_root).with_name("candidate-cache.json"),
     )
     for path in paths:
         if path.is_file():
@@ -685,7 +685,7 @@ def _optional_mapping(value: object) -> Mapping[str, object] | None:
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise SelectionToolError("candidate_pack_integrity_failed", "stable_top20_rule must be object")
+        raise SelectionToolError("candidate_cache_integrity_failed", "stable_top20_rule must be object")
     return value
 
 
@@ -708,18 +708,18 @@ def _required_text(payload: Mapping[str, object], field_name: str, *, code: str)
 
 def _string_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
-        raise SelectionToolError("candidate_pack_lineage_incomplete", "source_lineage_refs must be list[str]")
+        raise SelectionToolError("candidate_cache_lineage_incomplete", "source_lineage_refs must be list[str]")
     items: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip():
-            raise SelectionToolError("candidate_pack_lineage_incomplete", "source_lineage_refs must be list[str]")
+            raise SelectionToolError("candidate_cache_lineage_incomplete", "source_lineage_refs must be list[str]")
         items.append(item.strip())
     return tuple(items)
 
 
 def _read_text(path: Path) -> str:
     if not path.exists():
-        raise SelectionToolError("candidate_pack_not_approved", f"missing candidate pack artifact: {path}")
+        raise SelectionToolError("candidate_cache_not_approved", f"missing candidate cache artifact: {path}")
     return path.read_text(encoding="utf-8")
 
 
@@ -740,7 +740,7 @@ def main() -> int:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise SelectionToolError("selection_runtime_context_missing", "stdin payload must be json object")
-        result = execute_selection_candidate_pack_tool(payload)
+        result = execute_selection_candidate_cache_tool(payload)
     except SelectionToolError as exc:
         result = {
             "ok": False,
@@ -753,7 +753,7 @@ def main() -> int:
         result = {
             "ok": False,
             "error": {
-                "code": "candidate_pack_integrity_failed",
+                "code": "candidate_cache_integrity_failed",
                 "message": str(exc),
             },
         }

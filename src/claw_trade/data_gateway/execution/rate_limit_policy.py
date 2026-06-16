@@ -13,6 +13,7 @@ class DataSourceSettingsLike(Protocol):
 _PROVIDER_TO_SOURCE_TYPE: dict[str, str] = {
     "cn_a_primary": "tushare",
     "cn_a_tushare_fundamental": "tushare",
+    "cn_a_tushare_realtime": "tushare",
     "hk_tushare": "tushare",
     "us_finnhub_data": "finnhub",
     "hk_finnhub_data": "finnhub",
@@ -32,9 +33,9 @@ class RateLimitPolicyResolver:
     def __init__(self, *, data_source_settings: DataSourceSettingsLike | None = None) -> None:
         self._data_source_settings = data_source_settings
 
-    def resolve(self, *, provider_id: str, default_policy: Any | None) -> RateLimitPolicy:
-        source_type = _PROVIDER_TO_SOURCE_TYPE.get(provider_id)
-        settings = self._settings_for_provider(provider_id)
+    def resolve(self, *, provider_id: str, default_policy: Any | None, rate_limit_bucket: str | None = None) -> RateLimitPolicy:
+        source_type = provider_rate_limit_namespace(provider_id, rate_limit_bucket=rate_limit_bucket)
+        settings = self._settings_for_source_type(source_type)
         if settings is not None:
             policy = _policy_from_settings(settings)
             if policy is not None:
@@ -42,9 +43,11 @@ class RateLimitPolicyResolver:
         return _policy_without_hard_limit(default_policy)
 
     def _settings_for_provider(self, provider_id: str) -> Mapping[str, Any] | None:
+        return self._settings_for_source_type(provider_rate_limit_namespace(provider_id))
+
+    def _settings_for_source_type(self, source_type: str) -> Mapping[str, Any] | None:
         if self._data_source_settings is None:
             return None
-        source_type = _PROVIDER_TO_SOURCE_TYPE.get(provider_id)
         if not source_type:
             return None
         getter = getattr(self._data_source_settings, "get_instance", None)
@@ -87,8 +90,19 @@ def _policy_without_hard_limit(raw: Any | None) -> RateLimitPolicy:
     )
 
 
-def provider_rate_limit_namespace(provider_id: str) -> str:
+def provider_rate_limit_namespace(provider_id: str, *, rate_limit_bucket: str | None = None) -> str:
+    bucket_source = _source_type_from_rate_limit_bucket(rate_limit_bucket)
+    if bucket_source:
+        return bucket_source
     return _PROVIDER_TO_SOURCE_TYPE.get(provider_id) or provider_id
+
+
+def _source_type_from_rate_limit_bucket(rate_limit_bucket: str | None) -> str | None:
+    text = str(rate_limit_bucket or "").strip()
+    if not text.startswith("ratelimit:"):
+        return None
+    source_type = text.split(":", 1)[1].strip()
+    return source_type or None
 
 
 def _read_attr(obj: Any, name: str, default: Any = None) -> Any:

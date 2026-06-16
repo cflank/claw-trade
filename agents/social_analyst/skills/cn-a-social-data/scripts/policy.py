@@ -17,7 +17,7 @@ SOCIAL_VISIBLE_TOOL_SET_INVALID = "SOCIAL_VISIBLE_TOOL_SET_INVALID"
 _REQUIRED_WORKER_ID = "social_analyst"
 _REQUIRED_MARKET_PROFILE = "CN_A"
 _EXPECTED_VISIBLE_TOOLS = (
-    "claw_get_social_pack",
+    "claw_request_data",
 )
 _DISALLOWED_PROVIDER_TOOL_NAMES = frozenset(
     {

@@ -4,20 +4,24 @@ from .api import DataAPI
 from .coordination import DataService, QueryPlanner
 from .models import (
     DataGap,
-    DataPlan,
     DataRequest,
     DataResult,
     FetchResult,
     IngestResult,
-    ProviderBatchPlan,
     ProviderCapability,
+)
+from .public_api import (
+    ApiImplementation,
+    PublicApiContract,
+    PublicDataRequest,
+    PublicRequestPriority,
+    validate_public_request,
 )
 from .needs import (
     DataNeed,
     DataNeedGap,
     MergeEvidence,
     NeedInstrument,
-    NeedKind,
     NeedPlan,
     NeedPriority,
     ProviderCallSpec,
@@ -30,15 +34,12 @@ __all__ = [
     "DataRequest",
     "DataResult",
     "DataGap",
-    "DataPlan",
     "ProviderCapability",
-    "ProviderBatchPlan",
     "FetchResult",
     "IngestResult",
     "DataService",
     "QueryPlanner",
     "DataNeed",
-    "NeedKind",
     "NeedPriority",
     "NeedInstrument",
     "ProviderCallSpec",
@@ -47,4 +48,9 @@ __all__ = [
     "DataNeedGap",
     "MergeEvidence",
     "RateLimitEvidence",
+    "PublicDataRequest",
+    "PublicApiContract",
+    "PublicRequestPriority",
+    "ApiImplementation",
+    "validate_public_request",
 ]

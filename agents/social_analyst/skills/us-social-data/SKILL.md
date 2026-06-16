@@ -1,13 +1,13 @@
 ---
 name: us-social-data
 version: 0.1.0
-description: Canonical claw-trade data layer social pack tool for social_analyst.
-tool: claw_get_social_pack
-tool_name: claw_get_social_pack
+description: Canonical claw-trade data layer social data-need capability for social_analyst.
+tool: claw_request_data
+tool_name: claw_request_data
 entrypoint: openclaw_plugins/claw-trade-frontline-tools/index.js
-schema_version: claw_data_social_pack.v1
+schema_version: claw_data_need.v1
 ---
 
 # us-social-data
 
-This skill provides only the canonical `claw_get_social_pack` claw-trade data layer social pack capability. It does not write the final report, investment decision, rating, or target price.
+This skill provides only the canonical `claw_request_data` claw-trade data layer social material capability. It does not write the final report, investment decision, rating, or target price.

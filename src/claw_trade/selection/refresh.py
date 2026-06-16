@@ -12,7 +12,7 @@ from claw_trade.selection.models import (
     SelectionDataRunStatus,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
     SelectionTriggerSource,
     SelectRequest,
@@ -35,7 +35,7 @@ class SelectionDataRefreshResult:
 
 
 class SelectionDataRefreshService:
-    """Starts the background selection data job when `/select` finds no usable pack."""
+    """Starts the background selection data job when `/select` finds no usable candidate cache."""
 
     def __init__(
         self,
@@ -44,7 +44,7 @@ class SelectionDataRefreshService:
         run_data_job: Callable[[SelectionRunPlan], SelectionDataJobExecution],
         resolve_closed_trade_date: Callable[[str | None], str],
         load_approved_strategy_config_ref: Callable[[SelectionMarket, SelectionProfile], str | None],
-        build_provider_batch_plan: Callable[..., SelectionProviderBatchPlan],
+        build_data_need_audit: Callable[..., SelectionDataNeedAudit],
         run_data_check: Callable[[SelectionRunPlan], object] | None = None,
         now_fn: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[], str] | None = None,
@@ -53,7 +53,7 @@ class SelectionDataRefreshService:
         self._run_data_job = run_data_job
         self._resolve_closed_trade_date = resolve_closed_trade_date
         self._load_approved_strategy_config_ref = load_approved_strategy_config_ref
-        self._build_provider_batch_plan = build_provider_batch_plan
+        self._build_data_need_audit = build_data_need_audit
         self._run_data_check = run_data_check or run_data_job
         self._now_fn = now_fn or _utc_now
         self._run_id_factory = run_id_factory
@@ -93,7 +93,7 @@ class SelectionDataRefreshService:
                     status="completed",
                     selection_run_id=existing.run.run_plan.selection_run_id,
                     trade_date=trade_date,
-                    reason=f"{reason}:candidate_pack_valid",
+                    reason=f"{reason}:candidate_cache_valid",
                 )
             active = self._store.load_active_data_run_record(
                 market=request.market,
@@ -122,7 +122,7 @@ class SelectionDataRefreshService:
                         trade_date=date_value,
                     ),
                     load_approved_strategy_config_ref=self._load_approved_strategy_config_ref,
-                    build_provider_batch_plan=self._build_provider_batch_plan,
+                    build_data_need_audit=self._build_data_need_audit,
                     run_id_factory=self._run_id_factory,
                 )
             except SelectionSchedulingError as exc:
@@ -203,7 +203,7 @@ class SelectionDataRefreshService:
                     status="completed",
                     selection_run_id=existing.run.run_plan.selection_run_id,
                     trade_date=trade_date,
-                    reason=f"{reason}:candidate_pack_valid",
+                    reason=f"{reason}:candidate_cache_valid",
                 )
             if self._auto_refresh_trade_date == trade_date:
                 return SelectionDataRefreshResult(
@@ -238,7 +238,7 @@ class SelectionDataRefreshService:
                         trade_date=date_value,
                     ),
                     load_approved_strategy_config_ref=self._load_approved_strategy_config_ref,
-                    build_provider_batch_plan=self._build_provider_batch_plan,
+                    build_data_need_audit=self._build_data_need_audit,
                     run_id_factory=self._run_id_factory,
                 )
             except SelectionSchedulingError as exc:
@@ -437,10 +437,10 @@ _DATA_RUN_STAGE_UI: dict[SelectionDataRunStatus, tuple[str, str, int]] = {
     SelectionDataRunStatus.NORMALIZING_INPUTS: ("标准化输入", "正在整理选股所需的行情、因子和身份字段。", 50),
     SelectionDataRunStatus.BUILDING_FEATURES: ("构建特征", "正在生成选股策略使用的特征快照。", 65),
     SelectionDataRunStatus.FILTERING_AND_SCORING: ("过滤并打分", "正在执行硬过滤、策略命中和候选打分。", 78),
-    SelectionDataRunStatus.BUILDING_CANDIDATE_PACK: ("生成候选包", "正在生成 top20 候选事实包。", 88),
-    SelectionDataRunStatus.APPROVING_CANDIDATE_PACK: ("审批候选包", "正在校验候选包证据和读回完整性。", 95),
+    SelectionDataRunStatus.BUILDING_CANDIDATE_CACHE: ("生成候选缓存", "正在生成 top20 候选事实缓存。", 88),
+    SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE: ("审批候选缓存", "正在校验候选缓存证据和读回完整性。", 95),
     SelectionDataRunStatus.NO_CANDIDATE: ("未产出候选", "本轮补数据完成，但没有可进入选股的候选。", 100),
-    SelectionDataRunStatus.COMPLETED: ("数据已准备", "当前交易日选股数据和候选包已准备完成。", 100),
+    SelectionDataRunStatus.COMPLETED: ("数据已准备", "当前交易日选股数据和候选缓存已准备完成。", 100),
     SelectionDataRunStatus.FAILED: ("数据刷新失败", "选股数据刷新失败，请查看失败原因。", 100),
 }
 

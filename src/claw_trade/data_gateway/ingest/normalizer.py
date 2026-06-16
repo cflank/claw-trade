@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from claw_trade.data_gateway.models import Market
@@ -29,11 +29,26 @@ class Normalizer:
         for row in rows:
             next_row = _map_field_aliases(row)
             next_row["market"] = _enum_value(getattr(batch, "market", next_row.get("market")))
-            next_row["dataset"] = _first_text(getattr(batch, "data_type", None), next_row.get("dataset"))
+            batch_data_type = _first_text(getattr(batch, "data_type", None))
+            row_dataset = next_row.get("dataset")
+            if batch_data_type == "official_api_response" and _non_empty_str(row_dataset):
+                next_row["dataset"] = str(row_dataset).strip()
+            else:
+                next_row["dataset"] = _first_text(batch_data_type, row_dataset)
             _copy_optional_text_field(next_row, batch, "universe_ref")
 
             row_granularity = _normalize_granularity(next_row.get("granularity"))
-            if row_granularity and batch_granularity and row_granularity != batch_granularity:
+            if (
+                row_granularity
+                and batch_granularity
+                and row_granularity != batch_granularity
+                and not _granularity_compatible_with_request(
+                    batch=batch,
+                    row=next_row,
+                    row_granularity=row_granularity,
+                    batch_granularity=batch_granularity,
+                )
+            ):
                 gaps.append(
                     _gap(
                         batch,
@@ -42,7 +57,7 @@ class Normalizer:
                         message=f"provider granularity {row_granularity} does not match requested {batch_granularity}",
                     )
                 )
-            next_row["granularity"] = batch_granularity or row_granularity
+            next_row["granularity"] = row_granularity or batch_granularity
 
             next_row["provider_lineage"] = _provider_lineage(batch, raw_refs)
             next_row["source_raw_refs"] = raw_refs
@@ -101,11 +116,13 @@ def _coerce_rows(payload: Any) -> tuple[dict[str, Any], ...]:
         return ()
     if isinstance(payload, dict):
         rows = payload.get("rows")
-        if isinstance(rows, list):
-            return tuple(dict(item) for item in rows if isinstance(item, dict))
+        if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes, bytearray)):
+            return tuple(dict(item) for item in rows if isinstance(item, Mapping))
         return (dict(payload),)
     if isinstance(payload, list):
-        return tuple(dict(item) for item in payload if isinstance(item, dict))
+        return tuple(dict(item) for item in payload if isinstance(item, Mapping))
+    if isinstance(payload, tuple):
+        return tuple(dict(item) for item in payload if isinstance(item, Mapping))
     return ()
 
 
@@ -237,6 +254,21 @@ def _is_blocking_gap(gap: DataGap) -> bool:
     return bool(set(gap.required_fields) & {"exchange", "currency", "timezone", "calendar", "base_asset", "quote_asset"})
 
 
+def _granularity_compatible_with_request(
+    *,
+    batch: Any,
+    row: dict[str, Any],
+    row_granularity: str,
+    batch_granularity: str,
+) -> bool:
+    if batch_granularity != "realtime":
+        return False
+    data_type = _first_text(getattr(batch, "data_type", None), row.get("dataset"))
+    if data_type not in {"crypto_derivative_metric", "crypto_onchain_metric", "valuation_metric"}:
+        return False
+    return row_granularity in {"hourly", "daily", "intraday"}
+
+
 def _first_symbol_id(batch: Any) -> str | None:
     symbols = tuple(getattr(batch, "symbol_ids", ()) or ())
     if symbols:
@@ -299,7 +331,22 @@ def _normalize_granularity(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().lower()
-    return text or None
+    if not text:
+        return None
+    return {
+        "1h": "hourly",
+        "60m": "hourly",
+        "hour": "hourly",
+        "1m": "intraday",
+        "5m": "intraday",
+        "10m": "intraday",
+        "15m": "intraday",
+        "30m": "intraday",
+        "1d": "daily",
+        "24h": "daily",
+        "d": "daily",
+        "day": "daily",
+    }.get(text, text)
 
 
 def _first_text(*values: Any) -> str | None:
@@ -333,6 +380,8 @@ def _date_range_gap(rows: list[dict[str, Any]], batch: Any, raw_refs: tuple[str,
     batch_granularity = _normalize_granularity(getattr(batch, "granularity", None))
     if batch_granularity in {"event", "realtime"}:
         return None
+    if _daily_range_check_exempt_data_type(batch):
+        return None
 
     starts = [_to_date(row.get("period_start")) for row in rows]
     ends = [_to_date(row.get("period_end")) for row in rows]
@@ -343,11 +392,32 @@ def _date_range_gap(rows: list[dict[str, Any]], batch: Any, raw_refs: tuple[str,
 
     actual_start = min(starts)
     actual_end = max(ends)
-    if request_start is not None and actual_start > request_start:
+    slack_days = _date_range_slack_days(batch)
+    if request_start is not None and (actual_start - request_start).days > slack_days:
         return _gap(batch, "date_range_missing", raw_refs)
-    if request_end is not None and actual_end < request_end:
+    if request_end is not None and (request_end - actual_end).days > slack_days:
         return _gap(batch, "date_range_missing", raw_refs)
     return None
+
+
+def _date_range_slack_days(batch: Any) -> int:
+    granularity = _normalize_granularity(getattr(batch, "granularity", None))
+    calendar = str(getattr(batch, "calendar", "") or "").upper()
+    if granularity == "daily" and calendar and calendar != "CRYPTO_24_7":
+        return 4
+    return 0
+
+
+def _daily_range_check_exempt_data_type(batch: Any) -> bool:
+    data_type = str(getattr(batch, "data_type", "") or "").strip().lower()
+    return data_type in {
+        "crypto_derivative_metric",
+        "crypto_onchain_metric",
+        "financial_metric",
+        "financial_statement",
+        "macro_series",
+        "valuation_metric",
+    }
 
 
 def _to_date(value: Any) -> date | None:

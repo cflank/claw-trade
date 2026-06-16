@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from claw_trade.data_gateway._selection_batch import (
-    build_selection_provider_batch_plan,
+    build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
 )
 from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
@@ -42,7 +42,7 @@ def previous_cn_a_selection_trade_date(candidate: date) -> date:
     raise ValueError(f"cannot resolve CN_A trading day from {candidate.isoformat()}")
 
 __all__ = [
-    "build_selection_provider_batch_plan",
+    "build_selection_data_need_audit",
     "fetch_selection_batch_from_data_gateway",
     "load_cn_a_selection_v1_strategy",
     "load_cn_a_selection_v1_strategy_config_ref",

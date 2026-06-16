@@ -11,7 +11,7 @@ from claw_trade.selection.models import (
     SelectionBatchScope,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
     SelectionTriggerSource,
 )
@@ -55,7 +55,7 @@ def schedule_selection_job(
     resolve_closed_trade_date: Callable[[str | None], str],
     has_active_job: Callable[[SelectionMarket, SelectionProfile, str], bool],
     load_approved_strategy_config_ref: Callable[[SelectionMarket, SelectionProfile], str | None],
-    build_provider_batch_plan: Callable[..., SelectionProviderBatchPlan],
+    build_data_need_audit: Callable[..., SelectionDataNeedAudit],
     run_id_factory: Callable[[], str] | None = None,
 ) -> SelectionRunPlan:
     if context.market != SelectionMarket.CN_A or context.profile != SelectionProfile.CN_A:
@@ -79,21 +79,19 @@ def schedule_selection_job(
     if not approved_strategy_config_ref:
         raise SelectionSchedulingError("strategy_config_unapproved", "缺少 approved strategy config")
 
-    provider_batch_plan = build_provider_batch_plan(
+    data_need_audit = build_data_need_audit(
         market=context.market,
         profile=context.profile,
         trade_date=resolved_trade_date,
     )
-    if not isinstance(provider_batch_plan, SelectionProviderBatchPlan):
-        raise SelectionSchedulingError("provider_batch_plan_missing", "provider batch plan 缺失")
-    if provider_batch_plan.scope != SelectionBatchScope.SELECTION_BATCH:
-        raise SelectionSchedulingError("provider_batch_plan_missing", "provider batch plan scope 非 selection_batch")
-    if provider_batch_plan.market != context.market or provider_batch_plan.profile != context.profile:
-        raise SelectionSchedulingError("provider_batch_plan_missing", "provider batch plan 市场或 profile 不匹配")
-    if provider_batch_plan.trade_date != resolved_trade_date:
-        raise SelectionSchedulingError("provider_batch_plan_missing", "provider batch plan trade_date 不匹配")
-    if not provider_batch_plan.provider_candidates:
-        raise SelectionSchedulingError("provider_batch_plan_missing", "provider candidates 不能为空")
+    if not isinstance(data_need_audit, SelectionDataNeedAudit):
+        raise SelectionSchedulingError("data_need_audit_missing", "data need audit 缺失")
+    if data_need_audit.scope != SelectionBatchScope.SELECTION_BATCH:
+        raise SelectionSchedulingError("data_need_audit_missing", "data need audit scope 非 selection_batch")
+    if data_need_audit.market != context.market or data_need_audit.profile != context.profile:
+        raise SelectionSchedulingError("data_need_audit_missing", "data need audit 市场或 profile 不匹配")
+    if data_need_audit.trade_date != resolved_trade_date:
+        raise SelectionSchedulingError("data_need_audit_missing", "data need audit trade_date 不匹配")
 
     create_run_id = run_id_factory or _default_run_id
     return SelectionRunPlan(
@@ -101,9 +99,9 @@ def schedule_selection_job(
         market=context.market,
         profile=context.profile,
         trade_date=resolved_trade_date,
-        lookback_trading_days=provider_batch_plan.lookback_trading_days,
-        universe_scope=provider_batch_plan.universe_scope,
-        provider_batch_plan_ref=provider_batch_plan.plan_id,
+        lookback_trading_days=data_need_audit.lookback_trading_days,
+        universe_scope=data_need_audit.universe_scope,
+        data_need_audit_ref=data_need_audit.plan_id,
         approved_strategy_config_ref=approved_strategy_config_ref,
         trigger_source=context.trigger_source,
         supersedes_run_id=context.supersedes_run_id,

@@ -112,11 +112,38 @@ def test_rate_limit_policy_resolver_ignores_provider_max_calls_without_user_sett
 def test_rate_limit_namespace_uses_final_data_source_not_endpoint() -> None:
     assert provider_rate_limit_namespace("cn_a_primary") == "tushare"
     assert provider_rate_limit_namespace("cn_a_tushare_fundamental") == "tushare"
+    assert provider_rate_limit_namespace("cn_a_tushare_realtime") == "tushare"
     assert provider_rate_limit_namespace("crypto_coinglass_derivatives") == "coinglass"
     assert provider_rate_limit_namespace("official_api_coinglass") == "coinglass"
     assert provider_rate_limit_namespace("official_api_tushare") == "tushare"
     assert provider_rate_limit_namespace("us_finnhub_data") == "finnhub"
     assert provider_rate_limit_namespace("hk_finnhub_data") == "finnhub"
+
+
+def test_rate_limit_policy_resolver_uses_rate_limit_bucket_for_any_source_without_provider_mapping() -> None:
+    resolver = RateLimitPolicyResolver(
+        data_source_settings=_Settings(
+            {
+                "data_source:binance": {
+                    "rate_limit_max_calls": 10,
+                    "rate_limit_window_seconds": 60,
+                }
+            }
+        )
+    )
+
+    policy = resolver.resolve(
+        provider_id="crypto_binance_spot_market",
+        rate_limit_bucket="ratelimit:binance",
+        default_policy=None,
+    )
+
+    assert policy.max_requests == 10
+    assert policy.window_seconds == 60
+
+
+def test_rate_limit_bucket_namespace_takes_precedence_over_legacy_provider_mapping() -> None:
+    assert provider_rate_limit_namespace("official_api_tushare", rate_limit_bucket="ratelimit:coinglass") == "coinglass"
 
 
 def test_data_run_scheduler_does_not_reanchor_external_source_limits() -> None:
@@ -132,3 +159,45 @@ def test_data_run_scheduler_does_not_reanchor_external_source_limits() -> None:
     )
 
     assert scheduled[0].rate_limit_policy.window_anchor is None
+
+
+def test_rate_limit_policy_resolver_shares_tushare_settings_between_official_and_realtime_sdk() -> None:
+    resolver = RateLimitPolicyResolver(
+        data_source_settings=_Settings(
+            {
+                "data_source:tushare": {
+                    "rate_limit_max_calls": 3,
+                    "rate_limit_window_seconds": 60,
+                    "rate_limit_safety_margin": 1,
+                }
+            }
+        )
+    )
+
+    realtime = resolver.resolve(provider_id="cn_a_tushare_realtime", default_policy=None)
+    official = resolver.resolve(provider_id="official_api_tushare", default_policy=None)
+
+    assert realtime == official
+    assert realtime.max_requests == 3
+    assert realtime.window_seconds == 60
+    assert realtime.safety_margin == 1
+
+
+def test_rate_limit_policy_resolver_shares_coinglass_settings_between_official_and_structured() -> None:
+    resolver = RateLimitPolicyResolver(
+        data_source_settings=_Settings(
+            {
+                "data_source:coinglass": {
+                    "rate_limit_max_calls": 2,
+                    "rate_limit_window_seconds": 120,
+                }
+            }
+        )
+    )
+
+    structured = resolver.resolve(provider_id="crypto_coinglass_derivatives", default_policy=None)
+    official = resolver.resolve(provider_id="official_api_coinglass", default_policy=None)
+
+    assert structured == official
+    assert structured.max_requests == 2
+    assert structured.window_seconds == 120

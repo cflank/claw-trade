@@ -9,12 +9,7 @@ from claw_trade.guards.common import GuardResult
 from claw_trade.runtime.evidence_reader import OpenClawResult
 from claw_trade.workflow.models import OpenClawCommand, ReadPolicy, Stage, WorkerCall
 
-_CRYPTO_FRONTLINE_SINGLE_PACK_TOOLS = {
-    "market_analyst": "claw_get_market_pack",
-    "fundamental_analyst": "claw_get_fundamental_pack",
-    "news_analyst": "claw_get_news_pack",
-    "social_analyst": "claw_get_social_pack",
-}
+_FRONTLINE_DATA_TOOL = "claw_request_data"
 
 
 @dataclass(frozen=True)
@@ -166,12 +161,21 @@ def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, ob
 
 
 def _initial_tool_choice_for_call(call: WorkerCall) -> str | None:
-    if call.profile != "CRYPTO" or call.stage != Stage.FRONTLINE:
+    if call.stage != Stage.FRONTLINE:
         return None
-    tool_name = _CRYPTO_FRONTLINE_SINGLE_PACK_TOOLS.get(call.worker_id)
-    if tool_name is None or tool_name not in call.allowed_tools:
+    if call.worker_id not in {
+        "market_analyst",
+        "fundamental_analyst",
+        "news_analyst",
+        "social_analyst",
+        "policy_analyst",
+        "hot_money_tracker",
+        "lockup_watcher",
+    }:
         return None
-    return tool_name
+    if _FRONTLINE_DATA_TOOL not in call.allowed_tools:
+        return None
+    return _FRONTLINE_DATA_TOOL
 
 
 def parse_openclaw_result(payload: dict[str, object]) -> OpenClawResult:

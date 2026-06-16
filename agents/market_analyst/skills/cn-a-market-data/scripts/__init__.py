@@ -1,1 +1,1 @@
-"""CN_A market data pack tool entrypoint package."""
+"""CN_A market data-need tool entrypoint package."""

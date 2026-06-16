@@ -17,10 +17,12 @@ NEW_CN_A_WORKERS: tuple[str, ...] = (
 )
 
 CN_A_CANONICAL_TOOLS = {
-    "policy_analyst": "claw_get_policy_pack",
-    "hot_money_tracker": "claw_get_hot_money_pack",
-    "lockup_watcher": "claw_get_lockup_pack",
+    "policy_analyst": "cn_a_policy_data",
+    "hot_money_tracker": "cn_a_hot_money_data",
+    "lockup_watcher": "cn_a_lockup_data",
 }
+
+CN_A_VISIBLE_TOOL = "claw_request_data"
 
 CN_A_ONLY_US_ALIGNMENT = "not_applicable_cn_a_only_worker"
 
@@ -64,19 +66,19 @@ FORBIDDEN_PROMPT_PROTOCOL_TOKENS = (
 
 TRUTHFULNESS_REDLINE_SNIPPETS = {
     "policy_analyst": (
-        "当资料包状态为 blocked/partial/empty",
+        "当数据结果状态为 blocked/partial/empty",
         "只能写“无法确认”或“未取得可核验证据”",
         "不得把缺口改写成“政策不存在”",
     ),
     "hot_money_tracker": (
-        "当关键覆盖组状态为 blocked/partial/empty",
+        "当关键数据状态为 blocked/partial/empty",
         "只能写“无法确认”或“未取得可核验证据”",
         "不得把缺口外推成“未发生异动”",
-        "金额/比例/日期必须逐字沿用资料包原始单位与数值",
+        "金额/比例/日期必须逐字沿用数据结果原始单位与数值",
         "不得把 CNY 改写为亿元、万元或百分比",
     ),
     "lockup_watcher": (
-        "当资料包状态为 blocked/partial/empty",
+        "当数据结果状态为 blocked/partial/empty",
         "当前无可核验解禁/筹码数据",
         "不得把缺口外推成“无任何解禁记录”",
         "“减持概率极低”",
@@ -142,7 +144,7 @@ def test_cn_a_prompt_front_matter_and_tool_boundary(worker_id: str) -> None:
     assert front_matter["worker_id"] == worker_id
     assert front_matter["stage"] == "frontline"
 
-    assert CN_A_CANONICAL_TOOLS[worker_id] in text
+    assert CN_A_VISIBLE_TOOL in text
     assert "可用工具" in text
     assert "最终报告正文必须直接从报告标题或正文第一句开始" in text
     assert "数据限制与风险提示" in text
@@ -192,7 +194,7 @@ def test_baseline_files_are_readable_and_prompt_keeps_role_snippets(worker_id: s
 def test_skill_manifest_exports_only_cn_a_canonical_tool(worker_id: str) -> None:
     manifest = (Path("agents") / worker_id / "skills" / "manifest.yaml").read_text(encoding="utf-8")
     exported = re.findall(r"tool_exports:\n\s*-\s*([A-Za-z0-9_]+)", manifest)
-    assert exported == [CN_A_CANONICAL_TOOLS[worker_id]]
+    assert exported == [CN_A_VISIBLE_TOOL]
     assert "claw-trade-stage/SKILL.md" in manifest
 
 

@@ -6,21 +6,21 @@ skills:
     workers:
       - market_analyst
     tool_exports:
-      - claw_get_market_pack
+      - claw_request_data
   - path: cn-a-market-data/SKILL.md
     skill_id: cn-a-market-data
     skill_version: 0.1.0
     workers:
       - market_analyst
     tool_exports:
-      - claw_get_market_pack
+      - claw_request_data
   - path: hk-market-data/SKILL.md
     skill_id: hk-market-data
     skill_version: 0.1.0
     workers:
       - market_analyst
     tool_exports:
-      - claw_get_market_pack
+      - claw_request_data
   - path: crypto-trading-analysis/SKILL.md
     skill_id: crypto-trading-analysis
     skill_version: 0.1.0
@@ -29,4 +29,4 @@ skills:
     profiles:
       - CRYPTO
     tool_exports:
-      - claw_get_market_pack
+      - claw_request_data

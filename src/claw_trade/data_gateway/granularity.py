@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+
+def canonical_granularity(value: str | None) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    return _GRANULARITY_ALIASES.get(text, text)
+
+
+_GRANULARITY_ALIASES = {
+    "1m": "intraday",
+    "5m": "intraday",
+    "10m": "intraday",
+    "15m": "intraday",
+    "30m": "intraday",
+    "minute": "intraday",
+    "minutes": "intraday",
+    "intraday": "intraday",
+    "1h": "hourly",
+    "60m": "hourly",
+    "h": "hourly",
+    "hr": "hourly",
+    "hrs": "hourly",
+    "hour": "hourly",
+    "hours": "hourly",
+    "hourly": "hourly",
+    "1d": "daily",
+    "24h": "daily",
+    "d": "daily",
+    "day": "daily",
+    "days": "daily",
+    "daily": "daily",
+    "1w": "weekly",
+    "1wk": "weekly",
+    "w": "weekly",
+    "wk": "weekly",
+    "wks": "weekly",
+    "week": "weekly",
+    "weeks": "weekly",
+    "weekly": "weekly",
+    "1mo": "monthly",
+    "1mon": "monthly",
+    "mo": "monthly",
+    "mon": "monthly",
+    "mons": "monthly",
+    "month": "monthly",
+    "months": "monthly",
+    "monthly": "monthly",
+    "1q": "quarterly",
+    "q": "quarterly",
+    "qtr": "quarterly",
+    "qtrs": "quarterly",
+    "quarter": "quarterly",
+    "quarters": "quarterly",
+    "quarterly": "quarterly",
+    "1y": "annual",
+    "y": "annual",
+    "yr": "annual",
+    "yrs": "annual",
+    "year": "annual",
+    "years": "annual",
+    "yearly": "annual",
+    "annual": "annual",
+    "annually": "annual",
+}

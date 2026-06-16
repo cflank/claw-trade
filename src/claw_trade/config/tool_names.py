@@ -26,30 +26,31 @@ class ToolRegistryResult:
 
 
 def load_tool_registry() -> ToolRegistryResult:
+    data_tool = ("claw_request_data",)
     registry = ToolRegistry(
         intent_to_tools={
             # 市场 profile 必须显式选择对应工具；不能让 US/CN_A 共用一个含糊 intent。
             # no-sidecar 路径：禁止使用 openvikingArtifact__* 触发 1944 MCP sidecar。
-            "cn_a_market_data": ("claw_get_market_pack",),
-            "us_market_data": ("claw_get_market_pack",),
-            "hk_market_data": ("claw_get_market_pack",),
-            "crypto_market_data": ("claw_get_market_pack",),
-            "cn_a_fundamentals_data": ("claw_get_fundamental_pack",),
-            "us_fundamentals_data": ("claw_get_fundamental_pack",),
-            "hk_fundamentals_data": ("claw_get_fundamental_pack",),
-            "crypto_fundamentals_data": ("claw_get_fundamental_pack",),
-            "cn_a_news_data": ("claw_get_news_pack",),
-            "us_news_data": ("claw_get_news_pack",),
-            "hk_news_data": ("claw_get_news_pack",),
-            "crypto_news_data": ("claw_get_news_pack",),
-            "cn_a_social_sentiment": ("claw_get_social_pack",),
-            "us_social_sentiment": ("claw_get_social_pack",),
-            "hk_social_sentiment": ("claw_get_social_pack",),
-            "crypto_social_sentiment": ("claw_get_social_pack",),
-            "claw_get_policy_pack": ("claw_get_policy_pack",),
-            "claw_get_hot_money_pack": ("claw_get_hot_money_pack",),
-            "claw_get_lockup_pack": ("claw_get_lockup_pack",),
-            "selection_candidate_pack": ("claw_get_selection_candidate_pack",),
+            "cn_a_market_data": data_tool,
+            "us_market_data": data_tool,
+            "hk_market_data": data_tool,
+            "crypto_market_data": data_tool,
+            "cn_a_fundamentals_data": data_tool,
+            "us_fundamentals_data": data_tool,
+            "hk_fundamentals_data": data_tool,
+            "crypto_fundamentals_data": data_tool,
+            "cn_a_news_data": data_tool,
+            "us_news_data": data_tool,
+            "hk_news_data": data_tool,
+            "crypto_news_data": data_tool,
+            "cn_a_social_sentiment": data_tool,
+            "us_social_sentiment": data_tool,
+            "hk_social_sentiment": data_tool,
+            "crypto_social_sentiment": data_tool,
+            "cn_a_policy_data": data_tool,
+            "cn_a_hot_money_data": data_tool,
+            "cn_a_lockup_data": data_tool,
+            "selection_candidate_cache": ("claw_get_selection_candidate_cache",),
             # 这里是 intent 到 provider-visible 工具名的边界：stage policy 保留 intent，
             # 但最终发给模型可见的工具名必须对齐 OpenViking 设计合同。
             "openviking_read": ("openviking_read_with_capability",),
@@ -85,19 +86,19 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
                 tools.append(mapped)
 
     if policy.worker_id == "news_analyst" and policy.profile == "CRYPTO":
-        if "claw_get_news_pack" not in tools:
-            raise ConfigError("news_analyst CRYPTO must include claw_get_news_pack")
+        if "claw_request_data" not in tools:
+            raise ConfigError("news_analyst CRYPTO must include claw_request_data")
 
     if policy.worker_id == "news_analyst" and policy.profile != "CRYPTO":
         require_global_news = require_global_news_capability_for_news(registry)
         if not require_global_news.ok:
             raise ConfigError(require_global_news.reason or "news capability missing")
-        if "claw_get_news_pack" not in tools:
-            raise ConfigError("news_analyst must include profile-specific news tools")
+        if "claw_request_data" not in tools:
+            raise ConfigError("news_analyst must include profile-specific data need tool")
 
     if policy.worker_id == "social_analyst" and policy.profile == "CRYPTO":
-        if "claw_get_social_pack" not in tools:
-            raise ConfigError("social_analyst CRYPTO must include claw_get_social_pack")
+        if "claw_request_data" not in tools:
+            raise ConfigError("social_analyst CRYPTO must include claw_request_data")
 
     if not tools and policy.openviking_access != "none":
         raise ConfigError(
@@ -108,10 +109,10 @@ def resolve_tools(policy: StagePolicy, registry: ToolRegistry) -> tuple[str, ...
 
 
 def require_global_news_capability_for_news(registry: ToolRegistry) -> GuardResult:
-    has_news_pack = bool(
+    has_news_data_tool = bool(
         {"cn_a_news_data", "us_news_data", "hk_news_data"}.intersection(registry.intent_to_tools)
     )
-    if has_news_pack:
+    if has_news_data_tool:
         return guard_passed("news_capability")
     return guard_failed(
         category="config_blocked",

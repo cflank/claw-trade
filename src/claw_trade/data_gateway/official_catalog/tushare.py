@@ -1,27 +1,48 @@
 from __future__ import annotations
 
-from .models import endpoint, no_batch
+from .generated_loader import load_generated_endpoints
+from .models import endpoint, no_batch, output_contract
 
 TUSHARE_DOC = "https://tushare.pro/document/2"
 AUTH = "tushare_body_token"
 BUCKET = "ratelimit:tushare"
 
 
-ENDPOINTS = (
+def _shape(label: str, *outputs: dict[str, object]) -> dict[str, object]:
+    value: dict[str, object] = {"source": "tushare_manual_official_doc"}
+    if label:
+        value["items"] = label
+    if outputs:
+        value["outputs"] = outputs
+    return value
+
+
+MANUAL_ENDPOINTS = (
     endpoint(
         provider_id="official_api_tushare",
         source_type="tushare",
         endpoint_id="tushare.daily",
         official_path_or_api_name="daily",
         method="POST",
-        required_params=("ts_code",),
-        optional_params=("start_date", "end_date", "trade_date", "fields"),
+        required_params=(),
+        optional_params=("ts_code", "start_date", "end_date", "trade_date", "fields"),
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         batch_policy=no_batch(),
+        parser_status="normalized",
         official_doc_ref=TUSHARE_DOC,
         request_template={"api_name": "daily", "params": {"ts_code": "<symbol>"}},
-        response_shape={"items": "daily A-share OHLCV rows"},
+        response_shape=_shape(
+            "daily A-share OHLCV rows",
+            output_contract(
+                market="CN_A",
+                data_type="daily_bar",
+                public_api_ids=('market_price',),
+                granularity="daily",
+                fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit"),
+                priority_rank=5,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -35,7 +56,17 @@ ENDPOINTS = (
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
         request_template={"api_name": "daily_basic", "params": {"ts_code": "<symbol>"}},
-        response_shape={"items": "valuation and market-cap rows"},
+        response_shape=_shape(
+            "valuation and market-cap rows",
+            output_contract(
+                market="CN_A",
+                data_type="valuation_metric",
+                public_api_ids=('valuation_metric',),
+                granularity="daily",
+                fields=("pe", "pb", "ps", "market_cap", "market_cap_unit"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -49,7 +80,17 @@ ENDPOINTS = (
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
         request_template={"api_name": "moneyflow", "params": {"ts_code": "<symbol>"}},
-        response_shape={"items": "stock capital-flow rows"},
+        response_shape=_shape(
+            "stock capital-flow rows",
+            output_contract(
+                market="CN_A",
+                data_type="capital_flow",
+                public_api_ids=('capital_flow', 'money_flow'),
+                granularity="daily",
+                fields=("date", "main_net", "small_net", "mid_net", "large_net", "super_net", "amount_unit", "symbol_id"),
+                priority_rank=8,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -62,6 +103,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "Tonghuashun stock capital-flow rows",
+            output_contract(
+                market="CN_A",
+                data_type="capital_flow",
+                public_api_ids=('capital_flow', 'money_flow'),
+                granularity="daily",
+                fields=("date", "main_net", "small_net", "mid_net", "large_net", "amount_unit", "symbol_id"),
+                priority_rank=9,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -74,6 +126,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "EastMoney industry capital-flow rows",
+            output_contract(
+                market="CN_A",
+                data_type="sector_snapshot",
+                public_api_ids=('sector_snapshot', 'sector_flow'),
+                granularity="event",
+                fields=("sector_code", "sector_name", "main_net", "super_net", "large_net", "mid_net", "small_net", "amount_unit", "timestamp"),
+                priority_rank=8,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -86,6 +149,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "Tonghuashun industry capital-flow rows",
+            output_contract(
+                market="CN_A",
+                data_type="sector_snapshot",
+                public_api_ids=('sector_snapshot', 'sector_flow'),
+                granularity="event",
+                fields=("sector_code", "sector_name", "main_net", "amount_unit", "timestamp"),
+                priority_rank=9,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -98,6 +172,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "Tonghuashun concept capital-flow rows",
+            output_contract(
+                market="CN_A",
+                data_type="sector_snapshot",
+                public_api_ids=('sector_snapshot', 'sector_flow'),
+                granularity="event",
+                fields=("sector_code", "sector_name", "main_net", "amount_unit", "timestamp"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -110,7 +195,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
-        response_shape={"items": "financial indicator rows"},
+        response_shape=_shape(
+            "financial indicator rows",
+            output_contract(
+                market="CN_A",
+                data_type="financial_metric",
+                public_api_ids=('financial_metric',),
+                granularity="quarterly",
+                fields=("roe", "roa", "gross_margin", "debt_ratio", "eps"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -123,6 +218,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "income statement rows",
+            output_contract(
+                market="CN_A",
+                data_type="financial_statement",
+                public_api_ids=('financial_statement',),
+                granularity="quarterly",
+                fields=("period", "revenue", "net_income", "amount_unit"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -135,6 +241,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "balance sheet rows",
+            output_contract(
+                market="CN_A",
+                data_type="financial_statement",
+                public_api_ids=('financial_statement',),
+                granularity="quarterly",
+                fields=("period", "assets", "liabilities", "amount_unit"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -147,6 +264,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "cash-flow statement rows",
+            output_contract(
+                market="CN_A",
+                data_type="financial_statement",
+                public_api_ids=('financial_statement',),
+                granularity="quarterly",
+                fields=("period", "cash_flow", "amount_unit"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -159,7 +287,40 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
-        response_shape={"items": "announcement metadata rows"},
+        response_shape=_shape(
+            "announcement metadata rows",
+            output_contract(
+                market="CN_A",
+                data_type="official_filing",
+                public_api_ids=('official_filing',),
+                granularity="event",
+                fields=("title", "published_at", "url", "source", "body_ref", "symbol_id"),
+                priority_rank=12,
+            ),
+        ),
+    ),
+    endpoint(
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        endpoint_id="tushare.share_float",
+        official_path_or_api_name="share_float",
+        method="POST",
+        required_params=("ts_code",),
+        optional_params=("start_date", "end_date", "ann_date", "float_date", "fields"),
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "restricted share unlock rows",
+            output_contract(
+                market="CN_A",
+                data_type="lockup_event",
+                public_api_ids=('lockup_event',),
+                granularity="event",
+                fields=("unlock_date", "shares", "market_value", "holder", "symbol_id"),
+                priority_rank=12,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -172,6 +333,18 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "Shanghai investor interaction rows",
+            output_contract(
+                market="CN_A",
+                data_type="social_signal",
+                public_api_ids=('social_signal',),
+                granularity="event",
+                fields=("source", "timestamp", "question", "answer", "symbol_id"),
+                priority_rank=20,
+                can_be_formal_fact_source=False,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -184,6 +357,18 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "Shenzhen investor interaction rows",
+            output_contract(
+                market="CN_A",
+                data_type="social_signal",
+                public_api_ids=('social_signal',),
+                granularity="event",
+                fields=("source", "timestamp", "question", "answer", "symbol_id"),
+                priority_rank=20,
+                can_be_formal_fact_source=False,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -196,6 +381,17 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK daily OHLCV rows",
+            output_contract(
+                market="HK",
+                data_type="daily_bar",
+                public_api_ids=('market_price',),
+                granularity="daily",
+                fields=("date", "open", "high", "low", "close", "volume", "amount"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -208,6 +404,63 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK adjusted daily OHLCV rows",
+            output_contract(
+                market="HK",
+                data_type="daily_bar",
+                public_api_ids=('market_price',),
+                granularity="daily",
+                fields=("date", "open", "high", "low", "close", "volume", "amount"),
+                priority_rank=10,
+            ),
+        ),
+    ),
+    endpoint(
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        endpoint_id="tushare.hk_mins",
+        official_path_or_api_name="hk_mins",
+        method="POST",
+        required_params=("ts_code",),
+        optional_params=("freq", "start_date", "end_date", "trade_date", "limit", "fields"),
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK intraday OHLCV rows",
+            output_contract(
+                market="HK",
+                data_type="intraday_bar",
+                public_api_ids=("intraday_bar",),
+                granularity=("intraday", "1m", "5m", "15m", "30m", "hourly"),
+                fields=("timestamp", "open", "high", "low", "close", "volume", "amount", "symbol_id"),
+                priority_rank=10,
+            ),
+        ),
+    ),
+    endpoint(
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        endpoint_id="tushare.rt_hk_k",
+        official_path_or_api_name="rt_hk_k",
+        method="POST",
+        required_params=("ts_code",),
+        optional_params=("freq", "src", "start_date", "end_date", "trade_date", "fields"),
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK realtime K-line rows",
+            output_contract(
+                market="HK",
+                data_type="quote_snapshot",
+                public_api_ids=("realtime_quote",),
+                granularity="realtime",
+                fields=("price", "timestamp", "open", "high", "low", "close", "volume", "symbol_id"),
+                priority_rank=10,
+            ),
+        ),
     ),
     endpoint(
         provider_id="official_api_tushare",
@@ -220,6 +473,98 @@ ENDPOINTS = (
         auth=AUTH,
         rate_limit_bucket=BUCKET,
         official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK financial indicator rows",
+            output_contract(
+                market="HK",
+                data_type="financial_metric",
+                public_api_ids=('financial_metric',),
+                granularity="quarterly",
+                fields=("roe", "eps", "gross_profit"),
+                priority_rank=10,
+            ),
+        ),
+    ),
+    endpoint(
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        endpoint_id="tushare.hk_income",
+        official_path_or_api_name="hk_income",
+        method="POST",
+        required_params=("ts_code",),
+        optional_params=("start_date", "end_date", "period", "fields"),
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK income statement rows",
+            output_contract(
+                market="HK",
+                data_type="financial_statement",
+                public_api_ids=("financial_statement",),
+                granularity="quarterly",
+                fields=("period", "revenue", "net_income", "symbol_id", "amount_unit"),
+                priority_rank=10,
+            ),
+        ),
+    ),
+    endpoint(
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        endpoint_id="tushare.hk_balancesheet",
+        official_path_or_api_name="hk_balancesheet",
+        method="POST",
+        required_params=("ts_code",),
+        optional_params=("start_date", "end_date", "period", "fields"),
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK balance sheet rows",
+            output_contract(
+                market="HK",
+                data_type="financial_statement",
+                public_api_ids=("financial_statement",),
+                granularity="quarterly",
+                fields=("period", "assets", "liabilities", "symbol_id", "amount_unit"),
+                priority_rank=11,
+            ),
+        ),
+    ),
+    endpoint(
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        endpoint_id="tushare.hk_cashflow",
+        official_path_or_api_name="hk_cashflow",
+        method="POST",
+        required_params=("ts_code",),
+        optional_params=("start_date", "end_date", "period", "fields"),
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        official_doc_ref=TUSHARE_DOC,
+        response_shape=_shape(
+            "HK cash-flow statement rows",
+            output_contract(
+                market="HK",
+                data_type="financial_statement",
+                public_api_ids=("financial_statement",),
+                granularity="quarterly",
+                fields=("period", "cash_flow", "symbol_id", "amount_unit"),
+                priority_rank=12,
+            ),
+        ),
     ),
 )
 
+
+ENDPOINTS = (
+    *MANUAL_ENDPOINTS,
+    *load_generated_endpoints(
+        "tushare_weborder_permission_api.json",
+        provider_id="official_api_tushare",
+        source_type="tushare",
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        skip_paths=(endpoint.official_path_or_api_name for endpoint in MANUAL_ENDPOINTS),
+    ),
+)

@@ -164,7 +164,7 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 - workflow stage
 - approved L1
 - PM decision
-- candidate pack
+- candidate cache
 - provider payload evidence
 
 如果用户在普通聊天里问具体报告：

@@ -6,9 +6,9 @@ This file defines what counts as evidence and what cannot be used to close data 
 
 ## Source Hierarchy
 
-1. Market data pack natural-language brief plus claw-trade data layer structured summary.
-2. Raw provider payload saved by the pack under provider evidence, used for audit rather than report body.
-3. Single-domain provider tools only for targeted debugging or gap investigation outside the normal worker turn.
+1. `claw_request_data` natural-language brief plus claw-trade data layer structured summary.
+2. Raw source payload saved under evidence, used for audit rather than report body.
+3. Data-layer evidence from `claw_request_data`; targeted provider debugging must stay outside the normal worker turn and outside worker-visible tool input.
 4. Browser evidence only as low-confidence visual observation.
 5. User-provided screenshots or descriptions only as low-confidence user observation.
 6. Tutorial content only as methodology.
@@ -101,4 +101,4 @@ Health, error, and log output must not show:
 - Provider failure, rate limit, missing key, plan limit, stale data, unsupported asset, and conflict must remain visible as open data gaps.
 - `technical.patterns` cannot close macro, on-chain, liquidation, or derivatives gaps.
 - Browser evidence cannot close structured gaps.
-- Direct provider route must be labeled degraded if it bypasses `build_trade_context`.
+- Direct provider routes must not be used in the normal worker turn. If engineering runs one for debugging outside the worker turn, it cannot close a report data gap unless the result is re-entered through the data layer evidence path.

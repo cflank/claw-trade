@@ -19,6 +19,8 @@ class AttemptRecord:
     status: str
     remote_attempted: bool
     remote_success: bool
+    http_visibility: str
+    http_audit_status: str
     dataset_refs: tuple[str, ...]
     raw_refs: tuple[str, ...]
     gap_codes: tuple[str, ...]
@@ -47,6 +49,7 @@ class AttemptLog:
             raise ValueError("sdk_http_unknown must not fabricate http evidence")
 
         attempt_ref = f"attempt:{batch.provider_id}:{batch.endpoint_id}:{uuid4().hex[:12]}"
+        http_visibility = _http_visibility(batch)
         record = AttemptRecord(
             attempt_ref=attempt_ref,
             provider_id=batch.provider_id,
@@ -54,6 +57,8 @@ class AttemptLog:
             status=status,
             remote_attempted=_remote_attempted(fetch_result),
             remote_success=remote_success,
+            http_visibility=http_visibility,
+            http_audit_status=_http_audit_status(fetch_result=fetch_result, http_visibility=http_visibility),
             dataset_refs=tuple(dataset_refs),
             raw_refs=tuple(raw_refs),
             gap_codes=tuple(gap.reason for gap in gaps),
@@ -67,6 +72,8 @@ class AttemptLog:
                 "status": record.status,
                 "remote_attempted": record.remote_attempted,
                 "remote_success": record.remote_success,
+                "http_visibility": record.http_visibility,
+                "http_audit_status": record.http_audit_status,
                 "dataset_refs": record.dataset_refs,
                 "raw_refs": record.raw_refs,
                 "gap_codes": tuple(getattr(code, "value", str(code)) for code in record.gap_codes),
@@ -89,6 +96,7 @@ class AttemptLog:
         raw_status = getattr(selector_skip, "reason", "credential_missing") or "credential_missing"
         status = str(getattr(raw_status, "value", raw_status))
         attempt_ref = f"attempt:{batch.provider_id}:{batch.endpoint_id}:{uuid4().hex[:12]}"
+        http_visibility = _http_visibility(batch)
         record = AttemptRecord(
             attempt_ref=attempt_ref,
             provider_id=batch.provider_id,
@@ -96,6 +104,8 @@ class AttemptLog:
             status=status,
             remote_attempted=bool(getattr(selector_skip, "remote_attempted", False)),
             remote_success=False,
+            http_visibility=http_visibility,
+            http_audit_status="no_remote_attempt",
             dataset_refs=(),
             raw_refs=(),
             gap_codes=tuple(gap.reason for gap in gaps),
@@ -109,6 +119,8 @@ class AttemptLog:
                 "status": record.status,
                 "remote_attempted": record.remote_attempted,
                 "remote_success": record.remote_success,
+                "http_visibility": record.http_visibility,
+                "http_audit_status": record.http_audit_status,
                 "dataset_refs": record.dataset_refs,
                 "raw_refs": record.raw_refs,
                 "gap_codes": tuple(getattr(code, "value", str(code)) for code in record.gap_codes),
@@ -127,7 +139,7 @@ class AttemptLog:
         raw_status = getattr(fetch_result, "status", "")
         status = str(getattr(raw_status, "value", raw_status))
         if status == "empty":
-            return "empty_result"
+            return "provider_empty"
         if status == "error":
             return "provider_error"
         return status
@@ -159,6 +171,22 @@ def _http_observation_summary(fetch_result: Any | None) -> dict[str, Any]:
         "quota_signals": quota_signals,
         "rate_limit_origin": _rate_limit_origin(serialized),
     }
+
+
+def _http_visibility(batch: Any) -> str:
+    raw = getattr(batch, "http_visibility", "managed_http")
+    return str(getattr(raw, "value", raw) or "managed_http")
+
+
+def _http_audit_status(*, fetch_result: Any | None, http_visibility: str) -> str:
+    observations = tuple(getattr(fetch_result, "http_observations", ()) or ()) if fetch_result is not None else ()
+    if http_visibility == "sdk_internal_unknown" and not observations:
+        return "sdk_internal_unknown"
+    if http_visibility == "no_http":
+        return "no_http"
+    if observations:
+        return "http_observed"
+    return "http_not_observed"
 
 
 def _serialize_http_observation(observation: Any) -> Mapping[str, Any]:

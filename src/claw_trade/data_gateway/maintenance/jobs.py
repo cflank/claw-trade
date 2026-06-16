@@ -623,9 +623,15 @@ def _required_fields_from_request(request: Any | None) -> tuple[str, ...]:
         return ()
     raw: Any
     if isinstance(request, Mapping):
-        raw = request.get("fields", ())
+        params = request.get("params")
+        raw = request.get("required_fields", ())
+        if not raw and isinstance(params, Mapping):
+            raw = params.get("required_fields", ())
     else:
-        raw = getattr(request, "fields", ())
+        params = getattr(request, "params", None)
+        raw = getattr(request, "required_fields", ())
+        if not raw and isinstance(params, Mapping):
+            raw = params.get("required_fields", ())
     if raw is None:
         return ()
     if isinstance(raw, str):

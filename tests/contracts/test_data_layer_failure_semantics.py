@@ -23,8 +23,10 @@ class _Batch:
 def test_failure_reason_contract_is_explicit_and_complete() -> None:
     reasons = {
         "credential_missing",
+        "permission_denied",
         "rate_limited",
         "provider_error",
+        "provider_empty",
         "empty_result",
         "warehouse_missing",
         "warehouse_stale",
@@ -44,8 +46,10 @@ def test_failure_reason_contract_is_explicit_and_complete() -> None:
     }
     assert reasons == {
         DataGap.by_reason("credential_missing").reason,
+        DataGap.by_reason("permission_denied").reason,
         DataGap.by_reason("rate_limited", evidence_refs=("rate_limit:contract",)).reason,
         DataGap.by_reason("provider_error").reason,
+        DataGap.by_reason("provider_empty").reason,
         DataGap.by_reason("empty_result").reason,
         DataGap.by_reason("warehouse_missing").reason,
         DataGap.by_reason("warehouse_stale").reason,
@@ -94,10 +98,13 @@ def test_fetch_failure_mapping_contains_required_reasons() -> None:
     assert [g.reason for g in gaps_from_fetch_result(FetchResult.from_error(batch, status="credential_missing"), batch)] == [
         "credential_missing"
     ]
+    assert [g.reason for g in gaps_from_fetch_result(FetchResult.from_error(batch, status="permission_denied"), batch)] == [
+        "permission_denied"
+    ]
     assert [g.reason for g in gaps_from_fetch_result(FetchResult.from_error(batch, status="rate_limited"), batch)] == [
         "rate_limited"
     ]
-    assert [g.reason for g in gaps_from_fetch_result(FetchResult.from_empty(batch), batch)] == ["empty_result"]
+    assert [g.reason for g in gaps_from_fetch_result(FetchResult.from_empty(batch), batch)] == ["provider_empty"]
     assert [g.reason for g in gaps_from_fetch_result(FetchResult.from_error(batch, status="not_applicable"), batch)] == [
         "not_applicable"
     ]

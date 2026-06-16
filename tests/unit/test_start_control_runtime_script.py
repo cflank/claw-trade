@@ -115,6 +115,13 @@ def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_
     assert 'write_runtime_env_var "OPENVIKING_MCP_URL" "${OPENVIKING_MCP_URL}"' in text
 
 
+def test_start_control_runtime_mounts_a_share_factory_seed_by_default() -> None:
+    text = _script_path().read_text(encoding="utf-8")
+
+    assert 'DATA_GATEWAY_SEED_MONGODB_URI="${DATA_GATEWAY_SEED_MONGODB_URI:-${CN_A_MONGODB_URI}}"' in text
+    assert 'DATA_GATEWAY_SEED_MONGODB_DATABASE="${DATA_GATEWAY_SEED_MONGODB_DATABASE:-claw_trade_a_share_factory_seed}"' in text
+
+
 def test_start_control_runtime_script_exports_runtime_env_before_child_command() -> None:
     text = _script_path().read_text(encoding="utf-8")
 

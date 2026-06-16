@@ -9,7 +9,7 @@ profiles:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - selection_candidate_pack
+      - selection_candidate_cache
     openviking_access: none
 skills:
   mounted:

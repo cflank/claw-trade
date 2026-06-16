@@ -39,12 +39,12 @@ class SelectionFileArtifactBackend:
         readback_sha = sha256(readback).hexdigest()
         if len(readback) != len(expected):
             raise SelectionArtifactError(
-                "candidate_pack_integrity_failed",
+                "candidate_cache_integrity_failed",
                 "artifact readback size mismatch",
             )
         if readback_sha != expected_sha:
             raise SelectionArtifactError(
-                "candidate_pack_integrity_failed",
+                "candidate_cache_integrity_failed",
                 "artifact readback sha256 mismatch",
             )
 
@@ -81,13 +81,13 @@ class SelectionFileArtifactBackend:
         prefix = "local://selection/"
         if not uri.startswith(prefix):
             raise SelectionArtifactError(
-                "candidate_pack_integrity_failed",
+                "candidate_cache_integrity_failed",
                 f"unsupported artifact uri: {uri}",
             )
         relative = uri[len(prefix) :].strip("/")
         if not relative or ".." in relative.split("/"):
             raise SelectionArtifactError(
-                "candidate_pack_integrity_failed",
+                "candidate_cache_integrity_failed",
                 f"unsafe artifact uri path: {uri}",
             )
         return self._root / relative
@@ -97,7 +97,7 @@ class SelectionFileArtifactBackend:
             relative = path.resolve().relative_to(self._root.resolve())
         except ValueError as exc:
             raise SelectionArtifactError(
-                "candidate_pack_integrity_failed",
+                "candidate_cache_integrity_failed",
                 f"path outside artifact root: {path}",
             ) from exc
         return f"local://selection/{relative.as_posix()}"

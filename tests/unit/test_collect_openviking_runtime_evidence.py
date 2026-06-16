@@ -31,7 +31,7 @@ def test_relation_query_uris_include_manifest_and_lineage_sources(tmp_path: Path
                             "index_uri": "viking://resources/workflow/run-openviking/frontline/market/evidence/index.json",
                             "entries": [
                                 {
-                                    "uri": "viking://resources/workflow/run-openviking/frontline/market/evidence/pack.json"
+                                    "uri": "viking://resources/workflow/run-openviking/frontline/market/evidence/data.json"
                                 }
                             ],
                         },

@@ -7,7 +7,7 @@ import { definePluginEntry } from "../../third_party/openclaw/dist/plugin-sdk/pl
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(PLUGIN_DIR, "..", "..");
 
-const TOOL_NAME = "claw_get_selection_candidate_pack";
+const TOOL_NAME = "claw_get_selection_candidate_cache";
 const REQUIRED_STAGE = "selection_review";
 const ALLOWED_WORKERS = new Set(["selection_strategist", "selection_skeptic"]);
 const DEFAULT_TIMEOUT_MS = 20000;
@@ -58,7 +58,8 @@ function toolErrorResult(code, message, details = undefined) {
       ok: false,
       error: {
         code,
-        message,
+        message: safeModelErrorMessage(code),
+        audit_message: message,
         ...(isRecord(details) ? details : {}),
       },
     },
@@ -75,11 +76,30 @@ function modelFacingToolText(payload, isError = false) {
     const error = isRecord(payload.error) ? payload.error : undefined;
     if (error) {
       const code = textValue(error.code) ?? "UNKNOWN_ERROR";
-      const message = textValue(error.message) ?? "候选包工具失败";
-      return `候选包工具失败：${code}。${message}`;
+      const message = safeModelErrorMessage(code);
+      return `候选缓存工具失败：${code}。${message}`;
     }
   }
-  return isError ? "候选包工具失败。请说明证据缺口，不要补写不存在数据。" : "候选包工具未返回可读正文。";
+  return isError ? "候选缓存工具失败。请说明证据缺口，不要补写不存在数据。" : "候选缓存工具未返回可读正文。";
+}
+
+function safeModelErrorMessage(code) {
+  switch (code) {
+    case TOOL_ERROR_CODES.paramsInvalid:
+      return "工具参数不符合公开合同";
+    case TOOL_ERROR_CODES.contextIncomplete:
+      return "选择工具运行上下文不完整";
+    case TOOL_ERROR_CODES.workerMismatch:
+      return "当前 worker 不能使用候选缓存工具";
+    case TOOL_ERROR_CODES.runtimeContextMissing:
+      return "选择工具运行上下文缺失";
+    case TOOL_ERROR_CODES.subprocessTimeout:
+      return "候选缓存工具执行超时";
+    case TOOL_ERROR_CODES.protocolError:
+      return "候选缓存工具协议执行失败";
+    default:
+      return "候选缓存工具失败";
+  }
 }
 
 function readCommand(ctx) {
@@ -256,14 +276,14 @@ async function runSelectionTool(ctx, params, toolCallId) {
       dispatch_id: runtime.callId,
       worker_id: runtime.workerId,
       stage: runtime.stage,
-      evidence_root: path.join(runtime.evidenceDir, "selection-pack-tool-evidence"),
+      evidence_root: path.join(runtime.evidenceDir, "selection-candidate-cache-tool-evidence"),
       tool_call_id: textValue(toolCallId) ?? null,
       select_workflow_run_id: runtime.selectWorkflowRunId,
       selection_run_id: runtime.selectionRunId,
       runtime_vars: runtime.runtimeVars,
-      candidate_pack_ref: isRecord(runtime.command.candidate_pack_ref)
-        ? runtime.command.candidate_pack_ref
-        : runtime.runtimeVars.candidate_pack_ref,
+      candidate_cache_ref: isRecord(runtime.command.candidate_cache_ref)
+        ? runtime.command.candidate_cache_ref
+        : runtime.runtimeVars.candidate_cache_ref,
       selection_artifact_root:
         textValue(runtime.command.selection_artifact_root) ??
         textValue(runtime.runtimeVars.selection_artifact_root) ??
@@ -294,7 +314,7 @@ function registerSelectionTool(api) {
     (ctx) => ({
       name: TOOL_NAME,
       label: TOOL_NAME,
-      description: "Read the approved A-share selection candidate pack for current selection review turn.",
+      description: "Read the approved A-share selection candidate cache for current selection review turn.",
       parameters: EMPTY_PARAMS_SCHEMA,
       async execute(callId, params) {
         return runSelectionTool(ctx, params, callId);
@@ -307,7 +327,7 @@ function registerSelectionTool(api) {
 export default definePluginEntry({
   id: "claw-trade-selection-tools",
   name: "claw-trade selection tools",
-  description: "Registers selection candidate-pack tool with approved-only runtime boundary.",
+  description: "Registers selection candidate-cache tool with approved-only runtime boundary.",
   register(api) {
     registerSelectionTool(api);
   },

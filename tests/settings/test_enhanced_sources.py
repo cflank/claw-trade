@@ -14,12 +14,17 @@ from claw_trade.ui_backend.settings_service import UiBoundaryError
 
 PROBE_BACKED_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
+    "akshare",
     "finnhub",
     "fred",
+    "coingecko",
     "coingecko_pro",
     "coinglass",
     "glassnode",
+    "binance",
+    "okx",
 )
+KEYED_SOURCE_TYPES = frozenset({"tushare", "finnhub", "fred", "coingecko_pro", "coinglass", "glassnode"})
 
 
 def _show_decision(provider_id: str, *, market: Market) -> ProviderDisplayDecision:
@@ -31,7 +36,7 @@ def _show_decision(provider_id: str, *, market: Market) -> ProviderDisplayDecisi
         requires_user_credential=True,
         changes_report_or_select_result=True,
         writes_mongo_and_evidence=True,
-        enters_domain_pack=True,
+        enters_data_result_flow=True,
         consumed_by_worker_or_strategy=True,
         live_fresh_evidence_ref=f"evidence://main-chain/{provider_id}",
         probe_only=False,
@@ -251,28 +256,16 @@ def test_settings_enhanced_sources_rejects_blocked_source_types(source_type: str
     assert "NT-07" in exc.value.user_message
 
 
-def test_data_source_health_tester_dispatches_all_fixed_sources(monkeypatch: pytest.MonkeyPatch) -> None:
-    called: list[str] = []
-
-    def _record(name: str):
-        def _probe(**_: object) -> None:
-            called.append(name)
-
-        return _probe
-
-    monkeypatch.setattr(ui_runtime_checks, "_probe_tushare", _record("tushare"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_finnhub", _record("finnhub"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_fred", _record("fred"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_coingecko_pro", _record("coingecko_pro"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_coinglass", _record("coinglass"))
-    monkeypatch.setattr(ui_runtime_checks, "_probe_glassnode", _record("glassnode"))
-
+def test_data_source_health_tester_validates_fixed_sources_without_remote_probe() -> None:
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
     for source_type in PROBE_BACKED_SOURCE_TYPES:
-        result = tester({"supportedType": source_type})
+        instance = {"supportedType": source_type}
+        if source_type in KEYED_SOURCE_TYPES:
+            instance["apiKeyReplacement"] = "token"
+        result = tester(instance)
         assert result["status"] == "validated"
-
-    assert called == list(PROBE_BACKED_SOURCE_TYPES)
+        assert result["evidence"]["kind"] == "config_only"
+        assert result["evidence"]["remoteSuccess"] is False
 
 
 @pytest.mark.parametrize(
@@ -340,39 +333,15 @@ def test_settings_enhanced_sources_probe_credential_missing_is_translated_to_ui_
     assert "密钥未配置" in exc.value.user_message
 
 
-class _HttpProbeResponse:
-    def __init__(self, *, status_code: int = 200, payload: object | None = None) -> None:
-        self.status_code = status_code
-        self._payload = payload if payload is not None else {}
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"http_{self.status_code}")
-
-    def json(self) -> object:
-        return self._payload
+def test_data_source_health_tester_does_not_expose_requests_probe_surface() -> None:
+    assert not hasattr(ui_runtime_checks, "requests")
+    assert not hasattr(ui_runtime_checks, "create_tushare_pro")
+    assert not hasattr(ui_runtime_checks, "_probe_tushare")
 
 
-@pytest.mark.parametrize(
-    ("source_type", "credential", "payload"),
-    (
-        ("finnhub", "k", {"error": "invalid token"}),
-        ("fred", "k", {"error_message": "bad key"}),
-        ("coingecko_pro", "k", {"error": "throttled"}),
-        ("coinglass", "k", {"message": "bad key"}),
-        ("glassnode", "k", {"error": "bad key"}),
-    ),
-)
-def test_data_source_health_tester_does_not_validate_error_payloads(
-    monkeypatch: pytest.MonkeyPatch,
-    source_type: str,
-    credential: str,
-    payload: dict[str, object],
-) -> None:
-    def _record_get(*_: object, **__: object) -> _HttpProbeResponse:
-        return _HttpProbeResponse(payload=payload)
-
-    monkeypatch.setattr(ui_runtime_checks.requests, "get", _record_get)
+@pytest.mark.parametrize("source_type", tuple(sorted(KEYED_SOURCE_TYPES)))
+def test_data_source_health_tester_does_not_validate_provider_payloads(source_type: str) -> None:
     tester = ui_runtime_checks.build_data_source_health_tester(env={})
-    with pytest.raises(RuntimeError):
-        tester({"supportedType": source_type, "apiKeyReplacement": credential})
+    result = tester({"supportedType": source_type, "apiKeyReplacement": "k"})
+    assert result["status"] == "validated"
+    assert result["evidence"]["dataNeedRequiredForRemoteValidation"] is True

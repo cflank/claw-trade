@@ -54,10 +54,6 @@ class EndpointCapability:
     def supported_granularities(self) -> tuple[str, ...]:
         return self.granularity
 
-    @property
-    def coverage_fields(self) -> tuple[str, ...]:
-        return self.fields
-
 
 @dataclass(frozen=True)
 class ProviderCapabilities:

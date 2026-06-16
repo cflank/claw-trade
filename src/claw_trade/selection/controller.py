@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from claw_trade.runtime.openclaw_client import OpenClawClient
-from claw_trade.selection.candidate_pack import (
-    CandidatePackError,
-    validate_candidate_pack_payload_strategy_field_completeness,
+from claw_trade.selection.candidate_cache import (
+    CandidateCacheError,
+    validate_candidate_cache_payload_strategy_field_completeness,
 )
 from claw_trade.selection.dispatch import (
     build_fixed_selection_dispatches,
@@ -21,7 +21,7 @@ from claw_trade.selection.dispatch import (
 from claw_trade.selection.models import (
     DEFAULT_SELECTION_STRATEGY_CONFIG_VERSION,
     DEFAULT_SELECTION_WEIGHT_VERSION,
-    CandidatePackRef,
+    CandidateCacheRef,
     DecisionTicker,
     SelectionDecision,
     SelectionMarket,
@@ -104,7 +104,7 @@ _EXPLICIT_TICKER_CORRECTION_RE = re.compile(
     r"(?P<ticker>\d{6}\.(?:SH|SZ|BJ))",
     re.IGNORECASE,
 )
-_CANDIDATE_PACK_REQUIRED_SUMMARY_LABELS = (
+_CANDIDATE_CACHE_REQUIRED_SUMMARY_LABELS = (
     "总分",
     "分项得分",
     "策略来源",
@@ -165,7 +165,7 @@ _READER_TEXT_REPLACEMENTS = (
     ("selection_ranked_watchlist", "综合观察清单"),
     ("selection_strategy_review", "选股策略评审"),
     ("selection_skeptic_review", "反方审查意见"),
-    ("candidate_pack_summary", "候选池摘要"),
+    ("candidate_cache_summary", "候选池摘要"),
     ("watchlist", "观察清单"),
     ("Selection 反方审查员 Review", "反方审查"),
     ("Selection", "选股"),
@@ -303,7 +303,7 @@ _READER_TEXT_REPLACEMENTS = (
     ("tight flag", "紧旗形态"),
     ("策略变体", "策略条件"),
     ("候选事实表", "候选池数据"),
-    ("候选事实包", "候选池数据"),
+    ("候选缓存", "候选池数据"),
     ("命中字段", "触发指标"),
     ("排序 tie-break 字段", "同分排序字段"),
     ("tie-break", "同分排序"),
@@ -345,7 +345,7 @@ _REFRESHABLE_UNAVAILABLE_CODES = frozenset(
         SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
         SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN,
         SelectUnavailableCode.STALE_SELECTION_RUN,
-        SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED,
+        SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED,
         SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING,
     }
 )
@@ -353,7 +353,7 @@ _REFRESHABLE_UNAVAILABLE_CODES = frozenset(
 
 class SelectionController:
     """
-    SEL-08 scope: /select 命令只读 latest terminal run；只有 completed + approved pack 才走 SEL-07 固定 dispatch。
+    SEL-08 scope: /select 命令只读 latest terminal run；只有 completed + approved candidate cache 才走 SEL-07 固定 dispatch。
     """
 
     def __init__(
@@ -399,7 +399,7 @@ class SelectionController:
         select_workflow_run_id: str,
         selection_run_id: str,
         evidence_root: str,
-        candidate_pack_summary_md: str,
+        candidate_cache_summary_md: str,
         approved_l1_materials: Mapping[SelectionWorkerId, str],
     ) -> tuple[SelectionWorkerDispatch, ...]:
         return build_fixed_selection_dispatches(
@@ -407,7 +407,7 @@ class SelectionController:
             select_workflow_run_id=select_workflow_run_id,
             selection_run_id=selection_run_id,
             evidence_root=Path(evidence_root),
-            candidate_pack_summary_md=candidate_pack_summary_md,
+            candidate_cache_summary_md=candidate_cache_summary_md,
             approved_l1_materials=approved_l1_materials,
         )
 
@@ -476,40 +476,40 @@ class SelectionController:
         assert latest is not None
         if request.trade_date is None:
             request = replace(request, trade_date=latest.run_plan.trade_date)
-        candidate_pack_ref = latest.data_run.candidate_pack_ref
-        if candidate_pack_ref is None:
+        candidate_cache_ref = latest.data_run.candidate_cache_ref
+        if candidate_cache_ref is None:
             payload = _base_workflow_evidence_payload(
                 request=request,
                 workflow_run_id=workflow_run_id,
-                status=SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED.value,
+                status=SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED.value,
                 selection_run_id=latest.run_plan.selection_run_id,
-                reason=SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED.value,
+                reason=SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED.value,
             )
             evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED),
+                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED),
                 select_workflow_run_id=workflow_run_id,
                 evidence_path=evidence_path,
-                unavailable_code=SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED,
+                unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED,
             )
 
-        candidate_pack_strategy_error = _candidate_pack_strategy_completeness_error(candidate_pack_ref)
-        if candidate_pack_strategy_error is not None:
+        candidate_cache_strategy_error = _candidate_cache_strategy_completeness_error(candidate_cache_ref)
+        if candidate_cache_strategy_error is not None:
             payload = _base_workflow_evidence_payload(
                 request=request,
                 workflow_run_id=workflow_run_id,
-                status=SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED.value,
+                status=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED.value,
                 selection_run_id=latest.run_plan.selection_run_id,
-                reason=candidate_pack_strategy_error,
+                reason=candidate_cache_strategy_error,
             )
             evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED),
+                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED),
                 select_workflow_run_id=workflow_run_id,
                 evidence_path=evidence_path,
-                unavailable_code=SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED,
+                unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
             )
 
         if self._openclaw is None:
@@ -529,24 +529,24 @@ class SelectionController:
                 failure_reason="selection_openclaw_not_configured",
             )
 
-        summary_md = _load_candidate_pack_summary(candidate_pack_ref)
+        summary_md = _load_candidate_cache_summary(candidate_cache_ref)
         allowed_ticker_companies = _extract_allowed_ticker_companies_from_summary(summary_md)
         allowed_tickers = frozenset(allowed_ticker_companies)
         if not allowed_tickers:
             payload = _base_workflow_evidence_payload(
                 request=request,
                 workflow_run_id=workflow_run_id,
-                status=SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED.value,
+                status=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED.value,
                 selection_run_id=latest.run_plan.selection_run_id,
-                reason="candidate_pack_summary_missing_allowed_tickers",
+                reason="candidate_cache_summary_missing_allowed_tickers",
             )
             evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED),
+                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED),
                 select_workflow_run_id=workflow_run_id,
                 evidence_path=evidence_path,
-                unavailable_code=SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED,
+                unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
             )
 
         approved_l1: dict[SelectionWorkerId, str] = {
@@ -563,14 +563,14 @@ class SelectionController:
                 select_workflow_run_id=workflow_run_id,
                 selection_run_id=latest.run_plan.selection_run_id,
                 evidence_root=str(evidence_dir / "dispatches"),
-                candidate_pack_summary_md=summary_md,
+                candidate_cache_summary_md=summary_md,
                 approved_l1_materials=approved_l1,
             )
             dispatch = _select_dispatch_for_worker(dispatches=dispatches, worker_id=worker_id)
             executions = execute_selection_dispatches(
                 openclaw=self._openclaw,
                 dispatches=(dispatch,),
-                candidate_pack_ref=candidate_pack_ref,
+                candidate_cache_ref=candidate_cache_ref,
                 profile=request.profile.value,
             )
             if not executions:
@@ -666,7 +666,7 @@ class SelectionController:
             decision,
             selection_worker_reports=approved_l1,
             portfolio_manager_report=pm_raw_text,
-            candidate_pack_summary_md=summary_md,
+            candidate_cache_summary_md=summary_md,
         )
         reader_report_path = evidence_dir / "select-reader-report.md"
         reader_report_path.write_text(f"{reader_report_markdown.strip()}\n", encoding="utf-8")
@@ -786,25 +786,25 @@ def _select_dispatch_for_worker(
     raise ValueError(f"dispatch missing worker {worker_id.value}")
 
 
-def _load_candidate_pack_summary(candidate_pack_ref: CandidatePackRef) -> str:
-    path = _resolve_selection_uri(candidate_pack_ref.pack_summary_ref)
+def _load_candidate_cache_summary(candidate_cache_ref: CandidateCacheRef) -> str:
+    path = _resolve_selection_uri(candidate_cache_ref.cache_summary_ref)
     text = path.read_text(encoding="utf-8")
     if not text.strip():
         return ""
-    if _candidate_pack_summary_has_required_labels(text):
+    if _candidate_cache_summary_has_required_labels(text):
         return text
-    rebuilt = _rebuild_candidate_pack_summary_from_json(candidate_pack_ref)
+    rebuilt = _rebuild_candidate_cache_summary_from_json(candidate_cache_ref)
     if rebuilt is not None:
         return rebuilt
     raw_field = _reader_visible_raw_field_name(text)
     if raw_field is not None:
-        raise ValueError(f"candidate pack summary contains reader-visible raw field name: {raw_field}")
+        raise ValueError(f"candidate cache summary contains reader-visible raw field name: {raw_field}")
     return text
 
 
-def _candidate_pack_summary_has_required_labels(summary_md: str) -> bool:
+def _candidate_cache_summary_has_required_labels(summary_md: str) -> bool:
     return (
-        all(label in summary_md for label in _CANDIDATE_PACK_REQUIRED_SUMMARY_LABELS)
+        all(label in summary_md for label in _CANDIDATE_CACHE_REQUIRED_SUMMARY_LABELS)
         and _reader_visible_raw_field_name(summary_md) is None
     )
 
@@ -817,8 +817,8 @@ def _reader_visible_raw_field_name(summary_md: str) -> str | None:
     return None
 
 
-def _rebuild_candidate_pack_summary_from_json(candidate_pack_ref: CandidatePackRef) -> str | None:
-    json_path = _candidate_pack_json_path(candidate_pack_ref)
+def _rebuild_candidate_cache_summary_from_json(candidate_cache_ref: CandidateCacheRef) -> str | None:
+    json_path = _candidate_cache_json_path(candidate_cache_ref)
     if json_path is None:
         return None
     try:
@@ -831,7 +831,7 @@ def _rebuild_candidate_pack_summary_from_json(candidate_pack_ref: CandidatePackR
     if not isinstance(candidates, list) or not candidates:
         return None
 
-    sidecar = _candidate_pack_sidecar_payload(candidate_pack_ref)
+    sidecar = _candidate_cache_sidecar_payload(candidate_cache_ref)
     strategy_config_version = _first_text(
         payload.get("strategy_config_version"),
         sidecar.get("strategy_config_version"),
@@ -849,7 +849,7 @@ def _rebuild_candidate_pack_summary_from_json(candidate_pack_ref: CandidatePackR
     candidate_count = _first_text(payload.get("candidate_count"), sidecar.get("candidate_count"), str(len(candidates)))
 
     lines = [
-        "# A股候选事实包",
+        "# A股候选缓存",
         "",
         "## 本轮范围",
         f"- 交易日：{trade_date}",
@@ -874,10 +874,10 @@ def _rebuild_candidate_pack_summary_from_json(candidate_pack_ref: CandidatePackR
         )
 
     data_quality_summary = _reader_friendly_summary_text(
-        _first_text(payload.get("data_quality_summary"), "数据质量：候选包未提供汇总文本。")
+        _first_text(payload.get("data_quality_summary"), "数据质量：候选缓存未提供汇总文本。")
     )
     source_summary = _reader_friendly_summary_text(
-        _first_text(payload.get("source_summary"), "来源摘要：候选包未提供汇总文本。")
+        _first_text(payload.get("source_summary"), "来源摘要：候选缓存未提供汇总文本。")
     )
     lines.extend(
         (
@@ -906,37 +906,37 @@ def _rebuild_candidate_pack_summary_from_json(candidate_pack_ref: CandidatePackR
     return "\n".join(lines).strip()
 
 
-def _candidate_pack_json_path(candidate_pack_ref: CandidatePackRef) -> Path | None:
-    summary_path = _resolve_selection_uri(candidate_pack_ref.pack_summary_ref)
-    candidates = (summary_path.with_name("candidate-pack.json"),)
+def _candidate_cache_json_path(candidate_cache_ref: CandidateCacheRef) -> Path | None:
+    summary_path = _resolve_selection_uri(candidate_cache_ref.cache_summary_ref)
+    candidates = (summary_path.with_name("candidate-cache.json"),)
     for path in candidates:
         if path.is_file():
             return path
-    body_path = _resolve_selection_uri(candidate_pack_ref.l1_uri)
-    alt_path = body_path.with_name("candidate-pack.json")
+    body_path = _resolve_selection_uri(candidate_cache_ref.l1_uri)
+    alt_path = body_path.with_name("candidate-cache.json")
     return alt_path if alt_path.is_file() else None
 
 
-def _candidate_pack_strategy_completeness_error(candidate_pack_ref: CandidatePackRef) -> str | None:
-    json_path = _candidate_pack_json_path(candidate_pack_ref)
+def _candidate_cache_strategy_completeness_error(candidate_cache_ref: CandidateCacheRef) -> str | None:
+    json_path = _candidate_cache_json_path(candidate_cache_ref)
     if json_path is None:
-        return "candidate_pack_strategy_fields_missing: candidate-pack.json missing"
+        return "candidate_cache_strategy_fields_missing: candidate-cache.json missing"
     try:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return f"candidate_pack_strategy_fields_missing: candidate-pack.json unreadable: {exc}"
+        return f"candidate_cache_strategy_fields_missing: candidate-cache.json unreadable: {exc}"
     if not isinstance(payload, Mapping):
-        return "candidate_pack_strategy_fields_missing: candidate-pack.json must be an object"
+        return "candidate_cache_strategy_fields_missing: candidate-cache.json must be an object"
     try:
-        validate_candidate_pack_payload_strategy_field_completeness(payload)
-    except CandidatePackError as exc:
+        validate_candidate_cache_payload_strategy_field_completeness(payload)
+    except CandidateCacheError as exc:
         return f"{exc.code}: {exc.reason}"
     return None
 
 
-def _candidate_pack_sidecar_payload(candidate_pack_ref: CandidatePackRef) -> dict[str, object]:
+def _candidate_cache_sidecar_payload(candidate_cache_ref: CandidateCacheRef) -> dict[str, object]:
     try:
-        path = _resolve_selection_uri(candidate_pack_ref.manifest_ref)
+        path = _resolve_selection_uri(candidate_cache_ref.manifest_ref)
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return {}
@@ -1444,7 +1444,7 @@ def _render_selection_reader_report(
     *,
     selection_worker_reports: Mapping[SelectionWorkerId, str] | None = None,
     portfolio_manager_report: str | None = None,
-    candidate_pack_summary_md: str | None = None,
+    candidate_cache_summary_md: str | None = None,
 ) -> str:
     worker_reports = selection_worker_reports or {}
     lines: list[str] = [
@@ -1473,10 +1473,10 @@ def _render_selection_reader_report(
         "## 五、最终分流决策",
         _reader_friendly_selection_text(portfolio_manager_report or ""),
     ]
-    strategy_analysis = _reader_strategy_analysis(candidate_pack_summary_md)
+    strategy_analysis = _reader_strategy_analysis(candidate_cache_summary_md)
     if strategy_analysis:
         lines.extend(("", "## 六、策略命中与分析过程", strategy_analysis))
-    summary = _reader_selection_summary(candidate_pack_summary_md)
+    summary = _reader_selection_summary(candidate_cache_summary_md)
     if summary:
         lines.extend(("", "## 七、数据范围与质量", summary))
     lines.extend(("", "## 八、进入 `/report` 的验证重点", *_render_validation_focus_rows(decision.enter_report)))
@@ -1514,8 +1514,8 @@ def _render_validation_focus_rows(rows: tuple[DecisionTicker, ...]) -> list[str]
     return [f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}" for row in rows]
 
 
-def _reader_strategy_analysis(candidate_pack_summary_md: str | None) -> str:
-    summary = (candidate_pack_summary_md or "").strip()
+def _reader_strategy_analysis(candidate_cache_summary_md: str | None) -> str:
+    summary = (candidate_cache_summary_md or "").strip()
     if not summary:
         return ""
     candidate_rows = _reader_candidate_strategy_rows(summary)
@@ -1526,7 +1526,7 @@ def _reader_strategy_analysis(candidate_pack_summary_md: str | None) -> str:
             explanation = _READER_STRATEGY_EXPLANATIONS.get(name, _READER_STRATEGY_FALLBACK_EXPLANATION)
             lines.append(f"- {name}：{explanation}")
     else:
-        lines.append("- 候选包没有提供可读的策略条件明细；本报告不补造策略名称。")
+        lines.append("- 候选缓存没有提供可读的策略条件明细；本报告不补造策略名称。")
 
     if candidate_rows:
         lines.extend(
@@ -1660,8 +1660,8 @@ def _markdown_table_cell(value: str) -> str:
     return value.replace("|", "｜").replace("\n", " ").strip()
 
 
-def _reader_selection_summary(candidate_pack_summary_md: str | None) -> str:
-    summary = (candidate_pack_summary_md or "").strip()
+def _reader_selection_summary(candidate_cache_summary_md: str | None) -> str:
+    summary = (candidate_cache_summary_md or "").strip()
     if not summary:
         return ""
     scope = _reader_scope_values(summary)
@@ -1820,7 +1820,7 @@ def _data_refresh_payload(refresh: SelectionDataRefreshResult) -> dict[str, obje
 def _data_refresh_chat_text(refresh: SelectionDataRefreshResult) -> str:
     if refresh.status == "already_running":
         return (
-            "`/select` 发现当前没有可用候选包；已有后台补数任务在运行。"
+            "`/select` 发现当前没有可用候选缓存；已有后台补数任务在运行。"
             f" 批次：`{refresh.selection_run_id}`，交易日：`{refresh.trade_date}`。补完后再次发送 `/select`。"
         )
     return (
@@ -1845,10 +1845,10 @@ def _unavailable_chat_text(code: SelectUnavailableCode) -> str:
         SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN: "`/select` 当前不可用：没有可用的已完成选股批次。",
         SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN: "`/select` 今日没有符合已批准策略条件的候选股票。",
         SelectUnavailableCode.STALE_SELECTION_RUN: "`/select` 当前不可用：最新选股批次已过期。",
-        SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED: "`/select` 当前不可用：候选池事实包尚未批准。",
-        SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH: "`/select` 当前不可用：候选池完整性校验失败（hash 不一致）。",
-        SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED: "`/select` 当前不可用：候选池完整性校验失败。",
-        SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE: "`/select` 当前不可用：候选池 lineage 不完整。",
+        SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED: "`/select` 当前不可用：候选缓存尚未批准。",
+        SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH: "`/select` 当前不可用：候选池完整性校验失败（hash 不一致）。",
+        SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED: "`/select` 当前不可用：候选池完整性校验失败。",
+        SelectUnavailableCode.CANDIDATE_CACHE_LINEAGE_INCOMPLETE: "`/select` 当前不可用：候选池 lineage 不完整。",
         SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING: "`/select` 当前不可用：最新选股批次缺少列式仓库 manifest、hash 或 provider 证据。",
         SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED: "`/select` 当前暂不支持该市场。",
         SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING: "`/select` 当前不可用：Crypto 历史仓库尚未完成下载和入库。",

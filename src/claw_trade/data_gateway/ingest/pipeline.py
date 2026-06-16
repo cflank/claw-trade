@@ -10,6 +10,25 @@ from .normalizer import Normalizer
 from .raw_store import RawStore
 
 _SELECTOR_SKIP_ATTEMPT_ONLY_REASONS = frozenset({"source_not_configured", "source_disabled"})
+_SHARED_RESULT_GAP_REASONS = frozenset(
+    {
+        "credential_missing",
+        "permission_denied",
+        "rate_limited",
+        "rate_limited_by_tool_budget",
+        "provider_error",
+        "provider_empty",
+        "parser_missing",
+        "field_missing",
+        "date_range_missing",
+        "data_integrity_failed",
+        "granularity_mismatch",
+        "cached_empty",
+        "cooldown_skipped",
+        "sdk_http_unknown",
+        "evidence_write_failed",
+    }
+)
 
 
 class IngestPipeline:
@@ -34,12 +53,23 @@ class IngestPipeline:
         try:
             if _fetch_status(result) == "success":
                 raw_refs = self.raw_store.save(result, batch)
-                normalized = self.normalizer.normalize(result, batch, raw_refs)
-                gaps.extend(normalized.gaps)
-                if _normalized_storage_allowed(batch):
+                if _normalization_skipped(batch) and not _payload_has_normalized_rows(getattr(result, "payload", None)):
+                    normalized = None
+                    gaps.append(
+                        _batch_gap(
+                            batch,
+                            "parser_missing",
+                            evidence_refs=raw_refs,
+                            message="official raw response has no normalized parser",
+                        )
+                    )
+                else:
+                    normalized = self.normalizer.normalize(result, batch, raw_refs)
+                    gaps.extend(normalized.gaps)
+                if normalized is not None and _normalized_storage_allowed(batch):
                     if normalized.rows:
                         dataset_refs = self.normalized_store.upsert(normalized.rows)
-                else:
+                elif normalized is not None:
                     gaps.append(
                         DataGap.by_reason(
                             "license_blocked",
@@ -57,12 +87,7 @@ class IngestPipeline:
             gaps.append(DataGap.by_reason("evidence_write_failed", message=str(exc)))
             result = _replace_fetch_status(result, "error")
 
-        status = _fetch_status(result)
-        remote_success = status == "success"
-        if status in NON_REMOTE_ATTEMPT_STATUSES:
-            remote_success = False
-        if remote_success and gaps:
-            remote_success = False
+        remote_success = _auditable_remote_success(result=result, batch=batch, gaps=tuple(gaps))
         try:
             attempt_refs = self.attempt_log.record(
                 batch=batch,
@@ -112,16 +137,18 @@ class IngestPipeline:
     def record_gate_result(self, batch: Any, gate: Any) -> IngestResult:
         refs = _gate_refs(gate)
         if gate.kind == "cache_hit":
-            gaps: tuple[DataGap, ...] = ()
+            gaps = _raw_only_parser_missing_gaps(batch, refs)
         elif gate.kind == "cached_empty":
-            gaps = (DataGap.by_reason("cached_empty", evidence_refs=tuple(refs.attempt_refs)),)
+            gaps = (_batch_gap(batch, "cached_empty", evidence_refs=tuple(refs.attempt_refs)),)
         elif gate.kind == "rate_limited":
             reason = _rate_limited_gap_reason(gate)
             gaps = (_batch_gap(batch, reason, evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
         elif gate.kind == "cooldown_skipped":
             gaps = (_batch_gap(batch, "cooldown_skipped", evidence_refs=_rate_limit_evidence_refs(batch, gate, refs)),)
         elif gate.kind == "shared_result":
-            gaps = ()
+            gaps = _raw_only_parser_missing_gaps(batch, refs)
+            if not gaps and str(getattr(gate, "reason", "") or "").strip():
+                gaps = (_shared_result_gap(batch, gate, refs),)
         else:
             raise ValueError(f"unsupported non-remote gate kind: {gate.kind}")
 
@@ -177,13 +204,15 @@ def gaps_from_fetch_result(result: Any, batch: Any) -> tuple[DataGap, ...]:
     status = _fetch_status(result)
     if status == "credential_missing":
         return (_batch_gap(batch, "credential_missing"),)
+    if status == "permission_denied":
+        return (_batch_gap(batch, "permission_denied"),)
     if status == "rate_limited":
         evidence_refs = tuple(getattr(obs, "request_key", "") for obs in getattr(result, "http_observations", ()) if getattr(obs, "request_key", ""))
         if not evidence_refs:
             evidence_refs = _derived_rate_limit_evidence_refs(batch)
         return (_batch_gap(batch, _rate_limited_gap_reason(result), evidence_refs=evidence_refs),)
     if status == "empty":
-        return (_batch_gap(batch, "empty_result"),)
+        return (_batch_gap(batch, "provider_empty"),)
     if status == "sdk_http_unknown":
         return (_batch_gap(batch, "sdk_http_unknown"), _batch_gap(batch, "provider_error", message="sdk_http_unknown"))
     if status == "not_applicable":
@@ -237,6 +266,13 @@ def _rate_limited_gap_reason(source: Any) -> str:
     return "rate_limited"
 
 
+def _shared_result_gap(batch: Any, gate: Any, refs: Any) -> DataGap:
+    raw_reason = str(getattr(gate, "reason", None) or "provider_error").strip()
+    reason = raw_reason if raw_reason in _SHARED_RESULT_GAP_REASONS else "provider_error"
+    message = None if reason == raw_reason else f"shared_result:{raw_reason}"
+    return _batch_gap(batch, reason, evidence_refs=tuple(refs.attempt_refs), message=message)
+
+
 def _replace_fetch_status(result: Any, status: str) -> Any:
     class _ResultProxy:
         def __init__(self, source: Any, next_status: str) -> None:
@@ -252,6 +288,31 @@ def _replace_fetch_status(result: Any, status: str) -> Any:
 def _fetch_status(result: Any) -> str:
     raw = getattr(result, "status", "")
     return str(getattr(raw, "value", raw))
+
+
+def _auditable_remote_success(*, result: Any, batch: Any, gaps: tuple[DataGap, ...]) -> bool:
+    status = _fetch_status(result)
+    if status != "success" or status in NON_REMOTE_ATTEMPT_STATUSES:
+        return False
+    if gaps and not _only_parser_missing_gaps(gaps):
+        return False
+    http_visibility = _http_visibility(batch)
+    if http_visibility == "no_http":
+        return False
+    if http_visibility == "sdk_internal_unknown" and not tuple(getattr(result, "http_observations", ()) or ()):
+        return False
+    return True
+
+
+def _http_visibility(batch: Any) -> str:
+    raw = getattr(batch, "http_visibility", "managed_http")
+    return str(getattr(raw, "value", raw) or "managed_http")
+
+
+def _only_parser_missing_gaps(gaps: tuple[DataGap, ...]) -> bool:
+    if not gaps:
+        return False
+    return all(str(getattr(getattr(gap, "reason", None), "value", getattr(gap, "reason", ""))) == "parser_missing" for gap in gaps)
 
 
 class _GateRefs:
@@ -315,6 +376,42 @@ def _normalized_storage_allowed(batch: Any) -> bool:
     else:
         value = True
     return bool(value)
+
+
+def _normalization_skipped(batch: Any) -> bool:
+    data_type = str(getattr(batch, "data_type", "") or "")
+    parser_status = str(getattr(batch, "parser_status", "") or "")
+    return data_type == "official_api_response" or parser_status in {"raw_only", "parser_missing"}
+
+
+def _raw_only_parser_missing_gaps(batch: Any, refs: Any) -> tuple[DataGap, ...]:
+    if tuple(getattr(refs, "dataset_refs", ()) or ()) or not tuple(getattr(refs, "raw_refs", ()) or ()):
+        return ()
+    if not _normalization_skipped(batch):
+        return ()
+    return (
+        _batch_gap(
+            batch,
+            "parser_missing",
+            evidence_refs=tuple(getattr(refs, "raw_refs", ()) or ()),
+            message="official raw response has no normalized parser",
+        ),
+    )
+
+
+def _payload_has_normalized_rows(payload: Any) -> bool:
+    if isinstance(payload, dict):
+        rows = payload.get("rows")
+        if isinstance(rows, list):
+            return any(isinstance(row, dict) and _has_dataset(row) for row in rows)
+        return _has_dataset(payload)
+    if isinstance(payload, list):
+        return any(isinstance(row, dict) and _has_dataset(row) for row in payload)
+    return False
+
+
+def _has_dataset(row: dict[str, Any]) -> bool:
+    return bool(str(row.get("dataset") or "").strip())
 
 
 def _first_request_id(batch: Any) -> str:

@@ -1,0 +1,4778 @@
+[
+  {
+    "description": "This endpoint provides an instant news (up to nearly 1000 news items).",
+    "endpoint_id": "coinglass.raw_article_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/article-list.md",
+    "optional_params": [
+      "end_time",
+      "language",
+      "page",
+      "per_page",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/article/list",
+    "required_params": [],
+    "response_fields": [
+      "article_content",
+      "article_description",
+      "article_picture",
+      "article_release_time",
+      "article_title",
+      "code",
+      "data",
+      "source_name",
+      "source_website_logo"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "News"
+  },
+  {
+    "description": "This endpoint provides data on margin long and short positions from Bitfinex.",
+    "endpoint_id": "coinglass.raw_bitfinex_margin_long_short",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitfinex-margin-long-short.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/bitfinex-margin-long-short",
+    "required_params": [
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "long_quantity",
+      "msg",
+      "short_quantity",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitfinex Margin Long/Short"
+  },
+  {
+    "description": "This endpoint provides daily borrowing interest rates for cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_borrow_interest_rate_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/borrow-interest-rate.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/borrow-interest-rate/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "interest_rate",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Borrow Interest Rate"
+  },
+  {
+    "description": "This endpoint provides a list of Bull Market Peak Indicators",
+    "endpoint_id": "coinglass.raw_bull_market_peak_indicator",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bull-market-peak-indicator.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/bull-market-peak-indicator",
+    "required_params": [],
+    "response_fields": [
+      "change_value",
+      "code",
+      "comparison_type",
+      "current_value",
+      "data",
+      "hit_status",
+      "indicator_name",
+      "msg",
+      "previous_value",
+      "target_value"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bull Market Peak Indicators"
+  },
+  {
+    "description": "This endpoint provides data for the economic data",
+    "endpoint_id": "coinglass.raw_calendar_economic_data",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/economic-data.md",
+    "optional_params": [
+      "end_time",
+      "language",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/calendar/economic-data",
+    "required_params": [],
+    "response_fields": [
+      "calendar_name",
+      "code",
+      "country_code",
+      "country_name",
+      "data",
+      "data_effect",
+      "forecast_value",
+      "has_exact_publish_time",
+      "importance_level",
+      "previous_value",
+      "publish_timestamp",
+      "published_value",
+      "revised_previous_value"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Economic Data"
+  },
+  {
+    "description": "This endpoint provides large on-chain transfers (minimum $10M) within the past six months across major blockchains, including Bitcoin, Ethereum, Tron, Ripple, Dogecoin, Litecoin, Polygon, Algorand, Bitcoin Cash, and Solana.",
+    "endpoint_id": "coinglass.raw_chain_v2_whale_transfer",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/whale-transfer.md",
+    "optional_params": [
+      "end_time",
+      "start_time",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/chain/v2/whale-transfer",
+    "required_params": [],
+    "response_fields": [
+      "amount_usd",
+      "asset_quantity",
+      "asset_symbol",
+      "block_height",
+      "block_timestamp",
+      "blockchain_name",
+      "code",
+      "data",
+      "from",
+      "to",
+      "transaction_hash"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Whale Transfer"
+  },
+  {
+    "description": "This endpoint provides historical data for circulating supply, market capitalization, and price across multiple cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_coin_market_data_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/coin-market-data-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/coin/market-data-history",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "circulating_supply",
+      "code",
+      "data",
+      "market_cap",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Market Data History"
+  },
+  {
+    "description": "This endpoint returns token unlock data and upcoming unlock schedules.",
+    "endpoint_id": "coinglass.raw_coin_unlock_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/coin-unlock-list.md",
+    "optional_params": [
+      "page",
+      "per_page"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/coin/unlock-list",
+    "required_params": [],
+    "response_fields": [
+      "circulating_supply",
+      "code",
+      "data",
+      "fully_diluted_valuation",
+      "market_cap",
+      "name",
+      "next_unlock_date",
+      "next_unlock_of_circulating",
+      "next_unlock_of_supply",
+      "next_unlock_tokens",
+      "price",
+      "price_change_percent_24h",
+      "symbol",
+      "symbol_logo_url",
+      "total_locked",
+      "total_supply",
+      "total_unlocked"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Token Unlock List"
+  },
+  {
+    "description": "This endpoint returns detailed vesting data and upcoming unlock schedules for a specific token.",
+    "endpoint_id": "coinglass.raw_coin_vesting",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/token-vesting.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/coin/vesting",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "allocation_of_supply",
+      "allocations",
+      "chart",
+      "circulating_supply",
+      "code",
+      "data",
+      "date",
+      "fully_diluted_valuation",
+      "is_tge",
+      "is_untracked",
+      "listing_date",
+      "locked_token_amount",
+      "market_cap",
+      "max_supply",
+      "name",
+      "next_unlock",
+      "next_unlock_token_amount",
+      "symbol",
+      "tge_unlock_percent",
+      "tge_unlocked_token_amount",
+      "token_amount",
+      "total_locked",
+      "total_supply",
+      "total_unlocked",
+      "total_untracked",
+      "total_untracked_percent",
+      "unlock_frequency_type",
+      "unlock_frequency_value",
+      "unlock_type",
+      "unlocked_percent",
+      "unlocked_token_amount",
+      "untracked_allocation_names",
+      "vesting_duration_type",
+      "vesting_duration_value",
+      "vesting_end_date",
+      "vesting_start_date"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Token Vesting"
+  },
+  {
+    "description": "This endpoint provides the Coinbase Bitcoin Premium Index, which indicates the price difference between Bitcoin on Coinbase Pro and Binance.",
+    "endpoint_id": "coinglass.raw_coinbase_premium_index",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/coinbase-premium-index.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/coinbase-premium-index",
+    "required_params": [
+      "interval"
+    ],
+    "response_fields": [
+      "code",
+      "coinbase_price",
+      "data",
+      "msg",
+      "premium",
+      "premium_rate",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coinbase Premium Index"
+  },
+  {
+    "description": "This endpoint provides historical Assets Under Management (AUM) data for Bitcoin ETFs",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_aum",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/etf-aum.md",
+    "optional_params": [
+      "ticker"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/aum",
+    "required_params": [],
+    "response_fields": [
+      "aum_usd",
+      "code",
+      "data",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF AUM"
+  },
+  {
+    "description": "This endpoint provides detailed information on a Bitcoin Exchange-Traded Fund (ETF), including its key attributes and status.",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_detail",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/etf-detail.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/detail",
+    "required_params": [
+      "ticker"
+    ],
+    "response_fields": [
+      "active",
+      "address",
+      "address_1",
+      "ask",
+      "ask_exchange",
+      "ask_size",
+      "avg_vol_usd_10d",
+      "bid",
+      "bid_exchange",
+      "bid_size",
+      "change",
+      "change_percent",
+      "cik_code",
+      "close",
+      "code",
+      "composite_figi",
+      "conditions",
+      "currency_name",
+      "data",
+      "early_trading_change",
+      "early_trading_change_percent",
+      "exchange",
+      "fund_type",
+      "high",
+      "high_price_52week",
+      "high_price_52week_date",
+      "id",
+      "last_quote",
+      "last_trade",
+      "last_updated",
+      "list_date",
+      "low",
+      "low_price_52week",
+      "low_price_52week_date",
+      "market",
+      "market_status",
+      "msg",
+      "name",
+      "open",
+      "performance",
+      "phone_number",
+      "previous_close",
+      "price",
+      "primary_exchange",
+      "region",
+      "round_lot",
+      "session",
+      "share_class_figi",
+      "share_class_shares_outstanding",
+      "sic_code",
+      "sic_description",
+      "size",
+      "status",
+      "tag",
+      "ticker",
+      "ticker_info",
+      "ticker_root",
+      "timeframe",
+      "type",
+      "type2",
+      "update_time",
+      "volume",
+      "ydt_change_percent",
+      "year_change_percent"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Detail"
+  },
+  {
+    "description": "This endpoint provides historical flow data for Bitcoin Exchange-Traded Funds (ETFs), including daily net inflows and outflows in USD, closing prices, and flow breakdowns by individual ETF tickers.",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_flow_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/etf-flows-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/flow-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "etf_flows",
+      "etf_ticker",
+      "flow_usd",
+      "msg",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Flows History"
+  },
+  {
+    "description": "This endpoint provides historical data for Bitcoin Exchange-Traded Funds (ETFs), including key information such as market price, Net Asset Value (NAV), premium/discount percentage, shares outstanding, and net assets for each ETF ticker.",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/etf-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/history",
+    "required_params": [
+      "ticker"
+    ],
+    "response_fields": [
+      "assets_date",
+      "btc_holdings",
+      "code",
+      "data",
+      "market_date",
+      "market_price",
+      "msg",
+      "name",
+      "nav",
+      "net_assets",
+      "premium_discount",
+      "shares_outstanding",
+      "ticker"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF History"
+  },
+  {
+    "description": "This endpoint provides a list of key status information for Bitcoin Exchange-Traded Funds (ETFs).",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-etfs.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/list",
+    "required_params": [],
+    "response_fields": [
+      "asset_details",
+      "aum_usd",
+      "btc_change_24h",
+      "btc_change_7d",
+      "btc_change_percent_24h",
+      "btc_change_percent_7d",
+      "btc_holding",
+      "cik_code",
+      "code",
+      "data",
+      "fund_name",
+      "fund_type",
+      "last_quote_time",
+      "last_trade_time",
+      "list_date",
+      "management_fee_percent",
+      "market_status",
+      "msg",
+      "net_asset_value_usd",
+      "premium_discount_percent",
+      "price_change_percent",
+      "price_change_usd",
+      "primary_exchange",
+      "region",
+      "shares_outstanding",
+      "ticker",
+      "update_date",
+      "update_timestamp",
+      "volume_quantity",
+      "volume_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin ETF List"
+  },
+  {
+    "description": "This endpoint provides historical data on the net assets of Bitcoin Exchange-Traded Funds (ETFs).",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_net_assets_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-etf-netassets-history.md",
+    "optional_params": [
+      "ticker"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/net-assets/history",
+    "required_params": [],
+    "response_fields": [
+      "change_usd",
+      "code",
+      "data",
+      "msg",
+      "net_assets_usd",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF NetAssets History"
+  },
+  {
+    "description": "This endpoint provides historical data on the premium or discount rates of Bitcoin Exchange-Traded Funds (ETFs), including Net Asset Value (NAV), market price, and premium/discount percentages for each ETF ticker.",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_premium_discount_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-etf-premium-discount-history.md",
+    "optional_params": [
+      "ticker"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/premium-discount/history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "list",
+      "market_price_usd",
+      "msg",
+      "nav_usd",
+      "premium_discount_details",
+      "ticker",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Premium/Discount History"
+  },
+  {
+    "description": "This endpoint provides historical price data for Bitcoin Exchange-Traded Funds (ETFs), including open, high, low, and close (OHLC) prices, along with trading volume for each data point.",
+    "endpoint_id": "coinglass.raw_etf_bitcoin_price_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/etf-price-ohlc-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/bitcoin/price/history",
+    "required_params": [
+      "range",
+      "ticker"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "message",
+      "open",
+      "time",
+      "volume"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Price History"
+  },
+  {
+    "description": "This endpoint provides a list of key status information regarding the history of ETF flows.",
+    "endpoint_id": "coinglass.raw_etf_ethereum_flow_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/ethereum-etf-flows-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/ethereum/flow-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "etf_flows",
+      "etf_ticker",
+      "flow_usd",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Flows History"
+  },
+  {
+    "description": "This endpoint provides a list of key status information for Ethereum Exchange-Traded Funds (ETFs).",
+    "endpoint_id": "coinglass.raw_etf_ethereum_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/ethereum-etf-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/ethereum/list",
+    "required_params": [],
+    "response_fields": [
+      "asset_info",
+      "aum",
+      "change_percent_1d",
+      "change_percent_7d",
+      "change_quantity_1d",
+      "change_quantity_7d",
+      "cik_code",
+      "code",
+      "data",
+      "date",
+      "holding_quantity",
+      "last_quote_time",
+      "last_trade_time",
+      "list_date",
+      "management_fee_percent",
+      "market_cap",
+      "market_status",
+      "msg",
+      "name",
+      "nav",
+      "premium_discount",
+      "price",
+      "price_change",
+      "price_change_percent",
+      "primary_exchange",
+      "region",
+      "shares_outstanding",
+      "ticker",
+      "type",
+      "update_time",
+      "volume_quantity",
+      "volume_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Ethereum ETF List"
+  },
+  {
+    "description": "This endpoint provides historical net assets data for Ethereum-based Exchange-Traded Funds (ETFs).",
+    "endpoint_id": "coinglass.raw_etf_ethereum_net_assets_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/ethereum-etf-netassets-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/ethereum/net-assets/history",
+    "required_params": [],
+    "response_fields": [
+      "change_usd",
+      "code",
+      "data",
+      "msg",
+      "net_assets_usd",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF NetAssets History"
+  },
+  {
+    "description": "This endpoint provides a list of key status information regarding the history of ETF flows.",
+    "endpoint_id": "coinglass.raw_etf_hype_flow_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hype-etf-flows-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/hype/flow-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "etf_flows",
+      "etf_ticker",
+      "flow_usd",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Flows History"
+  },
+  {
+    "description": "This endpoint provides a list of key status information regarding the history of ETF flows.",
+    "endpoint_id": "coinglass.raw_etf_solana_flow_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/solana-etf-flows-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/solana/flow-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "etf_flows",
+      "etf_ticker",
+      "flow_usd",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Flows History"
+  },
+  {
+    "description": "This endpoint provides a list of key status information regarding the history of ETF flows.",
+    "endpoint_id": "coinglass.raw_etf_xrp_flow_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/xrp-etf-flows-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/etf/xrp/flow-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "etf_flows",
+      "etf_ticker",
+      "flow_usd",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "ETF Flows History"
+  },
+  {
+    "description": "This endpoint provides asset holdings data for exchange wallets, including wallet address, asset balance, USD value, and real-time price information for each asset.",
+    "endpoint_id": "coinglass.raw_exchange_assets",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-assets.md",
+    "optional_params": [
+      "page",
+      "per_page"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/exchange/assets",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "assets_name",
+      "balance",
+      "balance_usd",
+      "code",
+      "data",
+      "msg",
+      "price",
+      "symbol",
+      "wallet_address"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Assets"
+  },
+  {
+    "description": "This endpoint provides historical chart data of exchange asset balances over time, along with corresponding price data.",
+    "endpoint_id": "coinglass.raw_exchange_balance_chart",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-balance-chart.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/exchange/balance/chart",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "data_map",
+      "gate",
+      "huobi",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Balance Chart"
+  },
+  {
+    "description": "This endpoint provides exchange-level asset balance data, including total holdings and percentage changes over 1-day, 7-day, and 30-day periods.",
+    "endpoint_id": "coinglass.raw_exchange_balance_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-balance-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/exchange/balance/list",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "balance_change_1d",
+      "balance_change_30d",
+      "balance_change_7d",
+      "balance_change_percent_1d",
+      "balance_change_percent_30d",
+      "balance_change_percent_7d",
+      "code",
+      "data",
+      "exchange_name",
+      "msg",
+      "total_balance"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Balance List"
+  },
+  {
+    "description": "This endpoint provides on-chain transfer records (ERC-20) for exchanges.",
+    "endpoint_id": "coinglass.raw_exchange_chain_tx_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-onchain-transfers.md",
+    "optional_params": [
+      "min_usd",
+      "page",
+      "per_page",
+      "start_time",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/exchange/chain/tx/list",
+    "required_params": [],
+    "response_fields": [
+      "amount_usd",
+      "asset_quantity",
+      "asset_symbol",
+      "code",
+      "data",
+      "exchange_name",
+      "from_address",
+      "msg",
+      "to_address",
+      "transaction_hash",
+      "transaction_time",
+      "transfer_type"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange On-chain Transfers (ERC-20)"
+  },
+  {
+    "description": "This endpoint provides transparency data of exchange assets, including total balances, inflows, balance changes, open interest, leverage, and trading volume.",
+    "endpoint_id": "coinglass.raw_exchange_assets_transparency_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchanges-assets-transparency.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/exchange_assets_transparency/list",
+    "required_params": [],
+    "response_fields": [
+      "average_leverage",
+      "balance_change_usd_24h",
+      "balance_change_usd_7d",
+      "balance_usd",
+      "code",
+      "data",
+      "exchange_logo_url",
+      "exchange_name",
+      "inflow_usd_24h",
+      "inflow_usd_7d",
+      "open_interest",
+      "volume_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchanges Assets Transparency"
+  },
+  {
+    "description": "This endpoint provides historical CVD data for a single cryptocurrency within one futures exchange, aggregated across multiple trading pairs.",
+    "endpoint_id": "coinglass.raw_futures_aggregated_cvd_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-aggregated-cvd-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/aggregated-cvd/history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "agg_taker_buy_vol",
+      "agg_taker_sell_vol",
+      "code",
+      "cum_vol_delta",
+      "data",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Aggregated Cumulative Volume Delta (CVD)"
+  },
+  {
+    "description": "This endpoint provides historical data for the long/short ratio of aggregated taker buy and sell volumes for futures cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_futures_aggregated_taker_buy_sell_volume_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/aggregated-taker-buysell-volume-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/aggregated-taker-buy-sell-volume/history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "aggregated_buy_volume_usd",
+      "aggregated_sell_volume_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Taker Buy/Sell History"
+  },
+  {
+    "description": "This API provides Average True Range (ATR) indicator data for multiple coins across different time intervals.",
+    "endpoint_id": "coinglass.raw_futures_avg_true_range_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-avg-true-range-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/avg-true-range/list",
+    "required_params": [],
+    "response_fields": [
+      "avg_true_range_15m",
+      "avg_true_range_1d",
+      "avg_true_range_1h",
+      "avg_true_range_1m",
+      "avg_true_range_1w",
+      "avg_true_range_30m",
+      "avg_true_range_4h",
+      "avg_true_range_5m",
+      "code",
+      "data",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Average True Range (ATR) List"
+  },
+  {
+    "description": "This endpoint provides historical futures basis data, including open and close basis rates and their corresponding annualized percentage changes over time.",
+    "endpoint_id": "coinglass.raw_futures_basis_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/basis.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/basis/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close_basis",
+      "close_change",
+      "code",
+      "data",
+      "msg",
+      "open_basis",
+      "open_change",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Futures Basis"
+  },
+  {
+    "description": "This endpoint provides historical CDRI (CoinGlass Derivatives Risk Index) data.",
+    "endpoint_id": "coinglass.raw_futures_cdri_index_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/cdri-index.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/cdri-index/history ",
+    "required_params": [],
+    "response_fields": [
+      "cdri_index_value",
+      "code",
+      "data",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "CDRI Index"
+  },
+  {
+    "description": "This endpoint provides historical CGDI (CoinGlass Derivatives Index) data",
+    "endpoint_id": "coinglass.raw_futures_cgdi_index_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/cgdi-index.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/cgdi-index/history  ",
+    "required_params": [],
+    "response_fields": [
+      "cgdi_index_value",
+      "code",
+      "data",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "CGDI Index"
+  },
+  {
+    "description": "This API provides inflow and outflow data for a single coin across multiple time intervals in the futures market.",
+    "endpoint_id": "coinglass.raw_futures_coin_netflow",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-coin-netflow.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/coin/netflow",
+    "required_params": [
+      "exchange_list",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "net_flow_usd_10d",
+      "net_flow_usd_10d_market_cap_ratio",
+      "net_flow_usd_120d",
+      "net_flow_usd_120d_market_cap_ratio",
+      "net_flow_usd_12h",
+      "net_flow_usd_12h_market_cap_ratio",
+      "net_flow_usd_150d",
+      "net_flow_usd_150d_market_cap_ratio",
+      "net_flow_usd_15d",
+      "net_flow_usd_15d_market_cap_ratio",
+      "net_flow_usd_15m",
+      "net_flow_usd_15m_market_cap_ratio",
+      "net_flow_usd_180d",
+      "net_flow_usd_180d_market_cap_ratio",
+      "net_flow_usd_1h",
+      "net_flow_usd_1h_market_cap_ratio",
+      "net_flow_usd_1y",
+      "net_flow_usd_1y_market_cap_ratio",
+      "net_flow_usd_24h",
+      "net_flow_usd_24h_market_cap_ratio",
+      "net_flow_usd_30d",
+      "net_flow_usd_30d_market_cap_ratio",
+      "net_flow_usd_30m",
+      "net_flow_usd_30m_market_cap_ratio",
+      "net_flow_usd_3d",
+      "net_flow_usd_3d_market_cap_ratio",
+      "net_flow_usd_40d",
+      "net_flow_usd_40d_market_cap_ratio",
+      "net_flow_usd_4h",
+      "net_flow_usd_4h_market_cap_ratio",
+      "net_flow_usd_50d",
+      "net_flow_usd_50d_market_cap_ratio",
+      "net_flow_usd_5d",
+      "net_flow_usd_5d_market_cap_ratio",
+      "net_flow_usd_5m",
+      "net_flow_usd_5m_market_cap_ratio",
+      "net_flow_usd_60d",
+      "net_flow_usd_60d_market_cap_ratio",
+      "net_flow_usd_7d",
+      "net_flow_usd_7d_market_cap_ratio",
+      "net_flow_usd_8h",
+      "net_flow_usd_8h_market_cap_ratio",
+      "net_flow_usd_90d",
+      "net_flow_usd_90d_market_cap_ratio",
+      "net_flow_usd_change_percent_10d",
+      "net_flow_usd_change_percent_120d",
+      "net_flow_usd_change_percent_12h",
+      "net_flow_usd_change_percent_150d",
+      "net_flow_usd_change_percent_15d",
+      "net_flow_usd_change_percent_15m",
+      "net_flow_usd_change_percent_180d",
+      "net_flow_usd_change_percent_1h",
+      "net_flow_usd_change_percent_1y",
+      "net_flow_usd_change_percent_24h",
+      "net_flow_usd_change_percent_30d",
+      "net_flow_usd_change_percent_30m",
+      "net_flow_usd_change_percent_3d",
+      "net_flow_usd_change_percent_40d",
+      "net_flow_usd_change_percent_4h",
+      "net_flow_usd_change_percent_50d",
+      "net_flow_usd_change_percent_5d",
+      "net_flow_usd_change_percent_5m",
+      "net_flow_usd_change_percent_60d",
+      "net_flow_usd_change_percent_7d",
+      "net_flow_usd_change_percent_8h",
+      "net_flow_usd_change_percent_90d",
+      "success",
+      "symbol",
+      "taker_buy_volume_usd_10d",
+      "taker_buy_volume_usd_120d",
+      "taker_buy_volume_usd_12h",
+      "taker_buy_volume_usd_150d",
+      "taker_buy_volume_usd_15d",
+      "taker_buy_volume_usd_15m",
+      "taker_buy_volume_usd_180d",
+      "taker_buy_volume_usd_1h",
+      "taker_buy_volume_usd_1y",
+      "taker_buy_volume_usd_24h",
+      "taker_buy_volume_usd_30d",
+      "taker_buy_volume_usd_30m",
+      "taker_buy_volume_usd_3d",
+      "taker_buy_volume_usd_40d",
+      "taker_buy_volume_usd_4h",
+      "taker_buy_volume_usd_50d",
+      "taker_buy_volume_usd_5d",
+      "taker_buy_volume_usd_5m",
+      "taker_buy_volume_usd_60d",
+      "taker_buy_volume_usd_7d",
+      "taker_buy_volume_usd_8h",
+      "taker_buy_volume_usd_90d",
+      "taker_sell_volume_usd_10d",
+      "taker_sell_volume_usd_120d",
+      "taker_sell_volume_usd_12h",
+      "taker_sell_volume_usd_150d",
+      "taker_sell_volume_usd_15d",
+      "taker_sell_volume_usd_15m",
+      "taker_sell_volume_usd_180d",
+      "taker_sell_volume_usd_1h",
+      "taker_sell_volume_usd_1y",
+      "taker_sell_volume_usd_24h",
+      "taker_sell_volume_usd_30d",
+      "taker_sell_volume_usd_30m",
+      "taker_sell_volume_usd_3d",
+      "taker_sell_volume_usd_40d",
+      "taker_sell_volume_usd_4h",
+      "taker_sell_volume_usd_50d",
+      "taker_sell_volume_usd_5d",
+      "taker_sell_volume_usd_5m",
+      "taker_sell_volume_usd_60d",
+      "taker_sell_volume_usd_7d",
+      "taker_sell_volume_usd_8h",
+      "taker_sell_volume_usd_90d"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin NetFlow"
+  },
+  {
+    "description": "This endpoint provides percentage price changes and amplitude data for all supported coins across multiple timeframes.",
+    "endpoint_id": "coinglass.raw_futures_coins_price_change",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/coins-price-change.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/coins-price-change",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "current_price",
+      "data",
+      "msg",
+      "price_amplitude_percent_12h",
+      "price_amplitude_percent_15m",
+      "price_amplitude_percent_1h",
+      "price_amplitude_percent_24h",
+      "price_amplitude_percent_30m",
+      "price_amplitude_percent_4h",
+      "price_amplitude_percent_5m",
+      "price_change_percent_12h",
+      "price_change_percent_15m",
+      "price_change_percent_1h",
+      "price_change_percent_24h",
+      "price_change_percent_30m",
+      "price_change_percent_4h",
+      "price_change_percent_5m",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coins Price Change"
+  },
+  {
+    "description": "This endpoint provides historical Cumulative Volume Delta (CVD) data for a single futures exchange trading pair, including taker buy and sell volumes over time.",
+    "endpoint_id": "coinglass.raw_futures_cvd_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-cvd-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/cvd/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "cum_vol_delta",
+      "data",
+      "taker_buy_vol",
+      "taker_sell_vol",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Cumulative Volume Delta (CVD)"
+  },
+  {
+    "description": "This endpoint allows you to query all delisted trading pairs.",
+    "endpoint_id": "coinglass.raw_futures_delisted_exchange_pairs",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/delisted-exchange-and-pair.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/delisted-exchange-pairs",
+    "required_params": [],
+    "response_fields": [
+      "Binance",
+      "Bitget",
+      "base_asset",
+      "code",
+      "data",
+      "instrument_id",
+      "msg",
+      "quote_asset"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Delisted Pairs"
+  },
+  {
+    "description": "This API provides exponential moving average (EMA) indicator data for multiple cryptocurrencies across different time periods.",
+    "endpoint_id": "coinglass.raw_futures_ema_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-ema-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/ema/list",
+    "required_params": [],
+    "response_fields": [
+      "close_price",
+      "code",
+      "data",
+      "ema_15m",
+      "ema_1d",
+      "ema_1h",
+      "ema_1m",
+      "ema_1w",
+      "ema_30m",
+      "ema_4h",
+      "ema_5m",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Exponential Moving Average List (EMA)"
+  },
+  {
+    "description": "This endpoint provides a ranking list of futures exchanges on CoinGlass.",
+    "endpoint_id": "coinglass.raw_futures_exchange_rank",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/exchange-rank",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "exchange",
+      "liquidation_usd_24h",
+      "open_interest_usd",
+      "volume_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Rank"
+  },
+  {
+    "description": "This endpoint provides cumulative funding rate data from exchanges.",
+    "endpoint_id": "coinglass.raw_futures_funding_rate_accumulated_exchange_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/cumulative-exchange-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/funding-rate/accumulated-exchange-list",
+    "required_params": [
+      "range"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "exchange",
+      "funding_rate",
+      "msg",
+      "stablecoin_margin_list",
+      "symbol",
+      "token_margin_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Cumulative Exchange List"
+  },
+  {
+    "description": "This endpoint provides funding rate arbitrage data across exchanges for futures cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_futures_funding_rate_arbitrage",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/fr-arbitrage.md",
+    "optional_params": [
+      "exchange_list"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/funding-rate/arbitrage",
+    "required_params": [
+      "usd"
+    ],
+    "response_fields": [
+      "apr",
+      "buy",
+      "code",
+      "data",
+      "exchange",
+      "fee",
+      "funding",
+      "funding_rate",
+      "funding_rate_interval",
+      "msg",
+      "next_funding_time",
+      "open_interest_usd",
+      "sell",
+      "spread",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Arbitrage"
+  },
+  {
+    "description": "This endpoint provides funding rate data from exchanges.",
+    "endpoint_id": "coinglass.raw_futures_funding_rate_exchange_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/fr-exchange-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/funding-rate/exchange-list",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "exchange",
+      "funding_rate",
+      "funding_rate_interval",
+      "msg",
+      "next_funding_time",
+      "stablecoin_margin_list",
+      "symbol",
+      "token_margin_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange List"
+  },
+  {
+    "description": "This endpoint provides funding rate data in OHLC (open, high, low, close) candlestick format for futures trading pairs.",
+    "endpoint_id": "coinglass.raw_futures_funding_rate_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/fr-ohlc-histroy.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/funding-rate/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides open interest-weighted funding rate data in OHLC (open, high, low, close) candlestick format for futures cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_futures_funding_rate_oi_weight_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-weight-ohlc-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/funding-rate/oi-weight-history",
+    "required_params": [
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "OI Weight History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides volume-weighted funding rate data in OHLC (open, high, low, close) candlestick format for futures cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_futures_funding_rate_vol_weight_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/vol-weight-ohlc-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/funding-rate/vol-weight-history",
+    "required_params": [
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Vol Weight History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides the long/short account ratio history for trading pairs on a specific exchange.",
+    "endpoint_id": "coinglass.raw_futures_global_long_short_account_ratio_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/global-longshort-account-ratio.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/global-long-short-account-ratio/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "global_account_long_percent",
+      "global_account_long_short_ratio",
+      "global_account_short_percent",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Global Account Ratio"
+  },
+  {
+    "description": "This API provides historical long/short account data for each symbol on Hyperliquid across different tag-based groups, including the number of long and short accounts and their corresponding position sizes.",
+    "endpoint_id": "coinglass.raw_futures_hyperliquid_long_short_account_ratio_by_tag_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-hyperliquid-long-short-account-ratio-by-tag-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/hyperliquid/long-short-account-ratio-by-tag/history",
+    "required_params": [
+      "interval",
+      "symbol",
+      "wallet_tag"
+    ],
+    "response_fields": [
+      "account_long_count",
+      "account_short_count",
+      "code",
+      "data",
+      "group_name",
+      "long_position_usd",
+      "short_position_usd",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Long/Short Account Ratio (By Tag)"
+  },
+  {
+    "description": "This API provides position distribution data for each symbol on Hyperliquid across different tag-based groups, including address counts, position sizes, profit and loss status, and long/short information.",
+    "endpoint_id": "coinglass.raw_futures_hyperliquid_position_distribution_by_tag_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-hyperliquid-position-distribution-by-tag-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/hyperliquid/position-distribution-by-tag/history",
+    "required_params": [
+      "interval",
+      "wallet_tag"
+    ],
+    "response_fields": [
+      "all_address_count",
+      "bias_remark",
+      "bias_score",
+      "code",
+      "data",
+      "group_name",
+      "long_position_usd",
+      "loss_address_count",
+      "maximum_amount",
+      "minimum_amount",
+      "position_address_count",
+      "position_usd",
+      "profit_address_count",
+      "short_position_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Position Distribution (By Tag)"
+  },
+  {
+    "description": "This endpoint provides Average True Range (ATR) for trading pairs.",
+    "endpoint_id": "coinglass.raw_futures_indicators_avg_true_range",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-avg-true-range.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "window"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/avg-true-range",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "avg_true_range_value",
+      "code",
+      "data",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Average True Range (ATR)"
+  },
+  {
+    "description": "This endpoint provides Bollinger Bands (BOLL) for trading pairs .",
+    "endpoint_id": "coinglass.raw_futures_indicators_boll",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-boll.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "mult",
+      "series_type",
+      "start_time",
+      "window"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/boll",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "lb_value",
+      "mb_value",
+      "time",
+      "ub_value"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bollinger Bands (BOLL)"
+  },
+  {
+    "description": "This endpoint provides Exponential Moving Average (EMA) for trading pairs .",
+    "endpoint_id": "coinglass.raw_futures_indicators_ema",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-ema.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "series_type",
+      "start_time",
+      "window"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/ema",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "ema_value",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exponential Moving Average (EMA)"
+  },
+  {
+    "description": "This endpoint provides Moving Average (MA) for trading pairs .",
+    "endpoint_id": "coinglass.raw_futures_indicators_ma",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-ma.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "series_type",
+      "start_time",
+      "window"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/ma",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "ma_value",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Moving Average (MA)"
+  },
+  {
+    "description": "This endpoint provides Moving Average Convergence Divergence (MACD) for pairs .",
+    "endpoint_id": "coinglass.raw_futures_indicators_macd",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-macd.md",
+    "optional_params": [
+      "end_time",
+      "fast_window",
+      "limit",
+      "series_type",
+      "signal_window",
+      "slow_window",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/macd",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "macd_value",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Moving Average Convergence Divergence (MACD)"
+  },
+  {
+    "description": "This endpoint provides RSI values for trading pairs .",
+    "endpoint_id": "coinglass.raw_futures_indicators_rsi",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-rsi.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "series_type",
+      "start_time",
+      "window"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/rsi",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "rsi_value",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair RSI"
+  },
+  {
+    "description": "This endpoint provides historical count data for the TD (Tom DeMark Sequential) indicator in futures trading, used to track trend continuation and identify potential reversal signals.",
+    "endpoint_id": "coinglass.raw_futures_indicators_td",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-indicators-td.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/indicators/td",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "td_buy_count",
+      "td_sell_count",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "TD Sequential"
+  },
+  {
+    "description": "This endpoint provides aggregated liquidation levels on a heatmap chart, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_aggregated_heatmap_model1",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-aggregate-heatmap.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/aggregated-heatmap/model1",
+    "required_params": [
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_leverage_data",
+      "msg",
+      "price_candlesticks",
+      "y_axis"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Liquidation Heatmap Model1"
+  },
+  {
+    "description": "This endpoint provides aggregated liquidation levels on a heatmap chart, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_aggregated_heatmap_model2",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-aggregate-heatmap-model2.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/aggregated-heatmap/model2",
+    "required_params": [
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_leverage_data",
+      "msg",
+      "price_candlesticks",
+      "y_axis"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Liquidation Heatmap Model2"
+  },
+  {
+    "description": "This endpoint provides aggregated liquidation levels on a heatmap chart, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_aggregated_heatmap_model3",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-aggregated-heatmap-model3.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/aggregated-heatmap/model3",
+    "required_params": [
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_leverage_data",
+      "msg",
+      "price_candlesticks",
+      "y_axis"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Liquidation Heatmap Model3"
+  },
+  {
+    "description": "This endpoint provides aggregated historical data for both long and short liquidations of a coin across multiple exchanges.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_aggregated_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/aggregated-liquidation-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/aggregated-history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "aggregated_long_liquidation_usd",
+      "aggregated_short_liquidation_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Liquidation History"
+  },
+  {
+    "description": "This endpoint provides a mapped visualization of aggregated liquidation events for coins, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_aggregated_map",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-aggregated-map.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/aggregated-map",
+    "required_params": [
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Liquidation Map"
+  },
+  {
+    "description": "This endpoint provides liquidation data for all coins on a specific exchange.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_coin_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-coin-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/coin-list",
+    "required_params": [
+      "exchange"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_usd_12h",
+      "liquidation_usd_1h",
+      "liquidation_usd_24h",
+      "liquidation_usd_4h",
+      "long_liquidation_usd_12h",
+      "long_liquidation_usd_1h",
+      "long_liquidation_usd_24h",
+      "long_liquidation_usd_4h",
+      "msg",
+      "short_liquidation_usd_12h",
+      "short_liquidation_usd_1h",
+      "short_liquidation_usd_24h",
+      "short_liquidation_usd_4h",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Liquidation Coin List"
+  },
+  {
+    "description": "This endpoint provides liquidation data for a specific coin across all exchanges.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_exchange_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-exchange-list.md",
+    "optional_params": [
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/exchange-list",
+    "required_params": [
+      "range"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "exchange",
+      "liquidation_usd",
+      "long_liquidation_usd",
+      "msg",
+      "short_liquidation_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Liquidation Exchange List"
+  },
+  {
+    "description": "This endpoint provides liquidation levels on a heatmap chart for trading pairs, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_heatmap_model1",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-heatmap.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/heatmap/model1",
+    "required_params": [
+      "exchange",
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_leverage_data",
+      "msg",
+      "price_candlesticks",
+      "y_axis"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Liquidation Heatmap Model1"
+  },
+  {
+    "description": "This endpoint provides liquidation levels on a heatmap chart for trading pairs, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_heatmap_model2",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-heatmap-model2.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/heatmap/model2",
+    "required_params": [
+      "exchange",
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_leverage_data",
+      "msg",
+      "price_candlesticks",
+      "y_axis"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Liquidation Heatmap Model2"
+  },
+  {
+    "description": "This endpoint provides liquidation levels on a heatmap chart for trading pairs, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_heatmap_model3",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-heatmap-model3.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/heatmap/model3",
+    "required_params": [
+      "exchange",
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "liquidation_leverage_data",
+      "msg",
+      "price_candlesticks",
+      "y_axis"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Liquidation Heatmap Model3"
+  },
+  {
+    "description": "This endpoint provides historical data for long and short liquidations of a trading pair on the exchange.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "long_liquidation_usd",
+      "msg",
+      "short_liquidation_usd",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Liquidation History"
+  },
+  {
+    "description": "This endpoint provides a mapped visualization of liquidation events for trading pairs, calculated based on market data and liquidation leverage levels.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_map",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-map.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/map",
+    "required_params": [
+      "exchange",
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Liquidation Map"
+  },
+  {
+    "description": "This endpoint provides key liquidation \u201cmax-pain\u201d price for major cryptocurrencies, indicating potential pressure zones between current and liquidation prices.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_max_pain",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-max-pain.md",
+    "optional_params": [
+      "range"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/max-pain",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "long_max_pain_liq_level",
+      "long_max_pain_liq_price",
+      "price",
+      "short_max_pain_liq_level",
+      "short_max_pain_liq_price",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Liquidation Max Pain"
+  },
+  {
+    "description": "This endpoint provides liquidation order data from the past 7 days, including exchange, trading pair, and liquidation amount details.",
+    "endpoint_id": "coinglass.raw_futures_liquidation_order",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/liquidation-order.md",
+    "optional_params": [
+      "end_time",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/liquidation/order",
+    "required_params": [
+      "exchange",
+      "min_liquidation_amount",
+      "symbol"
+    ],
+    "response_fields": [
+      "base_asset",
+      "code",
+      "data",
+      "exchange_name",
+      "msg",
+      "price",
+      "side",
+      "symbol",
+      "time",
+      "usd_value"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Liquidation Order"
+  },
+  {
+    "description": "This API provides moving average (MA) indicator data for multiple cryptocurrencies across different time periods.",
+    "endpoint_id": "coinglass.raw_futures_ma_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-ma-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/ma/list",
+    "required_params": [],
+    "response_fields": [
+      "close_price",
+      "code",
+      "data",
+      "ma_15m",
+      "ma_1d",
+      "ma_1h",
+      "ma_1m",
+      "ma_1w",
+      "ma_30m",
+      "ma_4h",
+      "ma_5m",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Moving Average List(MA)"
+  },
+  {
+    "description": "This endpoint returns current MACD values across multiple timeframes for each symbol.  This endpoint returns current Moving Average Convergence Divergence (MACD) values across multiple timeframes for each symbol, calculated using the standard parameters (12, 26, 9).",
+    "endpoint_id": "coinglass.raw_futures_macd_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-macd-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/macd/list",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "macd_15m",
+      "macd_1d",
+      "macd_1h",
+      "macd_1m",
+      "macd_1w",
+      "macd_30m",
+      "macd_4h",
+      "macd_5m",
+      "signal_15m",
+      "signal_1d",
+      "signal_1h",
+      "signal_1w",
+      "signal_30m",
+      "signal_4h",
+      "signal_5m",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin MACD List"
+  },
+  {
+    "description": "This endpoint provides the historical net position data for futures, including the net_long_change and net_short_change values.",
+    "endpoint_id": "coinglass.raw_futures_net_position_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/net-position.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/net-position/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "net_long_change",
+      "net_long_change_cum",
+      "net_position_change_cum",
+      "net_short_change",
+      "net_short_change_cum",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Net Long/Short Position"
+  },
+  {
+    "description": "This API provides inflow and outflow data for multiple coins across multiple time intervals in the futures market.",
+    "endpoint_id": "coinglass.raw_futures_netflow_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-netflow-list.md",
+    "optional_params": [
+      "page",
+      "per_page"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/netflow-list",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "market_cap",
+      "net_flow_usd_120d",
+      "net_flow_usd_12h",
+      "net_flow_usd_15d",
+      "net_flow_usd_15m",
+      "net_flow_usd_1h",
+      "net_flow_usd_24h",
+      "net_flow_usd_2h",
+      "net_flow_usd_30d",
+      "net_flow_usd_30m",
+      "net_flow_usd_3d",
+      "net_flow_usd_40d",
+      "net_flow_usd_4h",
+      "net_flow_usd_50d",
+      "net_flow_usd_5m",
+      "net_flow_usd_60d",
+      "net_flow_usd_6h",
+      "net_flow_usd_7d",
+      "net_flow_usd_8h",
+      "net_flow_usd_90d",
+      "symbol",
+      "taker_buy_volume_usd_120d",
+      "taker_buy_volume_usd_12h",
+      "taker_buy_volume_usd_15d",
+      "taker_buy_volume_usd_15m",
+      "taker_buy_volume_usd_1h",
+      "taker_buy_volume_usd_24h",
+      "taker_buy_volume_usd_2h",
+      "taker_buy_volume_usd_30d",
+      "taker_buy_volume_usd_30m",
+      "taker_buy_volume_usd_3d",
+      "taker_buy_volume_usd_40d",
+      "taker_buy_volume_usd_4h",
+      "taker_buy_volume_usd_50d",
+      "taker_buy_volume_usd_5m",
+      "taker_buy_volume_usd_60d",
+      "taker_buy_volume_usd_6h",
+      "taker_buy_volume_usd_7d",
+      "taker_buy_volume_usd_8h",
+      "taker_buy_volume_usd_90d",
+      "taker_sell_volume_usd_120d",
+      "taker_sell_volume_usd_12h",
+      "taker_sell_volume_usd_15d",
+      "taker_sell_volume_usd_15m",
+      "taker_sell_volume_usd_1h",
+      "taker_sell_volume_usd_24h",
+      "taker_sell_volume_usd_2h",
+      "taker_sell_volume_usd_30d",
+      "taker_sell_volume_usd_30m",
+      "taker_sell_volume_usd_3d",
+      "taker_sell_volume_usd_40d",
+      "taker_sell_volume_usd_4h",
+      "taker_sell_volume_usd_50d",
+      "taker_sell_volume_usd_5m",
+      "taker_sell_volume_usd_60d",
+      "taker_sell_volume_usd_6h",
+      "taker_sell_volume_usd_7d",
+      "taker_sell_volume_usd_8h",
+      "taker_sell_volume_usd_90d"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin NetFlow List"
+  },
+  {
+    "description": "This endpoint provides aggregated coin-margined open interest data in OHLC (open, high, low, close) candlestick format.",
+    "endpoint_id": "coinglass.raw_futures_open_interest_aggregated_coin_margin_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-ohlc-aggregated-coin-margin-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/open-interest/aggregated-coin-margin-history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Aggregated Coin Margin History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides aggregated open interest data across exchanges in OHLC (open, high, low, close) candlestick format.",
+    "endpoint_id": "coinglass.raw_futures_open_interest_aggregated_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-ohlc-aggregated-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/open-interest/aggregated-history",
+    "required_params": [
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Aggregated History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides aggregated stablecoin-margined open interest data in OHLC (open, high, low, close) candlestick format.",
+    "endpoint_id": "coinglass.raw_futures_open_interest_aggregated_stablecoin_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-ohlc-aggregated-stablecoin-margin-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/open-interest/aggregated-stablecoin-history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Aggregated Stablecoin Margin History (OHLC)"
+  },
+  {
+    "description": "This endpoint retrieves historical open interest data for a specific cryptocurrency across exchanges, formatted for chart display.",
+    "endpoint_id": "coinglass.raw_futures_open_interest_exchange_history_chart",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-exchange-history-chart.md",
+    "optional_params": [
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/open-interest/exchange-history-chart",
+    "required_params": [
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "Binance",
+      "Bitmex",
+      "code",
+      "data",
+      "data_map",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange History Chart"
+  },
+  {
+    "description": "This endpoint provides open interest data for a specific coin across multiple exchanges.",
+    "endpoint_id": "coinglass.raw_futures_open_interest_exchange_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-exchange-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/open-interest/exchange-list",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "exchange",
+      "msg",
+      "open_interest_by_stable_coin_margin",
+      "open_interest_change_percent_15m",
+      "open_interest_change_percent_1h",
+      "open_interest_change_percent_24h",
+      "open_interest_change_percent_30m",
+      "open_interest_change_percent_4h",
+      "open_interest_change_percent_5m",
+      "open_interest_quantity",
+      "open_interest_quantity_by_coin_margin",
+      "open_interest_quantity_by_stable_coin_margin",
+      "open_interest_usd",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange List"
+  },
+  {
+    "description": "This endpoint provides open interest data in OHLC (open, high, low, close) candlestick format for futures trading pairs.",
+    "endpoint_id": "coinglass.raw_futures_open_interest_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/oi-ohlc-histroy.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/open-interest/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides historical data of the aggregated order book for futures trading, including total bid/ask volumes within a specific price range.",
+    "endpoint_id": "coinglass.raw_futures_orderbook_aggregated_ask_bids_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-aggregated-orderbook-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "range",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/orderbook/aggregated-ask-bids-history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "aggregated_asks_quantity",
+      "aggregated_asks_usd",
+      "aggregated_bids_quantity",
+      "aggregated_bids_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Aggregated Orderbook Bid&Ask(\u00b1range)"
+  },
+  {
+    "description": "This endpoint provides historical data of the order book for futures trading, including total bid/ask volumes within a specific price range.",
+    "endpoint_id": "coinglass.raw_futures_orderbook_ask_bids_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-orderbook-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "range",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/orderbook/ask-bids-history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "asks_quantity",
+      "asks_usd",
+      "bids_quantity",
+      "bids_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Orderbook Bid&Ask(\u00b1range)"
+  },
+  {
+    "description": "This endpoint provides historical order book depth data for futures trading, supporting heatmap visualization.",
+    "endpoint_id": "coinglass.raw_futures_orderbook_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/orderbook-heatmap.md",
+    "optional_params": [
+      "end_time",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/orderbook/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "limit",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "success"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Orderbook Heatmap"
+  },
+  {
+    "description": "This endpoint provides large open limit orders from the current order book for futures trading.(thresholds: BTC \u2265 1M, ETH \u2265 500K, Other \u2265 50K)",
+    "endpoint_id": "coinglass.raw_futures_orderbook_large_limit_order",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/large-orderbook.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/orderbook/large-limit-order",
+    "required_params": [
+      "exchange",
+      "symbol"
+    ],
+    "response_fields": [
+      "base_asset",
+      "code",
+      "current_quantity",
+      "current_time",
+      "current_usd_value",
+      "data",
+      "exchange_name",
+      "executed_usd_value",
+      "executed_volume",
+      "id",
+      "msg",
+      "order_side",
+      "order_state",
+      "price",
+      "quote_asset",
+      "start_quantity",
+      "start_time",
+      "start_usd_value",
+      "symbol",
+      "trade_count"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Large Open Orders (Order Book)"
+  },
+  {
+    "description": "This endpoint provides completed historical large limit orders from the order book for futures trading (thresholds: BTC \u2265 1M, ETH \u2265 500K, Other \u2265 50K)",
+    "endpoint_id": "coinglass.raw_futures_orderbook_v2_large_limit_order_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/large-orderbook-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/orderbook/v2/large-limit-order-history",
+    "required_params": [
+      "end_time",
+      "exchange",
+      "start_time",
+      "state",
+      "symbol"
+    ],
+    "response_fields": [
+      "base_asset",
+      "code",
+      "current_quantity",
+      "current_time",
+      "current_usd_value",
+      "data",
+      "exchange_name",
+      "executed_usd_value",
+      "executed_volume",
+      "id",
+      "msg",
+      "order_end_time",
+      "order_side",
+      "order_state",
+      "price",
+      "quote_asset",
+      "start_quantity",
+      "start_time",
+      "start_usd_value",
+      "symbol",
+      "trade_count"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Large Open Orders (Order Book History)"
+  },
+  {
+    "description": "This endpoint provides performance-related metrics for all available futures trading pairs",
+    "endpoint_id": "coinglass.raw_futures_pairs_markets",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/pairs-markets.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/pairs-markets",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "current_price",
+      "data",
+      "exchange_name",
+      "funding_rate",
+      "index_price",
+      "instrument_id",
+      "long_liquidation_usd_24h",
+      "long_volume_quantity",
+      "long_volume_usd",
+      "msg",
+      "next_funding_time",
+      "oi_vol_ratio_change_percent_24h",
+      "open_interest_change_percent_24h",
+      "open_interest_quantity",
+      "open_interest_usd",
+      "open_interest_volume_radio",
+      "price_change_percent_24h",
+      "short_liquidation_usd_24h",
+      "short_volume_quantity",
+      "short_volume_usd",
+      "symbol",
+      "volume_usd",
+      "volume_usd_change_percent_24h"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pairs Markets"
+  },
+  {
+    "description": "This endpoint provides historical open, high, low, and close (OHLC) price data for cryptocurrencies over specified timeframes.",
+    "endpoint_id": "coinglass.raw_futures_price_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/price-ohlc-history.md",
+    "optional_params": [
+      "end_time",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/price/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "limit",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "open",
+      "time",
+      "volume_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Price History (OHLC)"
+  },
+  {
+    "description": "This endpoint provides the Relative Strength Index (RSI) values for multiple cryptocurrencies across different timeframes.",
+    "endpoint_id": "coinglass.raw_futures_rsi_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-rsi-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/rsi/list",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "current_price",
+      "data",
+      "msg",
+      "price_change_percent_12h",
+      "price_change_percent_15m",
+      "price_change_percent_1h",
+      "price_change_percent_1w",
+      "price_change_percent_24h",
+      "price_change_percent_4h",
+      "rsi_12h",
+      "rsi_15m",
+      "rsi_1h",
+      "rsi_1w",
+      "rsi_24h",
+      "rsi_4h",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin RSI List"
+  },
+  {
+    "description": "This endpoint allows you to query all the supported coins on CoinGlass",
+    "endpoint_id": "coinglass.raw_futures_supported_coins",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/coins.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/supported-coins",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "msg"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Supported Coins"
+  },
+  {
+    "description": "Check the supported exchange and trading pairs in the API documentation",
+    "endpoint_id": "coinglass.raw_futures_supported_exchange_pairs",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/instruments.md",
+    "optional_params": [
+      "exchange"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/supported-exchange-pairs",
+    "required_params": [],
+    "response_fields": [
+      "Binance",
+      "Bitget",
+      "base_asset",
+      "code",
+      "data",
+      "funding_interval",
+      "instrument_id",
+      "max_leverage",
+      "msg",
+      "price_tick_size",
+      "quote_asset",
+      "settlement_currency"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Supported Exchange and Pairs"
+  },
+  {
+    "description": "This endpoint allows you to query all the supported exchanges on CoinGlass",
+    "endpoint_id": "coinglass.raw_futures_supported_exchanges",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/supported-exchanges.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/supported-exchanges",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Supported Exchanges"
+  },
+  {
+    "description": "This endpoint provides the long/short ratio of aggregated taker buy/sell volumes across exchanges.",
+    "endpoint_id": "coinglass.raw_futures_taker_buy_sell_volume_exchange_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/taker-buysell-volume-exchange-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/taker-buy-sell-volume/exchange-list",
+    "required_params": [
+      "range",
+      "symbol"
+    ],
+    "response_fields": [
+      "buy_ratio",
+      "buy_vol_usd",
+      "code",
+      "data",
+      "exchange",
+      "exchange_list",
+      "msg",
+      "sell_ratio",
+      "sell_vol_usd",
+      "symbol"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Taker Buy/Sell Ratio"
+  },
+  {
+    "description": "This endpoint provides TD (Tom DeMark Sequential) indicator counts for multiple cryptocurrencies across different timeframes.",
+    "endpoint_id": "coinglass.raw_futures_td_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-td-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/td/list",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "symbol",
+      "td_15m",
+      "td_1d",
+      "td_1h",
+      "td_1m",
+      "td_1w",
+      "td_30m",
+      "td_4h",
+      "td_5m"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin TD Sequential List"
+  },
+  {
+    "description": "This endpoint provides historical data for the long/short account ratio of top traders.",
+    "endpoint_id": "coinglass.raw_futures_top_long_short_account_ratio_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/top-longshort-account-ratio.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/top-long-short-account-ratio/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "time",
+      "top_account_long_percent",
+      "top_account_long_short_ratio",
+      "top_account_short_percent"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Top Account Ratio History"
+  },
+  {
+    "description": "This endpoint provides historical data for the long/short position ratio of top traders.",
+    "endpoint_id": "coinglass.raw_futures_top_long_short_position_ratio_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/top-longshort-position-ratio.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/top-long-short-position-ratio/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "time",
+      "top_position_long_percent",
+      "top_position_long_short_ratio",
+      "top_position_short_percent"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Top Position Ratio History"
+  },
+  {
+    "description": "This endpoint provides the historical net position data for futures, including the net_long_change and net_short_change values.",
+    "endpoint_id": "coinglass.raw_futures_v2_net_position_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/net-position-v2.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/v2/net-position/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "net_long_change",
+      "net_long_change_cum",
+      "net_position_change_cum",
+      "net_short_change",
+      "net_short_change_cum",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Net Long/Short Position (v2)"
+  },
+  {
+    "description": "This endpoint provides historical data for the long/short ratio of taker buy and sell volumes in futures markets.",
+    "endpoint_id": "coinglass.raw_futures_v2_taker_buy_sell_volume_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/taker-buysell-volume.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/v2/taker-buy-sell-volume/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "taker_buy_volume_usd",
+      "taker_sell_volume_usd",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Taker Buy/Sell History"
+  },
+  {
+    "description": "This endpoint retrieves historical Futures trading volume data across exchanges, formatted for chart display.",
+    "endpoint_id": "coinglass.raw_futures_volume_exchange_history_chart",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-volume-exchange-history-chart.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/volume/exchange-history-chart",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "Binance",
+      "Bitmex",
+      "code",
+      "data",
+      "data_map",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Volume History"
+  },
+  {
+    "description": "This endpoint provides historical footprint chart data for futures markets, including buy and sell volumes at each price level.",
+    "endpoint_id": "coinglass.raw_futures_volume_footprint_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-footprint.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/volume/footprint-history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Footprint History (90d)"
+  },
+  {
+    "description": "This endpoint provides historical Whale Index data.",
+    "endpoint_id": "coinglass.raw_futures_whale_index_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/whale-index.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures/whale-index/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "time",
+      "whale_index_value"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Whale Index"
+  },
+  {
+    "description": "This endpoint provides time-series data for the futures-to-spot trading volume ratio, including timestamp, volume ratio, futures trading volume (USD), and spot trading volume (USD).",
+    "endpoint_id": "coinglass.raw_futures_spot_volume_ratio",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/futures-spot-volume-ratio.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/futures_spot_volume_ratio",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "futures_spot_vol_ratio",
+      "futures_vol_usd",
+      "spot_vol_usd",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Futures vs Spot Volume Ratio"
+  },
+  {
+    "description": "This endpoint provides a list of holdings managed by Grayscale Investments.",
+    "endpoint_id": "coinglass.raw_grayscale_holdings_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/grayscale-holding-list.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/grayscale/holdings-list",
+    "required_params": [],
+    "response_fields": [
+      "close_time",
+      "code",
+      "data",
+      "holdings_amount",
+      "holdings_amount_change1d",
+      "holdings_amount_change_30d",
+      "holdings_amount_change_7d",
+      "holdings_usd",
+      "msg",
+      "premium_rate",
+      "primary_market_price",
+      "secondary_market_price",
+      "symbol",
+      "update_time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Holdings List"
+  },
+  {
+    "description": "This endpoint provides historical premium/discount data for Grayscale Investment Trusts relative to their NAV.",
+    "endpoint_id": "coinglass.raw_grayscale_premium_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/grayscale-premium-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/grayscale/premium-history",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "date_list",
+      "msg",
+      "premium_rate_list",
+      "primary_market_price",
+      "secondary_market_price_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Premium History"
+  },
+  {
+    "description": "This endpoint provides historical data on ETF flow activity for Bitcoin ETFs in the Hong Kong market.",
+    "endpoint_id": "coinglass.raw_hk_etf_bitcoin_flow_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hong-kong-bitcoin-etf-flow-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/hk-etf/bitcoin/flow-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "etf_flows",
+      "etf_ticker",
+      "flow_usd",
+      "msg",
+      "price_usd",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hong Kong ETF Flows History"
+  },
+  {
+    "description": "This endpoint provides the long/short account ratio history for symbols on Hyperliquid.",
+    "endpoint_id": "coinglass.raw_hyperliquid_global_long_short_account_ratio_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-long-short-account-ratio-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "symbol"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/global-long-short-account-ratio/history",
+    "required_params": [
+      "interval"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "global_account_long_count",
+      "global_account_long_percent",
+      "global_account_long_short_ratio",
+      "global_account_short_count",
+      "global_account_short_percent",
+      "global_account_total_count",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Long/Short Ratio (Accounts)"
+  },
+  {
+    "description": "This endpoint provides real-time wallet position data by coin on Hyperliquid, including user addresses, position size, margin balance, and unrealized PnL for each account.",
+    "endpoint_id": "coinglass.raw_hyperliquid_position",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-position.md",
+    "optional_params": [
+      "current_page"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/position",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "create_time",
+      "current_page",
+      "data",
+      "entry_price",
+      "funding_fee",
+      "leverage",
+      "liq_price",
+      "list",
+      "margin_balance",
+      "margin_mode",
+      "mark_price",
+      "position_size",
+      "position_value_usd",
+      "symbol",
+      "total_pages",
+      "unrealized_pnl",
+      "update_time",
+      "user"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Wallet Positions by Coin"
+  },
+  {
+    "description": "This endpoint provides Hyperliquid user position data, including margin summaries, withdrawable balance, and open asset positions.",
+    "endpoint_id": "coinglass.raw_hyperliquid_user_position",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-user-position.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/user-position",
+    "required_params": [
+      "user_address"
+    ],
+    "response_fields": [
+      "account_value",
+      "all_time",
+      "asset_positions",
+      "code",
+      "coin",
+      "cross_maintenance_margin_used",
+      "cross_margin_summary",
+      "cum_funding",
+      "data",
+      "entry_px",
+      "leverage",
+      "margin_summary",
+      "max_leverage",
+      "position",
+      "position_value",
+      "return_on_equity",
+      "since_change",
+      "since_open",
+      "szi",
+      "total_margin_used",
+      "total_ntl_pos",
+      "total_raw_usd",
+      "type",
+      "unrealized_pnl",
+      "value",
+      "withdrawable"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Wallet Positions by Address"
+  },
+  {
+    "description": "This endpoint provides real-time Hyperliquid wallet PNL distribution data, grouped by PNL size tiers, including address counts, long/short position values, sentiment indicators, and profit/loss distribution.",
+    "endpoint_id": "coinglass.raw_hyperliquid_wallet_pnl_distribution",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-wallet-pnl-distribution.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/wallet/pnl-distribution",
+    "required_params": [],
+    "response_fields": [
+      "all_address_count",
+      "bias_remark",
+      "bias_score",
+      "code",
+      "data",
+      "group_name",
+      "long_position_usd",
+      "long_position_usd_percent",
+      "loss_address_count",
+      "loss_address_percent",
+      "maximum_amount",
+      "minimum_amount",
+      "position_address_count",
+      "position_address_percent",
+      "position_usd",
+      "profit_address_count",
+      "profit_address_percent",
+      "short_position_usd",
+      "short_position_usd_percent"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Wallet PNL Distribution"
+  },
+  {
+    "description": "This endpoint provides real-time Hyperliquid wallet position distribution data, grouped by position size tiers, including address counts, long/short position values, sentiment indicators, and profit/loss distribution.",
+    "endpoint_id": "coinglass.raw_hyperliquid_wallet_position_distribution",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-wallet-position-distribution.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/wallet/position-distribution",
+    "required_params": [],
+    "response_fields": [
+      "all_address_count",
+      "bias_remark",
+      "bias_score",
+      "code",
+      "data",
+      "group_name",
+      "long_position_usd",
+      "long_position_usd_percent",
+      "loss_address_count",
+      "loss_address_percent",
+      "maximum_amount",
+      "minimum_amount",
+      "position_address_count",
+      "position_address_percent",
+      "position_usd",
+      "profit_address_count",
+      "profit_address_percent",
+      "short_position_usd",
+      "short_position_usd_percent"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Wallet Positions Distribution"
+  },
+  {
+    "description": "This endpoint provides real-time whale alerts on Hyperliquid, highlighting positions with a notional value over $1 million.(Returns up to approximately 200 most recent records)",
+    "endpoint_id": "coinglass.raw_hyperliquid_whale_alert",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-whale-alert.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/whale-alert",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "create_time",
+      "data",
+      "entry_price",
+      "liq_price",
+      "msg",
+      "position_action",
+      "position_size",
+      "position_value_usd",
+      "symbol",
+      "user"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Whale Alert"
+  },
+  {
+    "description": "This endpoint provides whale positions on Hyperliquid with a notional value exceeding $1 million.",
+    "endpoint_id": "coinglass.raw_hyperliquid_whale_position",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/hyperliquid-whale-position.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/hyperliquid/whale-position",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "create_time",
+      "data",
+      "entry_price",
+      "funding_fee",
+      "leverage",
+      "liq_price",
+      "margin_balance",
+      "margin_mode",
+      "mark_price",
+      "msg",
+      "position_size",
+      "position_value_usd",
+      "symbol",
+      "unrealized_pnl",
+      "update_time",
+      "user"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Hyperliquid Whale Position"
+  },
+  {
+    "description": "This endpoint provides data for the Tow Year Ma Multiplier",
+    "endpoint_id": "coinglass.raw_index_2_year_ma_multiplier",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/tow-year-ma-multiplier.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/2-year-ma-multiplier",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "moving_average_730",
+      "moving_average_730_multiplier_5",
+      "msg",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Tow Year Ma Multiplier"
+  },
+  {
+    "description": "This endpoint provides data for the 200-Week Moving Avg Heatmap",
+    "endpoint_id": "coinglass.raw_index_200_week_moving_average_heatmap",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/tow-hundred-week-moving-avg-heatmap.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/200-week-moving-average-heatmap",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "moving_average_1440",
+      "moving_average_1440_ip",
+      "msg",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "200-Week Moving Avg Heatmap"
+  },
+  {
+    "description": "This endpoint provides data for AHR999, including the average value, AHR999 value, and corresponding values for different dates.",
+    "endpoint_id": "coinglass.raw_index_ahr999",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/ahr999.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/ahr999",
+    "required_params": [],
+    "response_fields": [
+      "ahr999_value",
+      "average_price",
+      "code",
+      "current_value",
+      "data",
+      "date_string",
+      "msg"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "AHR999"
+  },
+  {
+    "description": "This endpoint provides data for the altcoin season index",
+    "endpoint_id": "coinglass.raw_index_altcoin_season",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/altcoin-season-index.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/altcoin-season",
+    "required_params": [],
+    "response_fields": [
+      "altcoin_index",
+      "altcoin_marketcap",
+      "code",
+      "data",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Altcoin Season Index"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin active addresses",
+    "endpoint_id": "coinglass.raw_index_bitcoin_active_addresses",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-active-addresses.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-active-addresses",
+    "required_params": [],
+    "response_fields": [
+      "active_address_count",
+      "code",
+      "data",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Active Addresses"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin correlations (GLD, IWM, QQQ, SPY, TLT)",
+    "endpoint_id": "coinglass.raw_index_bitcoin_correlation",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/btc-correlations-gld-iwm-qqq-spy-tlt.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-correlation",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "gld",
+      "iwm",
+      "price",
+      "qqq",
+      "spy",
+      "timestamp",
+      "tlt"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Correlations"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin dominance",
+    "endpoint_id": "coinglass.raw_index_bitcoin_dominance",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-dominance.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-dominance",
+    "required_params": [],
+    "response_fields": [
+      "bitcoin_dominance",
+      "code",
+      "data",
+      "market_cap",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Dominance"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin long term holder supply",
+    "endpoint_id": "coinglass.raw_index_bitcoin_long_term_holder_supply",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-long-term-holder-supply.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-long-term-holder-supply",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "long_term_holder_supply",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Long Term Holder Supply"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin long term holder realized price",
+    "endpoint_id": "coinglass.raw_index_bitcoin_lth_realized_price",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-long-term-holder-realized-price.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-lth-realized-price",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "lth_realized_price",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Long Term Holder Realized Price"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin long term holder sopr",
+    "endpoint_id": "coinglass.raw_index_bitcoin_lth_sopr",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-long-term-holder-sopr.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-lth-sopr",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "lth_sopr",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Long Term Holder SOPR"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin macro oscillator (bmo)",
+    "endpoint_id": "coinglass.raw_index_bitcoin_macro_oscillator",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-macro-oscillator-bmo.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-macro-oscillator",
+    "required_params": [],
+    "response_fields": [
+      "bmo_value",
+      "code",
+      "data",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Macro Oscillator (BMO)"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin net unrealized profit/loss (nupl)",
+    "endpoint_id": "coinglass.raw_index_bitcoin_net_unrealized_profit_loss",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-net-unrealized-profitloss-nupl.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-net-unrealized-profit-loss",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "net_unpnl",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Net Unrealized PNL"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin new addresses",
+    "endpoint_id": "coinglass.raw_index_bitcoin_new_addresses",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-new-addresses.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-new-addresses",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "new_address_count",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin New Addresses"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin reserve risk",
+    "endpoint_id": "coinglass.raw_index_bitcoin_reserve_risk",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-reserve-risk.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-reserve-risk",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "hodl_bank",
+      "movcd",
+      "price",
+      "reserve_risk_index",
+      "timestamp",
+      "vocd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Reserve Risk"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin rhodl ratio",
+    "endpoint_id": "coinglass.raw_index_bitcoin_rhodl_ratio",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-rhodl-ratio.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-rhodl-ratio",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "price",
+      "rhodl_ratio",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin RHODL Ratio"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin short term holder supply",
+    "endpoint_id": "coinglass.raw_index_bitcoin_short_term_holder_supply",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-short-term-holder-supply.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-short-term-holder-supply",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "price",
+      "short_term_holder_supply",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Short Term Holder Supply"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin short term holder realized price",
+    "endpoint_id": "coinglass.raw_index_bitcoin_sth_realized_price",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-short-term-holder-realized-price.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-sth-realized-price",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "price",
+      "sth_realized_price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Short Term Holder Realized Price"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin short term holder sopr",
+    "endpoint_id": "coinglass.raw_index_bitcoin_sth_sopr",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-short-term-holder-sopr.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-sth-sopr",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "price",
+      "sth_sopr",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Short Term Holder SOPR"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin vs global m2 supply & growth",
+    "endpoint_id": "coinglass.raw_index_bitcoin_vs_global_m2_growth",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-vs-global-m2-supply-growth.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-vs-global-m2-growth",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "global_m2_supply",
+      "global_m2_yoy_growth",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin vs Global M2 Supply & Growth"
+  },
+  {
+    "description": "This endpoint provides data for the bitcoin vs US m2 supply & growth",
+    "endpoint_id": "coinglass.raw_index_bitcoin_vs_us_m2_growth",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-vs-us-m2-supply-growth.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin-vs-us-m2-growth",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "price",
+      "timestamp",
+      "us_m2_supply",
+      "us_m2_yoy_growth"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin vs US M2 Supply & Growth"
+  },
+  {
+    "description": "This endpoint provides data for the Bitcoin Bubble Index",
+    "endpoint_id": "coinglass.raw_index_bitcoin_bubble_index",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-bubble-index.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin/bubble-index",
+    "required_params": [],
+    "response_fields": [
+      "address_send_count",
+      "bubble_index",
+      "code",
+      "data",
+      "date_string",
+      "google_trend_percent",
+      "mining_difficulty",
+      "msg",
+      "price",
+      "transaction_count",
+      "tweet_count"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Bubble Index"
+  },
+  {
+    "description": "This endpoint provides data for the Bitcoin Profitable Days",
+    "endpoint_id": "coinglass.raw_index_bitcoin_profitable_days",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-profitable-days.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin/profitable-days",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "price",
+      "side",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin Profitable Days"
+  },
+  {
+    "description": "This endpoint provides data for the Bitcoin Rainbow Chart",
+    "endpoint_id": "coinglass.raw_index_bitcoin_rainbow_chart",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/bitcoin-rainbow-chart.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/bitcoin/rainbow-chart",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "msg"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Bitcoin-Rainbow-Chart"
+  },
+  {
+    "description": "This endpoint provides data for the Crypto Fear & Greed Index",
+    "endpoint_id": "coinglass.raw_index_fear_greed_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/cryptofear-greedindex.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/fear-greed-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "data_list",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Crypto Fear & Greed Index"
+  },
+  {
+    "description": "This endpoint provides data for the Golden Ratio Multiplier",
+    "endpoint_id": "coinglass.raw_index_golden_ratio_multiplier",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/golden-ratio-multiplier.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/golden-ratio-multiplier",
+    "required_params": [],
+    "response_fields": [
+      "accumulation_high_1_6",
+      "code",
+      "data",
+      "low_bull_high_2",
+      "ma_350",
+      "msg",
+      "price",
+      "timestamp",
+      "x_13",
+      "x_21",
+      "x_3",
+      "x_5",
+      "x_8"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Golden-Ratio-Multiplier"
+  },
+  {
+    "description": "This endpoint provides data for the options/futures oi ratio",
+    "endpoint_id": "coinglass.raw_index_option_vs_futures_oi_ratio",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/optionsfutures-oi-ratio.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/option-vs-futures-oi-ratio",
+    "required_params": [],
+    "response_fields": [
+      "btc_option_vs_futures_radio",
+      "code",
+      "data",
+      "eth_option_vs_futures_radio",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Options/Futures OI Ratio"
+  },
+  {
+    "description": "This endpoint provides data for the Pi Cycle Top Indicator, including the 111-day moving average (ma110), the 350-day moving average multiplied by 2 (ma350Mu2), and the price at specific timestamps.",
+    "endpoint_id": "coinglass.raw_index_pi_cycle_indicator",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/pi.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/pi-cycle-indicator",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "ma_110",
+      "ma_350_mu_2",
+      "msg",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pi Cycle Top Indicator"
+  },
+  {
+    "description": "This endpoint provides the Puell-Multiple index, which includes data on buy and sell quantities, the price, and the Puell-Multiple value at specific timestamps.",
+    "endpoint_id": "coinglass.raw_index_puell_multiple",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/puell-multiple.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/puell-multiple",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "price",
+      "puell_multiple",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Puell-Multiple"
+  },
+  {
+    "description": "This endpoint provides data for the StableCoin MarketCap History",
+    "endpoint_id": "coinglass.raw_index_stablecoin_marketcap_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/stablecoin-marketcap-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/stableCoin-marketCap-history",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "data_list",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "StableCoin MarketCap History"
+  },
+  {
+    "description": "This endpoint provides data for the Stock-to-Flow model, including the price and the number of days remaining until the next halving event for specific timestamps.",
+    "endpoint_id": "coinglass.raw_index_stock_flow",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/stock-flow.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/index/stock-flow",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "next_halving",
+      "price",
+      "timestamp"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Stock-to-Flow Model"
+  },
+  {
+    "description": "This endpoint provides historical open interest data for options across different exchanges",
+    "endpoint_id": "coinglass.raw_option_exchange_oi_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-open-interest-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/option/exchange-oi-history",
+    "required_params": [
+      "range",
+      "symbol",
+      "unit"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "data_map",
+      "gate",
+      "huobi",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Open Interest History"
+  },
+  {
+    "description": "This endpoint provides historical trading volume data for options across different exchanges",
+    "endpoint_id": "coinglass.raw_option_exchange_vol_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/exchange-volume-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/option/exchange-vol-history",
+    "required_params": [
+      "symbol",
+      "unit"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "data_map",
+      "gate",
+      "huobi",
+      "msg",
+      "price_list",
+      "time_list"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Exchange Volume History"
+  },
+  {
+    "description": "This endpoint provides detailed information about open interest and trading volume for options across different exchanges",
+    "endpoint_id": "coinglass.raw_option_info",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/info.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/option/info",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "exchange_name",
+      "msg",
+      "oi_market_share",
+      "open_interest",
+      "open_interest_change_24h",
+      "open_interest_usd",
+      "volume_change_percent_24h",
+      "volume_usd_24h"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Options Info"
+  },
+  {
+    "description": "This endpoint provides the max pain price for options.",
+    "endpoint_id": "coinglass.raw_option_max_pain",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/option-max-pain.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/option/max-pain",
+    "required_params": [
+      "exchange",
+      "symbol"
+    ],
+    "response_fields": [
+      "call_open_interest",
+      "call_open_interest_market_value",
+      "call_open_interest_notional",
+      "code",
+      "data",
+      "date",
+      "max_pain_price",
+      "msg",
+      "put_open_interest",
+      "put_open_interest_market_value",
+      "put_open_interest_notional"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Option Max Pain"
+  },
+  {
+    "description": "This endpoint provides historical CVD data for a single cryptocurrency within one spot exchange, aggregated across multiple trading pairs.",
+    "endpoint_id": "coinglass.raw_spot_aggregated_cvd_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-aggregated-cvd-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/aggregated-cvd/history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "agg_taker_buy_vol",
+      "agg_taker_sell_vol",
+      "code",
+      "cum_vol_delta",
+      "data",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Aggregated Cumulative Volume Delta (CVD)"
+  },
+  {
+    "description": "This endpoint provides historical data for the long/short ratio of aggregated taker buy and sell volumes for spot cryptocurrencies.",
+    "endpoint_id": "coinglass.raw_spot_aggregated_taker_buy_sell_volume_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-aggregated-taker-buysell-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/aggregated-taker-buy-sell-volume/history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "aggregated_buy_volume_usd",
+      "aggregated_sell_volume_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Taker Buy/Sell History"
+  },
+  {
+    "description": "This API provides inflow and outflow data for a single coin across multiple time intervals in the spot market.",
+    "endpoint_id": "coinglass.raw_spot_coin_netflow",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-coin-netflow.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/coin/netflow",
+    "required_params": [
+      "exchange_list",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "net_flow_usd_10d",
+      "net_flow_usd_10d_market_cap_ratio",
+      "net_flow_usd_120d",
+      "net_flow_usd_120d_market_cap_ratio",
+      "net_flow_usd_12h",
+      "net_flow_usd_12h_market_cap_ratio",
+      "net_flow_usd_150d",
+      "net_flow_usd_150d_market_cap_ratio",
+      "net_flow_usd_15d",
+      "net_flow_usd_15d_market_cap_ratio",
+      "net_flow_usd_15m",
+      "net_flow_usd_15m_market_cap_ratio",
+      "net_flow_usd_180d",
+      "net_flow_usd_180d_market_cap_ratio",
+      "net_flow_usd_1h",
+      "net_flow_usd_1h_market_cap_ratio",
+      "net_flow_usd_1y",
+      "net_flow_usd_1y_market_cap_ratio",
+      "net_flow_usd_24h",
+      "net_flow_usd_24h_market_cap_ratio",
+      "net_flow_usd_30d",
+      "net_flow_usd_30d_market_cap_ratio",
+      "net_flow_usd_30m",
+      "net_flow_usd_30m_market_cap_ratio",
+      "net_flow_usd_3d",
+      "net_flow_usd_3d_market_cap_ratio",
+      "net_flow_usd_40d",
+      "net_flow_usd_40d_market_cap_ratio",
+      "net_flow_usd_4h",
+      "net_flow_usd_4h_market_cap_ratio",
+      "net_flow_usd_50d",
+      "net_flow_usd_50d_market_cap_ratio",
+      "net_flow_usd_5d",
+      "net_flow_usd_5d_market_cap_ratio",
+      "net_flow_usd_5m",
+      "net_flow_usd_5m_market_cap_ratio",
+      "net_flow_usd_60d",
+      "net_flow_usd_60d_market_cap_ratio",
+      "net_flow_usd_7d",
+      "net_flow_usd_7d_market_cap_ratio",
+      "net_flow_usd_8h",
+      "net_flow_usd_8h_market_cap_ratio",
+      "net_flow_usd_90d",
+      "net_flow_usd_90d_market_cap_ratio",
+      "net_flow_usd_change_percent_10d",
+      "net_flow_usd_change_percent_120d",
+      "net_flow_usd_change_percent_12h",
+      "net_flow_usd_change_percent_150d",
+      "net_flow_usd_change_percent_15d",
+      "net_flow_usd_change_percent_15m",
+      "net_flow_usd_change_percent_180d",
+      "net_flow_usd_change_percent_1h",
+      "net_flow_usd_change_percent_1y",
+      "net_flow_usd_change_percent_24h",
+      "net_flow_usd_change_percent_30d",
+      "net_flow_usd_change_percent_30m",
+      "net_flow_usd_change_percent_3d",
+      "net_flow_usd_change_percent_40d",
+      "net_flow_usd_change_percent_4h",
+      "net_flow_usd_change_percent_50d",
+      "net_flow_usd_change_percent_5d",
+      "net_flow_usd_change_percent_5m",
+      "net_flow_usd_change_percent_60d",
+      "net_flow_usd_change_percent_7d",
+      "net_flow_usd_change_percent_8h",
+      "net_flow_usd_change_percent_90d",
+      "success",
+      "symbol",
+      "taker_buy_volume_usd_10d",
+      "taker_buy_volume_usd_120d",
+      "taker_buy_volume_usd_12h",
+      "taker_buy_volume_usd_150d",
+      "taker_buy_volume_usd_15d",
+      "taker_buy_volume_usd_15m",
+      "taker_buy_volume_usd_180d",
+      "taker_buy_volume_usd_1h",
+      "taker_buy_volume_usd_1y",
+      "taker_buy_volume_usd_24h",
+      "taker_buy_volume_usd_30d",
+      "taker_buy_volume_usd_30m",
+      "taker_buy_volume_usd_3d",
+      "taker_buy_volume_usd_40d",
+      "taker_buy_volume_usd_4h",
+      "taker_buy_volume_usd_50d",
+      "taker_buy_volume_usd_5d",
+      "taker_buy_volume_usd_5m",
+      "taker_buy_volume_usd_60d",
+      "taker_buy_volume_usd_7d",
+      "taker_buy_volume_usd_8h",
+      "taker_buy_volume_usd_90d",
+      "taker_sell_volume_usd_10d",
+      "taker_sell_volume_usd_120d",
+      "taker_sell_volume_usd_12h",
+      "taker_sell_volume_usd_150d",
+      "taker_sell_volume_usd_15d",
+      "taker_sell_volume_usd_15m",
+      "taker_sell_volume_usd_180d",
+      "taker_sell_volume_usd_1h",
+      "taker_sell_volume_usd_1y",
+      "taker_sell_volume_usd_24h",
+      "taker_sell_volume_usd_30d",
+      "taker_sell_volume_usd_30m",
+      "taker_sell_volume_usd_3d",
+      "taker_sell_volume_usd_40d",
+      "taker_sell_volume_usd_4h",
+      "taker_sell_volume_usd_50d",
+      "taker_sell_volume_usd_5d",
+      "taker_sell_volume_usd_5m",
+      "taker_sell_volume_usd_60d",
+      "taker_sell_volume_usd_7d",
+      "taker_sell_volume_usd_8h",
+      "taker_sell_volume_usd_90d"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin NetFlow"
+  },
+  {
+    "description": "This endpoint provides performance-related metrics for all available spot coins",
+    "endpoint_id": "coinglass.raw_spot_coins_markets",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-coins-markets.md",
+    "optional_params": [
+      "page",
+      "per_page"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/coins-markets",
+    "required_params": [],
+    "response_fields": [
+      "buy_volume_usd_12h",
+      "buy_volume_usd_15m",
+      "buy_volume_usd_1h",
+      "buy_volume_usd_1w",
+      "buy_volume_usd_24h",
+      "buy_volume_usd_30m",
+      "buy_volume_usd_4h",
+      "buy_volume_usd_5m",
+      "code",
+      "current_price",
+      "data",
+      "market_cap",
+      "msg",
+      "price_change_12h",
+      "price_change_15m",
+      "price_change_1h",
+      "price_change_1w",
+      "price_change_24h",
+      "price_change_30m",
+      "price_change_4h",
+      "price_change_5m",
+      "price_change_percent_12h",
+      "price_change_percent_15m",
+      "price_change_percent_1h",
+      "price_change_percent_1w",
+      "price_change_percent_24h",
+      "price_change_percent_30m",
+      "price_change_percent_4h",
+      "price_change_percent_5m",
+      "sell_volume_usd_12h",
+      "sell_volume_usd_15m",
+      "sell_volume_usd_1h",
+      "sell_volume_usd_1w",
+      "sell_volume_usd_24h",
+      "sell_volume_usd_30m",
+      "sell_volume_usd_4h",
+      "sell_volume_usd_5m",
+      "symbol",
+      "volume_change_percent_12h",
+      "volume_change_percent_15m",
+      "volume_change_percent_1h",
+      "volume_change_percent_1w",
+      "volume_change_percent_24h",
+      "volume_change_percent_30m",
+      "volume_change_percent_4h",
+      "volume_change_percent_5m",
+      "volume_change_usd_12h",
+      "volume_change_usd_15m",
+      "volume_change_usd_1h",
+      "volume_change_usd_1w",
+      "volume_change_usd_24h",
+      "volume_change_usd_30m",
+      "volume_change_usd_4h",
+      "volume_change_usd_5m",
+      "volume_flow_usd_12h",
+      "volume_flow_usd_15m",
+      "volume_flow_usd_1h",
+      "volume_flow_usd_1w",
+      "volume_flow_usd_24h",
+      "volume_flow_usd_30m",
+      "volume_flow_usd_4h",
+      "volume_flow_usd_5m",
+      "volume_usd_12h",
+      "volume_usd_15m",
+      "volume_usd_1h",
+      "volume_usd_1w",
+      "volume_usd_24h",
+      "volume_usd_30m",
+      "volume_usd_4h",
+      "volume_usd_5m"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coins Markets"
+  },
+  {
+    "description": "This endpoint provides historical Cumulative Volume Delta (CVD) data for a single spot exchange trading pair, including taker buy and sell volumes over time.",
+    "endpoint_id": "coinglass.raw_spot_cvd_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-cvd-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time",
+      "unit"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/cvd/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "cum_vol_delta",
+      "data",
+      "taker_buy_vol",
+      "taker_sell_vol",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Cumulative Volume Delta (CVD)"
+  },
+  {
+    "description": "This API provides inflow and outflow data for multiple coins across multiple time intervals in the spot market.",
+    "endpoint_id": "coinglass.raw_spot_netflow_list",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-netflow-list.md",
+    "optional_params": [
+      "page",
+      "per_page"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/netflow-list",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "market_cap",
+      "net_flow_usd_12h",
+      "net_flow_usd_15d",
+      "net_flow_usd_15m",
+      "net_flow_usd_1h",
+      "net_flow_usd_1w",
+      "net_flow_usd_24h",
+      "net_flow_usd_2h",
+      "net_flow_usd_30d",
+      "net_flow_usd_30m",
+      "net_flow_usd_3d",
+      "net_flow_usd_4h",
+      "net_flow_usd_5m",
+      "net_flow_usd_6h",
+      "net_flow_usd_8h",
+      "symbol",
+      "taker_buy_volume_usd_12h",
+      "taker_buy_volume_usd_15d",
+      "taker_buy_volume_usd_15m",
+      "taker_buy_volume_usd_1h",
+      "taker_buy_volume_usd_24h",
+      "taker_buy_volume_usd_2h",
+      "taker_buy_volume_usd_30d",
+      "taker_buy_volume_usd_30m",
+      "taker_buy_volume_usd_3d",
+      "taker_buy_volume_usd_4h",
+      "taker_buy_volume_usd_5m",
+      "taker_buy_volume_usd_6h",
+      "taker_buy_volume_usd_7d",
+      "taker_buy_volume_usd_8h",
+      "taker_sell_volume_usd_12h",
+      "taker_sell_volume_usd_15d",
+      "taker_sell_volume_usd_15m",
+      "taker_sell_volume_usd_1h",
+      "taker_sell_volume_usd_24h",
+      "taker_sell_volume_usd_2h",
+      "taker_sell_volume_usd_30d",
+      "taker_sell_volume_usd_30m",
+      "taker_sell_volume_usd_3d",
+      "taker_sell_volume_usd_4h",
+      "taker_sell_volume_usd_5m",
+      "taker_sell_volume_usd_6h",
+      "taker_sell_volume_usd_7d",
+      "taker_sell_volume_usd_8h"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin NetFlow List"
+  },
+  {
+    "description": "This endpoint provides historical data of the aggregated order book for spot trading, including total bid/ask volumes within a specific price range.",
+    "endpoint_id": "coinglass.raw_spot_orderbook_aggregated_ask_bids_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-aggregated-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "range",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/orderbook/aggregated-ask-bids-history",
+    "required_params": [
+      "exchange_list",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "aggregated_asks_quantity",
+      "aggregated_asks_usd",
+      "aggregated_bids_quantity",
+      "aggregated_bids_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Coin Orderbook Bid&Ask(\u00b1range)"
+  },
+  {
+    "description": "This endpoint provides historical data of the order book for spot trading, including total bid/ask volumes within a specific price range.",
+    "endpoint_id": "coinglass.raw_spot_orderbook_ask_bids_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-orderbook-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "range",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/orderbook/ask-bids-history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "asks_quantity",
+      "asks_usd",
+      "bids_quantity",
+      "bids_usd",
+      "code",
+      "data",
+      "msg",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Orderbook Bid&Ask(\u00b1range)"
+  },
+  {
+    "description": "This endpoint provides historical order book depth data for spot trading, supporting heatmap visualization.",
+    "endpoint_id": "coinglass.raw_spot_orderbook_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-orderbook-heatmap.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/orderbook/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "success"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Orderbook Heatmap"
+  },
+  {
+    "description": "This endpoint provides large open limit orders from the current order book for spot trading.(thresholds: BTC \u2265 350K, ETH \u2265 250K, Other \u2265 10K)",
+    "endpoint_id": "coinglass.raw_spot_orderbook_large_limit_order",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-large-limit-order.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/orderbook/large-limit-order",
+    "required_params": [
+      "exchange",
+      "symbol"
+    ],
+    "response_fields": [
+      "base_asset",
+      "code",
+      "current_quantity",
+      "current_time",
+      "current_usd_value",
+      "data",
+      "exchange_name",
+      "executed_usd_value",
+      "executed_volume",
+      "id",
+      "msg",
+      "order_side",
+      "order_state",
+      "price",
+      "quote_asset",
+      "start_quantity",
+      "start_time",
+      "start_usd_value",
+      "symbol",
+      "trade_count"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Large Orderbook"
+  },
+  {
+    "description": "This endpoint provides completed historical large limit orders from the order book for futures trading.(thresholds: BTC \u2265 350K, ETH \u2265 250K, Other \u2265 10K)",
+    "endpoint_id": "coinglass.raw_spot_orderbook_v2_large_limit_order_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-large-orderbook-history.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/orderbook/v2/large-limit-order-history",
+    "required_params": [
+      "end_time",
+      "exchange",
+      "start_time",
+      "state",
+      "symbol"
+    ],
+    "response_fields": [
+      "base_asset",
+      "code",
+      "current_quantity",
+      "current_time",
+      "current_usd_value",
+      "data",
+      "exchange_name",
+      "executed_usd_value",
+      "executed_volume",
+      "id",
+      "msg",
+      "order_end_time",
+      "order_side",
+      "order_state",
+      "price",
+      "quote_asset",
+      "start_quantity",
+      "start_time",
+      "start_usd_value",
+      "symbol",
+      "trade_count"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Large Orderbook History"
+  },
+  {
+    "description": "This endpoint provides performance-related metrics for all available spot trading pairs",
+    "endpoint_id": "coinglass.raw_spot_pairs_markets",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-pairs-markets.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/pairs-markets",
+    "required_params": [
+      "symbol"
+    ],
+    "response_fields": [
+      "buy_volume_usd_12h",
+      "buy_volume_usd_1h",
+      "buy_volume_usd_1w",
+      "buy_volume_usd_24h",
+      "buy_volume_usd_4h",
+      "code",
+      "current_price",
+      "data",
+      "exchange_name",
+      "msg",
+      "net_flows_usd_12h",
+      "net_flows_usd_1h",
+      "net_flows_usd_1w",
+      "net_flows_usd_24h",
+      "net_flows_usd_4h",
+      "price_change_12h",
+      "price_change_1h",
+      "price_change_1w",
+      "price_change_24h",
+      "price_change_4h",
+      "price_change_percent_12h",
+      "price_change_percent_1h",
+      "price_change_percent_1w",
+      "price_change_percent_24h",
+      "price_change_percent_4h",
+      "sell_volume_usd_12h",
+      "sell_volume_usd_1h",
+      "sell_volume_usd_1w",
+      "sell_volume_usd_24h",
+      "sell_volume_usd_4h",
+      "symbol",
+      "volume_change_12h",
+      "volume_change_24h",
+      "volume_change_4h",
+      "volume_change_percent_12h",
+      "volume_change_percent_1h",
+      "volume_change_percent_1w",
+      "volume_change_percent_24h",
+      "volume_change_percent_4h",
+      "volume_change_usd_1h",
+      "volume_change_usd_1w",
+      "volume_usd_12h",
+      "volume_usd_1h",
+      "volume_usd_1w",
+      "volume_usd_24h",
+      "volume_usd_4h"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pairs Markets"
+  },
+  {
+    "description": "This endpoint provides historical open, high, low, and close (OHLC) price data for cryptocurrencies over specified timeframes.",
+    "endpoint_id": "coinglass.raw_spot_price_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-price-ohlc-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/price/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "close",
+      "code",
+      "data",
+      "high",
+      "low",
+      "msg",
+      "open",
+      "time",
+      "volume_usd"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Price OHLC History"
+  },
+  {
+    "description": "This endpoint allows you to query all the supported spot coins on CoinGlass.",
+    "endpoint_id": "coinglass.raw_spot_supported_coins",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-supported-coins.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/supported-coins",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "msg"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Supported Coins"
+  },
+  {
+    "description": "This endpoint allows you to query all supported spot trading exchanges and their corresponding trading pairs on CoinGlass.",
+    "endpoint_id": "coinglass.raw_spot_supported_exchange_pairs",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-suported-exchange-pairs.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/supported-exchange-pairs",
+    "required_params": [],
+    "response_fields": [
+      "Binance",
+      "Bitget",
+      "base_asset",
+      "code",
+      "data",
+      "instrument_id",
+      "msg",
+      "quote_asset"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Suported Exchange and Pairs"
+  },
+  {
+    "description": "This endpoint provides historical data for the long/short ratio of taker buy and sell volumes in spot markets.",
+    "endpoint_id": "coinglass.raw_spot_taker_buy_sell_volume_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-taker-buysell-ratio-history.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/taker-buy-sell-volume/history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data",
+      "msg",
+      "taker_buy_volume_usd",
+      "taker_sell_volume_usd",
+      "time"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Pair Taker Buy/Sell History"
+  },
+  {
+    "description": "This endpoint provides historical footprint chart data for spot markets, including buy and sell volumes at each price level.",
+    "endpoint_id": "coinglass.raw_spot_volume_footprint_history",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/spot-footprint.md",
+    "optional_params": [
+      "end_time",
+      "limit",
+      "start_time"
+    ],
+    "parser_status": "parser_missing",
+    "path": "/api/spot/volume/footprint-history",
+    "required_params": [
+      "exchange",
+      "interval",
+      "symbol"
+    ],
+    "response_fields": [
+      "code",
+      "data"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Footprint History (90d)"
+  },
+  {
+    "description": "This endpoint retrieves the user's account subscription details, including the current API tier, expiration time, and expiration status.",
+    "endpoint_id": "coinglass.raw_user_account_subscription",
+    "method": "GET",
+    "official_doc_ref": "https://docs.coinglass.com/reference/user-account-subscription.md",
+    "optional_params": [],
+    "parser_status": "parser_missing",
+    "path": "/api/user/account/subscription",
+    "required_params": [],
+    "response_fields": [
+      "code",
+      "data",
+      "expire_time",
+      "expired",
+      "level"
+    ],
+    "source": "coinglass_llms_openapi",
+    "summary": "Account Level Query"
+  }
+]

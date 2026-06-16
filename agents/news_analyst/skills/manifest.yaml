@@ -6,25 +6,25 @@ skills:
     workers:
       - news_analyst
     tool_exports:
-      - claw_get_news_pack
+      - claw_request_data
   - path: cn-a-news-data/SKILL.md
     skill_id: cn-a-news-data
     skill_version: 0.1.0
     workers:
       - news_analyst
     tool_exports:
-      - claw_get_news_pack
+      - claw_request_data
   - path: hk-news-data/SKILL.md
     skill_id: hk-news-data
     skill_version: 0.1.0
     workers:
       - news_analyst
     tool_exports:
-      - claw_get_news_pack
+      - claw_request_data
   - path: crypto-news-data/SKILL.md
     skill_id: crypto-news-data
     skill_version: 0.1.0
     workers:
       - news_analyst
     tool_exports:
-      - claw_get_news_pack
+      - claw_request_data

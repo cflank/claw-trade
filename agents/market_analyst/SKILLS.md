@@ -1,4 +1,4 @@
 # 技能清单
 
 - `claw-trade-stage`：约束当前阶段的工具使用和正式材料写入边界。
-- `crypto-trading-analysis`：CRYPTO profile 下的加密币指标分析纪律，配合 `claw_get_market_pack` 返回的 claw-trade 数据层市场资料包和 CryptoLens 分析材料使用。
+- `crypto-trading-analysis`：CRYPTO profile 下的加密币指标分析纪律，配合 `claw_request_data` 返回的 claw-trade 数据层市场数据结果和 CryptoLens 分析材料使用。

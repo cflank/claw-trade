@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from claw_trade.data_gateway.selection_api import (
-    build_selection_provider_batch_plan,
+    build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
 )
 from claw_trade.runtime.openclaw_client import OpenClawClient
@@ -44,7 +44,7 @@ def main() -> int:
     runs_root = Path(args.selection_runs_root)
 
     store = restore_selection_run_store(selection_runs_root=runs_root)
-    provider_plan = build_selection_provider_batch_plan(
+    data_need_audit = build_selection_data_need_audit(
         market=SelectionMarket.CN_A,
         profile=SelectionProfile.CN_A,
         trade_date=args.trade_date,
@@ -58,9 +58,9 @@ def main() -> int:
         market=SelectionMarket.CN_A,
         profile=SelectionProfile.CN_A,
         trade_date=args.trade_date,
-        lookback_trading_days=provider_plan.lookback_trading_days,
-        universe_scope=provider_plan.universe_scope,
-        provider_batch_plan_ref=provider_plan.plan_id,
+        lookback_trading_days=data_need_audit.lookback_trading_days,
+        universe_scope=data_need_audit.universe_scope,
+        data_need_audit_ref=data_need_audit.plan_id,
         approved_strategy_config_ref=config_ref,
         trigger_source=SelectionTriggerSource.MANUAL_RERUN,
     )
@@ -128,7 +128,7 @@ def main() -> int:
 
 def _base_payload(*, selection_run_id: str, request_id: str, data_execution: object) -> dict[str, object]:
     record = data_execution.record
-    candidate_pack_ref = record.data_run.candidate_pack_ref
+    candidate_cache_ref = record.data_run.candidate_cache_ref
     return {
         "selection_run_id": selection_run_id,
         "request_id": request_id,
@@ -140,9 +140,9 @@ def _base_payload(*, selection_run_id: str, request_id: str, data_execution: obj
             "provider_attempt_refs": list(data_execution.provider_attempt_refs),
             "normalized_ref_count": len(data_execution.normalized_refs),
             "top20_tickers": list(data_execution.top20_tickers),
-            "candidate_pack_material_id": candidate_pack_ref.material_id if candidate_pack_ref else None,
-            "candidate_pack_l1_uri": candidate_pack_ref.l1_uri if candidate_pack_ref else None,
-            "candidate_pack_summary_ref": candidate_pack_ref.pack_summary_ref if candidate_pack_ref else None,
+            "candidate_cache_material_id": candidate_cache_ref.material_id if candidate_cache_ref else None,
+            "candidate_cache_l1_uri": candidate_cache_ref.l1_uri if candidate_cache_ref else None,
+            "candidate_cache_summary_ref": candidate_cache_ref.cache_summary_ref if candidate_cache_ref else None,
             "evidence_path": str(data_execution.evidence_path),
             "data_gaps": [
                 {

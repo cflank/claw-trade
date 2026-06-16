@@ -7,8 +7,35 @@ from pathlib import Path
 from typing import Any
 
 DATA_NEED_TOOL_NAME = "claw_request_data"
-FORBIDDEN_WORKER_VISIBLE_KEYS = {"provider", "path", "api_name", "url", "header", "token"}
-FRONTLINE_WORKERS = {"market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"}
+FORBIDDEN_WORKER_VISIBLE_KEYS = {
+    "provider",
+    "path",
+    "api_name",
+    "url",
+    "header",
+    "headers",
+    "token",
+    "api_key",
+    "secret",
+    "api_id",
+    "fields",
+}
+FORBIDDEN_WORKER_VISIBLE_TEXT = {
+    "claw_get_",
+    "catalog match missing",
+    "catalog_match_missing",
+    "resolver mapping missing",
+    "resolver_mapping_missing",
+}
+FRONTLINE_WORKERS = {
+    "market_analyst",
+    "fundamental_analyst",
+    "news_analyst",
+    "social_analyst",
+    "policy_analyst",
+    "hot_money_tracker",
+    "lockup_watcher",
+}
 REQUIRED_RUNTIME_MARKERS = {"run_id", "call_id", "worker_id", "stage", "profile", "openclaw_run_id"}
 
 
@@ -25,6 +52,20 @@ def test_worker_visible_data_need_tool_payload_does_not_expose_provider_executio
 
     forbidden = _forbidden_worker_visible_keys(payload, FORBIDDEN_WORKER_VISIBLE_KEYS)
     assert forbidden == set(), (str(path), sorted(forbidden))
+
+    forbidden_text = _forbidden_worker_visible_text(payload, FORBIDDEN_WORKER_VISIBLE_TEXT)
+    assert forbidden_text == set(), (str(path), sorted(forbidden_text))
+
+
+def test_cn_a_frontline_worker_prompts_do_not_expose_provider_execution_details() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    for worker_id in FRONTLINE_WORKERS:
+        prompt_path = repo_root / "agents" / worker_id / "prompts" / "CN_A.md"
+        text = prompt_path.read_text(encoding="utf-8")
+        forbidden_keys = _forbidden_message_terms(text, FORBIDDEN_WORKER_VISIBLE_KEYS)
+        forbidden_text = {token for token in FORBIDDEN_WORKER_VISIBLE_TEXT if token in text}
+        assert forbidden_keys == set(), (str(prompt_path), sorted(forbidden_keys))
+        assert forbidden_text == set(), (str(prompt_path), sorted(forbidden_text))
 
 
 def _provider_payload_capture_path() -> Path:
@@ -121,6 +162,8 @@ def _forbidden_object_keys(value: Any, forbidden: set[str]) -> set[str]:
             if isinstance(child, str) and child in forbidden:
                 found.add(child)
             found.update(_forbidden_object_keys(child, forbidden))
+    elif isinstance(value, str):
+        found.update(_forbidden_message_terms(value, forbidden))
     return found
 
 
@@ -130,6 +173,17 @@ def _forbidden_message_terms(value: Any, forbidden: set[str]) -> set[str]:
         for key in forbidden:
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(key)}(?![A-Za-z0-9_])", text):
                 found.add(key)
+    return found
+
+
+def _forbidden_worker_visible_text(provider_payload: dict[str, Any], forbidden: set[str]) -> set[str]:
+    body = provider_payload.get("payload")
+    assert isinstance(body, dict), "provider payload proof must include payload object"
+    found: set[str] = set()
+    for text in (*_message_text_fragments(body.get("messages")), *_message_text_fragments(body.get("tools"))):
+        for token in forbidden:
+            if token in text:
+                found.add(token)
     return found
 
 

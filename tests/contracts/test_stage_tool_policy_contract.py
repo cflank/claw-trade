@@ -56,7 +56,7 @@ def test_stage_tool_policy_allows_empty_tools_only_for_pure_prompt_workers(
 
 
 @pytest.mark.parametrize("profile", ("US", "CN_A"))
-def test_market_data_intent_resolves_to_provider_visible_mcp_tools(
+def test_market_data_intent_resolves_to_provider_agnostic_data_need_tool(
     agents_root: Path, profile: str
 ) -> None:
     registry = load_tool_registry().registry
@@ -65,22 +65,20 @@ def test_market_data_intent_resolves_to_provider_visible_mcp_tools(
     policy_result = load_stage_policy(agents_root, "market_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    assert tools == ("claw_get_market_pack",)
-    for unexpected_tool in ("market_market_data_pack", "us_market_data_pack", "get_stock_data", "get_indicators"):
-        assert unexpected_tool not in tools
+    assert tools == ("claw_request_data",)
     assert "market.stock_price" not in tools
     assert "market.techlab_analyze" not in tools
     assert "openviking_write_material" not in tools
 
 
-def test_crypto_market_data_intent_resolves_to_single_compact_market_pack(agents_root: Path) -> None:
+def test_crypto_market_data_intent_resolves_to_data_need_tool(agents_root: Path) -> None:
     registry = load_tool_registry().registry
     assert registry is not None
 
     policy_result = load_stage_policy(agents_root, "market_analyst", "CRYPTO")
     assert policy_result.ok is True and policy_result.policy is not None
     assert policy_result.policy.tool_intents == ("crypto_market_data",)
-    assert resolve_tools(policy_result.policy, registry) == ("claw_get_market_pack",)
+    assert resolve_tools(policy_result.policy, registry) == ("claw_request_data",)
 
 
 def test_crypto_formal_workers_are_approved(agents_root: Path) -> None:
@@ -95,10 +93,10 @@ def test_crypto_frontline_tool_policy_matches_current_real_tool_boundary(agents_
     assert registry is not None
 
     expected = {
-        "market_analyst": (("crypto_market_data",), ("claw_get_market_pack",)),
-        "fundamental_analyst": (("crypto_fundamentals_data",), ("claw_get_fundamental_pack",)),
-        "news_analyst": (("crypto_news_data",), ("claw_get_news_pack",)),
-        "social_analyst": (("crypto_social_sentiment",), ("claw_get_social_pack",)),
+        "market_analyst": (("crypto_market_data",), ("claw_request_data",)),
+        "fundamental_analyst": (("crypto_fundamentals_data",), ("claw_request_data",)),
+        "news_analyst": (("crypto_news_data",), ("claw_request_data",)),
+        "social_analyst": (("crypto_social_sentiment",), ("claw_request_data",)),
     }
     for worker_id, (expected_intents, expected_tools) in expected.items():
         policy_result = load_stage_policy(agents_root, worker_id, "CRYPTO")
@@ -113,10 +111,10 @@ def test_hk_frontline_tool_policy_matches_current_real_tool_boundary(agents_root
     assert registry is not None
 
     expected = {
-        "market_analyst": (("hk_market_data",), ("claw_get_market_pack",)),
-        "fundamental_analyst": (("hk_fundamentals_data",), ("claw_get_fundamental_pack",)),
-        "news_analyst": (("hk_news_data",), ("claw_get_news_pack",)),
-        "social_analyst": (("hk_social_sentiment",), ("claw_get_social_pack",)),
+        "market_analyst": (("hk_market_data",), ("claw_request_data",)),
+        "fundamental_analyst": (("hk_fundamentals_data",), ("claw_request_data",)),
+        "news_analyst": (("hk_news_data",), ("claw_request_data",)),
+        "social_analyst": (("hk_social_sentiment",), ("claw_request_data",)),
     }
     for worker_id, (expected_intents, expected_tools) in expected.items():
         policy_result = load_stage_policy(agents_root, worker_id, "HK")
@@ -152,9 +150,7 @@ def test_news_analyst_must_include_company_and_macro_news(agents_root: Path, pro
     policy_result = load_stage_policy(agents_root, "news_analyst", profile)
     assert policy_result.ok is True and policy_result.policy is not None
     tools = resolve_tools(policy_result.policy, registry)
-    assert tools == ("claw_get_news_pack",)
-    for unexpected_tool in ("news_news_data_pack", "us_news_data_pack", "get_news", "get_global_news"):
-        assert unexpected_tool not in tools
+    assert tools == ("claw_request_data",)
 
 
 def test_unknown_openviking_access_fails() -> None:
@@ -220,7 +216,7 @@ def test_missing_openviking_tool_mapping_fails() -> None:
 
 def test_social_visible_tools_validator_passes_for_exact_approved_set() -> None:
     result = SOCIAL_POLICY_MODULE.validate_social_visible_tools(
-        ["claw_get_social_pack"]
+        ["claw_request_data"]
     )
     assert result.ok is True
     assert result.code is None
@@ -229,7 +225,7 @@ def test_social_visible_tools_validator_passes_for_exact_approved_set() -> None:
 def test_social_visible_tools_validator_fails_for_unapproved_extra_tool() -> None:
     result = SOCIAL_POLICY_MODULE.validate_social_visible_tools(
         [
-            "claw_get_social_pack",
+            "claw_request_data",
             "openviking_write_material",
             "stock_hot_keyword_em",
         ]

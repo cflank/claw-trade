@@ -6,25 +6,25 @@ skills:
     workers:
       - fundamental_analyst
     tool_exports:
-      - claw_get_fundamental_pack
+      - claw_request_data
   - path: cn-a-fundamental-data/SKILL.md
     skill_id: cn-a-fundamental-data
     skill_version: 0.1.0
     workers:
       - fundamental_analyst
     tool_exports:
-      - claw_get_fundamental_pack
+      - claw_request_data
   - path: hk-fundamental-data/SKILL.md
     skill_id: hk-fundamental-data
     skill_version: 0.1.0
     workers:
       - fundamental_analyst
     tool_exports:
-      - claw_get_fundamental_pack
+      - claw_request_data
   - path: crypto-fundamental-data/SKILL.md
     skill_id: crypto-fundamental-data
     skill_version: 0.1.0
     workers:
       - fundamental_analyst
     tool_exports:
-      - claw_get_fundamental_pack
+      - claw_request_data

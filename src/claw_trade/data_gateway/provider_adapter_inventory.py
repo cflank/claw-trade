@@ -56,6 +56,7 @@ _INTERNAL_SOURCE_CATALOG: tuple[SourceCatalogEntry, ...] = (
 _PROVIDER_SOURCE_MAPPINGS: tuple[ProviderSourceMapping, ...] = (
     ProviderSourceMapping("cn_a_primary", ("tushare",), "Tushare daily A-share market adapter"),
     ProviderSourceMapping("cn_a_tushare_fundamental", ("tushare",), "Tushare A-share financial, flow, filing, and interaction adapters"),
+    ProviderSourceMapping("cn_a_tushare_realtime", ("tushare",), "Tushare SDK realtime A-share quote and order book adapter"),
     ProviderSourceMapping("cn_a_akshare_social_news", ("akshare",), "AKShare A-share market, news, social, and flow adapters"),
     ProviderSourceMapping("cn_a_astock_signal_social", ("tonghuashun", "baidu_finance"), "A-share signal adapter backed by Tonghuashun and Baidu Finance paths"),
     ProviderSourceMapping("cn_a_baostock_market", ("baostock",), "BaoStock A-share market and financial adapters"),
@@ -144,7 +145,7 @@ def _adapter_from_capability(capability: Any) -> ImplementedAdapterCapability:
         data_type=str(capability.data_type),
         source_role=str(capability.source_role),
         granularities=_strings(capability.supported_granularities),
-        fields=_strings(capability.coverage_fields),
+        fields=_strings(capability.fields),
         credential_required=bool(capability.credential_required),
         http_visibility=str(capability.http_visibility),
         can_be_formal_fact_source=bool(capability.can_be_formal_fact_source),

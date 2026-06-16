@@ -6,7 +6,7 @@ from hashlib import sha256
 from typing import Any, Literal, Mapping
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Market(str, Enum):
@@ -37,6 +37,7 @@ class GapReason(str, Enum):
     PROVIDER_ERROR = "provider_error"
     PROVIDER_EMPTY = "provider_empty"
     PARSER_MISSING = "parser_missing"
+    # Legacy compatibility only. New provider-empty runtime gaps must use PROVIDER_EMPTY.
     EMPTY_RESULT = "empty_result"
     WAREHOUSE_MISSING = "warehouse_missing"
     WAREHOUSE_STALE = "warehouse_stale"
@@ -50,7 +51,7 @@ class GapReason(str, Enum):
     SHARED_RESULT = "shared_result"
     CACHED_EMPTY = "cached_empty"
     COOLDOWN_SKIPPED = "cooldown_skipped"
-    RESOLVER_MAPPING_MISSING = "resolver_mapping_missing"
+    CATALOG_MATCH_MISSING = "catalog_match_missing"
     NOT_APPLICABLE = "not_applicable"
     INVALID_REQUEST = "invalid_request"
     SDK_HTTP_UNKNOWN = "sdk_http_unknown"
@@ -62,6 +63,7 @@ class FetchStatus(str, Enum):
     ERROR = "error"
     RATE_LIMITED = "rate_limited"
     CREDENTIAL_MISSING = "credential_missing"
+    PERMISSION_DENIED = "permission_denied"
     NOT_APPLICABLE = "not_applicable"
     SDK_HTTP_UNKNOWN = "sdk_http_unknown"
 
@@ -133,6 +135,8 @@ class LicensePolicy(BaseModel):
 
 
 class DataRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     request_id: str
     market: Market
     symbol_id: str | None = None
@@ -149,7 +153,6 @@ class DataRequest(BaseModel):
     date_range_start: date | datetime | None = None
     date_range_end: date | datetime | None = None
     freshness_policy: str
-    source_role_required: SourceRole | None = None
     consumer: Literal["report", "select", "ui_probe", "price_alert", "maintenance"]
     consumer_id: str
     as_of: datetime
@@ -284,6 +287,8 @@ class DataResult(BaseModel):
 
 
 class WarehouseCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     request_id: str
     market: Market
     symbol_id: str | None = None
@@ -296,7 +301,6 @@ class WarehouseCheck(BaseModel):
     freshness_policy: str
     timezone: str
     calendar: str
-    source_role_required: SourceRole | None = None
     as_of: datetime | None = None
 
 
@@ -342,6 +346,8 @@ class QueryPlan(BaseModel):
 
 
 class ProviderCapability(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider_id: str
     plugin_version: str
     endpoint_id: str
@@ -349,7 +355,7 @@ class ProviderCapability(BaseModel):
     data_type: str
     source_role: SourceRole
     supported_granularities: tuple[str, ...]
-    coverage_fields: tuple[str, ...]
+    fields: tuple[str, ...]
     priority_rank: int
     credential_required: bool
     credential_names: tuple[str, ...] = ()
@@ -399,107 +405,20 @@ class ProviderCandidate(BaseModel):
     deadline_at: datetime | None = None
 
 
-class MergeItem(BaseModel):
-    request_id: str
-    symbol_ids: tuple[str, ...]
-    universe_ref: str | None = None
-    date_range_start: date | datetime | None = None
-    date_range_end: date | datetime | None = None
-    fields: tuple[str, ...]
-    required_level: RequiredLevel
-    exchange: str | None = None
-    currency: str | None = None
-    timezone: str | None = None
-    calendar: str | None = None
-    base_asset: str | None = None
-    quote_asset: str | None = None
-    deadline_at: datetime | None = None
-
-
-class MergeGroup(BaseModel):
-    provider_id: str
-    endpoint_id: str
-    market: Market
-    data_type: str
-    granularity: str
-    source_role: SourceRole
-    priority_rank: int
-    request_ids: tuple[str, ...]
-    symbol_ids: tuple[str, ...]
-    universe_ref: str | None = None
-    date_range_start: date | datetime | None = None
-    date_range_end: date | datetime | None = None
-    exchange: str | None = None
-    currency: str | None = None
-    timezone: str | None = None
-    calendar: str | None = None
-    base_asset: str | None = None
-    quote_asset: str | None = None
-    fields_union: tuple[str, ...]
-    required_level: RequiredLevel = RequiredLevel.REQUIRED
-    items: tuple[MergeItem, ...]
-    plan_id: str = "plan-unknown"
-    deadline_at: datetime | None = None
-
-
-class ProviderBatchPlan(BaseModel):
-    batch_id: str
-    plan_id: str
-    provider_id: str
-    endpoint_id: str
-    market: Market
-    data_type: str
-    granularity: str
-    request_ids: tuple[str, ...]
-    symbol_ids: tuple[str, ...]
-    universe_ref: str | None = None
-    date_range_start: date | datetime | None = None
-    date_range_end: date | datetime | None = None
-    exchange: str | None = None
-    currency: str | None = None
-    timezone: str | None = None
-    calendar: str | None = None
-    base_asset: str | None = None
-    quote_asset: str | None = None
-    fields_union: tuple[str, ...]
-    capability_fields: tuple[str, ...] = ()
-    params_redacted: dict[str, Any]
-    priority_rank: int
-    required_level: RequiredLevel
-    cache_key: str
-    rate_limit_key: str
-    cooldown_key: str | None = None
-    rate_limit_policy: Any | None = None
-    http_visibility: HttpVisibility = HttpVisibility.MANAGED_HTTP
-    single_flight_key: str
-    lease_ttl_seconds: int = 30
-    wait_timeout_seconds: int = 1
-    deadline_at: datetime | None = None
-    provider_config_version: str
-    license_policy: Any | None = None
-    as_of: datetime
-
-    @model_validator(mode="after")
-    def validate_batch(self) -> "ProviderBatchPlan":
-        if not self.request_ids:
-            raise ValueError("request_ids 不能为空")
-        if self.required_level == RequiredLevel.NOT_APPLICABLE:
-            raise ValueError("not_applicable 不能进入真实 batch 计划")
-        if self.lease_ttl_seconds <= 0:
-            raise ValueError("lease_ttl_seconds 必须大于 0")
-        if self.wait_timeout_seconds < 0:
-            raise ValueError("wait_timeout_seconds 必须大于等于 0")
-        if self.deadline_at is not None and (self.deadline_at.tzinfo is None or self.deadline_at.utcoffset() is None):
-            raise ValueError("deadline_at 必须有 timezone")
-        return self
-
-
 class HttpObservation(BaseModel):
     request_key: str
+    method: str | None = None
+    host: str | None = None
+    path: str | None = None
+    request_headers_redacted: dict[str, str] = Field(default_factory=dict)
     sent_at: datetime | None = None
     status_code: int | None = None
+    response_headers_redacted: dict[str, str] | None = None
+    response_body_hash: str | None = None
     error_code: str | None = None
+    quota_signal: str | None = None
     elapsed_ms: int | None = None
+    sdk_internal_unknown: bool = False
 
 
 class FetchResult(BaseModel):
@@ -571,7 +490,7 @@ class FetchResult(BaseModel):
             market=_coerce_market(getattr(batch, "market", Market.CN_A)),
             symbol_ids=symbol_ids,
             status=FetchStatus.EMPTY,
-            error_code="empty_result",
+            error_code="provider_empty",
             error_message=str(error) if error else None,
             row_count=0,
             http_observations=_coerce_http_observations(http_observations),
@@ -582,7 +501,7 @@ class FetchResult(BaseModel):
         cls,
         batch: Any,
         *,
-        status: Literal["error", "rate_limited", "credential_missing", "sdk_http_unknown", "not_applicable"],
+        status: Literal["error", "rate_limited", "credential_missing", "permission_denied", "sdk_http_unknown", "not_applicable"],
         error: Exception | None = None,
         http_observations: tuple[Any, ...] = (),
     ) -> "FetchResult":
@@ -682,18 +601,6 @@ class IngestResult(BaseModel):
             gaps=(DataGap.by_reason(reason),),
             remote_success=False,
         )
-
-
-class DataPlan(BaseModel):
-    plan_id: str
-    request_ids: tuple[str, ...]
-    query_plan: QueryPlan
-    warehouse_decisions: tuple[dict[str, Any], ...] = ()
-    gaps: tuple[DataGap, ...] = ()
-    provider_candidates: tuple[dict[str, Any], ...] = ()
-    merge_groups: tuple[dict[str, Any], ...] = ()
-    provider_batch_plans: tuple[ProviderBatchPlan, ...] = ()
-    created_at: datetime
 
 
 class WarehouseResult(BaseModel):
@@ -802,10 +709,20 @@ def _coerce_http_observations(raw: tuple[Any, ...]) -> tuple[HttpObservation, ..
         observations.append(
             HttpObservation(
                 request_key=str(getattr(item, "request_key", "")),
+                method=getattr(item, "method", None),
+                host=getattr(item, "host", None),
+                path=getattr(item, "path", None),
+                request_headers_redacted=dict(getattr(item, "request_headers_redacted", None) or {}),
                 sent_at=getattr(item, "sent_at", None),
                 status_code=getattr(item, "status_code", None),
+                response_headers_redacted=dict(getattr(item, "response_headers_redacted", None) or {})
+                if getattr(item, "response_headers_redacted", None) is not None
+                else None,
+                response_body_hash=getattr(item, "response_body_hash", None),
                 error_code=getattr(item, "error_code", None),
+                quota_signal=getattr(item, "quota_signal", None),
                 elapsed_ms=getattr(item, "elapsed_ms", None),
+                sdk_internal_unknown=bool(getattr(item, "sdk_internal_unknown", False)),
             )
         )
     return tuple(observations)

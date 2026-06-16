@@ -504,14 +504,14 @@ def test_export_final_report_copies_chart_image_to_reports_assets_and_uses_relat
     assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\nreport-asset"
 
 
-def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path: Path) -> None:
-    state = _sample_state(tmp_path, run_id="run-pack-tool-assets")
+def test_export_final_report_discovers_frontline_data_need_tool_chart_assets(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-data-need-tool-assets")
     manifest, reader = _build_manifest_and_reader(state)
     source_chart = (
         state.run_dir
         / "calls"
         / "call-01"
-        / "pack-tool-evidence"
+        / "data-need-tool-evidence"
         / "techlab"
         / "charts-local"
         / "runs"
@@ -521,7 +521,7 @@ def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path
         / "600519.SH_indicator_panels.png"
     )
     source_chart.parent.mkdir(parents=True, exist_ok=True)
-    source_chart.write_bytes(b"\x89PNG\r\n\x1a\npack-tool-chart")
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\ndata-need-tool-chart")
 
     result = export_final_report(state=state, manifest=manifest, openviking=reader)
 
@@ -533,7 +533,7 @@ def test_export_final_report_discovers_frontline_pack_tool_chart_assets(tmp_path
 
     copied_asset = state.run_dir / "reports" / "assets" / "market-01-600519.SH_indicator_panels.png"
     assert copied_asset.exists()
-    assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\npack-tool-chart"
+    assert copied_asset.read_bytes() == b"\x89PNG\r\n\x1a\ndata-need-tool-chart"
     assert not source_chart.exists()
 
 
@@ -590,7 +590,7 @@ def test_export_final_report_passes_without_chart_asset_when_market_report_has_r
     market_material = manifest.materials_for_stage(Stage.FRONTLINE, run_id=state.run_id)[0]
     reader._content_by_material_id[market_material.material_id] = (
         "# Market Analysis Report - AR\n\n"
-        "The market data pack returned insufficient data.\n"
+        "The market data tool returned insufficient data.\n"
         "| OHLCV rows | 0 (needs >=20 for chart generation) |\n"
         "No supported market claims are made without usable price data."
     ).encode("utf-8")

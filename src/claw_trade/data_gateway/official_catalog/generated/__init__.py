@@ -1,0 +1,2 @@
+"""Generated official endpoint snapshots."""
+

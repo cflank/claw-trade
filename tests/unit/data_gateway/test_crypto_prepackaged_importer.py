@@ -55,11 +55,6 @@ def _crypto_check(**overrides: object) -> WarehouseCheck:
         "freshness_policy": "warehouse_only",
         "timezone": CRYPTO_TIMEZONE,
         "calendar": CRYPTO_CALENDAR,
-        "exchange": CRYPTO_EXCHANGE,
-        "currency": "USDT",
-        "base_asset": "SOL",
-        "quote_asset": "USDT",
-        "source_role_required": "built_in_public",
         "as_of": datetime(2026, 6, 2, tzinfo=UTC),
     }
     payload.update(overrides)
@@ -84,7 +79,6 @@ def _crypto_request(**overrides: object) -> DataRequest:
         "currency": "USDT",
         "base_asset": "SOL",
         "quote_asset": "USDT",
-        "source_role_required": "built_in_public",
         "consumer": "report",
         "consumer_id": "market_analyst",
         "as_of": datetime(2026, 6, 2, tzinfo=UTC),

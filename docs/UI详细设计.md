@@ -1993,7 +1993,7 @@ toPdfExportForUser(record)
 | ChannelBridge | 调 OpenClaw Channel 状态、配置、发送 | 不保存 Channel 密钥、不实现协议 | OpenClawGatewayClient | `getChannelStatus`, `saveChannelConfigViaOpenClaw`, `sendReportFileViaChannel` | `mapOpenClawChannelStatus`, `resolveClawBotChannelId` | OpenClaw 错误翻译 | 状态查询、文件能力未知时返回明确错误 |
 | SchedulerService | 定时报告保存、tick 到点入队 | 不直接执行报告、不支持每小时 | ReportTaskQueue、时钟 | `createScheduledReport`, `tickScheduledReports`, `runScheduledReportNow` | `computeNextRunAt`, `rejectUnsupportedFrequency` | 队列满保留下次重试说明 | 每天/每周、立即执行、队列串行 |
 | PriceAlertService | 价格提醒保存、检查、通知、触发后关闭 | 不生成报告、不做 AI 解释 | 数据源价格查询、ChannelBridge | `createPriceAlert`, `evaluatePriceAlert`, `runPriceAlertNow` | `fetchLatestPrice`, `compareCondition` | 数据源失败可读提醒 | 阈值、涨跌幅、触发关闭 |
-| DataSourceSettingsService | 数据源实例增删改、replace-only 密钥、首版后端受控写入 `.env.local` | 不支持未知 HTTP/JSON、不让前端或 controller 直接读写 `.env.local` | DataSourceHealthService、env allowlist writer | `listDataSources`, `saveDataSourceInstance`, `testDataSource` | `validateSupportedType`, `maskSecret`, `buildProviderManifest`, `writeAllowedEnvKeys` | 测试失败不可启用 | 支持类型白名单、密钥掩码、env 写入原子性 |
+| DataSourceSettingsService | 数据源实例增删改、replace-only 密钥、首版后端受控写入 `.env.local` | 不支持未知 HTTP/JSON、不让前端或 controller 直接读写 `.env.local` | DataSourceHealthService、env allowlist writer | `listDataSources`, `saveDataSourceInstance`, `testDataSource` | `validateSupportedType`, `maskSecret`, `buildProviderManifest`, `writeAllowedEnvKeys` | 测试失败不可启用 | 支持类型硬编码限制、密钥掩码、env 写入原子性 |
 | DataSourceHealthService | 聚合本次数据源健康、失效提醒 | 不提醒未配置/未使用/关闭来源 | 运行尝试记录、run plan、instances | `collectConfiguredFailedDataSources` | `isConfiguredFailure`, `translateProviderStatus` | 状态缺失只进日志 | 提醒判定四条件 |
 | LlmSettingsBridge | 模型设置入口、调 OpenClaw 保存和测试 | 不保存真实 LLM 密钥、不直接调 provider | OpenClaw config/models APIs | `loadLlmSettings`, `saveLlmConfigViaOpenClaw`, `testLlmViaOpenClaw` | `buildConfigPatch`, `restoreMaskedSecret` | schema/版本冲突提示重试 | 密钥 replace-only、真实密钥不落 claw-trade |
 | PdfExportService | Markdown 到 PDF 文件 | 不改写 Markdown、不影响报告保存 | ReportRepository、pdfkit/wkhtmltopdf、weasyprint | `exportSavedMarkdownToPdf` | `cleanMarkdownForPdf`, `renderMarkdownHtml`, `writePdfFile` | PDF 失败记录状态 | Markdown 原文 hash 不变、中文横排 |
@@ -3292,7 +3292,7 @@ function evaluatePriceAlert(alertId, requestId) {
 
 输出：`DataSourceInstanceForUser`
 
-前置条件：类型在白名单内；启用前必须测试通过。
+前置条件：类型在硬编码限制内；启用前必须测试通过。
 
 后置条件：密钥只替换不回显；未知 HTTP/JSON 被拒绝。
 

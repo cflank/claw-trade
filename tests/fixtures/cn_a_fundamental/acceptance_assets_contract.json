@@ -3,7 +3,7 @@
     "visible_tools",
     "provider_request",
     "tool_calls",
-    "data_pack_raw_output",
+    "data_result_raw_output",
     "provider_attempts",
     "field_sources",
     "missing_fields",

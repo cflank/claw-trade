@@ -41,7 +41,7 @@ def test_dlt14_design_lists_minimum_closure_order() -> None:
 def test_dlt14_task_boundary_rejects_out_of_scope_completion_evidence() -> None:
     text = _read(TASK_LIST)
     dlt14_row_pattern = re.compile(
-        r"DLT-14[：:]\s*最小(?:实现)?闭环顺序.*?不得先实现 report pack、select plan、UI display、OpenViking writer 或 truthfulness guard",
+        r"DLT-14[：:]\s*最小(?:实现)?闭环顺序.*?不得先实现 report 数据工具、select 控制面、UI display、OpenViking writer 或 truthfulness guard",
         re.DOTALL,
     )
     assert dlt14_row_pattern.search(text), "DLT-14 boundary line missing from task list"

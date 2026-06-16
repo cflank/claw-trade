@@ -6,4 +6,4 @@ skills:
     workers:
       - hot_money_tracker
     tool_exports:
-      - claw_get_hot_money_pack
+      - claw_request_data

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
-from typing import Any, Protocol
+from time import sleep
+from types import SimpleNamespace
+from typing import Any, Callable, Protocol
 
 from . import GateDecision, ProviderResultCache, ResultRefs
 from .rate_limiter import RateLimiter
 from .single_flight import SingleFlight
 
 _LOCAL_QUOTA_SIGNALS = {"local_rate_limited", "rate_limited_by_tool_budget"}
+_MATERIAL_RESULT_GAP_REASONS = {"field_missing", "date_range_missing", "data_integrity_failed", "granularity_mismatch"}
 
 
 class GateBatchPlan(Protocol):
@@ -19,8 +22,8 @@ class GateBatchPlan(Protocol):
     http_visibility: Any
     single_flight_key: str
     lease_ttl_seconds: int
-    wait_timeout_seconds: int
     deadline_at: datetime | None
+    earliest_start_at: datetime | None
 
 
 class ExecutionGate:
@@ -30,10 +33,14 @@ class ExecutionGate:
         cache: ProviderResultCache,
         rate_limiter: RateLimiter,
         single_flight: SingleFlight,
+        now_fn: Callable[[], datetime] | None = None,
+        sleep_fn: Callable[[float], None] | None = None,
     ) -> None:
         self.cache = cache
         self.rate_limiter = rate_limiter
         self.single_flight = single_flight
+        self._now = now_fn or (lambda: datetime.now(UTC))
+        self._sleep = sleep_fn or sleep
 
     def enter(self, batch: GateBatchPlan) -> GateDecision:
         cache_lookup = self.cache.get(batch.cache_key)
@@ -41,14 +48,6 @@ class ExecutionGate:
             return GateDecision.cache_hit(cache_lookup.entry.refs)
         if cache_lookup.state == "fresh_empty" and cache_lookup.entry is not None:
             return GateDecision.cached_empty(cache_lookup.entry.refs)
-
-        scheduler_skip_reason = getattr(batch, "scheduler_skip_reason", None)
-        if scheduler_skip_reason:
-            retry_after = getattr(batch, "scheduler_retry_after", None)
-            return GateDecision.rate_limited(
-                retry_after if isinstance(retry_after, datetime) else None,
-                str(scheduler_skip_reason),
-            )
 
         cooldown_key = _cooldown_key(batch)
         if cooldown_key != batch.rate_limit_key or _rate_limit_at_http(batch):
@@ -60,7 +59,40 @@ class ExecutionGate:
             if not cooldown.allowed:
                 return GateDecision.cooldown_skipped(cooldown.retry_after, cooldown.reason or "cooldown_skipped")
 
-        if not _rate_limit_at_http(batch):
+        flight = self.single_flight.acquire(batch.single_flight_key, batch.lease_ttl_seconds)
+        if flight.kind == "shared" and flight.published is not None:
+            return _shared_result_decision(flight.published)
+        if flight.kind == "waiter":
+            wait_budget_seconds = _single_flight_wait_budget_seconds(batch)
+            if wait_budget_seconds <= 0:
+                return GateDecision.rate_limited(_deadline_at(batch), "rate_limited_by_tool_budget")
+            try:
+                published = self.single_flight.wait(batch.single_flight_key, wait_budget_seconds)
+            except TimeoutError:
+                return GateDecision.rate_limited(_deadline_at(batch), "rate_limited_by_tool_budget")
+            return _shared_result_decision(published)
+
+        if flight.kind != "owner" or flight.owner_token is None:
+            raise RuntimeError("single-flight returned unsupported decision")
+
+        scheduler_skip_reason = getattr(batch, "scheduler_skip_reason", None)
+        if scheduler_skip_reason:
+            retry_after = getattr(batch, "scheduler_retry_after", None)
+            decision = GateDecision.rate_limited(
+                retry_after if isinstance(retry_after, datetime) else None,
+                str(scheduler_skip_reason),
+            )
+            self._publish_owner_gate_failure(batch, flight.owner_token, decision.reason or "rate_limited")
+            return decision
+
+        earliest = _earliest_start_at(batch)
+        if earliest is not None:
+            wait_decision = self._wait_until_earliest_start(batch=batch, earliest_start_at=earliest)
+            if wait_decision is not None:
+                self._publish_owner_gate_failure(batch, flight.owner_token, wait_decision.reason or "rate_limited")
+                return wait_decision
+
+        if not _rate_limit_at_http(batch) and not _rate_limit_pre_reserved(batch):
             quota = self.rate_limiter.reserve(
                 batch.rate_limit_key,
                 batch.rate_limit_policy,
@@ -68,27 +100,23 @@ class ExecutionGate:
             )
             if not quota.allowed:
                 if quota.reason == "cooldown_skipped":
+                    self._publish_owner_gate_failure(batch, flight.owner_token, quota.reason or "cooldown_skipped")
                     return GateDecision.cooldown_skipped(quota.retry_after, quota.reason or "cooldown_skipped")
-                return GateDecision.rate_limited(quota.retry_after, quota.reason or "rate_limited")
+                decision = GateDecision.rate_limited(quota.retry_after, quota.reason or "rate_limited")
+                self._publish_owner_gate_failure(batch, flight.owner_token, decision.reason or "rate_limited")
+                return decision
 
-        flight = self.single_flight.acquire(batch.single_flight_key, batch.lease_ttl_seconds)
-        if flight.kind == "shared" and flight.published is not None:
-            return GateDecision.shared_result(flight.published.refs)
-        if flight.kind == "waiter":
-            published = self.single_flight.wait(batch.single_flight_key, batch.wait_timeout_seconds)
-            return GateDecision.shared_result(published.refs)
-        if flight.kind == "owner" and flight.owner_token is not None:
-            return GateDecision.owner(flight.owner_token)
-        raise RuntimeError("single-flight returned unsupported decision")
+        return GateDecision.owner(flight.owner_token)
 
-    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: Any) -> bool:
+    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: Any, *, batch: Any | None = None) -> bool:
         published = self.single_flight.publish(single_flight_key, owner_token, ingest)
         if not published:
             return False
         now = datetime.now(UTC)
-        fresh_until = getattr(ingest, "cache_fresh_until", None) or (now + timedelta(seconds=60))
-        stale_until = getattr(ingest, "cache_stale_until", None) or (now + timedelta(seconds=300))
-        if ingest.status in {"ingested", "partial"} and ingest.dataset_refs:
+        default_fresh_seconds, default_stale_seconds = _default_cache_window_seconds(batch)
+        fresh_until = getattr(ingest, "cache_fresh_until", None) or (now + timedelta(seconds=default_fresh_seconds))
+        stale_until = getattr(ingest, "cache_stale_until", None) or (now + timedelta(seconds=default_stale_seconds))
+        if ingest.status in {"ingested", "partial"} and (ingest.dataset_refs or ingest.raw_refs) and not _has_material_result_gap(ingest):
             refs = ResultRefs(
                 dataset_refs=tuple(ingest.dataset_refs),
                 raw_refs=tuple(ingest.raw_refs),
@@ -100,7 +128,10 @@ class ExecutionGate:
                 fresh_until=fresh_until,
                 stale_until=stale_until,
             )
-        elif ingest.status in {"failed", "partial"} and any(getattr(g, "reason", None) == "empty_result" for g in ingest.gaps):
+        elif ingest.status in {"failed", "partial"} and any(
+            str(getattr(getattr(g, "reason", None), "value", getattr(g, "reason", ""))) in {"provider_empty", "empty_result"}
+            for g in ingest.gaps
+        ):
             refs = ResultRefs(
                 dataset_refs=(),
                 raw_refs=tuple(ingest.raw_refs),
@@ -138,6 +169,32 @@ class ExecutionGate:
         self.rate_limiter.mark_cooldown(_cooldown_key(batch), until=until, reason="provider_429")
         return self.rate_limiter.check_cooldown(_cooldown_key(batch), policy, deadline_at=deadline_at).allowed
 
+    def _publish_owner_gate_failure(self, batch: GateBatchPlan, owner_token: str, reason: str) -> None:
+        self.single_flight.publish(
+            batch.single_flight_key,
+            owner_token,
+            SimpleNamespace(
+                status="failed",
+                dataset_refs=(),
+                raw_refs=(),
+                attempt_refs=(),
+                gaps=({"reason": reason},),
+            ),
+        )
+
+    def _wait_until_earliest_start(self, *, batch: GateBatchPlan, earliest_start_at: datetime) -> GateDecision | None:
+        earliest_start_at = _normalize_datetime(earliest_start_at)
+        now = _normalize_datetime(self._now())
+        if earliest_start_at <= now:
+            return None
+        deadline_at = _deadline_at(batch)
+        if deadline_at is not None and earliest_start_at > deadline_at:
+            return GateDecision.rate_limited(earliest_start_at, "rate_limited_by_tool_budget")
+        wait_seconds = max((earliest_start_at - now).total_seconds(), 0)
+        if wait_seconds > 0:
+            self._sleep(wait_seconds)
+        return None
+
 
 def _cooldown_key(batch: GateBatchPlan) -> str:
     return str(getattr(batch, "cooldown_key", None) or batch.rate_limit_key)
@@ -147,9 +204,36 @@ def _rate_limit_at_http(batch: GateBatchPlan) -> bool:
     return _as_string(getattr(batch, "http_visibility", "") or "") == "managed_http"
 
 
+def _rate_limit_pre_reserved(batch: GateBatchPlan) -> bool:
+    return isinstance(getattr(batch, "rate_limit_reserved_at", None), datetime)
+
+
 def _deadline_at(batch: GateBatchPlan) -> datetime | None:
     value = getattr(batch, "deadline_at", None)
     return value if isinstance(value, datetime) else None
+
+
+def _earliest_start_at(batch: GateBatchPlan) -> datetime | None:
+    value = getattr(batch, "earliest_start_at", None)
+    return value if isinstance(value, datetime) else None
+
+
+def _single_flight_wait_budget_seconds(batch: GateBatchPlan) -> int:
+    deadline_at = _deadline_at(batch)
+    if deadline_at is None:
+        return 0
+    return int(max((deadline_at - datetime.now(UTC)).total_seconds(), 0))
+
+
+def _default_cache_window_seconds(batch: Any | None) -> tuple[int, int]:
+    if batch is None:
+        return 60, 300
+    granularity = _as_string(getattr(batch, "granularity", "") or "").strip().lower()
+    if granularity in {"realtime", "intraday", "1m", "5m", "15m", "30m"}:
+        return 300, 900
+    if granularity in {"hourly", "1h", "60m"}:
+        return 600, 1800
+    return 1800, 3600
 
 
 def _as_string(value: Any) -> str:
@@ -157,6 +241,47 @@ def _as_string(value: Any) -> str:
     if isinstance(enum_value, str):
         return enum_value
     return str(value)
+
+
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    if value.tzinfo != UTC:
+        return value.astimezone(UTC)
+    return value
+
+
+def _shared_result_decision(published: Any) -> GateDecision:
+    refs = published.refs
+    return GateDecision(
+        kind="shared_result",
+        refs=refs,
+        evidence_refs=refs.attempt_refs,
+        reason=_shared_result_reason(published),
+    )
+
+
+def _shared_result_reason(published: Any) -> str | None:
+    gap_summary = tuple(getattr(published, "gap_summary", ()) or ())
+    for item in gap_summary:
+        if isinstance(item, dict):
+            reason = item.get("reason")
+        else:
+            reason = getattr(item, "reason", None)
+        text = _as_string(reason).strip()
+        if text and text != "None":
+            return text
+    error_summary = str(getattr(published, "error_summary", "") or "").strip()
+    return error_summary or None
+
+
+def _has_material_result_gap(ingest: Any) -> bool:
+    for gap in tuple(getattr(ingest, "gaps", ()) or ()):
+        raw_reason = getattr(gap, "reason", "")
+        reason = str(getattr(raw_reason, "value", raw_reason))
+        if reason in _MATERIAL_RESULT_GAP_REASONS:
+            return True
+    return False
 
 
 def _cooldown_until(*, fetch_result: Any, batch: GateBatchPlan, now: datetime) -> datetime | None:

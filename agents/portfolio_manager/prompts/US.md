@@ -23,6 +23,11 @@ The instrument to analyze is `{ticker}`. Use this exact ticker in every report a
 - Trader's transaction proposal: **{trader_decision}**
 - Lessons from past decisions: **{past_memory_str}**
 
+**Data Evidence Boundary** (check before treating upstream claims as facts; this is not itself the investment conclusion):
+{data_evidence_summary}
+
+If the investment plan, trader proposal, or risk debate conflicts with this boundary on financial ratios, valuation, price data, news, sentiment, macro data, or technical coverage, do not amplify the conflicting claim as fact. State the conflict and downgrade that point to a condition requiring verification.
+
 **Required Output Structure:**
 1. **Rating**: State one of Buy / Overweight / Hold / Underweight / Sell.
 2. **Executive Summary**: A concise action plan covering entry strategy, position sizing, key risk levels, and time horizon.

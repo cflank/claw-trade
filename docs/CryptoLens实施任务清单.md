@@ -1,5 +1,9 @@
 # CryptoLens 实施任务清单
 
+> **2026-06-13 状态修正**
+>
+> 本文中“固定 market 数据包 / 历史数据入口构建 / 旧历史请求计划”相关任务已被 `docs/限流重组.md` 取代。CryptoLens 只消费数据层取回并留证的数据；CRYPTO worker 只通过 `claw_request_data` 提交业务数据项和用途，`DataNeed -> planner -> ProviderCallSpec -> 执行闸/限流/入库` 只发生在数据层内部。
+
 状态：实施计划，未代表代码已完成。
 日期：2026-05-18
 来源设计：`docs/CryptoLens接入方案.md`
@@ -12,9 +16,9 @@
 
 - CryptoLens 仍只是迁入 claw-trade 的 CRYPTO 离线指标分析引擎，不是数据源、provider、外部 MCP、独立 worker、trader 或 portfolio_manager 决策器。
 - data_gateway 仍是唯一外部取数入口、唯一 provider 接口层和唯一 provider evidence 记录者；已删除数据网关 本体不是当前目标运行时依赖。
-- CRYPTO worker 仍只通过 `claw_get_market_pack` 获取自然语言 market pack；worker 不直接读取旧 BB MCP、CryptoLens raw JSON、legacy 已删除数据网关 atomic/admin/discovery tools、Mongo raw/cache/debug envelope 或 OpenViking protocol。
+- CRYPTO worker 仍只通过 `claw_request_data` 获取自然语言市场数据结果；worker 不直接读取旧 BB MCP、CryptoLens raw JSON、legacy 已删除数据网关 atomic/admin/discovery tools、Mongo raw/cache/debug envelope 或 OpenViking protocol。
 - CryptoLens analysis 只消费 data_gateway normalized crypto bundle，不出网、不读 provider key、不调用 provider/runtime、不访问 Mongo、不写 BUY/HOLD/SELL、仓位、执行建议、PM rating 或最终投资裁决。
-- Python 控制层只做 plan、dispatch、pack 构建、证据保存和材料搬运，不写 worker 市场分析结论，不改写 PM 最终裁决。
+- Python 控制层只做 plan、dispatch、证据保存和材料搬运，不写 worker 市场分析结论，不改写 PM 最终裁决。
 - 本清单中的测试、import-block 和 live/fresh gate 只验证设计合同，不新增 runtime guard、风格 gate 或投资判断 gate。
 
 成功标准必须可验证：每个任务都要给出文件范围、验收命令或证据文件；不能用 mock/stub/fake/capture-only 证明 live/fresh 完成；不能用当前 canonical BTC final report 代替 CryptoLens 覆盖证据。
@@ -30,8 +34,8 @@
 | T-CL-5 | 扩展 data_gateway CRYPTO provider plan 和 adapters | T-CL-4 | 子域可并行 | market/OHLCV/derivatives/liquidation/onchain/macro/events/AHR999 provider evidence |
 | T-CL-6 | 按旧 BB 纯分析口径 Python 重写 CryptoLens | T-CL-2、T-CL-4 | 可与 T-CL-5 后半并行 | `src/claw_trade/data_gateway/analysis/crypto_lens/**` |
 | T-CL-7 | 实现 CryptoLens adapter、input/output/evidence | T-CL-4、T-CL-6 | 串行于 T-CL-6 后 | `analyze_crypto_lens_data_results`、`crypto_lens_analysis_evidence` / report evidence file |
-| T-CL-8 | 接入 CRYPTO MarketPackBuilder 和图表/readiness | T-CL-5、T-CL-7 | 串行集成 | reader_brief、chart readiness、data gaps、pack audit |
-| T-CL-9 | 验证 OpenClaw tool schema 和 worker 可见边界 | T-CL-8、T-CL-3 | 可与 T-CL-10 并行 | provider payload scan、pack-only schema |
+| T-CL-8 | 接入 CRYPTO 市场数据结果和图表/readiness | T-CL-5、T-CL-7 | 串行集成 | reader_brief、chart readiness、data gaps、data result audit |
+| T-CL-9 | 验证 OpenClaw tool schema 和 worker 可见边界 | T-CL-8、T-CL-3 | 可与 T-CL-10 并行 | provider payload scan、数据工具 schema |
 | T-CL-10 | 闭合 evidence chain 和 OpenViking relation/export 边界 | T-CL-7、T-CL-8 | 可与 T-CL-9 并行 | final report -> HTTP/raw evidence lineage |
 | T-CL-11 | 错误、缓存、缺口、无 silent fallback 合同测试 | T-CL-5、T-CL-8、T-CL-3 | 与 T-CL-9/T-CL-10 部分并行 | failure/cache/data-gap/import-block tests |
 | T-CL-12 | BTC fresh/live 验收和完成判定 | T-CL-9、T-CL-10、T-CL-11 | 串行最后一步 | fixed runtime preflight、live report、provider payload、evidence chain |
@@ -98,15 +102,15 @@
 
 交付：
 
-- import-block 测试覆盖旧 `frontline_data_pack`、旧 `frontline_data_pack.provider_executor`、旧 `crypto_market_data_pack.py`、旧 `bb_crypto_data` MCP、旧 worker-visible tool aliases。
-- tool schema 测试覆盖 data_gateway 模式下 frontline 只暴露 canonical pack tools，下游 worker 不暴露数据工具。
-- report worker 的 model-visible tool schema 只允许 `claw_get_*_pack`；provider/admin/discovery/debug 能力不得进入 report worker model-visible schema。
+- import-block 测试覆盖旧 `frontline_data_result`、旧 `frontline_data_result.provider_executor`、旧 `claw_request_data.py`、旧 `bb_crypto_data` MCP、旧 worker-visible tool aliases。
+- tool schema 测试覆盖 data_gateway 模式下 frontline 只暴露 `claw_request_data` 业务数据工具，下游 worker 不暴露数据工具。
+- report worker 的 model-visible tool schema 只允许 `claw_request_data`；provider/admin/discovery/debug 能力不得进入 report worker model-visible schema。
 - 启动配置中旧 `bb_crypto_data` MCP 不再是目标 report runtime 必需项。
 
 验收：
 
 - `uv run pytest tests/integration/data_gateway/test_old_provider_import_block.py tests/integration/data_gateway/test_mcp_visible_tools.py tests/unit/data_gateway/test_tool_schema.py`
-- 额外扫描证明 data_gateway 模式下没有旧 BB MCP 或 legacy 已删除数据网关 runtime 参与 CRYPTO pack 成功路径。
+- 额外扫描证明 data_gateway 模式下没有旧 BB MCP 或 legacy 已删除数据网关 runtime 参与 CRYPTO 数据成功路径。
 
 ### T-CL-4：data_gateway normalized crypto bundle 合同
 
@@ -154,9 +158,9 @@
 验收：
 
 - 每个 provider call 都写 ProviderAttempt、HTTP evidence、raw evidence、normalized result、data gap/conflict、cache receipt、rate-limit 记录。
-- RunProviderPlan 只做计划，不 prefetch，不写 remote success。
+- DataNeed planner 只做本次需求规划，不 prefetch，不写 remote success。
 - data_gateway provider 失败时写真实 gap，CryptoLens 不补数。
-- RunProviderPlan 字段断言覆盖：`run_provider_plan_id`、`provider_config_version`、`remote_prefetch_allowed=false`、spec `adapter_id`、`source_role`、`coverage_group`、`coverage_quorum`、`user_preferred` 边界。
+- DataNeed planner 断言覆盖：本次需求、provider call spec、rate-limit bucket、endpoint metadata 和禁止 prefetch 边界。
 - 每个 provider 必须有许可/费用/raw export approval record，且写清“可导出全文/只允许脱敏/禁止导出全文”；文档和证据只记录脱敏状态，不泄漏 secret。
 
 ### T-CL-6：按旧 BB 纯分析口径 Python 重写 CryptoLens
@@ -231,9 +235,9 @@ analyze_crypto_lens_data_results(results: Sequence[DataResult], ...) -> CryptoLe
 - 真实 attempts/normalized dataset refs 进入 CryptoLens input 的集成测试通过。
 - input 污染测试通过：raw/debug/protocol/prompt 字段不进入分析入参。
 
-### T-CL-8：CRYPTO MarketPackBuilder 接入
+### T-CL-8：CRYPTO 市场数据结果接入
 
-目标：让 `claw_get_market_pack` 的 CRYPTO 路径返回包含 CryptoLens 分析材料的自然语言 market pack。
+目标：让 `claw_request_data` 的 CRYPTO 路径返回包含 CryptoLens 分析材料的自然语言市场数据结果。
 
 流程：
 
@@ -243,7 +247,7 @@ data_gateway provider execution
   -> CryptoLens analysis engine
   -> reader_brief
   -> chart assets
-  -> pack audit
+  -> data result audit
 ```
 
 reader brief 必须包含：
@@ -263,14 +267,14 @@ reader brief 必须包含：
 
 验收：
 
-- pack output 不包含 provider raw JSON、CryptoLens raw JSON、Mongo raw/cache object、debug envelope、OpenViking protocol。
+- 市场数据结果不包含 provider raw JSON、CryptoLens raw JSON、Mongo raw/cache object、debug envelope、OpenViking protocol。
 - 缺 derivatives 时 funding/OI/多空比/CVD 进入缺口，不写中性。
 - 缺 liquidation_map 时不生成清算簇结论。
 - OHLCV 样本不足时技术指标状态为 partial/insufficient。
 
 ### T-CL-9：OpenClaw tool schema 和 worker 可见边界
 
-目标：证明 worker 只看到一个 market pack 工具和自然语言材料。
+目标：证明 worker 只看到 `claw_request_data` 业务数据工具和自然语言材料。
 
 范围：
 
@@ -280,7 +284,7 @@ reader brief 必须包含：
 
 验收：
 
-- CRYPTO `market_analyst` provider payload 的 visible tool schema 只含 `claw_get_market_pack`。
+- CRYPTO `market_analyst` provider payload 的 visible tool schema 只含 `claw_request_data`。
 - downstream workers 不看到数据工具。
 - provider payload 不含旧 BB MCP 原子工具、legacy 已删除数据网关 atomic/admin/discovery/raw/debug/cache tools。
 - worker prompt 不包含 provider raw payload、CryptoLens raw JSON、Mongo raw/cache/debug envelope、OpenViking protocol 正文。
@@ -297,7 +301,7 @@ reader brief 必须包含：
 final report claim
   -> PM L1
   -> market_analyst L1
-  -> CRYPTO market pack audit
+  -> CRYPTO data result audit
   -> crypto_lens_analysis_evidence
   -> data_gateway normalized refs
   -> provider attempts
@@ -309,9 +313,9 @@ final report claim
 
 - OpenViking relations 包含 CryptoLens analysis evidence 节点。
 - OpenViking relations 显式记录并测试人类批准口径：沿用现有 L2 evidence relation kind，或新增 CryptoLens relation kind（二选一必须在任务证据中写明）。
-- downstream approved L1/L2 evidence 关系断言通过：final report claim 至少可追到 PM L1、frontline L1、L2 evidence、pack audit、provider attempts/refs。
+- downstream approved L1/L2 evidence 关系断言通过：final report claim 至少可追到 PM L1、frontline L1、L2 evidence、data result audit、provider attempts/refs。
 - exporter 只搬运 approved material 和图表引用，不新增 unsupported 投资结论。
-- final report 中 CryptoLens 指标分析材料能追到 market pack audit 和 normalized refs。
+- final report 中 CryptoLens 指标分析材料能追到 data result audit 和 normalized refs。
 - chart assets 能被 exporter 复制并在导出物中保持引用可追溯。
 
 ### T-CL-11：错误、缓存、缺口和无 fallback 合同测试
@@ -321,18 +325,18 @@ final report claim
 场景：
 
 - data_gateway 某域失败：写 attempt、HTTP/raw evidence if request sent、data gap，bundle 该域 missing/partial/error，CryptoLens 只基于剩余域分析。
-- CryptoLens analysis 失败：data_gateway evidence 保留，`crypto_lens_analysis_evidence` 写失败状态，market pack readiness 降级，worker 不伪造指标分析。
+- CryptoLens analysis 失败：data_gateway evidence 保留，`crypto_lens_analysis_evidence` 写失败状态，市场数据结果 readiness 降级，worker 不伪造指标分析。
 - data_gateway 数据不足：指标 partial/insufficient，不把未计算写成中性。
 - AHR999 在非 BTC 场景写 not applicable 或真实缺口，不伪装为已覆盖。
 - cache hit/stale/empty/error：状态真实，不能伪装 fresh remote success。
-- 旧 BB/旧 provider 被 import-block 时，目标态 CRYPTO market pack 不走旧 fallback。
+- 旧 BB/旧 provider 被 import-block 时，目标态 CRYPTO 市场数据结果不走旧 fallback。
 - data_gateway adapter 读取本地 key 成功但 evidence 不泄漏 key 值。
-- RunProviderPlan 边界场景：source_role/coverage_group/coverage_quorum/user_preferred 不越权。
+- DataNeed planner 边界场景：source role 只排序或记录事实，不越权成业务硬编码限制。
 
 验收：
 
 - focused unit/contract/integration tests 覆盖以上场景。
-- 设置 `BB_MCP_SERVER_PATH` 和 `BB_MCP_CWD` 为空或无效时，目标态 CRYPTO market pack 不因此失败，也不启动外部 BB MCP。
+- 设置 `BB_MCP_SERVER_PATH` 和 `BB_MCP_CWD` 为空或无效时，目标态 CRYPTO 市场数据结果不因此失败，也不启动外部 BB MCP。
 - 批次回归和 live/fresh 报告必须附 `Collect-first compliance` 段落。
 
 ### T-CL-12：BTC fresh/live 验收和完成判定
@@ -349,7 +353,7 @@ final report claim
 必须收集：
 
 - `openclaw_llm_provider_payload`。
-- visible tool schema only `claw_get_market_pack`。
+- visible tool schema only `claw_request_data`。
 - data_gateway provider HTTP/raw evidence。
 - data_gateway normalized refs。
 - CryptoLens analysis evidence。
@@ -381,9 +385,9 @@ final report claim
 | data_gateway normalized rows / DataResult refs 作为唯一输入 | 6.2、6.3 | T-CL-4、T-CL-7 |
 | CryptoLens analysis adapter 和代码迁入 | 6.4、9.1 | T-CL-2、T-CL-6、T-CL-7 |
 | CryptoLens output 边界：不写最终投资裁决 | 6.5 | T-CL-7、T-CL-8、T-CL-10 |
-| MarketPackBuilder 自然语言 reader_brief | 6.6、11 | T-CL-8、T-CL-9 |
+| 市场数据结果自然语言 reader_brief | 6.6、11 | T-CL-8、T-CL-9 |
 | evidence 命名隔离 | 7 | T-CL-7、T-CL-10 |
-| RunProviderPlan 只计划、不 prefetch、不写 remote success | 8 | T-CL-5、T-CL-11 |
+| DataNeed planner 只计划本次需求、不 prefetch、不写 remote success | 8 | T-CL-5、T-CL-11 |
 | 配置迁移和 secret 边界 | 9.2、9.3 | T-CL-5、T-CL-11 |
 | 旧 BB MCP runtime 配置边界 | 9.4 | T-CL-3、T-CL-11、T-CL-12 |
 | data_gateway provider 失败、CryptoLens 失败、数据不足、cache 命中 | 10 | T-CL-8、T-CL-11 |
@@ -402,13 +406,13 @@ final report claim
 | Win11 旧 BB runtime 目录 | `D:\src\BB`、`/mnt/d/src/BB` | 目标态必须与旧项目运行目录无关 | T-CL-2、T-CL-6、T-CL-11、T-CL-12 |
 | 旧 BB MCP server | `bb_crypto_data`、`bb_crypto_data__build_trade_context`、`BB_MCP_SERVER_PATH`、`BB_MCP_CWD`、`BB_MCP_HTTP_*` | 旧 BB 会自己出网取数，破坏 data_gateway 唯一入口 | T-CL-3、T-CL-11、T-CL-12 |
 | 旧 BB live provider fetch | `mcp/crypto-data-mcp/src/domains/live.ts`、CoinGlass/Binance/Bybit/FRED/CoinGecko direct fetch | provider 取数必须进入 data_gateway evidence chain | T-CL-2、T-CL-5、T-CL-6、T-CL-11 |
-| 旧资料包 fallback | `crypto_market_data_pack.py`、`market_market_data_pack`、`crypto_market_data_pack`、`frontline_data_pack` | 不能在 data_gateway 失败后 silent fallback | T-CL-3、T-CL-8、T-CL-11 |
-| 旧 provider executor | `frontline_data_pack.provider_executor`、旧 `provider_executor` import slice、旧 `claw_trade.providers` | 目标态使用 data_gateway provider contract，不复用旧 executor | T-CL-3、T-CL-5、T-CL-11 |
-| US atomic tools | `get_stock_data`、`get_indicators`、`get_fundamentals`、`get_balance_sheet`、`get_cashflow`、`get_income_statement`、`get_news`、`get_global_news` | worker 可见工具必须收敛为 canonical pack | T-CL-3、T-CL-9、T-CL-12 |
+| 旧数据结果 fallback | `claw_request_data.py`、`claw_request_data`、`claw_request_data`、`frontline_data_result` | 不能在 data_gateway 失败后 silent fallback | T-CL-3、T-CL-8、T-CL-11 |
+| 旧 provider executor | `frontline_data_result.provider_executor`、旧 `provider_executor` import slice、旧 `claw_trade.providers` | 目标态使用 data_gateway provider contract，不复用旧 executor | T-CL-3、T-CL-5、T-CL-11 |
+| US atomic tools | `get_stock_data`、`get_indicators`、`get_fundamentals`、`get_balance_sheet`、`get_cashflow`、`get_income_statement`、`get_news`、`get_global_news` | worker 可见工具必须收敛为 canonical data need | T-CL-3、T-CL-9、T-CL-12 |
 | legacy 已删除数据网关 atomic/admin/discovery/debug tools（model-visible） | `provider.`、`admin.`、`discovery.`、`activate_tools`、`execute_prompt`、`list_providers`、`cache`、`raw`、`debug` | report worker 模型不能直接调用这些工具；控制层/CLI/UI 调试入口可存在但不进 worker schema | T-CL-3、T-CL-9、T-CL-12 |
-| raw/cache/debug material | provider raw JSON、CryptoLens raw JSON、Mongo raw/cache object、debug envelope、OpenViking protocol | worker 只看自然语言 pack 和 approved L1 | T-CL-8、T-CL-9、T-CL-10 |
+| raw/cache/debug material | provider raw JSON、CryptoLens raw JSON、Mongo raw/cache object、debug envelope、OpenViking protocol | worker 只看自然语言数据结果和 approved L1 | T-CL-8、T-CL-9、T-CL-10 |
 | CryptoLens 出网或读 key | `fetch`、`requests`、`httpx`、`axios`、provider key env reads inside `analysis/crypto_lens` | CryptoLens 是离线分析层，不是 provider | T-CL-6、T-CL-7、T-CL-11 |
-| CryptoLens 再调 provider/runtime | CryptoLens module import/call legacy 已删除数据网关 runtime、pack endpoint、provider adapters | 会形成 provider -> CryptoLens -> provider 绕圈 | T-CL-7、T-CL-11 |
+| CryptoLens 再调 provider/runtime | CryptoLens module import/call legacy 已删除数据网关 runtime、旧历史数据入口 endpoint、provider adapters | 会形成 provider -> CryptoLens -> provider 绕圈 | T-CL-7、T-CL-11 |
 | CryptoLens 写最终投资裁决 | BUY/HOLD/SELL、position size、execution order、PM rating/final decision fields | PM 拥有最终投资裁决，CryptoLens 只供 market analysis | T-CL-7、T-CL-8、T-CL-10 |
 | fake 验收 | mock/stub/fake/capture-only success | 不能证明 live/fresh provider 和 evidence 行为 | T-CL-11、T-CL-12 |
 | secret 泄漏 | 真实 API key 写入 docs/memory/evidence/final report/prompt/material | 只能记录 credential present/missing 和脱敏 evidence | T-CL-5、T-CL-11、T-CL-12 |
@@ -417,15 +421,15 @@ final report claim
 
 只有同时满足以下条件，才能说 CryptoLens 接入完成：
 
-1. `claw_get_market_pack` 在 CRYPTO 下真实走 data_gateway provider plan 取数，RunProviderPlan 不 prefetch、不写 remote success。
+1. `claw_request_data` 在 CRYPTO 下真实走 DataNeed planner 取数，planner 不 prefetch、不写 remote success。
 2. 所有外部 provider 请求都有 data_gateway HTTP/raw evidence，并有 attempt、normalized ref、cache receipt、rate-limit 或错误记录。
 3. CryptoLens analysis engine 来自 claw-trade 仓库内部代码，在 report runtime 中不出网、不读 provider key、不访问 Mongo、不调用 provider/runtime。
 4. CryptoLens analysis input 只来自 data_gateway normalized rows、DataResult 批结果和 refs。
 5. CryptoLens analysis evidence 独立命名为 `crypto_lens_analysis_evidence`，不能替代 data_gateway HTTP/raw provider evidence。
-6. worker 只看到 `claw_get_market_pack` 和自然语言 market pack，不看到旧 BB MCP、legacy 已删除数据网关 atomic/admin/discovery/raw/debug/cache tools、raw JSON、Mongo raw/cache/debug envelope 或 OpenViking protocol。
+6. worker 只看到 `claw_request_data` 和自然语言市场数据结果，不看到旧 BB MCP、legacy 已删除数据网关 atomic/admin/discovery/raw/debug/cache tools、raw JSON、Mongo raw/cache/debug envelope 或 OpenViking protocol。
 7. BTC fresh/live report 恢复 CryptoLens 指标分析密度；缺失域真实写 data gaps，不能把未覆盖写成成功覆盖。
-8. final report evidence chain 能追到 PM L1、market L1、CRYPTO market pack audit、CryptoLens analysis evidence、data_gateway normalized refs、provider attempts、HTTP evidence、raw evidence。
-9. `/mnt/d/src/BB` 不存在或不可访问、`BB_MCP_SERVER_PATH`/`BB_MCP_CWD` 为空或无效时，目标态 CRYPTO market pack 仍能运行且不启动外部 BB MCP。
+8. final report evidence chain 能追到 PM L1、market L1、CRYPTO data result audit、CryptoLens analysis evidence、data_gateway normalized refs、provider attempts、HTTP evidence、raw evidence。
+9. `/mnt/d/src/BB` 不存在或不可访问、`BB_MCP_SERVER_PATH`/`BB_MCP_CWD` 为空或无效时，目标态 CRYPTO 市场数据结果仍能运行且不启动外部 BB MCP。
 10. data_gateway 真实缺口只通过 readiness/data gaps 表达；不得把“旧 BB 路径不可用”包装成完成口径。
 11. import-block 证明旧 BB/旧 provider/旧工具不能 silent fallback。
 12. focused tests、contract tests、integration tests、BTC fresh/live 验收全部通过。
@@ -439,7 +443,7 @@ uv run pytest \
   tests/integration/data_gateway/test_mcp_visible_tools.py \
   tests/unit/data_gateway/test_tool_schema.py \
   tests/contracts/test_frontline_tool_protocol.py \
-  tests/unit/data_gateway/test_domain_pack_service.py
+  tests/unit/reports/test_data_need_bridge.py
 ```
 
 CryptoLens 新增测试落地后，最终 gate 还必须加入：
@@ -447,7 +451,7 @@ CryptoLens 新增测试落地后，最终 gate 还必须加入：
 ```bash
 uv run pytest \
   tests/unit/data_gateway/test_crypto_lens_*.py \
-  tests/integration/data_gateway/test_market_pack_crypto.py \
+  tests/integration/data_gateway/test_btc_market_data_need_no_fixed_17_bundle.py \
   tests/integration/data_gateway/test_openviking_relations.py
 ```
 
@@ -458,7 +462,7 @@ BTC live/fresh gate 必须另行执行，且不能用静态 render、exporter ou
 遇到以下情况必须停止并问人：
 
 - 需要让 CryptoLens 自己出网、读取 provider key、调用 provider/runtime、访问 Mongo，才能补齐指标。
-- 需要恢复旧 BB MCP、旧 `crypto_market_data_pack.py`、旧 provider executor 或旧 Win11 BB runtime 路径，才能让 CRYPTO report 通过。
+- 需要恢复旧 BB MCP、旧 `claw_request_data.py`、旧 provider executor 或旧 Win11 BB runtime 路径，才能让 CRYPTO report 通过。
 - 旧 BB 纯分析代码无法获得，必须改为重新实现分析引擎；这属于范围和证据来源变化。
 - 某 provider 的许可、费用、商业使用边界或 raw export policy 不明确。
 - data_gateway 无法承载某个必需 provider 域，且没有批准的缺口表达策略。

@@ -33,17 +33,56 @@ class _Batch:
     http_visibility: str = "sdk_internal_unknown"
     single_flight_key: str = "sf:key"
     lease_ttl_seconds: int = 30
-    wait_timeout_seconds: int = 1
     provider_id: str = "provider"
     endpoint_id: str = "endpoint"
     market: str = "CN_A"
     data_type: str = "daily_bar"
+    granularity: str = "daily"
     deadline_at: datetime | None = None
+    earliest_start_at: datetime | None = None
+
+
+class _WaiterSingleFlight:
+    def __init__(self) -> None:
+        self.wait_budget_seconds: int | None = None
+
+    def acquire(self, key: str, lease_ttl_seconds: int) -> SimpleNamespace:
+        return SimpleNamespace(kind="waiter", owner_token="owner-token", published=None)
+
+    def wait(self, key: str, timeout_seconds: int) -> SimpleNamespace:
+        self.wait_budget_seconds = timeout_seconds
+        return SimpleNamespace(refs=ResultRefs(dataset_refs=("dataset:shared",), raw_refs=(), attempt_refs=("attempt:shared",)))
+
+
+def _insert_daily_bar(repository: DatasetRepository, dataset_ref: str = "dataset:daily_bar:CN_A:row-1") -> None:
+    repository.insert_normalized(
+        {
+            "dataset_ref": dataset_ref,
+            "dataset": "daily_bar",
+            "market": "CN_A",
+            "symbol_id": "600519.SH",
+            "granularity": "daily",
+            "period_start": datetime(2026, 6, 1, tzinfo=UTC),
+            "period_end": datetime(2026, 6, 1, tzinfo=UTC),
+            "exchange": "SSE",
+            "currency": "CNY",
+            "timezone": "Asia/Shanghai",
+            "calendar": "CN_A_SSE_SZSE",
+            "base_asset": None,
+            "quote_asset": None,
+            "provider_lineage": {"provider": "unit"},
+            "schema_id": "daily_bar.v1",
+            "quality_flags": (),
+            "row": {"date": "2026-06-01", "close": 10.0},
+        }
+    )
 
 
 def test_gate_returns_cache_hit_before_rate_limit_or_single_flight() -> None:
     now = datetime.now(UTC)
-    cache = ProviderResultCache()
+    repository = DatasetRepository()
+    _insert_daily_bar(repository, "dataset:1")
+    cache = ProviderResultCache(repository=repository)
     cache.put_remote_success(
         cache_key="cache:key",
         refs=ResultRefs(dataset_refs=("dataset:1",), raw_refs=("raw:1",), attempt_refs=("attempt:1",)),
@@ -71,6 +110,29 @@ def test_gate_returns_cached_empty_from_cache() -> None:
     assert decision.refs.attempt_refs == ("attempt:empty",)
 
 
+def test_gate_waits_for_shared_result_using_deadline_budget() -> None:
+    single_flight = _WaiterSingleFlight()
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=single_flight)  # type: ignore[arg-type]
+
+    decision = gate.enter(_Batch(deadline_at=datetime.now(UTC) + timedelta(seconds=30)))
+
+    assert decision.kind == "shared_result"
+    assert decision.refs.dataset_refs == ("dataset:shared",)
+    assert single_flight.wait_budget_seconds is not None
+    assert 0 < single_flight.wait_budget_seconds <= 30
+
+
+def test_gate_does_not_wait_for_shared_result_without_deadline() -> None:
+    single_flight = _WaiterSingleFlight()
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=single_flight)  # type: ignore[arg-type]
+
+    decision = gate.enter(_Batch(deadline_at=None))
+
+    assert decision.kind == "rate_limited"
+    assert decision.reason == "rate_limited_by_tool_budget"
+    assert single_flight.wait_budget_seconds is None
+
+
 def test_cache_unknown_status_is_not_treated_as_remote_success() -> None:
     now = datetime.now(UTC)
     repository = DatasetRepository()
@@ -93,8 +155,8 @@ def test_cache_accepts_naive_cached_datetime_when_now_is_aware() -> None:
     repository.write_provider_result_cache(
         cache_key="cache:key",
         status="remote_success",
-        dataset_refs=("dataset:ok",),
-        raw_refs=(),
+        dataset_refs=(),
+        raw_refs=("raw:ok",),
         attempt_refs=("attempt:ok",),
         fresh_until=datetime(2026, 6, 1, 12, 5),
         stale_until=datetime(2026, 6, 1, 12, 30),
@@ -105,7 +167,49 @@ def test_cache_accepts_naive_cached_datetime_when_now_is_aware() -> None:
 
     assert lookup.state == "fresh_success"
     assert lookup.entry is not None
-    assert lookup.entry.refs.dataset_refs == ("dataset:ok",)
+    assert lookup.entry.refs.raw_refs == ("raw:ok",)
+
+
+def test_cache_drops_fresh_success_when_dataset_refs_are_not_readable() -> None:
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    repository = DatasetRepository()
+    repository.write_provider_result_cache(
+        cache_key="cache:key",
+        status="remote_success",
+        dataset_refs=("dataset:missing",),
+        raw_refs=("raw:stale",),
+        attempt_refs=("attempt:stale",),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    cache = ProviderResultCache(repository=repository)
+
+    lookup = cache.get("cache:key", now=now)
+
+    assert lookup.state == "miss"
+    assert repository.read_provider_result_cache("cache:key") is None
+
+
+def test_cache_accepts_fresh_success_when_dataset_refs_are_readable() -> None:
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    repository = DatasetRepository()
+    _insert_daily_bar(repository, "dataset:readable")
+    repository.write_provider_result_cache(
+        cache_key="cache:key",
+        status="remote_success",
+        dataset_refs=("dataset:readable",),
+        raw_refs=("raw:readable",),
+        attempt_refs=("attempt:readable",),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    cache = ProviderResultCache(repository=repository)
+
+    lookup = cache.get("cache:key", now=now)
+
+    assert lookup.state == "fresh_success"
+    assert lookup.entry is not None
+    assert lookup.entry.refs.dataset_refs == ("dataset:readable",)
 
 
 def test_gate_returns_rate_limited_when_quota_blocked() -> None:
@@ -138,6 +242,53 @@ def test_gate_uses_batch_deadline_for_non_managed_http_quota_wait() -> None:
     assert sleep_calls == [60.0]
 
 
+def test_gate_waits_until_scheduler_earliest_start_before_owner_fetch() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    sleep_calls: list[float] = []
+
+    def _sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        clock.tick(seconds)
+
+    gate = ExecutionGate(
+        cache=ProviderResultCache(),
+        rate_limiter=RateLimiter(now_fn=clock),
+        single_flight=SingleFlight(),
+        now_fn=clock,
+        sleep_fn=_sleep,
+    )
+    batch = _Batch(
+        deadline_at=clock.now + timedelta(seconds=30),
+        earliest_start_at=clock.now + timedelta(seconds=6),
+        http_visibility="managed_http",
+    )
+
+    decision = gate.enter(batch)
+
+    assert decision.kind == "owner"
+    assert sleep_calls == [6.0]
+
+
+def test_gate_rejects_scheduled_start_after_deadline() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    gate = ExecutionGate(
+        cache=ProviderResultCache(),
+        rate_limiter=RateLimiter(now_fn=clock),
+        single_flight=SingleFlight(),
+        now_fn=clock,
+    )
+    batch = _Batch(
+        deadline_at=clock.now + timedelta(seconds=5),
+        earliest_start_at=clock.now + timedelta(seconds=6),
+        http_visibility="managed_http",
+    )
+
+    decision = gate.enter(batch)
+
+    assert decision.kind == "rate_limited"
+    assert decision.reason == "rate_limited_by_tool_budget"
+
+
 def test_gate_returns_tool_budget_rate_limit_when_deadline_too_short() -> None:
     clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
     policy = RateLimitPolicy(window_seconds=60, max_requests=1)
@@ -150,6 +301,41 @@ def test_gate_returns_tool_budget_rate_limit_when_deadline_too_short() -> None:
 
     assert decision.kind == "rate_limited"
     assert decision.reason == "rate_limited_by_tool_budget"
+
+
+def test_gate_does_not_consume_quota_for_duplicate_waiter_before_single_flight_result() -> None:
+    policy = RateLimitPolicy(window_seconds=60, max_requests=2)
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
+    first = _Batch(rate_limit_policy=policy, deadline_at=datetime.now(UTC) + timedelta(seconds=30))
+    duplicate = _Batch(
+        cache_key="cache:duplicate",
+        rate_limit_policy=policy,
+        single_flight_key=first.single_flight_key,
+        deadline_at=None,
+    )
+    other = _Batch(cache_key="cache:other", rate_limit_policy=policy, single_flight_key="sf:other")
+
+    assert gate.enter(first).kind == "owner"
+    duplicate_decision = gate.enter(duplicate)
+    assert duplicate_decision.kind == "rate_limited"
+    assert duplicate_decision.reason == "rate_limited_by_tool_budget"
+    assert gate.enter(other).kind == "owner"
+
+
+def test_gate_publishes_owner_rate_limit_failure_for_same_call_waiters() -> None:
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
+    batch = _Batch(rate_limit_policy=policy, deadline_at=datetime.now(UTC) + timedelta(seconds=30))
+    limiter = RateLimiter()
+    assert limiter.reserve(batch.rate_limit_key, policy).allowed is True
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=limiter, single_flight=SingleFlight())
+
+    owner_blocked = gate.enter(batch)
+    shared = gate.enter(batch)
+
+    assert owner_blocked.kind == "rate_limited"
+    assert owner_blocked.reason == "rate_limited_by_tool_budget"
+    assert shared.kind == "shared_result"
+    assert shared.reason == "rate_limited_by_tool_budget"
 
 
 def test_gate_skips_source_quota_for_managed_http_batches() -> None:
@@ -193,7 +379,7 @@ def test_gate_skips_source_quota_for_managed_http_enum_batches() -> None:
 
 
 def test_gate_marks_cooldown_after_provider_429_fetch_result() -> None:
-    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10))
+    batch = _Batch(rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10), cooldown_key="cooldown:endpoint")
     gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=SingleFlight())
     owner = gate.enter(batch)
     assert owner.kind == "owner"
@@ -383,6 +569,35 @@ def test_gate_records_empty_owner_result_as_cached_empty() -> None:
     assert gate.publish_shared_result(batch.single_flight_key, owner.owner_token or "", failed) is True
     decision = gate.enter(batch)
     assert decision.kind == "cached_empty"
+
+
+def test_gate_uses_batch_granularity_for_default_cache_window() -> None:
+    repository = DatasetRepository()
+    gate = ExecutionGate(
+        cache=ProviderResultCache(repository=repository),
+        rate_limiter=RateLimiter(repository=repository),
+        single_flight=SingleFlight(repository=repository),
+    )
+    batch = _Batch(granularity="daily")
+    owner = gate.enter(batch)
+    assert owner.kind == "owner"
+    published = IngestResult(
+        status="ingested",
+        dataset_refs=("dataset:owner",),
+        raw_refs=("raw:owner",),
+        attempt_refs=("attempt:owner",),
+        gaps=(),
+        remote_success=True,
+        cache_key=batch.cache_key,
+    )
+    before_publish = datetime.now(UTC)
+
+    assert gate.publish_shared_result(batch.single_flight_key, owner.owner_token or "", published, batch=batch) is True
+
+    row = repository.read_provider_result_cache(batch.cache_key)
+    assert row is not None
+    assert row["fresh_until"] >= before_publish + timedelta(minutes=29)
+    assert row["stale_until"] >= before_publish + timedelta(minutes=59)
 
 
 def test_gate_persists_non_remote_state_across_instances_with_same_repository() -> None:

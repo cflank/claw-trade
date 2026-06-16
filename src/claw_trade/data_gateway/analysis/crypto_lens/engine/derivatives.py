@@ -26,20 +26,22 @@ def analyze_derivatives(payload: Mapping[str, Any] | None, data: CryptoLensInput
     funding = _to_float(payload.get("funding"))
     oi = _to_float(payload.get("oi"))
     long_short_ratio = _to_float(payload.get("long_short_ratio"))
-    cvd = _to_float(payload.get("cvd_proxy"))
+    cvd = _to_float(payload.get("cvd"))
+    cvd_proxy = _to_float(payload.get("cvd_proxy"))
     funding_unit = str(payload.get("funding_unit") or "") or None
     oi_unit = str(payload.get("oi_unit") or "") or None
     funding_source_field = str(payload.get("funding_source_field") or "") or None
     oi_source_field = str(payload.get("oi_source_field") or "") or None
+    cvd_source_field = str(payload.get("cvd_source_field") or "") or None
     cvd_source = str(payload.get("cvd_proxy_source") or "") or None
-    cvd_unit = str(payload.get("cvd_proxy_unit") or "") or None
+    cvd_unit = str(payload.get("cvd_unit") or payload.get("cvd_proxy_unit") or "") or None
     notes: list[str] = []
     if funding is None:
         notes.append("funding 缺失")
     if oi is None:
         notes.append("oi 缺失")
 
-    summary = "衍生品上下文基于 funding/OI/多空比/CVD 代理字段生成。"
+    summary = "衍生品上下文基于 funding/OI/多空比/CVD 字段生成。"
     if funding is not None:
         summary += f" funding={funding:.6f}{f' {funding_unit}' if funding_unit else ''}."
     if oi is not None:
@@ -47,7 +49,9 @@ def analyze_derivatives(payload: Mapping[str, Any] | None, data: CryptoLensInput
     if long_short_ratio is not None:
         summary += f" 多空比={long_short_ratio:.3f}."
     if cvd is not None:
-        summary += f" 主动买卖量差代理={cvd:.2f}{f' {cvd_unit}' if cvd_unit else ''}."
+        summary += f" CVD={cvd:.2f}{f' {cvd_unit}' if cvd_unit else ''}."
+    elif cvd_proxy is not None:
+        summary += f" 主动买卖量差代理={cvd_proxy:.2f}{f' {cvd_unit}' if cvd_unit else ''}."
 
     status = base_state
     if notes and status == AnalysisState.READY:
@@ -64,7 +68,10 @@ def analyze_derivatives(payload: Mapping[str, Any] | None, data: CryptoLensInput
             "oi_unit": oi_unit,
             "oi_source_field": oi_source_field,
             "long_short_ratio": long_short_ratio,
-            "cvd_proxy": cvd,
+            "cvd": cvd,
+            "cvd_unit": cvd_unit if cvd is not None else None,
+            "cvd_source_field": cvd_source_field,
+            "cvd_proxy": cvd_proxy,
             "cvd_proxy_unit": cvd_unit,
             "cvd_proxy_source": cvd_source,
         },

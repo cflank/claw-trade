@@ -29,6 +29,7 @@ stage: investment_debate
 社交媒体情绪报告：{sentiment_report}
 最新世界事务新闻：{news_report}
 公司基本面报告：{fundamentals_report}
+数据证据边界（辩论数据冲突前必须先核对）：{data_evidence_summary}
 辩论对话历史：{history}
 最后的看跌论点：{current_response}
 类似情况的反思和经验教训：{past_memory_str}

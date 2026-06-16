@@ -58,6 +58,49 @@ FORBIDDEN_AGENT_FACING_PROTOCOL_TOKENS = (
     "viking://",
 )
 
+DOWNSTREAM_DATA_EVIDENCE_PROMPT_CASES = (
+    ("bull_researcher", "US"),
+    ("bull_researcher", "CN_A"),
+    ("bull_researcher", "HK"),
+    ("bull_researcher", "CRYPTO"),
+    ("bear_researcher", "US"),
+    ("bear_researcher", "CN_A"),
+    ("bear_researcher", "HK"),
+    ("bear_researcher", "CRYPTO"),
+    ("research_manager", "CN_A"),
+    ("research_manager", "HK"),
+    ("research_manager", "CRYPTO"),
+    ("trader", "US"),
+    ("trader", "CN_A"),
+    ("trader", "HK"),
+    ("trader", "CRYPTO"),
+    ("risk_challenger", "US"),
+    ("risk_challenger", "CN_A"),
+    ("risk_challenger", "HK"),
+    ("risk_challenger", "CRYPTO"),
+    ("risk_guardian", "US"),
+    ("risk_guardian", "CN_A"),
+    ("risk_guardian", "HK"),
+    ("risk_guardian", "CRYPTO"),
+    ("risk_moderator", "US"),
+    ("risk_moderator", "CN_A"),
+    ("risk_moderator", "HK"),
+    ("risk_moderator", "CRYPTO"),
+    ("portfolio_manager", "US"),
+    ("portfolio_manager", "CN_A"),
+    ("portfolio_manager", "HK"),
+    ("portfolio_manager", "CRYPTO"),
+    ("report_polisher", "US"),
+    ("report_polisher", "CN_A"),
+    ("report_polisher", "HK"),
+    ("report_polisher", "CRYPTO"),
+)
+
+
+class _FormatVars(dict[str, str]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
 US_PROMPT_FORBIDDEN_CONTROL_TOKENS = (
     "OpenClaw",
     "OpenViking",
@@ -186,6 +229,7 @@ SUPPORTED_US_PROMPT_PLACEHOLDERS = {
     "supporting_worker_reports",
     "chart_assets_note",
     "final_report_section_instruction",
+    "data_evidence_summary",
 }
 SUPPORTED_HK_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS
 SUPPORTED_CRYPTO_PROMPT_PLACEHOLDERS = SUPPORTED_US_PROMPT_PLACEHOLDERS | {"trader_plan"}
@@ -203,6 +247,7 @@ CN_A_RESEARCH_MANAGER_REQUIRED_PLACEHOLDERS = {
     "sentiment_report",
     "news_report",
     "fundamentals_report",
+    "data_evidence_summary",
     "history",
 }
 
@@ -213,10 +258,10 @@ FRONTLINE_WORKERS: tuple[str, ...] = (
     "social_analyst",
 )
 HK_FRONTLINE_TOOLS = {
-    "market_analyst": "claw_get_market_pack",
-    "fundamental_analyst": "claw_get_fundamental_pack",
-    "news_analyst": "claw_get_news_pack",
-    "social_analyst": "claw_get_social_pack",
+    "market_analyst": "claw_request_data",
+    "fundamental_analyst": "claw_request_data",
+    "news_analyst": "claw_request_data",
+    "social_analyst": "claw_request_data",
 }
 HK_SPECIFIC_TOOL_TOKENS = (
     "hk_market_data",
@@ -429,13 +474,15 @@ def test_approved_crypto_worker_prompts_are_real_prompts_not_fail_closed_placeho
 def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
     text = (Path("agents") / "market_analyst" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
 
-    assert "可用工具：本阶段可见的市场资料包工具" in text
+    assert "可用工具：`claw_request_data`" in text
+    assert "`item` 填 `日线`" in text
+    assert "`api_id`" not in text
     assert "worker 不直接读取原始大 JSON" in text
     assert "资料就绪度只能说明资料覆盖和通道质量" in text
     assert "若上游材料含内部字段名、键值串、英文状态词" in text
     assert "任何工具名、审计计数、机器状态码、带下划线字段" in text
     assert "不得推断其正常、过热或极端" in text
-    assert "如果资料包只列出价格历史和本地技术指标成功" in text
+    assert "如果数据结果只列出价格历史和本地技术指标成功" in text
     assert "每个小节必须使用 Markdown 表格" in text
     assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in text
     assert "每个关键指标单独一行" in text
@@ -497,12 +544,12 @@ def test_crypto_downstream_materials_are_not_inlined_inside_instruction_sentence
 def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() -> None:
     expected_snippets = {
         "fundamental_analyst": (
-            "基本面资料包工具",
-            "资料包未可用 / 未调用成功 / 覆盖不足",
+            "`claw_request_data`",
+            "数据结果未可用 / 未调用成功 / 覆盖不足",
             "不得用模型常识、历史印象或上游未提供的证据补写缺失事实",
         ),
         "news_analyst": (
-            "新闻资料包工具",
+            "`claw_request_data`",
             "不得写真实新闻、真实公告、真实监管事件或真实市场反应结论",
             "搜索摘要和媒体聚合标题只能作为发现线索",
             "即使线索提到机构资金、监管、链上活动或其它市场主题，也不能写成已验证事实",
@@ -510,7 +557,7 @@ def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() ->
             "市场级情绪指标不是新闻源",
         ),
         "social_analyst": (
-            "舆情资料包工具",
+            "`claw_request_data`",
             "不得写真实社交平台观点、真实 KOL 立场、真实社区共识或真实情绪结论",
             "搜索摘要只能作为公开讨论线索",
             "即使搜索摘要涉及机构资金、链上大户或交易所行为，也不能写成已验证事实",
@@ -527,7 +574,7 @@ def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() ->
 def test_crypto_downstream_prompts_condition_on_upstream_data_gaps_without_filling_facts() -> None:
     for worker_id in DOWNSTREAM_DECISION_WORKERS:
         text = (Path("agents") / worker_id / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
-        assert "资料包未可用、未调用成功、覆盖不足或内容为空" in text
+        assert "数据结果未可用、未调用成功、覆盖不足或内容为空" in text
         assert "不得补写缺失事实" in text
         assert "数据缺口本身不是看涨或看跌事实" in text
         assert "必须逐项写明缺少哪些数据" in text
@@ -593,6 +640,22 @@ def test_crypto_worker_prompt_placeholders_are_supported_runtime_vars(
 
     unsupported = placeholders - SUPPORTED_CRYPTO_PROMPT_PLACEHOLDERS
     assert unsupported == set()
+
+
+@pytest.mark.parametrize(("worker_id", "profile"), DOWNSTREAM_DATA_EVIDENCE_PROMPT_CASES)
+def test_downstream_model_visible_prompts_include_data_evidence_summary(
+    worker_id: str,
+    profile: str,
+) -> None:
+    text = (Path("agents") / worker_id / "prompts" / f"{profile}.md").read_text(encoding="utf-8")
+    rendered = text.format_map(
+        _FormatVars(
+            data_evidence_summary="SENTINEL DATA EVIDENCE SUMMARY",
+        )
+    )
+
+    assert "{data_evidence_summary}" in text
+    assert "SENTINEL DATA EVIDENCE SUMMARY" in rendered
 
 
 @pytest.mark.parametrize(("worker_id", "profile"), HK_PROMPT_CASES)
@@ -674,7 +737,7 @@ def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protoc
             assert token not in text, f"{worker_id} prompt contains machine protocol keyword {token!r}"
 
 
-def test_hk_frontline_prompts_reuse_existing_domain_pack_tools() -> None:
+def test_hk_frontline_prompts_reuse_existing_data_tools() -> None:
     us_tool_tokens = (
         "`get_stock_data`",
         "`get_indicators`",
@@ -762,7 +825,7 @@ def test_us_market_prompt_allows_original_tradingagents_transaction_proposal() -
 def test_us_fundamental_prompt_requires_quarterly_and_annual_statement_history() -> None:
     text = (Path("agents") / "fundamental_analyst" / "prompts" / "US.md").read_text(encoding="utf-8")
 
-    assert "Use the available tool: `claw_get_fundamental_pack`" in text
+    assert "Use the available tool: `claw_request_data`" in text
     assert "quarterly/annual financial statement coverage" in text
     assert "valuation metrics" in text
     assert "source notes" in text
@@ -865,7 +928,7 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "时间覆盖缺口写成" in crypto_text
     assert "终稿输出前最后自检" in crypto_text
     assert "不要用反引号保留内部标识" in crypto_text
-    assert "对应资料包的可引用材料状态" in crypto_text
+    assert "对应数据结果的可引用材料状态" in crypto_text
     assert "不得扩写成全局外部来源没有调用" in crypto_text
     assert "不要为了说明某条论据不可引用而写出未验证事实本身" in crypto_text
     assert "未验证的供给、网络采用、机构资金、宏观或链上线索" in crypto_text
@@ -880,7 +943,7 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "这里可以简洁，但前面各节不能压缩成摘要" in crypto_text
     assert "第一行必须是正式报告的 Markdown H1 标题" in user_text
     assert "不要以“好的”“收到”“我将”等过程性回应开头" in user_text
-    assert "带下划线字段和资料包引用计数" in user_text
+    assert "带下划线字段和数据结果引用计数" in user_text
     assert "不能把它们压成几个提纲式结论" in user_text
 
 

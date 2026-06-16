@@ -1,11 +1,15 @@
 # CryptoLens 接入方案（旧称 BB）
 
+> **2026-06-13 状态修正**
+>
+> 本文中“固定 market 数据包 / MarketPackBuilder / 旧历史请求计划 -> 历史数据入口后端”等目标态表述已被 `docs/限流重组.md` 取代。CryptoLens 可作为离线分析引擎消费数据层已取回的证据/结构化数据；CRYPTO worker 只通过 `claw_request_data` 提交业务数据项和用途，`DataNeed -> planner -> ProviderCallSpec -> 执行闸/限流/入库` 只发生在数据层内部。
+
 状态：设计方案，未代表代码已完成。
 日期：2026-05-18
 
 > **2026-06 当前数据层口径**
 >
-> 本文中旧称 “已删除数据网关/data_gateway” 的目标入口，当前统一改读为 `src/claw_trade/data_gateway`：核心合同是 `DataRequest -> DataResult`，Provider 能力来自 `ProviderPlugin.capabilities()`，Mongo 证据使用当前 8 个目标 collection。已删除数据网关 本体不是目标运行时依赖；旧 `removed_data_gateway_*` 证据名只可作为历史背景或 forbidden legacy path 参考。
+> 本文中旧称 “已删除数据网关/data_gateway” 的目标入口，当前统一改读为 `src/claw_trade/data_gateway`。report/frontline worker 的有效取数合同已改为 `claw_request_data` 业务数据项请求；`DataNeed -> planner -> ProviderCallSpec -> 执行闸/限流/入库` 是数据层内部链路。已删除数据网关 本体不是目标运行时依赖；旧 `removed_data_gateway_*` 证据名只可作为历史背景或 forbidden legacy path 参考。
 
 ## 1. 结论
 
@@ -25,12 +29,12 @@ CryptoLens 不是数据源、不是 provider、不是外部 MCP、不是独立 w
 
 ```text
 market_analyst
-  -> claw_get_market_pack
+  -> claw_request_data
   -> data_gateway 执行外部 provider 取数并写证据
   -> 归一化为 crypto market analysis input
   -> CryptoLens 离线分析引擎计算指标/结构/清算/链上/宏观解释
-  -> MarketPackBuilder 渲染自然语言 reader_brief
-  -> worker 基于自然语言资料包写 L1 报告
+  -> 数据结果渲染自然语言 reader_brief
+  -> worker 基于自然语言数据结果写 L1 报告
 ```
 
 禁止链路是：
@@ -44,7 +48,7 @@ market_analyst
 也禁止：
 
 ```text
-claw_get_market_pack
+claw_request_data
   -> data_gateway
   -> CryptoLens
   -> CryptoLens 再调用 data_gateway 或其它外部 provider
@@ -60,25 +64,25 @@ claw_get_market_pack
 
 - `memory/2026-05-15.md` 记录：BB 被定位为 OpenClaw worker 挂载的 skill 加 `bb_crypto_data` MCP。
 - `memory/2026-05-15.md` 记录：`market_analyst` 的 CRYPTO stage 曾真实调用 BB MCP 并写入 L1 报告。
-- `memory/2026-05-16.md` 记录：后来为避免 BB 大 JSON 截断，改为 `crypto_market_data_pack` 集中读取 BB/CoinGlass 并输出自然语言简报。
-- `memory/2026-05-16.md` 记录：worker 可见工具收敛为单一资料包，旧 BB 原始 payload 只写证据，不直接给模型。
+- `memory/2026-05-16.md` 记录：后来为避免 BB 大 JSON 截断，改为 `claw_request_data` 集中读取 BB/CoinGlass 并输出自然语言简报。
+- `memory/2026-05-16.md` 记录：worker 可见工具收敛为单一数据结果，旧 BB 原始 payload 只写证据，不直接给模型。
 
 当前数据层迁移后的问题：
 
-- `claw_get_market_pack` 已成为 market worker 的统一资料包工具。
+- `claw_request_data` 已成为 market worker 的统一数据结果工具。
 - 当前 CRYPTO market adapter 实际覆盖仍不足。
-- 当前 BTC final report 因此只拿到 OHLCV 与本地技术指标，资金费率、OI、多空比、清算、链上、宏观、AHR999 等 CryptoLens 指标分析没有进入资料包。
+- 当前 BTC final report 因此只拿到 OHLCV 与本地技术指标，资金费率、OI、多空比、清算、链上、宏观、AHR999 等 CryptoLens 指标分析没有进入数据结果。
 - 如果直接把旧 BB MCP 接回去，旧 BB 当前代码会自己出网调用 CoinGecko、CoinGlass、Binance、Bybit、FRED 等外部源。这违反 data_gateway 统一数据入口合同。
 
 所以修复目标不是“恢复旧 BB 直连”，也不是“运行时继续调用 Win11 旧 BB 项目”，而是“把旧 BB 的纯分析代码迁入 claw-trade 并命名为 CryptoLens，改成 data_gateway normalized crypto bundle 之上的本项目内部分析层”。
 
 ## 3. 术语
 
-### `claw_get_market_pack`
+### `claw_request_data`
 
-worker 可见的市场资料包工具名。
+worker 可见的市场数据结果工具名。
 
-它不是数据源。它只是 market worker 获取市场资料包的统一入口。
+它不是数据源。它只是 market worker 获取市场数据结果的统一入口。
 
 ### data_gateway
 
@@ -92,8 +96,8 @@ worker 可见的市场资料包工具名。
 - normalized evidence；
 - cache receipt；
 - single-flight；
-- RunProviderPlan；
-- pack endpoint。
+- DataNeed planner；
+- 数据结果渲染。
 
 ### CryptoLens analysis engine
 
@@ -141,9 +145,9 @@ worker 可见的市场资料包工具名。
 - `BB_MCP_SERVER_PATH`；
 - `BB_MCP_CWD`。
 
-### CRYPTO market pack
+### CRYPTO 市场数据结果
 
-`claw_get_market_pack` 在 CRYPTO market 下返回的自然语言市场资料包。
+`claw_request_data` 在 CRYPTO market 下返回的自然语言市场数据结果。
 
 它由 data_gateway 数据和 CryptoLens 分析结果共同生成，但 worker 只看到自然语言 `reader_brief`、资料质量说明、图表引用和必要缺口。
 
@@ -157,13 +161,13 @@ worker 可见的市场资料包工具名。
 
    CryptoLens 可以保留旧 BB 的纯分析代码，但不得读取 provider key，不得调用 `fetch`/HTTP client，不得自己请求 CoinGlass/Binance/Bybit/FRED 等外部服务。
 
-3. worker 只看一个 market pack。
+3. worker 只看一个市场数据结果工具。
 
-   `market_analyst` 只调用 `claw_get_market_pack`。它不得直接看到 CryptoLens raw JSON、旧 BB MCP 原子工具、legacy 已删除数据网关 atomic/admin/discovery tool、Mongo raw/cache/debug envelope。
+   `market_analyst` 只调用 `claw_request_data`。它不得直接看到 CryptoLens raw JSON、旧 BB MCP 原子工具、legacy 已删除数据网关 atomic/admin/discovery tool、Mongo raw/cache/debug envelope。
 
 4. Python 控制层只做计划和调度。
 
-   Python 可以生成 `RunProviderPlan`、调 pack endpoint、保存证据、渲染资料包。Python 不写 worker 的市场分析结论，不写 PM 最终决策。
+   Python 可以保存证据、渲染数据结果。Python 不写 worker 的市场分析结论，不写 PM 最终决策。
 
 5. CryptoLens 输出是分析 evidence，不是 provider evidence。
 
@@ -190,15 +194,15 @@ OpenClaw worker turn
   |
   | model-visible tool schema
   v
-claw_get_market_pack
+claw_request_data
   |
   | runtime context: ticker/market/profile/date/run_id/call_id
   v
-data_gateway pack/tool backend
+data_gateway DataNeed runtime
   |
-  | loads RunProviderPlan
+  | plans ProviderCallSpec
   v
-DomainPackService
+DataNeed planner / scheduler
   |
   | executes provider specs through data_gateway provider plugins/adapters
   v
@@ -214,7 +218,7 @@ CryptoLens analysis engine
   |
   | writes crypto_lens_analysis_evidence
   v
-MarketPackBuilder
+Data result renderer
   |
   | reader_brief + chart readiness + data gaps + refs
   v
@@ -228,17 +232,17 @@ market_analyst LLM prompt
 ```text
 Chat /report
   -> claw-trade Runner 创建 report run
-  -> RunProviderPlan 只生成 provider plan，不做 prefetch、不写 remote success
+  -> DataNeed planner 只生成本次需求对应的 ProviderCallSpec，不做 prefetch、不写 remote success
   -> OpenClaw wake market_analyst
-  -> provider payload 证明 market_analyst 只看到 claw_get_market_pack
-  -> market_analyst 调用 claw_get_market_pack
-  -> data_gateway pack/tool backend
-  -> DomainPackService 按数据请求执行 data_gateway provider plugins/adapters
+  -> provider payload 证明 market_analyst 只看到 claw_request_data
+  -> market_analyst 调用 claw_request_data
+  -> data_gateway DataNeed runtime
+  -> planner/scheduler 按数据需求执行 data_gateway provider plugins/adapters
   -> data_gateway 写 provider attempts/raw refs
   -> data_gateway 写 normalized rows / normalized refs
   -> CryptoLens 只消费 report DataResult 批结果和 normalized refs 做离线分析
   -> CryptoLens 写 crypto_lens_analysis_evidence
-  -> MarketPackBuilder 合成 reader_brief、chart readiness、data gaps、refs
+  -> 数据结果渲染 reader_brief、chart readiness、data gaps、refs
   -> market_analyst 基于 reader_brief 写 approved market L1
   -> fundamental/news/social approved L1 进入下游材料边界
   -> bull/bear/research_manager/trader/risk/PM 只消费 approved L1 正文和允许的 refs
@@ -246,7 +250,7 @@ Chat /report
   -> exporter 只搬运 approved material 和图表引用生成 final report
   -> final report evidence chain 闭合：
      final report -> PM L1 -> downstream approved L1
-     -> approved market L1 -> market pack audit
+     -> approved market L1 -> data result audit
      -> crypto_lens_analysis_evidence
      -> data_gateway normalized refs -> provider attempts
      -> raw payload refs
@@ -402,7 +406,7 @@ src/claw_trade/data_gateway/analysis/crypto_lens/
 CryptoLens 代码迁移方式：
 
 1. 从 Win11 旧 BB 项目中只读提取纯分析口径、测试样例和历史证据。
-2. 在 claw-trade 仓库内用 Python 重写 CryptoLens 分析模块，以便直接被 `DomainPackService` / `MarketPackBuilder` 调用。
+2. 在 claw-trade 仓库内用 Python 重写 CryptoLens 分析模块，以便直接消费数据层 DataResult / normalized refs。
 3. 重写后的代码归 claw-trade 管理，不再以 `/mnt/d/src/BB`、旧 TS runtime 或旧 BB 构建产物作为运行依赖。
 4. 可迁入为分析口径和测试对照的内容包括 technical analyzers、tutorial pattern analyzers、readiness/conflict/data gap 计算、trade context envelope 的非取数部分。
 5. 不迁入或不启用 provider fetch 逻辑，包括 CoinGecko、CoinGlass、Binance、Bybit、FRED、Glassnode、DefiLlama、Tavily、Snapshot 等直接 HTTP 调用。
@@ -439,9 +443,9 @@ class CryptoLensAnalysisResult:
 
 `conditional_trade_framework` 只能是 market_analyst 的技术材料，用于描述条件场景、失效条件和资料缺口；不得写 BUY/HOLD/SELL、仓位、交易执行建议、PM rating 或最终投资裁决。
 
-### 6.6 MarketPackBuilder
+### 6.6 市场数据结果渲染
 
-`MarketPackBuilder` 负责把 data_gateway normalized 数据和 CryptoLens analysis result 合成 worker 可读材料。
+市场数据结果渲染负责把 data_gateway normalized 数据和 CryptoLens analysis result 合成 worker 可读材料。
 
 CRYPTO market reader brief 必须包含：
 
@@ -509,9 +513,9 @@ CryptoLens 分析引擎对 `data_gateway` normalized bundle 的离线分析证�
 
 它不能替代 `provider_attempts` 或 `raw_payloads`。
 
-## 8. RunProviderPlan 设计
+## 8. DataNeed 规划设计
 
-`RunProviderPlan` 仍只做计划，不远端取数。
+`DataNeed` planner 只把本次需求翻译成 `ProviderCallSpec`，不预取、不写 remote success。
 
 CRYPTO market plan 应包含多个 provider call specs，例如：
 
@@ -701,8 +705,8 @@ claw-trade report runtime
 
 验收必须证明：
 
-- `/mnt/d/src/BB` 不存在或不可访问时，CRYPTO market pack 仍能运行；
-- `BB_MCP_SERVER_PATH`/`BB_MCP_CWD` 为空或指向无效路径时，CRYPTO market pack 不因此失败；
+- `/mnt/d/src/BB` 不存在或不可访问时，CRYPTO 市场数据结果仍能运行；
+- `BB_MCP_SERVER_PATH`/`BB_MCP_CWD` 为空或指向无效路径时，CRYPTO 市场数据结果不因此失败；
 - report runtime 没有启动外部 BB MCP；
 - CryptoLens analysis engine 调用的是 claw-trade 仓库内部代码。
 
@@ -727,7 +731,7 @@ CryptoLens 不得自己出网补数。
 
 - provider attempts/raw evidence 仍保留；
 - `crypto_lens_analysis_evidence` 写失败状态；
-- CRYPTO market pack readiness 降为 `partial` 或 `insufficient`；
+- CRYPTO 市场数据结果 readiness 降为 `partial` 或 `insufficient`；
 - worker 只能使用 `data_gateway` 原始事实的自然语言摘要，不得伪造 CryptoLens 指标分析。
 
 ### data_gateway 数据不足
@@ -767,7 +771,7 @@ cache hit 必须带 cache receipt。
 worker 可见工具仍是：
 
 ```text
-claw_get_market_pack
+claw_request_data
 ```
 
 不是：
@@ -876,9 +880,9 @@ analyze_crypto_lens_data_results(results: Sequence[DataResult], ...) -> CryptoLe
 - 缺口原样传递或进一步细化；
 - 不写投资最终裁决。
 
-### T-CL-6：接入 MarketPackBuilder
+### T-CL-6：接入市场数据结果渲染
 
-CRYPTO `claw_get_market_pack` 流程改为：
+CRYPTO `claw_request_data` 流程改为：
 
 ```text
 data_gateway provider execution
@@ -886,7 +890,7 @@ data_gateway provider execution
   -> CryptoLens analysis engine
   -> reader_brief
   -> chart assets
-  -> pack audit
+  -> data result audit
 ```
 
 ### T-CL-7：证据链和 OpenViking
@@ -897,7 +901,7 @@ data_gateway provider execution
 final report claim
   -> PM L1
   -> market_analyst L1
-  -> CRYPTO market pack audit
+  -> CRYPTO data result audit
   -> crypto_lens_analysis_evidence
   -> normalized_datasets refs
   -> provider_attempts
@@ -911,7 +915,7 @@ final report claim
 
 - fixed runtime preflight；
 - `openclaw_llm_provider_payload`；
-- visible tool schema 只含 `claw_get_market_pack`；
+- visible tool schema 只含 `claw_request_data`；
 - provider_attempts/raw_payloads evidence；
 - CryptoLens analysis evidence；
 - Mongo attempts/raw/cache/normalized/run-plan/single-flight/validation receipt；
@@ -936,8 +940,8 @@ final report claim
 
 ### 合同测试
 
-- `claw_get_market_pack` model-visible schema 不接受模型传 ticker/market/date 覆盖 runtime。
-- CRYPTO market pack output 不包含 raw JSON/debug envelope/Mongo raw/cache object。
+- `claw_request_data` model-visible schema 不接受模型传 ticker/market/date 覆盖 runtime。
+- CRYPTO 市场数据结果不包含 raw JSON/debug envelope/Mongo raw/cache object。
 - provider_attempts/raw_payloads evidence 不被命名为 OpenClaw LLM payload。
 - `crypto_lens_analysis_evidence` 不被命名为 data_gateway provider evidence。
 - data_gateway provider 失败时不调用旧 BB live provider fetch。
@@ -946,11 +950,11 @@ final report claim
 
 在 data_gateway schema 模式下：
 
-- 旧 `frontline_data_pack` 不得被 import/call；
-- 旧 `crypto_market_data_pack.py` 不得作为 fallback；
+- 旧 `frontline_data_result` 不得被 import/call；
+- 旧 `claw_request_data.py` 不得作为 fallback；
 - 旧 BB `domains/live.ts` 的直接 provider fetch 路径不得被 report runtime 调用；
 - 外部 Win11 BB MCP 不得被 report runtime 调用；
-- 把 `BB_MCP_SERVER_PATH` 和 `BB_MCP_CWD` 设置成无效路径时，目标态 CRYPTO market pack 不得因此失败；
+- 把 `BB_MCP_SERVER_PATH` 和 `BB_MCP_CWD` 设置成无效路径时，目标态 CRYPTO 市场数据结果不得因此失败；
 - US atomics 和 legacy 已删除数据网关 atomic provider tools 不得进入 worker tool schema。
 
 ### 集成测试
@@ -985,14 +989,14 @@ docs/evidence/removed_data_gateway-canonical-t16-final-20260518T125112Z/crypto_b
 原因：
 
 - CRYPTO market source 只显示 `removed_data_gateway_yfinance/crypto_price_historical`；
-- CryptoLens 分析材料没有进入当前 `claw_get_market_pack` 后端；
+- CryptoLens 分析材料没有进入当前 `claw_request_data` 后端；
 - 该旧 final report 中的旧 BB/CoinGlass 缺失说明是诚实缺口，但不是目标完成态。
 
 ## 15. 不做事项
 
 本方案不做：
 
-- 不恢复旧 `crypto_market_data_pack.py` 作为可运行 fallback；
+- 不恢复旧 `claw_request_data.py` 作为可运行 fallback；
 - 不让 worker 直接调用 `bb_crypto_data__build_trade_context`；
 - 不让 CryptoLens 自己调用 CoinGlass/Binance/Bybit/FRED；
 - 不让 report runtime 调用 Win11 下的旧 BB 项目目录；
@@ -1014,11 +1018,11 @@ docs/evidence/removed_data_gateway-canonical-t16-final-20260518T125112Z/crypto_b
 - provider 接入方向已批准：每个 provider 必须有 license/cost/raw export approval record；不得泄漏 secret；未经许可不得导出 raw 全文。
 - CryptoLens 采用 Python 重写，不保留旧 BB 运行时代码或 TS runtime 依赖。
 - 旧 BB 运行相关内容应删除/禁用以避免污染；迁移审计证据与只读盘点清单必须保留。
-- data_gateway 覆盖口径（人话）：BTC 报告需要价格/K线、资金费率、持仓、清算、链上、宏观、事件、AHR999；拿到就进资料包，拿不到就写真实缺口。
-- 证据链口径（人话）：最终报告中的判断要能一路追到 market L1、market pack、CryptoLens 分析、normalized/provider attempt/raw payload evidence。
+- data_gateway 覆盖口径（人话）：BTC 报告需要价格/K线、资金费率、持仓、清算、链上、宏观、事件、AHR999；拿到就进数据结果，拿不到就写真实缺口。
+- 证据链口径（人话）：最终报告中的判断要能一路追到 market L1、数据结果审计、CryptoLens 分析、normalized/provider attempt/raw payload evidence。
 - data_gateway 形态口径（人话）：所有外部取数只走 `data_gateway` 这一个门，不能让 Python 或旧 BB 自己出网。
-- 加密 market 通过 CryptoLens 分析能力生成指标解释，worker 仍通过 `claw_get_market_pack` 获取材料。
-- `claw_get_market_pack` 继续作为 market worker 的统一资料包入口。
+- 加密 market 通过 CryptoLens 分析能力生成指标解释，worker 仍通过 `claw_request_data` 获取材料。
+- `claw_request_data` 继续作为 market worker 的统一数据结果入口。
 
 仍需在实施时以代码证据关闭的问题：
 
@@ -1031,12 +1035,12 @@ docs/evidence/removed_data_gateway-canonical-t16-final-20260518T125112Z/crypto_b
 
 只有同时满足以下条件，才能说 CryptoLens 接入完成：
 
-1. `claw_get_market_pack` 在 CRYPTO 下真实走 data_gateway provider plan 取数。
+1. `claw_request_data` 在 CRYPTO 下真实走 data_gateway provider plan 取数。
 2. 所有外部 provider 请求都有 provider_attempts/raw_payloads evidence。
 3. CryptoLens analysis engine 在 report runtime 中不出网、不读 provider key。
 4. CryptoLens analysis engine 来自 claw-trade 仓库内部代码，不依赖 Win11 旧 BB 项目、`/mnt/d/src/BB` 或外部 BB MCP。
 5. CryptoLens analysis input 只来自 data_gateway normalized rows、DataResult 批结果和 refs。
-6. worker 只看到自然语言 market pack。
+6. worker 只看到自然语言市场数据结果。
 7. BTC fresh/live report 中恢复 CryptoLens 指标分析密度。
 8. 缺失字段仍真实进入 data gaps。
 9. final report evidence chain 能追到 PM L1、market L1、CryptoLens analysis evidence、normalized/raw/provider attempt refs。

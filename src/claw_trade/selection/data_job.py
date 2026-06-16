@@ -14,11 +14,11 @@ from claw_trade.data_gateway.refs import (
 )
 from claw_trade.data_gateway.selection_integrity import validate_selection_columnar_manifest_ref
 from claw_trade.selection.artifacts import SelectionFileArtifactBackend
-from claw_trade.selection.candidate_pack import (
-    ApprovedCandidatePack,
-    CandidatePackError,
-    approve_candidate_pack,
-    build_candidate_pack,
+from claw_trade.selection.candidate_cache import (
+    ApprovedCandidateCache,
+    CandidateCacheError,
+    approve_candidate_cache,
+    build_candidate_cache,
 )
 from claw_trade.selection.engine import (
     ApprovedSelectionStrategy,
@@ -37,14 +37,14 @@ from claw_trade.selection.features import (
     normalize_selection_inputs,
 )
 from claw_trade.selection.models import (
-    CandidatePackManifest,
+    CandidateCacheManifest,
     DataGapRef,
     DataGapSeverity,
     SelectionBatchScope,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
 )
 from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
@@ -55,8 +55,8 @@ from claw_trade.selection.strategy_config import (
 
 
 @dataclass(frozen=True)
-class SelectionProviderBatchResult:
-    provider_batch_plan: SelectionProviderBatchPlan
+class SelectionDataNeedResult:
+    data_need_audit: SelectionDataNeedAudit
     attempt_refs: tuple[str, ...]
     normalized_refs: tuple[str, ...]
     rows: tuple[Mapping[str, object], ...]
@@ -144,18 +144,18 @@ class SelectionDataJob:
         self,
         *,
         store: SelectionRunStore,
-        provider_fetch_batch: Callable[..., SelectionProviderBatchResult],
+        provider_fetch_batch: Callable[..., SelectionDataNeedResult],
         strategy_config_loader: Callable[[str], ApprovedSelectionStrategy | None],
         now_fn: Callable[[], datetime] | None = None,
         evidence_root: Path | None = None,
-        candidate_pack_backend: SelectionFileArtifactBackend | None = None,
+        candidate_cache_backend: SelectionFileArtifactBackend | None = None,
     ) -> None:
         self._store = store
         self._provider_fetch_batch = provider_fetch_batch
         self._strategy_config_loader = strategy_config_loader
         self._now_fn = now_fn or _utc_now
         self._evidence_root = evidence_root or Path("runs/selection")
-        self._candidate_pack_backend = candidate_pack_backend or SelectionFileArtifactBackend(
+        self._candidate_cache_backend = candidate_cache_backend or SelectionFileArtifactBackend(
             root=self._evidence_root / "artifacts"
         )
 
@@ -168,7 +168,7 @@ class SelectionDataJob:
         feature_snapshot: FeatureSnapshot | None = None
         scoring: ScoringResult | None = None
         strategy: ApprovedSelectionStrategy | None = None
-        approved_pack: ApprovedCandidatePack | None = None
+        approved_cache: ApprovedCandidateCache | None = None
         select_data_plan: Any | None = None
         select_data_plan_ref: str | None = None
         all_data_gaps: list[DataGapRef] = []
@@ -238,8 +238,8 @@ class SelectionDataJob:
             )
             filtered = FilteredUniverse(rows=(), decisions=())
 
-            self._save_status(plan, status=SelectionDataRunStatus.BUILDING_CANDIDATE_PACK, lease_id=lease_id)
-            draft = build_candidate_pack(
+            self._save_status(plan, status=SelectionDataRunStatus.BUILDING_CANDIDATE_CACHE, lease_id=lease_id)
+            draft = build_candidate_cache(
                 plan=plan,
                 inputs=normalized_inputs,
                 filtered=filtered,
@@ -251,11 +251,11 @@ class SelectionDataJob:
                 stable_top20_rule=strategy.stable_top20_rule,
             )
 
-            self._save_status(plan, status=SelectionDataRunStatus.APPROVING_CANDIDATE_PACK, lease_id=lease_id)
-            approved_pack = approve_candidate_pack(
+            self._save_status(plan, status=SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE, lease_id=lease_id)
+            approved_cache = approve_candidate_cache(
                 plan=plan,
                 draft=draft,
-                artifact_backend=self._candidate_pack_backend,
+                artifact_backend=self._candidate_cache_backend,
                 now_fn=self._now_fn,
                 candidate_scores_ref=scoring.score_ref,
                 stable_top20_rule=strategy.stable_top20_rule,
@@ -273,7 +273,7 @@ class SelectionDataJob:
                 columnar_manifest_ref=columnar_manifest_ref,
                 columnar_manifest_sha256=columnar_manifest_sha256,
                 feature_snapshot_ref=feature_snapshot.feature_snapshot_ref,
-                candidate_pack_ref=approved_pack.candidate_pack_ref,
+                candidate_cache_ref=approved_cache.candidate_cache_ref,
                 data_gaps=tuple(all_data_gaps),
                 started_at=self._started_at_for(plan, fallback=completed_at),
                 completed_at=completed_at,
@@ -281,13 +281,13 @@ class SelectionDataJob:
             record = SelectionDataRunRecord(
                 run_plan=plan,
                 data_run=completed,
-                manifest=approved_pack.manifest,
+                manifest=approved_cache.manifest,
             )
             self._store.save_data_run_record(record)
             evidence_path = self._write_evidence(
                 plan=plan,
                 data_run=completed,
-                manifest=approved_pack.manifest,
+                manifest=approved_cache.manifest,
                 provider_attempt_refs=provider_attempt_refs,
                 normalized_refs=normalized_refs,
                 select_data_plan=select_data_plan,
@@ -295,7 +295,7 @@ class SelectionDataJob:
                 scoring=scoring,
                 strategy=strategy,
                 data_gaps=tuple(all_data_gaps),
-                verification_log_refs=approved_pack.verification_log_refs,
+                verification_log_refs=approved_cache.verification_log_refs,
                 failure_code=None,
             )
             return SelectionDataJobExecution(
@@ -307,9 +307,9 @@ class SelectionDataJob:
                 top20_tickers=tuple(item.ticker for item in scoring.top20),
                 evidence_path=evidence_path,
             )
-        except (SelectionFeatureError, SelectionEngineError, SelectionDataJobStepError, CandidatePackError) as raw_exc:
+        except (SelectionFeatureError, SelectionEngineError, SelectionDataJobStepError, CandidateCacheError) as raw_exc:
             exc = raw_exc
-            if isinstance(raw_exc, CandidatePackError):
+            if isinstance(raw_exc, CandidateCacheError):
                 exc = SelectionDataJobStepError(raw_exc.code, raw_exc.reason)
             all_data_gaps.extend(exc.data_gaps)
             if _is_no_candidate_outcome(raw_exc):
@@ -379,13 +379,13 @@ class SelectionDataJob:
             record = SelectionDataRunRecord(
                 run_plan=plan,
                 data_run=failed_run,
-                manifest=approved_pack.manifest if approved_pack is not None else None,
+                manifest=approved_cache.manifest if approved_cache is not None else None,
             )
             self._store.save_data_run_record(record)
             evidence_path = self._write_evidence(
                 plan=plan,
                 data_run=failed_run,
-                manifest=approved_pack.manifest if approved_pack is not None else None,
+                manifest=approved_cache.manifest if approved_cache is not None else None,
                 provider_attempt_refs=provider_attempt_refs,
                 normalized_refs=normalized_refs,
                 select_data_plan=select_data_plan,
@@ -393,7 +393,7 @@ class SelectionDataJob:
                 scoring=scoring,
                 strategy=strategy,
                 data_gaps=tuple(all_data_gaps),
-                verification_log_refs=approved_pack.verification_log_refs if approved_pack is not None else (),
+                verification_log_refs=approved_cache.verification_log_refs if approved_cache is not None else (),
                 failure_code=exc.code,
             )
             return SelectionDataJobExecution(
@@ -443,7 +443,7 @@ class SelectionDataJob:
         plan: SelectionRunPlan,
         *,
         progress_callback: Callable[[SelectionDataFetchProgress], None],
-    ) -> SelectionProviderBatchResult:
+    ) -> SelectionDataNeedResult:
         if _supports_progress_callback(self._provider_fetch_batch):
             return self._provider_fetch_batch(plan, progress_callback=progress_callback)
         return self._provider_fetch_batch(plan)
@@ -454,27 +454,27 @@ class SelectionDataJob:
             return existing.data_run.started_at
         return fallback
 
-    def _validate_provider_result(self, plan: SelectionRunPlan, provider_result: SelectionProviderBatchResult) -> None:
-        batch_plan = provider_result.provider_batch_plan
-        if batch_plan.plan_id != plan.provider_batch_plan_ref:
+    def _validate_provider_result(self, plan: SelectionRunPlan, provider_result: SelectionDataNeedResult) -> None:
+        batch_plan = provider_result.data_need_audit
+        if batch_plan.plan_id != plan.data_need_audit_ref:
             raise SelectionDataJobStepError(
-                "provider_batch_plan_missing",
-                "provider batch plan ref 与 run plan 不一致",
+                "data_need_audit_missing",
+                "data need audit ref 与 run plan 不一致",
             )
         if batch_plan.scope != SelectionBatchScope.SELECTION_BATCH:
             raise SelectionDataJobStepError(
-                "provider_batch_plan_missing",
-                "provider batch plan scope 非 selection_batch",
+                "data_need_audit_missing",
+                "data need audit scope 非 selection_batch",
             )
         if batch_plan.market != plan.market or batch_plan.profile != plan.profile:
             raise SelectionDataJobStepError(
-                "provider_batch_plan_missing",
-                "provider batch plan 市场或 profile 不匹配",
+                "data_need_audit_missing",
+                "data need audit 市场或 profile 不匹配",
             )
         if batch_plan.trade_date != plan.trade_date:
             raise SelectionDataJobStepError(
-                "provider_batch_plan_missing",
-                "provider batch plan trade_date 不匹配",
+                "data_need_audit_missing",
+                "data need audit trade_date 不匹配",
             )
         if not provider_result.attempt_refs:
             raise SelectionDataJobStepError(
@@ -634,7 +634,7 @@ class SelectionDataJob:
         *,
         plan: SelectionRunPlan,
         data_run: SelectionDataRun,
-        manifest: CandidatePackManifest | None,
+        manifest: CandidateCacheManifest | None,
         provider_attempt_refs: tuple[str, ...],
         normalized_refs: tuple[str, ...],
         select_data_plan: Any | None,
@@ -652,7 +652,7 @@ class SelectionDataJob:
             "trade_date": plan.trade_date,
             "lookback_trading_days": plan.lookback_trading_days,
             "universe_scope": plan.universe_scope,
-            "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+            "data_need_audit_ref": plan.data_need_audit_ref,
             "approved_strategy_config_ref": plan.approved_strategy_config_ref,
             "strategy_config_version": CN_A_SELECTION_V1_STRATEGY_CONFIG_VERSION,
             "weight_version": CN_A_SELECTION_V1_WEIGHT_VERSION,
@@ -672,21 +672,21 @@ class SelectionDataJob:
             "started_at": data_run.started_at,
             "completed_at": data_run.completed_at,
             "failed_at": data_run.failed_at,
-            "candidate_pack_stage": _candidate_pack_stage(data_run.status, manifest),
-            "candidate_pack_ref": (
+            "candidate_cache_stage": _candidate_cache_stage(data_run.status, manifest),
+            "candidate_cache_ref": (
                 {
-                    "material_id": data_run.candidate_pack_ref.material_id,
-                    "l1_uri": data_run.candidate_pack_ref.l1_uri,
-                    "content_sha256": data_run.candidate_pack_ref.content_sha256,
-                    "manifest_ref": data_run.candidate_pack_ref.manifest_ref,
-                    "approved_at": data_run.candidate_pack_ref.approved_at,
-                    "expires_at": data_run.candidate_pack_ref.expires_at,
-                    "pack_summary_ref": data_run.candidate_pack_ref.pack_summary_ref,
+                    "material_id": data_run.candidate_cache_ref.material_id,
+                    "l1_uri": data_run.candidate_cache_ref.l1_uri,
+                    "content_sha256": data_run.candidate_cache_ref.content_sha256,
+                    "manifest_ref": data_run.candidate_cache_ref.manifest_ref,
+                    "approved_at": data_run.candidate_cache_ref.approved_at,
+                    "expires_at": data_run.candidate_cache_ref.expires_at,
+                    "cache_summary_ref": data_run.candidate_cache_ref.cache_summary_ref,
                 }
-                if data_run.candidate_pack_ref is not None
+                if data_run.candidate_cache_ref is not None
                 else None
             ),
-            "candidate_pack_manifest": (
+            "candidate_cache_manifest": (
                 {
                     "schema_version": manifest.schema_version,
                     "selection_run_id": manifest.selection_run_id,
@@ -696,7 +696,7 @@ class SelectionDataJob:
                     "stage": manifest.stage,
                     "target": manifest.target,
                     "candidate_count": manifest.candidate_count,
-                    "pack_body_sha256": manifest.pack_body_sha256,
+                    "cache_body_sha256": manifest.cache_body_sha256,
                     "readback_status": manifest.readback_status.value,
                     "source_lineage_refs": list(manifest.source_lineage_refs),
                     "strategy_config_ref": manifest.strategy_config_ref,
@@ -708,7 +708,7 @@ class SelectionDataJob:
                 if manifest is not None
                 else None
             ),
-            "candidate_pack_verification_log_refs": list(verification_log_refs),
+            "candidate_cache_verification_log_refs": list(verification_log_refs),
             "provider_attempt_refs": list(provider_attempt_refs),
             "normalized_refs": list(normalized_refs),
             "select_data_plan_ref": data_run.select_data_plan_ref,
@@ -772,8 +772,8 @@ class SelectionDataJob:
 
 
 def _is_no_candidate_outcome(exc: Exception) -> bool:
-    if isinstance(exc, CandidatePackError):
-        return exc.code == "candidate_pack_top20_count_invalid"
+    if isinstance(exc, CandidateCacheError):
+        return exc.code == "candidate_cache_top20_count_invalid"
     if not isinstance(exc, SelectionEngineError):
         return False
     return any(gap.gap_code in {"filtered_universe_empty", "scoring_rows_empty"} for gap in exc.data_gaps)
@@ -782,7 +782,7 @@ def _is_no_candidate_outcome(exc: Exception) -> bool:
 def build_selection_data_plan(
     *,
     plan: SelectionRunPlan,
-    provider_result: SelectionProviderBatchResult | None = None,
+    provider_result: SelectionDataNeedResult | None = None,
 ) -> _SelectionDataPlan:
     plan_id = f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}"
     requirement_id = f"{plan.selection_run_id}:selection:{plan.trade_date}"
@@ -799,7 +799,6 @@ def build_selection_data_plan(
                 "universe_scope": plan.universe_scope,
                 "granularity": "daily",
                 "coverage_groups": ("universe", "daily", "fundamental"),
-                "source_role_required": "market_data",
                 "field_set": ("strategy_signal_myhhub_volume_rise", "private_placement_days_since", "amount"),
                 "target_ref_type": "dataset://normalized",
             },
@@ -835,7 +834,7 @@ def build_selection_data_plan(
             if status == _SelectionWarehouseStatus.FRESH
             else (
                 {
-                    "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+                    "data_need_audit_ref": plan.data_need_audit_ref,
                     "scope": SelectionBatchScope.SELECTION_BATCH.value,
                     "market": plan.market.value,
                     "profile": plan.profile.value,
@@ -895,7 +894,7 @@ def build_selection_data_plan(
         ),
         provider_call_specs=(
             {
-                "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+                "data_need_audit_ref": plan.data_need_audit_ref,
                 "scope": SelectionBatchScope.SELECTION_BATCH.value,
                 "market": plan.market.value,
                 "profile": plan.profile.value,
@@ -1065,7 +1064,7 @@ def _strategy_with_available_optional_variants(
                     gap_code="selection_strategy_variants_unavailable",
                     severity=DataGapSeverity.BLOCKER,
                     attempt_refs=(snapshot.feature_snapshot_ref,),
-                    reader_message="全部策略变体缺少本轮必需字段，不能生成 candidate pack。",
+                    reader_message="全部策略变体缺少本轮必需字段，不能生成 candidate cache。",
                 ),
             ),
         )
@@ -1086,7 +1085,7 @@ def _strategy_field_blocker_gaps(
             gap_code="selection_strategy_field_missing",
             severity=DataGapSeverity.BLOCKER,
             attempt_refs=(snapshot.feature_snapshot_ref,),
-            reader_message=f"策略字段缺失：{field}。字段不足时不能生成 approved candidate pack。",
+            reader_message=f"策略字段缺失：{field}。字段不足时不能生成 approved candidate cache。",
             source_metadata={
                 "field": field,
                 "missing_ticker_count": len(tickers),
@@ -1173,7 +1172,7 @@ def _dedup_tickers(tickers: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def _candidate_pack_stage(status: SelectionDataRunStatus, manifest: CandidatePackManifest | None) -> str:
+def _candidate_cache_stage(status: SelectionDataRunStatus, manifest: CandidateCacheManifest | None) -> str:
     if manifest is not None:
         return "approved"
     if status == SelectionDataRunStatus.NO_CANDIDATE:

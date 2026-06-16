@@ -185,7 +185,7 @@ def test_selection_batch_uses_valid_columnar_manifest_before_data_gateway(tmp_pa
     monkeypatch.delenv("CN_A_MONGODB_URI", raising=False)
     plan = _plan(
         "sel-run-columnar-cache",
-        provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+        data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
     )
     writer = SelectionColumnarWarehouse(root=root).begin_write(plan=plan)
     writer.add_daily_rows(({"ticker": "000001.SZ", "date": "2026-06-04", "close": 10.5},))
@@ -249,7 +249,7 @@ def _plan(
     selection_run_id: str,
     *,
     trade_date: str = "2026-06-04",
-    provider_batch_plan_ref: str | None = None,
+    data_need_audit_ref: str | None = None,
 ) -> SelectionRunPlan:
     return SelectionRunPlan(
         selection_run_id=selection_run_id,
@@ -258,7 +258,7 @@ def _plan(
         trade_date=trade_date,
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref=provider_batch_plan_ref or f"plan://selection/cn_a/{trade_date}/batch-v1",
+        data_need_audit_ref=data_need_audit_ref or f"plan://selection/cn_a/{trade_date}/batch-v1",
         approved_strategy_config_ref="config://selection/cn_a/v1",
         trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
     )

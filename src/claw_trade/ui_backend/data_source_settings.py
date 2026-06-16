@@ -28,7 +28,7 @@ class ProviderDisplayDecision:
     requires_user_credential: bool
     changes_report_or_select_result: bool
     writes_mongo_and_evidence: bool
-    enters_domain_pack: bool
+    enters_data_result_flow: bool
     consumed_by_worker_or_strategy: bool
     live_fresh_evidence_ref: str | None = None
     probe_only: bool = False
@@ -50,7 +50,6 @@ def _api_env_map(prefix: str, *, api_key: str, endpoint_url: str | None = None, 
         "rate_limit_window_seconds": f"{prefix}_RATE_LIMIT_WINDOW_SECONDS",
         "rate_limit_safety_margin": f"{prefix}_RATE_LIMIT_SAFETY_MARGIN",
         "rate_limit_overflow": f"{prefix}_RATE_LIMIT_OVERFLOW",
-        "rate_limit_wait_timeout_seconds": f"{prefix}_RATE_LIMIT_WAIT_TIMEOUT_SECONDS",
     }
     if endpoint_url:
         mapping["endpoint_url"] = endpoint_url
@@ -372,7 +371,6 @@ class DataSourceInstanceForUser:
     rate_limit_window_seconds: int | None
     rate_limit_safety_margin: int | None
     rate_limit_overflow: str | None
-    rate_limit_wait_timeout_seconds: int | None
 
     def to_user_dict(self) -> dict[str, Any]:
         return {
@@ -390,7 +388,6 @@ class DataSourceInstanceForUser:
             "rateLimitWindowSeconds": self.rate_limit_window_seconds,
             "rateLimitSafetyMargin": self.rate_limit_safety_margin,
             "rateLimitOverflow": self.rate_limit_overflow,
-            "rateLimitWaitTimeoutSeconds": self.rate_limit_wait_timeout_seconds,
         }
 
 
@@ -537,7 +534,6 @@ class DataSourceSettingsService:
                 "rate_limit_window_seconds": normalized["rate_limit_window_seconds"],
                 "rate_limit_safety_margin": normalized["rate_limit_safety_margin"],
                 "rate_limit_overflow": normalized["rate_limit_overflow"],
-                "rate_limit_wait_timeout_seconds": normalized["rate_limit_wait_timeout_seconds"],
             }
         )
         self._write_env_updates(saved, api_key_replacement)
@@ -595,7 +591,6 @@ class DataSourceSettingsService:
             "rate_limit_window_seconds": _optional_positive_int(data.get("rateLimitWindowSeconds")),
             "rate_limit_safety_margin": _optional_non_negative_int(data.get("rateLimitSafetyMargin")),
             "rate_limit_overflow": _optional_overflow(data.get("rateLimitOverflow")),
-            "rate_limit_wait_timeout_seconds": _optional_non_negative_int(data.get("rateLimitWaitTimeoutSeconds")),
         }
 
     def _probe_health(
@@ -689,7 +684,6 @@ class DataSourceSettingsService:
             ("rate_limit_window_seconds", "rate_limit_window_seconds"),
             ("rate_limit_safety_margin", "rate_limit_safety_margin"),
             ("rate_limit_overflow", "rate_limit_overflow"),
-            ("rate_limit_wait_timeout_seconds", "rate_limit_wait_timeout_seconds"),
         ):
             value = saved.get(record_key)
             env_key = mapping.get(setting_name)
@@ -734,7 +728,6 @@ def to_data_source_instance_for_user(instance: Mapping[str, Any]) -> DataSourceI
         rate_limit_window_seconds=_optional_int(instance.get("rate_limit_window_seconds")),
         rate_limit_safety_margin=_optional_int(instance.get("rate_limit_safety_margin")),
         rate_limit_overflow=_optional_str(instance.get("rate_limit_overflow")),
-        rate_limit_wait_timeout_seconds=_optional_int(instance.get("rate_limit_wait_timeout_seconds")),
     )
 
 
@@ -841,7 +834,6 @@ def _built_in_source_row(supported_type: str) -> dict[str, Any]:
         "rate_limit_window_seconds": None,
         "rate_limit_safety_margin": None,
         "rate_limit_overflow": None,
-        "rate_limit_wait_timeout_seconds": None,
     }
 
 
@@ -856,6 +848,7 @@ def _default_display_decision_source() -> tuple[ProviderDisplayDecision, ...]:
 _PROVIDER_ID_TO_SETTINGS_SOURCE_TYPES: dict[str, tuple[str, ...]] = {
     "cn_a_primary": ("tushare",),
     "cn_a_tushare_fundamental": ("tushare",),
+    "cn_a_tushare_realtime": ("tushare",),
     "hk_tushare": ("tushare",),
     "us_finnhub_data": ("finnhub",),
     "hk_finnhub_data": ("finnhub",),

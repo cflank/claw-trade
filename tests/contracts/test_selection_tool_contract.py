@@ -7,8 +7,8 @@ from hashlib import sha256
 from pathlib import Path
 
 from claw_trade.config.tool_names import load_tool_registry
-from claw_trade.selection.controller import _rebuild_candidate_pack_summary_from_json
-from claw_trade.selection.models import CandidatePackRef
+from claw_trade.selection.controller import _rebuild_candidate_cache_summary_from_json
+from claw_trade.selection.models import CandidateCacheRef
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SELECTION_PLUGIN_PATH = REPO_ROOT / "openclaw_plugins" / "claw-trade-selection-tools" / "index.js"
@@ -16,9 +16,9 @@ SEL04_APPROVED_ARTIFACTS = (
     REPO_ROOT
     / "docs"
     / "evidence"
-    / "sel-04-candidate-pack-artifacts-2026-05-26"
+    / "sel-04-candidate-cache-artifacts-2026-05-26"
     / "sel04-approval-run"
-    / "candidate-pack"
+    / "candidate-cache"
     / "approved"
 )
 
@@ -35,7 +35,7 @@ const api = {{
   }},
 }};
 plugin.register(api);
-const tool = tools.find((item) => item.name === "claw_get_selection_candidate_pack");
+const tool = tools.find((item) => item.name === "claw_get_selection_candidate_cache");
 if (!tool) {{
   throw new Error("tool not found");
 }}
@@ -62,15 +62,15 @@ process.stdout.write(JSON.stringify(result));
     return json.loads(completed.stdout)
 
 
-def _prepare_candidate_pack_fixture(tmp_path: Path, *, raw_complete_body: bool = False) -> dict[str, object]:
+def _prepare_candidate_cache_fixture(tmp_path: Path, *, raw_complete_body: bool = False) -> dict[str, object]:
     artifact_root = tmp_path / "selection-artifacts"
-    target = artifact_root / "sel04-approval-run" / "candidate-pack" / "approved"
+    target = artifact_root / "sel04-approval-run" / "candidate-cache" / "approved"
     shutil.copytree(SEL04_APPROVED_ARTIFACTS, target)
 
     if raw_complete_body:
         raw_body = "\n".join(
             [
-                "# A股候选事实包",
+                "# A股候选缓存",
                 "",
                 "## 本轮范围",
                 "- 交易日：2026-05-26",
@@ -85,25 +85,25 @@ def _prepare_candidate_pack_fixture(tmp_path: Path, *, raw_complete_body: bool =
                 '| 1 | 600000.SH | 样本股票1 | 样本行业 | 100.000000 | {"liquidity_tradability_score":15} | myhhub/stock | myhhub_volume_rise | {"hit_volume_breakout":1} | {"amount":3000000000,"close":1612} | 0.000000 | 0.000000 | {"amount":3000000000} |',
             ]
         ) + "\n"
-        (target / "candidate-pack.md").write_text(raw_body, encoding="utf-8")
-        (target / "candidate-pack-summary.md").write_text(raw_body, encoding="utf-8")
+        (target / "candidate-cache.md").write_text(raw_body, encoding="utf-8")
+        (target / "candidate-cache-summary.md").write_text(raw_body, encoding="utf-8")
 
-    manifest_path = target / "candidate-pack-manifest.json"
+    manifest_path = target / "candidate-cache-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if raw_complete_body:
-        _refresh_verified_artifact(target / "candidate-pack.md", manifest)
-        _refresh_verified_artifact(target / "candidate-pack-summary.md", manifest)
+        _refresh_verified_artifact(target / "candidate-cache.md", manifest)
+        _refresh_verified_artifact(target / "candidate-cache-summary.md", manifest)
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         _refresh_verified_artifact(manifest_path, manifest, expected_field=None)
-    candidate_pack_ref = {
+    candidate_cache_ref = {
         "selection_run_id": manifest["selection_run_id"],
-        "material_id": "selection-candidate-pack-sel04-contract-proof",
-        "l1_uri": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack.md",
-        "content_sha256": manifest["pack_body_sha256"],
-        "manifest_ref": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack-manifest.json",
+        "material_id": "selection-candidate-cache-sel04-contract-proof",
+        "l1_uri": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache.md",
+        "content_sha256": manifest["cache_body_sha256"],
+        "manifest_ref": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache-manifest.json",
         "approved_at": "2026-05-26T09:00:00Z",
         "expires_at": "2026-06-26T09:00:00Z",
-        "pack_summary_ref": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack-summary.md",
+        "cache_summary_ref": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache-summary.md",
     }
     runtime_vars = {
         "market": "CN_A",
@@ -112,24 +112,24 @@ def _prepare_candidate_pack_fixture(tmp_path: Path, *, raw_complete_body: bool =
         "selection_run_id": manifest["selection_run_id"],
         "select_workflow_run_id": "wf-sel-05-proof",
         "selection_artifact_root": str(artifact_root),
-        "candidate_pack_ref": candidate_pack_ref,
+        "candidate_cache_ref": candidate_cache_ref,
     }
-    body_text = (target / "candidate-pack.md").read_text(encoding="utf-8")
+    body_text = (target / "candidate-cache.md").read_text(encoding="utf-8")
     return {
         "runtime_vars": runtime_vars,
-        "expected_sha256": manifest["pack_body_sha256"],
+        "expected_sha256": manifest["cache_body_sha256"],
         "expected_body": body_text,
         "manifest": manifest,
     }
 
 
-def _refresh_verified_artifact(path: Path, manifest: dict[str, object], *, expected_field: str | None = "pack_body_sha256") -> None:
+def _refresh_verified_artifact(path: Path, manifest: dict[str, object], *, expected_field: str | None = "cache_body_sha256") -> None:
     digest = sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
     if expected_field is not None:
         manifest[expected_field] = digest
     verify_path = path.with_suffix(f"{path.suffix}.readback-verify.json")
     verify_payload = {
-        "uri": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/{path.name}",
+        "uri": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/{path.name}",
         "path": str(path),
         "status": "verified",
         "expected_sha256": digest,
@@ -143,12 +143,12 @@ def _refresh_verified_artifact(path: Path, manifest: dict[str, object], *, expec
 def test_selection_tool_registry_maps_intent_to_unique_canonical_name() -> None:
     registry_result = load_tool_registry()
     assert registry_result.ok is True and registry_result.registry is not None
-    assert registry_result.registry.resolve_intent("selection_candidate_pack") == (
-        "claw_get_selection_candidate_pack",
+    assert registry_result.registry.resolve_intent("selection_candidate_cache") == (
+        "claw_get_selection_candidate_cache",
     )
 
 
-def test_selection_plugin_registers_candidate_pack_tool_with_empty_params_schema() -> None:
+def test_selection_plugin_registers_candidate_cache_tool_with_empty_params_schema() -> None:
     script = f"""
 import plugin from {json.dumps(str(SELECTION_PLUGIN_PATH))};
 const registrations = [];
@@ -176,7 +176,7 @@ process.stdout.write(JSON.stringify(registrations));
     registrations = json.loads(completed.stdout)
     assert registrations == [
         {
-            "name": "claw_get_selection_candidate_pack",
+            "name": "claw_get_selection_candidate_cache",
             "schemaType": "object",
             "additionalProperties": False,
             "fields": [],
@@ -184,11 +184,11 @@ process.stdout.write(JSON.stringify(registrations));
     ]
 
 
-def test_selection_tool_reads_same_approved_pack_hash_for_strategist_and_skeptic(tmp_path: Path) -> None:
-    fixture = _prepare_candidate_pack_fixture(tmp_path)
+def test_selection_tool_reads_same_approved_cache_hash_for_strategist_and_skeptic(tmp_path: Path) -> None:
+    fixture = _prepare_candidate_cache_fixture(tmp_path)
     manifest = fixture["manifest"]
     assert isinstance(manifest, dict)
-    assert "pack_body_sha256" in manifest
+    assert "cache_body_sha256" in manifest
     assert "source_lineage_refs" in manifest
 
     strategist = _run_plugin_tool(
@@ -207,9 +207,9 @@ def test_selection_tool_reads_same_approved_pack_hash_for_strategist_and_skeptic
     skeptic_details = skeptic.get("details", {})
     assert strategist_details.get("ok") is True
     assert skeptic_details.get("ok") is True
-    assert strategist_details.get("pack_body_sha256") == fixture["expected_sha256"]
-    assert skeptic_details.get("pack_body_sha256") == fixture["expected_sha256"]
-    assert strategist_details.get("pack_body_sha256") == skeptic_details.get("pack_body_sha256")
+    assert strategist_details.get("cache_body_sha256") == fixture["expected_sha256"]
+    assert skeptic_details.get("cache_body_sha256") == fixture["expected_sha256"]
+    assert strategist_details.get("cache_body_sha256") == skeptic_details.get("cache_body_sha256")
     assert strategist["content"][0]["text"] == skeptic["content"][0]["text"]
     assert strategist["content"][0]["text"] != fixture["expected_body"]
     for label in (
@@ -239,7 +239,7 @@ def test_selection_tool_reads_same_approved_pack_hash_for_strategist_and_skeptic
 
 
 def test_selection_tool_rebuilds_complete_body_that_contains_raw_reader_field_names(tmp_path: Path) -> None:
-    fixture = _prepare_candidate_pack_fixture(tmp_path, raw_complete_body=True)
+    fixture = _prepare_candidate_cache_fixture(tmp_path, raw_complete_body=True)
 
     result = _run_plugin_tool(
         worker_id="selection_strategist",
@@ -259,10 +259,10 @@ def test_selection_tool_rebuilds_complete_body_that_contains_raw_reader_field_na
         assert raw_field not in text
 
 
-def test_selection_tool_accepts_candidate_pack_ref_json_string(tmp_path: Path) -> None:
-    fixture = _prepare_candidate_pack_fixture(tmp_path)
+def test_selection_tool_accepts_candidate_cache_ref_json_string(tmp_path: Path) -> None:
+    fixture = _prepare_candidate_cache_fixture(tmp_path)
     runtime_vars = dict(fixture["runtime_vars"])
-    runtime_vars["candidate_pack_ref"] = json.dumps(runtime_vars["candidate_pack_ref"], ensure_ascii=False)
+    runtime_vars["candidate_cache_ref"] = json.dumps(runtime_vars["candidate_cache_ref"], ensure_ascii=False)
     result = _run_plugin_tool(
         worker_id="selection_strategist",
         runtime_vars=runtime_vars,
@@ -270,11 +270,11 @@ def test_selection_tool_accepts_candidate_pack_ref_json_string(tmp_path: Path) -
     assert result.get("isError") is False
     details = result.get("details", {})
     assert details.get("ok") is True
-    assert details.get("pack_body_sha256") == fixture["expected_sha256"]
+    assert details.get("cache_body_sha256") == fixture["expected_sha256"]
 
 
 def test_selection_tool_rejects_business_params(tmp_path: Path) -> None:
-    fixture = _prepare_candidate_pack_fixture(tmp_path)
+    fixture = _prepare_candidate_cache_fixture(tmp_path)
     result = _run_plugin_tool(
         worker_id="selection_strategist",
         runtime_vars=fixture["runtime_vars"],
@@ -285,26 +285,40 @@ def test_selection_tool_rejects_business_params(tmp_path: Path) -> None:
     assert error.get("code") == "TOOL_PARAMS_INVALID"
 
 
+def test_selection_tool_error_text_hides_internal_details_from_model(tmp_path: Path) -> None:
+    fixture = _prepare_candidate_cache_fixture(tmp_path)
+    result = _run_plugin_tool(
+        worker_id="provider=official_api_tushare api_name=hk_mins token=secret",
+        runtime_vars=fixture["runtime_vars"],
+    )
+
+    assert result.get("isError") is True
+    text = result["content"][0]["text"]
+    assert "当前 worker 不能使用候选缓存工具" in text
+    for forbidden in ("official_api_tushare", "api_name", "hk_mins", "token", "secret"):
+        assert forbidden not in text
+
+
 def test_selection_controller_rebuild_summary_from_json_hides_typical_machine_keys(
     tmp_path: Path,
     monkeypatch: object,
 ) -> None:
     artifact_root = tmp_path / "runs" / "selection" / "artifacts"
-    target = artifact_root / "sel04-approval-run" / "candidate-pack" / "approved"
+    target = artifact_root / "sel04-approval-run" / "candidate-cache" / "approved"
     shutil.copytree(SEL04_APPROVED_ARTIFACTS, target)
-    manifest = json.loads((target / "candidate-pack-manifest.json").read_text(encoding="utf-8"))
-    candidate_pack_ref = CandidatePackRef(
+    manifest = json.loads((target / "candidate-cache-manifest.json").read_text(encoding="utf-8"))
+    candidate_cache_ref = CandidateCacheRef(
         selection_run_id=manifest["selection_run_id"],
-        material_id="selection-candidate-pack-sel04-contract-proof",
-        l1_uri=f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack.md",
-        content_sha256=manifest["pack_body_sha256"],
-        manifest_ref=f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack-manifest.json",
+        material_id="selection-candidate-cache-sel04-contract-proof",
+        l1_uri=f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache.md",
+        content_sha256=manifest["cache_body_sha256"],
+        manifest_ref=f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache-manifest.json",
         approved_at="2026-05-26T09:00:00Z",
         expires_at="2026-06-26T09:00:00Z",
-        pack_summary_ref=f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack-summary.md",
+        cache_summary_ref=f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache-summary.md",
     )
     monkeypatch.chdir(tmp_path)
-    rebuilt = _rebuild_candidate_pack_summary_from_json(candidate_pack_ref)
+    rebuilt = _rebuild_candidate_cache_summary_from_json(candidate_cache_ref)
     assert rebuilt is not None
     assert "成交额" in rebuilt
     assert "总分" in rebuilt

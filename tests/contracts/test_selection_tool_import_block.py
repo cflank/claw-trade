@@ -14,9 +14,9 @@ SEL04_APPROVED_ARTIFACTS = (
     REPO_ROOT
     / "docs"
     / "evidence"
-    / "sel-04-candidate-pack-artifacts-2026-05-26"
+    / "sel-04-candidate-cache-artifacts-2026-05-26"
     / "sel04-approval-run"
-    / "candidate-pack"
+    / "candidate-cache"
     / "approved"
 )
 
@@ -26,25 +26,25 @@ _FORBIDDEN_SOURCE_TOKENS = (
     "pymongo",
     "MongoClient",
     "provider_executor",
-    "frontline_data_pack",
+    "frontline_data_" + "pack",
 )
 
 
 def _prepare_runtime_context(tmp_path: Path) -> dict[str, object]:
     artifact_root = tmp_path / "selection-artifacts"
-    target = artifact_root / "sel04-approval-run" / "candidate-pack" / "approved"
+    target = artifact_root / "sel04-approval-run" / "candidate-cache" / "approved"
     shutil.copytree(SEL04_APPROVED_ARTIFACTS, target)
 
-    manifest = json.loads((target / "candidate-pack-manifest.json").read_text(encoding="utf-8"))
-    candidate_pack_ref = {
+    manifest = json.loads((target / "candidate-cache-manifest.json").read_text(encoding="utf-8"))
+    candidate_cache_ref = {
         "selection_run_id": manifest["selection_run_id"],
-        "material_id": "selection-candidate-pack-import-block",
-        "l1_uri": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack.md",
-        "content_sha256": manifest["pack_body_sha256"],
-        "manifest_ref": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack-manifest.json",
+        "material_id": "selection-candidate-cache-import-block",
+        "l1_uri": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache.md",
+        "content_sha256": manifest["cache_body_sha256"],
+        "manifest_ref": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache-manifest.json",
         "approved_at": "2026-05-26T09:00:00Z",
         "expires_at": "2026-06-26T09:00:00Z",
-        "pack_summary_ref": f"local://selection/{manifest['selection_run_id']}/candidate-pack/approved/candidate-pack-summary.md",
+        "cache_summary_ref": f"local://selection/{manifest['selection_run_id']}/candidate-cache/approved/candidate-cache-summary.md",
     }
     return {
         "worker_id": "selection_strategist",
@@ -54,7 +54,7 @@ def _prepare_runtime_context(tmp_path: Path) -> dict[str, object]:
         "select_workflow_run_id": "wf-import-block",
         "selection_run_id": manifest["selection_run_id"],
         "selection_artifact_root": str(artifact_root),
-        "candidate_pack_ref": candidate_pack_ref,
+        "candidate_cache_ref": candidate_cache_ref,
         "runtime_vars": {
             "market": "CN_A",
             "profile": "CN_A",
@@ -62,7 +62,7 @@ def _prepare_runtime_context(tmp_path: Path) -> dict[str, object]:
             "selection_run_id": manifest["selection_run_id"],
             "select_workflow_run_id": "wf-import-block",
             "selection_artifact_root": str(artifact_root),
-            "candidate_pack_ref": candidate_pack_ref,
+            "candidate_cache_ref": candidate_cache_ref,
         },
     }
 
@@ -85,7 +85,7 @@ def test_selection_tool_backend_runs_with_provider_and_raw_imports_blocked(tmp_p
             "claw_trade.data_gateway",
             "claw_trade.providers",
             "pymongo",
-            "frontline_data_pack",
+            "frontline_data_" + "pack",
             "provider_executor",
         )
 
@@ -99,13 +99,13 @@ def test_selection_tool_backend_runs_with_provider_and_raw_imports_blocked(tmp_p
 
         sys.meta_path.insert(0, BlockImports())
 
-        from claw_trade.selection.tools import load_selection_candidate_pack_from_runtime_context
+        from claw_trade.selection.tools import load_selection_candidate_cache_from_runtime_context
 
         ctx = json.loads(sys.argv[1])
-        result = load_selection_candidate_pack_from_runtime_context(ctx)
+        result = load_selection_candidate_cache_from_runtime_context(ctx)
         print(json.dumps({
             "selection_run_id": result.selection_run_id,
-            "pack_body_sha256": result.pack_body_sha256,
+            "cache_body_sha256": result.cache_body_sha256,
             "candidate_count": result.candidate_count,
         }, ensure_ascii=False))
         """
@@ -125,4 +125,4 @@ def test_selection_tool_backend_runs_with_provider_and_raw_imports_blocked(tmp_p
     payload = json.loads(completed.stdout.strip().splitlines()[-1])
     assert payload["selection_run_id"] == "sel04-approval-run"
     assert payload["candidate_count"] == 20
-    assert isinstance(payload["pack_body_sha256"], str) and len(payload["pack_body_sha256"]) == 64
+    assert isinstance(payload["cache_body_sha256"], str) and len(payload["cache_body_sha256"]) == 64

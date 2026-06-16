@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from claw_trade.data_gateway.execution.fetch_engine import FetchTask
 from claw_trade.data_gateway.execution.managed_http import HttpRequestSpec, ManagedHttp
+from claw_trade.data_gateway.official_catalog import all_endpoints
 from claw_trade.data_gateway.providers.base import (
     CapabilityError,
     ensure_remote_success_is_auditable,
@@ -95,7 +96,7 @@ class EndpointCapability:
     data_type: str
     source_role: str
     supported_granularities: tuple[str, ...]
-    coverage_fields: tuple[str, ...]
+    fields: tuple[str, ...]
     freshness_supported: tuple[str, ...]
     http_visibility: str
     batch_policy: BatchPolicy
@@ -178,7 +179,7 @@ def _plugin(
                 data_type="daily_bar",
                 source_role=source_role,
                 supported_granularities=("daily",),
-                coverage_fields=("close", "volume"),
+                fields=("close", "volume"),
                 freshness_supported=("trading_day",),
                 http_visibility=http_visibility,
                 batch_policy=policy,
@@ -336,6 +337,41 @@ def test_crypto_plugin_reads_endpoint_from_settings_resolver_without_environment
     assert client.requests[0].path == "/custom/api/v3/klines"
 
 
+def test_crypto_binance_spot_order_book_requests_deep_depth() -> None:
+    plugin = BinanceSpotMarketPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text='{"lastUpdateId":1,"bids":[["84000.0","1.2"],["83999.0","0.8"]],"asks":[["84010.0","1.1"],["84011.0","0.9"]]}',
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:crypto-order-book",
+        provider_id="crypto_binance_spot_market",
+        endpoint_id="order_book_depth",
+        market="CRYPTO",
+        data_type="order_book_snapshot",
+        granularity="realtime",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("bid_price", "bid_size", "ask_price", "ask_size", "bid_levels", "ask_levels"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.path == "/api/v3/depth"
+    assert request.query["limit"] == 100
+    row = result.payload["rows"][0]
+    assert row["bid_levels"] == 2
+    assert row["ask_levels"] == 2
+
+
 def test_crypto_spot_intraday_preserves_hour_timestamp_through_managed_http() -> None:
     plugin = BinanceSpotMarketPlugin()
     endpoints = {endpoint.endpoint_id: endpoint for endpoint in plugin.capabilities().endpoints}
@@ -375,6 +411,173 @@ def test_crypto_spot_intraday_preserves_hour_timestamp_through_managed_http() ->
     assert row["close_time"] == row["period_end"]
     assert row["volume_unit"] == "BTC"
     assert row["amount_unit"] == "USDT"
+
+
+def test_crypto_binance_public_futures_endpoints_parse_derivative_rows() -> None:
+    plugin = BinanceSpotMarketPlugin()
+    cases = (
+        (
+            "futures_funding_rate",
+            [{"symbol": "BTCUSDT", "fundingRate": "0.0001", "fundingTime": 1772236800000}],
+            "/fapi/v1/fundingRate",
+            {"funding_rate": 0.0001, "funding_rate_unit": "percent"},
+        ),
+        (
+            "futures_long_short_ratio",
+            [{"symbol": "BTCUSDT", "longShortRatio": "1.25", "timestamp": 1772236800000}],
+            "/futures/data/globalLongShortAccountRatio",
+            {"long_short_ratio": 1.25},
+        ),
+        (
+            "futures_taker_buy_sell",
+            [{"symbol": "BTCUSDT", "buyVol": "100", "sellVol": "80", "buySellRatio": "1.25", "timestamp": 1772236800000}],
+            "/futures/data/takerlongshortRatio",
+            {"taker_buy_volume": 100.0, "taker_sell_volume": 80.0, "taker_buy_sell_ratio": 1.25, "cvd": 20.0},
+        ),
+    )
+
+    for endpoint_id, response, expected_path, expected_values in cases:
+        client = _RecordingHttpClient(_HttpResponse(status_code=200, headers={}, text=json.dumps(response)))
+        task = FetchTask(
+            batch_id=f"batch:{endpoint_id}",
+            provider_id="crypto_binance_spot_market",
+            endpoint_id=endpoint_id,
+            market="CRYPTO",
+            data_type="crypto_derivative_metric",
+            granularity="1h",
+            symbol_ids=("BTCUSDT",),
+            date_range_start=date(2026, 3, 1),
+            date_range_end=date(2026, 3, 2),
+            fields=tuple(expected_values),
+            provider_config_version="1.0.0",
+            params={},
+        )
+
+        result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+        assert result.status.value == "success", endpoint_id
+        assert client.requests[0].host == "https://fapi.binance.com"
+        assert client.requests[0].path == expected_path
+        row = result.payload["rows"][0]
+        for key, value in expected_values.items():
+            assert row[key] == value
+
+
+def test_crypto_binance_taker_buy_sell_caps_query_to_official_30_day_window() -> None:
+    plugin = BinanceSpotMarketPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text='[{"symbol":"BTCUSDT","buyVol":"100","sellVol":"80","buySellRatio":"1.25","timestamp":1772236800000}]',
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:futures_taker_window",
+        provider_id="crypto_binance_spot_market",
+        endpoint_id="futures_taker_buy_sell",
+        market="CRYPTO",
+        data_type="crypto_derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=date(2026, 1, 1),
+        date_range_end=date(2026, 3, 1),
+        fields=("taker_buy_volume", "taker_sell_volume", "timestamp", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.query["startTime"] == int(datetime(2026, 1, 31, tzinfo=UTC).timestamp() * 1000)
+    assert request.query["endTime"] == int(datetime(2026, 3, 2, tzinfo=UTC).timestamp() * 1000) - 1
+
+
+def test_crypto_binance_derivative_statistics_cap_query_to_official_30_day_window() -> None:
+    plugin = BinanceSpotMarketPlugin()
+    cases = (
+        (
+            "futures_open_interest_hist",
+            '[{"symbol":"BTCUSDT","sumOpenInterest":"100","sumOpenInterestValue":"2000","timestamp":1772236800000}]',
+        ),
+        (
+            "futures_long_short_ratio",
+            '[{"symbol":"BTCUSDT","longShortRatio":"1.25","timestamp":1772236800000}]',
+        ),
+    )
+
+    for endpoint_id, response_text in cases:
+        client = _RecordingHttpClient(_HttpResponse(status_code=200, headers={}, text=response_text))
+        task = FetchTask(
+            batch_id=f"batch:{endpoint_id}",
+            provider_id="crypto_binance_spot_market",
+            endpoint_id=endpoint_id,
+            market="CRYPTO",
+            data_type="crypto_derivative_metric",
+            granularity="1h",
+            symbol_ids=("BTCUSDT",),
+            date_range_start=date(2026, 1, 1),
+            date_range_end=date(2026, 3, 1),
+            fields=("timestamp", "symbol_id"),
+            provider_config_version="1.0.0",
+            params={},
+        )
+
+        result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+        assert result.status.value == "success"
+        request = client.requests[0]
+        assert request.query["period"] == "1h"
+        assert request.query["startTime"] == int(datetime(2026, 1, 31, tzinfo=UTC).timestamp() * 1000)
+        assert request.query["endTime"] == int(datetime(2026, 3, 2, tzinfo=UTC).timestamp() * 1000) - 1
+
+
+def test_crypto_binance_public_options_endpoints_parse_open_interest_and_volume() -> None:
+    plugin = BinanceSpotMarketPlugin()
+    cases = (
+        (
+            "options_open_interest",
+            [{"sumOpenInterestUsd": "3456", "timestamp": 1772236800000}],
+            "/eapi/v1/openInterest",
+            {"options_open_interest": 3456.0, "options_open_interest_unit": "USD"},
+            {"expiration": "260327", "underlyingAsset": "BTC"},
+        ),
+        (
+            "options_ticker",
+            [{"symbol": "BTC-260327-90000-C", "amount": "1200", "closeTime": 1772236800000}],
+            "/eapi/v1/ticker",
+            {"options_volume": 1200.0, "options_volume_unit": "USD"},
+            {},
+        ),
+    )
+
+    for endpoint_id, response, expected_path, expected_values, params in cases:
+        client = _RecordingHttpClient(_HttpResponse(status_code=200, headers={}, text=json.dumps(response)))
+        task = FetchTask(
+            batch_id=f"batch:{endpoint_id}",
+            provider_id="crypto_binance_spot_market",
+            endpoint_id=endpoint_id,
+            market="CRYPTO",
+            data_type="crypto_derivative_metric",
+            granularity="realtime",
+            symbol_ids=("BTCUSDT",),
+            date_range_start=None,
+            date_range_end=date(2026, 3, 2),
+            fields=tuple(expected_values),
+            provider_config_version="1.0.0",
+            params=params,
+        )
+
+        result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+        assert result.status.value == "success", endpoint_id
+        assert client.requests[0].host == "https://eapi.binance.com"
+        assert client.requests[0].path == expected_path
+        row = result.payload["rows"][0]
+        for key, value in expected_values.items():
+            assert row[key] == value
 
 
 def test_cn_a_plugin_uses_settings_credential_and_endpoint_through_managed_http() -> None:
@@ -599,31 +802,33 @@ def test_cn_a_free_source_plugins_declare_source_backed_interfaces_without_legac
         ("sector_fund_flow_rank", "sector_snapshot", "managed_http"),
         ("shareholder_count", "corporate_action", "managed_http"),
         ("block_trade", "capital_flow", "managed_http"),
-        ("margin_trading_detail", "capital_flow", "managed_http"),
+        ("margin_trading_detail", "margin_trading", "managed_http"),
         ("dividend_event", "corporate_action", "managed_http"),
         ("spot_quote_batch", "quote_snapshot", "managed_http"),
         ("daily_bar", "daily_bar", "managed_http"),
         ("stock_info", "valuation_metric", "managed_http"),
+        ("financial_analysis_indicator", "financial_metric", "managed_http"),
+        ("financial_statement", "financial_statement", "managed_http"),
         ("global_news_7x24", "macro_news", "managed_http"),
     }
     assert by_provider["cn_a_baostock_market"] >= {
-        ("daily_bar", "daily_bar", "no_http"),
-        ("intraday_bar", "intraday_bar", "no_http"),
-        ("adjust_factor", "corporate_action", "no_http"),
-        ("dividend", "corporate_action", "no_http"),
-        ("financial_statement", "financial_statement", "no_http"),
-        ("financial_metric", "financial_metric", "no_http"),
-        ("valuation_metric", "valuation_metric", "no_http"),
-        ("trade_calendar", "event_calendar", "no_http"),
-        ("stock_industry", "sector_snapshot", "no_http"),
+        ("daily_bar", "daily_bar", "sdk_internal_unknown"),
+        ("intraday_bar", "intraday_bar", "sdk_internal_unknown"),
+        ("adjust_factor", "corporate_action", "sdk_internal_unknown"),
+        ("dividend", "corporate_action", "sdk_internal_unknown"),
+        ("financial_statement", "financial_statement", "sdk_internal_unknown"),
+        ("financial_metric", "financial_metric", "sdk_internal_unknown"),
+        ("valuation_metric", "valuation_metric", "sdk_internal_unknown"),
+        ("trade_calendar", "event_calendar", "sdk_internal_unknown"),
+        ("stock_industry", "sector_snapshot", "sdk_internal_unknown"),
     }
     assert by_provider["cn_a_mootdx_market"] >= {
-        ("quote_snapshot", "quote_snapshot", "no_http"),
-        ("order_book_snapshot", "order_book_snapshot", "no_http"),
-        ("intraday_bar", "intraday_bar", "no_http"),
-        ("daily_bar", "daily_bar", "no_http"),
-        ("corporate_action", "corporate_action", "no_http"),
-        ("finance_snapshot", "financial_metric", "no_http"),
+        ("quote_snapshot", "quote_snapshot", "sdk_internal_unknown"),
+        ("order_book_snapshot", "order_book_snapshot", "sdk_internal_unknown"),
+        ("intraday_bar", "intraday_bar", "sdk_internal_unknown"),
+        ("daily_bar", "daily_bar", "sdk_internal_unknown"),
+        ("corporate_action", "corporate_action", "sdk_internal_unknown"),
+        ("finance_snapshot", "financial_metric", "sdk_internal_unknown"),
     }
     eastmoney_endpoints = {cap.endpoint_id: cap for cap in registry.read_capabilities(("cn_a_eastmoney_market_data",)).list()}
     assert "amount_unit" in eastmoney_endpoints["stock_fund_flow_daily"].fields
@@ -732,6 +937,7 @@ def test_crypto_coingecko_market_rows_preserve_quote_and_supply_units() -> None:
                         "fully_diluted_valuation": 1245487746323,
                         "circulating_supply": 20039087,
                         "total_supply": 20039087,
+                        "max_supply": 21000000,
                         "total_volume": 32016116765,
                         "last_updated": "2026-06-09T14:00:00Z",
                     }
@@ -758,6 +964,7 @@ def test_crypto_coingecko_market_rows_preserve_quote_and_supply_units() -> None:
             "fdv_unit",
             "circulating_supply",
             "total_supply",
+            "max_supply",
             "supply_unit",
             "volume",
             "volume_unit",
@@ -776,6 +983,62 @@ def test_crypto_coingecko_market_rows_preserve_quote_and_supply_units() -> None:
     assert row["volume_unit"] == "USD"
     assert row["supply_unit"] == "BTC"
     assert row["price"] == 62000.0
+    assert row["max_supply"] == 21000000.0
+
+
+def test_crypto_coingecko_public_profile_rows_parse_coin_metadata() -> None:
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in CoinGeckoCryptoPlugin().capabilities().endpoints}
+    assert endpoints["coins_id"].data_type == "company_profile"
+
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=json.dumps(
+                {
+                    "name": "Bitcoin",
+                    "symbol": "btc",
+                    "description": {"en": "Bitcoin is a decentralized currency."},
+                    "links": {"homepage": ["https://bitcoin.org", ""]},
+                    "market_cap_rank": 1,
+                    "market_data": {
+                        "circulating_supply": 20043234.849,
+                        "total_supply": 20043234.849,
+                        "max_supply": 21000000,
+                    },
+                }
+            ),
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:coingecko-profile",
+        provider_id="crypto_coingecko_market",
+        endpoint_id="coins_id",
+        market="CRYPTO",
+        data_type="company_profile",
+        granularity="event",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("name", "symbol", "description", "homepage", "market_cap_rank", "circulating_supply", "total_supply", "max_supply", "supply_unit"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = CoinGeckoCryptoPlugin().fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    assert client.requests[0].path == "/api/v3/coins/bitcoin"
+    assert client.requests[0].query["market_data"] == "true"
+    row = result.payload["rows"][0]
+    assert row["name"] == "Bitcoin"
+    assert row["symbol"] == "btc"
+    assert row["homepage"] == "https://bitcoin.org"
+    assert row["market_cap_rank"] == 1
+    assert row["circulating_supply"] == 20043234.849
+    assert row["total_supply"] == 20043234.849
+    assert row["max_supply"] == 21000000.0
+    assert row["supply_unit"] == "BTC"
 
 
 def test_crypto_coinglass_valuation_market_rows_are_paid_source() -> None:
@@ -914,8 +1177,7 @@ def test_hk_tushare_declares_official_documented_hk_market_and_metric_interfaces
     assert {"open", "high", "low", "close", "volume", "amount"} <= set(endpoints["hk_daily"].fields)
     assert endpoints["hk_daily_adj"].data_type == "daily_bar"
     assert "adjustment" in endpoints["hk_daily_adj"].fields
-    assert endpoints["hk_daily_adj_valuation"].data_type == "valuation_metric"
-    assert {"price", "market_cap"} <= set(endpoints["hk_daily_adj_valuation"].fields)
+    assert "hk_daily_adj_valuation" not in endpoints
     assert endpoints["hk_fina_indicator"].data_type == "financial_metric"
 
     assert "hk_basic" not in endpoints
@@ -1005,6 +1267,47 @@ def test_us_yahoo_finance_fetches_valuation_metric_through_managed_http() -> Non
     assert row["dataset"] == "valuation_metric"
     assert row["pe"] == 28.5
     assert row["market_cap"] == 3000000000.0
+
+
+def test_hk_yahoo_finance_fetches_valuation_metric_through_valuation_adapter() -> None:
+    plugin = HKYahooFinancePlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=(
+                '{"timeseries":{"result":['
+                '{"trailingPeRatio":[{"asOfDate":"2026-05-29","reportedValue":{"raw":18.5}}]},'
+                '{"trailingMarketCap":[{"asOfDate":"2026-05-29","reportedValue":{"raw":3000000000000}}]}'
+                '],"error":null}}'
+            ),
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:hk-yahoo",
+        provider_id="hk_yahoo_finance",
+        endpoint_id="quote_summary_valuation",
+        market="HK",
+        data_type="valuation_metric",
+        granularity="realtime",
+        symbol_ids=("00700.HK",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("pe", "market_cap"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    assert client.requests[0].host == "https://query1.finance.yahoo.com"
+    assert client.requests[0].path == "/ws/fundamentals-timeseries/v1/finance/timeseries/0700.HK"
+    assert client.requests[0].query["type"] == "trailingPeRatio,trailingMarketCap"
+    row = result.payload["rows"][0]
+    assert row["dataset"] == "valuation_metric"
+    assert row["pe"] == 18.5
+    assert row["market_cap"] == 3000000000000.0
 
 
 def test_us_finnhub_declares_tradingagents_cn_used_interfaces() -> None:
@@ -1219,6 +1522,13 @@ def test_hk_hkexnews_fetches_official_rss_through_managed_http() -> None:
     assert row["dataset"] == "official_filing"
     assert row["source"] == "HKEXnews"
     assert row["exchange"] == "XHKG"
+
+
+def test_hk_hkexnews_catalog_path_matches_rss_adapter_request() -> None:
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in all_endpoints()}
+
+    assert endpoints["hkexnews.regulatory_announcements"].official_path_or_api_name == "/Services/RSS-Feeds/regulatory-announcements"
+    assert endpoints["hkexnews.regulatory_calendar"].official_path_or_api_name == "/Services/RSS-Feeds/regulatory-announcements"
 
 
 def test_hk_hkexnews_does_not_assign_unmatched_market_rss_to_symbol() -> None:
@@ -2552,6 +2862,47 @@ def test_baostock_daily_and_intraday_use_endpoint_specific_fields(monkeypatch: p
     assert "peTTM" not in intraday_fields.split(",")
 
 
+def test_baostock_financial_statement_uses_planned_year_quarter(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class _Result:
+        error_code = "1"
+        error_msg = "stop_after_period_check"
+
+    class _Login:
+        error_code = "0"
+
+    fake_bs = SimpleNamespace(
+        login=lambda: _Login(),
+        logout=lambda: None,
+        query_profit_data=lambda **kwargs: calls.append(dict(kwargs)) or _Result(),
+        query_balance_data=lambda **kwargs: _Result(),
+        query_cash_flow_data=lambda **kwargs: _Result(),
+    )
+    monkeypatch.setitem(sys.modules, "baostock", fake_bs)
+    plugin = BaostockCNProviderPlugin()
+    task = FetchTask(
+        batch_id="batch:bs-financial",
+        provider_id="cn_a_baostock_market",
+        endpoint_id="financial_statement",
+        market="CN_A",
+        data_type="financial_statement",
+        granularity="quarterly",
+        symbol_ids=("600519.SH",),
+        date_range_start=date(2025, 6, 13),
+        date_range_end=date(2026, 6, 13),
+        fields=("revenue", "net_income"),
+        provider_config_version="1.0.0",
+        params={"year": 2026, "quarter": 1},
+    )
+
+    plugin.fetch(task, ctx=SimpleNamespace())
+
+    assert calls[0]["code"] == "sh.600519"
+    assert calls[0]["year"] == 2026
+    assert calls[0]["quarter"] == 1
+
+
 def test_baostock_fetch_sets_and_restores_socket_default_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     import claw_trade.data_gateway.providers.plugins.cn_a.provider_matrix as cn_a_matrix
 
@@ -2682,7 +3033,7 @@ def test_cn_a_social_signal_declares_text_and_heat_sources_without_full_sentimen
         ("cn_a_astock_signal_social", "ths_hot_reason"),
         ("cn_a_astock_signal_social", "baidu_concept_blocks"),
     }
-    assert all(cap.source_role == "sentiment" for cap in capabilities)
+    assert all(cap.source_role in {"sentiment", "paid_data"} for cap in capabilities)
     assert all(cap.can_be_formal_fact_source is False for cap in capabilities)
     assert not any({"score", "mentions", "sentiment"}.issubset(set(cap.fields)) for cap in capabilities)
 
@@ -2933,13 +3284,65 @@ def test_cn_a_tushare_sector_fund_flow_does_not_send_stock_code_filter() -> None
     assert result.status.value == "success"
     body = json.loads(str(client.requests[0].body))
     assert body["api_name"] == "moneyflow_ind_dc"
-    assert body["params"] == {"end_date": "20260531", "content_type": "行业"}
+    assert body["params"] == {"trade_date": "20260531", "content_type": "行业"}
     row = result.payload["rows"][0]
     assert row["dataset"] == "sector_snapshot"
     assert row["sector_code"] == "BK0475"
     assert row["sector_name"] == "白酒"
     assert row["main_net"] == 123456789.0
     assert row["source_roles"] == ("paid_data",)
+
+
+@pytest.mark.parametrize(
+    ("endpoint_id", "expected_api_name"),
+    [
+        ("moneyflow_ind_ths", "moneyflow_ind_ths"),
+        ("moneyflow_cnt_ths", "moneyflow_cnt_ths"),
+    ],
+)
+def test_cn_a_tushare_sector_ths_fund_flow_uses_trade_date_not_range_dates(
+    endpoint_id: str,
+    expected_api_name: str,
+) -> None:
+    plugin = TushareFundamentalPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=(
+                '{"code":0,"msg":"","data":{"fields":["trade_date","ts_code","name","industry",'
+                '"net_amount","net_buy_amount","net_sell_amount"],'
+                '"items":[["20260531","881001.TI","白酒","白酒",123456789.0,200000000.0,76543211.0]]}}'
+            ),
+        )
+    )
+    resolver = SimpleNamespace(
+        get_credential=lambda name: "ts-token" if name == "data_source:tushare" else None,
+        get_endpoint_url=lambda name: "http://tushare.example:8020" if name == "data_source:tushare" else None,
+    )
+    task = FetchTask(
+        batch_id=f"batch:cn-a-sector-flow:{endpoint_id}",
+        provider_id="cn_a_tushare_fundamental",
+        endpoint_id=endpoint_id,
+        market="CN_A",
+        data_type="sector_snapshot",
+        granularity="event",
+        symbol_ids=("600519.SH",),
+        date_range_start=date(2026, 5, 1),
+        date_range_end=date(2026, 5, 31),
+        fields=("sector_name", "main_net", "timestamp"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client), credential_resolver=resolver))
+
+    assert result.status.value == "success"
+    body = json.loads(str(client.requests[0].body))
+    assert body["api_name"] == expected_api_name
+    assert body["params"] == {"trade_date": "20260531"}
+    assert "start_date" not in body["params"]
+    assert "end_date" not in body["params"]
 
 
 def test_cn_a_akshare_fund_flow_sdk_is_registered_as_public_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3004,6 +3407,97 @@ def test_cn_a_akshare_fund_flow_sdk_is_registered_as_public_fallback(monkeypatch
     assert sector_result.status.value == "success"
     assert sector_result.payload["rows"][0]["sector_name"] == "白酒"
     assert sector_result.payload["rows"][0]["quality_flags"] == ("sector_code_not_provided_by_source",)
+
+
+def test_cn_a_eastmoney_financial_managed_http_is_registered_as_public_fallback() -> None:
+    plugin = EastMoneyCNMarketDataPlugin()
+    endpoints = {endpoint.endpoint_id: endpoint for endpoint in plugin.capabilities().endpoints}
+    assert endpoints["financial_analysis_indicator"].data_type == "financial_metric"
+    assert endpoints["financial_statement"].data_type == "financial_statement"
+
+    metric_payload = json.dumps(
+        {
+            "result": {
+                "data": [
+                    {
+                        "REPORT_DATE": "2026-03-31 00:00:00",
+                        "ROEJQ": 10.57,
+                        "ZZCJLL": 9.03,
+                        "XSMLL": 89.76,
+                        "ZCFZL": 12.12,
+                        "EPSJB": 21.76,
+                        "TOTALOPERATEREVE": 54702910000,
+                        "PARENTNETPROFIT": 27242510000,
+                    }
+                ]
+            }
+        }
+    )
+    client = _RecordingHttpClient(
+        [
+            _HttpResponse(status_code=200, headers={}, text=metric_payload),
+            _HttpResponse(status_code=200, headers={}, text=metric_payload),
+            _HttpResponse(status_code=200, headers={"content-type": "text/html"}, text='<input id="hidctype" value="4">'),
+            _HttpResponse(status_code=200, headers={}, text='{"data":[{"REPORT_DATE":"2026-03-31"}]}'),
+            _HttpResponse(
+                status_code=200,
+                headers={},
+                text='{"data":[{"REPORT_DATE":"2026-03-31","TOTAL_ASSETS":319918800000,"TOTAL_LIABILITIES":38782960000}]}',
+            ),
+            _HttpResponse(status_code=200, headers={}, text='{"data":[{"REPORT_DATE":"2026-03-31","NETCASH_OPERATE":26909890000}]}'),
+        ]
+    )
+    ctx = SimpleNamespace(managed_http=ManagedHttp(client))
+    metric_task = FetchTask(
+        batch_id="batch:em-financial-metric",
+        provider_id="cn_a_eastmoney_market_data",
+        endpoint_id="financial_analysis_indicator",
+        market="CN_A",
+        data_type="financial_metric",
+        granularity="quarterly",
+        symbol_ids=("600519.SH",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("roe", "roa", "gross_margin", "debt_ratio", "eps"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+    statement_task = replace(
+        metric_task,
+        batch_id="batch:em-financial-statement",
+        endpoint_id="financial_statement",
+        data_type="financial_statement",
+        fields=("period", "revenue", "net_income", "assets", "liabilities", "cash_flow", "amount_unit"),
+    )
+
+    metric_result = plugin.fetch(metric_task, ctx=ctx)
+    statement_result = plugin.fetch(statement_task, ctx=ctx)
+
+    assert metric_result.status.value == "success"
+    metric_row = metric_result.payload["rows"][0]
+    assert metric_row["dataset"] == "financial_metric"
+    assert metric_row["roe"] == 10.57
+    assert metric_row["gross_margin"] == 89.76
+    assert statement_result.status.value == "success"
+    statement_row = statement_result.payload["rows"][0]
+    assert statement_row["dataset"] == "financial_statement"
+    assert statement_row["revenue"] == 54702910000.0
+    assert statement_row["net_income"] == 27242510000.0
+    assert statement_row["assets"] == 319918800000.0
+    assert statement_row["liabilities"] == 38782960000.0
+    assert statement_row["cash_flow"] == 26909890000.0
+    assert {request.host for request in client.requests} == {
+        "https://datacenter.eastmoney.com",
+        "https://emweb.securities.eastmoney.com",
+    }
+    assert [request.path for request in client.requests] == [
+        "/securities/api/data/get",
+        "/securities/api/data/get",
+        "/PC_HSF10/NewFinanceAnalysis/Index",
+        "/PC_HSF10/NewFinanceAnalysis/zcfzbDateAjaxNew",
+        "/PC_HSF10/NewFinanceAnalysis/zcfzbAjaxNew",
+        "/PC_HSF10/NewFinanceAnalysis/xjllbAjaxNew",
+    ]
 
 
 def test_cn_a_akshare_social_fetches_heat_keyword_through_managed_http() -> None:
@@ -3137,6 +3631,45 @@ def test_cn_a_astock_social_fetches_ths_hot_reason_from_reference_shape() -> Non
     assert row["change_pct"] == 2.5
     assert row["turnover_rate"] == 0.8
     assert row["quality_flags"] == ("astock_signal_without_sentiment_label", "topic_reason_signal")
+
+
+def test_cn_a_astock_fetches_northbound_flow_from_hsgt_api_shape() -> None:
+    plugin = AStockSignalSocialPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            text='{"time":["09:30","09:31"],"hgt":["1.2","1.5"],"sgt":["-0.4","0.6"]}',
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:cn-a-northbound",
+        provider_id="cn_a_astock_signal_social",
+        endpoint_id="northbound_flow",
+        market="CN_A",
+        data_type="northbound_flow",
+        granularity="realtime",
+        symbol_ids=("600519.SH",),
+        date_range_start=None,
+        date_range_end=date(2026, 5, 29),
+        fields=("timestamp", "hgt_net", "sgt_net", "northbound_net", "amount_unit"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.host == "https://data.hexin.cn"
+    assert request.path == "/market/hsgtApi/method/dayChart/"
+    row = result.payload["rows"][-1]
+    assert row["dataset"] == "northbound_flow"
+    assert row["timestamp"].isoformat() == "2026-05-29T09:31:00+08:00"
+    assert row["hgt_net"] == 1.5
+    assert row["sgt_net"] == 0.6
+    assert row["northbound_net"] == 2.1
+    assert row["amount_unit"] == "CNY 亿元"
 
 
 def test_cn_a_astock_social_fetches_baidu_concept_blocks_from_reference_shape() -> None:
@@ -3338,6 +3871,51 @@ def test_cn_a_eastmoney_market_data_fund_flow_uses_source_request_shape() -> Non
     assert row["main_net"] == 100.0
     assert row["super_net"] == 40.0
     assert result.http_observations
+
+
+def test_cn_a_eastmoney_margin_detail_uses_margin_trading_dataset() -> None:
+    plugin = EastMoneyCNMarketDataPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=(
+                '{"result":{"data":[{'
+                '"DATE":"2026-05-29","RZYE":"1000","RZRQYE":"1200",'
+                '"RQYL":"30","RQYE":"200","RZMRE":"80","RZCHE":"60"'
+                '}]}}'
+            ),
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:cn-a-margin",
+        provider_id="cn_a_eastmoney_market_data",
+        endpoint_id="margin_trading_detail",
+        market="CN_A",
+        data_type="margin_trading",
+        granularity="daily",
+        symbol_ids=("600519.SH",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("date", "financing_balance", "margin_balance", "security_lending_volume", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    request = client.requests[0]
+    assert request.host == "https://datacenter-web.eastmoney.com"
+    assert request.path == "/api/data/v1/get"
+    assert request.query["reportName"] == "RPTA_WEB_RZRQ_GGMX"
+    assert request.query["pageSize"] == 500
+    row = result.payload["rows"][0]
+    assert row["dataset"] == "margin_trading"
+    assert row["date"].isoformat() == "2026-05-29"
+    assert row["financing_balance"] == 1000.0
+    assert row["margin_balance"] == 1200.0
+    assert row["security_lending_volume"] == 30.0
 
 
 def test_cn_a_eastmoney_spot_quote_uses_target_secids_not_first_page_scan() -> None:

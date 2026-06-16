@@ -56,11 +56,11 @@ def run_daily_incremental(
             gap = incremental_gaps[index]
             planned.append((index, gap, _build_request_from_gap(gap, current, request_from_gap=request_from_gap)))
         requests = tuple(request for _, _, request in planned)
-        if requests and not callable(getattr(data_api, "get_data_batch", None)):
-            raise TypeError("maintenance daily incremental requires DataAPI.get_data_batch")
-        results = list(data_api.get_data_batch(requests)) if requests else []
+        if requests and not callable(getattr(data_api, "request_data", None)):
+            raise TypeError("maintenance daily incremental requires DataAPI.request_data")
+        results = list(data_api.request_data(requests)) if requests else []
         if len(results) != len(planned):
-            raise JobInvariantError("DataAPI.get_data_batch returned mismatched result count")
+            raise JobInvariantError("DataAPI.request_data returned mismatched result count")
         for (index, gap, request), result in zip(planned, results, strict=True):
             add_result_stats(current, result)
             audit_result(
@@ -101,9 +101,9 @@ def _build_request_from_gap(
 ) -> Any:
     if request_from_gap is not None:
         return request_from_gap(gap, consumer="maintenance", consumer_id=job.job_id)
-    if hasattr(gap, "to_data_request"):
-        return gap.to_data_request(consumer="maintenance", consumer_id=job.job_id)
-    raise TypeError("missing authorized DataRequest builder for incremental gap")
+    if hasattr(gap, "to_public_data_request"):
+        return gap.to_public_data_request(consumer="maintenance", consumer_id=job.job_id)
+    raise TypeError("missing authorized PublicDataRequest builder for incremental gap")
 
 
 def _gap_id(gap: Any) -> str:

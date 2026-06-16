@@ -4,19 +4,12 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from pydantic import ValidationError
-
-from .models import DataGap, DataRequest, DataResult, DataResultStatus, Market
+from .models import DataGap, DataResult, DataResultStatus, Market
+from .public_api import PublicDataRequest, validate_public_request
 
 
 class DataServiceLike(Protocol):
-    def get_data(self, request: DataRequest) -> DataResult: ...
-
-    def get_data_batch(self, requests: Sequence[DataRequest]) -> list[DataResult]: ...
-
-    def plan_batch(self, requests: Sequence[DataRequest]) -> Any: ...
-
-    def execute_plan(self, plan: Any) -> list[DataResult]: ...
+    def request_data(self, requests: Sequence[PublicDataRequest]) -> list[DataResult]: ...
 
     def resolve_company_names(
         self,
@@ -31,26 +24,20 @@ class DataAPI:
     def __init__(self, data_service: DataServiceLike) -> None:
         self._data_service = data_service
 
-    def get_data(self, request: DataRequest | Mapping[str, Any]) -> DataResult:
-        normalized = self._validate_request(request)
-        if isinstance(normalized, DataResult):
-            return normalized
-        return self._data_service.get_data(normalized)
-
-    def get_data_batch(self, requests: Sequence[DataRequest | Mapping[str, Any]]) -> list[DataResult]:
-        valid: list[DataRequest] = []
+    def request_data(self, requests: Sequence[PublicDataRequest | Mapping[str, Any]]) -> list[DataResult]:
+        valid: list[PublicDataRequest] = []
         invalid_by_index: dict[int, DataResult] = {}
         for idx, item in enumerate(requests):
-            normalized = self._validate_request(item)
-            if isinstance(normalized, DataResult):
-                invalid_by_index[idx] = normalized
+            normalized = validate_public_request(item)
+            if not normalized.ok:
+                invalid_by_index[idx] = normalized.result or self._invalid_request_result(item)
                 continue
-            valid.append(normalized)
+            if normalized.request is not None:
+                valid.append(normalized.request)
 
         valid_results: list[DataResult] = []
         if valid:
-            plan = self._data_service.plan_batch(valid)
-            valid_results = self._data_service.execute_plan(plan)
+            valid_results = self._data_service.request_data(valid)
 
         ordered: list[DataResult] = []
         valid_cursor = 0
@@ -75,29 +62,21 @@ class DataAPI:
             return {}
         return resolver(market=market, symbol_ids=symbol_ids, dataset=dataset)
 
-    def _validate_request(self, raw: DataRequest | Mapping[str, Any]) -> DataRequest | DataResult:
-        payload: Mapping[str, Any] | None
-        if isinstance(raw, DataRequest):
-            return raw
-        payload = raw
-        request_id = str(payload.get("request_id") or payload.get("requestId") or "unknown")
+    def _invalid_request_result(self, raw: Any) -> DataResult:
+        if isinstance(raw, Mapping):
+            request_id = str(raw.get("request_id") or raw.get("requestId") or raw.get("need_id") or "unknown")
+            market = self._extract_market(raw)
+        else:
+            request_id = "unknown"
+            market = Market.CN_A
         as_of = datetime.now(tz=UTC)
-        market = self._extract_market(payload)
-        try:
-            return DataRequest.model_validate(payload)
-        except ValidationError as exc:
-            gap = DataGap.invalid_request(
-                request_id=request_id,
-                message=f"invalid_request: {exc.errors()[0]['msg']}",
-                market=market,
-                as_of=as_of,
-            )
-            return DataResult(
-                request_id=request_id,
-                status=DataResultStatus.ERROR,
-                gaps=(gap,),
-                as_of=as_of,
-            )
+        gap = DataGap.invalid_request(
+            request_id=request_id,
+            message="invalid_public_request",
+            market=market,
+            as_of=as_of,
+        )
+        return DataResult(request_id=request_id, status=DataResultStatus.ERROR, gaps=(gap,), as_of=as_of)
 
     @staticmethod
     def _extract_market(payload: Mapping[str, Any]) -> Market:

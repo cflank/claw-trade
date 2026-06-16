@@ -11,9 +11,9 @@ from typing import Any, Callable, Mapping
 from claw_trade.data_gateway.refs import is_normalized_dataset_ref
 from claw_trade.data_gateway.selection_integrity import validate_selection_columnar_manifest_ref
 from claw_trade.selection.models import (
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionConfirmation,
     SelectionDataRun,
     SelectionDataRunStatus,
@@ -28,10 +28,10 @@ class SelectUnavailableCode(StrEnum):
     NO_COMPLETED_SELECTION_RUN = "no_completed_selection_run"
     NO_CANDIDATE_SELECTION_RUN = "no_candidate_selection_run"
     STALE_SELECTION_RUN = "stale_selection_run"
-    CANDIDATE_PACK_NOT_APPROVED = "candidate_pack_not_approved"
-    CANDIDATE_PACK_HASH_MISMATCH = "candidate_pack_hash_mismatch"
-    CANDIDATE_PACK_INTEGRITY_FAILED = "candidate_pack_integrity_failed"
-    CANDIDATE_PACK_LINEAGE_INCOMPLETE = "candidate_pack_lineage_incomplete"
+    CANDIDATE_CACHE_NOT_APPROVED = "candidate_cache_not_approved"
+    CANDIDATE_CACHE_HASH_MISMATCH = "candidate_cache_hash_mismatch"
+    CANDIDATE_CACHE_INTEGRITY_FAILED = "candidate_cache_integrity_failed"
+    CANDIDATE_CACHE_LINEAGE_INCOMPLETE = "candidate_cache_lineage_incomplete"
     SELECTION_WAREHOUSE_CHECK_MISSING = "selection_warehouse_check_missing"
     SELECT_MARKET_UNSUPPORTED = "select_market_unsupported"
     CRYPTO_SELECT_HISTORY_MISSING = "crypto_select_history_missing"
@@ -39,7 +39,7 @@ class SelectUnavailableCode(StrEnum):
 
 @dataclass(frozen=True)
 class SelectionRunIntegrity:
-    pack_approved: bool = True
+    cache_approved: bool = True
     readback_verified: bool = True
     hash_matches_manifest: bool = True
     lineage_complete: bool = True
@@ -49,7 +49,7 @@ class SelectionRunIntegrity:
 class SelectionDataRunRecord:
     run_plan: SelectionRunPlan
     data_run: SelectionDataRun
-    manifest: CandidatePackManifest | None
+    manifest: CandidateCacheManifest | None
     integrity: SelectionRunIntegrity = SelectionRunIntegrity()
 
     def __post_init__(self) -> None:
@@ -66,7 +66,7 @@ class SelectionDataRunRecord:
 class LatestCompletedSelectionRun:
     run_plan: SelectionRunPlan
     data_run: SelectionDataRun
-    manifest: CandidatePackManifest
+    manifest: CandidateCacheManifest
 
 
 @dataclass(frozen=True)
@@ -107,8 +107,8 @@ _ACTIVE_DATA_RUN_STATUSES = frozenset(
         SelectionDataRunStatus.NORMALIZING_INPUTS,
         SelectionDataRunStatus.BUILDING_FEATURES,
         SelectionDataRunStatus.FILTERING_AND_SCORING,
-        SelectionDataRunStatus.BUILDING_CANDIDATE_PACK,
-        SelectionDataRunStatus.APPROVING_CANDIDATE_PACK,
+        SelectionDataRunStatus.BUILDING_CANDIDATE_CACHE,
+        SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE,
     }
 )
 
@@ -161,7 +161,7 @@ class SelectionRunStore:
         )
         if latest.data_run.status == SelectionDataRunStatus.NO_CANDIDATE:
             return LatestCompletedSelectionRunResult.unavailable(SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN)
-        code = _validate_record_for_select(latest, now=now, artifact_root=self._candidate_pack_artifact_root())
+        code = _validate_record_for_select(latest, now=now, artifact_root=self._candidate_cache_artifact_root())
         if code is not None:
             return LatestCompletedSelectionRunResult.unavailable(code)
         assert latest.manifest is not None
@@ -320,7 +320,7 @@ class SelectionRunStore:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(output)
 
-    def _candidate_pack_artifact_root(self) -> Path:
+    def _candidate_cache_artifact_root(self) -> Path:
         if self._artifact_root is not None:
             return self._artifact_root
         if self._persisted_runs_dir is not None:
@@ -420,27 +420,27 @@ def _validate_record_for_select(
     now: datetime,
     artifact_root: Path,
 ) -> SelectUnavailableCode | None:
-    if not record.integrity.pack_approved:
-        return SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED
-    if record.data_run.candidate_pack_ref is None:
-        return SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED
-    if _parse_iso_timestamp(record.data_run.candidate_pack_ref.expires_at) <= _to_utc(now):
+    if not record.integrity.cache_approved:
+        return SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED
+    if record.data_run.candidate_cache_ref is None:
+        return SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED
+    if _parse_iso_timestamp(record.data_run.candidate_cache_ref.expires_at) <= _to_utc(now):
         return SelectUnavailableCode.STALE_SELECTION_RUN
     if record.manifest is None:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
-    if record.manifest.readback_status != CandidatePackReadbackStatus.VERIFIED:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
+    if record.manifest.readback_status != CandidateCacheReadbackStatus.VERIFIED:
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     if not record.integrity.readback_verified:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
-    if record.manifest.pack_body_sha256 != record.data_run.candidate_pack_ref.content_sha256:
-        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
+    if record.manifest.cache_body_sha256 != record.data_run.candidate_cache_ref.content_sha256:
+        return SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
     if not record.integrity.hash_matches_manifest:
-        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+        return SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
     if not record.integrity.lineage_complete:
-        return SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE
+        return SelectUnavailableCode.CANDIDATE_CACHE_LINEAGE_INCOMPLETE
     if not record.manifest.source_lineage_refs:
-        return SelectUnavailableCode.CANDIDATE_PACK_LINEAGE_INCOMPLETE
-    file_code = _validate_candidate_pack_files_for_select(record, artifact_root=artifact_root)
+        return SelectUnavailableCode.CANDIDATE_CACHE_LINEAGE_INCOMPLETE
+    file_code = _validate_candidate_cache_files_for_select(record, artifact_root=artifact_root)
     if file_code is not None:
         return file_code
     warehouse_code = _validate_warehouse_evidence_for_select(record)
@@ -449,62 +449,62 @@ def _validate_record_for_select(
     return None
 
 
-def _validate_candidate_pack_files_for_select(
+def _validate_candidate_cache_files_for_select(
     record: SelectionDataRunRecord,
     *,
     artifact_root: Path,
 ) -> SelectUnavailableCode | None:
-    candidate_pack_ref = record.data_run.candidate_pack_ref
-    if candidate_pack_ref is None:
-        return SelectUnavailableCode.CANDIDATE_PACK_NOT_APPROVED
+    candidate_cache_ref = record.data_run.candidate_cache_ref
+    if candidate_cache_ref is None:
+        return SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED
 
-    body_path = _resolve_selection_artifact_path(candidate_pack_ref.l1_uri, artifact_root=artifact_root)
-    manifest_path = _resolve_selection_artifact_path(candidate_pack_ref.manifest_ref, artifact_root=artifact_root)
-    summary_path = _resolve_selection_artifact_path(candidate_pack_ref.pack_summary_ref, artifact_root=artifact_root)
+    body_path = _resolve_selection_artifact_path(candidate_cache_ref.l1_uri, artifact_root=artifact_root)
+    manifest_path = _resolve_selection_artifact_path(candidate_cache_ref.manifest_ref, artifact_root=artifact_root)
+    summary_path = _resolve_selection_artifact_path(candidate_cache_ref.cache_summary_ref, artifact_root=artifact_root)
     if body_path is None or manifest_path is None or summary_path is None:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
 
     try:
         body_bytes = body_path.read_bytes()
     except OSError:
-        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
-    if sha256(body_bytes).hexdigest() != candidate_pack_ref.content_sha256:
-        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+        return SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
+    if sha256(body_bytes).hexdigest() != candidate_cache_ref.content_sha256:
+        return SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
 
     manifest_payload = _read_json_object(manifest_path)
     if manifest_payload is None:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     try:
-        manifest = _candidate_pack_manifest_from_payload(manifest_payload)
+        manifest = _candidate_cache_manifest_from_payload(manifest_payload)
     except (TypeError, ValueError):
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     if manifest is None:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
-    if manifest.pack_body_sha256 != candidate_pack_ref.content_sha256:
-        return SelectUnavailableCode.CANDIDATE_PACK_HASH_MISMATCH
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
+    if manifest.cache_body_sha256 != candidate_cache_ref.content_sha256:
+        return SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH
     if manifest.selection_run_id != record.run_plan.selection_run_id:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     if manifest.trade_date != record.run_plan.trade_date:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
-    if manifest.readback_status != CandidatePackReadbackStatus.VERIFIED:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
+    if manifest.readback_status != CandidateCacheReadbackStatus.VERIFIED:
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
 
     if not _readback_verify_log_matches(
         body_path,
-        expected_sha256=candidate_pack_ref.content_sha256,
+        expected_sha256=candidate_cache_ref.content_sha256,
     ):
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     try:
         manifest_sha256 = sha256(manifest_path.read_bytes()).hexdigest()
     except OSError:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     if not _readback_verify_log_matches(manifest_path, expected_sha256=manifest_sha256):
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     try:
         if not summary_path.read_text(encoding="utf-8").strip():
-            return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+            return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     except OSError:
-        return SelectUnavailableCode.CANDIDATE_PACK_INTEGRITY_FAILED
+        return SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
     return None
 
 
@@ -542,7 +542,7 @@ def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> S
         return SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED
     if record.run_plan.market == SelectionMarket.CRYPTO:
         return SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING
-    if record.run_plan.provider_batch_plan_ref.startswith("restored://"):
+    if record.run_plan.data_need_audit_ref.startswith("restored://"):
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     data_run = record.data_run
     if not data_run.select_data_plan_ref or not data_run.warehouse_check_ref:
@@ -630,13 +630,13 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
             trade_date=_read_text(run_plan_payload, "trade_date"),
             lookback_trading_days=int(run_plan_payload.get("lookback_trading_days", 1)),
             universe_scope=_read_text(run_plan_payload, "universe_scope"),
-            provider_batch_plan_ref=_read_text(run_plan_payload, "provider_batch_plan_ref"),
+            data_need_audit_ref=_read_text(run_plan_payload, "data_need_audit_ref"),
             approved_strategy_config_ref=_read_text(run_plan_payload, "approved_strategy_config_ref"),
             trigger_source=SelectionTriggerSource(_read_text(run_plan_payload, "trigger_source")),
             supersedes_run_id=_optional_text(run_plan_payload.get("supersedes_run_id")),
         )
-        candidate_pack_payload = _read_mapping(data_run_payload, "candidate_pack_ref", optional=True)
-        candidate_pack_ref = _candidate_pack_ref_from_payload(candidate_pack_payload)
+        candidate_cache_payload = _read_mapping(data_run_payload, "candidate_cache_ref", optional=True)
+        candidate_cache_ref = _candidate_cache_ref_from_payload(candidate_cache_payload)
         data_run = SelectionDataRun(
             selection_run_id=_read_text(data_run_payload, "selection_run_id"),
             status=SelectionDataRunStatus(_read_text(data_run_payload, "status")),
@@ -649,7 +649,7 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
             columnar_manifest_ref=_optional_text(data_run_payload.get("columnar_manifest_ref")),
             columnar_manifest_sha256=_optional_text(data_run_payload.get("columnar_manifest_sha256")),
             feature_snapshot_ref=_optional_text(data_run_payload.get("feature_snapshot_ref")),
-            candidate_pack_ref=candidate_pack_ref,
+            candidate_cache_ref=candidate_cache_ref,
             started_at=_optional_text(data_run_payload.get("started_at")),
             completed_at=_optional_text(data_run_payload.get("completed_at")),
             failed_at=_optional_text(data_run_payload.get("failed_at")),
@@ -660,10 +660,10 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
             progress_total=_optional_int(data_run_payload.get("progress_total")),
         )
         manifest_payload = _read_mapping(payload, "manifest", optional=True)
-        manifest = _candidate_pack_manifest_from_payload(manifest_payload)
+        manifest = _candidate_cache_manifest_from_payload(manifest_payload)
         integrity_payload = _read_mapping(payload, "integrity", optional=True)
         integrity = SelectionRunIntegrity(
-            pack_approved=bool(integrity_payload.get("pack_approved", True)) if integrity_payload else True,
+            cache_approved=bool(integrity_payload.get("cache_approved", True)) if integrity_payload else True,
             readback_verified=bool(integrity_payload.get("readback_verified", True)) if integrity_payload else True,
             hash_matches_manifest=bool(integrity_payload.get("hash_matches_manifest", True)) if integrity_payload else True,
             lineage_complete=bool(integrity_payload.get("lineage_complete", True)) if integrity_payload else True,
@@ -681,7 +681,7 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
 def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]:
     run_plan = record.run_plan
     data_run = record.data_run
-    candidate_pack_ref = data_run.candidate_pack_ref
+    candidate_cache_ref = data_run.candidate_cache_ref
     manifest = record.manifest
     return {
         "schema_version": "selection-run-store-v1",
@@ -692,7 +692,7 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
             "trade_date": run_plan.trade_date,
             "lookback_trading_days": run_plan.lookback_trading_days,
             "universe_scope": run_plan.universe_scope,
-            "provider_batch_plan_ref": run_plan.provider_batch_plan_ref,
+            "data_need_audit_ref": run_plan.data_need_audit_ref,
             "approved_strategy_config_ref": run_plan.approved_strategy_config_ref,
             "trigger_source": run_plan.trigger_source.value,
             "supersedes_run_id": run_plan.supersedes_run_id,
@@ -709,18 +709,18 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
             "columnar_manifest_ref": data_run.columnar_manifest_ref,
             "columnar_manifest_sha256": data_run.columnar_manifest_sha256,
             "feature_snapshot_ref": data_run.feature_snapshot_ref,
-            "candidate_pack_ref": (
+            "candidate_cache_ref": (
                 {
-                    "selection_run_id": candidate_pack_ref.selection_run_id,
-                    "material_id": candidate_pack_ref.material_id,
-                    "l1_uri": candidate_pack_ref.l1_uri,
-                    "content_sha256": candidate_pack_ref.content_sha256,
-                    "manifest_ref": candidate_pack_ref.manifest_ref,
-                    "approved_at": candidate_pack_ref.approved_at,
-                    "expires_at": candidate_pack_ref.expires_at,
-                    "pack_summary_ref": candidate_pack_ref.pack_summary_ref,
+                    "selection_run_id": candidate_cache_ref.selection_run_id,
+                    "material_id": candidate_cache_ref.material_id,
+                    "l1_uri": candidate_cache_ref.l1_uri,
+                    "content_sha256": candidate_cache_ref.content_sha256,
+                    "manifest_ref": candidate_cache_ref.manifest_ref,
+                    "approved_at": candidate_cache_ref.approved_at,
+                    "expires_at": candidate_cache_ref.expires_at,
+                    "cache_summary_ref": candidate_cache_ref.cache_summary_ref,
                 }
-                if candidate_pack_ref is not None
+                if candidate_cache_ref is not None
                 else None
             ),
             "started_at": data_run.started_at,
@@ -741,7 +741,7 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
                 "trade_date": manifest.trade_date,
                 "candidate_count": manifest.candidate_count,
                 "source_lineage_refs": list(manifest.source_lineage_refs),
-                "pack_body_sha256": manifest.pack_body_sha256,
+                "cache_body_sha256": manifest.cache_body_sha256,
                 "strategy_config_ref": manifest.strategy_config_ref,
                 "strategy_config_version": manifest.strategy_config_version,
                 "weight_version": manifest.weight_version,
@@ -755,7 +755,7 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
             else None
         ),
         "integrity": {
-            "pack_approved": record.integrity.pack_approved,
+            "cache_approved": record.integrity.cache_approved,
             "readback_verified": record.integrity.readback_verified,
             "hash_matches_manifest": record.integrity.hash_matches_manifest,
             "lineage_complete": record.integrity.lineage_complete,
@@ -763,10 +763,10 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
     }
 
 
-def _candidate_pack_ref_from_payload(payload: Mapping[str, Any] | None) -> CandidatePackRef | None:
+def _candidate_cache_ref_from_payload(payload: Mapping[str, Any] | None) -> CandidateCacheRef | None:
     if payload is None:
         return None
-    return CandidatePackRef(
+    return CandidateCacheRef(
         selection_run_id=_read_text(payload, "selection_run_id"),
         material_id=_read_text(payload, "material_id"),
         l1_uri=_read_text(payload, "l1_uri"),
@@ -774,17 +774,17 @@ def _candidate_pack_ref_from_payload(payload: Mapping[str, Any] | None) -> Candi
         manifest_ref=_read_text(payload, "manifest_ref"),
         approved_at=_read_text(payload, "approved_at"),
         expires_at=_read_text(payload, "expires_at"),
-        pack_summary_ref=_read_text(payload, "pack_summary_ref"),
+        cache_summary_ref=_read_text(payload, "cache_summary_ref"),
     )
 
 
-def _candidate_pack_manifest_from_payload(
+def _candidate_cache_manifest_from_payload(
     payload: Mapping[str, Any] | None,
     *,
     fallback_market: str | None = None,
     fallback_profile: str | None = None,
     fallback_trade_date: str | None = None,
-) -> CandidatePackManifest | None:
+) -> CandidateCacheManifest | None:
     if payload is None:
         return None
     market_text = _optional_text(payload.get("market")) or fallback_market
@@ -792,7 +792,7 @@ def _candidate_pack_manifest_from_payload(
     trade_date_text = _optional_text(payload.get("trade_date")) or fallback_trade_date
     if market_text is None or profile_text is None or trade_date_text is None:
         raise ValueError("manifest market/profile/trade_date missing")
-    return CandidatePackManifest(
+    return CandidateCacheManifest(
         schema_version=_read_text(payload, "schema_version"),
         selection_run_id=_read_text(payload, "selection_run_id"),
         market=SelectionMarket(market_text),
@@ -800,15 +800,15 @@ def _candidate_pack_manifest_from_payload(
         trade_date=trade_date_text,
         candidate_count=int(payload.get("candidate_count", 0)),
         source_lineage_refs=tuple(_read_text_list(payload, "source_lineage_refs")),
-        pack_body_sha256=_read_text(payload, "pack_body_sha256"),
+        cache_body_sha256=_read_text(payload, "cache_body_sha256"),
         strategy_config_ref=_read_text(payload, "strategy_config_ref"),
-        readback_status=CandidatePackReadbackStatus(_read_text(payload, "readback_status")),
+        readback_status=CandidateCacheReadbackStatus(_read_text(payload, "readback_status")),
         strategy_config_version=_optional_text(payload.get("strategy_config_version")) or "cn_a.selection_strategy.v1",
         weight_version=_optional_text(payload.get("weight_version")) or "cn_a.selection_weights.v1",
         candidate_scores_ref=_optional_text(payload.get("candidate_scores_ref")),
         stable_top20_rule=_read_mapping(payload, "stable_top20_rule", optional=True),
-        stage=_optional_text(payload.get("stage")) or "approving_candidate_pack",
-        target=_optional_text(payload.get("target")) or "candidate_pack",
+        stage=_optional_text(payload.get("stage")) or "approving_candidate_cache",
+        target=_optional_text(payload.get("target")) or "candidate_cache",
     )
 
 

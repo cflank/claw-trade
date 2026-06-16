@@ -11,7 +11,7 @@ from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumn
 from claw_trade.selection.data_job import (
     SelectionDataFetchProgress,
     SelectionDataJob,
-    SelectionProviderBatchResult,
+    SelectionDataNeedResult,
     build_selection_data_plan,
 )
 from claw_trade.selection.engine import ApprovedSelectionStrategy, StableTop20Rule
@@ -20,7 +20,7 @@ from claw_trade.selection.models import (
     SelectionDataRunStatus,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
     SelectionTriggerSource,
 )
@@ -36,14 +36,14 @@ def _plan() -> SelectionRunPlan:
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://cn-a-2026-05-26",
+        data_need_audit_ref="plan://cn-a-2026-05-26",
         approved_strategy_config_ref="config://cn-a-approved-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
 
 
-def _provider_batch_plan(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionProviderBatchPlan:
-    return SelectionProviderBatchPlan(
+def _data_need_audit(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionDataNeedAudit:
+    return SelectionDataNeedAudit(
         plan_id=plan_id,
         scope=SelectionBatchScope.SELECTION_BATCH,
         market=SelectionMarket.CN_A,
@@ -52,7 +52,6 @@ def _provider_batch_plan(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionPr
         lookback_trading_days=260,
         universe_scope="all_a_shares",
         coverage_groups=("universe", "daily", "fundamental"),
-        provider_candidates=("akshare", "eastmoney"),
         ttl_policy_ref="ttl://daily",
         lineage_root_ref="lineage://selection/2026-05-26",
     )
@@ -72,7 +71,7 @@ def test_select_data_plan_crypto_history_missing_has_blocker_gap() -> None:
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="approved_crypto_universe",
-        provider_batch_plan_ref="plan://crypto-2026-05-26",
+        data_need_audit_ref="plan://crypto-2026-05-26",
         approved_strategy_config_ref="config://crypto-target-design",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
@@ -98,13 +97,13 @@ def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: P
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="approved_crypto_universe",
-        provider_batch_plan_ref="plan://crypto-2026-05-26",
+        data_need_audit_ref="plan://crypto-2026-05-26",
         approved_strategy_config_ref="config://crypto-target-design",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
     provider_calls = {"count": 0}
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
         provider_calls["count"] += 1
         raise AssertionError("Crypto history missing must fail before provider fetch")
 
@@ -128,7 +127,7 @@ def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: P
     assert payload["data_gaps"][0]["gap_code"] == "mongo_missing"
 
 
-def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> SelectionProviderBatchResult:
+def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> SelectionDataNeedResult:
     rows = []
     normalized_refs: list[str] = []
     for idx in range(20):
@@ -162,8 +161,8 @@ def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> 
         )
     return _with_columnar_manifest(
         plan,
-        SelectionProviderBatchResult(
-        provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+        SelectionDataNeedResult(
+        data_need_audit=_data_need_audit(plan.data_need_audit_ref),
         attempt_refs=("attempt://akshare-1", "attempt://eastmoney-1"),
         normalized_refs=tuple(normalized_refs),
         rows=tuple(rows),
@@ -175,10 +174,10 @@ def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> 
 
 def _with_columnar_manifest(
     plan: SelectionRunPlan,
-    result: SelectionProviderBatchResult,
+    result: SelectionDataNeedResult,
     *,
     root: Path,
-) -> SelectionProviderBatchResult:
+) -> SelectionDataNeedResult:
     os.environ["CLAW_TRADE_SELECTION_COLUMNAR_ROOT"] = str(root)
     writer = SelectionColumnarWarehouse(root=root).begin_write(plan=plan)
     writer.add_daily_rows(
@@ -221,7 +220,7 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     store = SelectionRunStore()
     provider_calls = {"count": 0}
 
-    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionDataNeedResult:
         provider_calls["count"] += 1
         assert run_plan.selection_run_id == plan.selection_run_id
         return _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
@@ -245,8 +244,8 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     assert result.feature_snapshot_ref == "feature://sel-run-03-success"
     assert result.score_ref == "score://sel-run-03-success"
     assert result.record.manifest is not None
-    assert result.record.manifest.stage == "approving_candidate_pack"
-    assert result.record.manifest.target == "candidate_pack"
+    assert result.record.manifest.stage == "approving_candidate_cache"
+    assert result.record.manifest.target == "candidate_cache"
     assert result.record.manifest.readback_status.value == "verified"
     assert result.record.manifest.strategy_config_version == "cn_a.selection_strategy.v1"
     assert result.record.manifest.weight_version == "cn_a.selection_weights.v1"
@@ -262,21 +261,21 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
             "risk_penalty_score_asc",
         ],
     }
-    assert result.record.data_run.candidate_pack_ref is not None
-    assert result.record.data_run.candidate_pack_ref.material_id.startswith("selection-candidate-pack-sel-run-03-success-")
+    assert result.record.data_run.candidate_cache_ref is not None
+    assert result.record.data_run.candidate_cache_ref.material_id.startswith("selection-candidate-cache-sel-run-03-success-")
     assert result.evidence_path.exists()
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
     assert payload["provider_attempt_refs"] == ["attempt://akshare-1", "attempt://eastmoney-1"]
-    assert payload["candidate_pack_stage"] == "approved"
-    assert payload["candidate_pack_ref"]["material_id"].startswith("selection-candidate-pack-sel-run-03-success-")
-    assert payload["candidate_pack_manifest"]["stage"] == "approving_candidate_pack"
-    assert payload["candidate_pack_manifest"]["target"] == "candidate_pack"
-    assert payload["candidate_pack_manifest"]["selection_run_id"] == "sel-run-03-success"
-    assert payload["candidate_pack_manifest"]["readback_status"] == "verified"
-    assert payload["candidate_pack_manifest"]["strategy_config_version"] == "cn_a.selection_strategy.v1"
-    assert payload["candidate_pack_manifest"]["weight_version"] == "cn_a.selection_weights.v1"
-    assert payload["candidate_pack_manifest"]["candidate_scores_ref"] == "score://sel-run-03-success"
-    assert payload["candidate_pack_manifest"]["stable_top20_rule"]["primary"] == "score_desc"
+    assert payload["candidate_cache_stage"] == "approved"
+    assert payload["candidate_cache_ref"]["material_id"].startswith("selection-candidate-cache-sel-run-03-success-")
+    assert payload["candidate_cache_manifest"]["stage"] == "approving_candidate_cache"
+    assert payload["candidate_cache_manifest"]["target"] == "candidate_cache"
+    assert payload["candidate_cache_manifest"]["selection_run_id"] == "sel-run-03-success"
+    assert payload["candidate_cache_manifest"]["readback_status"] == "verified"
+    assert payload["candidate_cache_manifest"]["strategy_config_version"] == "cn_a.selection_strategy.v1"
+    assert payload["candidate_cache_manifest"]["weight_version"] == "cn_a.selection_weights.v1"
+    assert payload["candidate_cache_manifest"]["candidate_scores_ref"] == "score://sel-run-03-success"
+    assert payload["candidate_cache_manifest"]["stable_top20_rule"]["primary"] == "score_desc"
     assert payload["normalized_refs"] == [f"dataset://normalized/CN_A/daily/row-{idx}" for idx in range(1, 21)]
     assert payload["warehouse_check_ref"] == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
     assert payload["columnar_manifest_ref"].startswith("columnar://selection/")
@@ -284,9 +283,20 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     assert payload["select_data_plan"]["select_data_plan"]["support_status"] == "supported"
     assert payload["select_data_plan"]["requirement_batch"]["request_kind"] == "select"
     [select_requirement] = payload["select_data_plan"]["requirement_batch"]["merged_requirements"]
+    assert set(select_requirement) == {
+        "requirement_id",
+        "market",
+        "profile",
+        "trade_date",
+        "lookback_trading_days",
+        "universe_scope",
+        "granularity",
+        "coverage_groups",
+        "field_set",
+        "target_ref_type",
+    }
     assert select_requirement["granularity"] == "daily"
     assert select_requirement["lookback_trading_days"] == 260
-    assert select_requirement["source_role_required"] == "market_data"
     assert "strategy_signal_myhhub_volume_rise" in select_requirement["field_set"]
     assert "private_placement_days_since" in select_requirement["field_set"]
     assert "amount" in select_requirement["field_set"]
@@ -319,7 +329,7 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
     assert "600019.SH" in {item["ticker"] for item in payload["top20"]}
     assert payload["data_gaps"] == []
 
-    body_uri = result.record.data_run.candidate_pack_ref.l1_uri
+    body_uri = result.record.data_run.candidate_cache_ref.l1_uri
     body_path = tmp_path / "artifacts" / body_uri.removeprefix("local://selection/")
     body_text = body_path.read_text(encoding="utf-8")
     assert "策略配置版本：cn_a.selection_strategy.v1" in body_text
@@ -331,7 +341,7 @@ def test_data_job_pipeline_success_builds_feature_score_and_top20(tmp_path: Path
 def test_data_job_pipeline_normalizes_legacy_source_refs_in_feature_snapshot_evidence(tmp_path: Path) -> None:
     plan = replace(_plan(), selection_run_id="sel-run-legacy-source-ref")
 
-    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionDataNeedResult:
         result = _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
         rows = tuple(
             {
@@ -368,7 +378,7 @@ def test_data_job_pipeline_records_provider_fetch_progress(tmp_path: Path) -> No
         run_plan: SelectionRunPlan,
         *,
         progress_callback,
-    ) -> SelectionProviderBatchResult:
+    ) -> SelectionDataNeedResult:
         progress_callback(SelectionDataFetchProgress(label="补齐全市场日线数据", completed=64, total=256))
         active = store.load_data_run_record(run_plan.selection_run_id)
         assert active is not None
@@ -397,7 +407,7 @@ def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields
     plan = _plan()
     store = SelectionRunStore()
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
         rows = []
         normalized_refs: list[str] = []
         for idx in range(20):
@@ -426,8 +436,8 @@ def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields
             )
         return _with_columnar_manifest(
             plan,
-            SelectionProviderBatchResult(
-                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+            SelectionDataNeedResult(
+                data_need_audit=_data_need_audit(plan.data_need_audit_ref),
                 attempt_refs=("attempt://akshare-1",),
                 normalized_refs=tuple(normalized_refs),
                 rows=tuple(rows),
@@ -451,7 +461,7 @@ def test_data_job_pipeline_disables_private_placement_strategy_when_event_fields
     assert len(result.top20_tickers) == 20
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
     assert payload["failure_code"] is None
-    assert payload["candidate_pack_stage"] == "approved"
+    assert payload["candidate_cache_stage"] == "approved"
     assert len(payload["strategy_variants"]) == 16
     assert "sequoia_private_placement" not in {item["variant_id"] for item in payload["strategy_variants"]}
     assert payload["disabled_strategy_variants"] == [
@@ -476,9 +486,9 @@ def test_data_job_pipeline_provider_failure_fails_closed_without_fallback(tmp_pa
     store = SelectionRunStore()
     strategy_loader_calls = {"count": 0}
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
-        return SelectionProviderBatchResult(
-            provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
+        return SelectionDataNeedResult(
+            data_need_audit=_data_need_audit(plan.data_need_audit_ref),
             attempt_refs=(),
             normalized_refs=(),
             rows=(),
@@ -510,7 +520,7 @@ def test_data_job_pipeline_provider_failure_fails_closed_without_fallback(tmp_pa
     provider_specs = payload["select_data_plan"]["provider_call_specs"]
     assert provider_specs == [
         {
-            "provider_batch_plan_ref": plan.provider_batch_plan_ref,
+            "data_need_audit_ref": plan.data_need_audit_ref,
             "scope": "selection_batch",
             "market": "CN_A",
             "profile": "CN_A",
@@ -536,7 +546,7 @@ def test_data_job_pipeline_missing_approved_strategy_config_fails_closed(tmp_pat
     store = SelectionRunStore()
     provider_calls = {"count": 0}
 
-    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionDataNeedResult:
         provider_calls["count"] += 1
         return _provider_result_success(run_plan, columnar_root=tmp_path / "columnar")
 
@@ -565,7 +575,7 @@ def test_data_job_pipeline_accepts_candidate_count_less_than_20(tmp_path: Path) 
     plan = _plan()
     store = SelectionRunStore()
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
         rows = []
         refs: list[str] = []
         for idx in range(19):
@@ -589,8 +599,8 @@ def test_data_job_pipeline_accepts_candidate_count_less_than_20(tmp_path: Path) 
             )
         return _with_columnar_manifest(
             plan,
-            SelectionProviderBatchResult(
-                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+            SelectionDataNeedResult(
+                data_need_audit=_data_need_audit(plan.data_need_audit_ref),
                 attempt_refs=("attempt://akshare-1",),
                 normalized_refs=tuple(refs),
                 rows=tuple(rows),
@@ -616,17 +626,17 @@ def test_data_job_pipeline_accepts_candidate_count_less_than_20(tmp_path: Path) 
     assert result.record.manifest.candidate_count == 19
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
     assert payload["failure_code"] is None
-    assert payload["candidate_pack_manifest"]["candidate_count"] == 19
+    assert payload["candidate_cache_manifest"]["candidate_count"] == 19
     assert len(payload["top20"]) == 19
     assert payload["data_gaps"] == []
 
 
 @pytest.mark.integration
-def test_data_job_pipeline_marks_no_candidate_without_approved_pack(tmp_path: Path) -> None:
+def test_data_job_pipeline_marks_no_candidate_without_approved_candidate_cache(tmp_path: Path) -> None:
     plan = _plan()
     store = SelectionRunStore()
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
         rows = []
         refs: list[str] = []
         for idx in range(3):
@@ -650,8 +660,8 @@ def test_data_job_pipeline_marks_no_candidate_without_approved_pack(tmp_path: Pa
             )
         return _with_columnar_manifest(
             plan,
-            SelectionProviderBatchResult(
-                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+            SelectionDataNeedResult(
+                data_need_audit=_data_need_audit(plan.data_need_audit_ref),
                 attempt_refs=("attempt://akshare-1",),
                 normalized_refs=tuple(refs),
                 rows=tuple(rows),
@@ -677,8 +687,8 @@ def test_data_job_pipeline_marks_no_candidate_without_approved_pack(tmp_path: Pa
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
     assert payload["status"] == "no_candidate"
     assert payload["failure_code"] is None
-    assert payload["candidate_pack_stage"] == "no_candidate"
-    assert payload["candidate_pack_manifest"] is None
+    assert payload["candidate_cache_stage"] == "no_candidate"
+    assert payload["candidate_cache_manifest"] is None
     assert payload["top20"] == []
     assert payload["data_gaps"][0]["gap_code"] == "filtered_universe_empty"
 
@@ -721,11 +731,11 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
     plan = _plan()
     store = SelectionRunStore()
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
         return _with_columnar_manifest(
             plan,
-            SelectionProviderBatchResult(
-                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+            SelectionDataNeedResult(
+                data_need_audit=_data_need_audit(plan.data_need_audit_ref),
                 attempt_refs=("attempt://current-only",),
                 normalized_refs=("dataset://normalized/CN_A/daily/current-only-1",),
                 rows=(
@@ -762,7 +772,7 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
     assert result.record.manifest is None
     assert result.top20_tickers == ()
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
-    assert payload["candidate_pack_stage"] == "draft_only"
+    assert payload["candidate_cache_stage"] == "draft_only"
     assert payload["top20"] == []
     missing_fields = {gap["source_metadata"]["field"] for gap in payload["data_gaps"]}
     assert "ma30" in missing_fields
@@ -773,15 +783,15 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
 
 
 @pytest.mark.integration
-def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_pack(tmp_path: Path) -> None:
+def test_data_job_pipeline_rejects_duplicate_ticker_before_candidate_cache(tmp_path: Path) -> None:
     plan = _plan()
     store = SelectionRunStore()
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionProviderBatchResult:
+    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
         return _with_columnar_manifest(
             plan,
-            SelectionProviderBatchResult(
-                provider_batch_plan=_provider_batch_plan(plan.provider_batch_plan_ref),
+            SelectionDataNeedResult(
+                data_need_audit=_data_need_audit(plan.data_need_audit_ref),
                 attempt_refs=("attempt://duplicate",),
                 normalized_refs=(
                     "dataset://normalized/CN_A/daily/duplicate-1",

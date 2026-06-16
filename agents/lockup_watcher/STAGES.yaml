@@ -14,7 +14,7 @@ profiles:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - claw_get_lockup_pack
+      - cn_a_lockup_data
     openviking_access: none
   HK:
     approved: false

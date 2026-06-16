@@ -18,7 +18,7 @@ CRYPTO_LENS_DOMAIN_KEYS = (
     "ahr999",
 )
 
-_DOMAIN_DATASETS: Mapping[str, tuple[str, ...]] = {
+_DOMAIN_STATUS_DATA_TYPES: Mapping[str, tuple[str, ...]] = {
     "market": ("quote_snapshot",),
     "ohlcv": ("daily_bar", "intraday_bar"),
     "derivatives": ("crypto_derivative_metric",),
@@ -119,11 +119,11 @@ class CryptoLensInput:
         )
 
     def gap_ids_for(self, domain_key: str) -> tuple[str, ...]:
-        dataset_names = _DOMAIN_DATASETS.get(domain_key, ())
+        data_types = _DOMAIN_STATUS_DATA_TYPES.get(domain_key, ())
         return tuple(
             gap.gap_id
             for gap in self.data_gaps
-            if gap.data_type in dataset_names or _gap_matches_domain_text(gap, domain_key)
+            if gap.data_type in data_types or _gap_matches_domain_text(gap, domain_key)
         )
 
     def as_dict(self) -> Mapping[str, Any]:
@@ -180,14 +180,14 @@ def _domain_status_from_results(
             status[domain] = CryptoLensDomainStatus.NOT_APPLICABLE
             continue
         if domain_payloads.get(domain):
-            status[domain] = _status_from_dataset_results(results, _DOMAIN_DATASETS.get(domain, ()))
+            status[domain] = _status_from_data_type_results(results, _DOMAIN_STATUS_DATA_TYPES.get(domain, ()))
         else:
-            status[domain] = _missing_or_error_status(results, _DOMAIN_DATASETS.get(domain, ()))
+            status[domain] = _missing_or_error_status(results, _DOMAIN_STATUS_DATA_TYPES.get(domain, ()))
     return status
 
 
-def _status_from_dataset_results(results: Sequence[DataResult], datasets: tuple[str, ...]) -> CryptoLensDomainStatus:
-    statuses = [result.status for result in results if _dataset_from_request_id(result.request_id) in datasets]
+def _status_from_data_type_results(results: Sequence[DataResult], data_types: tuple[str, ...]) -> CryptoLensDomainStatus:
+    statuses = [result.status for result in results if _data_type_from_request_id(result.request_id) in data_types]
     if any(status == DataResultStatus.ERROR for status in statuses):
         return CryptoLensDomainStatus.PARTIAL if any(status == DataResultStatus.READY for status in statuses) else CryptoLensDomainStatus.ERROR
     if any(status == DataResultStatus.PARTIAL for status in statuses):
@@ -195,8 +195,8 @@ def _status_from_dataset_results(results: Sequence[DataResult], datasets: tuple[
     return CryptoLensDomainStatus.READY
 
 
-def _missing_or_error_status(results: Sequence[DataResult], datasets: tuple[str, ...]) -> CryptoLensDomainStatus:
-    statuses = [result.status for result in results if _dataset_from_request_id(result.request_id) in datasets]
+def _missing_or_error_status(results: Sequence[DataResult], data_types: tuple[str, ...]) -> CryptoLensDomainStatus:
+    statuses = [result.status for result in results if _data_type_from_request_id(result.request_id) in data_types]
     if any(status == DataResultStatus.ERROR for status in statuses):
         return CryptoLensDomainStatus.ERROR
     return CryptoLensDomainStatus.MISSING
@@ -205,7 +205,7 @@ def _missing_or_error_status(results: Sequence[DataResult], datasets: tuple[str,
 def _rows_for(results: Sequence[DataResult], dataset: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for result in results:
-        if _dataset_from_request_id(result.request_id) == dataset:
+        if _data_type_from_request_id(result.request_id) == dataset:
             for row in result.rows:
                 normalized = dict(row)
                 if result.attempt_refs:
@@ -214,7 +214,7 @@ def _rows_for(results: Sequence[DataResult], dataset: str) -> list[dict[str, Any
     return rows
 
 
-def _dataset_from_request_id(request_id: str) -> str:
+def _data_type_from_request_id(request_id: str) -> str:
     parts = request_id.split(":")
     return parts[4] if len(parts) >= 5 else ""
 
@@ -275,6 +275,7 @@ def _derivatives_payload(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]
             ("long_short_ratio", "long_short_ratio"),
             ("net_inflow", "net_inflow"),
             ("taker_buy_sell_ratio", "taker_buy_sell_ratio"),
+            ("cvd", "cvd"),
         ):
             value = _to_float(row.get(source))
             if value is not None:
@@ -294,15 +295,17 @@ def _derivatives_payload(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]
     if saw_taker:
         latest_values["taker_buy_volume"] = taker_buy_total
         latest_values["taker_sell_volume"] = taker_sell_total
-        latest_values["cvd_proxy"] = taker_buy_total - taker_sell_total
-        latest_values["cvd_proxy_source"] = "taker_buy_volume_minus_taker_sell_volume"
+        if "cvd" not in latest_values:
+            latest_values["cvd_proxy"] = taker_buy_total - taker_sell_total
+            latest_values["cvd_proxy_source"] = "taker_buy_volume_minus_taker_sell_volume"
         taker_unit = next(
             (str(row.get("taker_volume_unit")) for row in rows if row.get("taker_volume_unit") is not None),
             None,
         )
         if taker_unit:
             latest_values["taker_volume_unit"] = taker_unit
-            latest_values["cvd_proxy_unit"] = taker_unit
+            if "cvd" not in latest_values:
+                latest_values["cvd_proxy_unit"] = taker_unit
     return latest_values or None
 
 
@@ -334,7 +337,7 @@ def _liquidation_payload(rows: Sequence[Mapping[str, Any]], *, current_price: fl
         if _valid_liquidation_price(_to_float(row.get("liquidation_price")), current_price=current_price)
     ]
     largest_cluster = _largest_liquidation_cluster(valid_heatmap_rows)
-    if not liquidation_rows and largest_cluster is None:
+    if largest_cluster is None:
         return None
     long_total = sum(_to_float(row.get("long_liquidation")) or 0.0 for row in liquidation_rows)
     short_total = sum(_to_float(row.get("short_liquidation")) or 0.0 for row in liquidation_rows)
@@ -406,7 +409,7 @@ def _onchain_payload(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | N
         elif metric == "whale_transfer":
             whale_count += 1
             payload["whale_transfer_value"] = value
-        elif metric in {"active_addresses", "mvrv", "sth_sopr", "lth_sopr", "nupl", "stablecoin_exchange_netflow"}:
+        elif metric in {"active_addresses", "mvrv", "sth_sopr", "lth_sopr", "nupl", "stablecoin_exchange_netflow", "stablecoin_market_cap"}:
             payload[metric] = value
     if whale_count:
         payload["whale_large_tx_count"] = whale_count

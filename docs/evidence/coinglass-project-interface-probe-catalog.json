@@ -1,0 +1,1598 @@
+{
+  "catalog_only": true,
+  "date_window": {
+    "end": "2026-06-15",
+    "start": "2026-05-15"
+  },
+  "generated_at": "2026-06-16T00:53:55.002100+00:00",
+  "quote": "USDT",
+  "rows": [
+    {
+      "api_id": "crypto.daily_bar",
+      "coinglass_status": "implemented",
+      "data_type": "daily_bar",
+      "declared_fields": [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "volume_usd"
+      ],
+      "doc": "https://docs.coinglass.com/reference/price-ohlc-history.md",
+      "endpoint_id": "coinglass.futures_price_history",
+      "path": "/api/futures/price/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1d",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ]
+    },
+    {
+      "api_id": "crypto.daily_bar",
+      "coinglass_status": "implemented",
+      "data_type": "daily_bar",
+      "declared_fields": [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "volume_usd"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-price-ohlc-history.md",
+      "endpoint_id": "coinglass.spot_price_history",
+      "path": "/api/spot/price/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1d",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ]
+    },
+    {
+      "api_id": "crypto.intraday_bar",
+      "coinglass_status": "implemented",
+      "data_type": "intraday_bar",
+      "declared_fields": [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "volume_usd"
+      ],
+      "doc": "https://docs.coinglass.com/reference/price-ohlc-history.md",
+      "endpoint_id": "coinglass.futures_price_history",
+      "path": "/api/futures/price/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ]
+    },
+    {
+      "api_id": "crypto.intraday_bar",
+      "coinglass_status": "implemented",
+      "data_type": "intraday_bar",
+      "declared_fields": [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "volume_usd"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-price-ohlc-history.md",
+      "endpoint_id": "coinglass.spot_price_history",
+      "path": "/api/spot/price/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+      ]
+    },
+    {
+      "api_id": "crypto.realtime_quote",
+      "coinglass_status": "implemented",
+      "data_type": "quote_snapshot",
+      "declared_fields": [
+        "price",
+        "timestamp",
+        "symbol_id",
+        "volume_usd"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-coins-markets.md",
+      "endpoint_id": "coinglass.spot_coins_markets",
+      "path": "/api/spot/coins-markets",
+      "plan_status": {
+        "params": {
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "price",
+        "timestamp",
+        "symbol_id"
+      ]
+    },
+    {
+      "api_id": "crypto.order_book",
+      "coinglass_status": "not_implemented",
+      "data_type": "order_book_snapshot",
+      "declared_fields": [],
+      "doc": "",
+      "endpoint_id": "",
+      "path": "",
+      "project_required_fields": [
+        "bid_price",
+        "ask_price",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.valuation_metric",
+      "coinglass_status": "implemented",
+      "data_type": "valuation_metric",
+      "declared_fields": [
+        "price",
+        "market_cap",
+        "volume_usd",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-coins-markets.md",
+      "endpoint_id": "coinglass.spot_coins_markets",
+      "path": "/api/spot/coins-markets",
+      "plan_status": {
+        "params": {
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "price",
+        "market_cap"
+      ]
+    },
+    {
+      "api_id": "crypto.valuation_metric",
+      "coinglass_status": "implemented",
+      "data_type": "valuation_metric",
+      "declared_fields": [
+        "price",
+        "market_cap",
+        "circulating_supply",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/coin-market-data-history.md",
+      "endpoint_id": "coinglass.coin_market_data_history",
+      "path": "/api/coin/market-data-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "price",
+        "market_cap"
+      ]
+    },
+    {
+      "api_id": "crypto.funding_rate",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "funding_rate",
+        "funding_rate_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/oi-weight-ohlc-history.md",
+      "endpoint_id": "coinglass.futures_funding_rate",
+      "path": "/api/futures/funding-rate/oi-weight-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "funding_rate",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.funding_rate",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "funding_rate",
+        "funding_rate_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/fr-ohlc-histroy.md",
+      "endpoint_id": "coinglass.raw_futures_funding_rate_history",
+      "path": "/api/futures/funding-rate/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "funding_rate",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.funding_rate",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "funding_rate",
+        "funding_rate_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/vol-weight-ohlc-history.md",
+      "endpoint_id": "coinglass.raw_futures_funding_rate_vol_weight_history",
+      "path": "/api/futures/funding-rate/vol-weight-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "funding_rate",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.open_interest",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "open_interest",
+        "open_interest_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/oi-ohlc-aggregated-history.md",
+      "endpoint_id": "coinglass.futures_open_interest_aggregated_history",
+      "path": "/api/futures/open-interest/aggregated-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "open_interest",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.open_interest",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "open_interest",
+        "open_interest_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/oi-ohlc-aggregated-coin-margin-history.md",
+      "endpoint_id": "coinglass.raw_futures_open_interest_aggregated_coin_margin_history",
+      "path": "/api/futures/open-interest/aggregated-coin-margin-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "open_interest",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.open_interest",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "open_interest",
+        "open_interest_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/oi-ohlc-aggregated-stablecoin-margin-history.md",
+      "endpoint_id": "coinglass.raw_futures_open_interest_aggregated_stablecoin_history",
+      "path": "/api/futures/open-interest/aggregated-stablecoin-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "open_interest",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.open_interest",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "open_interest",
+        "open_interest_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/oi-ohlc-histroy.md",
+      "endpoint_id": "coinglass.raw_futures_open_interest_history",
+      "path": "/api/futures/open-interest/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "open_interest",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.long_short_ratio",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "long_short_ratio",
+        "metric",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/global-longshort-account-ratio.md",
+      "endpoint_id": "coinglass.futures_long_short_ratio",
+      "path": "/api/futures/global-long-short-account-ratio/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "long_short_ratio",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.long_short_ratio",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "long_short_ratio",
+        "metric",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/top-longshort-account-ratio.md",
+      "endpoint_id": "coinglass.raw_futures_top_long_short_account_ratio_history",
+      "path": "/api/futures/top-long-short-account-ratio/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "long_short_ratio",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.long_short_ratio",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "long_short_ratio",
+        "metric",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/top-longshort-position-ratio.md",
+      "endpoint_id": "coinglass.raw_futures_top_long_short_position_ratio_history",
+      "path": "/api/futures/top-long-short-position-ratio/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "long_short_ratio",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.long_short_ratio",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "long_short_ratio",
+        "metric",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/hyperliquid-long-short-account-ratio-history.md",
+      "endpoint_id": "coinglass.raw_hyperliquid_global_long_short_account_ratio_history",
+      "path": "/api/hyperliquid/global-long-short-account-ratio/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "long_short_ratio",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.liquidation",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/aggregated-liquidation-history.md",
+      "endpoint_id": "coinglass.futures_liquidation",
+      "path": "/api/futures/liquidation/aggregated-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "liquidation_value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.liquidation",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "long_liquidation",
+        "short_liquidation",
+        "liquidation_value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/liquidation-history.md",
+      "endpoint_id": "coinglass.raw_futures_liquidation_history",
+      "path": "/api/futures/liquidation/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "liquidation_value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.liquidation_heatmap",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "liquidation_price",
+        "liquidation_size",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/liquidation-aggregate-heatmap.md",
+      "endpoint_id": "coinglass.futures_liquidation_heatmap",
+      "path": "/api/futures/liquidation/aggregated-heatmap/model1",
+      "plan_status": {
+        "params": {
+          "range": "90d",
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "liquidation_price",
+        "liquidation_value"
+      ]
+    },
+    {
+      "api_id": "crypto.cvd",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "cvd",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-aggregated-cvd-history.md",
+      "endpoint_id": "coinglass.spot_cvd_history",
+      "path": "/api/spot/aggregated-cvd/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "4500",
+          "start_time": 1778803200000,
+          "symbol": "BTC",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "cvd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.cvd",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "cvd",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/futures-aggregated-cvd-history.md",
+      "endpoint_id": "coinglass.futures_cvd_history",
+      "path": "/api/futures/aggregated-cvd/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "4500",
+          "start_time": 1778803200000,
+          "symbol": "BTC",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "cvd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.cvd",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "cvd",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/futures-cvd-history.md",
+      "endpoint_id": "coinglass.raw_futures_cvd_history",
+      "path": "/api/futures/cvd/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "cvd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.cvd",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "cvd",
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-cvd-history.md",
+      "endpoint_id": "coinglass.raw_spot_cvd_history",
+      "path": "/api/spot/cvd/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTCUSDT",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "cvd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.taker_buy_sell",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "taker_buy_volume",
+        "taker_sell_volume",
+        "taker_buy_sell_ratio",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/aggregated-taker-buysell-volume-history.md",
+      "endpoint_id": "coinglass.futures_taker_buy_sell",
+      "path": "/api/futures/aggregated-taker-buy-sell-volume/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange_list": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "taker_buy_volume",
+        "taker_sell_volume"
+      ]
+    },
+    {
+      "api_id": "crypto.exchange_netflow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "netflow",
+        "netflow_unit",
+        "net_inflow",
+        "net_inflow_unit",
+        "value",
+        "value_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-coin-netflow.md",
+      "endpoint_id": "coinglass.spot_coin_netflow",
+      "path": "/api/spot/coin/netflow",
+      "plan_status": {
+        "params": {
+          "exchange_list": "Binance",
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "net_inflow",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.exchange_netflow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "netflow",
+        "net_inflow",
+        "net_inflow_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/futures-coin-netflow.md",
+      "endpoint_id": "coinglass.futures_coin_netflow",
+      "path": "/api/futures/coin/netflow",
+      "plan_status": {
+        "params": {
+          "exchange_list": "Binance",
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "net_inflow",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.exchange_netflow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "netflow",
+        "net_inflow",
+        "net_inflow_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/futures-netflow-list.md",
+      "endpoint_id": "coinglass.raw_futures_netflow_list",
+      "path": "/api/futures/netflow-list",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "net_inflow",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.exchange_netflow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "netflow",
+        "net_inflow",
+        "net_inflow_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/spot-netflow-list.md",
+      "endpoint_id": "coinglass.raw_spot_netflow_list",
+      "path": "/api/spot/netflow-list",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "net_inflow",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.options_open_interest",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "options_open_interest",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/exchange-open-interest-history.md",
+      "endpoint_id": "coinglass.options_open_interest",
+      "path": "/api/option/exchange-oi-history",
+      "plan_status": {
+        "params": {
+          "range": "all",
+          "symbol": "BTC",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "options_open_interest",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.options_volume",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "options_volume",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/exchange-volume-history.md",
+      "endpoint_id": "coinglass.options_volume",
+      "path": "/api/option/exchange-vol-history",
+      "plan_status": {
+        "params": {
+          "symbol": "BTC",
+          "unit": "USD"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "options_volume",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.etf_flow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "etf_flow_usd",
+        "price",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/etf-flows-history.md",
+      "endpoint_id": "coinglass.etf_bitcoin_flow_history",
+      "path": "/api/etf/bitcoin/flow-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "etf_flow_usd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.etf_flow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "etf_flow_usd",
+        "price",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/ethereum-etf-flows-history.md",
+      "endpoint_id": "coinglass.etf_ethereum_flow_history",
+      "path": "/api/etf/ethereum/flow-history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "etf_flow_usd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.etf_flow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "etf_flow_usd",
+        "price",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/hype-etf-flows-history.md",
+      "endpoint_id": "coinglass.raw_etf_hype_flow_history",
+      "path": "/api/etf/hype/flow-history",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "etf_flow_usd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.etf_flow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "etf_flow_usd",
+        "price",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/solana-etf-flows-history.md",
+      "endpoint_id": "coinglass.raw_etf_solana_flow_history",
+      "path": "/api/etf/solana/flow-history",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "etf_flow_usd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.etf_flow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "etf_flow_usd",
+        "price",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/xrp-etf-flows-history.md",
+      "endpoint_id": "coinglass.raw_etf_xrp_flow_history",
+      "path": "/api/etf/xrp/flow-history",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "etf_flow_usd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.etf_flow",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "etf_flow_usd",
+        "price",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/hong-kong-bitcoin-etf-flow-history.md",
+      "endpoint_id": "coinglass.raw_hk_etf_bitcoin_flow_history",
+      "path": "/api/hk-etf/bitcoin/flow-history",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "etf_flow_usd",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.borrow_interest_rate",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_derivative_metric",
+      "declared_fields": [
+        "borrow_interest_rate",
+        "borrow_interest_rate_unit",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/borrow-interest-rate.md",
+      "endpoint_id": "coinglass.raw_borrow_interest_rate_history",
+      "path": "/api/borrow-interest-rate/history",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "exchange": "Binance",
+          "interval": "1h",
+          "limit": "1000",
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "borrow_interest_rate",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.exchange_balance",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "exchange_balance",
+        "balance",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/exchange-balance-chart.md",
+      "endpoint_id": "coinglass.onchain_exchange_balance",
+      "path": "/api/exchange/balance/chart",
+      "plan_status": {
+        "params": {
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "exchange_balance",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.whale_transfer",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "whale_transfer",
+        "value",
+        "timestamp",
+        "chain"
+      ],
+      "doc": "https://docs.coinglass.com/reference/whale-transfer.md",
+      "endpoint_id": "coinglass.onchain_whale_transfer",
+      "path": "/api/chain/v2/whale-transfer",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "whale_transfer",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.ahr999",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "ahr999",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/ahr999.md",
+      "endpoint_id": "coinglass.bitcoin_ahr999",
+      "path": "/api/index/ahr999",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "ahr999",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "exchange_balance",
+        "balance",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/exchange-balance-chart.md",
+      "endpoint_id": "coinglass.onchain_exchange_balance",
+      "path": "/api/exchange/balance/chart",
+      "plan_status": {
+        "params": {
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "whale_transfer",
+        "value",
+        "timestamp",
+        "chain"
+      ],
+      "doc": "https://docs.coinglass.com/reference/whale-transfer.md",
+      "endpoint_id": "coinglass.onchain_whale_transfer",
+      "path": "/api/chain/v2/whale-transfer",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000,
+          "symbol": "BTC"
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "active_addresses",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/bitcoin-active-addresses.md",
+      "endpoint_id": "coinglass.raw_index_bitcoin_active_addresses",
+      "path": "/api/index/bitcoin-active-addresses",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "lth_sopr",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/bitcoin-long-term-holder-sopr.md",
+      "endpoint_id": "coinglass.raw_index_bitcoin_lth_sopr",
+      "path": "/api/index/bitcoin-lth-sopr",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "nupl",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/bitcoin-net-unrealized-profitloss-nupl.md",
+      "endpoint_id": "coinglass.raw_index_bitcoin_net_unrealized_profit_loss",
+      "path": "/api/index/bitcoin-net-unrealized-profit-loss",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "sth_sopr",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/bitcoin-short-term-holder-sopr.md",
+      "endpoint_id": "coinglass.raw_index_bitcoin_sth_sopr",
+      "path": "/api/index/bitcoin-sth-sopr",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.onchain_metric",
+      "coinglass_status": "implemented",
+      "data_type": "crypto_onchain_metric",
+      "declared_fields": [
+        "metric",
+        "stablecoin_market_cap",
+        "value",
+        "timestamp",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/stablecoin-marketcap-history.md",
+      "endpoint_id": "coinglass.raw_index_stablecoin_marketcap_history",
+      "path": "/api/index/stableCoin-marketCap-history",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "metric",
+        "value",
+        "timestamp"
+      ]
+    },
+    {
+      "api_id": "crypto.defi_metric",
+      "coinglass_status": "not_implemented",
+      "data_type": "defi_metric",
+      "declared_fields": [],
+      "doc": "",
+      "endpoint_id": "",
+      "path": "",
+      "project_required_fields": [
+        "tvl",
+        "symbol_id"
+      ]
+    },
+    {
+      "api_id": "crypto.company_profile",
+      "coinglass_status": "not_implemented",
+      "data_type": "company_profile",
+      "declared_fields": [],
+      "doc": "",
+      "endpoint_id": "",
+      "path": "",
+      "project_required_fields": [
+        "name",
+        "symbol"
+      ]
+    },
+    {
+      "api_id": "crypto.company_news",
+      "coinglass_status": "implemented",
+      "data_type": "company_news",
+      "declared_fields": [
+        "event_id",
+        "event_type",
+        "title",
+        "published_at",
+        "source",
+        "summary",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/article-list.md",
+      "endpoint_id": "coinglass.raw_article_list",
+      "path": "/api/article/list",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "title",
+        "published_at",
+        "source"
+      ]
+    },
+    {
+      "api_id": "crypto.macro_series",
+      "coinglass_status": "not_implemented",
+      "data_type": "macro_series",
+      "declared_fields": [],
+      "doc": "",
+      "endpoint_id": "",
+      "path": "",
+      "project_required_fields": [
+        "series_id",
+        "date",
+        "value"
+      ]
+    },
+    {
+      "api_id": "crypto.macro_news",
+      "coinglass_status": "implemented",
+      "data_type": "macro_news",
+      "declared_fields": [
+        "event_id",
+        "event_type",
+        "title",
+        "published_at",
+        "source",
+        "summary",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/article-list.md",
+      "endpoint_id": "coinglass.raw_article_list",
+      "path": "/api/article/list",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "title",
+        "published_at",
+        "source"
+      ]
+    },
+    {
+      "api_id": "crypto.macro_news",
+      "coinglass_status": "implemented",
+      "data_type": "macro_news",
+      "declared_fields": [
+        "event_id",
+        "event_type",
+        "title",
+        "published_at",
+        "source",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/economic-data.md",
+      "endpoint_id": "coinglass.raw_calendar_economic_data",
+      "path": "/api/calendar/economic-data",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "title",
+        "published_at",
+        "source"
+      ]
+    },
+    {
+      "api_id": "crypto.event_calendar",
+      "coinglass_status": "implemented",
+      "data_type": "event_calendar",
+      "declared_fields": [
+        "event_id",
+        "event_type",
+        "title",
+        "event_date",
+        "source",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/economic-data.md",
+      "endpoint_id": "coinglass.raw_calendar_economic_data",
+      "path": "/api/calendar/economic-data",
+      "plan_status": {
+        "params": {
+          "end_time": 1781567999999,
+          "start_time": 1778803200000
+        },
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "event_date",
+        "event_type",
+        "title"
+      ]
+    },
+    {
+      "api_id": "crypto.social_signal",
+      "coinglass_status": "implemented",
+      "data_type": "social_signal",
+      "declared_fields": [
+        "source",
+        "timestamp",
+        "sentiment",
+        "value",
+        "event_type",
+        "symbol_id"
+      ],
+      "doc": "https://docs.coinglass.com/reference/cryptofear-greedindex.md",
+      "endpoint_id": "coinglass.raw_index_fear_greed_history",
+      "path": "/api/index/fear-greed-history",
+      "plan_status": {
+        "params": {},
+        "planned": true,
+        "skipped": []
+      },
+      "project_required_fields": [
+        "source",
+        "timestamp"
+      ]
+    }
+  ],
+  "schema_version": "coinglass-project-interface-probe-v1",
+  "symbol": "BTC"
+}

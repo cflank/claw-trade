@@ -14,29 +14,35 @@ from claw_trade.config.tool_names import (
 from claw_trade.workflow.models import Stage
 
 
-def test_load_tool_registry_defaults_to_canonical_data_pack_intents(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_tool_registry_defaults_frontline_data_intents_to_data_need_tool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", raising=False)
     result = load_tool_registry()
     assert result.ok is True
     assert result.registry is not None
     intents = result.registry.intent_to_tools
     assert "market_data" not in intents
-    assert intents["cn_a_market_data"] == ("claw_get_market_pack",)
-    assert intents["us_market_data"] == ("claw_get_market_pack",)
-    assert intents["hk_market_data"] == ("claw_get_market_pack",)
-    assert intents["crypto_market_data"] == ("claw_get_market_pack",)
-    assert intents["cn_a_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["us_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["hk_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["crypto_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["cn_a_news_data"] == ("claw_get_news_pack",)
-    assert intents["us_news_data"] == ("claw_get_news_pack",)
-    assert intents["hk_news_data"] == ("claw_get_news_pack",)
-    assert intents["crypto_news_data"] == ("claw_get_news_pack",)
-    assert intents["cn_a_social_sentiment"] == ("claw_get_social_pack",)
-    assert intents["us_social_sentiment"] == ("claw_get_social_pack",)
-    assert intents["hk_social_sentiment"] == ("claw_get_social_pack",)
-    assert intents["crypto_social_sentiment"] == ("claw_get_social_pack",)
+    for intent in (
+        "cn_a_market_data",
+        "us_market_data",
+        "hk_market_data",
+        "crypto_market_data",
+        "cn_a_fundamentals_data",
+        "us_fundamentals_data",
+        "hk_fundamentals_data",
+        "crypto_fundamentals_data",
+        "cn_a_news_data",
+        "us_news_data",
+        "hk_news_data",
+        "crypto_news_data",
+        "cn_a_social_sentiment",
+        "us_social_sentiment",
+        "hk_social_sentiment",
+        "crypto_social_sentiment",
+        "cn_a_policy_data",
+        "cn_a_hot_money_data",
+        "cn_a_lockup_data",
+    ):
+        assert intents[intent] == ("claw_request_data",)
     assert "openviking_write" in intents
     assert intents["openviking_read"] == ("openviking_read_with_capability",)
     assert intents["openviking_write"] == ("openviking_write_material",)
@@ -44,29 +50,32 @@ def test_load_tool_registry_defaults_to_canonical_data_pack_intents(monkeypatch:
 
 def test_legacy_rollback_flag_no_longer_changes_tool_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", raising=False)
-    assert load_tool_registry().registry.intent_to_tools["us_market_data"] == ("claw_get_market_pack",)
+    assert load_tool_registry().registry.intent_to_tools["us_market_data"] == ("claw_request_data",)
 
     monkeypatch.setenv("CLAW_TRADE_LEGACY_ROLLBACK_ENABLED", "true")
     intents = load_tool_registry().registry.intent_to_tools
-    assert intents["cn_a_market_data"] == ("claw_get_market_pack",)
-    assert intents["us_market_data"] == ("claw_get_market_pack",)
-    assert intents["hk_market_data"] == ("claw_get_market_pack",)
-    assert intents["crypto_market_data"] == ("claw_get_market_pack",)
-    assert intents["cn_a_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["us_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["hk_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["crypto_fundamentals_data"] == ("claw_get_fundamental_pack",)
-    assert intents["cn_a_news_data"] == ("claw_get_news_pack",)
-    assert intents["us_news_data"] == ("claw_get_news_pack",)
-    assert intents["hk_news_data"] == ("claw_get_news_pack",)
-    assert intents["crypto_news_data"] == ("claw_get_news_pack",)
-    assert intents["cn_a_social_sentiment"] == ("claw_get_social_pack",)
-    assert intents["us_social_sentiment"] == ("claw_get_social_pack",)
-    assert intents["hk_social_sentiment"] == ("claw_get_social_pack",)
-    assert intents["crypto_social_sentiment"] == ("claw_get_social_pack",)
+    assert intents["cn_a_market_data"] == ("claw_request_data",)
+    assert intents["us_market_data"] == ("claw_request_data",)
+    assert intents["hk_market_data"] == ("claw_request_data",)
+    assert intents["crypto_market_data"] == ("claw_request_data",)
+    assert intents["cn_a_fundamentals_data"] == ("claw_request_data",)
+    assert intents["us_fundamentals_data"] == ("claw_request_data",)
+    assert intents["hk_fundamentals_data"] == ("claw_request_data",)
+    assert intents["crypto_fundamentals_data"] == ("claw_request_data",)
+    assert intents["cn_a_news_data"] == ("claw_request_data",)
+    assert intents["us_news_data"] == ("claw_request_data",)
+    assert intents["hk_news_data"] == ("claw_request_data",)
+    assert intents["crypto_news_data"] == ("claw_request_data",)
+    assert intents["cn_a_social_sentiment"] == ("claw_request_data",)
+    assert intents["us_social_sentiment"] == ("claw_request_data",)
+    assert intents["hk_social_sentiment"] == ("claw_request_data",)
+    assert intents["crypto_social_sentiment"] == ("claw_request_data",)
+    assert intents["cn_a_policy_data"] == ("claw_request_data",)
+    assert intents["cn_a_hot_money_data"] == ("claw_request_data",)
+    assert intents["cn_a_lockup_data"] == ("claw_request_data",)
 
 
-def test_hk_frontline_stage_policy_declares_approved_pack_tools() -> None:
+def test_hk_frontline_stage_policy_declares_approved_data_tools() -> None:
     expected_tools_and_skills = {
         "market_analyst": (["hk_market_data"], "hk-market-data"),
         "fundamental_analyst": (["hk_fundamentals_data"], "hk-fundamental-data"),
@@ -88,7 +97,7 @@ def test_hk_frontline_stage_policy_declares_approved_pack_tools() -> None:
         assert any(entry.get("path") == f"{skill_name}/SKILL.md" for entry in manifest["skills"] if isinstance(entry, dict))
 
 
-def test_hk_frontline_reuses_existing_pack_tool_contracts_without_hk_specific_visible_tools() -> None:
+def test_hk_frontline_reuses_single_data_need_tool_without_hk_specific_visible_tools() -> None:
     hk_specific_tools = {
         "hk_market_data",
         "hk_fundamental_data",
@@ -103,30 +112,17 @@ def test_hk_frontline_reuses_existing_pack_tool_contracts_without_hk_specific_vi
     registry = load_tool_registry().registry
     assert registry is not None
 
-    assert {
-        "claw_get_market_pack",
-        "claw_get_fundamental_pack",
-        "claw_get_news_pack",
-        "claw_get_social_pack",
-    }.issubset(registered_tools)
+    assert registered_tools == {"claw_request_data"}
     assert registered_tools.isdisjoint(hk_specific_tools)
     for hk_intent in ("hk_market_data", "hk_fundamentals_data", "hk_news_data", "hk_social_sentiment"):
-        assert registry.intent_to_tools[hk_intent][0].startswith("claw_get_")
+        assert registry.intent_to_tools[hk_intent] == ("claw_request_data",)
 
 
 def test_frontline_tools_are_registered_by_local_openclaw_plugin_not_old_core_files() -> None:
     root = Path(__file__).resolve().parents[2]
     plugin_root = root / "openclaw_plugins" / "claw-trade-frontline-tools"
     manifest = json.loads((plugin_root / "openclaw.plugin.json").read_text(encoding="utf-8"))
-    assert set(manifest["contracts"]["tools"]) == {
-        "claw_get_market_pack",
-        "claw_get_fundamental_pack",
-        "claw_get_news_pack",
-        "claw_get_social_pack",
-        "claw_get_policy_pack",
-        "claw_get_hot_money_pack",
-        "claw_get_lockup_pack",
-    }
+    assert set(manifest["contracts"]["tools"]) == {"claw_request_data"}
 
     plugin_entry = (plugin_root / "index.js").read_text(encoding="utf-8")
     assert "{ name, optional: true }" in plugin_entry
@@ -211,7 +207,7 @@ def test_openviking_required_tool_missing_fails() -> None:
 
 
 def test_news_guard_blocks_missing_macro_or_company_news() -> None:
-    guard = require_global_news_capability_for_news(ToolRegistry({"cn_a_market_data": ("market_market_data_pack",)}))
+    guard = require_global_news_capability_for_news(ToolRegistry({"cn_a_market_data": ("claw_request_data",)}))
     assert guard.ok is False
     assert guard.category == "config_blocked"
 

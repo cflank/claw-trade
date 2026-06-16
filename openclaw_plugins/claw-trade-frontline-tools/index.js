@@ -7,22 +7,9 @@ import { definePluginEntry } from "../../third_party/openclaw/dist/plugin-sdk/pl
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(PLUGIN_DIR, "..", "..");
 const TOOL_NAMES = Object.freeze({
-  clawGetMarketPack: "claw_get_market_pack",
-  clawGetFundamentalPack: "claw_get_fundamental_pack",
-  clawGetNewsPack: "claw_get_news_pack",
-  clawGetSocialPack: "claw_get_social_pack",
-  clawGetPolicyPack: "claw_get_policy_pack",
-  clawGetHotMoneyPack: "claw_get_hot_money_pack",
-  clawGetLockupPack: "claw_get_lockup_pack",
+  clawRequestData: "claw_request_data",
 });
 const FRONTLINE_STAGE = "frontline";
-const DATA_PACK_DOMAIN_MARKET = "market";
-const DATA_PACK_DOMAIN_FUNDAMENTAL = "fundamental";
-const DATA_PACK_DOMAIN_NEWS = "news";
-const DATA_PACK_DOMAIN_SOCIAL = "social";
-const DATA_PACK_DOMAIN_POLICY = "policy";
-const DATA_PACK_DOMAIN_HOT_MONEY = "hot_money";
-const DATA_PACK_DOMAIN_LOCKUP = "lockup";
 const MARKET_CN_A = "CN_A";
 const MARKET_HK = "HK";
 const MARKET_US = "US";
@@ -37,12 +24,9 @@ const TOOL_ERROR_CODES = Object.freeze({
   protocolError: "TOOL_PROTOCOL_ERROR",
 });
 const DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS = 30000;
-const DEFAULT_MARKET_PACK_TIMEOUT_MS = 120000;
-const DEFAULT_CRYPTO_MARKET_PACK_TIMEOUT_MS = 120000;
-const DEFAULT_NEWS_TOTAL_TIMEOUT_MS = 20000;
-const DEFAULT_SOCIAL_PACK_TIMEOUT_MS = 20000;
+const DEFAULT_DATA_NEED_TOOL_BUDGET_MS = 180000;
 const DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS = 25000;
-const SUBPROCESS_TIMEOUT_BUFFER_MS = 5000;
+const SUBPROCESS_TIMEOUT_BUFFER_MS = 30000;
 const STDERR_SUMMARY_MAX_CHARS = 2000;
 const STDOUT_SUMMARY_MAX_CHARS = 2000;
 const WECHAT_CHANNEL_ID = "openclaw-weixin";
@@ -54,32 +38,58 @@ const OPTIONAL_TEXT = {
   type: "string",
 };
 
-const PACK_INPUT_SCHEMA = {
+const DATA_REQUEST_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
+  required: ["item", "purpose"],
   properties: {
-    ticker: OPTIONAL_TEXT,
+    item: OPTIONAL_TEXT,
+    instrument: OPTIONAL_TEXT,
     market: OPTIONAL_TEXT,
-    company_name: OPTIONAL_TEXT,
-    industry: OPTIONAL_TEXT,
-    start_date: OPTIONAL_TEXT,
-    end_date: OPTIONAL_TEXT,
-    aliases: {
-      type: "array",
-      items: { type: "string" },
+    time_range: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        start: OPTIONAL_TEXT,
+        end: OPTIONAL_TEXT,
+        lookback_days: {
+          type: "integer",
+          minimum: 1,
+        },
+      },
     },
-    approved_artifact_refs: {
-      type: "array",
-      items: {},
+    granularity: OPTIONAL_TEXT,
+    purpose: OPTIONAL_TEXT,
+    priority: {
+      type: "string",
+      enum: ["required", "normal", "optional", "expensive"],
     },
   },
 };
 
-const DATA_PACK_INPUT_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {},
-};
+const DATA_REQUEST_FORBIDDEN_INPUT_KEYS = Object.freeze([
+  "provider",
+  "path",
+  "api_name",
+  "url",
+  "header",
+  "headers",
+  "token",
+  "api_key",
+  "secret",
+  "api_id",
+  "data_type",
+  "fields",
+]);
+const DATA_REQUEST_ALLOWED_INPUT_KEYS = Object.freeze([
+  "item",
+  "instrument",
+  "market",
+  "time_range",
+  "granularity",
+  "purpose",
+  "priority",
+]);
 
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -100,6 +110,25 @@ function nonNegativeIntegerValue(value) {
   return parsed;
 }
 
+function forbiddenDataRequestKeys(value, found = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      forbiddenDataRequestKeys(item, found);
+    }
+    return found;
+  }
+  if (!isRecord(value)) {
+    return found;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (DATA_REQUEST_FORBIDDEN_INPUT_KEYS.includes(key) || key.startsWith("allowed_") || key.startsWith("only_for_")) {
+      found.add(key);
+    }
+    forbiddenDataRequestKeys(child, found);
+  }
+  return found;
+}
+
 function readInboundTimeoutMs() {
   return nonNegativeIntegerValue(process.env.CLAW_TRADE_UI_INBOUND_TIMEOUT_MS) ?? DEFAULT_UI_INBOUND_TIMEOUT_MS;
 }
@@ -110,18 +139,8 @@ function safeToken(value, defaultValue = "unknown") {
   return safe || defaultValue;
 }
 
-function packEvidenceCallId(workerCallId, toolCallId) {
+function dataNeedEvidenceCallId(workerCallId, toolCallId) {
   return `${workerCallId}__tool-${safeToken(toolCallId)}`;
-}
-
-function listValue(value, fieldName) {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `params.${fieldName} must be an array`);
-  }
-  return value;
 }
 
 function readCommand(ctx, expectedWorkerId, toolName) {
@@ -134,8 +153,12 @@ function readCommand(ctx, expectedWorkerId, toolName) {
     );
   }
   const workerId = textValue(command.worker_id);
-  const expectedWorkerIds = Array.isArray(expectedWorkerId) ? expectedWorkerId : [expectedWorkerId];
-  if (!expectedWorkerIds.includes(workerId)) {
+  const expectedWorkerIds = Array.isArray(expectedWorkerId)
+    ? expectedWorkerId.filter(Boolean)
+    : textValue(expectedWorkerId)
+      ? [expectedWorkerId]
+      : [];
+  if (expectedWorkerIds.length > 0 && !expectedWorkerIds.includes(workerId)) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.workerMismatch,
       `${toolName} worker mismatch: expected ${expectedWorkerIds.join(", ")}, got ${workerId ?? "<empty>"}`,
@@ -164,33 +187,10 @@ function readCommand(ctx, expectedWorkerId, toolName) {
   return { command, runtimeVars, runId, callId, stage, workerId, evidenceDir };
 }
 
-function runtimeText(runtimeVars, params, fieldName, required = false) {
-  const value = readOptionalString(params, fieldName) ?? readOptionalString(runtimeVars, fieldName);
-  if (required && value === undefined) {
-    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `params.${fieldName} is required`);
-  }
-  return value;
-}
-
 function runtimeOnlyText(runtimeVars, fieldName, required = false) {
   const value = readOptionalRuntimeString(runtimeVars, fieldName);
   if (required && value === undefined) {
     throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `runtime_vars.${fieldName} is required`);
-  }
-  return value;
-}
-
-function runtimeOnlyPositiveNumber(runtimeVars, fieldName) {
-  const raw = runtimeVars?.[fieldName];
-  if (raw === undefined || raw === null || raw === "") {
-    return undefined;
-  }
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new FrontlineToolError(
-      TOOL_ERROR_CODES.paramsInvalid,
-      `runtime_vars.${fieldName} must be a positive number`,
-    );
   }
   return value;
 }
@@ -359,72 +359,91 @@ async function handleReplyDispatchHook(event, ctx) {
   }
 }
 
-function ignoredModelInputFields(params) {
+function buildDataRequestToolInput(runtimeVars, params, toolName) {
   if (!isRecord(params)) {
-    return [];
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool input must be a JSON object");
   }
-  return Object.keys(params).sort();
-}
-
-function buildToolInput(runtimeVars, params, requiredFields = []) {
-  if (!isRecord(params)) {
-    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool params must be a JSON object");
-  }
-  const runtime = isRecord(runtimeVars) ? runtimeVars : {};
-  const required = new Set(requiredFields);
-  const aliases = listValue(params.aliases ?? runtime.aliases, "aliases");
-  const approvedArtifactRefs = listValue(
-    params.approved_artifact_refs ?? runtime.approved_artifact_refs,
-    "approved_artifact_refs",
-  );
-  if (aliases && !aliases.every((item) => typeof item === "string")) {
+  const unexpected = Object.keys(params)
+    .filter((key) => !DATA_REQUEST_ALLOWED_INPUT_KEYS.includes(key))
+    .sort();
+  const forbidden = Array.from(forbiddenDataRequestKeys(params)).sort();
+  if (forbidden.length > 0) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.paramsInvalid,
-      "params.aliases must contain only strings",
+      "data request contains unsupported execution details",
     );
   }
+  if (unexpected.length > 0) {
+    throw new FrontlineToolError(
+      TOOL_ERROR_CODES.paramsInvalid,
+      "data request contains unsupported fields",
+    );
+  }
+  const runtime = isRecord(runtimeVars) ? runtimeVars : {};
+  const item = readOptionalString(params, "item");
+  const purpose = readOptionalString(params, "purpose");
+  if (!item) {
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "data request item is required");
+  }
+  if (!purpose) {
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "data request purpose is required");
+  }
+  const market = readOptionalString(params, "market") ?? runtimeOnlyText(runtime, "market", true);
+  const timeRange = normalizeDataNeedTimeRange(params.time_range);
   const input = {
-    ticker: runtimeText(runtime, params, "ticker", required.has("ticker")),
-    market: runtimeText(runtime, params, "market", required.has("market")),
-    company_name: runtimeText(runtime, params, "company_name", false),
-    industry: runtimeText(runtime, params, "industry", false),
-    start_date: runtimeText(runtime, params, "start_date", false),
-    end_date: runtimeText(runtime, params, "end_date", false),
-    aliases,
-    approved_artifact_refs: approvedArtifactRefs,
+    item,
+    instrument: readOptionalString(params, "instrument") ?? runtimeOnlyText(runtime, "ticker", true),
+    market,
+    time_range: timeRange,
+    granularity: readOptionalString(params, "granularity"),
+    purpose,
+    priority: readOptionalString(params, "priority"),
   };
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
 }
 
-function buildDataPackToolInput(runtimeVars, params) {
-  if (!isRecord(params)) {
-    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool params must be a JSON object");
+function normalizeDataNeedTimeRange(value) {
+  if (value === undefined || value === null) {
+    return undefined;
   }
-  const runtime = isRecord(runtimeVars) ? runtimeVars : {};
-  const market = runtimeOnlyText(runtime, "market", true);
-  const profile = runtimeOnlyText(runtime, "profile", false) ?? market;
-  const freshnessMaxAgeSeconds = runtimeOnlyPositiveNumber(runtime, "freshness_max_age_seconds");
-  const input = {
-    ticker: runtimeOnlyText(runtime, "ticker", true),
-    market,
-    profile,
-    company_name: runtimeOnlyText(runtime, "company_name", true),
-    start_date: runtimeOnlyText(runtime, "start_date", true),
-    end_date: runtimeOnlyText(runtime, "end_date", true),
-    current_date: runtimeOnlyText(runtime, "current_date", true),
-    currency: runtimeOnlyText(runtime, "currency", true),
-    freshness_max_age_seconds: freshnessMaxAgeSeconds,
-  };
-  return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+  if (!isRecord(value)) {
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "data request time_range must be an object");
+  }
+  const allowed = new Set(["start", "end", "lookback_days"]);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key)).sort();
+  if (unexpected.length > 0) {
+    throw new FrontlineToolError(
+      TOOL_ERROR_CODES.paramsInvalid,
+      "data request time_range contains unsupported fields",
+    );
+  }
+  const start = readOptionalString(value, "start");
+  const end = readOptionalString(value, "end");
+  const out = {};
+  if (start) {
+    out.start = start;
+  }
+  if (end) {
+    out.end = end;
+  }
+  if (value.lookback_days !== undefined) {
+    const parsed = Number.parseInt(String(value.lookback_days), 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "data request lookback_days must be positive");
+    }
+    out.lookback_days = parsed;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function buildRuntimeContext(runtime, toolName, toolCallId) {
+  const now = new Date();
   const currentDate = textValue(runtime.runtimeVars.current_date);
   const startDate = textValue(runtime.runtimeVars.start_date);
   const endDate = textValue(runtime.runtimeVars.end_date);
   const reportPrefetchManifestPath = textValue(runtime.runtimeVars.report_prefetch_manifest_path);
   const workerCallId = runtime.callId;
-  const providerCallId = packEvidenceCallId(workerCallId, toolCallId);
+  const providerCallId = dataNeedEvidenceCallId(workerCallId, toolCallId);
   const context = {
     run_id: runtime.runId,
     stage: runtime.stage,
@@ -434,11 +453,12 @@ function buildRuntimeContext(runtime, toolName, toolCallId) {
     worker_call_id: workerCallId,
     tool_call_id: textValue(toolCallId) || null,
     tool_name: toolName,
-    evidence_root: path.join(runtime.evidenceDir, "pack-tool-evidence"),
+    evidence_root: path.join(runtime.evidenceDir, "data-need-tool-evidence"),
     current_date: currentDate,
     start_date: startDate,
     end_date: endDate,
-    current_time: new Date().toISOString(),
+    current_time: now.toISOString(),
+    deadline_at: new Date(now.getTime() + dataNeedToolBudgetMs()).toISOString(),
   };
   if (reportPrefetchManifestPath) {
     context.report_prefetch_required = true;
@@ -452,7 +472,7 @@ function assertExpectedMarket(toolName, toolInput, expectedMarket) {
   if (!market) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.paramsInvalid,
-      `params.market is required`,
+      "data request market is required",
       { tool_name: toolName },
     );
   }
@@ -460,7 +480,7 @@ function assertExpectedMarket(toolName, toolInput, expectedMarket) {
   if (!expectedMarkets.includes(market)) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.paramsInvalid,
-      `params.market must be ${expectedMarkets.join(" or ")}, got ${market}`,
+      "data request market is outside this worker profile",
       { tool_name: toolName, market },
     );
   }
@@ -500,15 +520,22 @@ function subprocessTimeoutMs(domainTotalTimeoutMs) {
   return Math.max(totalTimeout + SUBPROCESS_TIMEOUT_BUFFER_MS, DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS);
 }
 
-function providerTotalTimeoutMs() {
+function dataNeedToolBudgetMs() {
+  return positiveSecondsEnvToMs("CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS", DEFAULT_DATA_NEED_TOOL_BUDGET_MS);
+}
+
+function legacyProviderTotalTimeoutMs() {
   return positiveIntegerEnv("CN_A_PROVIDER_TOTAL_TIMEOUT_MS", DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS);
 }
 
-function domainToolTimeoutMs(domainTotalTimeoutMs) {
+function domainToolTimeoutMs(domainTotalTimeoutMs, dataNeedBudgetMs) {
   const totalTimeout = Number.isFinite(domainTotalTimeoutMs) && domainTotalTimeoutMs > 0
     ? domainTotalTimeoutMs
     : DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS;
-  return Math.max(totalTimeout, providerTotalTimeoutMs());
+  const toolBudget = Number.isFinite(dataNeedBudgetMs) && dataNeedBudgetMs > 0
+    ? dataNeedBudgetMs
+    : DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS;
+  return Math.max(totalTimeout, legacyProviderTotalTimeoutMs(), toolBudget);
 }
 
 function parseJsonFromStdout(stdout) {
@@ -651,7 +678,7 @@ function toolResultDetails(payload, isError = false) {
     const { status, ...rest } = payload;
     return {
       ...rest,
-      data_pack_status: status,
+      data_result_status: status,
     };
   }
   return payload;
@@ -669,16 +696,33 @@ function modelFacingToolText(payload, isError = false) {
     const error = isRecord(payload.error) ? payload.error : undefined;
     if (error) {
       const code = textValue(error.code) ?? "UNKNOWN_ERROR";
-      const message = textValue(error.message) ?? "工具返回失败，但未提供可读错误说明";
-      return `资料包工具失败：${code}。${message}`;
+      const message = safeModelErrorMessage(code);
+      return `数据工具失败：${code}。${message}。本次数据需求已经有工具结果，不要再次调用同一数据需求；请在报告的数据限制与风险提示部分说明缺口，不要补写未提供的数据。`;
     }
     if (!isError && payload.ok === true) {
-      return "未提供自然语言资料包正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
+      return "未提供自然语言数据结果正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
     }
   }
   return isError
-    ? "资料包工具失败。请在报告中说明工具失败和证据缺口，不要补写未提供的数据。"
-    : "未提供自然语言资料包正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
+    ? "数据工具失败。本次数据需求已经有工具结果，不要再次调用同一数据需求；请在报告中说明工具失败和证据缺口，不要补写未提供的数据。"
+    : "未提供自然语言数据结果正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
+}
+
+function safeModelErrorMessage(code) {
+  switch (code) {
+    case TOOL_ERROR_CODES.paramsInvalid:
+      return "工具参数不符合公开合同";
+    case TOOL_ERROR_CODES.subprocessTimeout:
+      return "数据工具执行超时";
+    case TOOL_ERROR_CODES.protocolError:
+      return "数据工具协议执行失败";
+    case "invalid_public_data_request":
+      return "数据需求参数不符合公开工具合同";
+    case "data_need_runtime_blocked":
+      return "数据层运行时未能完成本次数据请求";
+    default:
+      return "工具返回失败，但未提供可读错误说明";
+  }
 }
 
 class FrontlineToolError extends Error {
@@ -694,7 +738,8 @@ function toolErrorPayload(code, message, details = undefined) {
     ok: false,
     error: {
       code,
-      message,
+      message: safeModelErrorMessage(code),
+      audit_message: message,
       ...(details && isRecord(details) ? details : {}),
     },
   };
@@ -710,7 +755,7 @@ function readOptionalString(payload, fieldName) {
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, `params.${fieldName} must be a string`);
+    throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "tool input field must be a string");
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : undefined;
@@ -804,61 +849,33 @@ function runtimeErrorToResult(toolName, expectedWorkerId, error) {
   });
 }
 
-function dataPackScriptConfig(expectedWorkerId, packDomain) {
+function dataNeedScriptConfig() {
   return {
-    expectedWorkerId,
     expectedMarket: ALL_MARKETS,
     args: [
       "-c",
       [
         "import json, sys",
         "try:",
-        "    from claw_trade.reports.data_pack_bridge import run_frontline_data_pack",
+        "    from claw_trade.reports.data_need_bridge import run_claw_request_data",
         "    payload = json.load(sys.stdin)",
         "    tool_input = dict(payload.get('tool_input') or {})",
         "    runtime_context = dict(payload.get('runtime_context') or {})",
-        "    tool_input.setdefault('start_date', runtime_context.get('start_date') or '')",
-        "    tool_input.setdefault('end_date', runtime_context.get('end_date') or '')",
-        "    tool_input.setdefault('current_date', runtime_context.get('current_date') or '')",
-        "    result = run_frontline_data_pack(tool_input, runtime_context)",
+        "    result = run_claw_request_data(tool_input, runtime_context)",
         "except Exception as exc:",
-        "    print(json.dumps({'ok': False, 'error': {'code': 'data_pack_runtime_blocked', 'message': str(exc)}}, ensure_ascii=False, default=str))",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'data_need_runtime_blocked', 'message': '数据层运行时未能完成本次数据请求', 'audit_message': str(exc)}, 'model_visible_text': '数据工具失败：数据层运行时未能完成本次数据请求。本次数据需求已经有工具结果，不要再次调用同一数据需求；请在报告的数据限制与风险提示部分说明缺口，不要补写未提供的数据。'}, ensure_ascii=False, default=str))",
         "    raise SystemExit(0)",
         "print(json.dumps(result, ensure_ascii=False, default=str))",
       ].join("\n"),
-      packDomain,
     ],
     pythonPathDirs: [path.join(REPO_ROOT, "src")],
-    inputBuilder: buildDataPackToolInput,
-    totalTimeoutMs: domainToolTimeoutMs(providerTotalTimeoutMs()),
-    packDomain,
+    inputBuilder: buildDataRequestToolInput,
+    totalTimeoutMs: domainToolTimeoutMs(legacyProviderTotalTimeoutMs(), dataNeedToolBudgetMs()),
   };
 }
 
-function resolvePackTotalTimeoutMs(config, toolInput, toolName) {
-  if (toolName === TOOL_NAMES.clawGetMarketPack) {
-    return domainToolTimeoutMs(DEFAULT_MARKET_PACK_TIMEOUT_MS);
-  }
-  return config.totalTimeoutMs;
-}
-
 const TOOL_CONFIG_FACTORIES = Object.freeze({
-  [TOOL_NAMES.clawGetMarketPack]: () => dataPackScriptConfig("market_analyst", DATA_PACK_DOMAIN_MARKET),
-  [TOOL_NAMES.clawGetFundamentalPack]: () => dataPackScriptConfig("fundamental_analyst", DATA_PACK_DOMAIN_FUNDAMENTAL),
-  [TOOL_NAMES.clawGetNewsPack]: () => dataPackScriptConfig("news_analyst", DATA_PACK_DOMAIN_NEWS),
-  [TOOL_NAMES.clawGetSocialPack]: () => dataPackScriptConfig("social_analyst", DATA_PACK_DOMAIN_SOCIAL),
-  [TOOL_NAMES.clawGetPolicyPack]: () => ({
-    ...dataPackScriptConfig("policy_analyst", DATA_PACK_DOMAIN_POLICY),
-    expectedMarket: [MARKET_CN_A],
-  }),
-  [TOOL_NAMES.clawGetHotMoneyPack]: () => ({
-    ...dataPackScriptConfig("hot_money_tracker", DATA_PACK_DOMAIN_HOT_MONEY),
-    expectedMarket: [MARKET_CN_A],
-  }),
-  [TOOL_NAMES.clawGetLockupPack]: () => ({
-    ...dataPackScriptConfig("lockup_watcher", DATA_PACK_DOMAIN_LOCKUP),
-    expectedMarket: [MARKET_CN_A],
-  }),
+  [TOOL_NAMES.clawRequestData]: () => dataNeedScriptConfig(),
 });
 
 async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
@@ -868,23 +885,14 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   }
   const config = configFactory();
   const runtime = readCommand(ctx, config.expectedWorkerId, toolName);
-  const toolInput = config.inputBuilder
-    ? config.inputBuilder(runtime.runtimeVars, params, toolName)
-    : buildToolInput(runtime.runtimeVars, params, config.requiredFields);
+  const toolInput = config.inputBuilder(runtime.runtimeVars, params, toolName);
   assertExpectedMarket(toolName, toolInput, config.expectedMarket);
   const runtimeContext = buildRuntimeContext(runtime, toolName, toolCallId);
-  if (config.packDomain) {
-    runtimeContext.pack_domain = config.packDomain;
-  }
-  const ignoredFields = ignoredModelInputFields(params);
-  if (ignoredFields.length > 0) {
-    runtimeContext.ignored_model_input_fields = ignoredFields;
-  }
   const payload = {
     tool_input: toolInput,
     runtime_context: runtimeContext,
   };
-  const timeoutMs = subprocessTimeoutMs(resolvePackTotalTimeoutMs(config, toolInput, toolName));
+  const timeoutMs = subprocessTimeoutMs(config.totalTimeoutMs);
   const result = await runPythonJson(config.args, payload, {
     pythonPathDirs: config.pythonPathDirs,
     timeoutMs,
@@ -898,7 +906,7 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   return toolResult(result.parsed, shouldMarkToolResultAsError(result.parsed));
 }
 
-async function runPack(ctx, params, toolName, expectedWorkerId, toolCallId) {
+async function runFrontlineDataTool(ctx, params, toolName, expectedWorkerId, toolCallId) {
   try {
     return await executeFrontlineTool(ctx, params, toolName, toolCallId);
   } catch (error) {
@@ -906,35 +914,17 @@ async function runPack(ctx, params, toolName, expectedWorkerId, toolCallId) {
   }
 }
 
-async function runClawGetMarketPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetMarketPack, "market_analyst", toolCallId);
+async function runClawRequestData(ctx, params, toolCallId) {
+  return runFrontlineDataTool(
+    ctx,
+    params,
+    TOOL_NAMES.clawRequestData,
+    undefined,
+    toolCallId,
+  );
 }
 
-async function runClawGetFundamentalPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetFundamentalPack, "fundamental_analyst", toolCallId);
-}
-
-async function runClawGetNewsPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetNewsPack, "news_analyst", toolCallId);
-}
-
-async function runClawGetSocialPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetSocialPack, "social_analyst", toolCallId);
-}
-
-async function runClawGetPolicyPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetPolicyPack, "policy_analyst", toolCallId);
-}
-
-async function runClawGetHotMoneyPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetHotMoneyPack, "hot_money_tracker", toolCallId);
-}
-
-async function runClawGetLockupPack(ctx, params, toolCallId) {
-  return runPack(ctx, params, TOOL_NAMES.clawGetLockupPack, "lockup_watcher", toolCallId);
-}
-
-function registerFrontlineTool(api, name, description, execute, parameters = PACK_INPUT_SCHEMA) {
+function registerFrontlineTool(api, name, description, execute, parameters = DATA_REQUEST_INPUT_SCHEMA) {
   api.registerTool(
     (ctx) => ({
       name,
@@ -952,59 +942,17 @@ function registerFrontlineTool(api, name, description, execute, parameters = PAC
 export default definePluginEntry({
   id: "claw-trade-frontline-tools",
   name: "claw-trade frontline tools",
-  description: "Registers claw-trade frontline data pack tools.",
+  description: "Registers the claw-trade frontline data layer tool.",
   register(api) {
     if (typeof api.on === "function") {
       api.on("reply_dispatch", handleReplyDispatchHook);
     }
     registerFrontlineTool(
       api,
-      TOOL_NAMES.clawGetMarketPack,
-      "Load one market data pack through the canonical claw-trade data layer.",
-      runClawGetMarketPack,
-      DATA_PACK_INPUT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.clawGetFundamentalPack,
-      "Load one fundamental data pack through the canonical claw-trade data layer.",
-      runClawGetFundamentalPack,
-      DATA_PACK_INPUT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.clawGetNewsPack,
-      "Load one news data pack through the canonical claw-trade data layer.",
-      runClawGetNewsPack,
-      DATA_PACK_INPUT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.clawGetSocialPack,
-      "Load one social data pack through the canonical claw-trade data layer.",
-      runClawGetSocialPack,
-      DATA_PACK_INPUT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.clawGetPolicyPack,
-      "Load one policy data pack through the canonical claw-trade data layer.",
-      runClawGetPolicyPack,
-      DATA_PACK_INPUT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.clawGetHotMoneyPack,
-      "Load one hot-money data pack through the canonical claw-trade data layer.",
-      runClawGetHotMoneyPack,
-      DATA_PACK_INPUT_SCHEMA,
-    );
-    registerFrontlineTool(
-      api,
-      TOOL_NAMES.clawGetLockupPack,
-      "Load one lockup data pack through the canonical claw-trade data layer.",
-      runClawGetLockupPack,
-      DATA_PACK_INPUT_SCHEMA,
+      TOOL_NAMES.clawRequestData,
+      "Request a business data item through the canonical claw-trade data layer.",
+      runClawRequestData,
+      DATA_REQUEST_INPUT_SCHEMA,
     );
   },
 });

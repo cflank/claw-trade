@@ -6,4 +6,4 @@ skills:
     workers:
       - lockup_watcher
     tool_exports:
-      - claw_get_lockup_pack
+      - claw_request_data

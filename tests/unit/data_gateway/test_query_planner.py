@@ -85,11 +85,11 @@ def test_query_planner_scopes_crypto_bar_warehouse_checks_to_spot_universe() -> 
     assert derivative_plan.warehouse_checks[0].universe_ref is None
 
 
-def test_query_planner_does_not_generate_provider_candidates_or_batch_plan() -> None:
+def test_query_planner_does_not_generate_remote_execution_fields() -> None:
     planner = QueryPlanner()
     plan = planner.validate_and_normalize(_request())
     assert not hasattr(plan, "provider_candidates")
-    assert not hasattr(plan, "provider_batch_plans")
+    assert tuple(plan.normalized_requests)
 
 
 def test_query_plan_can_resolve_request_for_gap() -> None:

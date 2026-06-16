@@ -25,7 +25,7 @@ def _show_decision(provider_id: str = "tushare", *, market: Market = Market.CN_A
         requires_user_credential=True,
         changes_report_or_select_result=True,
         writes_mongo_and_evidence=True,
-        enters_domain_pack=True,
+        enters_data_result_flow=True,
         consumed_by_worker_or_strategy=True,
         live_fresh_evidence_ref=f"evidence://main-chain/{provider_id}",
         probe_only=False,
@@ -120,13 +120,13 @@ def test_save_data_source_persists_rate_limit_settings_to_env(tmp_path: Path) ->
     assert payload["rateLimitWindowSeconds"] == 60
     assert payload["rateLimitSafetyMargin"] == 1
     assert payload["rateLimitOverflow"] == "wait"
-    assert payload["rateLimitWaitTimeoutSeconds"] == 75
+    assert "rateLimitWaitTimeoutSeconds" not in payload
     env_text = env_path.read_text(encoding="utf-8")
     assert "TUSHARE_RATE_LIMIT_MAX_CALLS=10" in env_text
     assert "TUSHARE_RATE_LIMIT_WINDOW_SECONDS=60" in env_text
     assert "TUSHARE_RATE_LIMIT_SAFETY_MARGIN=1" in env_text
     assert "TUSHARE_RATE_LIMIT_OVERFLOW=wait" in env_text
-    assert "TUSHARE_RATE_LIMIT_WAIT_TIMEOUT_SECONDS=75" in env_text
+    assert "TUSHARE_RATE_LIMIT_WAIT_TIMEOUT_SECONDS" not in env_text
 
 
 def test_save_data_source_clears_stale_rate_limit_env_when_fields_are_blank(tmp_path: Path) -> None:

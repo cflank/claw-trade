@@ -8,7 +8,7 @@ def test_required_data_need_gap_reasons_exist() -> None:
         "permission_denied",
         "provider_empty",
         "parser_missing",
-        "resolver_mapping_missing",
+        "catalog_match_missing",
         "rate_limited_by_tool_budget",
     }
 

@@ -15,6 +15,8 @@ Market Research Report: {market_research_report}
 Social Media Sentiment Report: {sentiment_report}
 Latest World Affairs Report: {news_report}
 Company Fundamentals Report: {fundamentals_report}
+Data evidence boundary (check before debating data conflicts): {data_evidence_summary}
+If analyst claims conflict with this evidence boundary, do not amplify the conflicting number or fact; state the conflict and treat the claim as unverified.
 Here is the current conversation history: {history} Here is the last response from the aggressive analyst: {current_risky_response} Here is the last response from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
 Engage by questioning their optimism and emphasizing the potential downsides they may have overlooked. Address each of their counterpoints to showcase why a conservative stance is ultimately the safest path for the firm's assets. Focus on debating and critiquing their arguments to demonstrate the strength of a low-risk strategy over their approaches. Output conversationally as if you are speaking without any special formatting.

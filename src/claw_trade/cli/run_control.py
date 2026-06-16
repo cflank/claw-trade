@@ -14,7 +14,6 @@ from claw_trade.config.report_workflow_settings import (
     load_report_workflow_settings,
 )
 from claw_trade.instruments.resolver import InstrumentResolveError
-from claw_trade.reports.data_pack_bridge import ReportDataPrefetcher
 from claw_trade.reports.exporter import FinalReportExporter
 from claw_trade.runtime.openclaw_client import OpenClawClient
 from claw_trade.workflow.models import RunRequest, RunStatus, Stage, StopPoint, WorkflowEntryPoint
@@ -150,7 +149,6 @@ def _build_runner(run_dir: Path) -> object:
         openclaw=OpenClawClient(runner=openclaw_runner),
         openviking=openviking_client,
         exporter=FinalReportExporter(openviking=openviking_client),
-        data_prefetcher=ReportDataPrefetcher(),
     )
 
 

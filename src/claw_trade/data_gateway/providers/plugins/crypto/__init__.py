@@ -172,7 +172,7 @@ class BinanceSpotMarketPlugin:
                     data_type="order_book_snapshot",
                     source_role="official",
                     granularity=("realtime",),
-                    fields=("bid_price", "bid_size", "ask_price", "ask_size", "timestamp", "symbol_id"),
+                    fields=("bid_price", "bid_size", "ask_price", "ask_size", "bid_levels", "ask_levels", "timestamp", "symbol_id"),
                     priority_rank=10,
                 ),
                 endpoint_capability(
@@ -183,6 +183,87 @@ class BinanceSpotMarketPlugin:
                     granularity=("1h", "1m"),
                     fields=("open", "high", "low", "close", "volume", "volume_unit", "amount", "amount_unit"),
                     priority_rank=15,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_funding_rate",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime", "1h", "daily"),
+                    fields=("funding_rate", "funding_rate_unit", "timestamp", "symbol_id"),
+                    priority_rank=28,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_open_interest",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime",),
+                    fields=("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+                    priority_rank=28,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_open_interest_hist",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime", "1h", "daily"),
+                    fields=("open_interest", "open_interest_unit", "timestamp", "symbol_id"),
+                    priority_rank=29,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_long_short_ratio",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime", "1h", "daily"),
+                    fields=("long_short_ratio", "metric", "timestamp", "symbol_id"),
+                    priority_rank=28,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_top_long_short_account_ratio",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime", "1h", "daily"),
+                    fields=("long_short_ratio", "metric", "timestamp", "symbol_id"),
+                    priority_rank=29,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_top_long_short_position_ratio",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime", "1h", "daily"),
+                    fields=("long_short_ratio", "metric", "timestamp", "symbol_id"),
+                    priority_rank=29,
+                ),
+                endpoint_capability(
+                    endpoint_id="futures_taker_buy_sell",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime", "1h", "daily"),
+                    fields=("taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "taker_buy_sell_ratio", "cvd", "timestamp", "symbol_id"),
+                    priority_rank=28,
+                ),
+                endpoint_capability(
+                    endpoint_id="options_open_interest",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime",),
+                    fields=("options_open_interest", "options_open_interest_unit", "timestamp", "symbol_id"),
+                    priority_rank=28,
+                ),
+                endpoint_capability(
+                    endpoint_id="options_ticker",
+                    market="CRYPTO",
+                    data_type="crypto_derivative_metric",
+                    source_role="official",
+                    granularity=("realtime",),
+                    fields=("options_volume", "options_volume_unit", "timestamp", "symbol_id"),
+                    priority_rank=28,
                 ),
             ),
             credential_policy=NO_CREDENTIALS,
@@ -208,6 +289,24 @@ class BinanceSpotMarketPlugin:
             return self._fetch_order_book(task, ctx=ctx, symbol=symbol)
         if endpoint_id == "spot_intraday_bar":
             return self._fetch_intraday(task, ctx=ctx, symbol=symbol)
+        if endpoint_id == "futures_funding_rate":
+            return self._fetch_futures_funding_rate(task, ctx=ctx, symbol=symbol)
+        if endpoint_id == "futures_open_interest":
+            return self._fetch_futures_open_interest(task, ctx=ctx, symbol=symbol)
+        if endpoint_id == "futures_open_interest_hist":
+            return self._fetch_futures_open_interest_hist(task, ctx=ctx, symbol=symbol)
+        if endpoint_id in {
+            "futures_long_short_ratio",
+            "futures_top_long_short_account_ratio",
+            "futures_top_long_short_position_ratio",
+        }:
+            return self._fetch_futures_long_short_ratio(task, ctx=ctx, symbol=symbol, endpoint_id=endpoint_id)
+        if endpoint_id == "futures_taker_buy_sell":
+            return self._fetch_futures_taker_buy_sell(task, ctx=ctx, symbol=symbol)
+        if endpoint_id == "options_open_interest":
+            return self._fetch_options_open_interest(task, ctx=ctx, symbol=symbol)
+        if endpoint_id == "options_ticker":
+            return self._fetch_options_ticker(task, ctx=ctx, symbol=symbol)
         return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
 
     def _fetch_ticker(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
@@ -265,7 +364,7 @@ class BinanceSpotMarketPlugin:
                 method="GET",
                 host=host,
                 path=f"{prefix}/api/v3/depth",
-                query={"symbol": symbol, "limit": 5},
+                query={"symbol": symbol, "limit": 100},
                 headers={"accept": "application/json"},
                 provider_config_version=getattr(task, "provider_config_version", None),
             ),
@@ -294,6 +393,8 @@ class BinanceSpotMarketPlugin:
                 "bid_size": bid[1],
                 "ask_price": ask[0],
                 "ask_size": ask[1],
+                "bid_levels": len(payload.get("bids")) if isinstance(payload.get("bids"), list) else None,
+                "ask_levels": len(payload.get("asks")) if isinstance(payload.get("asks"), list) else None,
                 "timestamp": datetime.now(tz=UTC),
             }
         )
@@ -343,6 +444,185 @@ class BinanceSpotMarketPlugin:
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
 
+    def _fetch_futures_funding_rate(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
+        host, prefix = _binance_futures_endpoint(ctx)
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/fapi/v1/fundingRate",
+                query=_binance_history_query(task, symbol=symbol),
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _binance_funding_rows(payload, task=task, symbol=symbol, provider_id=self.plugin_id)
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
+    def _fetch_futures_open_interest(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
+        host, prefix = _binance_futures_endpoint(ctx)
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/fapi/v1/openInterest",
+                query={"symbol": symbol},
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _binance_open_interest_rows(payload, task=task, symbol=symbol, provider_id=self.plugin_id, endpoint_id="futures_open_interest")
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
+    def _fetch_futures_open_interest_hist(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
+        host, prefix = _binance_futures_endpoint(ctx)
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/futures/data/openInterestHist",
+                query=_binance_recent_period_query(task, symbol=symbol, max_days=30),
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _binance_open_interest_rows(payload, task=task, symbol=symbol, provider_id=self.plugin_id, endpoint_id="futures_open_interest_hist")
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
+    def _fetch_futures_long_short_ratio(self, task: Any, *, ctx: Any, symbol: str, endpoint_id: str) -> FetchResult:
+        path = {
+            "futures_long_short_ratio": "/futures/data/globalLongShortAccountRatio",
+            "futures_top_long_short_account_ratio": "/futures/data/topLongShortAccountRatio",
+            "futures_top_long_short_position_ratio": "/futures/data/topLongShortPositionRatio",
+        }[endpoint_id]
+        host, prefix = _binance_futures_endpoint(ctx)
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}{path}",
+                query=_binance_recent_period_query(task, symbol=symbol, max_days=30),
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _binance_long_short_rows(payload, task=task, symbol=symbol, provider_id=self.plugin_id, endpoint_id=endpoint_id)
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
+    def _fetch_futures_taker_buy_sell(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
+        host, prefix = _binance_futures_endpoint(ctx)
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/futures/data/takerlongshortRatio",
+                query=_binance_recent_period_query(task, symbol=symbol, max_days=30),
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _binance_taker_rows(payload, task=task, symbol=symbol, provider_id=self.plugin_id)
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
+    def _fetch_options_open_interest(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
+        asset, _quote_asset = _split_symbol(symbol)
+        if not asset:
+            return FetchResult.from_error(task, status="error", error=RuntimeError(f"unsupported_crypto_symbol:{symbol}"))
+        query = _binance_options_oi_query(task, asset=asset)
+        observations: list[Any] = []
+        host, prefix = _binance_options_endpoint(ctx)
+        if "expiration" not in query:
+            exchange_payload, exchange_observations, exchange_error = send_json_request(
+                task,
+                ctx,
+                HttpRequestSpec(
+                    method="GET",
+                    host=host,
+                    path=f"{prefix}/eapi/v1/exchangeInfo",
+                    headers={"accept": "application/json"},
+                    provider_config_version=getattr(task, "provider_config_version", None),
+                ),
+            )
+            observations.extend(exchange_observations)
+            if exchange_error is not None:
+                return exchange_error
+            expiration = _binance_nearest_option_expiration(exchange_payload, asset=asset, as_of=getattr(task, "date_range_end", None))
+            if expiration is None:
+                return FetchResult.from_empty(task, error=RuntimeError("option_expiration_missing"), http_observations=tuple(observations))
+            query["expiration"] = expiration
+        payload, payload_observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/eapi/v1/openInterest",
+                query=query,
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        observations.extend(payload_observations)
+        if error is not None:
+            return error
+        rows = _binance_options_open_interest_rows(payload, task=task, symbol=symbol, provider_id=self.plugin_id)
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations))
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=tuple(observations))
+
+    def _fetch_options_ticker(self, task: Any, *, ctx: Any, symbol: str) -> FetchResult:
+        asset, _quote_asset = _split_symbol(symbol)
+        if not asset:
+            return FetchResult.from_error(task, status="error", error=RuntimeError(f"unsupported_crypto_symbol:{symbol}"))
+        host, prefix = _binance_options_endpoint(ctx)
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/eapi/v1/ticker",
+                headers={"accept": "application/json"},
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        rows = _binance_options_volume_rows(payload, task=task, symbol=symbol, asset=asset, provider_id=self.plugin_id)
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=observations)
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
+
 
 class CoinGeckoCryptoPlugin:
     plugin_id = "crypto_coingecko_market"
@@ -368,9 +648,30 @@ class CoinGeckoCryptoPlugin:
                         "fdv_unit",
                         "circulating_supply",
                         "total_supply",
+                        "max_supply",
                         "supply_unit",
                         "volume",
                         "volume_unit",
+                    ),
+                    priority_rank=20,
+                ),
+                endpoint_capability(
+                    endpoint_id="coins_id",
+                    market="CRYPTO",
+                    data_type="company_profile",
+                    source_role="built_in_public",
+                    granularity=("event",),
+                    fields=(
+                        "name",
+                        "symbol",
+                        "description",
+                        "homepage",
+                        "market_cap_rank",
+                        "circulating_supply",
+                        "total_supply",
+                        "max_supply",
+                        "supply_unit",
+                        "symbol_id",
                     ),
                     priority_rank=20,
                 ),
@@ -393,6 +694,11 @@ class CoinGeckoCryptoPlugin:
         coin_id = symbols.coingecko_coin_id or (symbol or "").lower()
         base_asset = symbols.crypto_base_symbol or (symbol or "").upper()
         quote_asset = symbols.crypto_quote_symbol or "USDT"
+        endpoint_id = str(getattr(task, "endpoint_id", "coins_markets"))
+        if endpoint_id == "coins_id":
+            return self._fetch_coin_profile(task, ctx=ctx, symbol=symbol or base_asset, coin_id=coin_id, base_asset=base_asset, quote_asset=quote_asset)
+        if endpoint_id != "coins_markets":
+            return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
         host, prefix = endpoint(ctx, "data_source:coingecko", "https://api.coingecko.com/api/v3")
         token = credential_value(ctx, "data_source:coingecko_pro") or credential_value(ctx, "data_source:coingecko")
         headers = {"accept": "application/json"}
@@ -437,10 +743,73 @@ class CoinGeckoCryptoPlugin:
                 "fdv_unit": "USD",
                 "circulating_supply": _decimal_float(item.get("circulating_supply")),
                 "total_supply": _decimal_float(item.get("total_supply")),
+                "max_supply": _decimal_float(item.get("max_supply")),
                 "supply_unit": base_asset,
                 "volume": _decimal_float(item.get("total_volume")),
                 "volume_unit": "USD",
                 "timestamp": parse_datetime(item.get("last_updated")),
+            }
+        )
+        return FetchResult.from_success(task, payload={"rows": [row]}, row_count=1, http_observations=observations)
+
+    def _fetch_coin_profile(
+        self,
+        task: Any,
+        *,
+        ctx: Any,
+        symbol: str,
+        coin_id: str,
+        base_asset: str,
+        quote_asset: str,
+    ) -> FetchResult:
+        host, prefix = endpoint(ctx, "data_source:coingecko", "https://api.coingecko.com/api/v3")
+        token = credential_value(ctx, "data_source:coingecko_pro") or credential_value(ctx, "data_source:coingecko")
+        headers = {"accept": "application/json"}
+        if token:
+            headers["x-cg-pro-api-key" if "pro-api" in host else "x-cg-demo-api-key"] = token
+        payload, observations, error = send_json_request(
+            task,
+            ctx,
+            HttpRequestSpec(
+                method="GET",
+                host=host,
+                path=f"{prefix}/coins/{coin_id}",
+                query={"localization": "false", "tickers": "false", "market_data": "true", "community_data": "false", "developer_data": "false", "sparkline": "false"},
+                headers=headers,
+                provider_config_version=getattr(task, "provider_config_version", None),
+            ),
+        )
+        if error is not None:
+            return error
+        if not isinstance(payload, Mapping):
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
+        row = _crypto_base_row(
+            dataset="company_profile",
+            symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
+            provider_id=self.plugin_id,
+            endpoint_id="coins_id",
+            source_role="built_in_public",
+            granularity="event",
+        )
+        links = payload.get("links") if isinstance(payload.get("links"), Mapping) else {}
+        homepage = links.get("homepage") if isinstance(links, Mapping) else ()
+        homepage_url = next((non_empty(item) for item in homepage if non_empty(item)), None) if isinstance(homepage, Sequence) and not isinstance(homepage, (str, bytes, bytearray)) else None
+        description = payload.get("description") if isinstance(payload.get("description"), Mapping) else {}
+        market_data = payload.get("market_data") if isinstance(payload.get("market_data"), Mapping) else {}
+        row.update(
+            {
+                "name": non_empty(payload.get("name")),
+                "symbol": non_empty(payload.get("symbol")),
+                "description": non_empty(description.get("en")) if isinstance(description, Mapping) else None,
+                "homepage": homepage_url,
+                "market_cap_rank": _int_or_none(payload.get("market_cap_rank")),
+                "circulating_supply": _decimal_float(market_data.get("circulating_supply")),
+                "total_supply": _decimal_float(market_data.get("total_supply")),
+                "max_supply": _decimal_float(market_data.get("max_supply")),
+                "supply_unit": base_asset,
+                "timestamp": datetime.now(tz=UTC),
             }
         )
         return FetchResult.from_success(task, payload={"rows": [row]}, row_count=1, http_observations=observations)
@@ -664,7 +1033,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("1h", "daily"),
-            "fields": ("long_short_ratio", "timestamp", "symbol_id"),
+            "fields": ("long_short_ratio", "metric", "timestamp", "symbol_id"),
             "priority_rank": 10,
             "path": "/api/futures/global-long-short-account-ratio/history",
             "symbol_mode": "contract",
@@ -1629,7 +1998,7 @@ def _coinglass_row_from_payload(
             _set_optional_metric(row, "options_open_interest", item, ("options_open_interest", "open_interest", "openInterest", "oi", "sumOpenInterest", "value"))
             _set_optional_metric(row, "options_volume", item, ("options_volume", "volume", "vol", "sumVolume"))
         elif spec.get("metric_kind") == "cvd":
-            _set_optional_metric(row, "cvd", item, ("cvd", "cum_vol_delta", "cumulativeVolumeDelta", "cumulative_volume_delta", "delta", "value", "close"))
+            _set_optional_metric(row, "cvd", item, ("cvd", "cum_vol_delta", "cumulativeVolumeDelta", "cumulative_volume_delta", "delta"))
             _set_optional_metric(row, "taker_buy_volume", item, ("taker_buy_volume", "agg_taker_buy_vol", "takerBuyVolume", "buy_volume", "buyVolume", "buy"))
             _set_optional_metric(row, "taker_sell_volume", item, ("taker_sell_volume", "agg_taker_sell_vol", "takerSellVolume", "sell_volume", "sellVolume", "sell"))
             if any(row.get(field) is not None for field in ("cvd", "taker_buy_volume", "taker_sell_volume")):
@@ -1864,6 +2233,13 @@ def _safe_parse_datetime(value: Any) -> datetime | None:
     try:
         return parse_datetime(value)
     except (TypeError, ValueError):
+        text = str(value or "").strip()
+        for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y%m%d"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+            return parsed.replace(tzinfo=UTC)
         return None
 
 
@@ -2319,6 +2695,17 @@ class CryptoProjectNewsPlugin:
                     supports_batch=False,
                     batch_by="none",
                 ),
+                endpoint_capability(
+                    endpoint_id="github_releases",
+                    market="CRYPTO",
+                    data_type="event_calendar",
+                    source_role="official",
+                    granularity=("event",),
+                    fields=("title", "published_at", "source", "summary", "url"),
+                    priority_rank=5,
+                    supports_batch=False,
+                    batch_by="none",
+                ),
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
@@ -2363,8 +2750,11 @@ class CryptoProjectNewsPlugin:
             published = parse_datetime(item.get("published_at"))
             if title is None or url is None:
                 continue
+            dataset = str(getattr(task, "data_type", "") or "company_news")
+            if dataset not in {"company_news", "event_calendar"}:
+                dataset = "company_news"
             row = _crypto_base_row(
-                dataset="company_news",
+                dataset=dataset,
                 symbol=symbol,
                 base_asset=symbols.crypto_base_symbol or symbol,
                 quote_asset=symbols.crypto_quote_symbol or "USDT",
@@ -2409,6 +2799,16 @@ class CryptoGoogleNewsDiscoveryPlugin:
                     priority_rank=50,
                     can_be_formal_fact_source=False,
                 ),
+                endpoint_capability(
+                    endpoint_id="event_calendar",
+                    market="CRYPTO",
+                    data_type="event_calendar",
+                    source_role="discovery",
+                    granularity=("event",),
+                    fields=("title", "published_at", "source", "summary", "url"),
+                    priority_rank=55,
+                    can_be_formal_fact_source=False,
+                ),
             ),
             credential_policy=NO_CREDENTIALS,
             license_policy=METADATA_ONLY_LICENSE,
@@ -2424,7 +2824,13 @@ class CryptoGoogleNewsDiscoveryPlugin:
 
     def fetch(self, task: Any, ctx: Any) -> FetchResult:
         symbol = first_symbol(task) or "CRYPTO"
-        query = f"{symbol} crypto project news" if str(getattr(task, "endpoint_id", "")) == "company_news" else "crypto market macro news"
+        endpoint_id = str(getattr(task, "endpoint_id", "company_news"))
+        if endpoint_id in {"company_news", "google_news.crypto_company_news"}:
+            query = f"{symbol} crypto project news"
+        elif endpoint_id in {"event_calendar", "google_news.crypto_event_calendar"}:
+            query = f"{symbol} crypto event calendar upcoming market events"
+        else:
+            query = "crypto market macro news"
         http = managed_http(ctx)
         if http is None:
             return FetchResult.from_error(task, status="error", error=RuntimeError("managed_http_required"))
@@ -2473,6 +2879,282 @@ def build_crypto_provider_plugins() -> tuple[object, ...]:
         CryptoProjectNewsPlugin(),
         CryptoGoogleNewsDiscoveryPlugin(),
     )
+
+
+def _binance_futures_endpoint(ctx: Any) -> tuple[str, str]:
+    return endpoint(ctx, "data_source:binance_futures", "https://fapi.binance.com")
+
+
+def _binance_options_endpoint(ctx: Any) -> tuple[str, str]:
+    return endpoint(ctx, "data_source:binance_options", "https://eapi.binance.com")
+
+
+def _binance_history_query(task: Any, *, symbol: str) -> dict[str, Any]:
+    query: dict[str, Any] = {"symbol": symbol, "limit": "1000"}
+    start_ms = _start_millis(getattr(task, "date_range_start", None))
+    end_ms = _end_millis(getattr(task, "date_range_end", None))
+    if start_ms is not None:
+        query["startTime"] = start_ms
+    if end_ms is not None:
+        query["endTime"] = end_ms
+    return query
+
+
+def _binance_period_query(task: Any, *, symbol: str) -> dict[str, Any]:
+    query = _binance_history_query(task, symbol=symbol)
+    query["period"] = _binance_period(getattr(task, "granularity", None))
+    query["limit"] = "500"
+    return query
+
+
+def _binance_recent_period_query(task: Any, *, symbol: str, max_days: int) -> dict[str, Any]:
+    query = _binance_period_query(task, symbol=symbol)
+    today = datetime.now(tz=UTC).date()
+    start = _as_date(getattr(task, "date_range_start", None))
+    end = _as_date(getattr(task, "date_range_end", None)) or today
+    end = min(end, today)
+    earliest = end - timedelta(days=max(max_days - 1, 0))
+    capped_start = max(start, earliest) if start is not None else earliest
+    query["startTime"] = _start_millis(capped_start)
+    query["endTime"] = _end_millis(end)
+    return query
+
+
+def _binance_period(granularity: Any) -> str:
+    value = str(granularity or "").strip().lower()
+    if value in {"5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"}:
+        return value
+    if value in {"daily", "day"}:
+        return "1d"
+    return "1h"
+
+
+def _binance_base_row(
+    *,
+    task: Any,
+    symbol: str,
+    provider_id: str,
+    endpoint_id: str,
+    granularity: str | None = None,
+) -> dict[str, Any]:
+    base_asset, quote_asset = _split_symbol(symbol)
+    if base_asset is None:
+        symbols = resolve_crypto_provider_symbols(symbol)
+        base_asset = symbols.crypto_base_symbol or symbol.replace("USDT", "")
+        quote_asset = symbols.crypto_quote_symbol or "USDT"
+    if quote_asset is None:
+        quote_asset = "USDT"
+    return _crypto_base_row(
+        dataset="crypto_derivative_metric",
+        symbol=symbol,
+        base_asset=base_asset,
+        quote_asset=quote_asset,
+        provider_id=provider_id,
+        endpoint_id=endpoint_id,
+        source_role="official",
+        granularity=granularity or str(getattr(task, "granularity", None) or "realtime"),
+    )
+
+
+def _binance_funding_rows(payload: Any, *, task: Any, symbol: str, provider_id: str) -> tuple[dict[str, Any], ...]:
+    items = _as_mapping_sequence(payload)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        timestamp = parse_datetime(item.get("fundingTime") or item.get("time"))
+        row = _binance_base_row(task=task, symbol=str(item.get("symbol") or symbol), provider_id=provider_id, endpoint_id="futures_funding_rate")
+        row.update(
+            {
+                "funding_rate": _decimal_float(item.get("fundingRate")),
+                "funding_rate_unit": "percent",
+                "timestamp": timestamp or datetime.now(tz=UTC),
+            }
+        )
+        _apply_crypto_period(row, row["timestamp"])
+        if row["funding_rate"] is not None:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _binance_open_interest_rows(payload: Any, *, task: Any, symbol: str, provider_id: str, endpoint_id: str) -> tuple[dict[str, Any], ...]:
+    items = _as_mapping_sequence(payload)
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        timestamp = parse_datetime(item.get("time") or item.get("timestamp")) or datetime.now(tz=UTC)
+        row = _binance_base_row(task=task, symbol=str(item.get("symbol") or symbol), provider_id=provider_id, endpoint_id=endpoint_id)
+        value = _decimal_float(item.get("sumOpenInterestValue") or item.get("openInterestValue"))
+        unit = "USD"
+        if value is None:
+            value = _decimal_float(item.get("sumOpenInterest") or item.get("openInterest"))
+            unit = _split_symbol(symbol)[0] or "contracts"
+        row.update({"open_interest": value, "open_interest_unit": unit, "timestamp": timestamp})
+        _apply_crypto_period(row, timestamp)
+        if row["open_interest"] is not None:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _binance_long_short_rows(
+    payload: Any,
+    *,
+    task: Any,
+    symbol: str,
+    provider_id: str,
+    endpoint_id: str,
+) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    for item in _as_mapping_sequence(payload):
+        timestamp = parse_datetime(item.get("timestamp") or item.get("time")) or datetime.now(tz=UTC)
+        row = _binance_base_row(task=task, symbol=str(item.get("symbol") or symbol), provider_id=provider_id, endpoint_id=endpoint_id)
+        row.update(
+            {
+                "long_short_ratio": _decimal_float(item.get("longShortRatio")),
+                "metric": _binance_long_short_metric(endpoint_id),
+                "timestamp": timestamp,
+            }
+        )
+        _apply_crypto_period(row, timestamp)
+        if row["long_short_ratio"] is not None:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _binance_long_short_metric(endpoint_id: str) -> str:
+    if endpoint_id == "futures_top_long_short_account_ratio":
+        return "top_account_long_short_ratio"
+    if endpoint_id == "futures_top_long_short_position_ratio":
+        return "top_position_long_short_ratio"
+    return "global_account_long_short_ratio"
+
+
+def _binance_taker_rows(payload: Any, *, task: Any, symbol: str, provider_id: str) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    cvd = 0.0
+    for item in _as_mapping_sequence(payload):
+        timestamp = parse_datetime(item.get("timestamp") or item.get("time")) or datetime.now(tz=UTC)
+        buy = _decimal_float(item.get("buyVol") or item.get("buyVolume") or item.get("takerBuyVolume"))
+        sell = _decimal_float(item.get("sellVol") or item.get("sellVolume") or item.get("takerSellVolume"))
+        if buy is not None and sell is not None:
+            cvd += buy - sell
+        row = _binance_base_row(task=task, symbol=str(item.get("symbol") or symbol), provider_id=provider_id, endpoint_id="futures_taker_buy_sell")
+        row.update(
+            {
+                "taker_buy_volume": buy,
+                "taker_sell_volume": sell,
+                "taker_volume_unit": _split_symbol(symbol)[0] or "contracts",
+                "taker_buy_sell_ratio": _decimal_float(item.get("buySellRatio")),
+                "cvd": cvd if buy is not None and sell is not None else None,
+                "timestamp": timestamp,
+            }
+        )
+        _apply_crypto_period(row, timestamp)
+        if row["taker_buy_volume"] is not None or row["taker_sell_volume"] is not None or row["cvd"] is not None:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _binance_options_oi_query(task: Any, *, asset: str) -> dict[str, Any]:
+    params = getattr(task, "params", {}) if isinstance(getattr(task, "params", {}), Mapping) else {}
+    query = {"underlyingAsset": non_empty(params.get("underlyingAsset")) or asset.upper()}
+    expiration = non_empty(params.get("expiration"))
+    if expiration:
+        query["expiration"] = expiration
+    return query
+
+
+def _binance_nearest_option_expiration(payload: Any, *, asset: str, as_of: Any) -> str | None:
+    base_day = _as_date(as_of) or datetime.now(tz=UTC).date()
+    expirations: set[date] = set()
+    source = payload.get("optionSymbols") if isinstance(payload, Mapping) else payload
+    for item in _as_mapping_sequence(source):
+        underlying = non_empty(item.get("underlying") or item.get("underlyingAsset"))
+        symbol = non_empty(item.get("symbol"))
+        if underlying and underlying.upper() != asset.upper():
+            continue
+        if symbol and not symbol.upper().startswith(f"{asset.upper()}-"):
+            continue
+        raw_expiry = item.get("expiryDate") or item.get("expiration")
+        parsed = _parse_binance_option_expiry(raw_expiry)
+        if parsed is not None:
+            expirations.add(parsed)
+            continue
+        if symbol:
+            parts = symbol.split("-")
+            if len(parts) >= 2:
+                parsed = _parse_binance_option_expiry(parts[1])
+                if parsed is not None:
+                    expirations.add(parsed)
+    future = sorted(day for day in expirations if day >= base_day)
+    selected = future[0] if future else max(expirations, default=None)
+    return selected.strftime("%y%m%d") if selected else None
+
+
+def _parse_binance_option_expiry(value: Any) -> date | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if isinstance(value, (int, float)) or (text.isdigit() and len(text) > 6):
+        parsed = parse_datetime(value)
+        return parsed.date() if parsed is not None else None
+    for fmt in ("%y%m%d", "%Y%m%d", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _binance_options_open_interest_rows(payload: Any, *, task: Any, symbol: str, provider_id: str) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    for item in _as_mapping_sequence(payload):
+        timestamp = parse_datetime(item.get("timestamp") or item.get("time")) or datetime.now(tz=UTC)
+        row = _binance_base_row(task=task, symbol=symbol, provider_id=provider_id, endpoint_id="options_open_interest")
+        value = _decimal_float(item.get("sumOpenInterestUsd") or item.get("sumOpenInterest"))
+        unit = "USD" if item.get("sumOpenInterestUsd") is not None else "contracts"
+        row.update({"options_open_interest": value, "options_open_interest_unit": unit, "timestamp": timestamp})
+        _apply_crypto_period(row, timestamp)
+        if value is not None:
+            rows.append(row)
+    return tuple(rows)
+
+
+def _binance_options_volume_rows(payload: Any, *, task: Any, symbol: str, asset: str, provider_id: str) -> tuple[dict[str, Any], ...]:
+    total = 0.0
+    seen = False
+    latest: datetime | None = None
+    for item in _as_mapping_sequence(payload):
+        item_symbol = non_empty(item.get("symbol"))
+        if item_symbol and not item_symbol.upper().startswith(f"{asset.upper()}-"):
+            continue
+        value = _decimal_float(item.get("amount") or item.get("volume"))
+        if value is None:
+            continue
+        seen = True
+        total += value
+        timestamp = parse_datetime(item.get("closeTime") or item.get("openTime"))
+        if timestamp is not None and (latest is None or timestamp > latest):
+            latest = timestamp
+    if not seen:
+        return ()
+    timestamp = latest or datetime.now(tz=UTC)
+    row = _binance_base_row(task=task, symbol=symbol, provider_id=provider_id, endpoint_id="options_ticker")
+    row.update({"options_volume": total, "options_volume_unit": "USD", "timestamp": timestamp})
+    _apply_crypto_period(row, timestamp)
+    return (row,)
+
+
+def _as_mapping_sequence(payload: Any) -> tuple[Mapping[str, Any], ...]:
+    if isinstance(payload, Mapping):
+        return (payload,)
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+        return tuple(item for item in payload if isinstance(item, Mapping))
+    return ()
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _request_for(task: Any, *, symbol: str, ctx: Any) -> HttpRequestSpec:

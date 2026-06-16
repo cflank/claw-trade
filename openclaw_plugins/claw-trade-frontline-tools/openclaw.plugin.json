@@ -1,16 +1,10 @@
 {
   "id": "claw-trade-frontline-tools",
   "name": "claw-trade frontline tools",
-  "description": "Registers canonical claw-trade frontline data pack tools.",
+  "description": "Registers the canonical claw-trade frontline data layer tool.",
   "contracts": {
     "tools": [
-      "claw_get_market_pack",
-      "claw_get_fundamental_pack",
-      "claw_get_news_pack",
-      "claw_get_social_pack",
-      "claw_get_policy_pack",
-      "claw_get_hot_money_pack",
-      "claw_get_lockup_pack"
+      "claw_request_data"
     ]
   },
   "activation": {

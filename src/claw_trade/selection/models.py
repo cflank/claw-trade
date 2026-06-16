@@ -75,8 +75,8 @@ class SelectionDataRunStatus(StrEnum):
     NORMALIZING_INPUTS = "normalizing_inputs"
     BUILDING_FEATURES = "building_features"
     FILTERING_AND_SCORING = "filtering_and_scoring"
-    BUILDING_CANDIDATE_PACK = "building_candidate_pack"
-    APPROVING_CANDIDATE_PACK = "approving_candidate_pack"
+    BUILDING_CANDIDATE_CACHE = "building_candidate_cache"
+    APPROVING_CANDIDATE_CACHE = "approving_candidate_cache"
     NO_CANDIDATE = "no_candidate"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -86,7 +86,7 @@ class SelectionWorkflowStatus(StrEnum):
     RECEIVED = "received"
     RESOLVING_REQUEST = "resolving_request"
     LOADING_COMPLETED_SELECTION_RUN = "loading_completed_selection_run"
-    VALIDATING_CANDIDATE_PACK = "validating_candidate_pack"
+    VALIDATING_CANDIDATE_CACHE = "validating_candidate_cache"
     SELECT_RUN_CREATED = "select_run_created"
     STRATEGIST_RUNNING = "strategist_running"
     STRATEGIST_APPROVED = "strategist_approved"
@@ -102,10 +102,10 @@ class SelectionWorkflowStatus(StrEnum):
     NO_COMPLETED_SELECTION_RUN = "no_completed_selection_run"
     NO_CANDIDATE_SELECTION_RUN = "no_candidate_selection_run"
     STALE_SELECTION_RUN = "stale_selection_run"
-    CANDIDATE_PACK_NOT_APPROVED = "candidate_pack_not_approved"
-    CANDIDATE_PACK_HASH_MISMATCH = "candidate_pack_hash_mismatch"
-    CANDIDATE_PACK_INTEGRITY_FAILED = "candidate_pack_integrity_failed"
-    CANDIDATE_PACK_LINEAGE_INCOMPLETE = "candidate_pack_lineage_incomplete"
+    CANDIDATE_CACHE_NOT_APPROVED = "candidate_cache_not_approved"
+    CANDIDATE_CACHE_HASH_MISMATCH = "candidate_cache_hash_mismatch"
+    CANDIDATE_CACHE_INTEGRITY_FAILED = "candidate_cache_integrity_failed"
+    CANDIDATE_CACHE_LINEAGE_INCOMPLETE = "candidate_cache_lineage_incomplete"
     SELECTION_WAREHOUSE_CHECK_MISSING = "selection_warehouse_check_missing"
     SELECT_MARKET_UNSUPPORTED = "select_market_unsupported"
     CRYPTO_SELECT_HISTORY_MISSING = "crypto_select_history_missing"
@@ -146,7 +146,7 @@ class DataGapSeverity(StrEnum):
     BLOCKER = "blocker"
 
 
-class CandidatePackReadbackStatus(StrEnum):
+class CandidateCacheReadbackStatus(StrEnum):
     VERIFIED = "verified"
 
 
@@ -168,10 +168,10 @@ WORKFLOW_FAILURE_STATUSES = frozenset(
         SelectionWorkflowStatus.NO_COMPLETED_SELECTION_RUN,
         SelectionWorkflowStatus.NO_CANDIDATE_SELECTION_RUN,
         SelectionWorkflowStatus.STALE_SELECTION_RUN,
-        SelectionWorkflowStatus.CANDIDATE_PACK_NOT_APPROVED,
-        SelectionWorkflowStatus.CANDIDATE_PACK_HASH_MISMATCH,
-        SelectionWorkflowStatus.CANDIDATE_PACK_INTEGRITY_FAILED,
-        SelectionWorkflowStatus.CANDIDATE_PACK_LINEAGE_INCOMPLETE,
+        SelectionWorkflowStatus.CANDIDATE_CACHE_NOT_APPROVED,
+        SelectionWorkflowStatus.CANDIDATE_CACHE_HASH_MISMATCH,
+        SelectionWorkflowStatus.CANDIDATE_CACHE_INTEGRITY_FAILED,
+        SelectionWorkflowStatus.CANDIDATE_CACHE_LINEAGE_INCOMPLETE,
         SelectionWorkflowStatus.SELECTION_WAREHOUSE_CHECK_MISSING,
         SelectionWorkflowStatus.SELECT_MARKET_UNSUPPORTED,
         SelectionWorkflowStatus.CRYPTO_SELECT_HISTORY_MISSING,
@@ -241,7 +241,7 @@ class SelectRequest:
 
 
 @dataclass(frozen=True)
-class SelectionProviderBatchPlan:
+class SelectionDataNeedAudit:
     plan_id: str
     scope: SelectionBatchScope
     market: SelectionMarket
@@ -250,7 +250,6 @@ class SelectionProviderBatchPlan:
     lookback_trading_days: int
     universe_scope: str
     coverage_groups: tuple[str, ...]
-    provider_candidates: tuple[str, ...]
     ttl_policy_ref: str
     lineage_root_ref: str
 
@@ -265,8 +264,6 @@ class SelectionProviderBatchPlan:
         _require_non_empty("universe_scope", self.universe_scope)
         if not self.coverage_groups:
             raise ValueError("coverage_groups must be non-empty")
-        if not self.provider_candidates:
-            raise ValueError("provider_candidates must be non-empty")
         _require_non_empty("ttl_policy_ref", self.ttl_policy_ref)
         _require_non_empty("lineage_root_ref", self.lineage_root_ref)
 
@@ -279,7 +276,7 @@ class SelectionRunPlan:
     trade_date: str
     lookback_trading_days: int
     universe_scope: str
-    provider_batch_plan_ref: str
+    data_need_audit_ref: str
     approved_strategy_config_ref: str
     trigger_source: SelectionTriggerSource
     supersedes_run_id: str | None = None
@@ -292,7 +289,7 @@ class SelectionRunPlan:
         if self.lookback_trading_days <= 0:
             raise ValueError("lookback_trading_days must be > 0")
         _require_non_empty("universe_scope", self.universe_scope)
-        _require_non_empty("provider_batch_plan_ref", self.provider_batch_plan_ref)
+        _require_non_empty("data_need_audit_ref", self.data_need_audit_ref)
         _require_non_empty("approved_strategy_config_ref", self.approved_strategy_config_ref)
         _require_enum("trigger_source", self.trigger_source, SelectionTriggerSource)
         if self.supersedes_run_id is not None and self.trigger_source != SelectionTriggerSource.MANUAL_RERUN:
@@ -300,7 +297,7 @@ class SelectionRunPlan:
 
 
 @dataclass(frozen=True)
-class CandidatePackRef:
+class CandidateCacheRef:
     selection_run_id: str
     material_id: str
     l1_uri: str
@@ -308,7 +305,7 @@ class CandidatePackRef:
     manifest_ref: str
     approved_at: str
     expires_at: str
-    pack_summary_ref: str
+    cache_summary_ref: str
 
     def __post_init__(self) -> None:
         _require_non_empty("selection_run_id", self.selection_run_id)
@@ -318,7 +315,7 @@ class CandidatePackRef:
         _require_non_empty("manifest_ref", self.manifest_ref)
         _require_iso_timestamp("approved_at", self.approved_at)
         _require_iso_timestamp("expires_at", self.expires_at)
-        _require_non_empty("pack_summary_ref", self.pack_summary_ref)
+        _require_non_empty("cache_summary_ref", self.cache_summary_ref)
 
 
 @dataclass(frozen=True)
@@ -378,7 +375,7 @@ class CandidateFactRow:
 
 
 @dataclass(frozen=True)
-class CandidatePackSummary:
+class CandidateCacheSummary:
     summary_md: str
     candidates: tuple[CandidateFactRow, ...]
     data_quality_summary: str
@@ -398,7 +395,7 @@ class CandidatePackSummary:
 
 
 @dataclass(frozen=True)
-class CandidatePackManifest:
+class CandidateCacheManifest:
     schema_version: str
     selection_run_id: str
     market: SelectionMarket
@@ -406,15 +403,15 @@ class CandidatePackManifest:
     trade_date: str
     candidate_count: int
     source_lineage_refs: tuple[str, ...]
-    pack_body_sha256: str
+    cache_body_sha256: str
     strategy_config_ref: str
-    readback_status: CandidatePackReadbackStatus
+    readback_status: CandidateCacheReadbackStatus
     strategy_config_version: str = DEFAULT_SELECTION_STRATEGY_CONFIG_VERSION
     weight_version: str = DEFAULT_SELECTION_WEIGHT_VERSION
     candidate_scores_ref: str | None = None
     stable_top20_rule: Mapping[str, object] | None = None
-    stage: str = "approving_candidate_pack"
-    target: str = "candidate_pack"
+    stage: str = "approving_candidate_cache"
+    target: str = "candidate_cache"
 
     def __post_init__(self) -> None:
         _require_non_empty("schema_version", self.schema_version)
@@ -428,9 +425,9 @@ class CandidatePackManifest:
             raise ValueError("candidate_count must be in [1, 20]")
         if not self.source_lineage_refs:
             raise ValueError("source_lineage_refs must be non-empty")
-        _require_sha256("pack_body_sha256", self.pack_body_sha256)
+        _require_sha256("cache_body_sha256", self.cache_body_sha256)
         _require_non_empty("strategy_config_ref", self.strategy_config_ref)
-        _require_enum("readback_status", self.readback_status, CandidatePackReadbackStatus)
+        _require_enum("readback_status", self.readback_status, CandidateCacheReadbackStatus)
         _require_non_empty("strategy_config_version", self.strategy_config_version)
         _require_non_empty("weight_version", self.weight_version)
         if self.candidate_scores_ref is not None:
@@ -611,7 +608,7 @@ class SelectionDataRun:
     columnar_manifest_ref: str | None = None
     columnar_manifest_sha256: str | None = None
     feature_snapshot_ref: str | None = None
-    candidate_pack_ref: CandidatePackRef | None = None
+    candidate_cache_ref: CandidateCacheRef | None = None
     data_gaps: tuple[DataGapRef, ...] = ()
     progress_label: str | None = None
     progress_completed: int | None = None
@@ -646,15 +643,15 @@ class SelectionDataRun:
         if self.status == SelectionDataRunStatus.RUNNING and self.lease_id is None:
             raise ValueError("lease_id is required when status is running")
         if self.status == SelectionDataRunStatus.COMPLETED:
-            if self.candidate_pack_ref is None:
-                raise ValueError("candidate_pack_ref is required when status is completed")
+            if self.candidate_cache_ref is None:
+                raise ValueError("candidate_cache_ref is required when status is completed")
             if self.completed_at is None:
                 raise ValueError("completed_at is required when status is completed")
             if self.failure_code is not None or self.failure_reason is not None:
                 raise ValueError("completed run cannot include failure fields")
         if self.status == SelectionDataRunStatus.NO_CANDIDATE:
-            if self.candidate_pack_ref is not None:
-                raise ValueError("no_candidate run cannot include candidate_pack_ref")
+            if self.candidate_cache_ref is not None:
+                raise ValueError("no_candidate run cannot include candidate_cache_ref")
             if self.completed_at is None:
                 raise ValueError("completed_at is required when status is no_candidate")
             if self.failure_code is not None or self.failure_reason is not None:
@@ -672,7 +669,7 @@ class SelectionWorkflowRun:
     selection_run_id: str
     status: SelectionWorkflowStatus
     request: SelectRequest
-    candidate_pack_ref: CandidatePackRef
+    candidate_cache_ref: CandidateCacheRef
     created_at: str
     updated_at: str
     dispatches: tuple[SelectionWorkerDispatch, ...] = ()
@@ -685,8 +682,8 @@ class SelectionWorkflowRun:
         _require_enum("status", self.status, SelectionWorkflowStatus)
         if self.request.entry_point != WorkflowEntryPoint.SELECT_COMMAND:
             raise ValueError("SelectionWorkflowRun requires select_command request")
-        if self.selection_run_id != self.candidate_pack_ref.selection_run_id:
-            raise ValueError("selection_run_id must match candidate_pack_ref.selection_run_id")
+        if self.selection_run_id != self.candidate_cache_ref.selection_run_id:
+            raise ValueError("selection_run_id must match candidate_cache_ref.selection_run_id")
         _require_non_empty("created_at", self.created_at)
         _require_iso_timestamp("created_at", self.created_at)
         _require_non_empty("updated_at", self.updated_at)
@@ -740,18 +737,18 @@ DATA_RUN_STATE_TRANSITIONS: dict[SelectionDataRunStatus, frozenset[SelectionData
     SelectionDataRunStatus.FILTERING_AND_SCORING: frozenset(
         {
             SelectionDataRunStatus.NO_CANDIDATE,
-            SelectionDataRunStatus.BUILDING_CANDIDATE_PACK,
+            SelectionDataRunStatus.BUILDING_CANDIDATE_CACHE,
             SelectionDataRunStatus.FAILED,
         }
     ),
-    SelectionDataRunStatus.BUILDING_CANDIDATE_PACK: frozenset(
+    SelectionDataRunStatus.BUILDING_CANDIDATE_CACHE: frozenset(
         {
             SelectionDataRunStatus.NO_CANDIDATE,
-            SelectionDataRunStatus.APPROVING_CANDIDATE_PACK,
+            SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE,
             SelectionDataRunStatus.FAILED,
         }
     ),
-    SelectionDataRunStatus.APPROVING_CANDIDATE_PACK: frozenset(
+    SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE: frozenset(
         {
             SelectionDataRunStatus.COMPLETED,
             SelectionDataRunStatus.FAILED,
@@ -778,7 +775,7 @@ WORKFLOW_STATE_TRANSITIONS: dict[SelectionWorkflowStatus, frozenset[SelectionWor
     ),
     SelectionWorkflowStatus.LOADING_COMPLETED_SELECTION_RUN: frozenset(
         {
-            SelectionWorkflowStatus.VALIDATING_CANDIDATE_PACK,
+            SelectionWorkflowStatus.VALIDATING_CANDIDATE_CACHE,
             SelectionWorkflowStatus.NO_COMPLETED_SELECTION_RUN,
             SelectionWorkflowStatus.NO_CANDIDATE_SELECTION_RUN,
             SelectionWorkflowStatus.STALE_SELECTION_RUN,
@@ -787,13 +784,13 @@ WORKFLOW_STATE_TRANSITIONS: dict[SelectionWorkflowStatus, frozenset[SelectionWor
             SelectionWorkflowStatus.CRYPTO_SELECT_HISTORY_MISSING,
         }
     ),
-    SelectionWorkflowStatus.VALIDATING_CANDIDATE_PACK: frozenset(
+    SelectionWorkflowStatus.VALIDATING_CANDIDATE_CACHE: frozenset(
         {
             SelectionWorkflowStatus.SELECT_RUN_CREATED,
-            SelectionWorkflowStatus.CANDIDATE_PACK_NOT_APPROVED,
-            SelectionWorkflowStatus.CANDIDATE_PACK_HASH_MISMATCH,
-            SelectionWorkflowStatus.CANDIDATE_PACK_INTEGRITY_FAILED,
-            SelectionWorkflowStatus.CANDIDATE_PACK_LINEAGE_INCOMPLETE,
+            SelectionWorkflowStatus.CANDIDATE_CACHE_NOT_APPROVED,
+            SelectionWorkflowStatus.CANDIDATE_CACHE_HASH_MISMATCH,
+            SelectionWorkflowStatus.CANDIDATE_CACHE_INTEGRITY_FAILED,
+            SelectionWorkflowStatus.CANDIDATE_CACHE_LINEAGE_INCOMPLETE,
         }
     ),
     SelectionWorkflowStatus.SELECT_RUN_CREATED: frozenset(
@@ -866,10 +863,10 @@ WORKFLOW_STATE_TRANSITIONS: dict[SelectionWorkflowStatus, frozenset[SelectionWor
     SelectionWorkflowStatus.NO_COMPLETED_SELECTION_RUN: frozenset(),
     SelectionWorkflowStatus.NO_CANDIDATE_SELECTION_RUN: frozenset(),
     SelectionWorkflowStatus.STALE_SELECTION_RUN: frozenset(),
-    SelectionWorkflowStatus.CANDIDATE_PACK_NOT_APPROVED: frozenset(),
-    SelectionWorkflowStatus.CANDIDATE_PACK_HASH_MISMATCH: frozenset(),
-    SelectionWorkflowStatus.CANDIDATE_PACK_INTEGRITY_FAILED: frozenset(),
-    SelectionWorkflowStatus.CANDIDATE_PACK_LINEAGE_INCOMPLETE: frozenset(),
+    SelectionWorkflowStatus.CANDIDATE_CACHE_NOT_APPROVED: frozenset(),
+    SelectionWorkflowStatus.CANDIDATE_CACHE_HASH_MISMATCH: frozenset(),
+    SelectionWorkflowStatus.CANDIDATE_CACHE_INTEGRITY_FAILED: frozenset(),
+    SelectionWorkflowStatus.CANDIDATE_CACHE_LINEAGE_INCOMPLETE: frozenset(),
     SelectionWorkflowStatus.SELECTION_WAREHOUSE_CHECK_MISSING: frozenset(),
     SelectionWorkflowStatus.SELECT_MARKET_UNSUPPORTED: frozenset(),
     SelectionWorkflowStatus.CRYPTO_SELECT_HISTORY_MISSING: frozenset(),

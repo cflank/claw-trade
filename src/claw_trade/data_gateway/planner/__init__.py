@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from .call_planner import build_batch_key, build_provider_call_spec, plan_data_needs
-from .need_resolver import ResolvedNeed, resolve_need
+from .call_planner import build_batch_key, build_provider_call_spec, plan_public_data_requests
 
 __all__ = [
-    "ResolvedNeed",
     "build_batch_key",
     "build_provider_call_spec",
-    "plan_data_needs",
-    "resolve_need",
+    "plan_public_data_requests",
 ]

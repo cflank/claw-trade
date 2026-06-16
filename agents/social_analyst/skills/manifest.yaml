@@ -6,25 +6,25 @@ skills:
     workers:
       - social_analyst
     tool_exports:
-      - claw_get_social_pack
+      - claw_request_data
   - path: cn-a-social-data/SKILL.md
     skill_id: cn-a-social-data
     skill_version: 0.1.0
     workers:
       - social_analyst
     tool_exports:
-      - claw_get_social_pack
+      - claw_request_data
   - path: hk-social-data/SKILL.md
     skill_id: hk-social-data
     skill_version: 0.1.0
     workers:
       - social_analyst
     tool_exports:
-      - claw_get_social_pack
+      - claw_request_data
   - path: crypto-social-sentiment/SKILL.md
     skill_id: crypto-social-sentiment
     skill_version: 0.1.0
     workers:
       - social_analyst
     tool_exports:
-      - claw_get_social_pack
+      - claw_request_data

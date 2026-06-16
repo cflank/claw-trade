@@ -85,7 +85,7 @@ Limits:
 - BTC-only context unless the tool returns `not_applicable`.
 - Long-term valuation only.
 - Not a short-term long/short trigger.
-- Do not calculate or quote an AHR999 value unless `compute_ahr999` or `build_trade_context` returned it.
+- Do not calculate or quote an AHR999 value unless the data layer returned it.
 
 ## Events
 

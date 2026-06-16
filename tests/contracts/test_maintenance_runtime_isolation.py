@@ -26,14 +26,17 @@ def test_maintenance_modules_do_not_cross_report_material_boundaries() -> None:
             assert token not in text, f"{path.name} must not reference {token}"
 
 
-def test_incremental_and_repair_are_data_api_batch_driven() -> None:
+def test_incremental_and_repair_are_public_request_driven() -> None:
     for filename in ("incremental.py", "repair.py"):
         tree = _parse(MAINTENANCE_DIR / filename)
 
+        has_request_data_call = False
         has_get_data_batch_call = False
         has_file_read = False
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr == "request_data":
+                    has_request_data_call = True
                 if node.func.attr == "get_data_batch":
                     has_get_data_batch_call = True
                 if node.func.attr in {"read_text", "read_bytes"}:
@@ -42,7 +45,8 @@ def test_incremental_and_repair_are_data_api_batch_driven() -> None:
                 if node.func.id == "open":
                     has_file_read = True
 
-        assert has_get_data_batch_call, f"{filename} must call DataAPI.get_data_batch"
+        assert has_request_data_call, f"{filename} must call DataAPI.request_data"
+        assert not has_get_data_batch_call, f"{filename} must not call DataAPI.get_data_batch"
         assert not has_file_read, f"{filename} must not read local files directly"
 
 

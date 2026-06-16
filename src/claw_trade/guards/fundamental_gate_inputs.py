@@ -39,7 +39,7 @@ class MaterialGateInput:
 @dataclass(frozen=True)
 class ClaimGateInput:
     report_path: Path | None
-    pack_path: Path | None
+    evidence_path: Path | None
     rule_version: str
     dictionary_revision_id: str
     claims: tuple[FundamentalReportClaim, ...]
@@ -85,10 +85,10 @@ def build_fundamental_gate_inputs(
     openviking: OpenVikingClient,
     *,
     report_path: Path | None = None,
-    pack_path: Path | None = None,
+    evidence_path: Path | None = None,
 ) -> FundamentalGateInputs:
     material_gate = build_material_gate_input(call=call, evidence=evidence, openviking=openviking)
-    claim_gate = build_claim_gate_input(report_path=report_path, pack_path=pack_path)
+    claim_gate = build_claim_gate_input(report_path=report_path, evidence_path=evidence_path)
     return FundamentalGateInputs(
         material_gate=material_gate,
         claim_gate=claim_gate,
@@ -98,22 +98,22 @@ def build_fundamental_gate_inputs(
 def build_claim_gate_input(
     *,
     report_path: Path | None,
-    pack_path: Path | None,
+    evidence_path: Path | None,
 ) -> ClaimGateInput:
     claim_paths = _merge_paths(
         (report_path,) if report_path is not None else (),
-        (pack_path,) if pack_path is not None else (),
+        (evidence_path,) if evidence_path is not None else (),
     )
-    if report_path is None or pack_path is None:
+    if report_path is None or evidence_path is None:
         guard = guard_failed(
             category="claim",
-            reason="claim gate 输入缺失: report_path 或 pack_path 为空",
+            reason="claim gate 输入缺失: report_path 或 evidence_path 为空",
             paths=claim_paths,
             early_stop=True,
         )
         return ClaimGateInput(
             report_path=report_path,
-            pack_path=pack_path,
+            evidence_path=evidence_path,
             rule_version=CLAIM_RULES_VERSION,
             dictionary_revision_id=CLAIM_DICTIONARY_REVISION_ID,
             claims=(),
@@ -131,7 +131,7 @@ def build_claim_gate_input(
         )
         return ClaimGateInput(
             report_path=report_path,
-            pack_path=pack_path,
+            evidence_path=evidence_path,
             rule_version=CLAIM_RULES_VERSION,
             dictionary_revision_id=CLAIM_DICTIONARY_REVISION_ID,
             claims=(),
@@ -140,16 +140,16 @@ def build_claim_gate_input(
             claim_guard=guard,
             evidence_paths=claim_paths,
         )
-    if not pack_path.exists() or not pack_path.is_file():
+    if not evidence_path.exists() or not evidence_path.is_file():
         guard = guard_failed(
             category="claim",
-            reason="claim gate pack_path 不存在或不是文件",
+            reason="claim gate evidence_path 不存在或不是文件",
             paths=claim_paths,
             early_stop=True,
         )
         return ClaimGateInput(
             report_path=report_path,
-            pack_path=pack_path,
+            evidence_path=evidence_path,
             rule_version=CLAIM_RULES_VERSION,
             dictionary_revision_id=CLAIM_DICTIONARY_REVISION_ID,
             claims=(),
@@ -162,7 +162,7 @@ def build_claim_gate_input(
     try:
         evaluation = evaluate_fundamental_report_claims_from_paths_v1(
             report_path=report_path,
-            pack_path=pack_path,
+            evidence_path=evidence_path,
         )
     except Exception as exc:
         guard = guard_failed(
@@ -173,7 +173,7 @@ def build_claim_gate_input(
         )
         return ClaimGateInput(
             report_path=report_path,
-            pack_path=pack_path,
+            evidence_path=evidence_path,
             rule_version=CLAIM_RULES_VERSION,
             dictionary_revision_id=CLAIM_DICTIONARY_REVISION_ID,
             claims=(),
@@ -205,7 +205,7 @@ def build_claim_gate_input(
 
     return ClaimGateInput(
         report_path=report_path,
-        pack_path=pack_path,
+        evidence_path=evidence_path,
         rule_version=evaluation.rule_version,
         dictionary_revision_id=evaluation.dictionary_revision_id,
         claims=evaluation.claims,

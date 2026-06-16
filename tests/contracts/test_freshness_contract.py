@@ -35,7 +35,6 @@ def _request(**overrides: object) -> dict[str, object]:
         "date_range_start": date(2026, 5, 1),
         "date_range_end": date(2026, 5, 31),
         "freshness_policy": "trading_day",
-        "source_role_required": "official",
         "as_of": datetime(2026, 5, 31, 23, 0, tzinfo=UTC),
     }
     payload.update(overrides)
@@ -212,6 +211,98 @@ def test_freshness_checker_reports_stale_gap() -> None:
     assert any(gap["reason"] == "warehouse_stale" for gap in verdict.gaps)
 
 
+def test_trading_day_freshness_accepts_latest_completed_session_on_weekend() -> None:
+    checker = FreshnessChecker()
+    as_of = datetime(2026, 6, 14, 16, 0, tzinfo=UTC)
+    verdict = checker.evaluate(
+        request=_request(
+            date_range_start=date(2026, 6, 8),
+            date_range_end=date(2026, 6, 14),
+            timezone="America/New_York",
+            calendar="US_NYSE_NASDAQ",
+            as_of=as_of,
+        ),
+        records=_weekday_records(date(2026, 6, 8), date(2026, 6, 12), as_of=datetime(2026, 6, 12, 21, 0, tzinfo=UTC)),
+    )
+
+    assert verdict.satisfied is True
+    assert not any(gap["reason"] == "warehouse_stale" for gap in verdict.gaps)
+
+
+def test_us_calendar_skips_2025_exchange_holiday_inside_lookback_window() -> None:
+    checker = FreshnessChecker()
+    as_of = datetime(2025, 6, 20, 21, 0, tzinfo=UTC)
+    verdict = checker.evaluate(
+        request=_request(
+            date_range_start=date(2025, 6, 16),
+            date_range_end=date(2025, 6, 20),
+            timezone="America/New_York",
+            calendar="US_NYSE_NASDAQ",
+            as_of=as_of,
+        ),
+        records=[
+            _record(period_start=date(2025, 6, 16), period_end=date(2025, 6, 16), as_of=as_of),
+            _record(period_start=date(2025, 6, 17), period_end=date(2025, 6, 17), as_of=as_of),
+            _record(period_start=date(2025, 6, 18), period_end=date(2025, 6, 18), as_of=as_of),
+            _record(period_start=date(2025, 6, 20), period_end=date(2025, 6, 20), as_of=as_of),
+        ],
+    )
+
+    assert verdict.satisfied is True
+    assert not any(gap["reason"] == "date_range_missing" for gap in verdict.gaps)
+
+
+def test_hk_calendar_skips_2025_exchange_holiday_inside_lookback_window() -> None:
+    checker = FreshnessChecker()
+    as_of = datetime(2025, 10, 3, 9, 0, tzinfo=UTC)
+    verdict = checker.evaluate(
+        request=_request(
+            date_range_start=date(2025, 9, 29),
+            date_range_end=date(2025, 10, 3),
+            timezone="Asia/Hong_Kong",
+            calendar="HK_XHKG",
+            as_of=as_of,
+        ),
+        records=[
+            _record(market="HK", period_start=date(2025, 9, 29), period_end=date(2025, 9, 29), as_of=as_of),
+            _record(market="HK", period_start=date(2025, 9, 30), period_end=date(2025, 9, 30), as_of=as_of),
+            _record(market="HK", period_start=date(2025, 10, 2), period_end=date(2025, 10, 2), as_of=as_of),
+            _record(market="HK", period_start=date(2025, 10, 3), period_end=date(2025, 10, 3), as_of=as_of),
+        ],
+    )
+
+    assert verdict.satisfied is True
+    assert not any(gap["reason"] == "date_range_missing" for gap in verdict.gaps)
+
+
+def test_hk_xhkg_trading_day_freshness_uses_16_00_local_close() -> None:
+    checker = FreshnessChecker()
+    before_close = checker.evaluate(
+        request=_request(
+            date_range_start=date(2026, 6, 12),
+            date_range_end=date(2026, 6, 15),
+            timezone="Asia/Hong_Kong",
+            calendar="HK_XHKG",
+            as_of=datetime(2026, 6, 15, 7, 30, tzinfo=UTC),
+        ),
+        records=[_record(market="HK", period_start=date(2026, 6, 12), period_end=date(2026, 6, 12), as_of=datetime(2026, 6, 12, 9, 0, tzinfo=UTC))],
+    )
+    after_close = checker.evaluate(
+        request=_request(
+            date_range_start=date(2026, 6, 12),
+            date_range_end=date(2026, 6, 15),
+            timezone="Asia/Hong_Kong",
+            calendar="HK_XHKG",
+            as_of=datetime(2026, 6, 15, 8, 30, tzinfo=UTC),
+        ),
+        records=[_record(market="HK", period_start=date(2026, 6, 12), period_end=date(2026, 6, 12), as_of=datetime(2026, 6, 12, 9, 0, tzinfo=UTC))],
+    )
+
+    assert before_close.satisfied is True
+    assert after_close.satisfied is False
+    assert any(gap["reason"] == "warehouse_stale" for gap in after_close.gaps)
+
+
 def test_freshness_checker_reports_stale_gap_when_as_of_is_missing() -> None:
     checker = FreshnessChecker()
     verdict = checker.evaluate(
@@ -224,13 +315,3 @@ def test_freshness_checker_reports_stale_gap_when_as_of_is_missing() -> None:
         gap["reason"] == "warehouse_stale" and gap["details"]["stale_reason"] == "missing_as_of"
         for gap in verdict.gaps
     )
-
-
-def test_freshness_checker_reports_official_source_gap() -> None:
-    checker = FreshnessChecker()
-    verdict = checker.evaluate(
-        request=_request(source_role_required="official"),
-        records=[_record(source_roles=("discovery",))],
-    )
-    assert verdict.satisfied is False
-    assert any(gap["reason"] == "warehouse_missing" for gap in verdict.gaps)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from .models import endpoint, no_batch
+from .generated_loader import load_generated_endpoints
+from .models import endpoint, no_batch, output_contract
 
 AUTH = "query_api_key"
 BUCKET = "ratelimit:glassnode"
@@ -22,11 +23,24 @@ def _gn(endpoint_id: str, path: str, metric: str):
         batch_policy=no_batch(),
         official_doc_ref=DOC,
         request_template={"path": path, "query": {"a": "<asset>"}},
-        response_shape={"metric": metric, "rows": "time/value points"},
+        response_shape={
+            "metric": metric,
+            "rows": "time/value points",
+            "outputs": (
+                output_contract(
+                    market="CRYPTO",
+                    data_type="crypto_onchain_metric",
+                    public_api_ids=('crypto_onchain_metric', 'onchain_metric'),
+                    granularity="daily",
+                    fields=(metric, "value", "timestamp", "symbol_id"),
+                    priority_rank=8,
+                ),
+            ),
+        },
     )
 
 
-ENDPOINTS = (
+_CURATED_ENDPOINTS = (
     _gn("addresses_active_count", "/v1/metrics/addresses/active_count", "active_addresses"),
     _gn("indicators_mvrv_account_based", "/v1/metrics/indicators/mvrv_account_based", "mvrv"),
     _gn("indicators_sopr_less_155", "/v1/metrics/indicators/sopr_less_155", "sth_sopr"),
@@ -34,3 +48,15 @@ ENDPOINTS = (
     _gn("indicators_nupl", "/v1/metrics/indicators/net_unrealized_profit_loss", "nupl"),
 )
 
+ENDPOINTS = (
+    *_CURATED_ENDPOINTS,
+    *load_generated_endpoints(
+        "glassnode_basic_api.json",
+        provider_id=PROVIDER,
+        source_type="glassnode",
+        auth=AUTH,
+        rate_limit_bucket=BUCKET,
+        markets=("CRYPTO",),
+        skip_paths=(endpoint.official_path_or_api_name for endpoint in _CURATED_ENDPOINTS),
+    ),
+)

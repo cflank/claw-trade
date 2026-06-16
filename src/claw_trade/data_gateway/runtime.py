@@ -6,9 +6,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 from claw_trade.data_gateway.api import DataAPI
-from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
-from claw_trade.data_gateway.coordination.coalescer import RequestCoalescer
-from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
 from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
 from claw_trade.data_gateway.coordination.scheduler import DataRunScheduler
 from claw_trade.data_gateway.coordination.service import DataService
@@ -34,8 +31,13 @@ from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColu
 @dataclass(frozen=True)
 class DataGatewayRuntime:
     data_api: DataAPI
+    data_service: DataService
     repository: DatasetRepository
-    provider_candidates: tuple[str, ...]
+    registry: ProviderRegistry
+    rate_limiter: RateLimiter
+    rate_limit_policy_resolver: RateLimitPolicyResolver
+    fetch_engine: FetchEngine
+    ingest: IngestPipeline
 
 
 def build_data_api_from_env() -> DataAPI:
@@ -55,13 +57,13 @@ def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
     plugins = iter_minimal_market_plugins()
     for plugin in plugins:
         registry.register(plugin)
-    provider_candidates = _provider_candidates_from_plugins(plugins)
 
     settings_stores = build_data_source_settings_stores(database)
     credential_resolver = DataSourceCredentialResolver(
         data_source_store=settings_stores.data_source_store,
         secret_store=settings_stores.secret_store,
     )
+    rate_limit_policy_resolver = RateLimitPolicyResolver(data_source_settings=credential_resolver)
     ingest = IngestPipeline(
         raw_store=RawStore(repository=repository),
         normalizer=Normalizer(),
@@ -72,11 +74,6 @@ def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
     service = DataService(
         query_planner=QueryPlanner(),
         warehouse=Warehouse(repository),
-        provider_selector=ProviderSelector(registry, credential_resolver=credential_resolver),
-        coalescer=RequestCoalescer(),
-        batch_planner=ProviderBatchPlanner(
-            rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
-        ),
         execution_gate=ExecutionGate(
             cache=ProviderResultCache(repository),
             rate_limiter=rate_limiter,
@@ -85,22 +82,18 @@ def build_data_gateway_runtime_from_env() -> DataGatewayRuntime:
         fetch_engine=FetchEngine(registry, credential_resolver=credential_resolver, rate_limiter=rate_limiter),
         ingest=ingest,
         scheduler=DataRunScheduler(rate_limiter=rate_limiter),
+        rate_limit_policy_resolver=rate_limit_policy_resolver,
     )
     return DataGatewayRuntime(
         data_api=DataAPI(service),
+        data_service=service,
         repository=repository,
-        provider_candidates=provider_candidates,
+        registry=registry,
+        rate_limiter=rate_limiter,
+        rate_limit_policy_resolver=rate_limit_policy_resolver,
+        fetch_engine=service.fetch_engine,  # type: ignore[arg-type]
+        ingest=ingest,
     )
-
-
-def _provider_candidates_from_plugins(plugins: tuple[object, ...]) -> tuple[str, ...]:
-    provider_ids: list[str] = []
-    for plugin in plugins:
-        caps = plugin.capabilities()
-        provider_id = str(getattr(caps, "provider_id", "")).strip()
-        if provider_id:
-            provider_ids.append(provider_id)
-    return tuple(dict.fromkeys(provider_ids))
 
 
 def open_data_gateway_database_from_env() -> Any:

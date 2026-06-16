@@ -1,0 +1,4 @@
+interface:
+  display_name: "Provider Interface Verification"
+  short_description: "Verify provider coverage with live probes"
+  default_prompt: "Use provider-interface-verification to check a data source against project-required interfaces, compare official catalog coverage, live-test every covered endpoint, fix root causes, and report only success or explicit not_implemented."

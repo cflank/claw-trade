@@ -28,12 +28,12 @@ def test_selection_provider_payload_contract_passes_for_four_workers(tmp_path: P
 
     _write_dispatch_evidence(
         dispatch=by_worker[SelectionWorkerId.STRATEGIST],
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         messages=("请基于候选池工具结果完成正向评审。",),
     )
     _write_dispatch_evidence(
         dispatch=by_worker[SelectionWorkerId.SKEPTIC],
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         messages=_skeptic_message(by_worker[SelectionWorkerId.SKEPTIC]),
     )
     _write_dispatch_evidence(
@@ -52,32 +52,32 @@ def test_selection_provider_payload_contract_passes_for_four_workers(tmp_path: P
         assert guard.ok, guard.reason
 
 
-def test_selection_provider_payload_rejects_preloaded_candidate_pack_for_strategist(tmp_path: Path) -> None:
+def test_selection_provider_payload_rejects_preloaded_candidate_cache_for_strategist(tmp_path: Path) -> None:
     dispatch = _dispatch_by_worker(tmp_path, SelectionWorkerId.STRATEGIST)
     _write_dispatch_evidence(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
-        messages=("首轮不应出现完整候选池正文。\n# 候选池事实包\n## 候选事实表",),
+        tools=("claw_get_selection_candidate_cache",),
+        messages=("首轮不应出现完整候选池正文。\n# 候选池数据缓存\n## 候选事实表",),
     )
 
     guard = validate_selection_dispatch_evidence(evidence_from_dispatch(dispatch))
 
     assert guard.ok is False
-    assert guard.reason is not None and "preloaded full candidate pack body" in guard.reason
+    assert guard.reason is not None and "preloaded full candidate cache body" in guard.reason
 
 
-def test_selection_provider_payload_rejects_compact_candidate_pack_tool_result(tmp_path: Path) -> None:
+def test_selection_provider_payload_rejects_compact_candidate_cache_tool_result(tmp_path: Path) -> None:
     dispatch = _dispatch_by_worker(tmp_path, SelectionWorkerId.STRATEGIST)
     _write_dispatch_evidence(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         messages=("selection payload contract test",),
     )
     _write_provider_requests_jsonl(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         tool_result_text=(
-            "# 候选池事实包\n"
+            "# 候选池数据缓存\n"
             "## 候选事实表\n"
             "| 排名 | 代码 | 公司 | 得分 |\n"
             "| 1 | 300721.SZ | 怡达股份 | 9.7 |"
@@ -87,20 +87,20 @@ def test_selection_provider_payload_rejects_compact_candidate_pack_tool_result(t
     guard = validate_selection_dispatch_evidence(evidence_from_dispatch(dispatch))
 
     assert guard.ok is False
-    assert guard.reason is not None and "candidate pack tool result missing required model-visible field" in guard.reason
+    assert guard.reason is not None and "candidate cache tool result missing required model-visible field" in guard.reason
 
 
-def test_selection_provider_payload_accepts_full_candidate_pack_tool_result(tmp_path: Path) -> None:
+def test_selection_provider_payload_accepts_full_candidate_cache_tool_result(tmp_path: Path) -> None:
     dispatch = _dispatch_by_worker(tmp_path, SelectionWorkerId.STRATEGIST)
     _write_dispatch_evidence(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         messages=("selection payload contract test",),
     )
     _write_provider_requests_jsonl(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
-        tool_result_text=_full_candidate_pack_tool_result(),
+        tools=("claw_get_selection_candidate_cache",),
+        tool_result_text=_full_candidate_cache_tool_result(),
     )
 
     guard = validate_selection_dispatch_evidence(evidence_from_dispatch(dispatch))
@@ -112,7 +112,7 @@ def test_selection_provider_payload_rejects_skeptic_missing_required_material_bo
     dispatch = _dispatch_by_worker(tmp_path, SelectionWorkerId.SKEPTIC)
     _write_dispatch_evidence(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         messages=("【approved_strategist_l1】",),
     )
 
@@ -130,7 +130,7 @@ def test_selection_provider_payload_accepts_skeptic_with_approved_strategist_l1_
         SelectionWorkerId.SKEPTIC,
         strategist_l1_override=(
             "好，已获取候选池事实材料。\n"
-            "# 候选池事实包\n"
+            "# 候选池数据缓存\n"
             "## 候选事实表\n"
             "| 排名 | 代码 | 公司 |\n"
             "| 1 | 300721.SZ | 怡达股份 |"
@@ -138,7 +138,7 @@ def test_selection_provider_payload_accepts_skeptic_with_approved_strategist_l1_
     )
     _write_dispatch_evidence(
         dispatch=dispatch,
-        tools=("claw_get_selection_candidate_pack",),
+        tools=("claw_get_selection_candidate_cache",),
         messages=_skeptic_message(dispatch),
     )
 
@@ -166,7 +166,7 @@ def test_selection_provider_payload_rejects_manager_missing_required_material_bo
     _write_dispatch_evidence(
         dispatch=dispatch,
         tools=(),
-        messages=("【approved_strategist_l1】\n【approved_skeptic_l1】\n【candidate_pack_summary】",),
+        messages=("【approved_strategist_l1】\n【approved_skeptic_l1】\n【candidate_cache_summary】",),
     )
 
     guard = validate_selection_dispatch_evidence(evidence_from_dispatch(dispatch))
@@ -183,7 +183,7 @@ def test_selection_provider_payload_rejects_manager_refs_only_materials(tmp_path
         messages=(
             "【approved_strategist_l1】 viking://resources/workflow/x/report.md\n"
             "【approved_skeptic_l1】 l1_sha256=abc123\n"
-            "【candidate_pack_summary】 manifest=selection-manifest",
+            "【candidate_cache_summary】 manifest=selection-manifest",
         ),
     )
 
@@ -211,8 +211,8 @@ def test_selection_provider_payload_requires_single_worker_minimal_policy(tmp_pa
 @pytest.mark.parametrize(
     ("worker_id", "expected_tools"),
     (
-        (SelectionWorkerId.STRATEGIST, ("claw_get_selection_candidate_pack",)),
-        (SelectionWorkerId.SKEPTIC, ("claw_get_selection_candidate_pack",)),
+        (SelectionWorkerId.STRATEGIST, ("claw_get_selection_candidate_cache",)),
+        (SelectionWorkerId.SKEPTIC, ("claw_get_selection_candidate_cache",)),
         (SelectionWorkerId.MANAGER, ()),
         (SelectionWorkerId.PORTFOLIO_MANAGER, ()),
     ),
@@ -261,7 +261,7 @@ def _dispatches(
         select_workflow_run_id="sel-wf-provider",
         selection_run_id="sel-run-provider",
         evidence_root=tmp_path / "evidence",
-        candidate_pack_summary_md="candidate_pack_summary：只含事实与数据质量摘要。",
+        candidate_cache_summary_md="candidate_cache_summary：只含事实与数据质量摘要。",
         approved_l1_materials=approved_l1_materials,
     )
 
@@ -385,7 +385,7 @@ def _write_provider_requests_jsonl(
                         {
                             "id": "tool-call-1",
                             "type": "function",
-                            "function": {"name": "claw_get_selection_candidate_pack", "arguments": "{}"},
+                            "function": {"name": "claw_get_selection_candidate_cache", "arguments": "{}"},
                         }
                     ],
                 },
@@ -401,10 +401,10 @@ def _write_provider_requests_jsonl(
     )
 
 
-def _full_candidate_pack_tool_result() -> str:
+def _full_candidate_cache_tool_result() -> str:
     return "\n".join(
         (
-            "# A股候选事实包",
+            "# A股候选缓存",
             "",
             "## 本轮范围",
             "- 交易日：2026-05-27",
@@ -449,14 +449,14 @@ def _manager_pm_messages(dispatch: SelectionWorkerDispatch) -> tuple[str, ...]:
         labels = (
             "approved_strategist_l1",
             "approved_skeptic_l1",
-            "candidate_pack_summary",
+            "candidate_cache_summary",
         )
     elif dispatch.worker_id == SelectionWorkerId.PORTFOLIO_MANAGER:
         labels = (
             "approved_manager_l1",
             "approved_strategist_l1",
             "approved_skeptic_l1",
-            "candidate_pack_summary",
+            "candidate_cache_summary",
         )
     else:
         raise AssertionError(f"unexpected worker for manager/pm message helper: {dispatch.worker_id.value}")

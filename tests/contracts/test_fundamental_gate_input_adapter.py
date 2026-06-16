@@ -28,7 +28,7 @@ def test_material_gate_input_passes_when_visible_tools_and_receipt_valid(tmp_pat
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("claw_get_fundamental_pack", "openviking_write_material"),
+        tools=("claw_request_data", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(call=call, evidence=evidence, receipt_content=b"fundamental report")
     result = build_material_gate_input(call=call, evidence=evidence, openviking=openviking)
@@ -44,7 +44,7 @@ def test_material_gate_input_emits_visible_tools_invalid_reason_code(tmp_path: P
     _write_provider_and_visible_tools(
         evidence=evidence,
         tools=(
-            "claw_get_fundamental_pack",
+            "claw_request_data",
             "openviking_write_material",
             "tushare.fina_indicator",
         ),
@@ -62,7 +62,7 @@ def test_material_gate_input_emits_openviking_receipt_invalid_for_hash_mismatch(
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("claw_get_fundamental_pack", "openviking_write_material"),
+        tools=("claw_request_data", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(
         call=call,
@@ -82,13 +82,13 @@ def test_build_fundamental_gate_inputs_emits_unsupported_claim_reason_code(tmp_p
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("claw_get_fundamental_pack", "openviking_write_material"),
+        tools=("claw_request_data", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(call=call, evidence=evidence, receipt_content=b"fundamental report")
     report_path = call.evidence_dir / "report.md"
-    pack_path = call.evidence_dir / "fundamental-pack.json"
+    evidence_path = call.evidence_dir / "fundamental-evidence.json"
     report_path.write_text("我们给出目标价 2200 元，并维持买入评级。", encoding="utf-8")
-    pack_path.write_text(
+    evidence_path.write_text(
         json.dumps(
             {
                 "facts": {
@@ -134,7 +134,7 @@ def test_build_fundamental_gate_inputs_emits_unsupported_claim_reason_code(tmp_p
         evidence=evidence,
         openviking=openviking,
         report_path=report_path,
-        pack_path=pack_path,
+        evidence_path=evidence_path,
     )
     assert gate_inputs.material_gate.receipt_ok is True
     assert gate_inputs.material_gate.visible_tools_ok is True
@@ -142,26 +142,26 @@ def test_build_fundamental_gate_inputs_emits_unsupported_claim_reason_code(tmp_p
     assert UNSUPPORTED_CLAIM in gate_inputs.claim_gate.reason_codes
     assert gate_inputs.claim_gate.dictionary_revision_id == CLAIM_DICTIONARY_REVISION_ID
     assert gate_inputs.claim_gate.report_path == report_path
-    assert gate_inputs.claim_gate.pack_path == pack_path
+    assert gate_inputs.claim_gate.evidence_path == evidence_path
 
 
-def test_build_fundamental_gate_inputs_marks_claim_input_invalid_when_pack_missing(tmp_path: Path) -> None:
+def test_build_fundamental_gate_inputs_marks_claim_input_invalid_when_evidence_missing(tmp_path: Path) -> None:
     call, evidence = _sample_call_and_evidence(tmp_path)
     _write_provider_and_visible_tools(
         evidence=evidence,
-        tools=("claw_get_fundamental_pack", "openviking_write_material"),
+        tools=("claw_request_data", "openviking_write_material"),
     )
     openviking = _seed_receipt_and_client(call=call, evidence=evidence, receipt_content=b"fundamental report")
     report_path = call.evidence_dir / "report.md"
     report_path.write_text("证据不足，无法给出目标价。", encoding="utf-8")
-    pack_path = call.evidence_dir / "missing-pack.json"
+    evidence_path = call.evidence_dir / "missing-evidence.json"
 
     gate_inputs = build_fundamental_gate_inputs(
         call=call,
         evidence=evidence,
         openviking=openviking,
         report_path=report_path,
-        pack_path=pack_path,
+        evidence_path=evidence_path,
     )
     assert gate_inputs.claim_gate.claim_guard.ok is False
     assert CLAIM_INPUT_INVALID in gate_inputs.claim_gate.reason_codes
@@ -185,7 +185,7 @@ def _sample_call_and_evidence(tmp_path: Path) -> tuple[WorkerCall, ProviderEvide
         current_date="2026-05-07",
         start_date="2026-01-01",
         end_date="2026-05-07",
-        allowed_tools=("claw_get_fundamental_pack", "openviking_write_material"),
+        allowed_tools=("claw_request_data", "openviking_write_material"),
         upstream_materials=(),
         openviking_read_capabilities=(),
         material_target=target,

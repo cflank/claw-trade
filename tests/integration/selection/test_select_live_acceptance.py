@@ -21,9 +21,9 @@ from claw_trade.selection.confirmation import (
 )
 from claw_trade.selection.controller import SelectCommandCode, SelectionController
 from claw_trade.selection.models import (
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
@@ -50,7 +50,7 @@ _FORBIDDEN_PROTOCOL_TERMS = (
     "refs",
     "runtime wrapper",
 )
-_CANDIDATE_PACK_BODY_MARKERS = (
+_CANDIDATE_CACHE_BODY_MARKERS = (
     "# 候选池事实包",
     "## 候选事实表",
     "| 排名 | 代码 | 公司",
@@ -59,13 +59,13 @@ _SKEPTIC_PROMPT_MATERIAL_MARKERS = ("【approved_strategist_l1】",)
 _MANAGER_PROMPT_MATERIAL_MARKERS = (
     "【approved_strategist_l1】",
     "【approved_skeptic_l1】",
-    "【candidate_pack_summary】",
+    "【candidate_cache_summary】",
 )
 _PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS = (
     "【approved_manager_l1】",
     "【approved_strategist_l1】",
     "【approved_skeptic_l1】",
-    "【candidate_pack_summary】",
+    "【candidate_cache_summary】",
 )
 _WORKER_ORDER = (
     "selection_strategist",
@@ -74,8 +74,8 @@ _WORKER_ORDER = (
     "selection_portfolio_manager",
 )
 _EXPECTED_TOOLS = {
-    "selection_strategist": {"claw_get_selection_candidate_pack"},
-    "selection_skeptic": {"claw_get_selection_candidate_pack"},
+    "selection_strategist": {"claw_get_selection_candidate_cache"},
+    "selection_skeptic": {"claw_get_selection_candidate_cache"},
     "selection_manager": set(),
     "selection_portfolio_manager": set(),
 }
@@ -250,7 +250,7 @@ def _selection_artifact_root() -> Path:
 def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
     store = SelectionRunStore()
     run_id = "sel-11-live-data-run"
-    candidate_pack_body = "\n".join(
+    candidate_cache_body = "\n".join(
         [
             "# 候选池事实包",
             "",
@@ -273,15 +273,15 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
             "- 仅含事实字段",
         ]
     ) + "\n"
-    summary_path = artifact_root / "candidate-pack-summary.md"
-    summary_path.write_text(candidate_pack_body, encoding="utf-8")
-    pack_body_path = artifact_root / "candidate-pack-approved.md"
-    pack_body_sha = _write_verified_text(pack_body_path, candidate_pack_body)
+    summary_path = artifact_root / "candidate-cache-summary.md"
+    summary_path.write_text(candidate_cache_body, encoding="utf-8")
+    cache_body_path = artifact_root / "candidate-cache-approved.md"
+    cache_body_sha = _write_verified_text(cache_body_path, candidate_cache_body)
     _write_verified_text(
-        artifact_root / "candidate-pack.json",
+        artifact_root / "candidate-cache.json",
         json.dumps(
             {
-                "schema_version": "sel-04-candidate-pack-v1",
+                "schema_version": "sel-04-candidate-cache-v1",
                 "selection_run_id": run_id,
                 "market": SelectionMarket.CN_A.value,
                 "trade_date": "2026-05-26",
@@ -291,7 +291,7 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
                 "data_quality_summary": "数据质量：本批次未发现阻断级或提示级缺口。",
                 "source_summary": "来源摘要：交易日全市场标准化快照、特征快照与确定性评分结果。",
                 "candidates": [
-                    _candidate_pack_json_row(
+                    _candidate_cache_json_row(
                         rank=1,
                         ticker="600519.SH",
                         company_name="贵州茅台",
@@ -301,7 +301,7 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
                         close=1612,
                         strategy_hit="myhhub/stock::myhhub_volume_rise",
                     ),
-                    _candidate_pack_json_row(
+                    _candidate_cache_json_row(
                         rank=2,
                         ticker="000858.SZ",
                         company_name="五粮液",
@@ -311,7 +311,7 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
                         close=132,
                         strategy_hit="Sequoia-X::sequoia_ma_volume",
                     ),
-                    _candidate_pack_json_row(
+                    _candidate_cache_json_row(
                         rank=3,
                         ticker="300750.SZ",
                         company_name="宁德时代",
@@ -328,22 +328,22 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
         )
         + "\n",
     )
-    manifest_path = artifact_root / "candidate-pack-manifest.json"
+    manifest_path = artifact_root / "candidate-cache-manifest.json"
     manifest_payload = {
-        "schema_version": "sel-04-candidate-pack-v1",
+        "schema_version": "sel-04-candidate-cache-v1",
         "selection_run_id": run_id,
         "market": SelectionMarket.CN_A.value,
         "profile": SelectionProfile.CN_A.value,
         "trade_date": "2026-05-26",
         "candidate_count": 3,
         "source_lineage_refs": ["lineage://sel-11-live"],
-        "pack_body_sha256": pack_body_sha,
+        "cache_body_sha256": cache_body_sha,
         "strategy_config_ref": "config://approved",
         "strategy_config_version": "cn_a.selection_strategy.v1",
         "weight_version": "cn_a.selection_weights.v1",
-        "readback_status": CandidatePackReadbackStatus.VERIFIED.value,
-        "stage": "approving_candidate_pack",
-        "target": "candidate_pack",
+        "readback_status": CandidateCacheReadbackStatus.VERIFIED.value,
+        "stage": "approving_candidate_cache",
+        "target": "candidate_cache",
     }
     _write_verified_text(
         manifest_path,
@@ -352,15 +352,15 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
     now = datetime.now(tz=UTC)
     approved_at = now.replace(microsecond=0).isoformat()
     expires_at = datetime(2099, 1, 1, tzinfo=UTC).isoformat()
-    candidate_pack_ref = CandidatePackRef(
+    candidate_cache_ref = CandidateCacheRef(
         selection_run_id=run_id,
-        material_id="selection-candidate-pack-sel-11-live",
-        l1_uri=str(pack_body_path),
-        content_sha256=pack_body_sha,
+        material_id="selection-candidate-cache-sel-11-live",
+        l1_uri=str(cache_body_path),
+        content_sha256=cache_body_sha,
         manifest_ref=str(manifest_path),
         approved_at=approved_at,
         expires_at=expires_at,
-        pack_summary_ref=str(summary_path),
+        cache_summary_ref=str(summary_path),
     )
     run_plan = SelectionRunPlan(
         selection_run_id=run_id,
@@ -369,7 +369,7 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://sel-11-live",
+        data_need_audit_ref="plan://sel-11-live",
         approved_strategy_config_ref="config://approved",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
@@ -416,29 +416,29 @@ def _build_store(artifact_root: Path) -> tuple[SelectionRunStore, str]:
                 columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(
                     columnar_manifest.manifest_ref
                 ),
-                candidate_pack_ref=candidate_pack_ref,
+                candidate_cache_ref=candidate_cache_ref,
                 completed_at=approved_at,
             ),
-            manifest=CandidatePackManifest(
-                schema_version="sel-04-candidate-pack-v1",
+            manifest=CandidateCacheManifest(
+                schema_version="sel-04-candidate-cache-v1",
                 selection_run_id=run_id,
                 market=SelectionMarket.CN_A,
                 profile=SelectionProfile.CN_A,
                 trade_date="2026-05-26",
                 candidate_count=3,
                 source_lineage_refs=("lineage://sel-11-live",),
-                pack_body_sha256=pack_body_sha,
+                cache_body_sha256=cache_body_sha,
                 strategy_config_ref="config://approved",
-                readback_status=CandidatePackReadbackStatus.VERIFIED,
-                stage="approving_candidate_pack",
-                target="candidate_pack",
+                readback_status=CandidateCacheReadbackStatus.VERIFIED,
+                stage="approving_candidate_cache",
+                target="candidate_cache",
             ),
         )
     )
     return store, run_id
 
 
-def _candidate_pack_json_row(
+def _candidate_cache_json_row(
     *,
     rank: int,
     ticker: str,
@@ -559,8 +559,8 @@ def _assert_tools_and_boundary(*, worker_id: str, provider_payload: dict[str, ob
             assert forbidden.lower() not in text.lower(), f"{worker_id} payload leaked forbidden text: {forbidden}"
 
     if worker_id == "selection_strategist":
-        for marker in _CANDIDATE_PACK_BODY_MARKERS:
-            assert marker not in text, f"{worker_id} payload preloaded candidate-pack full body"
+        for marker in _CANDIDATE_CACHE_BODY_MARKERS:
+            assert marker not in text, f"{worker_id} payload preloaded candidate-cache full body"
     if worker_id == "selection_skeptic":
         for marker in _SKEPTIC_PROMPT_MATERIAL_MARKERS:
             assert marker in text, f"skeptic payload missing marker: {marker}"
@@ -669,8 +669,8 @@ def test_select_live_acceptance_provider_payload_and_handoff() -> None:
         if worker_id in {"selection_strategist", "selection_skeptic"}:
             assert tool_calls.get("status") == "recorded"
             called_tools = {str(call.get("tool_name") or "").strip() for call in calls if isinstance(call, dict)}
-            assert "claw_get_selection_candidate_pack" in called_tools, (
-                f"{worker_id} did not invoke candidate-pack tool; calls={called_tools}"
+            assert "claw_get_selection_candidate_cache" in called_tools, (
+                f"{worker_id} did not invoke candidate-cache tool; calls={called_tools}"
             )
         else:
             assert tool_calls.get("status") in {"none", "recorded"}

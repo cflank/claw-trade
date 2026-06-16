@@ -11,7 +11,7 @@ from claw_trade.selection.dispatch import (
     selection_dispatch_worker_order,
 )
 from claw_trade.selection.models import (
-    CandidatePackRef,
+    CandidateCacheRef,
     SelectionMarket,
     SelectionProfile,
     SelectionSystemContextPolicy,
@@ -58,7 +58,7 @@ class _FakeOpenClawRunner:
         runtime_vars = payload.get("runtime_vars")
         prompt_text = "selection test prompt"
         if isinstance(runtime_vars, dict):
-            select_context = runtime_vars.get("select_workflow_run_id")
+            select_context = runtime_vars.get("selection_prompt_context")
             if isinstance(select_context, str) and select_context.strip():
                 prompt_text = select_context
         provider_request = {
@@ -143,8 +143,8 @@ def test_selection_dispatch_order_is_fixed_and_not_model_decided(tmp_path: Path)
         "selection_portfolio_decision",
     ]
     assert [item.allowed_tools for item in dispatches] == [
-        ("claw_get_selection_candidate_pack",),
-        ("claw_get_selection_candidate_pack",),
+        ("claw_get_selection_candidate_cache",),
+        ("claw_get_selection_candidate_cache",),
         (),
         (),
     ]
@@ -157,7 +157,7 @@ def test_selection_dispatch_executes_four_openclaw_single_worker_turns(tmp_path:
     executions = execute_selection_dispatches(
         openclaw=openclaw,
         dispatches=dispatches,
-        candidate_pack_ref=_candidate_pack_ref(),
+        candidate_cache_ref=_candidate_cache_ref(),
         profile="CN_A",
         selection_artifact_root=tmp_path / "selection-artifacts",
     )
@@ -177,10 +177,10 @@ def test_selection_dispatch_executes_four_openclaw_single_worker_turns(tmp_path:
         assert payload["stop_after_first_response"] is False
         runtime_vars = payload["runtime_vars"]
         assert isinstance(runtime_vars, dict)
-        candidate_pack_ref = runtime_vars.get("candidate_pack_ref")
-        assert isinstance(candidate_pack_ref, str) and candidate_pack_ref
-        candidate_pack_payload = json.loads(candidate_pack_ref)
-        assert candidate_pack_payload["selection_run_id"] == "sel-run-07"
+        candidate_cache_ref = runtime_vars.get("candidate_cache_ref")
+        assert isinstance(candidate_cache_ref, str) and candidate_cache_ref
+        candidate_cache_payload = json.loads(candidate_cache_ref)
+        assert candidate_cache_payload["selection_run_id"] == "sel-run-07"
         material_target = payload["material_target"]
         assert isinstance(material_target, dict)
         for unexpected_field in ("turn_index", "round_index", "role_turn_index"):
@@ -194,7 +194,7 @@ def test_selection_manager_pm_command_include_model_visible_upstream_material_re
     executions = execute_selection_dispatches(
         openclaw=openclaw,
         dispatches=dispatches,
-        candidate_pack_ref=_candidate_pack_ref(),
+        candidate_cache_ref=_candidate_cache_ref(),
         profile="CN_A",
         selection_artifact_root=tmp_path / "selection-artifacts",
     )
@@ -212,13 +212,13 @@ def test_selection_manager_pm_command_include_model_visible_upstream_material_re
     assert [item["worker_id"] for item in manager_upstream] == [
         SelectionWorkerId.STRATEGIST.value,
         SelectionWorkerId.SKEPTIC.value,
-        "selection_candidate_pack_summary",
+        "selection_candidate_cache_summary",
     ]
     assert [item["worker_id"] for item in pm_upstream] == [
         SelectionWorkerId.MANAGER.value,
         SelectionWorkerId.STRATEGIST.value,
         SelectionWorkerId.SKEPTIC.value,
-        "selection_candidate_pack_summary",
+        "selection_candidate_cache_summary",
     ]
 
     manager_dispatch = {item.worker_id: item for item in dispatches}[SelectionWorkerId.MANAGER]
@@ -226,20 +226,22 @@ def test_selection_manager_pm_command_include_model_visible_upstream_material_re
     assert manager_upstream[0]["l1_sha256"] == _sha256(manager_dispatch.model_visible_materials[0])
     assert manager_upstream[1]["l1_sha256"] == _sha256(manager_dispatch.model_visible_materials[1])
     assert manager_upstream[2]["l1_sha256"] == _sha256(manager_dispatch.model_visible_materials[2])
-    assert manager_upstream[2]["l1_uri"] == _candidate_pack_ref().pack_summary_ref
+    assert manager_upstream[2]["l1_uri"] == _candidate_cache_ref().cache_summary_ref
 
     assert pm_upstream[0]["l1_sha256"] == _sha256(pm_dispatch.model_visible_materials[0])
     assert pm_upstream[1]["l1_sha256"] == _sha256(pm_dispatch.model_visible_materials[1])
     assert pm_upstream[2]["l1_sha256"] == _sha256(pm_dispatch.model_visible_materials[2])
     assert pm_upstream[3]["l1_sha256"] == _sha256(pm_dispatch.model_visible_materials[3])
-    assert pm_upstream[3]["l1_uri"] == _candidate_pack_ref().pack_summary_ref
+    assert pm_upstream[3]["l1_uri"] == _candidate_cache_ref().cache_summary_ref
 
-    manager_prompt_context = manager_snapshot["runtime_vars"]["select_workflow_run_id"]
-    pm_prompt_context = pm_snapshot["runtime_vars"]["select_workflow_run_id"]
+    assert manager_snapshot["runtime_vars"]["select_workflow_run_id"] == manager_dispatch.select_workflow_run_id
+    assert pm_snapshot["runtime_vars"]["select_workflow_run_id"] == pm_dispatch.select_workflow_run_id
+    manager_prompt_context = manager_snapshot["runtime_vars"]["selection_prompt_context"]
+    pm_prompt_context = pm_snapshot["runtime_vars"]["selection_prompt_context"]
     assert "[模型可见已批准材料]" in manager_prompt_context
     assert "【approved_strategist_l1】" in manager_prompt_context
     assert "【approved_skeptic_l1】" in manager_prompt_context
-    assert "【candidate_pack_summary】" in manager_prompt_context
+    assert "【candidate_cache_summary】" in manager_prompt_context
     assert manager_dispatch.model_visible_materials[0] in manager_prompt_context
     assert manager_dispatch.model_visible_materials[1] in manager_prompt_context
     assert manager_dispatch.model_visible_materials[2] in manager_prompt_context
@@ -248,7 +250,7 @@ def test_selection_manager_pm_command_include_model_visible_upstream_material_re
     assert "【approved_manager_l1】" in pm_prompt_context
     assert "【approved_strategist_l1】" in pm_prompt_context
     assert "【approved_skeptic_l1】" in pm_prompt_context
-    assert "【candidate_pack_summary】" in pm_prompt_context
+    assert "【candidate_cache_summary】" in pm_prompt_context
     assert pm_dispatch.model_visible_materials[0] in pm_prompt_context
     assert pm_dispatch.model_visible_materials[1] in pm_prompt_context
     assert pm_dispatch.model_visible_materials[2] in pm_prompt_context
@@ -272,7 +274,7 @@ def test_selection_manager_pm_prompt_context_prepends_candidate_checklist(tmp_pa
         select_workflow_run_id="sel-wf-checklist",
         selection_run_id="sel-run-checklist",
         evidence_root=tmp_path / "evidence",
-        candidate_pack_summary_md="\n".join(
+        candidate_cache_summary_md="\n".join(
             [
                 "## 候选事实表",
                 "| 排名 | 股票代码 | 股票名称 | 行业 | 总分 |",
@@ -291,7 +293,7 @@ def test_selection_manager_pm_prompt_context_prepends_candidate_checklist(tmp_pa
     executions = execute_selection_dispatches(
         openclaw=openclaw,
         dispatches=dispatches,
-        candidate_pack_ref=_candidate_pack_ref(),
+        candidate_cache_ref=_candidate_cache_ref(),
         profile="CN_A",
         selection_artifact_root=tmp_path / "selection-artifacts",
     )
@@ -304,7 +306,8 @@ def test_selection_manager_pm_prompt_context_prepends_candidate_checklist(tmp_pa
     )
 
     for snapshot in (manager_snapshot, pm_snapshot):
-        prompt_context = snapshot["runtime_vars"]["select_workflow_run_id"]
+        prompt_context = snapshot["runtime_vars"]["selection_prompt_context"]
+        assert snapshot["runtime_vars"]["select_workflow_run_id"].startswith("sel-wf-")
         assert "[候选池完整核对清单]" in prompt_context
         assert "- 6 | 600545.SH | 卓郎智能" in prompt_context
         assert prompt_context.index("[候选池完整核对清单]") < prompt_context.index("[模型可见已批准材料]")
@@ -318,7 +321,7 @@ def test_selection_dispatch_validation_failure_blocks_following_workers(tmp_path
     executions = execute_selection_dispatches(
         openclaw=openclaw,
         dispatches=dispatches,
-        candidate_pack_ref=_candidate_pack_ref(),
+        candidate_cache_ref=_candidate_cache_ref(),
         profile="CN_A",
         selection_artifact_root=tmp_path / "selection-artifacts",
     )
@@ -345,7 +348,7 @@ def _dispatches(tmp_path: Path):
         select_workflow_run_id="sel-wf-07",
         selection_run_id="sel-run-07",
         evidence_root=tmp_path / "evidence",
-        candidate_pack_summary_md="候选摘要：仅含事实和数据质量说明。",
+        candidate_cache_summary_md="候选摘要：仅含事实和数据质量说明。",
         approved_l1_materials={
             SelectionWorkerId.STRATEGIST: "approved strategist l1",
             SelectionWorkerId.SKEPTIC: "approved skeptic l1",
@@ -354,16 +357,16 @@ def _dispatches(tmp_path: Path):
     )
 
 
-def _candidate_pack_ref() -> CandidatePackRef:
-    return CandidatePackRef(
+def _candidate_cache_ref() -> CandidateCacheRef:
+    return CandidateCacheRef(
         selection_run_id="sel-run-07",
-        material_id="selection-candidate-pack-mat",
-        l1_uri="local://selection/sel-run-07/candidate-pack/approved/candidate-pack.md",
+        material_id="selection-candidate-cache-mat",
+        l1_uri="local://selection/sel-run-07/candidate-cache/approved/candidate-cache.md",
         content_sha256="a" * 64,
-        manifest_ref="local://selection/sel-run-07/candidate-pack/approved/candidate-pack-manifest.json",
+        manifest_ref="local://selection/sel-run-07/candidate-cache/approved/candidate-cache-manifest.json",
         approved_at="2026-05-26T09:00:00+00:00",
         expires_at="2026-05-27T09:00:00+00:00",
-        pack_summary_ref="local://selection/sel-run-07/candidate-pack/approved/candidate-pack-summary.md",
+        cache_summary_ref="local://selection/sel-run-07/candidate-cache/approved/candidate-cache-summary.md",
     )
 
 

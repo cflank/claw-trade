@@ -17,15 +17,26 @@ from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from claw_trade.data_gateway.api import DataAPI
+from claw_trade.data_gateway.coordination.scheduler import DataRunScheduleContext, DataRunScheduler
 from claw_trade.data_gateway.models import (
     DataGap,
     DataRequest,
     DataResult,
     DataResultStatus,
+    FetchResult,
+    GapReason,
+    GapSeverity,
     Market,
 )
-from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
+from claw_trade.data_gateway.needs import DataNeed
+from claw_trade.data_gateway.planner import plan_public_data_requests
+from claw_trade.data_gateway.public_api import PublicDataRequest, PublicRequestPriority
+from claw_trade.data_gateway.report_evidence import (
+    _DataNeedProviderTimeout,
+    _data_need_result_from_fetch,
+    _provider_call_batch,
+    _provider_call_timer,
+)
 from claw_trade.data_gateway.refs import normalize_normalized_dataset_ref
 from claw_trade.data_gateway.runtime import build_data_gateway_runtime_from_env
 from claw_trade.data_gateway.warehouse import DatasetRecord, DatasetRepository
@@ -34,7 +45,7 @@ from claw_trade.data_gateway.warehouse.selection_columnar import (
     SelectionColumnarWarehouse,
 )
 from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
-from claw_trade.selection.data_job import SelectionDataFetchProgress, SelectionProviderBatchResult
+from claw_trade.selection.data_job import SelectionDataFetchProgress, SelectionDataNeedResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
 from claw_trade.selection.features import (
     SelectionFeatureError,
@@ -47,7 +58,7 @@ from claw_trade.selection.models import (
     SelectionBatchScope,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
 )
 from claw_trade.selection.strategy_config import load_cn_a_selection_v1_strategy
@@ -175,9 +186,9 @@ _LOGGER = logging.getLogger("uvicorn.error")
 
 @dataclass(frozen=True)
 class _SelectionGatewayContext:
-    data_api: DataAPI
+    data_service: Any
     repository: DatasetRepository
-    provider_candidates: tuple[str, ...]
+    data_need_executor: Callable[[SelectionRunPlan, Sequence[PublicDataRequest]], tuple[DataResult, ...]]
 
 
 @dataclass(frozen=True)
@@ -199,17 +210,17 @@ class _LocalFeatureRowsResult:
     columnar_manifest_sha256: str | None = None
 
 
-def build_selection_provider_batch_plan(
+def build_selection_data_need_audit(
     *,
     market: SelectionMarket,
     profile: SelectionProfile,
     trade_date: str,
     plan_id: str | None = None,
-) -> SelectionProviderBatchPlan:
+) -> SelectionDataNeedAudit:
     if market != SelectionMarket.CN_A or profile != SelectionProfile.CN_A:
         raise ValueError("selection batch v1 仅支持 CN_A")
     resolved_plan_id = plan_id or f"plan://selection/cn_a/{trade_date}/batch-v1"
-    return SelectionProviderBatchPlan(
+    return SelectionDataNeedAudit(
         plan_id=resolved_plan_id,
         scope=SelectionBatchScope.SELECTION_BATCH,
         market=market,
@@ -218,7 +229,6 @@ def build_selection_provider_batch_plan(
         lookback_trading_days=_DEFAULT_LOOKBACK_TRADING_DAYS,
         universe_scope="all_a_shares",
         coverage_groups=(_CN_A_SELECTION_COVERAGE_GROUP, "universe", "daily", "fundamental"),
-        provider_candidates=_cn_a_provider_candidates(),
         ttl_policy_ref="ttl://selection/cn_a/batch-v1/900s",
         lineage_root_ref=f"lineage://selection/cn_a/{trade_date}/batch-v1",
     )
@@ -229,12 +239,12 @@ def fetch_selection_batch_from_data_gateway(
     *,
     evidence_root: Path | None = None,
     progress_callback: Callable[[SelectionDataFetchProgress], None] | None = None,
-) -> SelectionProviderBatchResult:
-    provider_plan = build_selection_provider_batch_plan(
+) -> SelectionDataNeedResult:
+    data_need_audit = build_selection_data_need_audit(
         market=plan.market,
         profile=plan.profile,
         trade_date=plan.trade_date,
-        plan_id=plan.provider_batch_plan_ref,
+        plan_id=plan.data_need_audit_ref,
     )
     columnar_warehouse = SelectionColumnarWarehouse.default()
     columnar_manifest = columnar_warehouse.load_valid_manifest(plan=plan)
@@ -251,7 +261,7 @@ def fetch_selection_batch_from_data_gateway(
             row_limit=_SELECTION_FEATURE_ROW_LIMIT,
         )
         result = _provider_result_from_columnar_manifest(
-            provider_plan=provider_plan,
+            data_need_audit=data_need_audit,
             manifest=columnar_manifest,
             rows=rows,
         )
@@ -263,7 +273,7 @@ def fetch_selection_batch_from_data_gateway(
     except Exception as exc:  # noqa: BLE001
         result = _failed_provider_result(
             plan=plan,
-            provider_plan=provider_plan,
+            data_need_audit=data_need_audit,
             gap_code="selection_data_api_unavailable",
             message=(
                 "selection batch 无法连接统一 DataAPI 运行时，"
@@ -287,11 +297,11 @@ def fetch_selection_batch_from_data_gateway(
         total=len(requests),
     )
     try:
-        raw_results = tuple(gateway.data_api.get_data_batch(requests))
+        raw_results = tuple(gateway.data_service.read_warehouse_batch(requests))
     except Exception as exc:  # noqa: BLE001
         result = _failed_provider_result(
             plan=plan,
-            provider_plan=provider_plan,
+            data_need_audit=data_need_audit,
             gap_code="selection_data_api_failed",
             message=f"selection batch 调用统一 DataAPI 失败，任务按 fail closed 失败：{type(exc).__name__}: {exc}",
         )
@@ -318,16 +328,16 @@ def fetch_selection_batch_from_data_gateway(
     )
     _LOGGER.info("selection local daily cache progress saved run_id=%s", plan.selection_run_id)
 
-    universe_refresh_requests = _selection_universe_refresh_requests(plan=plan, results=results)
+    universe_refresh_needs = _selection_universe_refresh_needs(plan=plan, results=results)
     _LOGGER.info(
-        "selection universe refresh requests planned run_id=%s request_count=%s",
+        "selection universe refresh needs planned run_id=%s need_count=%s",
         plan.selection_run_id,
-        len(universe_refresh_requests),
+        len(universe_refresh_needs),
     )
-    if universe_refresh_requests:
+    if universe_refresh_needs:
         universe_refresh_results: list[DataResult] = []
         completed_refresh_requests = 0
-        total_refresh_requests = len(universe_refresh_requests)
+        total_refresh_requests = len(universe_refresh_needs)
         _notify_fetch_progress(
             progress_callback,
             label="补齐全市场日线数据",
@@ -335,23 +345,23 @@ def fetch_selection_batch_from_data_gateway(
             total=total_refresh_requests,
         )
         try:
-            for refresh_chunk in _refresh_request_chunks(universe_refresh_requests, _UNIVERSE_REFRESH_CHUNK_SIZE):
+            for refresh_chunk in _refresh_need_chunks(universe_refresh_needs, _UNIVERSE_REFRESH_CHUNK_SIZE):
                 chunk_started = monotonic()
-                first_request = refresh_chunk[0]
+                first_need = refresh_chunk[0]
                 _LOGGER.info(
-                    "selection universe refresh chunk start run_id=%s completed=%s total=%s request_id=%s start=%s end=%s",
+                    "selection universe refresh chunk start run_id=%s completed=%s total=%s need_id=%s start=%s end=%s",
                     plan.selection_run_id,
                     completed_refresh_requests,
                     total_refresh_requests,
-                    first_request.request_id,
-                    first_request.date_range_start,
-                    first_request.date_range_end,
+                    first_need.request_id,
+                    first_need.time_range_start,
+                    first_need.time_range_end,
                 )
-                chunk_results = tuple(gateway.data_api.get_data_batch(refresh_chunk))
+                chunk_results = tuple(_execute_selection_data_needs(gateway=gateway, plan=plan, needs=refresh_chunk))
                 _LOGGER.info(
-                    "selection universe refresh chunk data_api_returned run_id=%s request_id=%s elapsed_ms=%s rows=%s attempts=%s gaps=%s",
+                    "selection universe refresh chunk data_need_returned run_id=%s need_id=%s elapsed_ms=%s rows=%s attempts=%s gaps=%s",
                     plan.selection_run_id,
-                    first_request.request_id,
+                    first_need.request_id,
                     int((monotonic() - chunk_started) * 1000),
                     sum(len(result.rows) for result in chunk_results),
                     sum(len(result.attempt_refs) for result in chunk_results),
@@ -361,9 +371,9 @@ def fetch_selection_batch_from_data_gateway(
                 del chunk_results
                 _release_fetch_batch_memory()
                 _LOGGER.info(
-                    "selection universe refresh chunk memory_released run_id=%s request_id=%s elapsed_ms=%s",
+                    "selection universe refresh chunk memory_released run_id=%s need_id=%s elapsed_ms=%s",
                     plan.selection_run_id,
-                    first_request.request_id,
+                    first_need.request_id,
                     int((monotonic() - chunk_started) * 1000),
                 )
                 completed_refresh_requests += len(refresh_chunk)
@@ -376,7 +386,7 @@ def fetch_selection_batch_from_data_gateway(
         except Exception as exc:  # noqa: BLE001
             initial_result = _provider_result_from_check_results(
                 plan=plan,
-                provider_plan=provider_plan,
+                data_need_audit=data_need_audit,
                 results=results,
             )
             result = _append_data_gap(
@@ -384,19 +394,21 @@ def fetch_selection_batch_from_data_gateway(
                 _blocker_gap(
                     gap_id=f"{plan.selection_run_id}-selection-batch-universe-refresh-failed",
                     gap_code="selection_batch_universe_refresh_failed",
-                    attempt_refs=initial_result.attempt_refs or (provider_plan.lineage_root_ref,),
+                    attempt_refs=initial_result.attempt_refs or (data_need_audit.lineage_root_ref,),
                     reader_message=(
-                        "selection batch 全市场日线补数已展开为单票请求，但统一数据层调用失败，"
+                        "selection batch 全市场日线补数已展开为 DataNeed，但统一数据层调用失败，"
                         f"任务按 fail closed 失败：{type(exc).__name__}: {exc}"
                     ),
                     source_metadata={
-                        "request_count": len(universe_refresh_requests),
-                        "completed_request_count": completed_refresh_requests,
-                        "tickers_sample": tuple(request.symbol_id for request in universe_refresh_requests[:20] if request.symbol_id),
+                        "need_count": len(universe_refresh_needs),
+                        "completed_need_count": completed_refresh_requests,
+                        "tickers_sample": tuple(
+                            need.instrument for need in universe_refresh_needs[:20] if need.instrument != plan.universe_scope
+                        ),
                         "trade_dates_sample": tuple(
-                            str(request.date_range_start)
-                            for request in universe_refresh_requests[:20]
-                            if request.universe_ref
+                            str(need.time_range_start)
+                            for need in universe_refresh_needs[:20]
+                            if need.instrument == plan.universe_scope
                         ),
                     },
                 ),
@@ -404,7 +416,7 @@ def fetch_selection_batch_from_data_gateway(
             _write_evidence(
                 evidence_root=evidence_root,
                 plan=plan,
-                requests=(*requests, *universe_refresh_requests),
+                requests=requests,
                 results=(*results, *universe_refresh_results),
                 provider_result=result,
             )
@@ -423,11 +435,11 @@ def fetch_selection_batch_from_data_gateway(
             total=len(recheck_requests),
         )
         try:
-            raw_recheck_results = tuple(gateway.data_api.get_data_batch(recheck_requests))
+            raw_recheck_results = tuple(gateway.data_service.read_warehouse_batch(recheck_requests))
         except Exception as exc:  # noqa: BLE001
             initial_result = _provider_result_from_check_results(
                 plan=plan,
-                provider_plan=provider_plan,
+                data_need_audit=data_need_audit,
                 results=(*results, *universe_refresh_results),
             )
             result = _append_data_gap(
@@ -435,7 +447,7 @@ def fetch_selection_batch_from_data_gateway(
                 _blocker_gap(
                     gap_id=f"{plan.selection_run_id}-selection-batch-universe-refresh-recheck-failed",
                     gap_code="selection_batch_universe_refresh_recheck_failed",
-                    attempt_refs=initial_result.attempt_refs or (provider_plan.lineage_root_ref,),
+                    attempt_refs=initial_result.attempt_refs or (data_need_audit.lineage_root_ref,),
                     reader_message=(
                         "selection batch 全市场日线补数已完成，但重新读取本地缓存失败，"
                         f"任务按 fail closed 失败：{type(exc).__name__}: {exc}"
@@ -446,7 +458,7 @@ def fetch_selection_batch_from_data_gateway(
             _write_evidence(
                 evidence_root=evidence_root,
                 plan=plan,
-                requests=(*requests, *universe_refresh_requests, *recheck_requests),
+                requests=(*requests, *recheck_requests),
                 results=(*results, *universe_refresh_results),
                 provider_result=result,
             )
@@ -460,7 +472,7 @@ def fetch_selection_batch_from_data_gateway(
             completed=len(recheck_requests),
             total=len(recheck_requests),
         )
-        requests = (*requests, *universe_refresh_requests, *recheck_requests)
+        requests = (*requests, *recheck_requests)
         results = (*results, *universe_refresh_results, *recheck_results)
 
     _notify_fetch_progress(
@@ -479,7 +491,7 @@ def fetch_selection_batch_from_data_gateway(
     except Exception as exc:  # noqa: BLE001
         initial_result = _provider_result_from_check_results(
             plan=plan,
-            provider_plan=provider_plan,
+            data_need_audit=data_need_audit,
             results=results,
         )
         result = _append_data_gap(
@@ -487,7 +499,7 @@ def fetch_selection_batch_from_data_gateway(
             _blocker_gap(
                 gap_id=f"{plan.selection_run_id}-selection-batch-local-row-read-failed",
                 gap_code="selection_batch_local_row_read_failed",
-                attempt_refs=initial_result.attempt_refs or (provider_plan.lineage_root_ref,),
+                attempt_refs=initial_result.attempt_refs or (data_need_audit.lineage_root_ref,),
                 reader_message=(
                     "selection batch 本地覆盖检查已完成，但流式读取本地标准化行失败，"
                     f"任务按 fail closed 失败：{type(exc).__name__}: {exc}"
@@ -520,7 +532,7 @@ def fetch_selection_batch_from_data_gateway(
     )
     result = _provider_result_from_local_feature_rows(
         plan=plan,
-        provider_plan=provider_plan,
+        data_need_audit=data_need_audit,
         results=results,
         local_feature_rows=local_feature_rows,
     )
@@ -528,20 +540,14 @@ def fetch_selection_batch_from_data_gateway(
     return result
 
 
-def _chunks(items: Sequence[DataRequest], size: int) -> tuple[tuple[DataRequest, ...], ...]:
+def _refresh_need_chunks(items: Sequence[PublicDataRequest], size: int) -> tuple[tuple[PublicDataRequest, ...], ...]:
     if size <= 0:
         raise ValueError("chunk size must be positive")
-    return tuple(tuple(items[index : index + size]) for index in range(0, len(items), size))
-
-
-def _refresh_request_chunks(items: Sequence[DataRequest], size: int) -> tuple[tuple[DataRequest, ...], ...]:
-    if size <= 0:
-        raise ValueError("chunk size must be positive")
-    chunks: list[tuple[DataRequest, ...]] = []
-    current: list[DataRequest] = []
+    chunks: list[tuple[PublicDataRequest, ...]] = []
+    current: list[PublicDataRequest] = []
     previous_date: date | None = None
     for item in items:
-        item_date = _parse_date(item.date_range_start)
+        item_date = _parse_date(item.time_range_start)
         should_split = (
             len(current) >= size
             or (previous_date is not None and item_date is not None and item_date != previous_date + timedelta(days=1))
@@ -589,29 +595,29 @@ def _release_fetch_batch_memory() -> None:
 def _provider_result_from_data_results(
     *,
     plan: SelectionRunPlan,
-    provider_plan: SelectionProviderBatchPlan,
+    data_need_audit: SelectionDataNeedAudit,
     results: tuple[DataResult, ...],
-) -> SelectionProviderBatchResult:
-    del plan, provider_plan, results
+) -> SelectionDataNeedResult:
+    del plan, data_need_audit, results
     raise RuntimeError("selection_data_result_rows_direct_path_disabled")
 
 
 def _provider_result_from_check_results(
     *,
     plan: SelectionRunPlan,
-    provider_plan: SelectionProviderBatchPlan,
+    data_need_audit: SelectionDataNeedAudit,
     results: tuple[DataResult, ...],
-) -> SelectionProviderBatchResult:
+) -> SelectionDataNeedResult:
     attempt_refs = _dedupe(ref for item in results for ref in item.attempt_refs)
     dataset_refs = _dedupe(ref for item in results for ref in item.dataset_refs)
     normalized_refs = tuple(_normalized_ref(ref) for ref in dataset_refs)
     data_gaps = tuple(
-        _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (provider_plan.lineage_root_ref,))
+        _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (data_need_audit.lineage_root_ref,))
         for item in results
         for gap in item.gaps
     )
-    return SelectionProviderBatchResult(
-        provider_batch_plan=provider_plan,
+    return SelectionDataNeedResult(
+        data_need_audit=data_need_audit,
         attempt_refs=attempt_refs,
         normalized_refs=normalized_refs,
         rows=(),
@@ -627,10 +633,10 @@ def _provider_result_from_check_results(
 def _provider_result_from_local_feature_rows(
     *,
     plan: SelectionRunPlan,
-    provider_plan: SelectionProviderBatchPlan,
+    data_need_audit: SelectionDataNeedAudit,
     results: tuple[DataResult, ...],
     local_feature_rows: _LocalFeatureRowsResult,
-) -> SelectionProviderBatchResult:
+) -> SelectionDataNeedResult:
     attempt_refs = _dedupe(
         (
             *(ref for item in results for ref in item.attempt_refs),
@@ -651,7 +657,7 @@ def _provider_result_from_local_feature_rows(
     )
     data_gaps = [
         *(
-            _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (provider_plan.lineage_root_ref,))
+            _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (data_need_audit.lineage_root_ref,))
             for gap in raw_data_gaps
         ),
         *local_feature_rows.data_gaps,
@@ -662,16 +668,16 @@ def _provider_result_from_local_feature_rows(
             _blocker_gap(
                 gap_id=f"{plan.selection_run_id}-selection-batch-strategy-fields-missing",
                 gap_code="selection_batch_strategy_fields_missing",
-                attempt_refs=attempt_refs or (provider_plan.lineage_root_ref,),
+                attempt_refs=attempt_refs or (data_need_audit.lineage_root_ref,),
                 reader_message=(
                     "selection batch 标准化行缺少 approved strategy 的源字段，"
-                    f"不能生成 approved candidate pack：{', '.join(missing_strategy_fields)}。"
+                    f"不能生成 approved candidate cache：{', '.join(missing_strategy_fields)}。"
                 ),
                 source_metadata={"missing_fields": missing_strategy_fields},
             )
         )
-    return SelectionProviderBatchResult(
-        provider_batch_plan=provider_plan,
+    return SelectionDataNeedResult(
+        data_need_audit=data_need_audit,
         attempt_refs=attempt_refs,
         normalized_refs=normalized_refs,
         rows=local_feature_rows.rows,
@@ -688,17 +694,17 @@ def _provider_result_from_local_feature_rows(
 
 def _provider_result_from_columnar_manifest(
     *,
-    provider_plan: SelectionProviderBatchPlan,
+    data_need_audit: SelectionDataNeedAudit,
     manifest: SelectionColumnarManifest,
     rows: tuple[Mapping[str, object], ...],
-) -> SelectionProviderBatchResult:
+) -> SelectionDataNeedResult:
     normalized_refs = _normalize_normalized_refs(manifest.normalized_refs or tuple(
         str(row.get("source_ref") or "").strip()
         for row in rows
         if str(row.get("source_ref") or "").strip()
     ))
-    return SelectionProviderBatchResult(
-        provider_batch_plan=provider_plan,
+    return SelectionDataNeedResult(
+        data_need_audit=data_need_audit,
         attempt_refs=manifest.provider_attempt_refs,
         normalized_refs=normalized_refs,
         rows=rows,
@@ -712,8 +718,8 @@ def _provider_result_from_columnar_manifest(
 def _provider_result_with_columnar_manifest(
     *,
     plan: SelectionRunPlan,
-    provider_result: SelectionProviderBatchResult,
-) -> SelectionProviderBatchResult:
+    provider_result: SelectionDataNeedResult,
+) -> SelectionDataNeedResult:
     if provider_result.columnar_manifest_ref or not provider_result.rows:
         return provider_result
     try:
@@ -757,8 +763,8 @@ def _provider_result_with_columnar_manifest(
         ),
         coverage_gap_codes=tuple(gap.gap_code for gap in provider_result.data_gaps),
     )
-    return SelectionProviderBatchResult(
-        provider_batch_plan=provider_result.provider_batch_plan,
+    return SelectionDataNeedResult(
+        data_need_audit=provider_result.data_need_audit,
         attempt_refs=provider_result.attempt_refs,
         normalized_refs=normalized_refs,
         rows=provider_result.rows,
@@ -769,9 +775,9 @@ def _provider_result_with_columnar_manifest(
     )
 
 
-def _append_data_gap(result: SelectionProviderBatchResult, gap: DataGapRef) -> SelectionProviderBatchResult:
-    return SelectionProviderBatchResult(
-        provider_batch_plan=result.provider_batch_plan,
+def _append_data_gap(result: SelectionDataNeedResult, gap: DataGapRef) -> SelectionDataNeedResult:
+    return SelectionDataNeedResult(
+        data_need_audit=result.data_need_audit,
         attempt_refs=result.attempt_refs,
         normalized_refs=result.normalized_refs,
         rows=result.rows,
@@ -829,7 +835,7 @@ def _history_backfill_ticker_from_request_id(request_id: str) -> str | None:
 def _should_return_initial_daily_result(
     *,
     results: tuple[DataResult, ...],
-    provider_result: SelectionProviderBatchResult,
+    provider_result: SelectionDataNeedResult,
 ) -> bool:
     if _has_prepackaged_direct_rows(results):
         return True
@@ -851,9 +857,160 @@ def _has_prepackaged_direct_rows(results: tuple[DataResult, ...]) -> bool:
 def _build_selection_gateway_context() -> _SelectionGatewayContext:
     runtime = build_data_gateway_runtime_from_env()
     return _SelectionGatewayContext(
-        data_api=runtime.data_api,
+        data_service=runtime.data_service,
         repository=runtime.repository,
-        provider_candidates=runtime.provider_candidates,
+        data_need_executor=lambda plan, needs: _execute_selection_data_need_batch(runtime=runtime, plan=plan, needs=needs),
+    )
+
+
+def _execute_selection_data_needs(
+    *,
+    gateway: _SelectionGatewayContext,
+    plan: SelectionRunPlan,
+    needs: Sequence[PublicDataRequest],
+) -> tuple[DataResult, ...]:
+    return tuple(gateway.data_need_executor(plan, tuple(needs)))
+
+
+def _execute_selection_data_need_batch(
+    *,
+    runtime: Any,
+    plan: SelectionRunPlan,
+    needs: Sequence[PublicDataRequest],
+) -> tuple[DataResult, ...]:
+    if not needs:
+        return ()
+    need_plan = plan_public_data_requests(tuple(needs))
+    policies = {
+        call.rate_limit_bucket: runtime.rate_limit_policy_resolver.resolve(
+            provider_id=call.provider_id,
+            rate_limit_bucket=call.rate_limit_bucket,
+            default_policy=None,
+        )
+        for call in need_plan.planned_calls
+    }
+    scheduler = getattr(getattr(runtime, "data_service", None), "scheduler", None) or DataRunScheduler(
+        rate_limit_policies=policies,
+        rate_limiter=getattr(runtime, "rate_limiter", None),
+    )
+    policy_updater = getattr(scheduler, "update_rate_limit_policies", None)
+    if callable(policy_updater):
+        policy_updater(policies)
+    scheduled_plan = scheduler.schedule(
+        need_plan,
+        DataRunScheduleContext.for_plan(
+            run_id=plan.selection_run_id,
+            run_started_at=datetime.now(tz=UTC),
+        ),
+    )
+    need_by_id = {need.need_id: need for need in scheduled_plan.needs}
+    call_by_id = {call.call_id: call for call in scheduled_plan.planned_calls}
+    results: list[DataResult] = [
+        _data_result_from_data_need_gap(need=need_by_id.get(gap.need_id), gap=gap)
+        for gap in scheduled_plan.skipped_needs
+    ]
+    for scheduled in scheduled_plan.scheduled_calls:
+        call = call_by_id.get(scheduled.call_id)
+        if call is None:
+            continue
+        call_needs = tuple(need_by_id[need_id] for need_id in call.need_ids if need_id in need_by_id)
+        if not call_needs:
+            continue
+        batch_need = call_needs[0]
+        policy = runtime.rate_limit_policy_resolver.resolve(
+            provider_id=call.provider_id,
+            rate_limit_bucket=call.rate_limit_bucket,
+            default_policy=None,
+        )
+        batch = _provider_call_batch(
+            call=call,
+            need=batch_need,
+            policy=policy,
+            runtime=runtime,
+            earliest_start_at=scheduled.earliest_start_at,
+            rate_limit_reserved_at=scheduled.rate_limit_reserved_at,
+        )
+        gate = runtime.data_service.execution_gate.enter(batch)
+        if gate.kind in {"cache_hit", "cached_empty", "rate_limited", "shared_result", "cooldown_skipped"}:
+            ingest = runtime.ingest.record_gate_result(batch, gate)
+            for need in call_needs:
+                results.append(_data_result_from_ingest(need=need, batch=batch, ingest=ingest))
+            continue
+        try:
+            with _provider_call_timer(call.deadline_at):
+                fetch_result = runtime.fetch_engine.fetch(batch)
+        except _DataNeedProviderTimeout as exc:
+            fetch_result = FetchResult.from_error(batch, status="error", error=exc)
+        retry_waiter = getattr(runtime.data_service.execution_gate, "wait_after_rate_limited_fetch", None)
+        if callable(retry_waiter) and retry_waiter(batch, fetch_result):
+            try:
+                with _provider_call_timer(call.deadline_at):
+                    fetch_result = runtime.fetch_engine.fetch(batch)
+            except _DataNeedProviderTimeout as exc:
+                fetch_result = FetchResult.from_error(batch, status="error", error=exc)
+        cooldown_marker = getattr(runtime.data_service.execution_gate, "mark_cooldown_after_fetch", None)
+        if callable(cooldown_marker):
+            cooldown_marker(batch, fetch_result)
+        ingest = runtime.ingest.ingest(fetch_result, batch)
+        if gate.kind == "owner" and gate.owner_token:
+            runtime.data_service.execution_gate.publish_shared_result(batch.single_flight_key, gate.owner_token, ingest, batch=batch)
+        for need in call_needs:
+            data_result = _data_need_result_from_fetch(
+                need=need,
+                call=call,
+                batch=batch,
+                fetch_result=fetch_result,
+                ingest=ingest,
+                index=len(results),
+                as_of=datetime.now(tz=UTC),
+            )
+            if data_result is not None:
+                data_result = data_result.model_copy(update={"request_id": need.need_id})
+            results.append(data_result or _data_result_from_ingest(need=need, batch=batch, ingest=ingest))
+    return tuple(results)
+
+
+def _data_result_from_ingest(*, need: DataNeed, batch: Any, ingest: Any) -> DataResult:
+    gaps = tuple(getattr(ingest, "gaps", ()) or ())
+    has_refs = bool(tuple(getattr(ingest, "dataset_refs", ()) or ()) or tuple(getattr(ingest, "raw_refs", ()) or ()))
+    status = DataResultStatus.PARTIAL if has_refs and gaps else DataResultStatus.READY if has_refs else DataResultStatus.MISSING
+    return DataResult(
+        request_id=need.need_id,
+        status=status,
+        rows=(),
+        dataset_refs=tuple(getattr(ingest, "dataset_refs", ()) or ()),
+        raw_refs=tuple(getattr(ingest, "raw_refs", ()) or ()),
+        attempt_refs=tuple(getattr(ingest, "attempt_refs", ()) or ()),
+        gaps=gaps,
+        as_of=datetime.now(tz=UTC),
+    )
+
+
+def _data_result_from_data_need_gap(*, need: DataNeed | None, gap: Any) -> DataResult:
+    request_id = str(getattr(gap, "need_id", None) or getattr(need, "need_id", None) or "selection:data_need:unknown")
+    reason = getattr(gap, "reason", GapReason.CATALOG_MATCH_MISSING)
+    reason_value = getattr(reason, "value", str(reason))
+    evidence_refs = tuple(getattr(gap, "evidence_refs", ()) or ())
+    if reason_value in {"rate_limited", "rate_limited_by_tool_budget", "cooldown_skipped"} and not evidence_refs:
+        evidence_refs = (f"data_need:{request_id}",)
+    data_gap = DataGap.by_reason(
+        reason_value,
+        request_id=request_id,
+        market=getattr(need, "market", Market.CN_A) if need is not None else Market.CN_A,
+        data_type="daily_bar",
+        granularity=str(getattr(need, "granularity", "daily") or "daily") if need is not None else "daily",
+        severity=GapSeverity.BLOCKER,
+        evidence_refs=evidence_refs,
+        message=str(getattr(gap, "human_readable", None) or reason_value),
+        symbol_id=getattr(need, "instrument", None) if need is not None else None,
+        as_of=datetime.now(tz=UTC),
+    )
+    return DataResult(
+        request_id=request_id,
+        status=DataResultStatus.MISSING,
+        rows=(),
+        gaps=(data_gap,),
+        as_of=datetime.now(tz=UTC),
     )
 
 
@@ -1251,40 +1408,9 @@ def _selection_data_requests(
     )
 
 
-def _selection_history_backfill_requests(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[DataRequest, ...]:
-    shortfalls = _direct_history_shortfalls(plan=plan, results=results)
-    tickers = tuple(item.ticker for item in shortfalls if item.classification == "listed_old_history_missing_should_backfill")
-    if not tickers:
-        return ()
-
-    as_of = datetime.now(tz=UTC)
-    trade_date = date.fromisoformat(plan.trade_date)
-    start = trade_date - timedelta(days=max(plan.lookback_trading_days, _DEFAULT_LOOKBACK_TRADING_DAYS) * 2)
-    return tuple(
-        DataRequest(
-            request_id=f"{plan.selection_run_id}:selection:history_backfill:{index}:{ticker}:daily_bar",
-            market=Market.CN_A,
-            symbol_id=ticker,
-            timezone=_CN_A_SELECTION_TIMEZONE,
-            calendar=_CN_A_SELECTION_CALENDAR,
-            data_type="daily_bar",
-            granularity="daily",
-            fields=_SELECTION_DAILY_REQUEST[2],
-            date_range_start=start,
-            date_range_end=trade_date,
-            freshness_policy="trading_day",
-            consumer="select",
-            consumer_id=plan.selection_run_id,
-            as_of=as_of,
-        )
-        for index, ticker in enumerate(tickers, start=1)
-    )
-
-
-def _selection_universe_refresh_requests(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[DataRequest, ...]:
+def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[PublicDataRequest, ...]:
     if not _main_daily_result_needs_universe_refresh(plan=plan, results=results):
         return ()
-    as_of = datetime.now(tz=UTC)
     trade_date = date.fromisoformat(plan.trade_date)
     start_fallback = trade_date - timedelta(days=max(plan.lookback_trading_days, _DEFAULT_LOOKBACK_TRADING_DAYS) * 2)
     refresh_dates = _selection_universe_refresh_dates(plan=plan, results=results)
@@ -1294,26 +1420,17 @@ def _selection_universe_refresh_requests(*, plan: SelectionRunPlan, results: tup
         refresh_dates = (trade_date,)
     if refresh_dates:
         return tuple(
-            DataRequest(
-                request_id=f"{plan.selection_run_id}:selection:universe_refresh:{index}:all_a_shares:daily_bar",
-                market=Market.CN_A,
-                universe_ref=plan.universe_scope,
-                timezone=_CN_A_SELECTION_TIMEZONE,
-                calendar=_CN_A_SELECTION_CALENDAR,
-                data_type="daily_bar",
+            _selection_data_need(
+                need_id=f"{plan.selection_run_id}:selection:universe_refresh:{index}:all_a_shares:daily_bar",
+                instrument=plan.universe_scope,
+                start=refresh_date,
+                end=refresh_date,
                 granularity="daily",
-                fields=_SELECTION_DAILY_REQUEST[2],
-                date_range_start=refresh_date,
-                date_range_end=refresh_date,
-                freshness_policy="trading_day",
-                consumer="select",
-                consumer_id=plan.selection_run_id,
-                as_of=as_of,
             )
             for index, refresh_date in enumerate(refresh_dates, start=1)
         )
 
-    requests: list[DataRequest] = []
+    needs: list[PublicDataRequest] = []
     seen: set[str] = set()
     for row in _main_direct_selection_rows(plan=plan, results=results):
         ticker = _ticker_from_row(row)
@@ -1324,25 +1441,41 @@ def _selection_universe_refresh_requests(*, plan: SelectionRunPlan, results: tup
             continue
         seen.add(ticker)
         start = start_fallback if latest is None else min(latest + timedelta(days=1), trade_date)
-        requests.append(
-            DataRequest(
-                request_id=f"{plan.selection_run_id}:selection:universe_refresh:{len(requests) + 1}:{ticker}:daily_bar",
-                market=Market.CN_A,
-                symbol_id=ticker,
-                timezone=_CN_A_SELECTION_TIMEZONE,
-                calendar=_CN_A_SELECTION_CALENDAR,
-                data_type="daily_bar",
+        needs.append(
+            _selection_data_need(
+                need_id=f"{plan.selection_run_id}:selection:universe_refresh:{len(needs) + 1}:{ticker}:daily_bar",
+                instrument=ticker,
+                start=start,
+                end=trade_date,
                 granularity="daily",
-                fields=_SELECTION_DAILY_REQUEST[2],
-                date_range_start=start,
-                date_range_end=trade_date,
-                freshness_policy="trading_day",
-                consumer="select",
-                consumer_id=plan.selection_run_id,
-                as_of=as_of,
             )
         )
-    return tuple(requests)
+    return tuple(needs)
+
+
+def _selection_data_need(
+    *,
+    need_id: str,
+    instrument: str,
+    start: date,
+    end: date,
+    granularity: str,
+) -> PublicDataRequest:
+    return PublicDataRequest(
+        request_id=need_id,
+        item="日线",
+        market=Market.CN_A,
+        instrument=instrument,
+        time_range_start=start,
+        time_range_end=end,
+        granularity=granularity,
+        priority=PublicRequestPriority.REQUIRED,
+        requested_by_worker="selection_data_job",
+        purpose="selection_candidate_cache",
+        freshness_policy="trading_day",
+        deadline_at=datetime.now(tz=UTC) + timedelta(seconds=60),
+        consumer="select",
+    )
 
 
 def _selection_universe_refresh_dates(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[date, ...]:
@@ -2088,12 +2221,12 @@ def _latest_history_date(row: Mapping[str, object]) -> date | None:
 def _failed_provider_result(
     *,
     plan: SelectionRunPlan,
-    provider_plan: SelectionProviderBatchPlan,
+    data_need_audit: SelectionDataNeedAudit,
     gap_code: str,
     message: str,
-) -> SelectionProviderBatchResult:
-    return SelectionProviderBatchResult(
-        provider_batch_plan=provider_plan,
+) -> SelectionDataNeedResult:
+    return SelectionDataNeedResult(
+        data_need_audit=data_need_audit,
         attempt_refs=(),
         normalized_refs=(),
         rows=(),
@@ -2101,7 +2234,7 @@ def _failed_provider_result(
             _blocker_gap(
                 gap_id=f"{plan.selection_run_id}-{gap_code}",
                 gap_code=gap_code,
-                attempt_refs=(provider_plan.lineage_root_ref,),
+                attempt_refs=(data_need_audit.lineage_root_ref,),
                 reader_message=message,
             ),
         ),
@@ -2199,16 +2332,6 @@ def _warn_gap(
         reader_message=reader_message,
         source_metadata=dict(source_metadata) if source_metadata else None,
     )
-
-
-def _cn_a_provider_candidates() -> tuple[str, ...]:
-    provider_ids: list[str] = []
-    for plugin in iter_minimal_market_plugins():
-        caps = plugin.capabilities()
-        endpoints = tuple(getattr(caps, "endpoints", ()) or ())
-        if any(_enum_value(getattr(endpoint, "market", "")) == Market.CN_A.value for endpoint in endpoints):
-            provider_ids.append(str(getattr(caps, "provider_id")))
-    return tuple(dict.fromkeys(provider_ids)) or ("cn_a_provider_unconfigured",)
 
 
 def _enum_value(value: Any) -> str:
@@ -2490,7 +2613,7 @@ def _write_evidence(
     plan: SelectionRunPlan,
     requests: tuple[DataRequest, ...],
     results: tuple[DataResult, ...],
-    provider_result: SelectionProviderBatchResult,
+    provider_result: SelectionDataNeedResult,
 ) -> None:
     if evidence_root is None:
         return

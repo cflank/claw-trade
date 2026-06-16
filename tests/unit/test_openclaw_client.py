@@ -91,33 +91,55 @@ def test_cn_a_pure_prompt_worker_command_can_have_no_visible_tools() -> None:
     assert command.allowed_tools == ()
 
 
-def test_crypto_single_pack_frontline_command_sets_initial_tool_choice() -> None:
+@pytest.mark.parametrize(
+    ("profile", "market", "worker_id"),
+    [
+        *(
+            ("CN_A", "CN_A", worker_id)
+            for worker_id in (
+                "market_analyst",
+                "fundamental_analyst",
+                "news_analyst",
+                "social_analyst",
+                "policy_analyst",
+                "hot_money_tracker",
+                "lockup_watcher",
+            )
+        ),
+        *(
+            (profile, market, worker_id)
+            for profile, market in (("US", "US"), ("HK", "HK"), ("CRYPTO", "CRYPTO"))
+            for worker_id in ("market_analyst", "fundamental_analyst", "news_analyst", "social_analyst")
+        ),
+    ],
+)
+def test_frontline_data_workers_set_data_need_initial_tool_choice(profile: str, market: str, worker_id: str) -> None:
     command = build_openclaw_command(
         replace(
             _valid_call(),
-            worker_id="social_analyst",
+            worker_id=worker_id,
             stage=Stage.FRONTLINE,
-            profile="CRYPTO",
-            ticker="BTC",
-            company_name="Bitcoin",
-            market="CRYPTO",
-            currency="USD",
-            currency_symbol="$",
-            allowed_tools=("claw_get_social_pack",),
+            profile=profile,
+            ticker="BTC" if market == "CRYPTO" else "600519.SH",
+            company_name="Bitcoin" if market == "CRYPTO" else "贵州茅台",
+            market=market,
+            currency="USDT" if market == "CRYPTO" else "CNY",
+            currency_symbol="USDT" if market == "CRYPTO" else "￥",
+            allowed_tools=("claw_request_data",),
             upstream_materials=(),
             openviking_read_capabilities=(),
         )
     )
     payload = serialize_openclaw_command_payload(command)
 
-    assert command.initial_tool_choice == "claw_get_social_pack"
+    assert command.initial_tool_choice == "claw_request_data"
     assert payload["initial_tool_choice"] == {
         "type": "tool",
-        "name": "claw_get_social_pack",
+        "name": "claw_request_data",
     }
 
 
-def test_crypto_single_market_pack_command_forces_initial_tool_choice() -> None:
+def test_crypto_frontline_non_data_need_tool_no_longer_forces_initial_tool_choice() -> None:
     command = build_openclaw_command(
         replace(
             _valid_call(),
@@ -129,18 +151,15 @@ def test_crypto_single_market_pack_command_forces_initial_tool_choice() -> None:
             market="CRYPTO",
             currency="USD",
             currency_symbol="$",
-            allowed_tools=("claw_get_market_pack",),
+            allowed_tools=("claw_get_selection_candidate_cache",),
             upstream_materials=(),
             openviking_read_capabilities=(),
         )
     )
     payload = serialize_openclaw_command_payload(command)
 
-    assert command.initial_tool_choice == "claw_get_market_pack"
-    assert payload["initial_tool_choice"] == {
-        "type": "tool",
-        "name": "claw_get_market_pack",
-    }
+    assert command.initial_tool_choice is None
+    assert "initial_tool_choice" not in payload
 
 
 def test_parse_openclaw_result_converts_paths() -> None:

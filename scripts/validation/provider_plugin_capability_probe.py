@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from claw_trade.data_gateway.execution.fetch_engine import FetchTask
-from claw_trade.data_gateway.execution.managed_http import ManagedHttp, UrllibHttpClient
+from claw_trade.data_gateway.execution.managed_http import ManagedHttp, RequestsHttpClient
 from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
 from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
 from claw_trade.ui_backend.mongo_settings_store import (
@@ -39,7 +39,7 @@ def main() -> int:
 
     _load_runtime_env()
     resolver = _credential_resolver()
-    managed_http = ManagedHttp(UrllibHttpClient())
+    managed_http = ManagedHttp(RequestsHttpClient())
     results: list[dict[str, Any]] = []
     for plugin in iter_minimal_market_plugins():
         caps = plugin.capabilities()

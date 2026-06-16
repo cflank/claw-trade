@@ -15,6 +15,8 @@ stage: risk_debate
 社交媒体情绪报告：{sentiment_report}
 最新世界事务报告：{news_report}
 公司基本面报告：{fundamentals_report}
+数据证据边界（辩论数据冲突前必须先核对）：{data_evidence_summary}
+如果上游论点与数据证据边界冲突，必须说明冲突并降为待验证，不得继续放大冲突数字或事实。
 以下是当前对话历史：{history}
 以下是激进分析师的最后回应：{current_risky_response}
 以下是安全分析师的最后回应：{current_safe_response}

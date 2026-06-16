@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Protocol
 
 from claw_trade.artifacts.approval import approve_worker_material
 from claw_trade.artifacts.manifest import ApprovedManifest, ManifestStore
@@ -27,7 +27,7 @@ from claw_trade.guards.provider_request import validate_provider_request
 from claw_trade.guards.tool_calls import validate_tool_calls
 from claw_trade.guards.visible_tools import validate_visible_tools
 from claw_trade.guards.workspace_evidence import validate_workspace_evidence
-from claw_trade.reports.data_evidence_summary import summarize_report_prefetch_manifest
+from claw_trade.reports.data_evidence_summary import summarize_report_data_need_results
 from claw_trade.reports.structure import validate_report_polisher_segment_text
 from claw_trade.runtime.evidence_reader import (
     EvidenceReader,
@@ -112,10 +112,6 @@ class LineageWriterLike(Protocol):
     ) -> Any: ...
 
 
-class DataPrefetcherLike(Protocol):
-    def prefetch_report(self, state: WorkflowState) -> Mapping[str, Any]: ...
-
-
 @dataclass(frozen=True)
 class PromptMaterialResult:
     ok: bool
@@ -187,7 +183,6 @@ class ControlRunner:
         now_text: Callable[[], str] | None = None,
         agents_root: Path | None = None,
         lineage_writer: LineageWriterLike | None = None,
-        data_prefetcher: DataPrefetcherLike | None = None,
         **legacy_kwargs: object,
     ) -> None:
         self.store = store
@@ -201,7 +196,6 @@ class ControlRunner:
         self.now_text = now_text or _utc_now_iso_text
         self.agents_root = agents_root or (Path(__file__).resolve().parents[3] / "agents")
         self.lineage_writer = lineage_writer
-        self.data_prefetcher = data_prefetcher
         self._legacy_provider_plan_injection_present = bool(legacy_kwargs)
         self._manifest_write_lock = Lock()
 
@@ -302,14 +296,6 @@ class ControlRunner:
                 human_action_required=None,
             )
             return self.fail_run(state, failure, decision_path=state.run_dir / "decisions" / "bootstrap-failed.json")
-        prefetch_failure = self._prefetch_report_data(state)
-        if prefetch_failure is not None:
-            return self.fail_run(
-                state,
-                prefetch_failure,
-                decision_path=state.run_dir / "decisions" / "bootstrap-failed.json",
-            )
-
         while True:
             state = self.store.load_state(state.run_id)
             # 调度权边界：下一步 worker/stage 由 controller 决定，runner 只执行决定。
@@ -355,41 +341,6 @@ class ControlRunner:
             category="data_gateway_mode",
             reason=f"unsupported data_gateway mode: {mode}; report_command 仅允许 data_gateway",
             evidence_paths=(state.run_dir / "request.json",),
-            early_stop=True,
-            human_action_required=None,
-        )
-
-    def _prefetch_report_data(self, state: WorkflowState) -> FailureRecord | None:
-        if self.data_prefetcher is None:
-            return None
-        if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
-            return None
-        if state.request.data_gateway.strip().lower() != "data_gateway":
-            return None
-        try:
-            result = self.data_prefetcher.prefetch_report(state)
-        except Exception as exc:
-            return FailureRecord(
-                run_id=state.run_id,
-                call_id=None,
-                worker_id=None,
-                stage=None,
-                category="data_prefetch",
-                reason=f"report 数据预提取失败: {exc}",
-                evidence_paths=(state.run_dir / "data-layer",),
-                early_stop=True,
-                human_action_required=None,
-            )
-        if bool(result.get("ok")):
-            return None
-        return FailureRecord(
-            run_id=state.run_id,
-            call_id=None,
-            worker_id=None,
-            stage=None,
-            category=str(result.get("category") or "data_prefetch"),
-            reason=str(result.get("reason") or "report 数据预提取失败"),
-            evidence_paths=_prefetch_evidence_paths(result, fallback=state.run_dir / "data-layer"),
             early_stop=True,
             human_action_required=None,
         )
@@ -639,7 +590,6 @@ class ControlRunner:
                     "final_report_section_instruction",
                     spec.section_plan.instruction,
                 )
-            call = _with_report_prefetch_manifest(call, state)
             call = _with_report_data_evidence_summary(call, state)
             result = self.run_single_worker(call)
             self.store.save_worker_result(result)
@@ -819,8 +769,7 @@ class ControlRunner:
                 worker_results_by_id[worker_id] = result
                 break
 
-            prepared_call = _with_report_prefetch_manifest(prompt_result.call, state)
-            prepared_call = _with_report_data_evidence_summary(prepared_call, state)
+            prepared_call = _with_report_data_evidence_summary(prompt_result.call, state)
             prepared_calls.append(prepared_call)
 
         if prepared_calls:
@@ -1605,38 +1554,19 @@ def _with_prompt_runtime_var(call: WorkerCall, key: str, value: str) -> WorkerCa
     return replace(call, prompt_runtime_vars={**call.prompt_runtime_vars, key: value})
 
 
-_REPORT_PREFETCH_WORKERS = frozenset(
-    {
-        "market_analyst",
-        "fundamental_analyst",
-        "news_analyst",
-        "social_analyst",
-    }
-)
-
 _REPORT_DATA_EVIDENCE_WORKERS = frozenset(
     {
+        "bull_researcher",
+        "bear_researcher",
+        "research_manager",
         "trader",
+        "risk_challenger",
+        "risk_guardian",
+        "risk_moderator",
         "portfolio_manager",
         "report_polisher",
     }
 )
-
-
-def _with_report_prefetch_manifest(call: WorkerCall, state: WorkflowState) -> WorkerCall:
-    if state.request.entry_point != WorkflowEntryPoint.REPORT_COMMAND:
-        return call
-    if state.request.data_gateway.strip().lower() != "data_gateway":
-        return call
-    if call.stage != Stage.FRONTLINE:
-        return call
-    if call.worker_id not in _REPORT_PREFETCH_WORKERS:
-        return call
-    return _with_prompt_runtime_var(
-        call,
-        "report_prefetch_manifest_path",
-        str(state.run_dir / "data-layer" / "report-prefetch.json"),
-    )
 
 
 def _with_report_data_evidence_summary(call: WorkerCall, state: WorkflowState) -> WorkerCall:
@@ -1646,11 +1576,12 @@ def _with_report_data_evidence_summary(call: WorkerCall, state: WorkflowState) -
         return call
     if call.worker_id not in _REPORT_DATA_EVIDENCE_WORKERS:
         return call
-    manifest_path = state.run_dir / "data-layer" / "report-prefetch.json"
-    summary = summarize_report_prefetch_manifest(
-        manifest_path,
+    legacy_manifest_path = state.run_dir / "data-layer" / "report-prefetch.json"
+    summary = summarize_report_data_need_results(
+        state.run_dir,
         ticker=state.request.ticker,
         company_name=state.request.company_name,
+        fallback_manifest_path=legacy_manifest_path,
     )
     return _with_prompt_runtime_var(call, "data_evidence_summary", summary)
 
@@ -1877,18 +1808,6 @@ def _dedupe_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
         if path not in out:
             out.append(path)
     return tuple(out)
-
-
-def _prefetch_evidence_paths(result: Mapping[str, Any], *, fallback: Path) -> tuple[Path, ...]:
-    raw_paths = result.get("evidence_paths") or ()
-    paths: list[Path] = []
-    if isinstance(raw_paths, (str, Path)):
-        raw_paths = (raw_paths,)
-    for raw_path in raw_paths:
-        text = str(raw_path).strip()
-        if text:
-            paths.append(Path(text))
-    return tuple(paths) or (fallback,)
 
 
 def _probe_ok(probe: object) -> bool:

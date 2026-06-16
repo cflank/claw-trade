@@ -23,7 +23,7 @@ def test_data_gateway_selection_batch_ignores_local_baostock_runtime_root(
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
         approved_strategy_config_ref="config://cn-a-selection-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )

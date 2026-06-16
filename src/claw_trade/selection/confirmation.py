@@ -242,34 +242,34 @@ class SelectionConfirmationController:
             raise SelectionConfirmationError("selection_run_not_found", "选股批次不存在。")
         if record.data_run.status != SelectionDataRunStatus.COMPLETED:
             raise SelectionConfirmationError("selection_not_confirmable", "选股批次尚未完成，不能确认。")
-        candidate_pack_ref = record.data_run.candidate_pack_ref
-        if candidate_pack_ref is None:
-            raise SelectionConfirmationError("candidate_pack_not_approved", "候选池事实包尚未批准。")
-        if context.decision_approved_material_id == candidate_pack_ref.material_id:
+        candidate_cache_ref = record.data_run.candidate_cache_ref
+        if candidate_cache_ref is None:
+            raise SelectionConfirmationError("candidate_cache_not_approved", "候选缓存尚未批准。")
+        if context.decision_approved_material_id == candidate_cache_ref.material_id:
             raise SelectionConfirmationError(
                 "selection_decision_missing_or_unapproved",
                 "选股决策缺失或未通过批准，无法确认。",
             )
-        if candidate_pack_ref.selection_run_id != context.selection_run_id:
-            raise SelectionConfirmationError("candidate_pack_integrity_failed", "候选池与选股工作流绑定不一致。")
-        if not record.integrity.pack_approved:
-            raise SelectionConfirmationError("candidate_pack_not_approved", "候选池事实包尚未批准。")
-        if _parse_iso(candidate_pack_ref.expires_at) <= _to_utc(self._now_fn()):
+        if candidate_cache_ref.selection_run_id != context.selection_run_id:
+            raise SelectionConfirmationError("candidate_cache_integrity_failed", "候选池与选股工作流绑定不一致。")
+        if not record.integrity.cache_approved:
+            raise SelectionConfirmationError("candidate_cache_not_approved", "候选缓存尚未批准。")
+        if _parse_iso(candidate_cache_ref.expires_at) <= _to_utc(self._now_fn()):
             raise SelectionConfirmationError("stale_selection_run", "候选池已过期，请等待下一轮选股。")
         if record.manifest is None:
-            raise SelectionConfirmationError("candidate_pack_integrity_failed", "候选池 manifest 缺失。")
-        if record.manifest.pack_body_sha256 != candidate_pack_ref.content_sha256:
-            raise SelectionConfirmationError("candidate_pack_hash_mismatch", "候选池 hash 校验失败。")
+            raise SelectionConfirmationError("candidate_cache_integrity_failed", "候选池 manifest 缺失。")
+        if record.manifest.cache_body_sha256 != candidate_cache_ref.content_sha256:
+            raise SelectionConfirmationError("candidate_cache_hash_mismatch", "候选池 hash 校验失败。")
         if not record.integrity.hash_matches_manifest:
-            raise SelectionConfirmationError("candidate_pack_hash_mismatch", "候选池 hash 校验失败。")
+            raise SelectionConfirmationError("candidate_cache_hash_mismatch", "候选池 hash 校验失败。")
         if record.manifest.readback_status.value != "verified":
-            raise SelectionConfirmationError("candidate_pack_integrity_failed", "候选池 readback 校验失败。")
+            raise SelectionConfirmationError("candidate_cache_integrity_failed", "候选池 readback 校验失败。")
         if not record.integrity.readback_verified:
-            raise SelectionConfirmationError("candidate_pack_integrity_failed", "候选池 readback 校验失败。")
+            raise SelectionConfirmationError("candidate_cache_integrity_failed", "候选池 readback 校验失败。")
         if not record.integrity.lineage_complete:
-            raise SelectionConfirmationError("candidate_pack_lineage_incomplete", "候选池 lineage 不完整。")
+            raise SelectionConfirmationError("candidate_cache_lineage_incomplete", "候选池 lineage 不完整。")
         if not record.manifest.source_lineage_refs:
-            raise SelectionConfirmationError("candidate_pack_lineage_incomplete", "候选池 lineage 不完整。")
+            raise SelectionConfirmationError("candidate_cache_lineage_incomplete", "候选池 lineage 不完整。")
         return record
 
     def _load_record_from_store(self, selection_run_id: str) -> SelectionDataRunRecord | None:

@@ -119,9 +119,7 @@ class ProviderRegistry:
             supported_granularities = _as_tuple(_read_attr(endpoint, "supported_granularities", ()))
             if not supported_granularities:
                 supported_granularities = _as_tuple(_read_attr(endpoint, "granularity", ()))
-            coverage_fields = _as_tuple(_read_attr(endpoint, "coverage_fields", ()))
-            if not coverage_fields:
-                coverage_fields = _as_tuple(_read_attr(endpoint, "fields", ()))
+            fields = _as_tuple(_read_attr(endpoint, "fields", ()))
 
             cap = ProviderCapabilityView(
                 provider_id=provider_id,
@@ -131,7 +129,7 @@ class ProviderRegistry:
                 data_type=data_type,
                 source_role=source_role,
                 supported_granularities=tuple(supported_granularities),
-                coverage_fields=tuple(coverage_fields),
+                fields=tuple(fields),
                 priority_rank=priority_rank,
                 credential_required=credential_required,
                 credential_names=credential_names,

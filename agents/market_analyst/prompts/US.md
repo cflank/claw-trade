@@ -33,9 +33,9 @@ The instrument to analyze is `{ticker}`. Use this exact ticker in the report and
 
 For your reference, the current date is {current_date}. The market data window is {start_date} to {end_date}; the data tool receives this from runtime context.
 
-Available tool: `claw_get_market_pack`.
+Available tool: `claw_request_data`.
 
-Before writing the market report, call `claw_get_market_pack` to retrieve price data, indicators, and chart readiness. If the tool is unavailable, returns no usable price data, or omits expected technical outputs, write a limitation report that states the missing evidence and do not make unsupported market claims.
+Before writing the market report, call `claw_request_data` with `item` set to `daily_bar` and `purpose` set to `market_report` to retrieve price data, indicators, and chart readiness. If the tool is unavailable, returns no usable price data, or omits expected technical outputs, write a limitation report that states the missing evidence and do not make unsupported market claims.
 
 Select indicators that provide diverse and complementary information. Avoid redundancy, for example do not select both rsi and stochrsi. Include `vwma` when evaluating volume confirmation because it is the volume-based indicator in the available indicator set. Also briefly explain why the selected indicators are suitable for the given market context.
 

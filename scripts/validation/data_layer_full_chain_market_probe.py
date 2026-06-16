@@ -15,15 +15,13 @@ from time import monotonic
 from typing import Any
 
 from claw_trade.data_gateway.api import DataAPI
-from claw_trade.data_gateway.coordination.batch_planner import ProviderBatchPlanner
-from claw_trade.data_gateway.coordination.coalescer import RequestCoalescer
-from claw_trade.data_gateway.coordination.provider_selector import ProviderSelector
 from claw_trade.data_gateway.coordination.query_planner import QueryPlanner
+from claw_trade.data_gateway.coordination.scheduler import DataRunScheduler
 from claw_trade.data_gateway.coordination.service import DataService
 from claw_trade.data_gateway.execution import ProviderResultCache
 from claw_trade.data_gateway.execution.fetch_engine import FetchEngine
 from claw_trade.data_gateway.execution.gate import ExecutionGate
-from claw_trade.data_gateway.execution.managed_http import ManagedHttp, UrllibHttpClient
+from claw_trade.data_gateway.execution.managed_http import ManagedHttp, RequestsHttpClient
 from claw_trade.data_gateway.execution.rate_limit_policy import RateLimitPolicyResolver
 from claw_trade.data_gateway.execution.rate_limiter import RateLimiter
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
@@ -32,7 +30,8 @@ from claw_trade.data_gateway.ingest.normalized_store import NormalizedStore
 from claw_trade.data_gateway.ingest.normalizer import Normalizer
 from claw_trade.data_gateway.ingest.pipeline import IngestPipeline
 from claw_trade.data_gateway.ingest.raw_store import RawStore
-from claw_trade.data_gateway.models import DataRequest, FetchResult, IngestResult
+from claw_trade.data_gateway.models import FetchResult, IngestResult
+from claw_trade.data_gateway.public_api import PublicDataRequest, PublicRequestPriority
 from claw_trade.data_gateway.providers import build_minimal_provider_registry
 from claw_trade.data_gateway.providers.credentials import DataSourceCredentialResolver
 from claw_trade.data_gateway.providers.plugins import iter_minimal_market_plugins
@@ -69,26 +68,19 @@ def main() -> int:
     repository = DatasetRepository.from_database(scratch_db)
     registry = build_minimal_provider_registry()
     recorder = Recorder(run_id=run_id, market=args.market)
-    managed_http = RecordingManagedHttp(ManagedHttp(UrllibHttpClient()), recorder)
+    managed_http = RecordingManagedHttp(ManagedHttp(RequestsHttpClient()), recorder)
     credential_resolver = DataSourceCredentialResolver(
         data_source_store=MongoDataSourceStore(main_db[UI_DATA_SOURCE_SETTINGS_COLLECTION]),
         secret_store=MongoSecretStore(main_db[UI_SECRET_SETTINGS_COLLECTION]),
     )
     rate_limiter = RateLimiter(repository)
     service = DataService(
-        query_planner=RecordingQueryPlanner(QueryPlanner(), recorder),
-        warehouse=RecordingWarehouse(Warehouse(repository), recorder),
-        provider_selector=RecordingProviderSelector(
-            ProviderSelector(registry, credential_resolver=credential_resolver),
-            registry,
-            recorder,
-        ),
-        coalescer=RecordingCoalescer(RequestCoalescer(), recorder),
-        batch_planner=RecordingBatchPlanner(
-            ProviderBatchPlanner(
-                rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
-            ),
-            recorder,
+        query_planner=SimpleNamespace(),
+        warehouse=SimpleNamespace(),
+        provider_selector=SimpleNamespace(),
+        coalescer=SimpleNamespace(),
+        batch_planner=SimpleNamespace(
+            _rate_limit_policy_resolver=RateLimitPolicyResolver(data_source_settings=credential_resolver),
         ),
         execution_gate=RecordingExecutionGate(
             ExecutionGate(
@@ -120,12 +112,12 @@ def main() -> int:
     )
     api = DataAPI(service)
     requests = _requests_for(args.market, run_id=run_id)
-    results = api.get_data_batch(requests)
+    results = api.request_data(requests)
 
     capabilities = _capabilities_for_market(args.market)
     provider_matrix = _provider_matrix(capabilities, requests, recorder.events)
     payload = {
-        "schema_version": "data-layer-full-chain-market-probe-v1",
+        "schema_version": "data-layer-public-api-market-probe-v1",
         "run_id": run_id,
         "generated_at": datetime.now(tz=UTC).isoformat(),
         "market": args.market,
@@ -133,7 +125,7 @@ def main() -> int:
         "runtime_profile": _runtime_profile(),
         "configured_sources": _configured_source_summary(main_db),
         "request_count": len(requests),
-        "requests": [_request_summary(req) for req in requests],
+        "requests": [_request_summary(request) for request in requests],
         "results": [_result_summary(result) for result in results],
         "provider_matrix": provider_matrix,
         "events": recorder.events,
@@ -190,91 +182,6 @@ class RecordingManagedHttp:
         return capture
 
 
-class RecordingQueryPlanner:
-    def __init__(self, inner: QueryPlanner, recorder: Recorder) -> None:
-        self._inner = inner
-        self._recorder = recorder
-
-    def validate_and_normalize(self, request: DataRequest) -> Any:
-        return self.validate_and_normalize_many((request,))
-
-    def validate_and_normalize_many(self, requests: Sequence[DataRequest]) -> Any:
-        self._recorder.record("query_planner.input", request_ids=tuple(req.request_id for req in requests))
-        plan = self._inner.validate_and_normalize_many(requests)
-        self._recorder.record(
-            "query_planner.output",
-            request_ids=tuple(req.request_id for req in plan.normalized_requests),
-            warehouse_checks=tuple(_check_summary(check) for check in plan.warehouse_checks),
-            expected_outputs=tuple(plan.expected_outputs),
-        )
-        return plan
-
-
-class RecordingWarehouse:
-    def __init__(self, inner: Warehouse, recorder: Recorder) -> None:
-        self._inner = inner
-        self._recorder = recorder
-
-    def check(self, checks: Sequence[Any], coverage: Any) -> Any:
-        self._recorder.record("warehouse.check.start", checks=tuple(_check_summary(check) for check in checks))
-        result = self._inner.check(checks, coverage)
-        self._recorder.record("warehouse.check.end", **_warehouse_summary(result))
-        return result
-
-    def recheck(self, checks: Sequence[Any], coverage: Any) -> Any:
-        self._recorder.record("warehouse.recheck.start", checks=tuple(_check_summary(check) for check in checks))
-        result = self._inner.recheck(checks, coverage)
-        self._recorder.record("warehouse.recheck.end", **_warehouse_summary(result))
-        return result
-
-
-class RecordingProviderSelector:
-    def __init__(self, inner: ProviderSelector, registry: Any, recorder: Recorder) -> None:
-        self._inner = inner
-        self._registry = registry
-        self._recorder = recorder
-
-    def select_candidates(self, gaps: Sequence[Any], plan: Any) -> tuple[Any, ...]:
-        self._recorder.record("provider_selector.start", gaps=tuple(_gap_summary(gap) for gap in gaps))
-        candidates = self._inner.select_candidates(gaps, plan)
-        self._recorder.record(
-            "provider_selector.end",
-            candidates=tuple(_candidate_summary(candidate) for candidate in candidates),
-        )
-        return candidates
-
-    def read_capabilities(self, candidates: Sequence[Any]) -> Any:
-        snapshot = self._inner.read_capabilities(candidates)
-        self._recorder.record(
-            "provider_selector.capabilities",
-            provider_ids=tuple(dict.fromkeys(getattr(candidate, "provider_id") for candidate in candidates)),
-            count=len(snapshot.list()),
-        )
-        return snapshot
-
-
-class RecordingCoalescer:
-    def __init__(self, inner: RequestCoalescer, recorder: Recorder) -> None:
-        self._inner = inner
-        self._recorder = recorder
-
-    def coalesce(self, gaps: Sequence[Any], candidates: Sequence[Any], capabilities: Any) -> tuple[Any, ...]:
-        groups = self._inner.coalesce(gaps, candidates, capabilities)
-        self._recorder.record("coalescer.end", groups=tuple(_group_summary(group) for group in groups))
-        return groups
-
-
-class RecordingBatchPlanner:
-    def __init__(self, inner: ProviderBatchPlanner, recorder: Recorder) -> None:
-        self._inner = inner
-        self._recorder = recorder
-
-    def build_batches(self, groups: Sequence[Any], capabilities: Any) -> tuple[Any, ...]:
-        batches = self._inner.build_batches(groups, capabilities)
-        self._recorder.record("batch_planner.end", batches=tuple(_batch_summary(batch) for batch in batches))
-        return batches
-
-
 class RecordingExecutionGate:
     def __init__(self, inner: ExecutionGate, recorder: Recorder) -> None:
         self._inner = inner
@@ -292,8 +199,8 @@ class RecordingExecutionGate:
         )
         return decision
 
-    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: Any) -> Any:
-        ok = self._inner.publish_shared_result(single_flight_key, owner_token, ingest)
+    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: Any, *, batch: Any | None = None) -> Any:
+        ok = self._inner.publish_shared_result(single_flight_key, owner_token, ingest, batch=batch)
         self._recorder.record(
             "execution_gate.publish_shared_result",
             single_flight_key=single_flight_key,
@@ -378,7 +285,7 @@ def _fetch_child_entrypoint(batch: Any, run_id: str, market: str, rate_limit_db_
     try:
         main_db = _mongo_db()
         registry = build_minimal_provider_registry()
-        managed_http = RecordingManagedHttp(ManagedHttp(UrllibHttpClient()), recorder)
+        managed_http = RecordingManagedHttp(ManagedHttp(RequestsHttpClient()), recorder)
         credential_resolver = DataSourceCredentialResolver(
             data_source_store=MongoDataSourceStore(main_db[UI_DATA_SOURCE_SETTINGS_COLLECTION]),
             secret_store=MongoSecretStore(main_db[UI_SECRET_SETTINGS_COLLECTION]),
@@ -422,36 +329,101 @@ class RecordingIngest:
         return ingest
 
 
-def _requests_for(market: str, *, run_id: str) -> list[DataRequest]:
+def _requests_for(market: str, *, run_id: str) -> list[PublicDataRequest]:
     as_of = datetime.now(tz=UTC)
     specs = _request_specs(market)
-    requests: list[DataRequest] = []
+    requests: list[PublicDataRequest] = []
     for idx, spec in enumerate(specs, start=1):
-        payload = {
-                "request_id": f"{run_id}:{idx:02d}:{spec['data_type']}",
-                "market": market,
-                "symbol_id": spec["symbol_id"],
-                "timezone": spec["timezone"],
-                "calendar": spec["calendar"],
-                "base_asset": spec.get("base_asset"),
-                "quote_asset": spec.get("quote_asset"),
-                "data_type": spec["data_type"],
-                "granularity": spec["granularity"],
-                "fields": tuple(spec["fields"]),
-                "freshness_policy": spec.get("freshness_policy", "event_time"),
-                "source_role_required": spec.get("source_role_required"),
-                "consumer": "ui_probe",
-                "consumer_id": run_id,
-                "as_of": as_of,
-            }
+        item = _item_for_spec(spec)
         range_days = spec.get("range_days")
-        if range_days is not None:
-            range_end = spec.get("date_range_end") or as_of.date()
-            range_start = spec.get("date_range_start") or (range_end - timedelta(days=int(range_days)))
-            payload["date_range_start"] = range_start
-            payload["date_range_end"] = range_end
-        requests.append(DataRequest.model_validate(payload))
+        range_end = spec.get("date_range_end") or as_of.date()
+        range_start = spec.get("date_range_start")
+        if range_days is not None and range_start is None:
+            range_start = range_end - timedelta(days=int(range_days))
+        payload = {
+            "request_id": f"{run_id}:{idx:02d}:{_safe_request_token(item)}",
+            "item": item,
+            "market": market,
+            "instrument": spec["symbol_id"],
+            "time_range_start": range_start,
+            "time_range_end": range_end if range_days is not None or range_start is not None else None,
+            "granularity": spec["granularity"],
+            "requested_by_worker": "validation_probe",
+            "purpose": "data_layer_market_probe",
+            "freshness_policy": spec.get("freshness_policy", "event_time"),
+            "deadline_at": as_of + timedelta(minutes=5),
+            "priority": PublicRequestPriority.REQUIRED,
+            "consumer": "ui_probe",
+        }
+        requests.append(PublicDataRequest.model_validate(payload))
     return requests
+
+
+def _item_for_spec(spec: Mapping[str, Any]) -> str:
+    data_type = str(spec["data_type"])
+    if data_type == "daily_bar":
+        return "日线"
+    if data_type == "intraday_bar":
+        return "分钟线"
+    if data_type == "quote_snapshot":
+        return "实时价"
+    if data_type == "order_book_snapshot":
+        return "盘口"
+    if data_type == "financial_statement":
+        return "财报"
+    if data_type == "financial_metric":
+        return "财务指标"
+    if data_type == "valuation_metric":
+        return "估值"
+    if data_type == "capital_flow":
+        return "资金流"
+    if data_type == "sector_snapshot":
+        return "板块"
+    if data_type == "corporate_action":
+        return "公司行动"
+    if data_type == "event_calendar":
+        return "事件日历"
+    if data_type == "official_filing":
+        return "公告"
+    if data_type == "hot_money_event":
+        return "游资"
+    if data_type == "lockup_event":
+        return "解禁"
+    if data_type == "company_news":
+        return "公司新闻"
+    if data_type == "macro_news":
+        return "宏观"
+    if data_type == "social_signal":
+        return "社交情绪"
+    if data_type == "macro_series":
+        return "宏观序列"
+    if data_type == "defi_metric":
+        return "defi"
+    if data_type == "crypto_onchain_metric":
+        return "链上"
+    if data_type == "crypto_derivative_metric":
+        fields = set(spec.get("fields", ()) or ())
+        if "funding_rate" in fields:
+            return "资金费率"
+        if "open_interest" in fields:
+            return "OI"
+        if "long_short_ratio" in fields:
+            return "多空比"
+        if "taker_buy_volume" in fields or "taker_sell_volume" in fields:
+            return "主动买卖量差"
+        if "liquidation_value" in fields:
+            return "清算"
+        if "net_inflow" in fields:
+            return "交易所净流量"
+    return data_type
+
+
+def _safe_request_token(value: str) -> str:
+    return "".join(ch if ch.isascii() and ch.isalnum() else "-" for ch in value).strip("-") or "item"
+
+
+def _market_api_prefix(market: str) -> str:
+    return str(market or "").strip().lower()
 
 
 def _request_specs(market: str) -> list[dict[str, Any]]:
@@ -579,7 +551,7 @@ def _capabilities_for_market(market: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _provider_matrix(capabilities: Sequence[Mapping[str, Any]], requests: Sequence[DataRequest], events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _provider_matrix(capabilities: Sequence[Mapping[str, Any]], requests: Sequence[PublicDataRequest], events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     selected_pairs: Counter[tuple[str, str]] = Counter()
     batch_pairs: Counter[tuple[str, str]] = Counter()
     fetch_results: defaultdict[tuple[str, str], list[str]] = defaultdict(list)
@@ -620,24 +592,22 @@ def _provider_matrix(capabilities: Sequence[Mapping[str, Any]], requests: Sequen
     return rows
 
 
-def _not_called_reason(cap: Mapping[str, Any], requests: Sequence[DataRequest], selected_count: int, batch_count: int, gate_kinds: Sequence[str]) -> str:
+def _not_called_reason(cap: Mapping[str, Any], requests: Sequence[PublicDataRequest], selected_count: int, batch_count: int, gate_kinds: Sequence[str]) -> str:
     if gate_kinds:
         return "gate_non_remote:" + ",".join(dict.fromkeys(gate_kinds))
     if batch_count:
         return "batch_built_but_fetch_not_observed"
     if selected_count:
         return "selected_but_no_batch"
-    for req in requests:
-        if req.data_type != cap["data_type"]:
+    for request in requests:
+        if _request_public_dataset(request) != cap["data_type"]:
             continue
-        if req.granularity not in cap["granularity"]:
+        if request.granularity not in cap["granularity"]:
             continue
-        missing = tuple(field for field in req.fields if field not in cap["fields"])
-        if not missing:
-            return "matching_request_exists_but_not_selected"
-    if any(req.data_type == cap["data_type"] for req in requests):
-        return "request_fields_or_granularity_do_not_match_capability"
-    return "no_request_for_data_type_in_this_probe"
+        return "matching_public_request_exists_but_not_called"
+    if any(_request_public_dataset(request) == cap["data_type"] for request in requests):
+        return "request_granularity_does_not_match_capability"
+    return "no_public_request_for_data_type_in_this_probe"
 
 
 def _runtime_profile() -> dict[str, Any]:
@@ -653,14 +623,31 @@ def _runtime_profile() -> dict[str, Any]:
     }
 
 
-def _request_summary(req: DataRequest) -> dict[str, Any]:
+def _request_public_dataset(request: PublicDataRequest) -> str:
+    suffix = request.api_id.rsplit(".", 1)[-1]
     return {
-        "request_id": req.request_id,
-        "market": req.market.value,
-        "symbol_id": req.symbol_id,
-        "data_type": req.data_type,
-        "granularity": req.granularity,
-        "fields": tuple(req.fields),
+        "realtime_quote": "quote_snapshot",
+        "order_book": "order_book_snapshot",
+        "onchain_metric": "crypto_onchain_metric",
+        "funding_rate": "crypto_derivative_metric",
+        "open_interest": "crypto_derivative_metric",
+        "long_short_ratio": "crypto_derivative_metric",
+        "taker_buy_sell": "crypto_derivative_metric",
+        "liquidation": "crypto_derivative_metric",
+        "liquidation_heatmap": "crypto_derivative_metric",
+        "exchange_netflow": "crypto_derivative_metric",
+    }.get(suffix, suffix)
+
+
+def _request_summary(request: PublicDataRequest) -> dict[str, Any]:
+    return {
+        "request_id": request.request_id,
+        "market": request.market.value,
+        "instrument": request.instrument,
+        "item": request.item,
+        "internal_api_id": request.api_id,
+        "granularity": request.granularity,
+        "consumer": request.consumer,
     }
 
 
@@ -673,53 +660,6 @@ def _result_summary(result: Any) -> dict[str, Any]:
         "raw_refs": tuple(getattr(result, "raw_refs", ()) or ()),
         "attempt_refs": tuple(getattr(result, "attempt_refs", ()) or ()),
         "gaps": tuple(_gap_summary(gap) for gap in tuple(getattr(result, "gaps", ()) or ())),
-    }
-
-
-def _check_summary(check: Any) -> dict[str, Any]:
-    return {
-        "request_id": getattr(check, "request_id", None),
-        "market": _status_value(getattr(check, "market", None)),
-        "symbol_id": getattr(check, "symbol_id", None),
-        "data_type": getattr(check, "data_type", None),
-        "granularity": getattr(check, "granularity", None),
-        "fields": tuple(getattr(check, "fields", ()) or ()),
-    }
-
-
-def _warehouse_summary(result: Any) -> dict[str, Any]:
-    return {
-        "satisfied": bool(getattr(result, "satisfied", False)),
-        "row_count": len(tuple(getattr(result, "rows", ()) or ())),
-        "dataset_refs": tuple(getattr(result, "dataset_refs", ()) or ()),
-        "gaps": tuple(_gap_summary(gap) for gap in tuple(getattr(result, "gaps", ()) or ())),
-    }
-
-
-def _candidate_summary(candidate: Any) -> dict[str, Any]:
-    return {
-        "request_id": getattr(candidate, "request_id", None),
-        "provider_id": getattr(candidate, "provider_id", None),
-        "endpoint_id": getattr(candidate, "endpoint_id", None),
-        "market": getattr(candidate, "market", None),
-        "data_type": getattr(candidate, "data_type", None),
-        "granularity": getattr(candidate, "granularity", None),
-        "fields": tuple(getattr(candidate, "fields", ()) or ()),
-        "source_role": getattr(candidate, "source_role", None),
-        "priority_rank": getattr(candidate, "priority_rank", None),
-    }
-
-
-def _group_summary(group: Any) -> dict[str, Any]:
-    return {
-        "provider_id": getattr(group, "provider_id", None),
-        "endpoint_id": getattr(group, "endpoint_id", None),
-        "market": getattr(group, "market", None),
-        "data_type": getattr(group, "data_type", None),
-        "granularity": getattr(group, "granularity", None),
-        "request_ids": tuple(getattr(group, "request_ids", ()) or ()),
-        "symbol_ids": tuple(getattr(group, "symbol_ids", ()) or ()),
-        "fields_union": tuple(getattr(group, "fields_union", ()) or ()),
     }
 
 
@@ -858,7 +798,7 @@ def _markdown_summary(payload: Mapping[str, Any]) -> str:
             f"| `{result['request_id']}` | `{result['status']}` | "
             f"{len(result.get('dataset_refs', ()) or ())} datasets / {len(result.get('raw_refs', ()) or ())} raw / {len(result.get('attempt_refs', ()) or ())} attempts | `{gaps}` |"
         )
-    lines.extend(["", "## Flow", "", "`DataAPI -> DataService.plan_batch -> QueryPlanner -> Warehouse.check -> ProviderSelector -> RequestCoalescer -> ProviderBatchPlanner -> ExecutionGate -> FetchEngine -> IngestPipeline(RawStore, Normalizer, NormalizedStore, AttemptLog) -> Warehouse.recheck -> DataResult`"])
+    lines.extend(["", "## Flow", "", "`DataAPI.request_data -> public api planner -> ProviderCallSpec -> scheduler -> ExecutionGate -> FetchEngine -> IngestPipeline(RawStore, Normalizer, NormalizedStore, AttemptLog) -> DataResult`"])
     return "\n".join(lines) + "\n"
 
 

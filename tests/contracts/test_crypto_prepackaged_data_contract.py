@@ -110,7 +110,6 @@ def test_local_warehouse_empty_contract_is_explicit_without_remote_success() -> 
         currency="USDT",
         base_asset="BTC",
         quote_asset="USDT",
-        source_role_required="built_in_public",
         consumer="report",
         consumer_id="market_analyst",
         as_of=datetime(2026, 6, 8, tzinfo=UTC),

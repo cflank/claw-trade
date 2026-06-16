@@ -47,10 +47,6 @@ class FreshnessChecker:
         if range_gap is not None:
             gaps.append(range_gap)
 
-        source_gap = self._check_source_role(request=request, records=records)
-        if source_gap is not None:
-            gaps.append(source_gap)
-
         freshness_gap = self._check_freshness(request=request, records=records)
         if freshness_gap is not None:
             gaps.append(freshness_gap)
@@ -158,19 +154,6 @@ class FreshnessChecker:
                 missing.append(day)
         return tuple(missing)
 
-    def _check_source_role(self, *, request: Any, records: Sequence[DatasetRecord]) -> Gap | None:
-        required_source_role = self._value(request, "source_role_required")
-        if not required_source_role:
-            return None
-        for record in records:
-            if required_source_role in record.source_roles:
-                return None
-        return self._gap(
-            "warehouse_missing",
-            dimension="source_role",
-            required_source_role=required_source_role,
-        )
-
     def _check_freshness(self, *, request: Any, records: Sequence[DatasetRecord]) -> Gap | None:
         policy = str(self._value(request, "freshness_policy", "")).strip()
         if not policy:
@@ -193,9 +176,16 @@ class FreshnessChecker:
         if policy == "warehouse_only":
             return None
         if policy == "trading_day":
-            if record_as_of.date() >= as_of.date():
+            required_day = self._freshness_required_trading_day(request=request, as_of=as_of)
+            if required_day is None or record_as_of.date() >= required_day:
                 return None
-            return self._gap("warehouse_stale", policy=policy, record_as_of=record_as_of.isoformat(), as_of=as_of.isoformat())
+            return self._gap(
+                "warehouse_stale",
+                policy=policy,
+                record_as_of=record_as_of.isoformat(),
+                as_of=as_of.isoformat(),
+                required_trading_day=required_day.isoformat(),
+            )
         ttl_match = re.fullmatch(r"ttl_(\d+)([mhd])", policy)
         if ttl_match:
             amount = int(ttl_match.group(1))
@@ -289,6 +279,17 @@ class FreshnessChecker:
             cursor -= timedelta(days=1)
         return None
 
+    def _freshness_required_trading_day(self, *, request: Any, as_of: datetime) -> date | None:
+        calendar = str(self._value(request, "calendar", ""))
+        if calendar == "CRYPTO_24_7":
+            return as_of.date()
+        local_as_of = self._local_as_of(as_of, self._value(request, "timezone"))
+        local_day = local_as_of.date()
+        close_time = self._market_close_time(calendar)
+        if self._is_expected_daily_date(local_day, calendar) and local_as_of.time() >= close_time:
+            return local_day
+        return self._previous_expected_daily_date(local_day - timedelta(days=1), calendar)
+
     @staticmethod
     def _is_expected_daily_date(day: date, calendar: str) -> bool:
         return is_expected_daily_date(day, calendar)
@@ -314,7 +315,7 @@ class FreshnessChecker:
     def _market_close_time(calendar: str) -> time:
         if calendar == "US_NYSE_NASDAQ":
             return time(16, 0)
-        if calendar == "HK_HKEX":
+        if calendar in {"HK_XHKG", "HK_HKEX"}:
             return time(16, 0)
         if calendar == "CN_A_SSE_SZSE":
             return time(15, 0)

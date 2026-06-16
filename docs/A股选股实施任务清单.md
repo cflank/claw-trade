@@ -14,7 +14,7 @@
 - `/select` 第一版只在聊天输出结果，不做复杂结果页。
 - 第一版不做手动补跑/backfill/rerun 的用户入口。
 - 禁止任何 `mock/stub/fake/fallback/capture-only/替身 OpenClaw/替身 provider/假 artifact/readback` 作为 runtime/live 验收证据。
-- `top20` 是 `/select` worker 评审上限，不是参考项目原生输出，也不是必须凑满 20。实现必须先保存每个来源策略的原始命中列表、命中字段和阈值证据；合并去重后最多取 20 只进入 approved candidate pack。真实候选不足 20 不得补齐，真实候选为 0 不得生成 fake approved pack。
+- `top20` 是 `/select` worker 评审上限，不是参考项目原生输出，也不是必须凑满 20。实现必须先保存每个来源策略的原始命中列表、命中字段和阈值证据；合并去重后最多取 20 只进入 approved candidate cache。真实候选不足 20 不得补齐，真实候选为 0 不得生成 fake approved cache。
 
 ## 1. 任务图
 
@@ -24,7 +24,7 @@
 | SEL-01 | 选择域模型与状态机骨架 | SEL-00 | 否 |
 | SEL-02 | selection run store 与 refresh 触发门 | SEL-01 | 否 |
 | SEL-03 | 后台确定性 data job（16:00 默认） | SEL-00, SEL-02 | 部分可并行 |
-| SEL-04 | candidate pack 与 artifact authority | SEL-03 | 否 |
+| SEL-04 | candidate cache 与 artifact authority | SEL-03 | 否 |
 | SEL-05 | selection tool 与 tool_names 映射 | SEL-04 | 否 |
 | SEL-06 | 4 worker agent 配置与 prompt 边界 | SEL-05 | 否 |
 | SEL-07 | OpenClaw dispatch（single worker turn） | SEL-06 | 否 |
@@ -54,10 +54,10 @@
 
 ### SEL-01 选择域模型与状态机骨架
 - 来源行：`docs/A股选股详细设计.md:146-340,363-463`，`docs/A股选股总体设计.md:49-57,571-607`，`src/claw_trade/data_gateway/models.py:12-27`
-- 目标：按详细设计 §3 全量模型合同落地 `SelectRequest/SelectionRunPlan/SelectionDataRun/SelectionWorkflowRun/SelectionWorkerDispatch/SelectionDecision/SelectionConfirmation/SelectionProviderBatchPlan` 等 DTO 及双状态机（data run + workflow run）；后续任务只填实现细节，不把这些模型当可选项。
+- 目标：按详细设计 §3 全量模型合同落地 `SelectRequest/SelectionRunPlan/SelectionDataRun/SelectionWorkflowRun/SelectionWorkerDispatch/SelectionDecision/SelectionConfirmation` 等 DTO 及双状态机（data run + workflow run）；远端刷新审计必须记录 DataNeed/ProviderCallSpec，不新增固定 provider batch plan 作为请求清单。
 - 允许修改范围：`src/claw_trade/selection/models.py`（新增）、`src/claw_trade/workflow/models.py`（必要最小扩展）。
 - 禁止修改范围：`third_party/openclaw/**`、`report workflow` 既有业务逻辑。
-- 实现要求：`entry_point=select_command`；第一版只允许 `CN_A`；失败状态显式枚举；data run 必须有 `no_candidate` 终态，不得把 0 候选写成 failed 或 fake approved pack；不得隐式 fallback。
+- 实现要求：`entry_point=select_command`；第一版只允许 `CN_A`；失败状态显式枚举；data run 必须有 `no_candidate` 终态，不得把 0 候选写成 failed 或 fake approved cache；不得隐式 fallback。
 - 验收证据：模型字段合同与状态转换表对应关系文档（可放 `docs/evidence/`）。
 - 必跑测试/命令：`uv run pytest tests/unit/selection/test_models.py tests/unit/selection/test_state_machine.py`
 - stop conditions：`select_command` 与 `report_command` 语义混用；状态机遗漏失败态。
@@ -67,7 +67,7 @@
 
 ### SEL-02 selection run store 与 refresh 触发门
 - 来源行：`docs/A股选股详细设计.md:40,49-51,127-130,197-205,1515-1519`，`docs/A股选股总体设计.md:168-171,1538-1546`
-- 目标：实现 run store、latest terminal 选择、stale 校验和 refresh 触发入口；确保只有 completed + approved pack 可启动 workers，不可用时由 `/select` 触发后台补数状态返回。
+- 目标：实现 run store、latest terminal 选择、stale 校验和 refresh 触发入口；确保只有 completed + approved cache 可启动 workers，不可用时由 `/select` 触发后台补数状态返回。
 - 允许修改范围：`src/claw_trade/selection/store.py`（新增）、`src/claw_trade/selection/controller.py`（查询与 refresh enqueue 部分）、必要最小 `src/claw_trade/selection/scheduler.py` enqueue 接口。
 - 禁止修改范围：后台任务执行实现、OpenClaw 调度代码。
 - 实现要求：no completed/no_candidate/stale/warehouse 证据不足时触发后台 selection data refresh/job，并返回“补数已启动/已有补数在跑/补数通道未配置”；latest no_candidate 不得回退旧 completed run；不得现场拉数、直接调 provider、直接读表或同步跑全市场；not approved/hash/readback/lineage mismatch 仍 fail closed。
@@ -88,33 +88,33 @@
 - 必跑测试/命令：
   - `uv run pytest tests/integration/selection/test_data_job_pipeline.py`
   - `uv run pytest tests/integration/selection/test_scheduler_default_time.py`
-- 专项用例：必须覆盖真实候选 `1..19` 可 completed、真实候选 `0` 进入 `no_candidate` 且无 approved pack。
+- 专项用例：必须覆盖真实候选 `1..19` 可 completed、真实候选 `0` 进入 `no_candidate` 且无 approved cache。
 - stop conditions：配置缺失导致算法无法等价映射；出现未批准参数；某策略无法生成 raw hits 证据却被写入命中；候选不足 20 时试图补齐。
 - mock/stub/fake/fallback 检查：失败必须落 data gaps，不得走旧 provider 直连。
 - 依赖任务：SEL-00, SEL-02。
 - 是否可并行：部分可并行（`features` 与 `scheduler` 可拆分）。
 
-### SEL-04 candidate pack 与 artifact authority
+### SEL-04 candidate cache 与 artifact authority
 - 来源行：`docs/A股选股详细设计.md:207-241,484-523,732-765,1425-1467`，`docs/A股选股总体设计.md:208-223,281-302,618-619`
-- 目标：生成并批准 candidate pack；保证 pack 只含事实与机器可复算结果；candidate pack 数量为 1..20，20 是上限不是必须数量。
-- 允许修改范围：`src/claw_trade/selection/candidate_pack.py`、`src/claw_trade/selection/artifacts.py`、必要的 `src/claw_trade/artifacts/**`。
+- 目标：生成并批准 candidate cache；保证 candidate cache 只含事实与机器可复算结果；candidate cache 数量为 1..20，20 是上限不是必须数量。
+- 允许修改范围：`src/claw_trade/selection/candidate_cache.py`、`src/claw_trade/selection/artifacts.py`、必要的 `src/claw_trade/artifacts/**`。
 - 禁止修改范围：worker prompt、selection decision 解析逻辑。
-- 实现要求：Python 不写自然语言入选理由/投资判断/目标价/止损价/交易建议；pack 必须包含每只候选的策略来源、策略变体、原始命中证据和评分排序字段；真实候选不足 20 时按实际数量生成，0 只候选进入 no-candidate 状态而不是 fake approved pack；approval 必须 readback/hash/manifest/lineage 全通过。
-- 验收证据：approved candidate pack + manifest + readback/hash 校验日志。
-- 必跑测试/命令：`uv run pytest tests/unit/selection/test_candidate_pack_contract.py tests/integration/selection/test_candidate_pack_approval.py`
-- 专项用例：必须覆盖 candidate pack 拒绝 `0` 和 `>20`，并证明 `0` 候选只由 data job 的 `no_candidate` 终态承接。
-- stop conditions：pack 含主观判断语言；readback/hash 不一致。
+- 实现要求：Python 不写自然语言入选理由/投资判断/目标价/止损价/交易建议；candidate cache 必须包含每只候选的策略来源、策略变体、原始命中证据和评分排序字段；真实候选不足 20 时按实际数量生成，0 只候选进入 no-candidate 状态而不是 fake approved cache；approval 必须 readback/hash/manifest/lineage 全通过。
+- 验收证据：approved candidate cache + manifest + readback/hash 校验日志。
+- 必跑测试/命令：`uv run pytest tests/unit/selection/test_candidate_cache_contract.py tests/integration/selection/test_candidate_cache_approval.py`
+- 专项用例：必须覆盖 candidate cache 拒绝 `0` 和 `>20`，并证明 `0` 候选只由 data job 的 `no_candidate` 终态承接。
+- stop conditions：candidate cache 含主观判断语言；readback/hash 不一致。
 - mock/stub/fake/fallback 检查：禁止 fake approved/readback。
 - 依赖任务：SEL-03。
 - 是否可并行：否。
 
 ### SEL-05 selection tool 与 tool_names 映射
 - 来源行：`docs/A股选股详细设计.md:135-137,888-929,1499-1505`，`docs/A股选股总体设计.md:240-257,845-850,859-870`，`src/claw_trade/config/tool_names.py:28-52`
-- 目标：落地 `claw_get_selection_candidate_pack`，并把 intent 映射到唯一 canonical tool 名。
+- 目标：落地 `claw_get_selection_candidate_cache`，并把 intent 映射到唯一 canonical tool 名。
 - 允许修改范围：`src/claw_trade/selection/tools.py`（新增）、`src/claw_trade/config/tool_names.py`、selection plugin wrapper。
-- 禁止修改范围：report pack endpoint 业务实现、旧 report tool contracts。
-- 实现要求：tool 无业务参数；只读 runtime context 对应 approved pack；不调 data_gateway/provider/Mongo raw，不重排或扩大 candidate pack。
-- 验收证据：tool schema + runtime call evidence（同一 hash pack 被 strategist/skeptic 读取）。
+- 禁止修改范围：历史 report 数据入口业务实现、旧 report tool contracts。
+- 实现要求：tool 无业务参数；只读 runtime context 对应 approved cache；不调 data_gateway/provider/Mongo raw，不重排或扩大 candidate cache。
+- 验收证据：tool schema + runtime call evidence（同一 hash candidate cache 被 strategist/skeptic 读取）。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_selection_tool_contract.py tests/contracts/test_selection_tool_import_block.py`
 - stop conditions：tool 接受 ticker/date/topN 等业务参数；tool 路径触发外部取数。
 - mock/stub/fake/fallback 检查：禁止 provider fallback 或 fake tool result。
@@ -126,7 +126,7 @@
 - 目标：新增四个 selection worker 配置与 CN_A prompt 草案落地。
 - 允许修改范围：`agents/selection_strategist/**`、`selection_skeptic/**`、`selection_manager/**`、`selection_portfolio_manager/**`。
 - 禁止修改范围：`agents` 下非 selection worker、`third_party/openclaw/**`。
-- 实现要求：strategist/skeptic 仅 candidate pack tool；manager/PM 无工具；worker 可见材料仅 approved L1 + approved summary，不含 raw/debug/provider envelope 与 refs/hash/manifest/lineage 文本。
+- 实现要求：strategist/skeptic 仅 candidate cache tool；manager/PM 无工具；worker 可见材料仅 approved L1 + approved summary，不含 raw/debug/provider envelope 与 refs/hash/manifest/lineage 文本。
 - 验收证据：四个 worker 的 STAGES/profile/tool matrix 与 prompt 文件。
 - 必跑测试/命令：`uv run pytest tests/contracts/test_selection_stage_policy.py tests/contracts/test_selection_prompt_material_boundary.py`
 - stop conditions：非 CN_A prompt fallback；manager/PM 暴露工具。
@@ -152,11 +152,11 @@
 - 目标：接入 `/select` 命令流程，输出聊天文本结果（进入 `/report` / 观察 / 放弃）。
 - 允许修改范围：`src/claw_trade/ui_backend/chat_controller.py` 或 command router、`src/claw_trade/selection/controller.py`。
 - 禁止修改范围：复杂结果页、新 UI 路由、`/report` 业务逻辑。
-- 实现要求：`/select` 不现场拉全市场数据、不直接调 provider、不直接读表、不同步跑全市场；先检查可用 completed + approved candidate pack，只有可用 pack 才启动 workers；无可用 pack/no_candidate/stale/warehouse 证据不足时触发后台 selection data refresh/job 并返回“补数已启动/已有补数在跑/补数通道未配置”；结果只在聊天输出。
-- no-candidate 要求：若 latest terminal data run 是 `no_candidate`，不启动 selection workers，不回退旧 completed run，不生成 fake candidate pack；只触发后台 refresh/job 并返回补数状态。
+- 实现要求：`/select` 不现场拉全市场数据、不直接调 provider、不直接读表、不同步跑全市场；先检查可用 completed + approved candidate cache，只有可用 candidate cache 才启动 workers；无可用 candidate cache/no_candidate/stale/warehouse 证据不足时触发后台 selection data refresh/job 并返回“补数已启动/已有补数在跑/补数通道未配置”；结果只在聊天输出。
+- no-candidate 要求：若 latest terminal data run 是 `no_candidate`，不启动 selection workers，不回退旧 completed run，不生成 fake candidate cache；只触发后台 refresh/job 并返回补数状态。
 - 验收证据：一次完整 `/select` 聊天回合日志与 selection workflow run evidence。
 - 必跑测试/命令：`uv run pytest tests/integration/selection/test_select_command_chat_flow.py`
-- stop conditions：`/select` 同步跑全市场、直接调 provider/读表、用 fake completed pack 代替补数；输出超出三分类语义。
+- stop conditions：`/select` 同步跑全市场、直接调 provider/读表、用 fake completed candidate cache 代替补数；输出超出三分类语义。
 - mock/stub/fake/fallback 检查：禁止 capture-only 文案通过（必须有 workflow/evidence 对应）。
 - 依赖任务：SEL-02, SEL-07。
 - 是否可并行：否。
@@ -166,7 +166,7 @@
 - 目标：用户确认后才启动 `/report`；同 workflow+ticker 全局去重。
 - 允许修改范围：`src/claw_trade/selection/confirmation.py`、`report_handoff.py`、必要最小的 queue 接口调用层。
 - 禁止修改范围：`/report` PM 决策逻辑、自动触发 report 的捷径逻辑。
-- 实现要求：未确认不触发 report；确认时重验 pack freshness/hash/readback/lineage；不把 `/select` 结论注入 `/report` PM。
+- 实现要求：未确认不触发 report；确认时重验 candidate cache freshness/hash/readback/lineage；不把 `/select` 结论注入 `/report` PM。
 - 验收证据：confirmation 去重记录 + report task 创建证据。
 - 必跑测试/命令：`uv run pytest tests/integration/selection/test_confirmation_idempotency.py tests/integration/selection/test_report_handoff_gate.py`
 - stop conditions：watch/reject ticker 能触发 report；重复点击创建多个 report run。
@@ -220,12 +220,12 @@
 - 依赖任务：SEL-11。
 - 是否可并行：否。
 
-### SEL-13 data_gateway selection batch 接线
+### SEL-13 data_gateway selection DataNeed 接线
 - 来源行：`docs/A股选股总体设计.md:1421-1460,1467-1546,1604-1642`，`docs/A股选股详细设计.md:0.2,3.16,5.3-5.5,11.1,11.4,15.2`，`docs/evidence/sel-12-ui-completed-selection-run.md`，`memory/2026-05-26.md` 最新 SEL-12 Chrome 条目
-- 目标：为现有 `SelectionDataJob` 接入真实 data_gateway 批量取数适配层，产出可审计 `SelectionProviderBatchResult`；`/select` 只检查可用 completed+approved pack，不在请求中现场拉全市场，不可用时触发后台 refresh/job。
-- 允许修改范围：`src/claw_trade/selection/**`（`provider_batch.py`、`scheduler.py`、`data_job.py` 必要 glue）、`src/claw_trade/data_gateway/**` 最小复用/适配、必要最小 `src/claw_trade/web/state.py` runtime wiring、`tests/unit/selection/**`、`tests/integration/selection/**`、`tests/contracts/test_selection_*.py`、`docs/evidence/**`、`memory/2026-05-26.md`。
+- 目标：为现有 `SelectionDataJob` 接入真实 data_gateway DataNeed 补数适配层，产出可审计 `SelectionDataNeedResult`；`/select` 只检查可用 completed+approved cache，不在请求中现场拉全市场，不可用时触发后台 refresh/job。
+- 允许修改范围：`src/claw_trade/selection/**`（`data_need_refresh.py`、`scheduler.py`、`data_job.py` 必要 glue）、`src/claw_trade/data_gateway/**` 最小复用/适配、必要最小 `src/claw_trade/web/state.py` runtime wiring、`tests/unit/selection/**`、`tests/integration/selection/**`、`tests/contracts/test_selection_*.py`、`docs/evidence/**`、`memory/2026-05-26.md`。
 - 禁止修改范围：`third_party/openclaw/**`、`/report` PM 决策逻辑与 exporter/prompt、selection 算法权重/阈值/排序规则、新增 runtime guard/hard gate、mock/stub/fake/fallback/capture-only 冒充 runtime/live。
-- 实现要求：必须走现有 data_gateway/provider registry/Mongo/OpenViking 证据链；无可用数据源或字段不足时 fail closed 并写 data gaps，不得生成 fake completed run；provider attempts/normalized refs/provider batch plan/data gaps 必须可审计。
+- 实现要求：必须走现有 data_gateway/provider registry/Mongo/OpenViking 证据链；无可用数据源或字段不足时 fail closed 并写 data gaps，不得生成 fake completed run；provider attempts/normalized refs/DataNeed audit/data gaps 必须可审计。
 - 验收证据：`docs/evidence/sel-13-data-gateway-batch-*.md`（或 `*-blocked-*.md`）+ 对应 run/测试证据路径；旧 `sel-13-removed_data_gateway-*` 文件名只作为历史证据，不代表 已删除数据网关 是当前运行依赖。
 - 必跑测试/命令：
   - `uv run pytest tests/integration/selection/test_data_job_pipeline.py`

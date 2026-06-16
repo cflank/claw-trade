@@ -52,14 +52,18 @@ class ProviderResultCache:
         if status not in {"remote_success", "cached_empty"}:
             self._repository.delete_provider_result_cache(cache_key)
             return CacheLookup(state="miss")
+        refs = ResultRefs(
+            dataset_refs=tuple(row.get("dataset_refs", ())),
+            raw_refs=tuple(row.get("raw_refs", ())),
+            attempt_refs=tuple(row.get("attempt_refs", ())),
+        )
+        if refs.dataset_refs and not self._repository.normalized_refs_have_readable_storage(refs.dataset_refs):
+            self._repository.delete_provider_result_cache(cache_key)
+            return CacheLookup(state="miss")
         entry = CacheEntry(
             cache_key=cache_key,
             status=status,  # type: ignore[arg-type]
-            refs=ResultRefs(
-                dataset_refs=tuple(row.get("dataset_refs", ())),
-                raw_refs=tuple(row.get("raw_refs", ())),
-                attempt_refs=tuple(row.get("attempt_refs", ())),
-            ),
+            refs=refs,
             fresh_until=fresh_until,
             stale_until=stale_until,
             empty_reason=row.get("empty_reason"),
@@ -100,7 +104,7 @@ class ProviderResultCache:
         refs: ResultRefs,
         fresh_until: datetime,
         stale_until: datetime,
-        empty_reason: str = "empty_result",
+        empty_reason: str = "provider_empty",
     ) -> None:
         self._repository.write_provider_result_cache(
             cache_key=cache_key,

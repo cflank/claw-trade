@@ -53,7 +53,7 @@ def test_decide_gate_outcome_reruns_when_unsupported_claim_and_retry_budget_avai
     claim = _claim_gate(
         unsupported_claims=(_unsupported_claim(),),
         reason_codes=("unsupported_claim",),
-        evidence_paths=(tmp_path / "report.md", tmp_path / "pack.json"),
+        evidence_paths=(tmp_path / "report.md", tmp_path / "evidence.json"),
     )
 
     decision = decide_gate_outcome(material, claim, RetryBudgetState(used=0, limit=2))
@@ -75,7 +75,7 @@ def test_decide_gate_outcome_rejects_when_unsupported_claim_contains_hard_fabric
     claim = _claim_gate(
         unsupported_claims=(_unsupported_claim(reason_codes=("hard_data_fabrication_signal",)),),
         reason_codes=("unsupported_claim",),
-        evidence_paths=(tmp_path / "report.md", tmp_path / "pack.json"),
+        evidence_paths=(tmp_path / "report.md", tmp_path / "evidence.json"),
     )
 
     decision = decide_gate_outcome(material, claim, RetryBudgetState(used=0, limit=2))
@@ -167,7 +167,7 @@ def _claim_gate(
 ) -> ClaimGateInput:
     return ClaimGateInput(
         report_path=None,
-        pack_path=None,
+        evidence_path=None,
         rule_version=CLAIM_RULES_VERSION,
         dictionary_revision_id=CLAIM_DICTIONARY_REVISION_ID,
         claims=(),

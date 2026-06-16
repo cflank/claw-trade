@@ -259,9 +259,12 @@ def test_collect_first_early_stop_writes_exception_evidence(tmp_path: Path) -> N
     payload = json.loads(result.collect_first_report_path.read_text(encoding="utf-8"))
     compliance = payload["collect_first_compliance"]
 
+    assert len(result.worker_results) == 1
+    assert len(result.failures) == 1
     assert result.early_stop_used is True
     assert compliance["early_stop_exception_used"] is True
-    assert len(compliance["exception_evidence"]) == len(batch.worker_ids)
+    assert len(compliance["exception_evidence"]) == 1
+    assert len(compliance["failures_collected"]) == 1
     assert compliance["exception_evidence"][0]["early_stop_category"] == "artifact_flow_overreach"
 
 

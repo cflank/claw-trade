@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
-from time import monotonic
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
 
 from claw_trade.data_gateway.coordination.scheduler import DataRunScheduleContext, DataRunScheduler
 from claw_trade.data_gateway.crypto_prepackaged_importer import local_warehouse_empty_gap
+from claw_trade.data_gateway.execution.rate_limit_policy import policy_to_namespace
+from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy
 from claw_trade.data_gateway.models import (
     DataGap,
-    DataPlan,
     DataRequest,
     DataResult,
     DataResultStatus,
@@ -24,8 +24,20 @@ from claw_trade.data_gateway.models import (
     QueryPlan,
     WarehouseResult,
 )
+from claw_trade.data_gateway.needs import DataNeed, DataNeedGap, NeedPriority, ProviderCallSpec
+from claw_trade.data_gateway.official_catalog import iter_official_catalog_endpoints
+from claw_trade.data_gateway.planner import plan_public_data_requests
+from claw_trade.data_gateway.public_api import PublicDataRequest
 
 _LOGGER = logging.getLogger("uvicorn.error")
+_DATA_NEED_LEASE_TTL_SECONDS = 30
+_COMPANY_NAME_REMOTE_DEADLINE_SECONDS = 30
+_CN_A_MARKET_DEFAULTS = {
+    "exchange": "SSE",
+    "currency": "CNY",
+    "timezone": "Asia/Shanghai",
+    "calendar": "CN_A_SSE_SZSE",
+}
 
 
 class QueryPlannerLike(Protocol):
@@ -48,20 +60,6 @@ class WarehouseLike(Protocol):
     ) -> Mapping[str, str]: ...
 
 
-class ProviderSelectorLike(Protocol):
-    def select_candidates(self, gaps: Sequence[Any], plan: QueryPlan) -> tuple[Any, ...]: ...
-
-    def read_capabilities(self, candidates: Sequence[Any]) -> Any: ...
-
-
-class RequestCoalescerLike(Protocol):
-    def coalesce(self, gaps: Sequence[Any], candidates: Sequence[Any], capabilities: Any) -> tuple[Any, ...]: ...
-
-
-class ProviderBatchPlannerLike(Protocol):
-    def build_batches(self, groups: Sequence[Any], capabilities: Any) -> tuple[Any, ...]: ...
-
-
 class DataRunSchedulerLike(Protocol):
     def schedule(self, batches: Sequence[Any], context: DataRunScheduleContext) -> tuple[Any, ...]: ...
 
@@ -69,7 +67,7 @@ class DataRunSchedulerLike(Protocol):
 class ExecutionGateLike(Protocol):
     def enter(self, batch: Any) -> GateDecision: ...
 
-    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: IngestResult) -> None: ...
+    def publish_shared_result(self, single_flight_key: str, owner_token: str, ingest: IngestResult, *, batch: Any | None = None) -> None: ...
 
     def wait_after_rate_limited_fetch(self, batch: Any, fetch_result: Any) -> bool: ...
 
@@ -113,31 +111,131 @@ class DataService:
         *,
         query_planner: QueryPlannerLike,
         warehouse: WarehouseLike,
-        provider_selector: ProviderSelectorLike,
-        coalescer: RequestCoalescerLike,
-        batch_planner: ProviderBatchPlannerLike,
         execution_gate: ExecutionGateLike,
         fetch_engine: FetchEngineLike,
         ingest: IngestLike,
         scheduler: DataRunSchedulerLike | None = None,
+        rate_limit_policy_resolver: Any | None = None,
     ) -> None:
         self.query_planner = query_planner
         self.warehouse = warehouse
-        self.provider_selector = provider_selector
-        self.coalescer = coalescer
-        self.batch_planner = batch_planner
         self.scheduler = scheduler or DataRunScheduler()
         self.execution_gate = execution_gate
         self.fetch_engine = fetch_engine
         self.ingest = ingest
+        self.rate_limit_policy_resolver = rate_limit_policy_resolver
 
-    def get_data(self, request: DataRequest) -> DataResult:
-        query_plan = self.query_planner.validate_and_normalize(request)
-        return self._execute_query_plan(query_plan)[0]
+    def read_warehouse_batch(self, requests: Sequence[DataRequest]) -> list[DataResult]:
+        query_plan = self.query_planner.validate_and_normalize_many(requests)
+        normalized_requests = query_plan.normalized_requests
+        if not normalized_requests:
+            return []
+        metadata_only = self._metadata_only_warehouse_check(normalized_requests)
+        warehouse_result = self._check_warehouse(query_plan, metadata_only=metadata_only)
+        if warehouse_result.satisfied:
+            return [
+                self._result_from_warehouse(request.request_id, self._slice_warehouse_result(warehouse_result, request))
+                for request in normalized_requests
+            ]
+        return [
+            self._compose_result(request.request_id, self._slice_warehouse_result(warehouse_result, request), ())
+            for request in normalized_requests
+        ]
 
-    def get_data_batch(self, requests: Sequence[DataRequest]) -> list[DataResult]:
-        plan = self.plan_batch(requests)
-        return self.execute_plan(plan)
+    def request_data(self, requests: Sequence[PublicDataRequest]) -> list[DataResult]:
+        ordered_requests = tuple(requests)
+        if not ordered_requests:
+            return []
+        now = datetime.now(tz=UTC)
+        plan = plan_public_data_requests(ordered_requests)
+        policies = {call.rate_limit_bucket: self._data_need_rate_limit_policy(call) for call in plan.planned_calls}
+        scheduler = self.scheduler
+        policy_updater = getattr(scheduler, "update_rate_limit_policies", None)
+        if callable(policy_updater):
+            policy_updater(policies)
+        scheduled_plan = scheduler.schedule(
+            plan,
+            DataRunScheduleContext.for_plan(run_id=f"public-data:{uuid4().hex}", run_started_at=now),
+        )
+        need_by_id = {need.need_id: need for need in scheduled_plan.needs}
+        call_by_id = {call.call_id: call for call in scheduled_plan.planned_calls}
+        results_by_request_id: dict[str, DataResult] = {}
+
+        for gap in scheduled_plan.skipped_needs:
+            need = need_by_id.get(gap.need_id)
+            if need is not None and gap.need_id not in results_by_request_id:
+                results_by_request_id[gap.need_id] = self._data_result_from_need_gap(need=need, gap=gap)
+
+        for scheduled in scheduled_plan.scheduled_calls:
+            call = call_by_id.get(scheduled.call_id)
+            if call is None:
+                continue
+            pending_need_list: list[DataNeed] = []
+            for need_id in call.need_ids:
+                need = need_by_id.get(need_id)
+                if need is None:
+                    continue
+                existing = results_by_request_id.get(need_id)
+                if existing is not None and existing.status == DataResultStatus.READY:
+                    continue
+                pending_need_list.append(need)
+            pending_needs = tuple(pending_need_list)
+            if not pending_needs:
+                continue
+            batch_need = pending_needs[0]
+            batch = self._provider_call_batch(
+                call=call,
+                need=batch_need,
+                policy=policies[call.rate_limit_bucket],
+                earliest_start_at=scheduled.earliest_start_at,
+                rate_limit_reserved_at=scheduled.rate_limit_reserved_at,
+            )
+            gate = self.execution_gate.enter(batch)
+            if gate.kind in self._NON_REMOTE_GATE_KINDS:
+                ingest = self.ingest.record_gate_result(batch, gate)
+                for need in pending_needs:
+                    result = self._data_result_from_ingest(need=need, ingest=ingest)
+                    results_by_request_id[need.need_id] = self._merge_data_need_result(results_by_request_id.get(need.need_id), result)
+                continue
+            fetch_result = self.fetch_engine.fetch(batch)
+            retry_waiter = getattr(self.execution_gate, "wait_after_rate_limited_fetch", None)
+            if callable(retry_waiter) and retry_waiter(batch, fetch_result):
+                fetch_result = self.fetch_engine.fetch(batch)
+            ingest = self.ingest.ingest(fetch_result, batch)
+            if gate.kind == "owner" and gate.owner_token:
+                self.execution_gate.publish_shared_result(batch.single_flight_key, gate.owner_token, ingest, batch=batch)
+            for need in pending_needs:
+                result = self._data_result_from_fetch(need=need, call=call, batch=batch, fetch_result=fetch_result, ingest=ingest)
+                if result is None:
+                    result = self._data_result_from_ingest(need=need, ingest=ingest)
+                results_by_request_id[need.need_id] = self._merge_data_need_result(results_by_request_id.get(need.need_id), result)
+
+        return [
+            results_by_request_id.get(
+                request.request_id,
+                self._data_result_from_need_gap(
+                    need=need_by_id.get(request.request_id)
+                    or DataNeed(
+                        need_id=request.request_id,
+                        api_id=request.api_id,
+                        market=request.market,
+                        instrument=request.instrument,
+                        granularity=request.granularity,
+                        requested_by_worker=request.requested_by_worker,
+                        purpose=request.purpose,
+                        freshness_policy=request.freshness_policy,
+                        deadline_at=request.deadline_at,
+                        consumer=request.consumer,
+                    ),
+                    gap=DataNeedGap(
+                        need_id=request.request_id,
+                        reason=GapReason.CATALOG_MATCH_MISSING,
+                        human_readable=f"project data item has no scheduled provider API binding: {request.market.value}:{request.item}",
+                    ),
+                ),
+            )
+            for request in ordered_requests
+        ]
 
     def resolve_company_names(
         self,
@@ -158,38 +256,312 @@ class DataService:
         if not missing or resolved_market != Market.CN_A:
             return names
 
-        requests = tuple(
-            DataRequest(
-                request_id=f"company-name:{symbol}:quote_snapshot:{datetime.now(tz=UTC).strftime('%Y%m%d%H%M%S%f')}",
-                market=resolved_market,
-                symbol_id=symbol,
-                timezone="Asia/Shanghai",
-                calendar="CN_A_SSE_SZSE",
-                data_type="quote_snapshot",
-                granularity="realtime",
-                fields=("symbol_id", "name", "company_name"),
-                freshness_policy="trading_day",
-                consumer="ui_probe",
-                consumer_id="company_name_resolver",
-                as_of=datetime.now(tz=UTC),
-            )
-            for symbol in missing
-        )
-        results = self.get_data_batch(requests)
-        names.update(self._company_names_from_results(results))
+        names.update(self._resolve_company_names_from_data_needs(resolved_market=resolved_market, symbols=missing))
         return names
+
+    def _resolve_company_names_from_data_needs(self, *, resolved_market: Market, symbols: Sequence[str]) -> dict[str, str]:
+        now = datetime.now(tz=UTC)
+        requests = tuple(
+            PublicDataRequest(
+                request_id=f"company-name:{symbol}:quote_snapshot:{now.strftime('%Y%m%d%H%M%S%f')}",
+                item="实时价",
+                market=resolved_market,
+                instrument=symbol,
+                granularity="realtime",
+                purpose="company_name_resolver",
+                priority=NeedPriority.REQUIRED,
+                requested_by_worker="ui_probe",
+                freshness_policy="trading_day",
+                deadline_at=now + timedelta(seconds=_COMPANY_NAME_REMOTE_DEADLINE_SECONDS),
+                consumer="ui_probe",
+            )
+            for symbol in symbols
+        )
+        if not requests:
+            return {}
+
+        plan = plan_public_data_requests(requests)
+        policies = {call.rate_limit_bucket: self._data_need_rate_limit_policy(call) for call in plan.planned_calls}
+        scheduler = self.scheduler
+        policy_updater = getattr(scheduler, "update_rate_limit_policies", None)
+        if callable(policy_updater):
+            policy_updater(policies)
+        scheduled_plan = scheduler.schedule(
+            plan,
+            DataRunScheduleContext.for_plan(run_id=f"company-name:{uuid4().hex}", run_started_at=now),
+        )
+        need_by_id = {need.need_id: need for need in scheduled_plan.needs}
+        call_by_id = {call.call_id: call for call in scheduled_plan.planned_calls}
+        names: dict[str, str] = {}
+        for scheduled in scheduled_plan.scheduled_calls:
+            call = call_by_id.get(scheduled.call_id)
+            if call is None:
+                continue
+            need = need_by_id.get(call.need_ids[0])
+            if need is None:
+                continue
+            batch = self._data_need_call_batch(
+                call=call,
+                need=need,
+                policy=policies[call.rate_limit_bucket],
+                earliest_start_at=scheduled.earliest_start_at,
+                rate_limit_reserved_at=scheduled.rate_limit_reserved_at,
+            )
+            gate = self.execution_gate.enter(batch)
+            if gate.kind in self._NON_REMOTE_GATE_KINDS:
+                self.ingest.record_gate_result(batch, gate)
+                continue
+            fetch_result = self.fetch_engine.fetch(batch)
+            retry_waiter = getattr(self.execution_gate, "wait_after_rate_limited_fetch", None)
+            if callable(retry_waiter) and retry_waiter(batch, fetch_result):
+                fetch_result = self.fetch_engine.fetch(batch)
+            ingest = self.ingest.ingest(fetch_result, batch)
+            if gate.kind == "owner" and gate.owner_token:
+                self.execution_gate.publish_shared_result(batch.single_flight_key, gate.owner_token, ingest, batch=batch)
+            names.update(self._company_names_from_fetch_result(fetch_result))
+
+        resolver = getattr(self.warehouse, "resolve_company_names", None)
+        if callable(resolver):
+            names.update(
+                resolver(
+                    market=resolved_market,
+                    symbol_ids=tuple(symbol for symbol in symbols if not str(names.get(symbol) or "").strip()),
+                    dataset="quote_snapshot",
+                )
+            )
+        return names
+
+    def _data_need_rate_limit_policy(self, call: ProviderCallSpec) -> RateLimitPolicy:
+        resolver = self.rate_limit_policy_resolver
+        if resolver is not None and callable(getattr(resolver, "resolve", None)):
+            return resolver.resolve(provider_id=call.provider_id, rate_limit_bucket=call.rate_limit_bucket, default_policy=None)
+        return RateLimitPolicy(window_seconds=60, max_requests=None)
+
+    def _data_need_call_batch(
+        self,
+        *,
+        call: ProviderCallSpec,
+        need: DataNeed,
+        policy: RateLimitPolicy,
+        earliest_start_at: datetime | None = None,
+        rate_limit_reserved_at: datetime | None = None,
+    ) -> Any:
+        return SimpleNamespace(
+            batch_id=call.call_id,
+            request_ids=call.need_ids,
+            provider_id=call.provider_id,
+            endpoint_id=call.catalog_endpoint_id if call.provider_id.startswith("official_api_") else _adapter_endpoint_id(call),
+            market=need.market,
+            symbol_ids=(need.instrument,),
+            data_type="quote_snapshot",
+            granularity="realtime",
+            fields_union=("symbol_id", "name", "company_name"),
+            capability_fields=("symbol_id", "name", "company_name"),
+            date_range_start=need.time_range_start,
+            date_range_end=need.time_range_end,
+            exchange=_CN_A_MARKET_DEFAULTS["exchange"],
+            currency=_CN_A_MARKET_DEFAULTS["currency"],
+            timezone=_CN_A_MARKET_DEFAULTS["timezone"],
+            calendar=_CN_A_MARKET_DEFAULTS["calendar"],
+            base_asset=None,
+            quote_asset=None,
+            provider_config_version=None,
+            params={"provider_call_spec": call.model_dump(mode="json")} if call.provider_id.startswith("official_api_") else dict(call.params),
+            http_visibility=call.http_visibility,
+            rate_limit_key=call.rate_limit_bucket,
+            cooldown_key=None,
+            rate_limit_policy=policy_to_namespace(policy),
+            deadline_at=call.deadline_at,
+            earliest_start_at=earliest_start_at,
+            rate_limit_reserved_at=rate_limit_reserved_at,
+            single_flight_key=call.batch_key,
+            lease_ttl_seconds=_DATA_NEED_LEASE_TTL_SECONDS,
+            cache_key=f"data-need:{call.batch_key}",
+            parser_status=call.parser_status,
+        )
+
+    def _provider_call_batch(
+        self,
+        *,
+        call: ProviderCallSpec,
+        need: DataNeed,
+        policy: RateLimitPolicy,
+        earliest_start_at: datetime | None = None,
+        rate_limit_reserved_at: datetime | None = None,
+    ) -> Any:
+        from claw_trade.data_gateway.report_evidence import _provider_call_batch
+
+        return _provider_call_batch(
+            call=call,
+            need=need,
+            policy=policy,
+            runtime=None,
+            earliest_start_at=earliest_start_at,
+            rate_limit_reserved_at=rate_limit_reserved_at,
+        )
+
+    def _data_result_from_fetch(
+        self,
+        *,
+        need: DataNeed,
+        call: ProviderCallSpec,
+        batch: Any,
+        fetch_result: Any,
+        ingest: IngestResult,
+    ) -> DataResult | None:
+        from claw_trade.data_gateway.report_evidence import _data_need_result_from_fetch
+
+        result = _data_need_result_from_fetch(
+            need=need,
+            call=call,
+            batch=batch,
+            fetch_result=fetch_result,
+            ingest=ingest,
+            index=0,
+            as_of=datetime.now(tz=UTC),
+        )
+        if result is None:
+            return None
+        return self._normalize_data_need_result(need=need, result=result)
+
+    def _data_result_from_ingest(self, *, need: DataNeed, ingest: IngestResult) -> DataResult:
+        gaps = tuple(
+            self._coerce_gap(gap, request_id=need.need_id)
+            for gap in (ingest.gaps or self._fallback_no_refs_gap(need=need, ingest=ingest))
+        )
+        status = DataResultStatus.READY if ingest.dataset_refs and not gaps else DataResultStatus.PARTIAL
+        if not ingest.dataset_refs and not ingest.raw_refs:
+            status = DataResultStatus.MISSING
+        if ingest.status == "failed":
+            status = DataResultStatus.ERROR
+        return DataResult(
+            request_id=need.need_id,
+            status=status,
+            rows=(),
+            dataset_refs=ingest.dataset_refs,
+            raw_refs=ingest.raw_refs,
+            attempt_refs=ingest.attempt_refs,
+            gaps=gaps,
+            as_of=datetime.now(tz=UTC),
+        )
+
+    def _normalize_data_need_result(self, *, need: DataNeed, result: DataResult) -> DataResult:
+        return result.model_copy(
+            update={
+                "request_id": need.need_id,
+                "gaps": tuple(self._coerce_gap(gap, request_id=need.need_id) for gap in result.gaps),
+            }
+        )
+
+    @staticmethod
+    def _fallback_no_refs_gap(*, need: DataNeed, ingest: IngestResult) -> tuple[DataGap, ...]:
+        if ingest.dataset_refs or ingest.raw_refs:
+            return ()
+        return (
+            DataGap.by_reason(
+                "evidence_write_failed",
+                request_id=need.need_id,
+                market=need.market,
+                data_type=_need_api_suffix(need),
+                granularity=need.granularity or "unknown",
+                evidence_refs=ingest.attempt_refs,
+                message="ingest returned no refs and no gaps",
+                symbol_id=need.instrument,
+            ),
+        )
+
+    @staticmethod
+    def _merge_data_need_result(existing: DataResult | None, incoming: DataResult) -> DataResult:
+        if existing is None:
+            return incoming
+        if existing.status == DataResultStatus.READY:
+            return existing
+        if incoming.status == DataResultStatus.READY:
+            return incoming.model_copy(
+                update={
+                    "attempt_refs": _unique_refs((*existing.attempt_refs, *incoming.attempt_refs)),
+                }
+            )
+
+        existing_has_data = bool(existing.dataset_refs or existing.raw_refs or existing.rows)
+        incoming_has_data = bool(incoming.dataset_refs or incoming.raw_refs or incoming.rows)
+        if existing_has_data or incoming_has_data:
+            rows = _unique_rows((*existing.rows, *incoming.rows))
+            dataset_refs = _unique_refs((*existing.dataset_refs, *incoming.dataset_refs))
+            raw_refs = _unique_refs((*existing.raw_refs, *incoming.raw_refs))
+            attempt_refs = _unique_refs((*existing.attempt_refs, *incoming.attempt_refs))
+            gaps = _unique_gaps((*existing.gaps, *incoming.gaps))
+            status = DataResultStatus.READY if dataset_refs and not gaps else DataResultStatus.PARTIAL
+            return existing.model_copy(
+                update={
+                    "status": status,
+                    "rows": rows,
+                    "dataset_refs": dataset_refs,
+                    "raw_refs": raw_refs,
+                    "attempt_refs": attempt_refs,
+                    "gaps": gaps,
+                    "as_of": max(existing.as_of or datetime.min.replace(tzinfo=UTC), incoming.as_of or datetime.min.replace(tzinfo=UTC)),
+                }
+            )
+
+        base = incoming if _data_result_rank(incoming) < _data_result_rank(existing) else existing
+        return base.model_copy(
+            update={
+                "attempt_refs": _unique_refs((*existing.attempt_refs, *incoming.attempt_refs)),
+                "gaps": _unique_gaps((*existing.gaps, *incoming.gaps)),
+                "as_of": max(existing.as_of or datetime.min.replace(tzinfo=UTC), incoming.as_of or datetime.min.replace(tzinfo=UTC)),
+            }
+        )
+
+    def _data_result_from_need_gap(self, *, need: DataNeed, gap: DataNeedGap) -> DataResult:
+        data_gap = DataGap.by_reason(
+            gap.reason,
+            request_id=need.need_id,
+            market=need.market,
+            data_type=_need_api_suffix(need),
+            granularity=need.granularity or "unknown",
+            severity=GapSeverity.BLOCKER,
+            evidence_refs=gap.evidence_refs,
+            message=gap.human_readable,
+            symbol_id=need.instrument,
+        )
+        return DataResult(
+            request_id=need.need_id,
+            status=DataResultStatus.MISSING,
+            gaps=(data_gap,),
+            as_of=datetime.now(tz=UTC),
+        )
 
     @classmethod
     def _company_names_from_results(cls, results: Sequence[DataResult]) -> dict[str, str]:
         names: dict[str, str] = {}
         for result in results:
-            for row in result.rows:
-                symbol = str(row.get("symbol_id") or "").strip().upper()
-                if not symbol or symbol in names:
-                    continue
-                name = cls._company_name_from_row(row)
-                if name:
-                    names[symbol] = name
+            names.update(cls._company_names_from_rows(tuple(row for row in result.rows if isinstance(row, Mapping))))
+        return names
+
+    @classmethod
+    def _company_names_from_fetch_result(cls, result: Any) -> dict[str, str]:
+        payload = getattr(result, "payload", None)
+        rows: Sequence[Any]
+        if isinstance(payload, Mapping):
+            candidate = payload.get("rows")
+            rows = candidate if isinstance(candidate, Sequence) and not isinstance(candidate, (str, bytes, bytearray)) else ()
+        elif isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+            rows = payload
+        else:
+            rows = ()
+        return cls._company_names_from_rows(tuple(row for row in rows if isinstance(row, Mapping)))
+
+    @classmethod
+    def _company_names_from_rows(cls, rows: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+        names: dict[str, str] = {}
+        for row in rows:
+            symbol = str(row.get("symbol_id") or row.get("ts_code") or row.get("code") or "").strip().upper()
+            if not symbol or symbol in names:
+                continue
+            name = cls._company_name_from_row(row)
+            if name:
+                names[symbol] = name
         return names
 
     @classmethod
@@ -200,252 +572,6 @@ class DataService:
                 return name
         return None
 
-    def plan_batch(self, requests: Sequence[DataRequest]) -> DataPlan:
-        query_plan = self.query_planner.validate_and_normalize_many(requests)
-        return DataPlan(
-            plan_id=f"plan:{uuid4().hex}",
-            request_ids=tuple(req.request_id for req in requests),
-            query_plan=query_plan,
-            created_at=datetime.now(tz=UTC),
-        )
-
-    def execute_plan(self, plan: DataPlan) -> list[DataResult]:
-        return self._execute_query_plan(
-            plan.query_plan,
-            schedule_context=DataRunScheduleContext.for_plan(run_id=plan.plan_id, run_started_at=plan.created_at),
-        )
-
-    def _execute_query_plan(self, query_plan: QueryPlan, *, schedule_context: DataRunScheduleContext | None = None) -> list[DataResult]:
-        requests = query_plan.normalized_requests
-        if not requests:
-            return []
-
-        run_id = getattr(schedule_context, "run_id", None) if schedule_context is not None else None
-        warehouse_only = self._warehouse_only(requests)
-        metadata_only = self._metadata_only_warehouse_check(requests)
-        started = monotonic()
-        self._log_data_service_event(
-            "start",
-            run_id=run_id,
-            request_count=len(requests),
-            warehouse_only=warehouse_only,
-        )
-        stage_started = monotonic()
-        if self._force_provider_refresh(requests):
-            initial = self._forced_refresh_warehouse_result(requests)
-            self._log_data_service_event(
-                "warehouse_check_skipped",
-                run_id=run_id,
-                elapsed_ms=self._elapsed_ms(stage_started),
-                reason="select_universe_refresh",
-                gaps=len(initial.gaps),
-            )
-        else:
-            initial = self._check_warehouse(query_plan, metadata_only=metadata_only)
-            self._log_data_service_event(
-                "warehouse_check_done",
-                run_id=run_id,
-                elapsed_ms=self._elapsed_ms(stage_started),
-                satisfied=initial.satisfied,
-                rows=len(initial.rows),
-                gaps=len(initial.gaps),
-                dataset_refs=len(initial.dataset_refs),
-            )
-        if initial.satisfied:
-            self._log_data_service_event("done_from_warehouse", run_id=run_id, elapsed_ms=self._elapsed_ms(started))
-            return [
-                self._result_from_warehouse(request.request_id, self._slice_warehouse_result(initial, request))
-                for request in requests
-            ]
-        if warehouse_only:
-            self._log_data_service_event("done_warehouse_only", run_id=run_id, elapsed_ms=self._elapsed_ms(started))
-            return [
-                self._compose_result(request.request_id, self._slice_warehouse_result(initial, request), ())
-                for request in requests
-            ]
-
-        ingest_results: list[tuple[Any, IngestResult]] = []
-        attempted_candidate_keys: set[tuple[Any, ...]] = set()
-        recorded_selector_skip_keys: set[tuple[Any, ...]] = set()
-        final = initial
-        while not final.satisfied:
-            stage_started = monotonic()
-            selected_candidates = self.provider_selector.select_candidates(final.gaps, query_plan)
-            self._record_selector_skips(
-                query_plan=query_plan,
-                recorded_selector_skip_keys=recorded_selector_skip_keys,
-                ingest_results=ingest_results,
-            )
-            candidates = tuple(
-                candidate
-                for candidate in selected_candidates
-                if self._candidate_attempt_key(candidate) not in attempted_candidate_keys
-            )
-            self._log_data_service_event(
-                "select_candidates_done",
-                run_id=run_id,
-                elapsed_ms=self._elapsed_ms(stage_started),
-                gaps=len(final.gaps),
-                candidates=len(candidates),
-            )
-            if not candidates:
-                break
-            wave_key = min(self._candidate_wave_key(candidate) for candidate in candidates)
-            wave_candidates = tuple(candidate for candidate in candidates if self._candidate_wave_key(candidate) == wave_key)
-            attempted_candidate_keys.update(self._candidate_attempt_key(candidate) for candidate in wave_candidates)
-            stage_started = monotonic()
-            capabilities = self.provider_selector.read_capabilities(wave_candidates)
-            self._log_data_service_event(
-                "read_capabilities_done",
-                run_id=run_id,
-                elapsed_ms=self._elapsed_ms(stage_started),
-                candidates=len(wave_candidates),
-            )
-            stage_started = monotonic()
-            groups = self.coalescer.coalesce(final.gaps, wave_candidates, capabilities)
-            self._log_data_service_event(
-                "coalesce_done",
-                run_id=run_id,
-                elapsed_ms=self._elapsed_ms(stage_started),
-                groups=len(groups),
-            )
-            stage_started = monotonic()
-            batches = self.batch_planner.build_batches(groups, capabilities)
-            self._log_data_service_event(
-                "build_batches_done",
-                run_id=run_id,
-                elapsed_ms=self._elapsed_ms(stage_started),
-                batches=len(batches),
-            )
-            if schedule_context is not None:
-                stage_started = monotonic()
-                batches = self.scheduler.schedule(batches, schedule_context)
-                self._log_data_service_event(
-                    "schedule_done",
-                    run_id=run_id,
-                    elapsed_ms=self._elapsed_ms(stage_started),
-                    batches=len(batches),
-                )
-
-            warehouse_may_have_changed = False
-            for batch in batches:
-                batch_context = self._batch_log_context(batch)
-                stage_started = monotonic()
-                self._log_data_service_event("gate_start", run_id=run_id, **batch_context)
-                gate = self.execution_gate.enter(batch)
-                self._log_data_service_event(
-                    "gate_done",
-                    run_id=run_id,
-                    elapsed_ms=self._elapsed_ms(stage_started),
-                    gate_kind=gate.kind,
-                    **batch_context,
-                )
-                if gate.kind in self._NON_REMOTE_GATE_KINDS:
-                    ingest_results.append((batch, self.ingest.record_gate_result(batch, gate)))
-                    continue
-                stage_started = monotonic()
-                self._log_data_service_event("fetch_start", run_id=run_id, **batch_context)
-                fetch_result = self.fetch_engine.fetch(batch)
-                self._log_data_service_event(
-                    "fetch_done",
-                    run_id=run_id,
-                    elapsed_ms=self._elapsed_ms(stage_started),
-                    fetch_rows=self._safe_len(getattr(fetch_result, "rows", None)),
-                    **batch_context,
-                )
-                retry_waiter = getattr(self.execution_gate, "wait_after_rate_limited_fetch", None)
-                if callable(retry_waiter) and retry_waiter(batch, fetch_result):
-                    stage_started = monotonic()
-                    self._log_data_service_event("fetch_retry_after_rate_limit_start", run_id=run_id, **batch_context)
-                    fetch_result = self.fetch_engine.fetch(batch)
-                    self._log_data_service_event(
-                        "fetch_retry_after_rate_limit_done",
-                        run_id=run_id,
-                        elapsed_ms=self._elapsed_ms(stage_started),
-                        fetch_rows=self._safe_len(getattr(fetch_result, "rows", None)),
-                        **batch_context,
-                    )
-                cooldown_marker = getattr(self.execution_gate, "mark_cooldown_after_fetch", None)
-                if callable(cooldown_marker):
-                    cooldown_marker(batch, fetch_result)
-                stage_started = monotonic()
-                self._log_data_service_event("ingest_start", run_id=run_id, **batch_context)
-                ingest_result = self.ingest.ingest(fetch_result, batch)
-                self._log_data_service_event(
-                    "ingest_done",
-                    run_id=run_id,
-                    elapsed_ms=self._elapsed_ms(stage_started),
-                    remote_success=ingest_result.remote_success,
-                    dataset_refs=len(ingest_result.dataset_refs),
-                    raw_refs=len(ingest_result.raw_refs),
-                    attempt_refs=len(ingest_result.attempt_refs),
-                    gaps=len(ingest_result.gaps),
-                    **batch_context,
-                )
-                if ingest_result.dataset_refs:
-                    warehouse_may_have_changed = True
-                if self._is_non_remote_ingest(ingest_result):
-                    ingest_result = self._force_non_remote(ingest_result)
-                ingest_results.append((batch, ingest_result))
-                if gate.kind == "owner" and gate.owner_token:
-                    self.execution_gate.publish_shared_result(batch.single_flight_key, gate.owner_token, ingest_result)
-
-            if warehouse_may_have_changed:
-                stage_started = monotonic()
-                final = self._recheck_warehouse(query_plan)
-                self._log_data_service_event(
-                    "warehouse_recheck_done",
-                    run_id=run_id,
-                    elapsed_ms=self._elapsed_ms(stage_started),
-                    satisfied=final.satisfied,
-                    rows=len(final.rows),
-                    gaps=len(final.gaps),
-                    dataset_refs=len(final.dataset_refs),
-                )
-            else:
-                self._log_data_service_event("warehouse_recheck_skipped", run_id=run_id, reason="no_dataset_refs")
-
-        results: list[DataResult] = []
-        for request in requests:
-            initial_per_request = self._slice_warehouse_result(initial, request)
-            final_per_request = self._slice_warehouse_result(final, request)
-            ingest_per_request = self._slice_ingest_results(ingest_results, request.request_id)
-            preserved_gaps = self._preserved_initial_local_gaps(request, initial_per_request)
-            results.append(
-                self._compose_result(
-                    request.request_id,
-                    final_per_request,
-                    ingest_per_request,
-                    preserved_gaps=preserved_gaps,
-                )
-            )
-        self._log_data_service_event("done", run_id=run_id, elapsed_ms=self._elapsed_ms(started), results=len(results))
-        return results
-
-    @staticmethod
-    def _elapsed_ms(started: float) -> int:
-        return int((monotonic() - started) * 1000)
-
-    @staticmethod
-    def _safe_len(value: Any) -> int | None:
-        if value is None:
-            return None
-        try:
-            return len(value)
-        except TypeError:
-            return None
-
-    @staticmethod
-    def _batch_log_context(batch: Any) -> dict[str, Any]:
-        return {
-            "provider_id": DataService._read_any_attr(batch, "provider_id"),
-            "endpoint_id": DataService._read_any_attr(batch, "endpoint_id"),
-            "request_count": len(tuple(DataService._as_tuple(DataService._read_any_attr(batch, "request_ids", ())))),
-            "universe_ref": DataService._read_any_attr(batch, "universe_ref"),
-            "date_range_start": DataService._read_any_attr(batch, "date_range_start"),
-            "date_range_end": DataService._read_any_attr(batch, "date_range_end"),
-        }
-
     @staticmethod
     def _log_data_service_event(event: str, **fields: Any) -> None:
         parts = [f"data service {event}"]
@@ -454,93 +580,6 @@ class DataService:
                 continue
             parts.append(f"{key}={value}")
         _LOGGER.info(" ".join(parts))
-
-    @staticmethod
-    def _candidate_wave_key(candidate: Any) -> tuple[Any, ...]:
-        source_role = str(DataService._read_any_attr(candidate, "source_role", ""))
-        if source_role == "paid_data" and bool(DataService._read_any_attr(candidate, "configured_paid_data", False)):
-            source_rank = -1
-        else:
-            source_rank = DataService._SOURCE_ROLE_ORDER.get(source_role, 99)
-        return (
-            source_rank,
-            int(DataService._read_any_attr(candidate, "priority_rank", 100)),
-        )
-
-    def _record_selector_skips(
-        self,
-        *,
-        query_plan: QueryPlan,
-        recorded_selector_skip_keys: set[tuple[Any, ...]],
-        ingest_results: list[tuple[Any, IngestResult]],
-    ) -> None:
-        skipped_candidates = tuple(getattr(self.provider_selector, "skipped_candidates", ()) or ())
-        if not skipped_candidates:
-            return
-        recorder = getattr(self.ingest, "record_selector_skip", None)
-        if not callable(recorder):
-            raise RuntimeError("ingest_record_selector_skip_missing")
-        for selector_skip in skipped_candidates:
-            key = self._selector_skip_key(selector_skip)
-            if key in recorded_selector_skip_keys:
-                continue
-            recorded_selector_skip_keys.add(key)
-            batch = self._selector_skip_batch(selector_skip, query_plan)
-            ingest_results.append((batch, recorder(batch, selector_skip)))
-
-    @staticmethod
-    def _selector_skip_key(selector_skip: Any) -> tuple[Any, ...]:
-        return (
-            DataService._read_any_attr(selector_skip, "request_id"),
-            DataService._read_any_attr(selector_skip, "provider_id"),
-            DataService._read_any_attr(selector_skip, "endpoint_id"),
-            DataService._read_any_attr(selector_skip, "market"),
-            DataService._read_any_attr(selector_skip, "data_type"),
-            DataService._read_any_attr(selector_skip, "granularity"),
-            DataService._read_any_attr(selector_skip, "reason"),
-        )
-
-    @staticmethod
-    def _selector_skip_batch(selector_skip: Any, query_plan: QueryPlan) -> SimpleNamespace:
-        request = query_plan.request_for_gap(selector_skip)
-        request_id = str(DataService._read_any_attr(selector_skip, "request_id", request.request_id))
-        provider_id = str(DataService._read_any_attr(selector_skip, "provider_id", "unknown_provider"))
-        endpoint_id = str(DataService._read_any_attr(selector_skip, "endpoint_id", "unknown_endpoint"))
-        symbol_id = request.symbol_id
-        return SimpleNamespace(
-            batch_id=f"selector-skip:{request_id}:{provider_id}:{endpoint_id}",
-            plan_id="selector-skip",
-            provider_id=provider_id,
-            endpoint_id=endpoint_id,
-            market=request.market,
-            data_type=request.data_type,
-            granularity=request.granularity,
-            request_ids=(request_id,),
-            symbol_ids=(symbol_id,) if symbol_id else (),
-            universe_ref=request.universe_ref,
-            date_range_start=request.date_range_start,
-            date_range_end=request.date_range_end,
-            exchange=request.exchange,
-            currency=request.currency,
-            timezone=request.timezone,
-            calendar=request.calendar,
-            base_asset=request.base_asset,
-            quote_asset=request.quote_asset,
-            fields_union=tuple(request.fields),
-            params_redacted={"selector_skip_reason": DataService._read_any_attr(selector_skip, "reason", "credential_missing")},
-            priority_rank=100,
-            required_level="required",
-            cache_key=f"selector-skip:{request_id}:{provider_id}:{endpoint_id}",
-            rate_limit_key=f"selector-skip:{provider_id}:{endpoint_id}",
-            cooldown_key=None,
-            rate_limit_policy=None,
-            single_flight_key=f"selector-skip:{request_id}:{provider_id}:{endpoint_id}",
-            lease_ttl_seconds=30,
-            wait_timeout_seconds=0,
-            provider_config_version="selector-skip",
-            license_policy=None,
-            as_of=datetime.now(tz=UTC),
-        )
 
     @staticmethod
     def _warehouse_only(requests: Sequence[DataRequest]) -> bool:
@@ -595,24 +634,6 @@ class DataService:
             if callable(check_coverage):
                 return check_coverage(query_plan.warehouse_checks, query_plan.required_coverage)
         return self.warehouse.check(query_plan.warehouse_checks, query_plan.required_coverage)
-
-    def _recheck_warehouse(self, query_plan: QueryPlan) -> WarehouseResult:
-        return self.warehouse.recheck(query_plan.warehouse_checks, query_plan.required_coverage)
-
-    @staticmethod
-    def _candidate_attempt_key(candidate: Any) -> tuple[Any, ...]:
-        return (
-            DataService._read_any_attr(candidate, "request_id"),
-            DataService._read_any_attr(candidate, "provider_id"),
-            DataService._read_any_attr(candidate, "endpoint_id"),
-            DataService._read_any_attr(candidate, "market"),
-            DataService._read_any_attr(candidate, "data_type"),
-            DataService._read_any_attr(candidate, "granularity"),
-            DataService._read_any_attr(candidate, "symbol_id"),
-            DataService._read_any_attr(candidate, "date_range_start"),
-            DataService._read_any_attr(candidate, "date_range_end"),
-            tuple(DataService._as_tuple(DataService._read_any_attr(candidate, "fields", ()))),
-        )
 
     @staticmethod
     def _read_any_attr(obj: Any, name: str, default: Any = None) -> Any:
@@ -677,6 +698,7 @@ class DataService:
         gaps = self._drop_satisfied_date_range_missing_gaps(gaps, final_warehouse.satisfied)
         gaps = self._drop_filled_local_warehouse_empty_gaps(gaps, final_warehouse.rows)
         gaps = self._drop_satisfied_field_missing_gaps(gaps, final_warehouse.rows)
+        gaps = self._drop_filled_field_missing_gaps(gaps, final_warehouse.satisfied, dataset_refs)
         gaps = self._drop_shadowed_field_missing_gaps(gaps, final_warehouse.rows)
         gaps = self._dedupe_gaps(gaps)
         status = self._resolve_status(final_warehouse.satisfied, dataset_refs, gaps)
@@ -736,6 +758,12 @@ class DataService:
                     continue
             filtered.append(gap)
         return filtered
+
+    @staticmethod
+    def _drop_filled_field_missing_gaps(gaps: Sequence[DataGap], satisfied: bool, dataset_refs: Sequence[str]) -> list[DataGap]:
+        if not satisfied or not dataset_refs:
+            return list(gaps)
+        return [gap for gap in gaps if gap.reason != GapReason.FIELD_MISSING]
 
     @staticmethod
     def _drop_shadowed_field_missing_gaps(gaps: Sequence[DataGap], rows: Sequence[Mapping[str, Any]]) -> list[DataGap]:
@@ -830,7 +858,7 @@ class DataService:
             evidence_refs = tuple(gap.get("evidence_refs", ()) or ())
             return DataGap.by_reason(
                 reason,
-                request_id=str(gap.get("request_id") or request_id),
+                request_id=request_id,
                 market=DataService._coerce_market(gap.get("market")),
                 data_type=str(gap.get("data_type") or "unknown"),
                 granularity=str(gap.get("granularity") or "unknown"),
@@ -843,7 +871,7 @@ class DataService:
         message = getattr(gap, "message", None) or getattr(gap, "human_readable", None) or str(reason)
         return DataGap.by_reason(
             reason,
-            request_id=str(getattr(gap, "request_id", request_id)),
+            request_id=request_id,
             market=DataService._coerce_market(getattr(gap, "market", None)),
             data_type=str(getattr(gap, "data_type", "unknown")),
             granularity=str(getattr(gap, "granularity", "unknown")),
@@ -1049,3 +1077,107 @@ class DataService:
         payload = ingest_result.model_dump()
         payload["remote_success"] = False
         return IngestResult.model_validate(payload)
+
+
+def _adapter_endpoint_id(call: ProviderCallSpec) -> str:
+    endpoint = _official_catalog_endpoint(call.catalog_endpoint_id)
+    request_template = getattr(endpoint, "request_template", None)
+    if isinstance(request_template, Mapping):
+        explicit = _optional_text(request_template.get("adapter_endpoint_id"))
+        if explicit:
+            return explicit
+    for candidate in _structured_endpoint_id_candidates(call):
+        stripped = _strip_market_prefix(candidate)
+        if stripped:
+            return stripped
+    return call.catalog_endpoint_id
+
+
+def _unique_refs(values: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(str(value) for value in values if str(value)))
+
+
+def _unique_rows(values: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
+    seen: set[str] = set()
+    rows: list[Mapping[str, Any]] = []
+    for row in values:
+        key = repr(sorted(dict(row).items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row)
+    return tuple(rows)
+
+
+def _unique_gaps(values: Sequence[DataGap]) -> tuple[DataGap, ...]:
+    seen: set[tuple[Any, ...]] = set()
+    gaps: list[DataGap] = []
+    for gap in values:
+        reason = getattr(getattr(gap, "reason", None), "value", getattr(gap, "reason", None))
+        key = (
+            getattr(gap, "request_id", None),
+            reason,
+            getattr(gap, "data_type", None),
+            getattr(gap, "granularity", None),
+            tuple(getattr(gap, "required_fields", ()) or ()),
+            getattr(gap, "human_readable", None),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        gaps.append(gap)
+    return tuple(gaps)
+
+
+def _data_result_rank(result: DataResult) -> int:
+    return {
+        DataResultStatus.READY: 4,
+        DataResultStatus.PARTIAL: 3,
+        DataResultStatus.MISSING: 2,
+        DataResultStatus.ERROR: 1,
+    }.get(result.status, 0)
+
+
+def _official_catalog_endpoint(endpoint_id: str) -> Any | None:
+    return next((endpoint for endpoint in iter_official_catalog_endpoints() if endpoint.endpoint_id == endpoint_id), None)
+
+
+def _structured_endpoint_id_candidates(call: ProviderCallSpec) -> tuple[str, ...]:
+    raw = call.catalog_endpoint_id
+    pieces: list[str] = []
+    if "." in raw:
+        pieces.append(raw.rsplit(".", 1)[1])
+        pieces.append(raw.split(".", 1)[1])
+        pieces.append(raw.split(".", 1)[1].replace(".", "_"))
+    pieces.extend((raw.replace(".", "_"), raw, call.official_path_or_api_name))
+    return tuple(_dedupe(piece for piece in pieces if piece))
+
+
+def _strip_market_prefix(value: str) -> str:
+    text = str(value or "").strip()
+    for prefix in ("cn_a_", "us_", "hk_", "crypto_"):
+        if text.startswith(prefix) and len(text) > len(prefix):
+            return text[len(prefix) :]
+    return text
+
+
+def _need_api_suffix(need: DataNeed) -> str:
+    return str(need.api_id or "").strip().lower().rsplit(".", 1)[-1]
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _dedupe(values: Sequence[Any]) -> tuple[Any, ...]:
+    seen: set[Any] = set()
+    output: list[Any] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        output.append(value)
+    return tuple(output)

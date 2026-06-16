@@ -74,7 +74,7 @@ class SingleFlight:
             return SingleFlightDecision.waiter(token)
         status = str(row.get("status", "pending"))
         lease_until = self._aware_utc(row.get("lease_expires_at"))
-        if status == "published_success":
+        if status == "published_success" and lease_until is not None and lease_until > now:
             return SingleFlightDecision.shared(self._published_from_row(row))
         if status == "published_error" and lease_until is not None and lease_until > now:
             return SingleFlightDecision.shared(self._published_from_row(row))
@@ -108,7 +108,7 @@ class SingleFlight:
         if row is None:
             return False
         blocker = self._has_blocker_gap(result.gaps)
-        status = "published_success" if result.dataset_refs and not blocker and result.status != "failed" else "published_error"
+        status = "published_success" if (result.dataset_refs or result.raw_refs) and not blocker and result.status != "failed" else "published_error"
         return self._repository.cas_publish_single_flight_if_owner(
             key=key,
             owner_token=owner_token,
@@ -171,6 +171,7 @@ class SingleFlight:
             reason = getattr(gap, "reason", None)
             if isinstance(gap, dict):
                 reason = gap.get("reason", reason)
+            reason = str(getattr(reason, "value", reason))
             if reason in blocker_reasons:
                 return True
         return False

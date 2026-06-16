@@ -1,12 +1,14 @@
 # Approved Provider Scope Contract Implementation Plan
 
+> **状态：不属于当前实现，不属于当前实现。** 本计划会把 provider 能力写成 code-readable scope matrix，容易复活字段/domain/report_required 硬编码限制。当前有效合同见 `docs/限流重组.md`：远端请求由 `DataNeed -> planner -> ProviderCallSpec` 生成，provider 能力来自官方接口目录和真实调用证据，fields/domain/report section 不得作为候选否决条件。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent approved data sources from being silently narrowed by code, report request sets, provider capability declarations, or agent interpretation.
 
 **Architecture:** Add a code-readable approved provider scope matrix and contract tests that connect approved source modules to provider capabilities and report data requests. The contract distinguishes implemented report scope from explicit implementation gaps, so a missing attempt cannot be described as “source has no data.”
 
-**Tech Stack:** Python, pytest, existing `ProviderRegistry`, existing report data pack request specs.
+**Tech Stack:** Python, pytest, existing `ProviderRegistry`, existing report data request specs.
 
 ---
 
@@ -20,7 +22,7 @@
 
 Create tests that assert:
 - every implemented approved scope has matching provider capability;
-- every report-required implemented scope is reachable from `data_pack_bridge` report requests;
+- every report-required implemented scope is reachable from `data_need_bridge` report requests;
 - every approved but not-yet-implemented scope has explicit `implementation_status="not_implemented"` and a reason.
 
 - [ ] **Step 2: Implement matrix**
@@ -92,7 +94,7 @@ Run:
 
 ```bash
 git diff --check
-uv run pytest tests/contracts/test_approved_provider_scope.py tests/contracts/test_provider_capabilities.py tests/unit/data_gateway/test_provider_selector.py tests/unit/reports/test_data_pack_bridge.py -q
+uv run pytest tests/contracts/test_approved_provider_scope.py tests/contracts/test_provider_capabilities.py tests/unit/data_gateway/test_provider_selector.py tests/unit/reports/test_data_need_bridge.py -q
 ```
 
 Expected: pass.

@@ -31,7 +31,7 @@ OLD_TOP_LEVEL_DOCS = {
     "control迁移方案.md",
     "current_workflow_inventory.md",
     "dev_mongodb_tushare_setup.md",
-    "frontline工具资料包改造说明.md",
+    "frontline工具数据结果改造说明.md",
     "stock_news_agent_design.md",
     "原版prompt.md",
 }

@@ -21,10 +21,11 @@ class RateLimitDecision:
     allowed: bool
     reason: str | None = None
     retry_after: datetime | None = None
+    reserved_at: datetime | None = None
 
     @classmethod
-    def reserved(cls) -> "RateLimitDecision":
-        return cls(allowed=True)
+    def reserved(cls, reserved_at: datetime | None = None) -> "RateLimitDecision":
+        return cls(allowed=True, reserved_at=reserved_at)
 
     @classmethod
     def blocked(cls, reason: str, retry_after: datetime | None = None) -> "RateLimitDecision":
@@ -134,6 +135,56 @@ class RateLimiter:
         if self._wait_for_cooldown(now=now, cooldown_until=active_cooldown, deadline_at=deadline_at):
             return RateLimitDecision.reserved()
         return _blocked_for_deadline(active_cooldown, deadline_at, fallback_reason="cooldown_skipped")
+
+    def reserve_at(
+        self,
+        key: str,
+        policy: RateLimitPolicy,
+        *,
+        reserve_at: datetime,
+        cost: int = 1,
+        deadline_at: datetime | None = None,
+    ) -> RateLimitDecision:
+        if policy.window_seconds <= 0:
+            raise ValueError("window_seconds must be > 0")
+        if cost <= 0:
+            raise ValueError("cost must be > 0")
+        deadline_at = _normalize_deadline(deadline_at)
+        target = _normalize_datetime(reserve_at)
+
+        if policy.max_requests is None:
+            return RateLimitDecision.reserved(target)
+        if _effective_limit(policy) <= 0:
+            retry_after = target + timedelta(seconds=policy.window_seconds)
+            return _blocked_for_deadline(retry_after, deadline_at, fallback_reason="rate_limited")
+
+        while True:
+            active_cooldown = self._repository.get_active_rate_limit_cooldown(rate_limit_key=key, now=target)
+            if active_cooldown is not None and active_cooldown > target:
+                retry_after = _normalize_datetime(active_cooldown)
+                if deadline_at is not None and retry_after > deadline_at:
+                    return RateLimitDecision.blocked("rate_limited_by_tool_budget", retry_after=retry_after)
+                target = retry_after
+                continue
+
+            state = self._repository.reserve_sliding_rate_limit(
+                rate_limit_key=key,
+                now=target,
+                window_seconds=policy.window_seconds,
+                max_requests=policy.max_requests,
+                safety_margin=policy.safety_margin,
+                cost=cost,
+            )
+            if state.get("allowed") is True:
+                return RateLimitDecision.reserved(target)
+
+            retry_after = state.get("retry_after")
+            if not isinstance(retry_after, datetime):
+                retry_after = target + timedelta(seconds=policy.window_seconds)
+            retry_after = _normalize_datetime(retry_after)
+            if deadline_at is not None and retry_after > deadline_at:
+                return RateLimitDecision.blocked("rate_limited_by_tool_budget", retry_after=retry_after)
+            target = retry_after
 
     def peek_next_available(self, key: str, policy: RateLimitPolicy, *, now: datetime | None = None) -> datetime:
         current = _normalize_datetime(now or self._now())

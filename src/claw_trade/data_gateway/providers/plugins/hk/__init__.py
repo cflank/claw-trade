@@ -474,15 +474,6 @@ class HKTushareProviderPlugin:
                     priority_rank=10,
                 ),
                 endpoint_capability(
-                    endpoint_id="hk_daily_adj_valuation",
-                    market="HK",
-                    data_type="valuation_metric",
-                    source_role="paid_data",
-                    granularity=("daily",),
-                    fields=("price", "market_cap", "symbol_id"),
-                    priority_rank=10,
-                ),
-                endpoint_capability(
                     endpoint_id="hk_fina_indicator",
                     market="HK",
                     data_type="financial_metric",
@@ -517,7 +508,7 @@ class HKTushareProviderPlugin:
         if symbol is None:
             return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
         endpoint_id = str(getattr(task, "endpoint_id", ""))
-        if endpoint_id in {"hk_daily", "hk_daily_adj", "hk_daily_adj_valuation"}:
+        if endpoint_id in {"hk_daily", "hk_daily_adj"}:
             return self._fetch_daily(task, ctx=ctx, token=token, symbol=symbol, endpoint_id=endpoint_id)
         if endpoint_id != "hk_fina_indicator":
             return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
@@ -548,7 +539,7 @@ class HKTushareProviderPlugin:
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=observations)
 
     def _fetch_daily(self, task: Any, *, ctx: Any, token: str, symbol: str, endpoint_id: str) -> FetchResult:
-        api_name = "hk_daily_adj" if endpoint_id in {"hk_daily_adj", "hk_daily_adj_valuation"} else "hk_daily"
+        api_name = "hk_daily_adj" if endpoint_id == "hk_daily_adj" else "hk_daily"
         host, path = endpoint(ctx, _TUSHARE_CREDENTIAL, _TUSHARE_ENDPOINT)
         params: dict[str, Any] = {"ts_code": symbol}
         start_date = _tushare_yyyymmdd(getattr(task, "date_range_start", None))
@@ -1351,36 +1342,28 @@ def _tushare_hk_daily_rows(payload: Any, *, symbol: str, provider_id: str, endpo
         period = parse_date(mapped.get("trade_date"))
         if period is None:
             continue
-        if endpoint_id == "hk_daily_adj_valuation":
-            market_cap = decimal_float(mapped.get("total_mv") or mapped.get("free_mv"))
-            price = decimal_float(mapped.get("close"))
-            if market_cap is None and price is None:
-                continue
-            row = _base_row(dataset="valuation_metric", symbol=symbol, provider_id=provider_id, endpoint_id=endpoint_id, source_role="paid_data", period=period)
-            row.update({"granularity": "daily", "price": price, "market_cap": market_cap})
-        else:
-            open_ = decimal_float(mapped.get("open"))
-            high = decimal_float(mapped.get("high"))
-            low = decimal_float(mapped.get("low"))
-            close = decimal_float(mapped.get("close"))
-            volume = decimal_float(mapped.get("vol"))
-            amount = decimal_float(mapped.get("amount"))
-            if None in {open_, high, low, close}:
-                continue
-            row = _base_row(dataset="daily_bar", symbol=symbol, provider_id=provider_id, endpoint_id=endpoint_id, source_role="paid_data", period=period)
-            row.update(
-                {
-                    "granularity": "daily",
-                    "date": period,
-                    "open": open_,
-                    "high": high,
-                    "low": low,
-                    "close": close,
-                    "volume": volume,
-                    "amount": amount,
-                    "adjustment": decimal_float(mapped.get("adj_factor")) if endpoint_id == "hk_daily_adj" else None,
-                }
-            )
+        open_ = decimal_float(mapped.get("open"))
+        high = decimal_float(mapped.get("high"))
+        low = decimal_float(mapped.get("low"))
+        close = decimal_float(mapped.get("close"))
+        volume = decimal_float(mapped.get("vol"))
+        amount = decimal_float(mapped.get("amount"))
+        if None in {open_, high, low, close}:
+            continue
+        row = _base_row(dataset="daily_bar", symbol=symbol, provider_id=provider_id, endpoint_id=endpoint_id, source_role="paid_data", period=period)
+        row.update(
+            {
+                "granularity": "daily",
+                "date": period,
+                "open": open_,
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": volume,
+                "amount": amount,
+                "adjustment": decimal_float(mapped.get("adj_factor")) if endpoint_id == "hk_daily_adj" else None,
+            }
+        )
         rows.append({key: value for key, value in row.items() if value is not None})
     return rows
 

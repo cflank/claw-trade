@@ -15,7 +15,7 @@
   -> 拉全市场数据
   -> 计算特征
   -> 策略筛选和评分
-  -> 生成 top 20 候选包
+  -> 生成 top 20 候选缓存
 
 用户触发 /select
   -> OpenClaw selection workers 评审 top 20
@@ -51,9 +51,9 @@
 - 新增 selection 请求模型，例如 `SelectRequest` 或等价模型，表达 `market/profile/trade_date/latest_terminal_run/user_confirmation`，不得把它伪装成 ticker-centric `RunRequest`。
 - 新增 `select_command` workflow entry point；普通 chat 不得静默进入 selection，`report_command` 也不得承担 selection 语义。
 - 新增 selection 阶段枚举或等价阶段标识，至少覆盖 `selection_review`、`selection_decision`、`selection_portfolio_decision`、`selection_report_handoff`。
-- 新增或扩展 run store，用于保存两类状态：后台候选池生成 run，以及用户触发的 `/select` worker workflow run。二者必须用 run id、trade date、market、candidate pack hash、status 和 lineage 关联。
+- 新增或扩展 run store，用于保存两类状态：后台候选池生成 run，以及用户触发的 `/select` worker workflow run。二者必须用 run id、trade date、market、candidate cache hash、status 和 lineage 关联。
 - 新增 selection workflow state machine，由 `claw-trade` 按固定顺序调度 4 个 OpenClaw single worker turn。LLM 不决定下一位 worker，OpenClaw 不拥有完整 selection workflow。
-- 新增 candidate pack approval/readback/hash/manifest 校验；未批准、过期或 hash/readback 不一致的候选包不得进入 worker prompt。
+- 新增 candidate cache approval/readback/hash/manifest 校验；未批准、过期或 hash/readback 不一致的候选缓存不得进入 worker prompt。
 - 新增用户确认记录和幂等键，保证用户确认后只对确认 ticker 启动现有 `/report`，且重复确认不会重复创建同一 report run。
 
 任何超出上述范围的调度权、执行权、worker 数量、市场扩展、provider fallback、OpenClaw 源码职责变化，都必须列为“需人工确认”，不能在实现时顺手扩大。
@@ -93,10 +93,10 @@
 |---|---|---|
 | `/select` 是独立 workflow，不偷用 `report_command` | 已确认共识范围 | 第一版新增入口、请求模型、阶段和 run store 合同 |
 | 第一版 worker 固定为 `selection_strategist`、`selection_skeptic`、`selection_manager`、`selection_portfolio_manager` | 已确认共识范围 | 必须是 OpenClaw-woken single worker turn |
-| top 20 候选包 | 合理推断 | 作为第一版默认压缩目标；若要改成动态 N，需要人工确认 |
+| top 20 候选缓存 | 合理推断 | 作为第一版默认压缩目标；若要改成动态 N，需要人工确认 |
 | 收盘后 16:30/17:00 定时 | 合理推断 | 写成建议默认窗口；具体 cron 和节假日策略需实现时配置 |
 | strategist 与 skeptic 顺序评审 | 合理推断 | 第一版默认顺序，便于 skeptic 反驳 strategist；改并行需人工确认 |
-| 第一版不开放 OpenViking 深读工具 | 已确认共识范围 | manager/PM 也无工具；增强材料应改 candidate pack 摘要 |
+| 第一版不开放 OpenViking 深读工具 | 已确认共识范围 | manager/PM 也无工具；增强材料应改 candidate cache 摘要 |
 | provider payload 是工具可见性和 prompt 边界最终验收证据 | 已确认共识范围 | 静态渲染、日志和文档声明不算最终证据 |
 | `myhhub/stock` 与 `Sequoia-X` 本地可复现策略 | 已确认共识范围 | 两个项目审计到的本地策略全部纳入 `/select` 优先实现清单；不得因当前数据字段未接好而裁剪策略 |
 | v1 跨策略排序权重 | 已确认共识范围 | 使用本文 §4.3 的透明权重；参考项目没有统一跨策略权重，因此这是 claw-trade 第一版排序合同 |
@@ -106,7 +106,7 @@
 | 新 Stage 名 | 待确认实现名 | 语义必须存在；具体 enum 名可按代码风格调整 |
 | `single_worker_minimal` | 合理推断 | 仅在现有 OpenClaw/system context 策略可支持时复用；不为此改 OpenClaw 业务职责 |
 | `selection-candidate-review` shared skill | 待确认配置名 | 可作为共享方法说明；不得替代 worker prompt 权威 |
-| manager/PM candidate facts 注入 | 有条件允许 | 只能注入已批准 candidate pack 摘要/表格 prompt variable，不得注入 raw/debug/provider envelope/Mongo/OpenViking 协议/refs/hash 文本 |
+| manager/PM candidate facts 注入 | 有条件允许 | 只能注入已批准 candidate cache 摘要/表格 prompt variable，不得注入 raw/debug/provider envelope/Mongo/OpenViking 协议/refs/hash 文本 |
 | HK/US/CRYPTO 复用 selection 模式 | 需人工确认 | 只能复用架构模式，不能 fallback 到 CN_A prompt 或 A股策略 |
 
 ## 2. 产品目标
@@ -154,11 +154,11 @@ OpenClaw worker 负责评审 top 20 值不值得进入完整投研。
 | 证据存储模块 | Mongo + evidence store | 保存 provider raw refs、normalized refs、feature refs、audit refs | data_gateway 输出 | 可追溯数据引用 |
 | 特征计算模块 | `claw-trade` | 计算收益、趋势、RPS、波动、量能、风险、行业强弱 | normalized refs、universe | `feature_snapshot` |
 | 策略筛选模块 | `claw-trade` | 硬过滤、策略命中、评分排序，把全市场压缩到 top 20 | `feature_snapshot`、规则配置 | `candidate_scores`、`strategy_hits` |
-| 候选包模块 | `claw-trade` | 生成 worker 可读的候选事实包和审计引用 | top 20、features、strategy hits、data quality | `candidate_pack.md/json` |
-| Artifact approval 模块 | `claw-trade` + OpenViking | 校验候选包和 worker L1，通过后写 approved material、manifest、hash、lineage | candidate pack、worker output | approved L1/L2 material |
-| Selection tool 模块 | OpenClaw tool + `claw-trade` backend | 暴露 `claw_get_selection_candidate_pack` 给指定 worker，只读取 approved candidate pack | runtime context 中的 `selection_run_id` | 模型可见候选包 |
+| 候选缓存模块 | `claw-trade` | 生成 worker 可读的候选事实缓存和审计引用 | top 20、features、strategy hits、data quality | `candidate_cache.md/json` |
+| Artifact approval 模块 | `claw-trade` + OpenViking | 校验候选缓存和 worker L1，通过后写 approved material、manifest、hash、lineage | candidate cache、worker output | approved L1/L2 material |
+| Selection tool 模块 | OpenClaw tool + `claw-trade` backend | 暴露 `claw_get_selection_candidate_cache` 给指定 worker，只读取 approved candidate cache | runtime context 中的 `selection_run_id` | 模型可见候选缓存 |
 | OpenClaw selection worker 模块 | OpenClaw | 按 worker 身份、prompt、skill、tool schema 执行单个 agent turn | prompt variables、approved material、allowed_tools | worker L1 |
-| Selection 决策模块 | OpenClaw workers | 由 strategist/skeptic/manager/PM 评审 top 20，输出进入 `/report`、观察、放弃 | candidate pack、上游 approved L1 | `selection_portfolio_decision` |
+| Selection 决策模块 | OpenClaw workers | 由 strategist/skeptic/manager/PM 评审 top 20，输出进入 `/report`、观察、放弃 | candidate cache、上游 approved L1 | `selection_portfolio_decision` |
 | `/report` 交接模块 | `claw-trade` | 把用户确认的 1-3 只股票交给现有 `/report` 流程 | selection decision、用户确认 | `/report <ticker>` run |
 | 验收与观测模块 | `claw-trade` | 保存 provider payload、tool schema、artifact refs、run status，用于测试和审计 | runtime events | evidence bundle |
 
@@ -166,9 +166,9 @@ OpenClaw worker 负责评审 top 20 值不值得进入完整投研。
 
 #### 入口与控制模块
 
-`/select` 入口模块只负责识别用户意图、选择 market/profile、检查是否已有可用 `completed + approved candidate_pack`，可用时启动 selection workflow；如果没有可用 completed candidate pack、最新终态为 no_candidate、run stale、candidate pack 尚未 approved 或 warehouse 证据不足，则触发后台 selection data refresh/job。它不直接调 provider，不直接读表，不同步跑全市场，不计算指标，不写入选理由。
+`/select` 入口模块只负责识别用户意图、选择 market/profile、检查是否已有可用 `completed + approved candidate_cache`，可用时启动 selection workflow；如果没有可用 completed candidate cache、最新终态为 no_candidate、run stale、candidate cache 尚未 approved 或 warehouse 证据不足，则触发后台 selection data refresh/job。它不直接调 provider，不直接读表，不同步跑全市场，不计算指标，不写入选理由。
 
-定时调度模块负责交易日收盘后的自动运行，以及 `backfill/rerun` 和 `/select` 触发的后台 refresh。它生成本轮 `selection_run_plan`，并把 run 状态从 `planned` 推到 `completed`、`no_candidate` 或 `failed`。如果没有可用 completed candidate pack、最新终态是 no_candidate、run stale、candidate pack 尚未 approved 或 warehouse 证据不足，用户 `/select` 应得到“补数已启动/已有补数在跑/补数通道未配置”，而不是临时同步启动全市场实时计算。hash/readback/lineage 损坏仍 fail closed，不用后台补数隐藏完整性问题。
+定时调度模块负责交易日收盘后的自动运行，以及 `backfill/rerun` 和 `/select` 触发的后台 refresh。它生成本轮 `selection_run_plan`，并把 run 状态从 `planned` 推到 `completed`、`no_candidate` 或 `failed`。如果没有可用 completed candidate cache、最新终态是 no_candidate、run stale、candidate cache 尚未 approved 或 warehouse 证据不足，用户 `/select` 应得到“补数已启动/已有补数在跑/补数通道未配置”，而不是临时同步启动全市场实时计算。hash/readback/lineage 损坏仍 fail closed，不用后台补数隐藏完整性问题。
 
 建议落点：
 
@@ -182,7 +182,7 @@ src/claw_trade/cli/
 
 数据入口模块复用 data_gateway 的 provider plugin/adapter、settings、attempt capture、cache、normalized result 机制。它负责“从哪里拿数据”和“证据怎么留”，不负责选股结论。
 
-Mongo/evidence store 保存 raw refs、normalized refs、feature refs 和 provider attempts。OpenViking 保存 approved candidate pack、worker L1、manifest、hash、lineage。模型可见材料只能来自 approved candidate pack 或 approved L1，不直接读取 raw/debug/provider envelope。
+Mongo/evidence store 保存 raw refs、normalized refs、feature refs 和 provider attempts。OpenViking 保存 approved candidate cache、worker L1、manifest、hash、lineage。模型可见材料只能来自 approved candidate cache 或 approved L1，不直接读取 raw/debug/provider envelope。
 
 建议落点：
 
@@ -194,7 +194,7 @@ src/claw_trade/artifacts/
 
 #### 确定性选股计算模块
 
-股票池、特征计算、策略筛选和候选包生成是一个后台批处理链路。它可以分文件实现，但第一版不需要拆成多个常驻 Python 进程。
+股票池、特征计算、策略筛选和候选缓存生成是一个后台批处理链路。它可以分文件实现，但第一版不需要拆成多个常驻 Python 进程。
 
 这组模块的核心职责是把约 5000 只 A股压缩到 top 20：
 
@@ -203,7 +203,7 @@ universe_snapshot
   -> feature_snapshot
   -> strategy_hits
   -> candidate_scores
-  -> candidate_pack
+  -> candidate_cache
 ```
 
 确定性层只能写事实和机器可复算结果：
@@ -220,7 +220,7 @@ universe_snapshot
 - 最终结论、目标价、止损价、交易建议。
 - 买入/持有/卖出或类似最终交易动作。
 
-candidate pack 可以是 Markdown/JSON，但 Markdown 只能是表格化事实和字段说明，不得把 Python 生成的文字包装成 worker 的投资观点。自然语言评审必须由 OpenClaw selection workers 产出。
+candidate cache 可以是 Markdown/JSON，但 Markdown 只能是表格化事实和字段说明，不得把 Python 生成的文字包装成 worker 的投资观点。自然语言评审必须由 OpenClaw selection workers 产出。
 
 建议新增落点：
 
@@ -232,13 +232,13 @@ src/claw_trade/selection/
   features.py
   strategies.py
   engine.py
-  candidate_pack.py
+  candidate_cache.py
   models.py
 ```
 
 #### Selection tool 模块
 
-`claw_get_selection_candidate_pack` 是 worker 可见工具，但它不是外部数据工具。它只按 runtime context 读取本轮 approved candidate pack，返回模型可见候选事实表、字段说明、数据质量和读者化来源摘要。
+`claw_get_selection_candidate_cache` 是 worker 可见工具，但它不是外部数据工具。它只按 runtime context 读取本轮 approved candidate cache，返回模型可见候选事实表、字段说明、数据质量和读者化来源摘要。
 
 它不允许：
 
@@ -279,7 +279,7 @@ agents/selection_portfolio_manager/
 
 #### Artifact approval 与交接模块
 
-artifact approval 模块负责验证 candidate pack 和 worker L1 是否可进入下游。通过后写 OpenViking material、manifest、hash、lineage。
+artifact approval 模块负责验证 candidate cache 和 worker L1 是否可进入下游。通过后写 OpenViking material、manifest、hash、lineage。
 
 `/report` 交接模块只做一件事：把用户确认的 ticker 交给现有 `/report`。它不把 `/select` 结论改写成最终买卖建议。
 
@@ -304,7 +304,7 @@ src/claw_trade/reports/
 | 最终交易建议 | `/report` 的 portfolio manager | `/select` 输出买入/持有/卖出或目标价 |
 | OpenClaw 职责 | 单 worker turn、provider payload、tool schema | selection workflow、候选池生成、A股策略、投资业务逻辑 |
 
-不得把 `/select` workflow、A股策略、candidate pack 生成、用户确认、report handoff 或任何 claw-trade 业务逻辑写进 `third_party/openclaw`。如果实现发现必须修改 OpenClaw，只能是通用 single-worker runtime seam，例如 per-turn tool narrowing 或 provider payload capture；超出该范围必须先人工确认。
+不得把 `/select` workflow、A股策略、candidate cache 生成、用户确认、report handoff 或任何 claw-trade 业务逻辑写进 `third_party/openclaw`。如果实现发现必须修改 OpenClaw，只能是通用 single-worker runtime seam，例如 per-turn tool narrowing 或 provider payload capture；超出该范围必须先人工确认。
 
 ### 3.4 模块架构图
 
@@ -335,11 +335,11 @@ flowchart LR
     DataJob["SelectionDataJob"]
     Feature["FeatureBuilder"]
     Engine["SelectionEngine"]
-    Pack["CandidatePackBuilder"]
+    Pack["CandidateCacheBuilder"]
   end
 
   subgraph ToolPlane["Selection 工具层"]
-    CandidateTool["claw_get_selection_candidate_pack"]
+    CandidateTool["claw_get_selection_candidate_cache"]
   end
 
   subgraph AgentPlane["OpenClaw 单 worker 层"]
@@ -398,12 +398,12 @@ sequenceDiagram
   participant M as Mongo/evidence
   participant F as feature_builder
   participant E as selection_engine
-  participant P as candidate_pack_builder
+  participant P as candidate_cache_builder
   participant OV as OpenViking
   participant U as 用户
   participant Chat as Chat/SelectCommandController
   participant OC as OpenClaw single worker turn
-  participant T as candidate_pack tool
+  participant T as candidate_cache tool
   participant A as ArtifactApproval/claw-trade
   participant R as /report
 
@@ -414,14 +414,14 @@ sequenceDiagram
   F->>E: 提交特征摘要
   E->>E: 硬过滤 + 策略命中 + 评分排序
   E->>P: 输出 top 20、strategy_hits、data_quality
-  P->>A: 提交 candidate_pack artifact
-  A->>OV: 校验并写 approved candidate_pack
+  P->>A: 提交 candidate_cache artifact
+  A->>OV: 校验并写 approved candidate_cache
   U->>Chat: 输入 /select
-  Chat->>A: 校验可用 completed+approved candidate_pack；不可用时只触发后台补数，不同步拉全市场
+  Chat->>A: 校验可用 completed+approved candidate_cache；不可用时只触发后台补数，不同步拉全市场
   Chat->>OC: 调度 selection_strategist single worker turn
-  OC->>T: strategist/skeptic 调用候选包工具
-  T->>OV: 只读取 approved candidate_pack
-  OV-->>T: 返回候选包正文和证据摘要
+  OC->>T: strategist/skeptic 调用候选缓存工具
+  T->>OV: 只读取 approved candidate_cache
+  OV-->>T: 返回候选缓存正文和证据摘要
   T-->>OC: 返回模型可见 top 20 候选材料
   OC-->>Chat: 返回 raw worker output、provider payload、tool evidence
   Chat->>A: 提交 raw worker output 进行 artifact approval
@@ -447,9 +447,9 @@ SelectionScheduler
   -> Mongo raw refs / normalized refs
   -> FeatureBuilder
   -> SelectionEngine
-  -> CandidatePackBuilder
+  -> CandidateCacheBuilder
   -> ArtifactApproval
-  -> OpenViking approved candidate_pack
+  -> OpenViking approved candidate_cache
 ```
 
 这一段处理全市场数据。它可以很重，可以跑几分钟，但必须在用户 `/select` 前完成。
@@ -458,11 +458,11 @@ SelectionScheduler
 
 ```text
 SelectCommandController
-  -> check usable completed+approved candidate pack
-  -> if no usable pack / no_candidate / stale / warehouse evidence insufficient, trigger background selection data refresh/job and return refresh status
-  -> wake selection_strategist with claw_get_selection_candidate_pack
+  -> check usable completed+approved candidate cache
+  -> if no usable candidate cache / no_candidate / stale / warehouse evidence insufficient, trigger background selection data refresh/job and return refresh status
+  -> wake selection_strategist with claw_get_selection_candidate_cache
   -> approve selection_strategy_review
-  -> wake selection_skeptic with claw_get_selection_candidate_pack
+  -> wake selection_skeptic with claw_get_selection_candidate_cache
   -> approve selection_skeptic_review
   -> wake selection_manager with approved upstream L1
   -> approve selection_ranked_watchlist
@@ -490,8 +490,8 @@ selection_portfolio_decision
 | `run scheduled_selection_job(CN_A, trade_date)` | scheduler/backfill | selection batch | market、trade_date、lookback_days |
 | `fetch_market_data(run_plan)` | `selection_data_job` | data_gateway | 股票池、日线、快照、估值/行业字段需求 |
 | `read_normalized_refs(selection_run_id)` | `feature_builder` | Mongo/evidence | normalized data refs，不读模型 prompt |
-| `build_candidate_pack(selection_run_id)` | `candidate_pack_builder` | selection artifacts | top 20 排序事实、候选摘要表、数据质量和审计引用 |
-| `claw_get_selection_candidate_pack()` | OpenClaw worker | selection tool backend | 当前 run 的 approved candidate pack |
+| `build_candidate_cache(selection_run_id)` | `candidate_cache_builder` | selection artifacts | top 20 排序事实、候选摘要表、数据质量和审计引用 |
+| `claw_get_selection_candidate_cache()` | OpenClaw worker | selection tool backend | 当前 run 的 approved candidate cache |
 | `agent.runSingleWorker` | `claw-trade` | OpenClaw | worker id、prompt vars、allowed_tools、material_target |
 | `approve_l1(worker_output)` | workflow control | artifact approval/OpenViking | worker L1、hash、manifest、lineage |
 | `start_report(ticker)` | report handoff | `/report` workflow | 用户确认后的股票代码和市场 |
@@ -510,27 +510,27 @@ sequenceDiagram
   participant Store as SelectionRunStore
   participant OV as OpenViking
   participant OC as OpenClaw
-  participant Tool as candidate_pack tool
+  participant Tool as candidate_cache tool
   participant A as ArtifactApproval
   participant R as ReportWorkflow
 
   U->>Chat: /select
   Chat->>Sel: 识别 select_command
   Sel->>Store: 查询 latest terminal selection data run
-  Store-->>Sel: completed run + candidate_pack ref 或 no_candidate
-  Sel->>OV: 校验 candidate_pack approved/readback/hash
-  OV-->>Sel: approved candidate_pack 可用
+  Store-->>Sel: completed run + candidate_cache ref 或 no_candidate
+  Sel->>OV: 校验 candidate_cache approved/readback/hash
+  OV-->>Sel: approved candidate_cache 可用
   Sel->>Sel: 创建 select_workflow_run
-  Sel->>OC: wake selection_strategist allowed_tools=[candidate_pack]
-  OC->>Tool: claw_get_selection_candidate_pack()
-  Tool->>OV: 读取 approved candidate_pack
-  OV-->>Tool: candidate_pack 正文和证据摘要
+  Sel->>OC: wake selection_strategist allowed_tools=[candidate_cache]
+  OC->>Tool: claw_get_selection_candidate_cache()
+  Tool->>OV: 读取 approved candidate_cache
+  OV-->>Tool: candidate_cache 正文和证据摘要
   Tool-->>OC: top 20 候选材料
   OC-->>A: selection_strategy_review.md
   A->>OV: 写 approved L1
-  Sel->>OC: wake selection_skeptic allowed_tools=[candidate_pack]
-  OC->>Tool: claw_get_selection_candidate_pack()
-  Tool->>OV: 读取同一 candidate_pack
+  Sel->>OC: wake selection_skeptic allowed_tools=[candidate_cache]
+  OC->>Tool: claw_get_selection_candidate_cache()
+  Tool->>OV: 读取同一 candidate_cache
   OC-->>A: selection_skeptic_review.md
   A->>OV: 写 approved L1
   Sel->>OC: wake selection_manager allowed_tools=[]
@@ -551,16 +551,16 @@ sequenceDiagram
 |---:|---|---|---|---|
 | 1 | Chat 入口 | 识别用户输入是否为 `/select`，切换到 selection workflow | `select_command` | 非 `/select` 走普通 chat 或其他命令 |
 | 2 | Select 控制器 | 解析 market/profile/date。第一版默认 `CN_A`，日期默认最新终态交易日 | `SelectRequest` | HK/US/CRYPTO 未批准时 fail，不 fallback |
-| 3 | Select 控制器 | 检查可用 `completed + approved candidate_pack` | `selection_run_id` 或 refresh 状态 | 没有可用 completed pack、最新 no-candidate、run stale 或 warehouse 证据不足：触发后台补数并返回补数状态 |
-| 4 | Select 控制器 | 检查 run 时效、market/profile、candidate_pack approval、hash/readback | `SelectedCandidatePackRef` | run 过期或 candidate pack 未 approved：触发后台补数并返回补数状态；hash/readback/lineage 不一致：停止 |
+| 3 | Select 控制器 | 检查可用 `completed + approved candidate_cache` | `selection_run_id` 或 refresh 状态 | 没有可用 completed candidate cache、最新 no-candidate、run stale 或 warehouse 证据不足：触发后台补数并返回补数状态 |
+| 4 | Select 控制器 | 检查 run 时效、market/profile、candidate_cache approval、hash/readback | `SelectedCandidateCacheRef` | run 过期或 candidate cache 未 approved：触发后台补数并返回补数状态；hash/readback/lineage 不一致：停止 |
 | 5 | Select 控制器 | 创建本次 `/select` workflow run，绑定 `selection_run_id` | `select_workflow_run_id` | run state 无法写入：停止 |
-| 6 | Select 控制器 | 准备 `selection_strategist` 的 prompt vars、allowed_tools、material_target | OpenClaw single-worker request | 工具解析不等于 candidate pack：停止 |
+| 6 | Select 控制器 | 准备 `selection_strategist` 的 prompt vars、allowed_tools、material_target | OpenClaw single-worker request | 工具解析不等于 candidate cache：停止 |
 | 7 | OpenClaw | 唤醒 `selection_strategist` | provider payload、tool schema、raw LLM output | provider/runtime 失败：记录失败并停止 |
-| 8 | candidate pack tool | worker 调用 `claw_get_selection_candidate_pack()`，只读 approved pack | 模型可见 top 20 材料 | tool 发现 pack 不可用：控制层记录明确错误并停止，不允许现场拉数 |
+| 8 | candidate cache tool | worker 调用 `claw_get_selection_candidate_cache()`，只读 approved cache | 模型可见 top 20 材料 | tool 发现 candidate cache 不可用：控制层记录明确错误并停止，不允许现场拉数 |
 | 9 | Artifact approval | 校验 strategist L1，通过后写 OpenViking approved material | `selection_strategy_review.md` | L1 不合格：不进入 skeptic |
-| 10 | Select 控制器 | 唤醒 `selection_skeptic`，仍只允许 candidate pack tool，并传入 strategist L1 | skeptic request | 上游 L1 缺失：停止 |
+| 10 | Select 控制器 | 唤醒 `selection_skeptic`，仍只允许 candidate cache tool，并传入 strategist L1 | skeptic request | 上游 L1 缺失：停止 |
 | 11 | Artifact approval | 校验 skeptic L1，通过后写 OpenViking | `selection_skeptic_review.md` | L1 不合格：不进入 manager |
-| 12 | Select 控制器 | 唤醒 `selection_manager`，allowed_tools 为空，只传 approved 上游 L1 和 candidate pack 摘要 | manager request | payload 出现工具：停止 |
+| 12 | Select 控制器 | 唤醒 `selection_manager`，allowed_tools 为空，只传 approved 上游 L1 和 candidate cache 摘要 | manager request | payload 出现工具：停止 |
 | 13 | Artifact approval | 校验 manager L1，通过后写 OpenViking | `selection_ranked_watchlist.md` | L1 不合格：不进入 PM |
 | 14 | Select 控制器 | 唤醒 `selection_portfolio_manager`，allowed_tools 为空 | PM request | payload 出现工具：停止 |
 | 15 | Artifact approval | 校验 PM L1，并生成最终 `/select` reader-facing 结果 | `selection_portfolio_decision.md` | PM 结论越界：不展示为有效结果 |
@@ -574,7 +574,7 @@ sequenceDiagram
 received
   -> resolving_request
   -> loading_completed_selection_run
-  -> validating_candidate_pack
+  -> validating_candidate_cache
   -> select_run_created
   -> strategist_running
   -> strategist_approved
@@ -593,8 +593,8 @@ received
 ```text
 no_completed_selection_run
 stale_selection_run
-candidate_pack_not_approved
-candidate_pack_hash_mismatch
+candidate_cache_not_approved
+candidate_cache_hash_mismatch
 tool_schema_violation
 worker_runtime_failed
 artifact_approval_failed
@@ -603,7 +603,7 @@ selection_result_invalid
 
 关键原则：
 
-- `no_completed_selection_run`、`no_candidate_selection_run`、`stale_selection_run`、`candidate_pack_not_approved` 和 warehouse 证据不足不启动 worker；`/select` 只触发后台 selection data refresh/job 并返回“补数已启动/已有补数在跑/补数通道未配置”。
+- `no_completed_selection_run`、`no_candidate_selection_run`、`stale_selection_run`、`candidate_cache_not_approved` 和 warehouse 证据不足不启动 worker；`/select` 只触发后台 selection data refresh/job 并返回“补数已启动/已有补数在跑/补数通道未配置”。
 - `tool_schema_violation` 是硬失败，因为它说明 worker 看到的工具边界不可信。
 - `artifact_approval_failed` 后的材料不能进入下游 prompt。
 - `/select` completed 以后仍不能自动跑 `/report`，必须等用户确认。
@@ -612,12 +612,12 @@ selection_result_invalid
 
 | worker | allowed tools | prompt 输入 | 输出 | 下游可见 |
 |---|---|---|---|---|
-| `selection_strategist` | `claw_get_selection_candidate_pack` | market、trade_date、selection_run_id、candidate pack 工具结果 | 策略评审 L1 | skeptic、manager、PM |
-| `selection_skeptic` | `claw_get_selection_candidate_pack` | candidate pack 工具结果、strategist approved L1 | 反方审查 L1 | manager、PM |
-| `selection_manager` | 无 | strategist L1、skeptic L1、经批准的 candidate pack 摘要/表格 prompt variable | ranked watchlist L1 | PM |
-| `selection_portfolio_manager` | 无 | ranked watchlist、strategist L1、skeptic L1、经批准的 candidate pack 摘要/表格 prompt variable | 最终 `/select` 决策 | 用户和 report handoff |
+| `selection_strategist` | `claw_get_selection_candidate_cache` | market、trade_date、selection_run_id、candidate cache 工具结果 | 策略评审 L1 | skeptic、manager、PM |
+| `selection_skeptic` | `claw_get_selection_candidate_cache` | candidate cache 工具结果、strategist approved L1 | 反方审查 L1 | manager、PM |
+| `selection_manager` | 无 | strategist L1、skeptic L1、经批准的 candidate cache 摘要/表格 prompt variable | ranked watchlist L1 | PM |
+| `selection_portfolio_manager` | 无 | ranked watchlist、strategist L1、skeptic L1、经批准的 candidate cache 摘要/表格 prompt variable | 最终 `/select` 决策 | 用户和 report handoff |
 
-`selection_manager` 与 `selection_portfolio_manager` 不重新查数据、不看工具、不读 raw。它们的主要材料是上游 worker 的 approved L1 自然语言正文。若决策需要候选事实，只能由 Python 把已批准 candidate pack 中的有限摘要/表格作为 prompt variable 注入；该注入材料不得包含 raw/debug/provider envelope、Mongo collection 内容、OpenViking/OpenClaw 协议文本、refs/hash/manifest/lineage 机器字段。
+`selection_manager` 与 `selection_portfolio_manager` 不重新查数据、不看工具、不读 raw。它们的主要材料是上游 worker 的 approved L1 自然语言正文。若决策需要候选事实，只能由 Python 把已批准 candidate cache 中的有限摘要/表格作为 prompt variable 注入；该注入材料不得包含 raw/debug/provider envelope、Mongo collection 内容、OpenViking/OpenClaw 协议文本、refs/hash/manifest/lineage 机器字段。
 
 #### 3.8.5 用户可见结果
 
@@ -712,7 +712,7 @@ selection_result_invalid
 数据原则：
 
 - 缺字段不是裁剪策略的理由。实现时必须优先补 data_gateway 下的数据字段合同和 provider plugin/adapter。
-- 运行时不得伪造策略命中。若某个策略所需字段在所有已配置真实来源中都不可得，候选包必须列出“该策略本轮数据不足”，而不是把策略从清单中静默移除。
+- 运行时不得伪造策略命中。若某个策略所需字段在所有已配置真实来源中都不可得，候选缓存必须列出“该策略本轮数据不足”，而不是把策略从清单中静默移除。
 - selection 层不直接接触具体数据源；它只消费 data_gateway 输出的标准化字段和证据。
 
 输出：
@@ -729,7 +729,7 @@ selection_result_invalid
 - 运行策略命中。
 - 评分排序。
 - 先保留每个来源策略的原始命中列表和命中证据，再用 `claw-trade` v1 合成评分把可评审候选压缩到最多 top 20。
-- 生成 worker 可读的候选包。
+- 生成 worker 可读的候选缓存。
 
 硬过滤第一版：
 
@@ -788,9 +788,9 @@ v1 透明排序权重（优先实现）：
 - 这是 2026-05-28 人类批准后的第一版跨策略排序合同。参考项目提供了策略阈值和局部排序键，但没有统一跨策略权重；claw-trade 用上表做透明合成排序。
 - top 20 是 `/select` 给 OpenClaw workers 评审的数量上限，不是参考项目原生输出，也不是必须凑满 20。若真实策略命中和硬过滤后不足 20，只能输出实际候选数；若没有真实候选，不得放宽条件、补假候选或伪造命中。
 - 参考项目对齐的第一层证据是 per-strategy raw hits：每个 `myhhub/stock` / `Sequoia-X` 策略先产出自己的原始命中集合、命中字段和阈值证据；合并去重、统一打分和 top 20 排序属于 `claw-trade` 的第二层产品逻辑。
-- 权重必须写入 approved strategy config，并进入候选包审计材料。生产代码不得再使用“当天涨幅 + 成交额”这类临时公式冒充完整选股。
-- 若权重后续调整，必须更新本文和详细设计，并在候选包 manifest/evidence 中记录策略配置版本和权重版本。
-- candidate pack 模型可见表必须显式包含总分、分项得分、策略来源、策略变体、命中字段、实际指标值、风险扣分、数据缺口扣分、排序 tie-break 字段、策略配置版本和权重版本；这些字段只能是可复算事实，不得写 Python 生成的入选观点。
+- 权重必须写入 approved strategy config，并进入候选缓存审计材料。生产代码不得再使用“当天涨幅 + 成交额”这类临时公式冒充完整选股。
+- 若权重后续调整，必须更新本文和详细设计，并在候选缓存 manifest/evidence 中记录策略配置版本和权重版本。
+- candidate cache 模型可见表必须显式包含总分、分项得分、策略来源、策略变体、命中字段、实际指标值、风险扣分、数据缺口扣分、排序 tie-break 字段、策略配置版本和权重版本；这些字段只能是可复算事实，不得写 Python 生成的入选观点。
 
 风险项作为扣分项：
 
@@ -805,7 +805,7 @@ v1 透明排序权重（优先实现）：
 
 - `strategy_hits`
 - `candidate_scores`
-- `candidate_pack`
+- `candidate_cache`
 - `selection_engine_audit`
 
 ## 5. OpenClaw Selection Workers
@@ -839,7 +839,7 @@ selection_portfolio_decision:
 
 `selection_strategist` 与 `selection_skeptic` 可见材料：
 
-- `claw_get_selection_candidate_pack` 返回的 top 20 候选事实包。
+- `claw_get_selection_candidate_cache` 返回的 top 20 候选事实缓存。
 - `strategy_hits`
 - `factor_snapshot_summary`
 - `data_quality_report`
@@ -848,7 +848,7 @@ selection_portfolio_decision:
 `selection_manager` 与 `selection_portfolio_manager` 可见材料：
 
 - 上游 selection worker 的 approved L1 自然语言正文。
-- 经批准的 candidate pack 摘要/表格 prompt variable，仅限 top 20 排序事实、特征摘要、策略命中、数据质量和必要的读者化来源名称/日期。
+- 经批准的 candidate cache 摘要/表格 prompt variable，仅限 top 20 排序事实、特征摘要、策略命中、数据质量和必要的读者化来源名称/日期。
 
 worker 不可见材料：
 
@@ -867,10 +867,10 @@ worker 不可见材料：
 
 ```text
 report frontline 工具：
-  从 data_gateway 获取单标的资料包。
+  从 data_gateway 获取单标的数据结果。
 
 select review 工具：
-  只读取已完成 selection run 的 top 20 候选包。
+  只读取已完成 selection run 的 top 20 候选缓存。
   不出网，不重新计算，不扩大股票池。
 ```
 
@@ -883,10 +883,10 @@ select review 工具：
 | `/report` 机制 | `/select` 对应机制 | 关键约束 |
 |---|---|---|
 | `agents/<worker>/STAGES.yaml` 决定当前 worker 的 tool intent | `selection_*` worker 也用 `STAGES.yaml` 声明 tool intent | prompt 可说明已授权工具的用法，但不能成为工具授权来源；Python 不临时拼工具 |
-| `src/claw_trade/config/tool_names.py` 把 intent 映射成 canonical provider-visible tool | 新增 `selection_candidate_pack -> claw_get_selection_candidate_pack` | provider payload 只允许出现 canonical tool 名 |
+| `src/claw_trade/config/tool_names.py` 把 intent 映射成 canonical provider-visible tool | 新增 `selection_candidate_cache -> claw_get_selection_candidate_cache` | provider payload 只允许出现 canonical tool 名 |
 | `allowed_tools` 随 OpenClaw single worker wake 传入 | `/select` 每次 worker wake 同样传入精确 `allowed_tools` | worker 不共享上一轮或其他 worker 的工具 |
-| frontline worker 可见领域 pack tool，下游 worker 不可见数据工具 | `selection_strategist` / `selection_skeptic` 可见 candidate pack tool，manager / PM 不可见工具 | 决策层只读 approved L1 和 candidate pack prompt variable |
-| data_gateway 负责外部数据，OpenViking 负责 approved material | 后台 selection job 负责全市场取数，candidate pack tool 只读 approved selection artifact | selection worker 不能实时出网、不能扩大股票池 |
+| frontline worker 可见领域 cache tool，下游 worker 不可见数据工具 | `selection_strategist` / `selection_skeptic` 可见 candidate cache tool，manager / PM 不可见工具 | 决策层只读 approved L1 和 candidate cache prompt variable |
+| data_gateway 负责外部数据，OpenViking 负责 approved material | 后台 selection job 负责全市场取数，candidate cache tool 只读 approved selection artifact | selection worker 不能实时出网、不能扩大股票池 |
 | 验收看 OpenClaw provider payload 的 `tools` | `/select` 同样以 provider payload 为准 | 静态渲染、日志、文档声明不算工具边界证明 |
 
 #### 5.3.1 Tool 分层
@@ -896,7 +896,7 @@ select review 工具：
 | `selection_data_job` | 否 | 全市场取数、provider attempts、normalized refs | 后台确定性任务，不是 OpenClaw tool |
 | `feature_builder` | 否 | 指标和因子计算 | 后台确定性任务，不是 OpenClaw tool |
 | `selection_engine` | 否 | 硬过滤、策略命中、评分、top 20 | 后台确定性任务，不是 OpenClaw tool |
-| `claw_get_selection_candidate_pack` | 是 | 读取本轮 top 20 candidate pack | selection worker 可见的 canonical pack tool |
+| `claw_get_selection_candidate_cache` | 是 | 读取本轮 top 20 candidate cache | selection worker 可见的 canonical cache tool |
 | `openviking_read_with_capability` | 可选，默认否 | 深读本轮 approved evidence | 仅未来需要时开启，不做第一版默认能力 |
 | data_gateway/provider atomic tools | 否 | 外部数据抓取 | selection worker 禁止可见 |
 
@@ -904,29 +904,29 @@ select review 工具：
 
 | worker | model-visible tools | openviking_access | 主输入 |
 |---|---|---|---|
-| `selection_strategist` | `claw_get_selection_candidate_pack` | `none` | top 20 候选包、策略命中、因子摘要、数据质量 |
-| `selection_skeptic` | `claw_get_selection_candidate_pack` | `none` | top 20 候选包、策略评审 L1、数据质量 |
-| `selection_manager` | 无 | `none` | approved strategy review、approved skeptic review、经批准 candidate pack 摘要/表格 |
-| `selection_portfolio_manager` | 无 | `none` | approved ranked watchlist、上游评审 L1、经批准 candidate pack 摘要/表格 |
+| `selection_strategist` | `claw_get_selection_candidate_cache` | `none` | top 20 候选缓存、策略命中、因子摘要、数据质量 |
+| `selection_skeptic` | `claw_get_selection_candidate_cache` | `none` | top 20 候选缓存、策略评审 L1、数据质量 |
+| `selection_manager` | 无 | `none` | approved strategy review、approved skeptic review、经批准 candidate cache 摘要/表格 |
+| `selection_portfolio_manager` | 无 | `none` | approved ranked watchlist、上游评审 L1、经批准 candidate cache 摘要/表格 |
 
 设计理由：
 
-- `selection_strategist` 与 `selection_skeptic` 是候选评审层，类似 `/report` 的 frontline：需要读取资料包后写 L1。
+- `selection_strategist` 与 `selection_skeptic` 是候选评审层，类似 `/report` 的 frontline：需要读取数据结果后写 L1。
 - `selection_manager` 与 `selection_portfolio_manager` 是下游决策层，类似 `/report` 的 research manager / portfolio manager：只读取 approved 上游 L1，不重新查数。
-- candidate pack 摘要/表格可以被 Python 作为 approved prompt variable 传给下游 worker，但不能包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest 文本，也不能由下游 worker 自行扩大数据范围。
+- candidate cache 摘要/表格可以被 Python 作为 approved prompt variable 传给下游 worker，但不能包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest 文本，也不能由下游 worker 自行扩大数据范围。
 
-#### 5.3.3 `claw_get_selection_candidate_pack` 合同
+#### 5.3.3 `claw_get_selection_candidate_cache` 合同
 
 工具名：
 
 ```text
-claw_get_selection_candidate_pack
+claw_get_selection_candidate_cache
 ```
 
 用途：
 
 ```text
-读取当前 selection_run_id 对应的已完成 top 20 候选包。
+读取当前 selection_run_id 对应的已完成 top 20 候选缓存。
 ```
 
 调用参数：
@@ -936,7 +936,7 @@ claw_get_selection_candidate_pack
 返回内容：
 
 ```text
-candidate_pack_md:
+candidate_cache_md:
   面向 worker 的候选事实表和字段说明。只陈列事实、特征、命中、排序和数据质量，不写入选理由或投资判断。
 
 candidates:
@@ -976,11 +976,11 @@ selection_run_meta:
 no_completed_selection_run:
   当天没有可用 selection run。`/select` 不启动 worker，只触发后台补数并返回补数状态；不得临时拉数。
 
-candidate_pack_not_approved:
-  候选包未通过 artifact approval。worker 必须停止，不得使用半成品；`/select` 控制层可以触发后台补数/重建候选包。
+candidate_cache_not_approved:
+  候选缓存未通过 artifact approval。worker 必须停止，不得使用半成品；`/select` 控制层可以触发后台补数/重建候选缓存。
 
-candidate_pack_stale:
-  候选包过期。`/select` 不启动 worker，只触发后台补数并返回补数状态；不能当作最新结论。
+candidate_cache_stale:
+  候选缓存过期。`/select` 不启动 worker，只触发后台补数并返回补数状态；不能当作最新结论。
 ```
 
 #### 5.3.4 Stage policy 示例
@@ -996,7 +996,7 @@ profiles:
     approved: true
     prompt: prompts/CN_A.md
     tools:
-      - selection_candidate_pack
+      - selection_candidate_cache
     openviking_access: none
 tool_policy:
   owner: stage_profile
@@ -1007,7 +1007,7 @@ tool_policy:
 
 ```yaml
 tools:
-  - selection_candidate_pack
+  - selection_candidate_cache
 openviking_access: none
 ```
 
@@ -1020,17 +1020,17 @@ openviking_access: none
 
 #### 5.3.5 Tool registry 设计
 
-`selection_candidate_pack` 是 intent，不是 provider-visible 名称。它应通过 tool registry 映射为 canonical 工具：
+`selection_candidate_cache` 是 intent，不是 provider-visible 名称。它应通过 tool registry 映射为 canonical 工具：
 
 ```python
-"selection_candidate_pack": ("claw_get_selection_candidate_pack",)
+"selection_candidate_cache": ("claw_get_selection_candidate_cache",)
 ```
 
 验收以 OpenClaw provider payload 为准：
 
 ```text
-selection_strategist visible tools == ["claw_get_selection_candidate_pack"]
-selection_skeptic visible tools == ["claw_get_selection_candidate_pack"]
+selection_strategist visible tools == ["claw_get_selection_candidate_cache"]
+selection_skeptic visible tools == ["claw_get_selection_candidate_cache"]
 selection_manager visible tools == []
 selection_portfolio_manager visible tools == []
 ```
@@ -1039,7 +1039,7 @@ selection_portfolio_manager visible tools == []
 
 #### 5.3.6 Runtime 边界
 
-`claw_get_selection_candidate_pack` 的实现边界必须保持简单：
+`claw_get_selection_candidate_cache` 的实现边界必须保持简单：
 
 - 调用方必须是 OpenClaw worker turn，不是 Python 预先代 worker 调用。
 - 工具只根据 runtime context 读取当前 `selection_run_id` 的 approved artifact。
@@ -1049,7 +1049,7 @@ selection_portfolio_manager visible tools == []
 - provider raw、attempt、cache、debug envelope、OpenViking 协议块只能留在 evidence/audit，不得进模型可见 tool result。
 - 缺 run、run 未完成、artifact 未批准、artifact 过期时，工具硬失败并返回明确错误码；worker 不得现场拉数继续。
 
-第一版不开放 OpenViking 深读工具。若后续发现 top 20 候选包不够，正确路径是增强后台 candidate pack 的字段和摘要，而不是让 selection worker 直接读 Mongo/raw/provider。
+第一版不开放 OpenViking 深读工具。若后续发现 top 20 候选缓存不够，正确路径是增强后台 candidate cache 的字段和摘要，而不是让 selection worker 直接读 Mongo/raw/provider。
 
 #### 5.3.7 Tool schema 验收辅助
 
@@ -1057,8 +1057,8 @@ selection_portfolio_manager visible tools == []
 
 ```python
 SELECTION_WORKER_VISIBLE_TOOLS = {
-    "selection_strategist": {"claw_get_selection_candidate_pack"},
-    "selection_skeptic": {"claw_get_selection_candidate_pack"},
+    "selection_strategist": {"claw_get_selection_candidate_cache"},
+    "selection_skeptic": {"claw_get_selection_candidate_cache"},
     "selection_manager": set(),
     "selection_portfolio_manager": set(),
 }
@@ -1106,7 +1106,7 @@ FORBIDDEN_SELECTION_TOOL_PATTERNS = (
 
 - 新增候选股票。
 - 调用全市场数据源。
-- 编造 candidate_pack 之外的事实。
+- 编造 candidate_cache 之外的事实。
 - 把缺失数据写成已确认事实。
 
 ### 6.2 共享 skill
@@ -1123,7 +1123,7 @@ skill 负责规定 worker 的共同方法：
 - 只能围绕 top 20 评审。
 - 必须区分已确认事实、推断、未知。
 - 必须说明保留、观察、放弃原因。
-- 必须引用候选包中的读者化来源摘要或明确说明证据缺口。
+- 必须引用候选缓存中的读者化来源摘要或明确说明证据缺口。
 - 最终结论只能是进入 `/report`、观察、放弃。
 
 skill 不负责：
@@ -1139,15 +1139,15 @@ skill 不负责：
 ```text
 你是一位中国A股选股策略分析师，负责从已筛出的候选股票池中识别最值得深入研究的标的。
 
-当前任务不是生成完整投资报告，也不是给出买入/持有/卖出建议。你的职责是基于 claw-trade 已批准的 candidate_pack，判断哪些候选的入选逻辑最扎实，最值得进入后续 /report 完整投研流程。
+当前任务不是生成完整投资报告，也不是给出买入/持有/卖出建议。你的职责是基于 claw-trade 已批准的 candidate_cache，判断哪些候选的入选逻辑最扎实，最值得进入后续 /report 完整投研流程。
 
-可用工具：`claw_get_selection_candidate_pack`。
-如果消息历史中没有候选包工具结果，请先调用 `claw_get_selection_candidate_pack` 获取本轮已批准候选包。
+可用工具：`claw_get_selection_candidate_cache`。
+如果消息历史中没有候选缓存工具结果，请先调用 `claw_get_selection_candidate_cache` 获取本轮已批准候选缓存。
 工具调用时不需要填写股票代码、市场、日期、数据源或候选数量；这些运行参数已由系统上下文锁定。
 
 ⚠️ 当前市场：中国A股（CN_A）
 ⚠️ 所有价格、成交额、市值和估值口径均使用人民币（¥）
-⚠️ 不得新增 candidate_pack 之外的股票
+⚠️ 不得新增 candidate_cache 之外的股票
 ⚠️ 不得调用外部数据源，不得编造指标、新闻、财务数据或策略命中
 
 首轮 prompt variables 只包含运行上下文：
@@ -1157,15 +1157,15 @@ skill 不负责：
 - selection_run_id
 
 候选材料获取方式：
-- 候选股票包、策略命中明细、因子摘要、数据质量说明、读者化来源摘要必须来自你调用 `claw_get_selection_candidate_pack` 后得到的工具结果。
-- Python 不会把完整 `{candidate_pack}`、`{strategy_hits}`、`{factor_snapshot_summary}`、`{data_quality_report}` 作为首轮 prompt 占位材料预注入。
+- 候选股票缓存、策略命中明细、因子摘要、数据质量说明、读者化来源摘要必须来自你调用 `claw_get_selection_candidate_cache` 后得到的工具结果。
+- Python 不会把完整 `{candidate_cache}`、`{strategy_hits}`、`{factor_snapshot_summary}`、`{data_quality_report}` 作为首轮 prompt 占位材料预注入。
 
 请重点评估：
 1. 趋势质量：中短期趋势是否清晰，是否只是单日脉冲。
 2. 策略共振：RPS、均线、突破、成交额、波动率等信号是否互相支持。
 3. 流动性与可交易性：成交额、换手、价格状态是否支持后续研究。
 4. 行业和主题位置：是否具备相对强势，而不是孤立上涨。
-5. 证据完整度：入选理由是否能从候选包和读者化来源摘要中追溯。
+5. 证据完整度：入选理由是否能从候选缓存和读者化来源摘要中追溯。
 
 输出格式：
 
@@ -1192,10 +1192,10 @@ skill 不负责：
 ```text
 你是一位中国A股选股反方审查员。你的任务不是寻找机会，而是专门淘汰弱候选，识别 selection_engine 机械评分可能误判的股票。
 
-你必须以反方视角审查 candidate_pack，但不能为了反对而编造事实。所有反对理由必须来自候选包、策略命中明细、数据质量说明或读者化来源摘要。
+你必须以反方视角审查 candidate_cache，但不能为了反对而编造事实。所有反对理由必须来自候选缓存、策略命中明细、数据质量说明或读者化来源摘要。
 
-可用工具：`claw_get_selection_candidate_pack`。
-如果消息历史中没有候选包工具结果，请先调用 `claw_get_selection_candidate_pack` 获取本轮已批准候选包。
+可用工具：`claw_get_selection_candidate_cache`。
+如果消息历史中没有候选缓存工具结果，请先调用 `claw_get_selection_candidate_cache` 获取本轮已批准候选缓存。
 工具调用时不需要填写股票代码、市场、日期、数据源或候选数量；这些运行参数已由系统上下文锁定。
 
 ⚠️ 当前市场：中国A股（CN_A）
@@ -1211,8 +1211,8 @@ skill 不负责：
 - 策略评审报告：{strategy_review}
 
 候选材料获取方式：
-- 候选股票包、策略命中明细、因子摘要、数据质量说明、读者化来源摘要必须来自你调用 `claw_get_selection_candidate_pack` 后得到的工具结果。
-- Python 不会把完整 `{candidate_pack}`、`{strategy_hits}`、`{factor_snapshot_summary}`、`{data_quality_report}` 作为首轮 prompt 占位材料预注入。
+- 候选股票缓存、策略命中明细、因子摘要、数据质量说明、读者化来源摘要必须来自你调用 `claw_get_selection_candidate_cache` 后得到的工具结果。
+- Python 不会把完整 `{candidate_cache}`、`{strategy_hits}`、`{factor_snapshot_summary}`、`{data_quality_report}` 作为首轮 prompt 占位材料预注入。
 
 请重点攻击：
 1. 假突破：突破是否缺少成交额、持续性或位置支持。
@@ -1256,11 +1256,11 @@ skill 不负责：
 ⚠️ 不得改写上游证据
 
 可用材料：
-- 经批准候选摘要/表格：{candidate_pack_summary}
+- 经批准候选摘要/表格：{candidate_cache_summary}
 - 策略评审报告：{strategy_review}
 - 反方审查报告：{skeptic_review}
 
-`{candidate_pack_summary}` 可以包含必要的因子摘要、策略命中、数据质量和读者化来源名称/日期，但不得包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本。
+`{candidate_cache_summary}` 可以包含必要的因子摘要、策略命中、数据质量和读者化来源名称/日期，但不得包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本。
 
 请综合判断：
 1. 哪些股票的策略命中最扎实。
@@ -1311,15 +1311,15 @@ skill 不负责：
 - 进入 /report
 - 观察
 - 放弃
-⚠️ 不得新增 candidate_pack 之外的股票
+⚠️ 不得新增 candidate_cache 之外的股票
 
 可用材料：
 - 研究负责人短名单：{ranked_watchlist}
 - 策略评审报告：{strategy_review}
 - 反方审查报告：{skeptic_review}
-- 经批准候选摘要/表格：{candidate_pack_summary}
+- 经批准候选摘要/表格：{candidate_cache_summary}
 
-`{candidate_pack_summary}` 可以包含必要的因子摘要、策略命中、数据质量和读者化来源名称/日期，但不得包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本。
+`{candidate_cache_summary}` 可以包含必要的因子摘要、策略命中、数据质量和读者化来源名称/日期，但不得包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本。
 
 决策原则：
 1. 只选择 1-3 只进入 /report，除非证据明显不足。
@@ -1409,8 +1409,8 @@ feature_snapshot_ref.json
 factor_snapshot_summary.json
 strategy_hits.json
 candidate_scores.json
-candidate_pack.md
-candidate_pack.json
+candidate_cache.md
+candidate_cache.json
 data_quality_report.md
 selection_engine_audit.json
 ```
@@ -1452,49 +1452,33 @@ selection_portfolio_decision.md
 
 后台收盘后定时任务是 `claw-trade` 的确定性数据作业，数据层通过共享 data_gateway、Mongo、OpenViking approved material 机制生成 candidate pool。它不是 `/select` 聊天控制器现场抓全市场，也不是 OpenClaw worker 抓数。
 
-外部数据入口优先复用 data_gateway 的 provider plugin/adapter、provider attempt、cache、normalized result、batch plan 和 readiness/data gap 机制。东财系接口只能作为经批准 adapter 的候选实测来源，不作为默认稳定依赖；任何 provider 失败都必须在 attempts/gaps/readiness 中可见，禁止隐藏 fallback provider。
+外部数据入口优先复用 data_gateway 的 provider plugin/adapter、provider attempt、cache、normalized result、planner、限流闸和 readiness/data gap 机制。东财系接口只能作为正式 adapter 或官方目录 endpoint 的实测来源，不作为无证据 fallback；任何 provider 失败都必须在 attempts/gaps/readiness 中可见。
 
-第一版候选 provider 类别：
+第一版数据需求类别：
 
 ```text
-股票列表：
-  Tushare stock_basic
-  AkShare 对应适配器
-  可选新增 baostock adapter
-
-日线历史：
-  Tushare pro_bar / daily
-  AkShare stock_zh_a_hist
-  data_gateway 可用行情 provider
-  可选新增 baostock query_history_k_data_plus
-
-当日全市场快照：
-  AkShare stock_zh_a_spot_em
-  data_gateway 可用 snapshot provider
-  其他经批准 provider adapter
-
-基础估值/行业：
-  Tushare daily_basic / stock_basic / fina_indicator
-  data_gateway 可用 fundamentals provider
-  其他经批准 provider adapter
+股票列表
+日线历史
+当日全市场快照
+基础估值
+行业分类
+公司名称/证券简称
 ```
 
-东财系接口可作为候选实测来源，但不得成为无证据 fallback。
+具体外部接口由 `DataNeed -> planner -> ProviderCallSpec` 结合官方接口目录、provider adapter、凭证、限流和真实返回证据决定。新增 baostock、东财或其它来源时，必须作为正式 provider adapter 或官方目录 endpoint 纳入 settings/provider registry/evidence 链，不得绕过 data_gateway，也不得把接口名写进选股计划当硬编码限制。
 
-如果新增 baostock，必须作为正式 provider adapter 纳入 settings/provider registry/evidence 链，不得绕过 data_gateway。
+### 9.1 Selection DataNeed refresh plan
 
-### 9.1 Selection provider batch plan
+`/select` 远端补数必须由 selection data job 生成 `DataNeed`，再由统一 planner 生成 `ProviderCallSpec`。不得复用或扩展旧 `旧历史请求计划` 来生成固定全市场远端请求清单，也不能把 5000 只股票的全市场刷新伪装成某个 ticker 的 report plan。
 
-`/report` 已有 `RunProviderPlan` 语义用于记录单标的报告各资料包的 provider 执行计划。`/select` 第一版需要等价的 selection provider batch plan，或者扩展 `RunProviderPlan` 支持 batch scope；但不能把 5000 只股票的全市场计划伪装成某个 ticker 的 report plan。
-
-selection provider batch plan 最低字段语义：
+selection data job 最低审计语义：
 
 - `selection_run_id`、market、trade_date、lookback_days、universe scope。
 - coverage group，例如股票列表、日线历史、当日快照、基础估值、行业分类。
-- provider candidate 顺序、attempt id、cache key、normalized ref、失败原因和 data gap。
+- DataNeed id、ProviderCallSpec、attempt id、cache key、normalized ref、失败原因和 data gap。
 - batch 粒度的 freshness/TTL、completed/failed 状态、lineage 和 rerun/backfill source。
 
-它与 `/report RunProviderPlan` 的关系是“复用 provider 计划和 evidence 语义”，不是“复用单标的请求形状”。验收时必须能把 candidate pack 中的字段追溯回 selection provider batch plan、provider attempts、normalized refs 和 feature snapshot。
+它与 `/report` 的关系是“复用 DataNeed planner、provider evidence 和 warehouse 语义”，不是“复用单标的请求形状”。验收时必须能把 candidate cache 中的字段追溯回 selection data job、DataNeed/ProviderCallSpec、provider attempts、normalized refs 和 feature snapshot。
 
 ## 10. 调度策略
 
@@ -1537,7 +1521,7 @@ select rerun --market CN_A --date YYYY-MM-DD
 `backfill` 与 `rerun` 最低差异：
 
 - `backfill` 用于缺失历史日期；如果目标日期已有 completed run，默认拒绝，除非显式 rerun。
-- `rerun` 用于重新生成同一日期；必须产生新 run id，不得修改旧 run 的 candidate pack、hash、manifest 或 provider evidence。
+- `rerun` 用于重新生成同一日期；必须产生新 run id，不得修改旧 run 的 candidate cache、hash、manifest 或 provider evidence。
 - 两者都必须复用 data_gateway provider plan 和 evidence 记录，不得用临时 provider 或隐藏 fallback。
 
 ### 10.3 `/select` 用户交互
@@ -1546,8 +1530,8 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 ```text
 用户输入 /select
-  -> 检查是否已有可用 completed + approved candidate pack
-  -> 如果最新终态是 no_candidate、不存在可用 completed pack、run 过期、candidate pack 尚未 approved 或 warehouse 证据不足，触发后台 selection data refresh/job，不启动 worker
+  -> 检查是否已有可用 completed + approved candidate cache
+  -> 如果最新终态是 no_candidate、不存在可用 completed candidate cache、run 过期、candidate cache 尚未 approved 或 warehouse 证据不足，触发后台 selection data refresh/job，不启动 worker
   -> 如果 hash/readback/lineage 损坏，fail closed，不触发隐藏 fallback
   -> 不默认现拉全市场，不直接调 provider，不直接读表，不同步跑全市场
   -> 如数据可用，运行 selection_strategist / skeptic / manager / portfolio_manager
@@ -1560,9 +1544,9 @@ select rerun --market CN_A --date YYYY-MM-DD
 | 状态 | 用户看到什么 | 系统实际做什么 |
 |---|---|---|
 | `no_completed_selection_run` | “今日选股数据未准备好，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker；只触发后台 refresh/job；不直接拉全市场 |
-| `no_candidate_selection_run` | “本轮没有符合已批准策略条件的候选股票，已启动新一轮后台补数/已有补数在跑/补数通道未配置。” | 不启动 worker，不生成 fake candidate pack，不回退旧 completed run；只触发后台 refresh/job |
+| `no_candidate_selection_run` | “本轮没有符合已批准策略条件的候选股票，已启动新一轮后台补数/已有补数在跑/补数通道未配置。” | 不启动 worker，不生成 fake candidate cache，不回退旧 completed run；只触发后台 refresh/job |
 | `stale_selection_run` | “最近候选池已过期，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker；只触发后台 refresh/job |
-| `candidate_pack_not_approved` | “候选池事实包尚未批准，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker，不使用半成品；只触发后台 refresh/job |
+| `candidate_cache_not_approved` | “候选池事实包尚未批准，补数已启动/已有补数在跑/补数通道未配置。” | 不启动 worker，不使用半成品；只触发后台 refresh/job |
 | `selection_running` | “正在评审候选池。” | 顺序唤醒 4 个 selection workers |
 | `selection_completed` | 展示进入 `/report`、观察、放弃 | 保存 approved decision，等待用户确认 |
 | `waiting_report_confirmation` | 提供可进入 `/report` 的股票列表 | 不自动创建 report task |
@@ -1570,11 +1554,11 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 ### 10.4 latest terminal run 与 TTL
 
-`/select` 先检查 latest terminal selection data run 是否能提供 `completed + approved candidate pack`；只有可用 pack 可以进入 worker，选择规则必须明确：
+`/select` 先检查 latest terminal selection data run 是否能提供 `completed + approved candidate cache`；只有可用 candidate cache 可以进入 worker，选择规则必须明确：
 
 - market/profile 必须匹配当前 `/select` 请求。
 - 若最新终态 run 是 `no_candidate`，直接进入 `no_candidate_selection_run` 并触发后台 refresh/job，不得回退到更旧的 completed run 凑候选。
-- run status 必须是 `completed`，且 candidate pack approval、OpenViking readback、hash/manifest 校验全部通过，才可启动 selection workers。
+- run status 必须是 `completed`，且 candidate cache approval、OpenViking readback、hash/manifest 校验全部通过，才可启动 selection workers。
 - latest 的排序依据是交易日和 completed_at；failed、running、partial、artifact_approval_failed 的 run 不参与选择。
 - UI runtime 启动时必须从真实 persisted terminal run（completed/no_candidate evidence）恢复 selection run store，禁止只用进程内临时字典导致 `/select` 恒为 no-run。
 - TTL 第一版按交易日口径：CN_A 默认只接受最近一个已收盘交易日的 completed run。非交易日可继续使用最近交易日 run；跨过下一个交易日收盘数据窗口后，旧 run 视为 stale。
@@ -1583,11 +1567,11 @@ select rerun --market CN_A --date YYYY-MM-DD
 失败语义：
 
 - 无 completed run：进入 `no_completed_selection_run`，不启动 worker，只触发后台 refresh/job，不现场抓全市场。
-- 最新终态 run 为 no-candidate：进入 `no_candidate_selection_run`，不启动 worker，不生成 fake approved pack，只触发后台 refresh/job。
+- 最新终态 run 为 no-candidate：进入 `no_candidate_selection_run`，不启动 worker，不生成 fake approved cache，只触发后台 refresh/job。
 - run 过期：进入 `stale_selection_run`，不启动 worker，只触发后台 refresh/job。
-- candidate pack 未批准：进入 `candidate_pack_not_approved`，不启动 worker，只触发后台 refresh/job。
-- pack hash/readback/manifest/lineage 不一致：进入 `candidate_pack_integrity_failed`，不启动 worker。
-- provider plan 或 feature snapshot lineage 缺失：进入 `candidate_pack_lineage_incomplete`，不启动 worker。
+- candidate cache 未批准：进入 `candidate_cache_not_approved`，不启动 worker，只触发后台 refresh/job。
+- candidate cache hash/readback/manifest/lineage 不一致：进入 `candidate_cache_integrity_failed`，不启动 worker。
+- provider plan 或 feature snapshot lineage 缺失：进入 `candidate_cache_lineage_incomplete`，不启动 worker。
 
 ### 10.5 用户确认与 `/report` 幂等
 
@@ -1619,18 +1603,18 @@ select rerun --market CN_A --date YYYY-MM-DD
 - Guard source: `docs/A股选股总体设计.md §2.2/§3.8.5/§11.1`。这里的语义限制只约束 `/select` 研究资源分配结果必须可机械解析为“进入 `/report` / 观察 / 放弃”，并保持候选池边界、确认后才 handoff。它不约束 `/report` 的 portfolio manager 投资表达，不改变 TradingAgents/TradingAgents-CN 报告口径，也不是新增 report 投资表达 runtime guard。
 - `select_command` 不等于 `report_command`。
 - `select_command` 使用 `single_worker_minimal`。
-- `selection_strategist` 的 resolved tools 严格等于 `("claw_get_selection_candidate_pack",)`。
-- `selection_skeptic` 的 resolved tools 严格等于 `("claw_get_selection_candidate_pack",)`。
+- `selection_strategist` 的 resolved tools 严格等于 `("claw_get_selection_candidate_cache",)`。
+- `selection_skeptic` 的 resolved tools 严格等于 `("claw_get_selection_candidate_cache",)`。
 - `selection_manager` 与 `selection_portfolio_manager` 的 resolved tools 严格等于空集合。
-- `selection_candidate_pack` tool intent 映射到 canonical provider-visible tool `claw_get_selection_candidate_pack`。
+- `selection_candidate_cache` tool intent 映射到 canonical provider-visible tool `claw_get_selection_candidate_cache`。
 - selection prompt 可以出现买入/持有/卖出、目标价、止损、交易计划等表达；不得用这些词面或模板做失败判定。
-- reader-facing `/select` artifact 语义验收：最终结论只能是“进入 `/report` / 观察 / 放弃”，且 ticker 必须来自 candidate pack、不得重复；表达类措辞不作为 runtime 失败条件。
+- reader-facing `/select` artifact 语义验收：最终结论只能是“进入 `/report` / 观察 / 放弃”，且 ticker 必须来自 candidate cache、不得重复；表达类措辞不作为 runtime 失败条件。
 - `selection_engine` 对固定 fixture 输出稳定 top 20。
 - `feature_builder` 对固定 OHLCV fixture 计算稳定特征。
 - `/select` 无 completed selection run 时进入 `no_completed_selection_run`，不启动 worker，只触发后台 refresh/job。
 - `/select` 最新终态是 no-candidate 时进入 `no_candidate_selection_run`，不启动 worker，不回退旧 completed run，只触发后台 refresh/job。
 - `/select` run 过期时进入 `stale_selection_run`，不启动 worker，只触发后台 refresh/job。
-- `/select` candidate pack 未 approved 时进入 `candidate_pack_not_approved`，不启动 worker，只触发后台 refresh/job。
+- `/select` candidate cache 未 approved 时进入 `candidate_cache_not_approved`，不启动 worker，只触发后台 refresh/job。
 - `/select` 完成后进入 `waiting_report_confirmation`，不自动创建 report task。
 - Worker 聊天不属于 `/select` 首版单元测试范围；旧 selection worker 追问设计已撤回。
 
@@ -1638,12 +1622,12 @@ select rerun --market CN_A --date YYYY-MM-DD
 
 - scheduled selection job 生成完整 artifact。
 - Mongo 中有 provider attempts/raw/normalized refs。
-- candidate_pack 的 audit evidence index、manifest、hash/readback 和 lineage 可解析。
-- selection workers 只看到 top 20 candidate_pack，不看到全市场明细。
-- `claw_get_selection_candidate_pack` 只读取已批准 selection artifact，不触发外部 provider fetch。
-- provider payload 中 `selection_strategist` 与 `selection_skeptic` 只出现 `claw_get_selection_candidate_pack`。
+- candidate_cache 的 audit evidence index、manifest、hash/readback 和 lineage 可解析。
+- selection workers 只看到 top 20 candidate_cache，不看到全市场明细。
+- `claw_get_selection_candidate_cache` 只读取已批准 selection artifact，不触发外部 provider fetch。
+- provider payload 中 `selection_strategist` 与 `selection_skeptic` 只出现 `claw_get_selection_candidate_cache`。
 - provider payload 中 `selection_manager` 与 `selection_portfolio_manager` 不出现任何 tool schema。
-- provider payload 验收检查工具 schema 和材料边界：manager/PM prompt 只能包含上游 approved L1 正文和经批准 candidate pack 摘要/表格，不包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本。
+- provider payload 验收检查工具 schema 和材料边界：manager/PM prompt 只能包含上游 approved L1 正文和经批准 candidate cache 摘要/表格，不包含 raw/debug/provider envelope、Mongo/OpenViking 协议、refs/hash/manifest/lineage 文本。
 - `/select` 输出 top 1-3、观察池、放弃名单。
 - `/select` reader-facing 输出必须保持三分类与候选池约束；若理由中出现买入/持有/卖出、目标价、止损、仓位或交易计划表达，不单独触发失败。
 - 用户未确认时，`/select` 不触发 `/report`。
@@ -1676,7 +1660,7 @@ Provider payload 是 `/select` 工具可见性和 prompt 材料边界的最终�
 - 要让 `@worker` 改写 `/select` 正式结论、自动触发 `/report`，或替代 PM 正式决策。
 - 要新增 fallback provider 绕过 data_gateway。
 - 要把 baostock 或东财直连作为非批准隐藏路径。
-- 候选包没有审计证据索引、manifest、hash/readback 或 lineage。
+- 候选缓存没有审计证据索引、manifest、hash/readback 或 lineage。
 - Python 直接写最终投资结论。
 - `/select` 自动触发 `/report` 且没有用户确认。
 - 要让 HK/US/CRYPTO 复用 CN_A prompt、A股策略或 A股阈值。
@@ -1689,7 +1673,7 @@ Provider payload 是 `/select` 工具可见性和 prompt 材料边界的最终�
 - selection data job fixture。
 - feature builder。
 - selection engine。
-- candidate_pack artifact。
+- candidate_cache artifact。
 - 不接 OpenClaw。
 
 ### Phase 2：`/select` OpenClaw 评审
@@ -1698,7 +1682,7 @@ Provider payload 是 `/select` 工具可见性和 prompt 材料边界的最终�
 - 新增 4 个 selection workers。
 - 新增 CN_A prompts。
 - 新增 `selection-candidate-review` skill。
-- selection worker 读取 candidate_pack。
+- selection worker 读取 candidate_cache。
 
 ### Phase 3：调度与 UI
 

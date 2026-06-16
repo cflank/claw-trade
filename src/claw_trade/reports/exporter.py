@@ -807,7 +807,7 @@ def _discover_market_chart_images(*, state: WorkflowState, materials: tuple[Appr
             continue
         call_dir = state.run_dir / "calls" / material.call_id
         candidate_dirs = (
-            call_dir / "pack-tool-evidence" / "techlab" / "charts-local",
+            call_dir / "data-need-tool-evidence" / "techlab" / "charts-local",
             call_dir / "evidence" / "techlab" / "charts-local",
             call_dir / "techlab" / "charts-local",
         )

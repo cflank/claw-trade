@@ -152,7 +152,7 @@ class ProviderCapabilityView:
     data_type: str
     source_role: str
     supported_granularities: tuple[str, ...]
-    coverage_fields: tuple[str, ...]
+    fields: tuple[str, ...]
     priority_rank: int
     credential_required: bool
     credential_names: tuple[str, ...]
@@ -166,7 +166,3 @@ class ProviderCapabilityView:
     @property
     def granularity(self) -> tuple[str, ...]:
         return self.supported_granularities
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        return self.coverage_fields

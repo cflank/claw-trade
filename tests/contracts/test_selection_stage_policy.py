@@ -8,11 +8,11 @@ import yaml
 SELECTION_WORKERS = {
     "selection_strategist": {
         "stage": "selection_review",
-        "tools": ["selection_candidate_pack"],
+        "tools": ["selection_candidate_cache"],
     },
     "selection_skeptic": {
         "stage": "selection_review",
-        "tools": ["selection_candidate_pack"],
+        "tools": ["selection_candidate_cache"],
     },
     "selection_manager": {
         "stage": "selection_decision",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 import pytest
 from claw_trade.data_gateway.models import (
@@ -17,7 +18,6 @@ from claw_trade.data_gateway.models import (
     IngestResult,
     LicensePolicy,
     Market,
-    ProviderBatchPlan,
     ProviderCapability,
     RateLimitPolicy,
     RequiredLevel,
@@ -152,7 +152,7 @@ def test_provider_capability_contract_validator() -> None:
             data_type="daily_bar",
             source_role=SourceRole.OFFICIAL,
             supported_granularities=("daily",),
-            coverage_fields=("close",),
+            fields=("close",),
             priority_rank=-1,
             credential_required=False,
             http_visibility=HttpVisibility.MANAGED_HTTP,
@@ -171,7 +171,7 @@ def test_provider_capability_contract_validator() -> None:
             data_type="daily_bar",
             source_role=SourceRole.DISCOVERY,
             supported_granularities=("daily",),
-            coverage_fields=("close",),
+            fields=("close",),
             priority_rank=1,
             credential_required=False,
             http_visibility=HttpVisibility.MANAGED_HTTP,
@@ -179,52 +179,6 @@ def test_provider_capability_contract_validator() -> None:
             license_policy=LicensePolicy(),
             rate_limit_policy=RateLimitPolicy(),
             batch_policy=EndpointBatchPolicy(supports_batch=False, batch_by="none"),
-        )
-
-
-def test_provider_batch_plan_validator() -> None:
-    with pytest.raises(ValueError, match="request_ids"):
-        ProviderBatchPlan(
-            batch_id="batch-1",
-            plan_id="plan-1",
-            provider_id="prov",
-            endpoint_id="daily",
-            market=Market.CN_A,
-            data_type="daily_bar",
-            granularity="daily",
-            request_ids=(),
-            symbol_ids=("600519.SH",),
-            fields_union=("close",),
-            params_redacted={},
-            priority_rank=1,
-            required_level=RequiredLevel.REQUIRED,
-            cache_key="cache",
-            rate_limit_key="rate",
-            single_flight_key="flight",
-            provider_config_version="cfg-v1",
-            as_of=datetime(2026, 5, 31, tzinfo=UTC),
-        )
-
-    with pytest.raises(ValueError, match="not_applicable"):
-        ProviderBatchPlan(
-            batch_id="batch-1",
-            plan_id="plan-1",
-            provider_id="prov",
-            endpoint_id="daily",
-            market=Market.CN_A,
-            data_type="daily_bar",
-            granularity="daily",
-            request_ids=("req-1",),
-            symbol_ids=("600519.SH",),
-            fields_union=("close",),
-            params_redacted={},
-            priority_rank=1,
-            required_level=RequiredLevel.NOT_APPLICABLE,
-            cache_key="cache",
-            rate_limit_key="rate",
-            single_flight_key="flight",
-            provider_config_version="cfg-v1",
-            as_of=datetime(2026, 5, 31, tzinfo=UTC),
         )
 
 
@@ -256,25 +210,12 @@ def test_fetch_result_contract_validator() -> None:
 
 
 def test_fetch_result_empty_keeps_http_observations() -> None:
-    batch = ProviderBatchPlan(
+    batch = SimpleNamespace(
         batch_id="batch-1",
-        plan_id="plan-1",
         provider_id="prov",
         endpoint_id="daily",
         market=Market.CN_A,
-        data_type="daily_bar",
-        granularity="daily",
-        request_ids=("req-1",),
         symbol_ids=("600519.SH",),
-        fields_union=("close",),
-        params_redacted={},
-        priority_rank=1,
-        required_level=RequiredLevel.REQUIRED,
-        cache_key="cache",
-        rate_limit_key="rate",
-        single_flight_key="flight",
-        provider_config_version="cfg-v1",
-        as_of=datetime(2026, 5, 31, tzinfo=UTC),
     )
 
     result = FetchResult.from_empty(
@@ -286,6 +227,40 @@ def test_fetch_result_empty_keeps_http_observations() -> None:
     assert result.status == FetchStatus.EMPTY
     assert result.http_observations[0].request_key == "http:1"
     assert result.http_observations[0].status_code == 200
+
+
+def test_fetch_result_keeps_managed_http_request_evidence() -> None:
+    batch = SimpleNamespace(
+        batch_id="batch-1",
+        provider_id="prov",
+        endpoint_id="daily",
+        market=Market.CN_A,
+        symbol_ids=("600519.SH",),
+    )
+    observation = SimpleNamespace(
+        request_key="http:1",
+        method="GET",
+        host="https://api.example.com",
+        path="/daily",
+        request_headers_redacted={"authorization": "<redacted>"},
+        sent_at=datetime(2026, 5, 31, tzinfo=UTC),
+        status_code=None,
+        response_headers_redacted=None,
+        response_body_hash=None,
+        error_code="connection_error",
+        quota_signal=None,
+        elapsed_ms=1000,
+        sdk_internal_unknown=False,
+    )
+
+    result = FetchResult.from_error(batch, status="error", error=RuntimeError("connection_error"), http_observations=(observation,))
+
+    captured = result.http_observations[0]
+    assert captured.method == "GET"
+    assert captured.host == "https://api.example.com"
+    assert captured.path == "/daily"
+    assert captured.request_headers_redacted == {"authorization": "<redacted>"}
+    assert captured.error_code == "connection_error"
 
 
 def test_ingest_result_contract_validator() -> None:
@@ -313,7 +288,7 @@ def test_data_need_accepts_strings_and_defaults() -> None:
     need = DataNeed.model_validate(
         {
             "need_id": "need-1",
-            "need_kind": "capital_flow",
+            "api_id": "cn_a.capital_flow",
             "market": "CN_A",
             "instrument": "600519.SH",
             "time_range_start": date(2026, 5, 1),
@@ -324,7 +299,7 @@ def test_data_need_accepts_strings_and_defaults() -> None:
         }
     )
 
-    assert need.need_kind == "capital_flow"
+    assert need.api_id == "cn_a.capital_flow"
     assert need.priority == NeedPriority.NORMAL
     assert need.consumer == "report"
 
@@ -332,7 +307,7 @@ def test_data_need_accepts_strings_and_defaults() -> None:
 def test_data_need_validates_required_fields_deadline_and_range() -> None:
     base = {
         "need_id": "need-1",
-        "need_kind": "funding_rate",
+        "api_id": "crypto.funding_rate",
         "market": Market.CRYPTO,
         "instrument": "BTC/USDT",
         "time_range_start": date(2026, 6, 1),
@@ -399,6 +374,15 @@ def test_provider_call_spec_contract_validator() -> None:
     with pytest.raises(ValueError, match="deadline_at 必须有 timezone"):
         ProviderCallSpec.model_validate({**base, "deadline_at": datetime(2026, 5, 31, 12, 0)})
 
+    with pytest.raises(ValueError, match="内部执行或业务范围字段"):
+        ProviderCallSpec.model_validate({**base, "params": {"query": {"symbol": "600519.SH", "only_for_social": "social"}}})
+
+    with pytest.raises(ValueError, match="内部执行或业务范围字段"):
+        ProviderCallSpec.model_validate({**base, "params": {"consumer": "report", "ts_code": "600519.SH"}})
+
+    with pytest.raises(ValueError, match="内部执行或业务范围字段"):
+        ProviderCallSpec.model_validate({**base, "params": {"query": {"symbol": "600519.SH", "allowed_news": "news"}}})
+
 
 def test_need_planner_models_are_lightweight_contracts() -> None:
     deadline = datetime(2026, 5, 31, 12, 0, tzinfo=UTC)
@@ -433,14 +417,14 @@ def test_need_planner_models_are_lightweight_contracts() -> None:
     instrument = NeedInstrument(symbol="BTC/USDT", base_asset="BTC", quote_asset="USDT")
     need = DataNeed(
         need_id="need-1",
-        need_kind="funding_rate",
+        api_id="crypto.funding_rate",
         market=Market.CRYPTO,
         instrument=instrument.symbol,
         requested_by_worker="market_analyst",
         purpose="derivatives_crowding",
         deadline_at=deadline,
     )
-    gap = DataNeedGap(need_id="need-2", reason=GapReason.RESOLVER_MAPPING_MISSING)
+    gap = DataNeedGap(need_id="need-2", reason=GapReason.CATALOG_MATCH_MISSING)
     merge = MergeEvidence(batch_key="coinglass:funding:symbol", need_ids=("need-1",), merged=False)
     rate_limit = RateLimitEvidence(
         rate_limit_bucket="ratelimit:coinglass",
@@ -460,7 +444,7 @@ def test_need_planner_models_are_lightweight_contracts() -> None:
 
     assert plan.planned_calls[0].batch_key == "coinglass:funding:symbol"
     assert plan.scheduled_calls[0].priority == NeedPriority.REQUIRED
-    assert plan.skipped_needs[0].reason == GapReason.RESOLVER_MAPPING_MISSING
+    assert plan.skipped_needs[0].reason == GapReason.CATALOG_MATCH_MISSING
 
 
 def test_data_need_gap_requires_evidence_for_tool_budget_rate_limit() -> None:

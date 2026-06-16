@@ -16,9 +16,9 @@ from claw_trade.selection.confirmation import (
 )
 from claw_trade.selection.controller import SelectionController
 from claw_trade.selection.models import (
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
@@ -111,7 +111,7 @@ def _assert_candidate_fact_body_is_reader_chinese(text: str) -> None:
         assert term in text
 
 
-def _add_candidate_pack_summary_fields(payload_path: Path) -> None:
+def _add_candidate_cache_summary_fields(payload_path: Path) -> None:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     for candidate in payload["candidates"]:
         values = dict(candidate["feature_values"])
@@ -177,7 +177,7 @@ class _FakeSelectionOpenClawRunner:
         runtime_vars = payload.get("runtime_vars")
         prompt_text = "selection test prompt"
         if isinstance(runtime_vars, dict):
-            select_context = runtime_vars.get("select_workflow_run_id")
+            select_context = runtime_vars.get("selection_prompt_context")
             if isinstance(select_context, str) and select_context.strip():
                 prompt_text = select_context
 
@@ -310,24 +310,24 @@ def _build_controller(
     return controller, transport, workflow_runner
 
 
-def _candidate_pack_manifest_payload(*, run_id: str, body_sha: str) -> dict[str, object]:
+def _candidate_cache_manifest_payload(*, run_id: str, body_sha: str) -> dict[str, object]:
     return {
-        "schema_version": "sel-04-candidate-pack-v1",
+        "schema_version": "sel-04-candidate-cache-v1",
         "selection_run_id": run_id,
         "market": "CN_A",
         "profile": "CN_A",
         "trade_date": "2026-05-26",
         "candidate_count": 3,
         "source_lineage_refs": ["lineage://a"],
-        "pack_body_sha256": body_sha,
+        "cache_body_sha256": body_sha,
         "strategy_config_ref": "config://approved",
         "strategy_config_version": "cn_a.selection_strategy.v1",
         "weight_version": "cn_a.selection_weights.v1",
         "candidate_scores_ref": "scores://sel-run-08",
         "stable_top20_rule": {"score_field": "score", "tie_break_fields": ["amount"], "missing_policy": "fail"},
         "readback_status": "verified",
-        "stage": "approving_candidate_pack",
-        "target": "candidate_pack",
+        "stage": "approving_candidate_cache",
+        "target": "candidate_cache",
     }
 
 
@@ -431,11 +431,11 @@ def _selection_controller_with_completed_run(
     raw_complete_summary: bool = False,
 ) -> tuple[SelectionController, _FakeSelectionOpenClawRunner]:
     store = SelectionRunStore()
-    summary_path = tmp_path / "candidate-pack-summary.md"
+    summary_path = tmp_path / "candidate-cache-summary.md"
     if legacy_summary or raw_complete_summary:
         summary_lines = (
             [
-                "# A股候选事实包",
+                "# A股候选缓存",
                 "",
                 "## 本轮范围",
                 "- 交易日：2026-05-26",
@@ -451,7 +451,7 @@ def _selection_controller_with_completed_run(
             ]
             if raw_complete_summary
             else [
-                "# A股候选事实包",
+                "# A股候选缓存",
                 "",
                 "| 排名 | 代码 | 公司 | 行业 | 得分 | 策略命中 | 数据质量 |",
                 "| --- | --- | --- | --- | ---: | --- | --- |",
@@ -464,7 +464,7 @@ def _selection_controller_with_completed_run(
             "\n".join(summary_lines),
             encoding="utf-8",
         )
-        (tmp_path / "candidate-pack.json").write_text(
+        (tmp_path / "candidate-cache.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -539,7 +539,7 @@ def _selection_controller_with_completed_run(
             ),
             encoding="utf-8",
         )
-        (tmp_path / "candidate-pack-manifest.json").write_text(
+        (tmp_path / "candidate-cache-manifest.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -557,7 +557,7 @@ def _selection_controller_with_completed_run(
         summary_path.write_text(
             "\n".join(
                 [
-                    "# A股候选事实包",
+                    "# A股候选缓存",
                     "",
                     "## 本轮范围",
                     "- 交易日：2026-05-26",
@@ -576,8 +576,8 @@ def _selection_controller_with_completed_run(
             ),
             encoding="utf-8",
         )
-    if not (tmp_path / "candidate-pack.json").is_file():
-        (tmp_path / "candidate-pack.json").write_text(
+    if not (tmp_path / "candidate-cache.json").is_file():
+        (tmp_path / "candidate-cache.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -653,9 +653,9 @@ def _selection_controller_with_completed_run(
             encoding="utf-8",
         )
     if not legacy_summary:
-        _add_candidate_pack_summary_fields(tmp_path / "candidate-pack.json")
-    if not (tmp_path / "candidate-pack-manifest.json").is_file():
-        (tmp_path / "candidate-pack-manifest.json").write_text(
+        _add_candidate_cache_summary_fields(tmp_path / "candidate-cache.json")
+    if not (tmp_path / "candidate-cache-manifest.json").is_file():
+        (tmp_path / "candidate-cache-manifest.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -677,27 +677,27 @@ def _selection_controller_with_completed_run(
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://sel-run-08",
+        data_need_audit_ref="plan://sel-run-08",
         approved_strategy_config_ref="config://approved",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
-    body_path = tmp_path / "candidate-pack.md"
+    body_path = tmp_path / "candidate-cache.md"
     body_text = "\n".join(
         [
-            "# A股候选事实包",
+            "# A股候选缓存",
             "",
             summary_path.read_text(encoding="utf-8"),
         ]
     )
     body_path.write_text(body_text, encoding="utf-8")
     body_sha = sha256(body_text.encode("utf-8")).hexdigest()
-    manifest_path = tmp_path / "candidate-pack-manifest.json"
-    manifest_payload = _candidate_pack_manifest_payload(run_id=run_id, body_sha=body_sha)
+    manifest_path = tmp_path / "candidate-cache-manifest.json"
+    manifest_payload = _candidate_cache_manifest_payload(run_id=run_id, body_sha=body_sha)
     manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     _write_readback_log(body_path, expected_sha256=body_sha)
     _write_readback_log(manifest_path, expected_sha256=sha256(manifest_path.read_bytes()).hexdigest())
     columnar_manifest = _write_columnar_manifest(plan)
-    candidate_pack_ref = CandidatePackRef(
+    candidate_cache_ref = CandidateCacheRef(
         selection_run_id=run_id,
         material_id="mat-sel-run-08",
         l1_uri=str(body_path),
@@ -705,7 +705,7 @@ def _selection_controller_with_completed_run(
         manifest_ref=str(manifest_path),
         approved_at="2026-05-26T09:00:00+00:00",
         expires_at="2026-05-27T09:00:00+00:00",
-        pack_summary_ref=str(summary_path),
+        cache_summary_ref=str(summary_path),
     )
     store.save_data_run_record(
         SelectionDataRunRecord(
@@ -721,22 +721,22 @@ def _selection_controller_with_completed_run(
                 columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(
                     columnar_manifest.manifest_ref
                 ),
-                candidate_pack_ref=candidate_pack_ref,
+                candidate_cache_ref=candidate_cache_ref,
                 completed_at="2026-05-26T09:01:00+00:00",
             ),
-            manifest=CandidatePackManifest(
-                schema_version="sel-04-candidate-pack-v1",
+            manifest=CandidateCacheManifest(
+                schema_version="sel-04-candidate-cache-v1",
                 selection_run_id=run_id,
                 market=SelectionMarket.CN_A,
                 profile=SelectionProfile.CN_A,
                 trade_date="2026-05-26",
                 candidate_count=3,
                 source_lineage_refs=("lineage://a",),
-                pack_body_sha256=body_sha,
+                cache_body_sha256=body_sha,
                 strategy_config_ref="config://approved",
-                readback_status=CandidatePackReadbackStatus.VERIFIED,
-                stage="approving_candidate_pack",
-                target="candidate_pack",
+                readback_status=CandidateCacheReadbackStatus.VERIFIED,
+                stage="approving_candidate_cache",
+                target="candidate_cache",
             ),
         )
     )
@@ -893,7 +893,7 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     assert "观察：" in message
     assert "放弃：" in message
     assert "命中6/8" in message
-    assert "候选事实包：" not in message
+    assert "候选缓存：" not in message
     assert "# A股选股报告" in report_markdown
     assert "## 一、候选分组结论" in report_markdown
     assert "## 二、正方策略观点" in report_markdown
@@ -939,9 +939,9 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
 
 
 @pytest.mark.integration
-def test_select_command_rejects_approved_pack_with_missing_strategy_fields(tmp_path: Path) -> None:
+def test_select_command_rejects_approved_candidate_cache_with_missing_strategy_fields(tmp_path: Path) -> None:
     selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
-    payload_path = tmp_path / "candidate-pack.json"
+    payload_path = tmp_path / "candidate-cache.json"
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     payload["candidates"][0]["feature_values"]["strategy_missing_field_count"] = 56
     payload_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
@@ -951,16 +951,16 @@ def test_select_command_rejects_approved_pack_with_missing_strategy_fields(tmp_p
 
     assert "error" not in result
     assert result["selection"]["code"] == "unavailable"
-    assert result["selection"]["unavailableCode"] == "candidate_pack_integrity_failed"
+    assert result["selection"]["unavailableCode"] == "candidate_cache_integrity_failed"
     evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
-    assert evidence_payload["reason"] == "candidate_pack_strategy_fields_missing: ticker=600519.SH missing 56/64 approved strategy fields"
+    assert evidence_payload["reason"] == "candidate_cache_strategy_fields_missing: ticker=600519.SH missing 56/64 approved strategy fields"
     assert selection_runner.payloads == []
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 
 
 @pytest.mark.integration
-def test_select_command_rejects_legacy_candidate_pack_summary_fields(tmp_path: Path) -> None:
+def test_select_command_rejects_legacy_candidate_cache_summary_fields(tmp_path: Path) -> None:
     selection_controller, _ = _selection_controller_with_completed_run(tmp_path, legacy_summary=True)
     controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
 
@@ -968,15 +968,15 @@ def test_select_command_rejects_legacy_candidate_pack_summary_fields(tmp_path: P
 
     assert "error" not in result
     assert result["selection"]["code"] == "unavailable"
-    assert result["selection"]["unavailableCode"] == "candidate_pack_integrity_failed"
+    assert result["selection"]["unavailableCode"] == "candidate_cache_integrity_failed"
     evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
-    assert evidence_payload["reason"] == "candidate_pack_summary_fields_missing: ticker=600519.SH missing component_scores"
+    assert evidence_payload["reason"] == "candidate_cache_summary_fields_missing: ticker=600519.SH missing component_scores"
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 
 
 @pytest.mark.integration
-def test_select_command_rebuilds_candidate_pack_summary_with_raw_reader_field_names(tmp_path: Path) -> None:
+def test_select_command_rebuilds_candidate_cache_summary_with_raw_reader_field_names(tmp_path: Path) -> None:
     selection_controller, _ = _selection_controller_with_completed_run(tmp_path, raw_complete_summary=True)
     controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
 
@@ -986,7 +986,7 @@ def test_select_command_rebuilds_candidate_pack_summary_with_raw_reader_field_na
     assert result["selection"]["code"] == "completed"
     message = result["messages"][-1]["text"]
     report_markdown = result["selection"]["readerReportMarkdown"]
-    assert "候选事实包：" not in message
+    assert "候选缓存：" not in message
     _assert_candidate_fact_body_is_reader_chinese(report_markdown)
     assert "策略配置版本" not in report_markdown
     assert "命中字段" not in report_markdown

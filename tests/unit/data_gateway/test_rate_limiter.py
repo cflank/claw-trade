@@ -123,6 +123,23 @@ def test_rate_limiter_uses_sliding_window_across_fixed_minute_boundary() -> None
     assert limiter.reserve("k", policy).allowed is True
 
 
+def test_rate_limiter_blocks_eleventh_request_in_any_rolling_sixty_seconds() -> None:
+    clock = _Clock(datetime(2026, 5, 31, 12, 0, 30, tzinfo=UTC))
+    limiter = RateLimiter(now_fn=clock)
+    policy = RateLimitPolicy(window_seconds=60, max_requests=10)
+
+    for _ in range(10):
+        assert limiter.reserve("k", policy).allowed is True
+        clock.tick(1)
+
+    blocked = limiter.reserve("k", policy)
+
+    assert blocked.allowed is False
+    assert blocked.retry_after == datetime(2026, 5, 31, 12, 1, 30, tzinfo=UTC)
+    clock.tick(50)
+    assert limiter.reserve("k", policy).allowed is True
+
+
 def test_rate_limiter_safety_margin_reduces_sliding_window_budget() -> None:
     clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
     limiter = RateLimiter(now_fn=clock)
@@ -160,6 +177,26 @@ def test_rate_limiter_persists_state_across_instances_with_same_repository() -> 
     blocked = limiter_b.reserve("k", policy)
     assert blocked.allowed is False
     assert blocked.reason == "rate_limited"
+
+
+def test_rate_limiter_reserve_at_persists_future_slot_across_instances() -> None:
+    clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
+    repository = DatasetRepository()
+    policy = RateLimitPolicy(window_seconds=60, max_requests=2)
+
+    limiter_a = RateLimiter(repository=repository, now_fn=clock)
+    first = limiter_a.reserve_at("ratelimit:any-paid-source", policy, reserve_at=clock.now)
+    second = limiter_a.reserve_at("ratelimit:any-paid-source", policy, reserve_at=clock.now)
+
+    limiter_b = RateLimiter(repository=repository, now_fn=clock)
+    third = limiter_b.reserve_at("ratelimit:any-paid-source", policy, reserve_at=clock.now)
+
+    assert first.allowed is True
+    assert first.reserved_at == clock.now
+    assert second.allowed is True
+    assert second.reserved_at == clock.now
+    assert third.allowed is True
+    assert third.reserved_at == clock.now + timedelta(seconds=60)
 
 
 def test_rate_limiter_handles_naive_cooldown_records_from_storage() -> None:

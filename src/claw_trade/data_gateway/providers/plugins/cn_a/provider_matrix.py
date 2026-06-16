@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import Any, Mapping, Sequence
 from xml.etree import ElementTree
+from zoneinfo import ZoneInfo
 
 from claw_trade.data_gateway.execution.managed_http import HttpRequestSpec
 from claw_trade.data_gateway.models import FetchResult
@@ -38,15 +39,19 @@ _NO_CREDENTIALS = CredentialPolicy(
 )
 
 _TUSHARE_CREDENTIAL = "data_source:tushare"
+_CN_A_TIMEZONE = ZoneInfo("Asia/Shanghai")
 _TUSHARE_ENDPOINT = "https://api.tushare.pro"
 _CNINFO_ENDPOINT = "https://www.cninfo.com.cn"
 _EASTMONEY_DATACENTER_ENDPOINT = "https://datacenter-web.eastmoney.com"
+_EASTMONEY_SECURITIES_DATACENTER_ENDPOINT = "https://datacenter.eastmoney.com"
 _EASTMONEY_APPDATA_ENDPOINT = "https://emappdata.eastmoney.com"
+_EASTMONEY_HSF10_ENDPOINT = "https://emweb.securities.eastmoney.com"
 _EASTMONEY_SEARCH_ENDPOINT = "https://search-api-web.eastmoney.com"
 _EASTMONEY_PUSH2_ENDPOINT = "https://push2.eastmoney.com"
 _EASTMONEY_PUSH2HIS_ENDPOINT = "https://push2his.eastmoney.com"
 _EASTMONEY_NP_WEBLIST_ENDPOINT = "https://np-weblist.eastmoney.com"
 _THS_HOT_ENDPOINT = "http://zx.10jqka.com.cn"
+_THS_DATA_ENDPOINT = "https://data.hexin.cn"
 _BAIDU_FINANCE_ENDPOINT = "https://finance.pae.baidu.com"
 _GOOGLE_NEWS_ENDPOINT = "https://news.google.com"
 _BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36"
@@ -501,6 +506,7 @@ class TushareFundamentalPlugin:
             observations=observations,
             include_symbol=False,
             extra_params={"content_type": "行业"},
+            single_trade_date=True,
         )
         return self._sector_moneyflow_result(
             task,
@@ -525,6 +531,7 @@ class TushareFundamentalPlugin:
             fields="trade_date,ts_code,industry,lead_stock,close,pct_change,company_num,net_buy_amount,net_sell_amount,net_amount",
             observations=observations,
             include_symbol=False,
+            single_trade_date=True,
         )
         return self._sector_moneyflow_result(
             task,
@@ -549,6 +556,7 @@ class TushareFundamentalPlugin:
             fields="trade_date,ts_code,name,lead_stock,close_price,pct_change,industry_index,company_num,net_buy_amount,net_sell_amount,net_amount",
             observations=observations,
             include_symbol=False,
+            single_trade_date=True,
         )
         return self._sector_moneyflow_result(
             task,
@@ -932,6 +940,104 @@ class AkShareSocialNewsPlugin:
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows))
 
 
+def _fetch_eastmoney_financial_metric(task: Any, *, managed_http: Any, symbol: str) -> FetchResult:
+    capture = _eastmoney_financial_metric_capture(task, managed_http=managed_http, symbol=symbol)
+    error = _http_error(capture)
+    if error is not None:
+        return FetchResult.from_error(task, status="error", error=error, http_observations=(capture.observation,))
+    rows = [_eastmoney_financial_metric_row(task, symbol=symbol, item=item) for item in _eastmoney_items(capture.json_payload)]
+    rows = [row for row in rows if row is not None]
+    if not rows:
+        return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
+    return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=(capture.observation,))
+
+
+def _fetch_eastmoney_financial_statement(task: Any, *, managed_http: Any, symbol: str) -> FetchResult:
+    observations = []
+    metric_capture = _eastmoney_financial_metric_capture(task, managed_http=managed_http, symbol=symbol)
+    observations.append(metric_capture.observation)
+    error = _http_error(metric_capture)
+    if error is not None:
+        return FetchResult.from_error(task, status="error", error=error, http_observations=tuple(observations))
+    company_type_capture = _eastmoney_company_type_capture(task, managed_http=managed_http, symbol=symbol)
+    observations.append(company_type_capture.observation)
+    error = _http_error(company_type_capture)
+    if error is not None:
+        return FetchResult.from_error(task, status="error", error=error, http_observations=tuple(observations))
+    company_type = _eastmoney_company_type(company_type_capture.body_text or "")
+    if not company_type:
+        return FetchResult.from_error(task, status="error", error=RuntimeError("eastmoney_company_type_missing"), http_observations=tuple(observations))
+    dates_capture = _eastmoney_statement_dates_capture(
+        task,
+        managed_http=managed_http,
+        symbol=symbol,
+        company_type=company_type,
+        sheet="balance",
+    )
+    observations.append(dates_capture.observation)
+    error = _http_error(dates_capture)
+    if error is not None:
+        return FetchResult.from_error(task, status="error", error=error, http_observations=tuple(observations))
+    report_date = _eastmoney_latest_report_date(dates_capture.json_payload)
+    if report_date is None:
+        return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations))
+    balance_capture = _eastmoney_statement_data_capture(
+        task,
+        managed_http=managed_http,
+        symbol=symbol,
+        company_type=company_type,
+        report_date=report_date,
+        sheet="balance",
+    )
+    observations.append(balance_capture.observation)
+    error = _http_error(balance_capture)
+    if error is not None:
+        return FetchResult.from_error(task, status="error", error=error, http_observations=tuple(observations))
+    cash_capture = _eastmoney_statement_data_capture(
+        task,
+        managed_http=managed_http,
+        symbol=symbol,
+        company_type=company_type,
+        report_date=report_date,
+        sheet="cash",
+    )
+    observations.append(cash_capture.observation)
+    error = _http_error(cash_capture)
+    if error is not None:
+        return FetchResult.from_error(task, status="error", error=error, http_observations=tuple(observations))
+    metric_rows = _eastmoney_items(metric_capture.json_payload)
+    balance_rows = _eastmoney_hsf10_rows(balance_capture.json_payload)
+    cash_rows = _eastmoney_hsf10_rows(cash_capture.json_payload)
+    merged: dict[str, dict[str, Any]] = {}
+    for item in metric_rows:
+        period = _period(_pick(item, "REPORT_DATE"))
+        if period is None:
+            continue
+        row = merged.setdefault(period, _base_row(task, symbol=symbol, dataset="financial_statement", period=period))
+        row["source_roles"] = ("built_in_public",)
+        _set_decimal(row, "revenue", _pick(item, "TOTALOPERATEREVE"))
+        _set_decimal(row, "net_income", _pick(item, "PARENTNETPROFIT"))
+    for item in balance_rows:
+        period = _period(_pick(item, "REPORT_DATE"))
+        if period is None:
+            continue
+        row = merged.setdefault(period, _base_row(task, symbol=symbol, dataset="financial_statement", period=period))
+        row["source_roles"] = ("built_in_public",)
+        _set_decimal(row, "assets", _pick(item, "TOTAL_ASSETS"))
+        _set_decimal(row, "liabilities", _pick(item, "TOTAL_LIABILITIES"))
+    for item in cash_rows:
+        period = _period(_pick(item, "REPORT_DATE"))
+        if period is None:
+            continue
+        row = merged.setdefault(period, _base_row(task, symbol=symbol, dataset="financial_statement", period=period))
+        row["source_roles"] = ("built_in_public",)
+        _set_decimal(row, "cash_flow", _pick(item, "NETCASH_OPERATE"))
+    rows = tuple(merged.values())
+    if not rows:
+        return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=tuple(observations))
+    return FetchResult.from_success(task, payload={"rows": list(rows)}, row_count=len(rows), http_observations=tuple(observations))
+
+
 class AStockSignalSocialPlugin:
     plugin_id = "cn_a_astock_signal_social"
     version = "1.0.0"
@@ -971,6 +1077,14 @@ class AStockSignalSocialPlugin:
                     priority_rank=26,
                     can_be_formal_fact_source=False,
                 ),
+                _endpoint(
+                    endpoint_id="northbound_flow",
+                    data_type="northbound_flow",
+                    source_role="built_in_public",
+                    granularity=("realtime",),
+                    fields=("timestamp", "hgt_net", "sgt_net", "northbound_net", "amount_unit", "source"),
+                    priority_rank=12,
+                ),
             ),
             credential_policy=_NO_CREDENTIALS,
             license_policy=_CN_A_LICENSE,
@@ -996,6 +1110,8 @@ class AStockSignalSocialPlugin:
             return self._fetch_ths_hot_reason(task, managed_http=managed_http, symbol=symbol)
         if endpoint_id == "baidu_concept_blocks":
             return self._fetch_baidu_concept_blocks(task, managed_http=managed_http, symbol=symbol)
+        if endpoint_id == "northbound_flow":
+            return self._fetch_northbound_flow(task, managed_http=managed_http, symbol=symbol)
         return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
 
     def _fetch_ths_hot_reason(self, task: Any, *, managed_http: Any, symbol: str) -> FetchResult:
@@ -1041,6 +1157,58 @@ class AStockSignalSocialPlugin:
                     "large_order_net": _decimal_or_none(_pick(item, "ddejingliang", "大单净量")),
                     "close": _decimal_or_none(_pick(item, "close", "收盘价")),
                     "quality_flags": ("astock_signal_without_sentiment_label", "topic_reason_signal"),
+                }
+            )
+            rows.append(row)
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=(capture.observation,))
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows), http_observations=(capture.observation,))
+
+    def _fetch_northbound_flow(self, task: Any, *, managed_http: Any, symbol: str) -> FetchResult:
+        capture = managed_http.send_capture(
+            HttpRequestSpec(
+                method="GET",
+                host=_THS_DATA_ENDPOINT,
+                path="/market/hsgtApi/method/dayChart/",
+                headers={
+                    "accept": "application/json,text/plain,*/*",
+                    "referer": "https://data.hexin.cn/",
+                    "user-agent": _BROWSER_USER_AGENT,
+                },
+                provider_config_version=getattr(task, "provider_config_version", None),
+                timeout_seconds=10.0,
+            )
+        )
+        error = _http_error(capture)
+        if error is not None:
+            return FetchResult.from_error(task, status="error", error=error, http_observations=(capture.observation,))
+        payload = capture.json_payload if isinstance(capture.json_payload, Mapping) else {}
+        times = payload.get("time")
+        hgt_values = payload.get("hgt")
+        sgt_values = payload.get("sgt")
+        if not isinstance(times, Sequence) or isinstance(times, (str, bytes, bytearray)):
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"), http_observations=(capture.observation,))
+        rows: list[dict[str, Any]] = []
+        query_date = _parse_date(getattr(task, "date_range_end", None)) or datetime.now(tz=_CN_A_TIMEZONE).date()
+        hgt_sequence = hgt_values if isinstance(hgt_values, Sequence) and not isinstance(hgt_values, (str, bytes, bytearray)) else ()
+        sgt_sequence = sgt_values if isinstance(sgt_values, Sequence) and not isinstance(sgt_values, (str, bytes, bytearray)) else ()
+        for index, raw_time in enumerate(times):
+            hgt_net = _decimal_or_none(_pos(hgt_sequence, index))
+            sgt_net = _decimal_or_none(_pos(sgt_sequence, index))
+            if hgt_net is None and sgt_net is None:
+                continue
+            timestamp = _northbound_timestamp(query_date, raw_time)
+            row = _base_event_row(task, symbol=symbol, dataset="northbound_flow", period=timestamp.date() if timestamp else query_date)
+            row["granularity"] = "realtime"
+            row.update(
+                {
+                    "timestamp": timestamp,
+                    "hgt_net": hgt_net,
+                    "sgt_net": sgt_net,
+                    "northbound_net": (hgt_net or 0.0) + (sgt_net or 0.0),
+                    "amount_unit": "CNY 亿元",
+                    "source": "ths_hsgt_api",
+                    "symbol_id": symbol,
                 }
             )
             rows.append(row)
@@ -1268,7 +1436,7 @@ class EastMoneyCNMarketDataPlugin:
                 ),
                 _endpoint(
                     endpoint_id="margin_trading_detail",
-                    data_type="capital_flow",
+                    data_type="margin_trading",
                     source_role="built_in_public",
                     granularity=("daily",),
                     fields=("date", "financing_balance", "margin_balance", "security_lending_volume", "symbol_id"),
@@ -1308,6 +1476,22 @@ class EastMoneyCNMarketDataPlugin:
                     granularity=("realtime",),
                     fields=("market_cap", "market_cap_unit", "price", "symbol_id"),
                     priority_rank=24,
+                ),
+                _endpoint(
+                    endpoint_id="financial_analysis_indicator",
+                    data_type="financial_metric",
+                    source_role="built_in_public",
+                    granularity=("quarterly",),
+                    fields=("roe", "roa", "gross_margin", "debt_ratio", "eps", "revenue", "net_income"),
+                    priority_rank=20,
+                ),
+                _endpoint(
+                    endpoint_id="financial_statement",
+                    data_type="financial_statement",
+                    source_role="built_in_public",
+                    granularity=("quarterly",),
+                    fields=("period", "revenue", "net_income", "assets", "liabilities", "cash_flow", "amount_unit"),
+                    priority_rank=20,
                 ),
                 _endpoint(
                     endpoint_id="global_news_7x24",
@@ -1358,6 +1542,10 @@ class EastMoneyCNMarketDataPlugin:
             return self._fetch_daily_bar(task, managed_http=managed_http, symbol=symbol)
         if endpoint_id == "stock_info":
             return self._fetch_stock_info(task, managed_http=managed_http, symbol=symbol)
+        if endpoint_id == "financial_analysis_indicator":
+            return _fetch_eastmoney_financial_metric(task, managed_http=managed_http, symbol=symbol)
+        if endpoint_id == "financial_statement":
+            return _fetch_eastmoney_financial_statement(task, managed_http=managed_http, symbol=symbol)
         return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
 
     def _fetch_stock_fund_flow_daily(self, task: Any, *, managed_http: Any, symbol: str) -> FetchResult:
@@ -1623,6 +1811,7 @@ class EastMoneyCNMarketDataPlugin:
             filter_expr=f'(scode="{_stock_code(symbol)}")',
             sort_columns="DATE",
             sort_types="-1",
+            page_size=500,
         )
         capture = managed_http.send_capture(request)
         error = _http_error(capture)
@@ -1631,7 +1820,7 @@ class EastMoneyCNMarketDataPlugin:
         rows: list[dict[str, Any]] = []
         for item in _eastmoney_items(capture.json_payload):
             row_date = _parse_date(_pick(item, "DATE"))
-            row = _base_event_row(task, symbol=symbol, dataset="capital_flow", period=row_date)
+            row = _base_event_row(task, symbol=symbol, dataset="margin_trading", period=row_date)
             row["granularity"] = "daily"
             row.update(
                 {
@@ -1812,7 +2001,7 @@ class BaostockCNProviderPlugin:
                     granularity=("daily",),
                     fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit", "adjustment"),
                     priority_rank=25,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="intraday_bar",
@@ -1821,7 +2010,7 @@ class BaostockCNProviderPlugin:
                     granularity=("intraday",),
                     fields=("timestamp", "open", "high", "low", "close", "volume"),
                     priority_rank=32,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="valuation_metric",
@@ -1830,7 +2019,7 @@ class BaostockCNProviderPlugin:
                     granularity=("daily",),
                     fields=("pe", "pb", "ps"),
                     priority_rank=28,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="adjust_factor",
@@ -1839,7 +2028,7 @@ class BaostockCNProviderPlugin:
                     granularity=("event",),
                     fields=("event_type", "event_date", "title", "source", "adjust_factor", "symbol_id"),
                     priority_rank=24,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="dividend",
@@ -1848,7 +2037,7 @@ class BaostockCNProviderPlugin:
                     granularity=("event",),
                     fields=("event_type", "event_date", "title", "source", "dividend", "symbol_id"),
                     priority_rank=26,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="financial_statement",
@@ -1870,7 +2059,7 @@ class BaostockCNProviderPlugin:
                         "liabilities_basis",
                     ),
                     priority_rank=30,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="financial_metric",
@@ -1879,7 +2068,7 @@ class BaostockCNProviderPlugin:
                     granularity=("quarterly",),
                     fields=("roe", "roa", "gross_margin", "debt_ratio", "eps"),
                     priority_rank=30,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="trade_calendar",
@@ -1888,7 +2077,7 @@ class BaostockCNProviderPlugin:
                     granularity=("event",),
                     fields=("event_type", "event_date", "title", "source"),
                     priority_rank=32,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="stock_industry",
@@ -1897,7 +2086,7 @@ class BaostockCNProviderPlugin:
                     granularity=("event",),
                     fields=("sector_name", "timestamp", "symbol_id"),
                     priority_rank=34,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
             ),
             credential_policy=_NO_CREDENTIALS,
@@ -2085,7 +2274,7 @@ class BaostockCNProviderPlugin:
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows))
 
     def _fetch_financial_statement(self, task: Any, *, bs: Any, symbol: str) -> FetchResult:
-        year, quarter = _year_quarter(getattr(task, "date_range_end", None))
+        year, quarter = _task_year_quarter(task)
         calls = (
             ("profit", bs.query_profit_data(code=_baostock_symbol(symbol), year=year, quarter=quarter)),
             ("balance", bs.query_balance_data(code=_baostock_symbol(symbol), year=year, quarter=quarter)),
@@ -2167,7 +2356,7 @@ class BaostockCNProviderPlugin:
         return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows))
 
     def _fetch_financial_metric(self, task: Any, *, bs: Any, symbol: str) -> FetchResult:
-        year, quarter = _year_quarter(getattr(task, "date_range_end", None))
+        year, quarter = _task_year_quarter(task)
         calls = (
             bs.query_profit_data(code=_baostock_symbol(symbol), year=year, quarter=quarter),
             bs.query_dupont_data(code=_baostock_symbol(symbol), year=year, quarter=quarter),
@@ -2211,7 +2400,7 @@ class MootdxCNProviderPlugin:
                     granularity=("realtime",),
                     fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
                     priority_rank=15,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                     batch_by="symbol",
                     max_symbols_per_call=80,
                     mergeable_fields=("price", "change", "change_pct", "volume", "amount", "amount_unit", "timestamp", "symbol_id", "name", "company_name"),
@@ -2223,7 +2412,7 @@ class MootdxCNProviderPlugin:
                     granularity=("realtime",),
                     fields=("bid_price", "bid_size", "ask_price", "ask_size", "timestamp", "symbol_id"),
                     priority_rank=15,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                     batch_by="symbol",
                     max_symbols_per_call=80,
                     mergeable_fields=("bid_price", "bid_size", "ask_price", "ask_size", "timestamp", "symbol_id"),
@@ -2235,7 +2424,7 @@ class MootdxCNProviderPlugin:
                     granularity=("intraday",),
                     fields=("timestamp", "open", "high", "low", "close", "volume"),
                     priority_rank=28,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="daily_bar",
@@ -2244,7 +2433,7 @@ class MootdxCNProviderPlugin:
                     granularity=("daily",),
                     fields=("date", "open", "high", "low", "close", "volume", "amount", "amount_unit", "adjustment"),
                     priority_rank=32,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="corporate_action",
@@ -2253,7 +2442,7 @@ class MootdxCNProviderPlugin:
                     granularity=("event",),
                     fields=("event_type", "event_date", "title", "source", "adjustment", "symbol_id"),
                     priority_rank=36,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
                 _endpoint(
                     endpoint_id="finance_snapshot",
@@ -2262,7 +2451,7 @@ class MootdxCNProviderPlugin:
                     granularity=("quarterly",),
                     fields=("roe", "eps", "symbol_id"),
                     priority_rank=34,
-                    http_visibility="no_http",
+                    http_visibility="sdk_internal_unknown",
                 ),
             ),
             credential_policy=_NO_CREDENTIALS,
@@ -2642,10 +2831,101 @@ class CNADefaultProviderPlugin:
         return self._daily_bar.fetch(task, ctx)
 
 
+class TushareRealtimeSDKPlugin:
+    plugin_id = "cn_a_tushare_realtime"
+    version = "1.0.0"
+
+    def __init__(self) -> None:
+        self._capabilities = ProviderCapabilities(
+            provider_id=self.plugin_id,
+            plugin_version=self.version,
+            endpoints=(
+                _endpoint(
+                    endpoint_id="realtime_quote",
+                    data_type="quote_snapshot",
+                    source_role="paid_data",
+                    granularity=("realtime",),
+                    fields=(
+                        "price",
+                        "open",
+                        "high",
+                        "low",
+                        "previous_close",
+                        "bid_price",
+                        "ask_price",
+                        "volume",
+                        "amount",
+                        "amount_unit",
+                        "timestamp",
+                        "symbol_id",
+                        "name",
+                        "company_name",
+                    ),
+                    priority_rank=7,
+                    http_visibility="sdk_internal_unknown",
+                ),
+                _endpoint(
+                    endpoint_id="realtime_order_book",
+                    data_type="order_book_snapshot",
+                    source_role="paid_data",
+                    granularity=("realtime",),
+                    fields=("bid_price", "bid_size", "ask_price", "ask_size", "timestamp", "symbol_id"),
+                    priority_rank=7,
+                    http_visibility="sdk_internal_unknown",
+                ),
+            ),
+            credential_policy=CredentialPolicy(
+                credential_required=True,
+                credential_names=(_TUSHARE_CREDENTIAL,),
+                credential_scope="provider_token",
+                missing_behavior="credential_missing",
+            ),
+            license_policy=_CN_A_LICENSE,
+            default_rate_limit_policy={"window_seconds": 60, "max_calls": None},
+            default_priority_rank=7,
+        )
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._capabilities
+
+    def build_fetch_tasks(self, batch: Any) -> tuple[Any, ...]:
+        return (batch,)
+
+    def fetch(self, task: Any, ctx: Any) -> FetchResult:
+        token = _credential_value(ctx, _TUSHARE_CREDENTIAL)
+        if token is None:
+            return FetchResult.from_error(
+                task,
+                status="credential_missing",
+                error=RuntimeError(f"credential_missing:{_TUSHARE_CREDENTIAL}"),
+            )
+        symbol = _first_symbol(task)
+        if symbol is None:
+            return FetchResult.from_error(task, status="error", error=RuntimeError("symbol_required"))
+        endpoint_id = str(getattr(task, "endpoint_id", ""))
+        if endpoint_id not in {"realtime_quote", "realtime_order_book"}:
+            return FetchResult.from_error(task, status="not_applicable", error=RuntimeError(f"unsupported_endpoint:{endpoint_id}"))
+        try:
+            import tushare as ts
+
+            setter = getattr(ts, "set_token", None)
+            if callable(setter):
+                setter(token)
+            source = ts.realtime_quote(ts_code=symbol, src=_tushare_realtime_src(task))
+        except Exception as exc:  # noqa: BLE001
+            return FetchResult.from_error(task, status="error", error=RuntimeError(f"tushare_sdk_realtime_error:{exc}"))
+
+        rows = _tushare_realtime_rows(task, source=source, symbol=symbol, order_book=endpoint_id == "realtime_order_book")
+        if not rows:
+            return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
+        return FetchResult.from_success(task, payload={"rows": rows}, row_count=len(rows))
+
+
 def build_cn_a_provider_plugins() -> tuple[object, ...]:
     return (
         CNADefaultProviderPlugin(),
         TushareFundamentalPlugin(),
+        TushareRealtimeSDKPlugin(),
         AkShareSocialNewsPlugin(),
         AStockSignalSocialPlugin(),
         EastMoneyCNEventsPlugin(),
@@ -2718,14 +2998,20 @@ def _tushare_items(
     observations: list[Any],
     include_symbol: bool = True,
     extra_params: Mapping[str, Any] | None = None,
+    single_trade_date: bool = False,
 ) -> _TushareRows:
     params: dict[str, Any] = {"ts_code": symbol} if include_symbol else {}
     start = _yyyymmdd(getattr(task, "date_range_start", None))
     end = _yyyymmdd(getattr(task, "date_range_end", None))
-    if start:
-        params["start_date"] = start
-    if end:
-        params["end_date"] = end
+    if single_trade_date:
+        trade_date = end or start
+        if trade_date:
+            params["trade_date"] = trade_date
+    else:
+        if start:
+            params["start_date"] = start
+        if end:
+            params["end_date"] = end
     if extra_params:
         params.update({key: value for key, value in extra_params.items() if value not in (None, "")})
     request = HttpRequestSpec(
@@ -2833,6 +3119,91 @@ def _base_event_row(task: Any, *, symbol: str, dataset: str, period: date | None
     }
 
 
+def _tushare_realtime_src(task: Any) -> str:
+    params = getattr(task, "params", {}) if isinstance(getattr(task, "params", {}), Mapping) else {}
+    return str(params.get("src") or "sina").strip() or "sina"
+
+
+def _tushare_realtime_rows(task: Any, *, source: Any, symbol: str, order_book: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in _records_from_tabular(source):
+        row_symbol = _text(_pick(item, "TS_CODE", "ts_code", "code", "symbol")) or symbol
+        normalized_symbol = _normalize_tushare_realtime_symbol(row_symbol, fallback=symbol)
+        if normalized_symbol != symbol:
+            continue
+        timestamp = _tushare_realtime_timestamp(item) or datetime.now(tz=UTC)
+        dataset = "order_book_snapshot" if order_book else "quote_snapshot"
+        row = _base_event_row(task, symbol=symbol, dataset=dataset, period=timestamp.date())
+        row["granularity"] = "realtime"
+        row["timestamp"] = timestamp
+        row["source_roles"] = ("paid_data",)
+        if order_book:
+            row.update(
+                {
+                    "bid_price": _decimal_or_none(_pick(item, "B1_P", "b1_p", "bid", "BID")),
+                    "bid_size": _decimal_or_none(_pick(item, "B1_V", "b1_v")),
+                    "ask_price": _decimal_or_none(_pick(item, "A1_P", "a1_p", "ask", "ASK")),
+                    "ask_size": _decimal_or_none(_pick(item, "A1_V", "a1_v")),
+                    "symbol_id": symbol,
+                }
+            )
+            for level in range(1, 6):
+                row[f"bid_price_{level}"] = _decimal_or_none(_pick(item, f"B{level}_P", f"b{level}_p"))
+                row[f"bid_size_{level}"] = _decimal_or_none(_pick(item, f"B{level}_V", f"b{level}_v"))
+                row[f"ask_price_{level}"] = _decimal_or_none(_pick(item, f"A{level}_P", f"a{level}_p"))
+                row[f"ask_size_{level}"] = _decimal_or_none(_pick(item, f"A{level}_V", f"a{level}_v"))
+            if row["bid_price"] is None and row["ask_price"] is None:
+                continue
+        else:
+            row.update(
+                {
+                    "price": _decimal_or_none(_pick(item, "PRICE", "price")),
+                    "open": _decimal_or_none(_pick(item, "OPEN", "open")),
+                    "high": _decimal_or_none(_pick(item, "HIGH", "high")),
+                    "low": _decimal_or_none(_pick(item, "LOW", "low")),
+                    "previous_close": _decimal_or_none(_pick(item, "PRE_CLOSE", "pre_close")),
+                    "bid_price": _decimal_or_none(_pick(item, "BID", "bid", "B1_P", "b1_p")),
+                    "ask_price": _decimal_or_none(_pick(item, "ASK", "ask", "A1_P", "a1_p")),
+                    "volume": _decimal_or_none(_pick(item, "VOLUME", "volume", "volumn", "vol")),
+                    "amount": _decimal_or_none(_pick(item, "AMOUNT", "amount")),
+                    "amount_unit": "CNY",
+                    "symbol_id": symbol,
+                    "name": _text(_pick(item, "NAME", "name")),
+                    "company_name": _text(_pick(item, "NAME", "name")),
+                }
+            )
+            if row["price"] is None:
+                continue
+        rows.append(row)
+    return rows
+
+
+def _normalize_tushare_realtime_symbol(value: str, *, fallback: str) -> str:
+    token = value.strip().upper()
+    if "." in token:
+        return token
+    code = _stock_code(token)
+    fallback_exchange = fallback.rsplit(".", 1)[1].upper() if "." in fallback else ""
+    if fallback_exchange in {"SH", "SZ", "BJ"}:
+        return f"{code}.{fallback_exchange}"
+    exchange = _cn_a_exchange(code)
+    suffix = {"SSE": "SH", "SZSE": "SZ", "BSE": "BJ"}.get(str(exchange), "SH")
+    return f"{code}.{suffix}"
+
+
+def _tushare_realtime_timestamp(item: Mapping[str, Any]) -> datetime | None:
+    raw_date = _text(_pick(item, "DATE", "date"))
+    raw_time = _text(_pick(item, "TIME", "time"))
+    if not raw_date or not raw_time:
+        return None
+    normalized_date = raw_date if "-" in raw_date else f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+    try:
+        parsed = datetime.fromisoformat(f"{normalized_date}T{raw_time}")
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_CN_A_TIMEZONE)
+
+
 def _eastmoney_datacenter_request(
     task: Any,
     *,
@@ -2840,6 +3211,7 @@ def _eastmoney_datacenter_request(
     filter_expr: str,
     sort_columns: str | None = None,
     sort_types: str | None = None,
+    page_size: int = 20,
 ) -> HttpRequestSpec:
     query: dict[str, Any] = {
         "reportName": report_name,
@@ -2847,7 +3219,7 @@ def _eastmoney_datacenter_request(
         "source": "WEB",
         "client": "WEB",
         "pageNumber": 1,
-        "pageSize": 20,
+        "pageSize": page_size,
         "filter": filter_expr,
     }
     if sort_columns:
@@ -2862,6 +3234,145 @@ def _eastmoney_datacenter_request(
         headers=_COMMON_HEADERS,
         provider_config_version=getattr(task, "provider_config_version", None),
     )
+
+
+def _eastmoney_financial_metric_capture(task: Any, *, managed_http: Any, symbol: str) -> Any:
+    return managed_http.send_capture(
+        HttpRequestSpec(
+            method="GET",
+            host=_EASTMONEY_SECURITIES_DATACENTER_ENDPOINT,
+            path="/securities/api/data/get",
+            query={
+                "type": "RPT_F10_FINANCE_MAINFINADATA",
+                "sty": "APP_F10_MAINFINADATA",
+                "quoteColumns": "",
+                "filter": f'(SECUCODE="{symbol}")',
+                "p": "1",
+                "ps": "200",
+                "sr": "-1",
+                "st": "REPORT_DATE",
+                "source": "HSF10",
+                "client": "PC",
+            },
+            headers=_COMMON_HEADERS,
+            provider_config_version=getattr(task, "provider_config_version", None),
+            timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    )
+
+
+def _eastmoney_company_type_capture(task: Any, *, managed_http: Any, symbol: str) -> Any:
+    return managed_http.send_capture(
+        HttpRequestSpec(
+            method="GET",
+            host=_EASTMONEY_HSF10_ENDPOINT,
+            path="/PC_HSF10/NewFinanceAnalysis/Index",
+            query={"type": "web", "code": _akshare_em_symbol(symbol).lower()},
+            headers=_COMMON_HEADERS,
+            provider_config_version=getattr(task, "provider_config_version", None),
+            timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    )
+
+
+def _eastmoney_statement_dates_capture(
+    task: Any,
+    *,
+    managed_http: Any,
+    symbol: str,
+    company_type: str,
+    sheet: str,
+) -> Any:
+    path = "/PC_HSF10/NewFinanceAnalysis/xjllbDateAjaxNew" if sheet == "cash" else "/PC_HSF10/NewFinanceAnalysis/zcfzbDateAjaxNew"
+    return managed_http.send_capture(
+        HttpRequestSpec(
+            method="GET",
+            host=_EASTMONEY_HSF10_ENDPOINT,
+            path=path,
+            query={"companyType": company_type, "reportDateType": "0", "code": _akshare_em_symbol(symbol)},
+            headers=_COMMON_HEADERS,
+            provider_config_version=getattr(task, "provider_config_version", None),
+            timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    )
+
+
+def _eastmoney_statement_data_capture(
+    task: Any,
+    *,
+    managed_http: Any,
+    symbol: str,
+    company_type: str,
+    report_date: str,
+    sheet: str,
+) -> Any:
+    path = "/PC_HSF10/NewFinanceAnalysis/xjllbAjaxNew" if sheet == "cash" else "/PC_HSF10/NewFinanceAnalysis/zcfzbAjaxNew"
+    return managed_http.send_capture(
+        HttpRequestSpec(
+            method="GET",
+            host=_EASTMONEY_HSF10_ENDPOINT,
+            path=path,
+            query={
+                "companyType": company_type,
+                "reportDateType": "0",
+                "reportType": "1",
+                "dates": report_date,
+                "code": _akshare_em_symbol(symbol),
+            },
+            headers=_COMMON_HEADERS,
+            provider_config_version=getattr(task, "provider_config_version", None),
+            timeout_seconds=_EASTMONEY_SNAPSHOT_TIMEOUT_SECONDS,
+        )
+    )
+
+
+def _eastmoney_company_type(html: str) -> str | None:
+    for pattern in (
+        r'id=["\']hidctype["\'][^>]*value=["\']([^"\']+)["\']',
+        r'value=["\']([^"\']+)["\'][^>]*id=["\']hidctype["\']',
+        r'companyType["\']?\s*[:=]\s*["\']?([A-Za-z0-9_-]+)',
+    ):
+        match = re.search(pattern, html, flags=re.IGNORECASE)
+        if match:
+            value = str(match.group(1)).strip()
+            if value:
+                return value
+    return None
+
+
+def _eastmoney_latest_report_date(payload: Any) -> str | None:
+    rows = _eastmoney_hsf10_rows(payload)
+    for row in rows:
+        value = _pick(row, "REPORT_DATE", "reportDate", "REPORTDATE", "date")
+        period = _period(value)
+        if period:
+            return period
+    if isinstance(payload, Mapping):
+        data = payload.get("data")
+        if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray)):
+            for item in data:
+                period = _period(item)
+                if period:
+                    return period
+    return None
+
+
+def _eastmoney_hsf10_rows(payload: Any) -> tuple[Mapping[str, Any], ...]:
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+        return tuple(item for item in payload if isinstance(item, Mapping))
+    if not isinstance(payload, Mapping):
+        return ()
+    for key in ("data", "result"):
+        value = payload.get(key)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            rows = tuple(item for item in value if isinstance(item, Mapping))
+            if rows:
+                return rows
+        if isinstance(value, Mapping):
+            nested = _eastmoney_hsf10_rows(value)
+            if nested:
+                return nested
+    return ()
 
 
 def _eastmoney_app_post(task: Any, *, path: str, payload: Mapping[str, Any]) -> HttpRequestSpec:
@@ -2914,6 +3425,23 @@ def _social_row(task: Any, *, symbol: str, endpoint: str, timestamp: datetime | 
             "quality_flags": ("aggregate_signal_without_sentiment_label",),
         }
     )
+    return row
+
+
+def _eastmoney_financial_metric_row(task: Any, *, symbol: str, item: Mapping[str, Any]) -> dict[str, Any] | None:
+    period = _period(_pick(item, "REPORT_DATE"))
+    if period is None:
+        return None
+    row = _base_row(task, symbol=symbol, dataset="financial_metric", period=period)
+    row["source_roles"] = ("built_in_public",)
+    _set_decimal(row, "roe", _pick(item, "ROEJQ"))
+    _set_decimal(row, "roa", _pick(item, "ZZCJLL"))
+    _set_decimal(row, "gross_margin", _pick(item, "XSMLL"))
+    _set_decimal(row, "debt_ratio", _pick(item, "ZCFZL"))
+    _set_decimal(row, "eps", _pick(item, "EPSJB", "EPSXS"))
+    _set_decimal(row, "revenue", _pick(item, "TOTALOPERATEREVE"))
+    _set_decimal(row, "net_income", _pick(item, "PARENTNETPROFIT"))
+    row["amount_unit"] = "CNY"
     return row
 
 
@@ -3042,6 +3570,23 @@ def _year_quarter(value: Any) -> tuple[int, int]:
     parsed = _parse_date(value) or datetime.now(tz=UTC).date()
     quarter = ((parsed.month - 1) // 3) + 1
     return parsed.year, quarter
+
+
+def _task_year_quarter(task: Any) -> tuple[int, int]:
+    params = getattr(task, "params", None)
+    if isinstance(params, Mapping):
+        year = _int_or_none(params.get("year"))
+        quarter = _int_or_none(params.get("quarter"))
+        if year is not None and quarter in {1, 2, 3, 4}:
+            return year, quarter
+    return _year_quarter(getattr(task, "date_range_end", None))
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _jsonp_payload(text: str) -> Mapping[str, Any]:
@@ -3445,6 +3990,21 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _northbound_timestamp(query_date: date, value: Any) -> datetime:
+    text = _non_empty(value)
+    if text:
+        match = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$", text)
+        if match:
+            hour = int(match.group(1))
+            minute = int(match.group(2))
+            second = int(match.group(3) or 0)
+            return datetime(query_date.year, query_date.month, query_date.day, hour, minute, second, tzinfo=_CN_A_TIMEZONE)
+        parsed = _parse_datetime(text)
+        if parsed is not None:
+            return parsed
+    return datetime.now(tz=_CN_A_TIMEZONE)
+
+
 def _yyyymmdd(value: Any) -> str | None:
     parsed = _parse_date(value)
     return parsed.strftime("%Y%m%d") if parsed else None
@@ -3488,6 +4048,7 @@ __all__ = [
     "GoogleNewsDiscoveryPlugin",
     "MootdxCNProviderPlugin",
     "TushareFundamentalPlugin",
+    "TushareRealtimeSDKPlugin",
     "build_cn_a_provider_plugin",
     "build_cn_a_provider_plugins",
 ]

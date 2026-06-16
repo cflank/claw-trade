@@ -21,14 +21,14 @@ def test_fundamental_analyst_skill_manifest_mounts_cn_a_fundamental_data() -> No
         if entry.get("path") != "cn-a-fundamental-data/SKILL.md":
             continue
         assert entry.get("workers") == ["fundamental_analyst"]
-        assert entry.get("tool_exports") == ["claw_get_fundamental_pack"]
+        assert entry.get("tool_exports") == ["claw_request_data"]
         return
     raise AssertionError("fundamental_analyst 未挂载 cn-a-fundamental-data skill manifest 条目")
 
 
-def test_resolve_fundamental_visible_tools_is_exactly_pack_tool_for_cn_a() -> None:
+def test_resolve_fundamental_visible_tools_is_exactly_data_request_tool_for_cn_a() -> None:
     policy = POLICY_MODULE.resolve_fundamental_visible_tools("fundamental_analyst", "CN_A")
-    assert set(policy.tool_names) == {"claw_get_fundamental_pack"}
+    assert set(policy.tool_names) == {"claw_request_data"}
     assert all(not tool.startswith("tushare.") for tool in policy.tool_names)
     assert all(not tool.startswith("akshare.") for tool in policy.tool_names)
     assert all(not tool.startswith("baostock.") for tool in policy.tool_names)
@@ -40,7 +40,7 @@ def test_visible_tool_snapshot_invalid_when_provider_tool_leaks() -> None:
             "worker_id": "fundamental_analyst",
             "market_profile": "CN_A",
             "tools": (
-                "claw_get_fundamental_pack",
+                "claw_request_data",
                 "tushare.fina_indicator",
             ),
         }

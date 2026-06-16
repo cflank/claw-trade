@@ -11,9 +11,9 @@ The company is {company_name}. The instrument to analyze is `{ticker}`. Use this
 
 For your reference, the current date is {current_date}. The news window is {start_date} to {end_date}; the data tool receives this from runtime context.
 
-Use the available tool: `claw_get_news_pack` for company-specific, source-backed, and broader macroeconomic news evidence.
+Use the available tool: `claw_request_data` for company-specific, source-backed, and broader macroeconomic news evidence.
 
-If no news result is already available in this turn, call `claw_get_news_pack` before writing the news report. The report should cover company-specific news and broader global or macroeconomic news relevant to the instrument. If the tool is unavailable, returns no usable news, or omits expected company or macro context, write a limitation report that states the missing evidence and do not fabricate headlines or source claims.
+If no news result is already available in this turn, call `claw_request_data` for `company_news` and `macro_news` with `purpose` set to `news_report` before writing the news report. The report should cover company-specific news and broader global or macroeconomic news relevant to the instrument. If the tool is unavailable, returns no usable news, or omits expected company or macro context, write a limitation report that states the missing evidence and do not fabricate headlines or source claims.
 
 Provide specific, actionable insights with supporting evidence to help traders make informed decisions.
 

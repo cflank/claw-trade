@@ -40,15 +40,15 @@ class MemoryDataAPI:
         self.status = status
         self.gaps = gaps
         self.requests: list[object] = []
-        self.batch_requests: list[tuple[object, ...]] = []
+        self.request_batches: list[tuple[object, ...]] = []
         self.get_data_calls = 0
 
     def get_data(self, request: object) -> object:
         self.get_data_calls += 1
         return self._record_request(request)
 
-    def get_data_batch(self, requests: tuple[object, ...]) -> list[object]:
-        self.batch_requests.append(tuple(requests))
+    def request_data(self, requests: tuple[object, ...]) -> list[object]:
+        self.request_batches.append(tuple(requests))
         return [self._record_request(request) for request in requests]
 
     def _record_request(self, request: object) -> object:
@@ -60,7 +60,7 @@ class MemoryDataAPI:
             attempt_refs=(f"attempt:{request_id}",),
             gaps=self.gaps,
             status=self.status,
-            request_id=f"req-{request_id}",
+            request_id=f"request-{request_id}",
         )
 
 
@@ -208,7 +208,7 @@ def test_seed_import_resume_with_cursor_after_failure() -> None:
     assert len(manifests[0]["output_refs"]["dataset_refs"]) == 3
 
 
-def test_daily_incremental_uses_data_api_and_maintenance_consumer() -> None:
+def test_daily_incremental_uses_public_requests_and_maintenance_consumer() -> None:
     repo = InMemoryMaintenanceJobRepository()
     job = MaintenanceJob(
         job_id="job:inc:us:daily_bar:1",
@@ -222,11 +222,12 @@ def test_daily_incremental_uses_data_api_and_maintenance_consumer() -> None:
     def request_from_gap(gap: Gap, *, consumer: str, consumer_id: str) -> dict[str, str]:
         seen.append((consumer, consumer_id))
         return {
-            "request_id": f"req-gap-{gap.gap_id}",
+            "request_id": f"request-gap-{gap.gap_id}",
+            "api_id": "us.daily_bar",
             "gap_id": gap.gap_id,
             "consumer": consumer,
             "consumer_id": consumer_id,
-            "fields": ("close", "volume"),
+            "params": {"required_fields": ("close", "volume")},
             "date_range_start": "2026-05-01",
             "date_range_end": "2026-05-31",
         }
@@ -242,15 +243,15 @@ def test_daily_incremental_uses_data_api_and_maintenance_consumer() -> None:
     assert result.status == "succeeded"
     assert len(api.requests) == 2
     assert api.get_data_calls == 0
-    assert len(api.batch_requests) == 1
-    assert len(api.batch_requests[0]) == 2
+    assert len(api.request_batches) == 1
+    assert len(api.request_batches[0]) == 2
     assert seen == [("maintenance", job.job_id), ("maintenance", job.job_id)]
     assert result.cursor["index"] == 2
-    assert result.cursor["last_request_id"] == "req-2"
+    assert result.cursor["last_request_id"] == "request-2"
     assert result.cursor["last_input_range"] == {"start": "2026-05-01", "end": "2026-05-31"}
     manifests = repo.list_dataset_manifests()
     assert len(manifests) == 1
-    assert tuple(manifests[0]["request_ids"]) == ("req-1", "req-2")
+    assert tuple(manifests[0]["request_ids"]) == ("request-1", "request-2")
     assert manifests[0]["required_fields"] == ("close", "volume")
     assert result.cursor["audit_counts"]["required_fields"] == 2
     assert tuple(manifests[0]["attempt_refs"]) == ("attempt:1", "attempt:2")
@@ -276,10 +277,11 @@ def test_maintenance_cursor_stores_manifest_pointer_not_unbounded_refs() -> None
         repo=repo,
         gaps=gaps,
         request_from_gap=lambda gap, *, consumer, consumer_id: {
-            "request_id": f"req-{gap.gap_id}",
+            "request_id": f"request-{gap.gap_id}",
+            "api_id": "us.daily_bar",
             "consumer": consumer,
             "consumer_id": consumer_id,
-            "fields": ("close",),
+            "params": {"required_fields": ("close",)},
         },
     )
 
@@ -312,7 +314,8 @@ def test_maintenance_stats_use_enum_status_value() -> None:
         repo=repo,
         gaps=[Gap("g1")],
         request_from_gap=lambda gap, *, consumer, consumer_id: {
-            "request_id": f"req-{gap.gap_id}",
+            "request_id": f"request-{gap.gap_id}",
+            "api_id": "crypto.daily_bar",
             "consumer": consumer,
             "consumer_id": consumer_id,
         },
@@ -324,7 +327,7 @@ def test_maintenance_stats_use_enum_status_value() -> None:
     assert "status_DataResultStatus.PARTIAL" not in saved.stats
 
 
-def test_repair_uses_data_api_and_cursor() -> None:
+def test_repair_uses_public_requests_and_cursor() -> None:
     repo = InMemoryMaintenanceJobRepository()
     job = MaintenanceJob(
         job_id="job:repair:hk:filing:1",
@@ -334,7 +337,7 @@ def test_repair_uses_data_api_and_cursor() -> None:
     )
     gap = SimpleNamespace(
         gap_id="gap:r1",
-        request_id="req-gap-r1",
+        request_id="request-gap-r1",
         reason="warehouse_stale",
         severity="warn",
         evidence_refs=("attempt:evidence:r1",),
@@ -345,9 +348,10 @@ def test_repair_uses_data_api_and_cursor() -> None:
     def request_from_slice(slice_item: Slice, *, consumer: str, consumer_id: str) -> dict[str, str]:
         called.append(f"{consumer}:{consumer_id}:{slice_item.slice_id}")
         return {
-            "request_id": f"req-slice-{slice_item.slice_id}",
+            "request_id": f"request-slice-{slice_item.slice_id}",
+            "api_id": "hk.official_filing",
             "slice_id": slice_item.slice_id,
-            "fields": ("title", "published_at"),
+            "params": {"required_fields": ("title", "published_at")},
             "date_range_start": "2026-05-01",
             "date_range_end": "2026-05-30",
         }
@@ -363,7 +367,7 @@ def test_repair_uses_data_api_and_cursor() -> None:
     assert result.status == "succeeded"
     assert len(api.requests) == 3
     assert api.get_data_calls == 0
-    assert len(api.batch_requests) == 1
+    assert len(api.request_batches) == 1
     assert result.cursor["index"] == 3
     assert result.stats["status_partial"] == 3
     assert result.stats["gap_warehouse_stale"] == 3
@@ -392,6 +396,8 @@ def test_daily_incremental_uses_injected_gap_planner_when_gaps_not_provided() ->
         repo=repo,
         incremental_planner=planner,
         request_from_gap=lambda gap, *, consumer, consumer_id: {
+            "request_id": f"request-{gap.gap_id}",
+            "api_id": "hk.company_news",
             "gap_id": gap.gap_id,
             "consumer": consumer,
             "consumer_id": consumer_id,
@@ -400,7 +406,7 @@ def test_daily_incremental_uses_injected_gap_planner_when_gaps_not_provided() ->
 
     assert planner.calls == [("HK", "company_news")]
     assert len(api.requests) == 2
-    assert len(api.batch_requests) == 1
+    assert len(api.request_batches) == 1
 
 
 def test_daily_incremental_requires_planner_when_gaps_not_provided() -> None:
@@ -437,7 +443,7 @@ def test_collection_maintenance_repository_persists_dataset_manifest() -> None:
     repo = CollectionMaintenanceJobRepository(repository=dataset_repo)
     manifest_ref = repo.save_dataset_manifest(
         {
-            "request_ids": ("req-1",),
+            "request_ids": ("request-1",),
             "dataset_refs": ("dataset:1",),
             "attempt_refs": ("attempt:1",),
             "raw_refs": (),

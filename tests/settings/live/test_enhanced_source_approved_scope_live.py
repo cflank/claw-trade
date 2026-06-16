@@ -31,7 +31,7 @@ def test_live_enhanced_source_attempt_scope_is_only_from_registered_provider_cap
     assert len(scopes) == len(capabilities)
     for capability in capabilities:
         assert capability.supported_granularities
-        assert capability.coverage_fields
+        assert capability.fields
         assert capability.http_visibility in {"managed_http", "sdk_internal_unknown", "no_http"}
         if capability.credential_required:
             assert capability.credential_names

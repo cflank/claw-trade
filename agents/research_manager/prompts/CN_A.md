@@ -40,6 +40,9 @@ stage: investment_decision
 
 基本面分析：{fundamentals_report}
 
+数据证据边界（裁决数据冲突前必须先核对）：{data_evidence_summary}
+如果宏观、情绪、资金或估值口径与数据证据边界冲突，以数据边界为准；不能把缺口、搜索线索或季度EPS直接写成确定事实。
+
 以下是辩论：
 辩论历史：
 {history}

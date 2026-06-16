@@ -10,9 +10,9 @@ import pytest
 from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.controller import SelectionController
 from claw_trade.selection.models import (
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
@@ -62,14 +62,14 @@ def _plan(run_id: str, trade_date: str) -> SelectionRunPlan:
         trade_date=trade_date,
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref=f"plan://{run_id}",
+        data_need_audit_ref=f"plan://{run_id}",
         approved_strategy_config_ref="config://approved",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
 
 
-def _pack_ref(run_id: str, *, expires_at: str = "2026-05-27T09:00:00+00:00", sha: str = "a" * 64) -> CandidatePackRef:
-    return CandidatePackRef(
+def _cache_ref(run_id: str, *, expires_at: str = "2026-05-27T09:00:00+00:00", sha: str = "a" * 64) -> CandidateCacheRef:
+    return CandidateCacheRef(
         selection_run_id=run_id,
         material_id=f"mat-{run_id}",
         l1_uri=f"ov://selection/{run_id}",
@@ -77,12 +77,12 @@ def _pack_ref(run_id: str, *, expires_at: str = "2026-05-27T09:00:00+00:00", sha
         manifest_ref=f"manifest://{run_id}",
         approved_at="2026-05-26T08:00:00+00:00",
         expires_at=expires_at,
-        pack_summary_ref=f"summary://{run_id}",
+        cache_summary_ref=f"summary://{run_id}",
     )
 
 
-def _manifest(run_id: str, trade_date: str, *, sha: str = "a" * 64) -> CandidatePackManifest:
-    return CandidatePackManifest(
+def _manifest(run_id: str, trade_date: str, *, sha: str = "a" * 64) -> CandidateCacheManifest:
+    return CandidateCacheManifest(
         schema_version="v1",
         selection_run_id=run_id,
         market=SelectionMarket.CN_A,
@@ -90,9 +90,9 @@ def _manifest(run_id: str, trade_date: str, *, sha: str = "a" * 64) -> Candidate
         trade_date=trade_date,
         candidate_count=20,
         source_lineage_refs=("lineage://provider-attempts", "lineage://feature-snapshot"),
-        pack_body_sha256=sha,
+        cache_body_sha256=sha,
         strategy_config_ref="config://approved",
-        readback_status=CandidatePackReadbackStatus.VERIFIED,
+        readback_status=CandidateCacheReadbackStatus.VERIFIED,
     )
 
 
@@ -102,24 +102,24 @@ def _completed_record(
     *,
     completed_at: str,
     expires_at: str = "2026-05-27T09:00:00+00:00",
-    pack_sha: str | None = None,
+    cache_sha: str | None = None,
     manifest_sha: str | None = None,
     integrity: SelectionRunIntegrity = SelectionRunIntegrity(),
-    manifest: CandidatePackManifest | None = None,
+    manifest: CandidateCacheManifest | None = None,
 ) -> SelectionDataRunRecord:
-    body_path, summary_path, manifest_path, body_sha = _write_candidate_pack_files(run_id, trade_date)
-    resolved_pack_sha = pack_sha or body_sha
-    resolved_manifest_sha = manifest_sha or resolved_pack_sha
+    body_path, summary_path, manifest_path, body_sha = _write_candidate_cache_files(run_id, trade_date)
+    resolved_cache_sha = cache_sha or body_sha
+    resolved_manifest_sha = manifest_sha or resolved_cache_sha
     columnar_manifest = _write_columnar_manifest(_plan(run_id, trade_date))
-    pack_ref = CandidatePackRef(
+    cache_ref = CandidateCacheRef(
         selection_run_id=run_id,
         material_id=f"mat-{run_id}",
         l1_uri=str(body_path),
-        content_sha256=resolved_pack_sha,
+        content_sha256=resolved_cache_sha,
         manifest_ref=str(manifest_path),
         approved_at="2026-05-26T08:00:00+00:00",
         expires_at=expires_at,
-        pack_summary_ref=str(summary_path),
+        cache_summary_ref=str(summary_path),
     )
     data_run = SelectionDataRun(
         selection_run_id=run_id,
@@ -130,7 +130,7 @@ def _completed_record(
         warehouse_check_ref=columnar_manifest.warehouse_check_ref,
         columnar_manifest_ref=columnar_manifest.manifest_ref,
         columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(columnar_manifest.manifest_ref),
-        candidate_pack_ref=pack_ref,
+        candidate_cache_ref=cache_ref,
         completed_at=completed_at,
     )
     final_manifest = manifest if manifest is not None else _manifest(run_id, trade_date, sha=resolved_manifest_sha)
@@ -178,15 +178,15 @@ def _assert_side_effect_dependencies_not_called(provider_spy: _Spy, scheduler_sp
     assert data_job_spy.calls == 0
 
 
-def _write_candidate_pack_files(run_id: str, trade_date: str) -> tuple[Path, Path, Path, str]:
+def _write_candidate_cache_files(run_id: str, trade_date: str) -> tuple[Path, Path, Path, str]:
     root = Path(os.environ["CLAW_TRADE_SELECTION_GATE_ARTIFACT_ROOT"]) / run_id
     root.mkdir(parents=True, exist_ok=True)
-    body_path = root / "candidate-pack.md"
-    summary_path = root / "candidate-pack-summary.md"
-    manifest_path = root / "candidate-pack-manifest.json"
+    body_path = root / "candidate-cache.md"
+    summary_path = root / "candidate-cache-summary.md"
+    manifest_path = root / "candidate-cache-manifest.json"
     body_text = "\n".join(
         [
-            "# A股候选事实包",
+            "# A股候选缓存",
             "",
             "| 排名 | 股票代码 | 股票名称 |",
             "| --- | --- | --- |",
@@ -195,7 +195,7 @@ def _write_candidate_pack_files(run_id: str, trade_date: str) -> tuple[Path, Pat
     )
     summary_text = "\n".join(
         [
-            "# A股候选事实包",
+            "# A股候选缓存",
             "",
             "## 本轮范围",
             f"- 交易日：{trade_date}",
@@ -214,15 +214,15 @@ def _write_candidate_pack_files(run_id: str, trade_date: str) -> tuple[Path, Pat
         "trade_date": trade_date,
         "candidate_count": 1,
         "source_lineage_refs": ["lineage://provider-attempts", "lineage://feature-snapshot"],
-        "pack_body_sha256": body_sha,
+        "cache_body_sha256": body_sha,
         "strategy_config_ref": "config://approved",
         "strategy_config_version": "cn_a.selection_strategy.v1",
         "weight_version": "cn_a.selection_weights.v1",
         "candidate_scores_ref": f"scores://{run_id}",
         "stable_top20_rule": {"score_field": "score", "tie_break_fields": ["amount"], "missing_policy": "fail"},
         "readback_status": "verified",
-        "stage": "approving_candidate_pack",
-        "target": "candidate_pack",
+        "stage": "approving_candidate_cache",
+        "target": "candidate_cache",
     }
     manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     _write_readback_log(body_path, expected_sha256=body_sha)
@@ -379,14 +379,14 @@ def test_select_stale_run_does_not_fetch_or_schedule() -> None:
 
 
 @pytest.mark.integration
-def test_select_unapproved_pack_stops_before_any_side_effect() -> None:
+def test_select_unapproved_candidate_cache_stops_before_any_side_effect() -> None:
     store = SelectionRunStore()
     store.save_data_run_record(
         _completed_record(
             "sel-run-unapproved",
             "2026-05-26",
             completed_at="2026-05-26T08:30:00+00:00",
-            integrity=SelectionRunIntegrity(pack_approved=False),
+            integrity=SelectionRunIntegrity(cache_approved=False),
         )
     )
     controller, provider_spy, scheduler_spy, data_job_spy = _controller(store)
@@ -394,7 +394,7 @@ def test_select_unapproved_pack_stops_before_any_side_effect() -> None:
     result = controller.load_latest_completed_for_select(_request())
 
     assert result.is_available is False
-    assert result.unavailable_code == "candidate_pack_not_approved"
+    assert result.unavailable_code == "candidate_cache_not_approved"
     _assert_side_effect_dependencies_not_called(provider_spy, scheduler_spy, data_job_spy)
 
 
@@ -406,7 +406,7 @@ def test_select_hash_mismatch_stops_before_any_side_effect() -> None:
             "sel-run-hash-mismatch",
             "2026-05-26",
             completed_at="2026-05-26T08:30:00+00:00",
-            pack_sha="a" * 64,
+            cache_sha="a" * 64,
             manifest_sha="b" * 64,
         )
     )
@@ -415,7 +415,7 @@ def test_select_hash_mismatch_stops_before_any_side_effect() -> None:
     result = controller.load_latest_completed_for_select(_request())
 
     assert result.is_available is False
-    assert result.unavailable_code == "candidate_pack_hash_mismatch"
+    assert result.unavailable_code == "candidate_cache_hash_mismatch"
     _assert_side_effect_dependencies_not_called(provider_spy, scheduler_spy, data_job_spy)
 
 
@@ -435,7 +435,7 @@ def test_select_lineage_incomplete_stops_before_any_side_effect() -> None:
     result = controller.load_latest_completed_for_select(_request())
 
     assert result.is_available is False
-    assert result.unavailable_code == "candidate_pack_lineage_incomplete"
+    assert result.unavailable_code == "candidate_cache_lineage_incomplete"
     _assert_side_effect_dependencies_not_called(provider_spy, scheduler_spy, data_job_spy)
 
 
@@ -450,7 +450,7 @@ def test_select_manifest_missing_returns_integrity_failure() -> None:
         provider_attempt_refs=(f"attempt://{run_id}",),
         select_data_plan_ref=f"select-data-plan://selection/{run_id}/2026-05-26",
         warehouse_check_ref=f"warehouse-check://selection/{run_id}/2026-05-26/ok",
-        candidate_pack_ref=_pack_ref(run_id),
+        candidate_cache_ref=_cache_ref(run_id),
         completed_at="2026-05-26T08:30:00+00:00",
     )
     store.save_data_run_record(
@@ -465,7 +465,7 @@ def test_select_manifest_missing_returns_integrity_failure() -> None:
     result = controller.load_latest_completed_for_select(_request())
 
     assert result.is_available is False
-    assert result.unavailable_code == "candidate_pack_integrity_failed"
+    assert result.unavailable_code == "candidate_cache_integrity_failed"
     _assert_side_effect_dependencies_not_called(provider_spy, scheduler_spy, data_job_spy)
 
 
@@ -485,5 +485,5 @@ def test_select_readback_not_verified_returns_integrity_failure() -> None:
     result = controller.load_latest_completed_for_select(_request())
 
     assert result.is_available is False
-    assert result.unavailable_code == "candidate_pack_integrity_failed"
+    assert result.unavailable_code == "candidate_cache_integrity_failed"
     _assert_side_effect_dependencies_not_called(provider_spy, scheduler_spy, data_job_spy)

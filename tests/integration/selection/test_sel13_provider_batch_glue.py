@@ -8,6 +8,7 @@ from claw_trade.data_gateway._selection_batch import (
     fetch_selection_batch_from_data_gateway,
 )
 from claw_trade.data_gateway.models import DataResult, DataResultStatus
+from claw_trade.data_gateway.needs import DataNeed
 from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
     SelectionBatchScope,
@@ -23,16 +24,20 @@ class _FakeDataAPI:
         self.requests = ()
         self._results = results
 
-    def get_data_batch(self, requests):  # type: ignore[no-untyped-def]
+    def read_warehouse_batch(self, requests):  # type: ignore[no-untyped-def]
         self.requests = tuple(requests)
         return self._results
 
 
 class _FakeGateway:
     def __init__(self, api: _FakeDataAPI) -> None:
-        self.data_api = api
+        self.data_service = api
         self.repository = object()
-        self.provider_candidates = ("cn_a_primary",)
+        self.data_need_calls: list[tuple[DataNeed, ...]] = []
+
+    def data_need_executor(self, _plan: SelectionRunPlan, needs: tuple[DataNeed, ...]) -> tuple[DataResult, ...]:
+        self.data_need_calls.append(tuple(needs))
+        return ()
 
 
 @pytest.mark.integration
@@ -90,8 +95,8 @@ def test_sel13_fetches_selection_batch_through_current_data_gateway(monkeypatch:
 
     result = fetch_selection_batch_from_data_gateway(plan)
 
-    assert result.provider_batch_plan.scope == SelectionBatchScope.SELECTION_BATCH
-    assert result.provider_batch_plan.plan_id == plan.provider_batch_plan_ref
+    assert result.data_need_audit.scope == SelectionBatchScope.SELECTION_BATCH
+    assert result.data_need_audit.plan_id == plan.data_need_audit_ref
     assert result.attempt_refs == ("attempt:cn_a_primary:daily_bar:sel13",)
     assert result.normalized_refs == ("dataset://normalized/CN_A/daily/dataset:daily_bar:CN_A:sel13",)
     assert result.warehouse_check_ref == "warehouse-check://selection-columnar/CN_A/CN_A/2026-05-26"
@@ -112,7 +117,7 @@ def _selection_run_plan() -> SelectionRunPlan:
         trade_date="2026-05-26",
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
         approved_strategy_config_ref="config://cn-a-selection-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import requests
 from claw_trade.data_gateway.execution.fetch_engine import FetchEngine
 from claw_trade.data_gateway.execution.managed_http import HttpRequestSpec, ManagedHttp
 from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimitPolicy
@@ -43,6 +44,17 @@ class _HttpClient:
         return _Response(status_code=200, headers={}, text='{"ok": true}')
 
 
+class _TransientErrorHttpClient:
+    def __init__(self) -> None:
+        self.requests: list[HttpRequestSpec] = []
+
+    def send(self, request: HttpRequestSpec) -> _Response:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            raise requests.exceptions.ConnectionError("closed")
+        return _Response(status_code=200, headers={}, text='{"ok": true}')
+
+
 class _Registry:
     def __init__(self, plugin: Any) -> None:
         self.plugin = plugin
@@ -53,13 +65,14 @@ class _Registry:
 
 
 class _ThreeHttpCallsPlugin:
-    def __init__(self) -> None:
+    def __init__(self, call_count: int = 3) -> None:
+        self.call_count = call_count
         self.managed_http_type_names: list[str] = []
 
     def fetch(self, task: Any, ctx: Any) -> FetchResult:
         self.managed_http_type_names.append(type(ctx.managed_http).__name__)
         observations = []
-        for index in range(3):
+        for index in range(self.call_count):
             capture = ctx.managed_http.send_capture(
                 HttpRequestSpec(
                     method="GET",
@@ -77,6 +90,26 @@ class _ThreeHttpCallsPlugin:
                     http_observations=tuple(observations),
                 )
         return FetchResult.from_success(task, payload={"rows": []}, row_count=0, http_observations=tuple(observations))
+
+
+class _SingleHttpCallPlugin:
+    def fetch(self, task: Any, ctx: Any) -> FetchResult:
+        capture = ctx.managed_http.send_capture(
+            HttpRequestSpec(
+                method="GET",
+                host="example.com",
+                path="/items",
+                provider_config_version=getattr(task, "provider_config_version", None),
+            )
+        )
+        if capture.observation.error_code:
+            return FetchResult.from_error(
+                task,
+                status="error",
+                error=RuntimeError(capture.observation.error_code),
+                http_observations=(capture.observation,),
+            )
+        return FetchResult.from_success(task, payload={"rows": []}, row_count=0, http_observations=(capture.observation,))
 
 
 @pytest.mark.parametrize("http_visibility", ("managed_http", HttpVisibility.MANAGED_HTTP))
@@ -157,3 +190,109 @@ def test_fetch_engine_managed_http_does_not_send_when_deadline_cannot_wait() -> 
     assert result.status == FetchStatus.RATE_LIMITED
     assert len(client.requests) == 1
     assert result.error_message == "rate_limited_by_tool_budget"
+
+
+def test_fetch_engine_managed_http_blocks_eleventh_subrequest_for_configured_ten_per_minute_budget() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    client = _HttpClient()
+    limiter = RateLimiter(now_fn=clock)
+    batch = SimpleNamespace(
+        batch_id="batch:ten-per-minute",
+        provider_id="provider",
+        endpoint_id="endpoint",
+        market="CRYPTO",
+        data_type="derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields_union=("cvd",),
+        provider_config_version="test",
+        params={},
+        http_visibility="managed_http",
+        rate_limit_key="ratelimit:test",
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=10),
+        deadline_at=clock.now + timedelta(seconds=30),
+    )
+    plugin = _ThreeHttpCallsPlugin(call_count=11)
+    engine = FetchEngine(
+        _Registry(plugin),
+        managed_http=ManagedHttp(client),
+        rate_limiter=limiter,
+    )
+
+    result = engine.fetch(batch)
+
+    assert result.status == FetchStatus.RATE_LIMITED
+    assert len(client.requests) == 10
+    assert result.http_observations[-1].quota_signal == "rate_limited_by_tool_budget"
+
+
+def test_fetch_engine_retries_transient_managed_http_error_after_rate_limit_reserve() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    client = _TransientErrorHttpClient()
+    limiter = RateLimiter(now_fn=clock)
+    batch = SimpleNamespace(
+        batch_id="batch:retry",
+        provider_id="provider",
+        endpoint_id="endpoint",
+        market="CRYPTO",
+        data_type="derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields_union=("cvd",),
+        provider_config_version="test",
+        params={},
+        http_visibility="managed_http",
+        rate_limit_key="ratelimit:test",
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=2),
+        deadline_at=clock.now + timedelta(seconds=30),
+    )
+    engine = FetchEngine(
+        _Registry(_SingleHttpCallPlugin()),
+        managed_http=ManagedHttp(client),
+        rate_limiter=limiter,
+    )
+
+    result = engine.fetch(batch)
+
+    assert result.status == FetchStatus.SUCCESS
+    assert len(client.requests) == 2
+    assert result.http_observations[-1].error_code is None
+
+
+def test_fetch_engine_retry_does_not_bypass_rate_limit_budget() -> None:
+    clock = _Clock(datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+    client = _TransientErrorHttpClient()
+    limiter = RateLimiter(now_fn=clock)
+    batch = SimpleNamespace(
+        batch_id="batch:retry-budget",
+        provider_id="provider",
+        endpoint_id="endpoint",
+        market="CRYPTO",
+        data_type="derivative_metric",
+        granularity="1h",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields_union=("cvd",),
+        provider_config_version="test",
+        params={},
+        http_visibility="managed_http",
+        rate_limit_key="ratelimit:test",
+        rate_limit_policy=RateLimitPolicy(window_seconds=60, max_requests=1),
+        deadline_at=clock.now + timedelta(seconds=30),
+    )
+    engine = FetchEngine(
+        _Registry(_SingleHttpCallPlugin()),
+        managed_http=ManagedHttp(client),
+        rate_limiter=limiter,
+    )
+
+    result = engine.fetch(batch)
+
+    assert result.status == FetchStatus.ERROR
+    assert len(client.requests) == 1
+    assert result.error_message == "connection_error"

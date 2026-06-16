@@ -10,7 +10,7 @@ CN_A 采用 A股专属扩展方案。
 本方案不是简单补几个数据接口，而是把 A股特色变量纳入正式报告工作流：
 
 - 扩展 CN_A frontline worker。
-- 新增 A股特色统一数据层资料包。
+- 新增 A股特色统一数据层数据结果。
 - 将 `a-stock-data` 的免费数据源分类和默认顺序转成 `data_gateway` provider 矩阵。
 - 复用现有用户声明式 provider/catalog/admission/registry 能力。
 - 保持 `src/claw_trade/data_gateway` 作为统一数据层入口；Provider 能力来自 `ProviderPlugin.capabilities()`，证据落入当前 Mongo/attempt/raw/normalized 合同。
@@ -65,7 +65,7 @@ PEG、估值消化和增长匹配逻辑进入：
 - `bull_researcher` / `bear_researcher`
 - `research_manager`
 
-第一版不新增独立估值 worker，不引入独立估值 UI，也不引入 `astock-peg` 工程依赖。估值消化先通过 fundamental 资料包中的一致预期、forward PE、PEG 和可追溯口径表达；字段不足时写缺口。
+第一版不新增独立估值 worker，不引入独立估值 UI，也不引入 `astock-peg` 工程依赖。估值消化先通过 fundamental 数据结果中的一致预期、forward PE、PEG 和可追溯口径表达；字段不足时写缺口。
 
 ### `global-stock-data`
 
@@ -81,7 +81,7 @@ PEG、估值消化和增长匹配逻辑进入：
 外部数据源
   -> data_gateway ProviderPlugin / ProviderRegistry
   -> provider attempt / raw / normalized / cache evidence
-  -> domain pack / material builder
+  -> DataNeed result / approved material builder
   -> OpenClaw worker
   -> OpenViking approved L1/L2 material
 ```
@@ -155,7 +155,7 @@ portfolio_decision:
 - 下游 worker 接收 7 份 frontline 已批准自然语言 L1 报告。
 - 质量门先作为 claw-trade 控制层阶段校验，不新增独立质量门 agent。
 
-## 5. 新增 CN_A 数据域与资料包
+## 5. 新增 CN_A 数据域与数据结果
 
 新增 3 个 CN_A 专属数据域：
 
@@ -165,15 +165,15 @@ hot_money
 lockup
 ```
 
-新增 3 个 worker-visible 资料包：
+新增 3 个 worker-visible 数据结果：
 
 ```text
-policy_analyst    -> claw_get_policy_pack
-hot_money_tracker -> claw_get_hot_money_pack
-lockup_watcher    -> claw_get_lockup_pack
+policy_analyst    -> claw_request_data
+hot_money_tracker -> claw_request_data
+lockup_watcher    -> claw_request_data
 ```
 
-这些资料包在对应 worker turn 内懒加载，不做控制层预取。
+这些数据结果在对应 worker turn 内懒加载，不做控制层预取。
 
 ### `policy`
 
@@ -389,10 +389,10 @@ lockup
 用户配置后：
 
 ```text
-用户已验证、已启用的 provider 在其声明的同一作用范围内优先。
+用户已验证、已启用的 provider 只能在能产出同一项目数据项、同一标准输出口径时优先。
 ```
 
-优先级只在同一范围内生效：
+优先级只在同一项目数据项的等价接口候选内生效。下面这些只是审计和展示标签，不能当候选硬编码限制：
 
 ```text
 market
@@ -403,11 +403,11 @@ coverage_group
 
 例如：
 
-- 用户配置行情源，只优先影响行情/K线/盘口覆盖组。
-- 用户配置新闻源，只优先影响新闻发现或新闻事实覆盖组。
-- 用户配置 policy 源，只优先影响 CN_A policy 域下声明支持的覆盖组。
-- 用户配置 hot_money 源，只优先影响资金/龙虎榜/北向等覆盖组。
-- 用户配置 lockup 源，只优先影响解禁/筹码/融资融券等覆盖组。
+- 用户配置行情源，只有能返回行情、K线或盘口对应标准输出时，才进入对应数据项候选。
+- 用户配置新闻源，只有能返回新闻发现或新闻事实对应标准输出时，才进入对应数据项候选。
+- 用户配置 policy 源，只有能返回政策/公告/监管对应标准输出时，才进入对应数据项候选。
+- 用户配置 hot_money 源，只有能返回资金、龙虎榜、北向等对应标准输出时，才进入对应数据项候选。
+- 用户配置 lockup 源，只有能返回解禁、筹码、融资融券等对应标准输出时，才进入对应数据项候选。
 
 官方原始披露源不可被普通源完全覆盖：
 
@@ -415,7 +415,7 @@ coverage_group
 - 交易所公告。
 - 监管或官方披露。
 
-用户源可以补充、交叉验证或在同组内优先；但不能让系统完全不查官方原始披露，也不能跨作用域替代事实来源。
+用户源可以补充、交叉验证，或在同一项目数据项的等价接口候选内优先；但不能让系统完全不查官方原始披露，也不能替代官方事实来源。
 
 ## 8. 用户声明式 provider
 
@@ -435,9 +435,9 @@ coverage_group
 - `policy` / `hot_money` / `lockup` 三个新 domain。
 - 新 domain 的 coverage_group。
 - 新 domain 在 UI 数据源配置中的可见入口。
-- 用户 provider 在七个 CN_A domain 下的 health/admission/priority/run plan 证据链。
+- 用户 provider 的 health、credential、priority、真实 attempt 和 DataNeed/ProviderCallSpec 证据链。
 
-用户声明式 provider 第一版允许按声明作用域参与七个 CN_A domain；A股扩展新增并必须补齐的是后三个：
+用户声明式 provider 第一版只能声明连接、凭证、成本、许可和优先级事实；不得按七个 CN_A domain 形成业务硬编码限制。A股扩展新增并必须补齐的是后三个 worker 的数据需求语义：
 
 ```text
 market
@@ -461,7 +461,7 @@ priority_source=USER_PREFERRED
 
 声明式 provider 仍必须满足：
 
-- 域名白名单。
+- 域名硬编码限制。
 - 协议限制。
 - DNS 和 redirect 后目标复验。
 - 禁止 localhost/private IP/link-local/metadata service。
@@ -478,8 +478,8 @@ priority_source=USER_PREFERRED
 
 ```text
 1. 先尝试用户已配置、已验证、已启用的 provider。
-2. 用户 provider 失败后，尝试同一 coverage_group 下的系统默认源。
-3. 同组默认源也失败时，记录 data gap。
+2. 用户 provider 失败后，尝试同一项目数据项下的系统默认源。
+3. 同一数据项候选源也失败时，记录 data gap。
 4. worker 报告只能说明缺口，不能补写事实。
 ```
 
@@ -489,7 +489,7 @@ priority_source=USER_PREFERRED
 - 成功/失败。
 - 失败原因。
 - 是否命中缓存。
-- 最终哪个 provider 的 normalized 数据进入资料包。
+- 最终哪个 provider 的 normalized 数据进入数据结果。
 - 哪些字段缺失。
 - readiness 是否 ready/partial/insufficient。
 
@@ -509,7 +509,7 @@ priority_source=USER_PREFERRED
 
 ## 10. Worker 可见材料边界
 
-新增 worker 只看自然语言资料包和必要缺口说明。
+新增 worker 只看自然语言数据结果和必要缺口说明。
 
 worker 不应直接看到：
 
@@ -521,7 +521,7 @@ worker 不应直接看到：
 - OpenViking protocol 文本。
 - OpenClaw/OpenViking/legacy 已删除数据网关 内部工程协议。
 
-资料包应返回：
+数据结果应返回：
 
 - `reader_brief`：自然语言资料正文。
 - `compact_facts`：必要事实摘要。
@@ -567,8 +567,8 @@ CN_A
 
 优先级配置：
 
-- 用户可以调整同一覆盖组内的顺序。
-- 用户 provider 通过验证并启用后应默认排在同组系统默认源前。
+- 用户可以调整同一项目数据项等价接口候选内的顺序。
+- 用户 provider 通过验证并启用后，应默认排在同一项目数据项的系统默认候选源前。
 - 官方原始披露源显示为事实权威，不允许普通源替代。
 
 运行页或报告详情需要展示：
@@ -587,9 +587,9 @@ CN_A
 - 扩展 CN_A workflow。
 - 新增 3 个 worker。
 - 新增 3 个 domain。
-- 新增 3 个 data_gateway pack。
-- 七个 A股资料域的 provider 矩阵都进入工程任务范围。
-- 用户声明式 provider 可以在七个 CN_A domain 下按声明作用域参与 registry 和 run plan。
+- 新增 3 类 DataNeed 数据结果材料。
+- 七个 A股 worker 的数据需求语义和证据链都进入工程任务范围。
+- 用户声明式 provider 只能按连接、凭证、成本、许可和优先级事实参与 planner 排序；不得按 domain 硬编码限制决定能不能尝试。
 
 七域 provider 范围：
 
@@ -631,9 +631,9 @@ lockup:
 
 - CN_A `/report` 可跑出 7 个 frontline L1。
 - 新增 3 个 worker 均为 OpenClaw worker turn。
-- 新增 3 个 pack 均通过 `data_gateway` 取数。
+- 新增 3 个 worker 的远端取数均通过 `claw_request_data` 业务数据项请求进入数据层；`DataNeed -> planner -> ProviderCallSpec -> data_gateway` 只发生在数据层内部。
 - provider attempt/http/raw/normalized/cache evidence 可追溯。
-- 用户声明式 provider 在七个 CN_A domain 下可按声明作用域进入 enabled candidate 和 run plan。
+- 用户声明式 provider 可按连接、凭证、成本、许可和优先级事实进入 planner 排序；不得按 domain 硬编码限制决定能不能尝试。
 - 下游 bull/bear/research_manager/trader/risk/PM 可读取 7 份 approved L1。
 - 每个计划 provider 都有 attempt；失败、空返回、字段缺失、限流和 schema drift 进入 gaps/readiness。
 
@@ -656,7 +656,7 @@ lockup:
 目标：
 
 - 设置页支持 7 个 CN_A 数据域。
-- 支持覆盖组内 provider 优先级管理。
+- 支持同一项目数据项等价接口候选内的 provider 优先级管理。
 - 支持用户源测试、启用、禁用和状态展示。
 - 报告运行证据展示实际命中顺序和失败替换链。
 
@@ -684,7 +684,7 @@ lockup:
 
 - CN_A 扩展 workflow 只对 A股生效。
 - 7 个 frontline worker 都是真实 OpenClaw turn。
-- 新增 3 个 pack 都走 `data_gateway`。
+- 新增 3 类 A 股特色数据请求都走 `data_gateway`。
 - 用户声明式 provider 能参与新增三域排序。
 - A股七域 provider 矩阵都进入 `data_gateway`，并且每个计划 provider 都有 attempt。
 - 官方原始披露源边界不被用户源覆盖。

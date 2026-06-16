@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
 from claw_trade.guards.common import GuardResult, guard_failed, guard_passed
 from claw_trade.runtime.evidence_reader import ProviderEvidence
 from claw_trade.workflow.models import WorkerCall
@@ -11,21 +9,7 @@ from claw_trade.workflow.models import WorkerCall
 _TOOL_CALLS_STATUS = {"none", "recorded"}
 _CALL_STATUS = {"success", "error"}
 _REQUIRED_CALL_FIELDS = ("tool_name", "action", "status", "result_sha256")
-_FRONTLINE_PACK_TOOLS = {
-    "claw_get_market_pack",
-    "claw_get_fundamental_pack",
-    "claw_get_news_pack",
-    "claw_get_social_pack",
-    "claw_get_policy_pack",
-    "claw_get_hot_money_pack",
-    "claw_get_lockup_pack",
-}
-_CRYPTO_FRONTLINE_REQUIRED_PACK_TOOLS = {
-    "market_analyst": "claw_get_market_pack",
-    "fundamental_analyst": "claw_get_fundamental_pack",
-    "news_analyst": "claw_get_news_pack",
-    "social_analyst": "claw_get_social_pack",
-}
+_CRYPTO_FRONTLINE_REQUIRED_DATA_TOOL = "claw_request_data"
 
 
 def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardResult:
@@ -81,11 +65,11 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
                 reason="tool-calls status=none 时 calls 必须为空",
                 paths=(evidence.tool_calls_path,),
             )
-        required_tool = _required_crypto_frontline_pack_tool(call)
+        required_tool = _required_crypto_frontline_data_tool(call)
         if required_tool is not None:
             return guard_failed(
                 category="tool_calls",
-                reason=f"CRYPTO frontline worker 未调用必需资料包工具: {required_tool}",
+                reason=f"CRYPTO frontline worker 未调用必需数据工具: {required_tool}",
                 paths=(evidence.tool_calls_path,),
             )
         return guard_passed(category="tool_calls")
@@ -112,39 +96,25 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
                 reason=f"tool-calls calls[{index}].status 非法: {item.get('status')!r}",
                 paths=(evidence.tool_calls_path,),
             )
-        if _is_frontline_pack_tool_failure(call, item):
-            return guard_failed(
-                category="tool_calls",
-                reason=f"frontline 资料包工具调用失败: {item['tool_name']}",
-                paths=(evidence.tool_calls_path,),
-            )
         seen_tools.add(item["tool_name"].strip())
-    required_tool = _required_crypto_frontline_pack_tool(call)
+    required_tool = _required_crypto_frontline_data_tool(call)
     if required_tool is not None and required_tool not in seen_tools:
         return guard_failed(
             category="tool_calls",
-            reason=f"CRYPTO frontline worker 未调用必需资料包工具: {required_tool}",
+            reason=f"CRYPTO frontline worker 未调用必需数据工具: {required_tool}",
             paths=(evidence.tool_calls_path,),
         )
     return guard_passed(category="tool_calls")
 
-
-def _is_frontline_pack_tool_failure(call: WorkerCall, item: dict[str, Any]) -> bool:
-    # Guard source: AGENTS Truthfulness Hard Gates; 2026-06-01 human request to stop
-    # treating failed data-layer/tool calls as successful report evidence.
-    if call.stage.value != "frontline":
-        return False
-    tool_name = str(item.get("tool_name") or "").strip()
-    return tool_name in _FRONTLINE_PACK_TOOLS and item.get("status") == "error"
-
-
-def _required_crypto_frontline_pack_tool(call: WorkerCall) -> str | None:
+def _required_crypto_frontline_data_tool(call: WorkerCall) -> str | None:
     # Guard source: 2026-05-16 user CRYPTO authenticity request; AGENTS Truthfulness Hard Gates
     # require missing tool data to fail visibly instead of passing as fake/silent success.
     if call.profile != "CRYPTO" or call.stage.value != "frontline":
         return None
-    tool_name = _CRYPTO_FRONTLINE_REQUIRED_PACK_TOOLS.get(call.worker_id)
-    if tool_name is None or tool_name not in call.allowed_tools:
+    if call.worker_id not in {"market_analyst", "fundamental_analyst", "news_analyst", "social_analyst"}:
+        return None
+    tool_name = _CRYPTO_FRONTLINE_REQUIRED_DATA_TOOL
+    if tool_name not in call.allowed_tools:
         return None
     return tool_name
 

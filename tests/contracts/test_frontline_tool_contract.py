@@ -10,25 +10,36 @@ from claw_trade.config.stage_policy import load_stage_policy
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 
 EXPECTED_FRONTLINE_VISIBLE_TOOLS = {
-    "market_analyst": ("claw_get_market_pack",),
-    "fundamental_analyst": ("claw_get_fundamental_pack",),
-    "news_analyst": ("claw_get_news_pack",),
-    "social_analyst": ("claw_get_social_pack",),
+    "market_analyst": ("claw_request_data",),
+    "fundamental_analyst": ("claw_request_data",),
+    "news_analyst": ("claw_request_data",),
+    "social_analyst": ("claw_request_data",),
+    "policy_analyst": ("claw_request_data",),
+    "hot_money_tracker": ("claw_request_data",),
+    "lockup_watcher": ("claw_request_data",),
 }
 EXPECTED_US_FRONTLINE_VISIBLE_TOOLS = {
-    "market_analyst": ("claw_get_market_pack",),
-    "fundamental_analyst": ("claw_get_fundamental_pack",),
-    "news_analyst": ("claw_get_news_pack",),
-    "social_analyst": ("claw_get_social_pack",),
+    "market_analyst": ("claw_request_data",),
+    "fundamental_analyst": ("claw_request_data",),
+    "news_analyst": ("claw_request_data",),
+    "social_analyst": ("claw_request_data",),
 }
 EXPECTED_CRYPTO_FRONTLINE_VISIBLE_TOOLS = {
-    "market_analyst": ("claw_get_market_pack",),
-    "fundamental_analyst": ("claw_get_fundamental_pack",),
-    "news_analyst": ("claw_get_news_pack",),
-    "social_analyst": ("claw_get_social_pack",),
+    "market_analyst": ("claw_request_data",),
+    "fundamental_analyst": ("claw_request_data",),
+    "news_analyst": ("claw_request_data",),
+    "social_analyst": ("claw_request_data",),
 }
 
-PACK_TOOL_PARAM_FIELDS: set[str] = set()
+DATA_NEED_TOOL_PARAM_FIELDS = {
+    "item",
+    "instrument",
+    "market",
+    "time_range",
+    "granularity",
+    "purpose",
+    "priority",
+}
 
 FORBIDDEN_PROVIDER_ATOMIC_TOOL_HINTS = (
     "akshare",
@@ -38,25 +49,20 @@ FORBIDDEN_PROVIDER_ATOMIC_TOOL_HINTS = (
     "raw",
 )
 
-EXPECTED_WORKER_PACK_EXPORTS = {
-    "market_analyst": {"claw_get_market_pack"},
-    "fundamental_analyst": {"claw_get_fundamental_pack"},
-    "news_analyst": {"claw_get_news_pack"},
-    "social_analyst": {"claw_get_social_pack"},
+EXPECTED_WORKER_TOOL_EXPORTS = {
+    "market_analyst": {"claw_request_data"},
+    "fundamental_analyst": {"claw_request_data"},
+    "news_analyst": {"claw_request_data"},
+    "social_analyst": {"claw_request_data"},
+    "policy_analyst": {"claw_request_data"},
+    "hot_money_tracker": {"claw_request_data"},
+    "lockup_watcher": {"claw_request_data"},
 }
 
-EXPECTED_PLUGIN_TOOLS = {
-    "claw_get_market_pack",
-    "claw_get_fundamental_pack",
-    "claw_get_news_pack",
-    "claw_get_social_pack",
-    "claw_get_policy_pack",
-    "claw_get_hot_money_pack",
-    "claw_get_lockup_pack",
-}
+EXPECTED_PLUGIN_TOOLS = {"claw_request_data"}
 
 
-def test_cn_a_frontline_visible_tools_match_domain_pack_only() -> None:
+def test_cn_a_frontline_visible_tools_match_data_need_only() -> None:
     registry_result = load_tool_registry()
     assert registry_result.ok is True and registry_result.registry is not None
     registry = registry_result.registry
@@ -107,7 +113,7 @@ def test_cn_a_frontline_visible_tools_do_not_expose_provider_atomic_tools() -> N
 
 
 def test_frontline_skill_manifest_only_exports_worker_profile_tools() -> None:
-    for worker_id, expected_pack_tools in EXPECTED_WORKER_PACK_EXPORTS.items():
+    for worker_id, expected_tools in EXPECTED_WORKER_TOOL_EXPORTS.items():
         manifest_path = Path("agents") / worker_id / "skills" / "manifest.yaml"
         parsed = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         assert isinstance(parsed, dict)
@@ -121,16 +127,18 @@ def test_frontline_skill_manifest_only_exports_worker_profile_tools() -> None:
             tools = entry.get("tool_exports")
             assert isinstance(tools, list)
             exported_tools.update(str(tool) for tool in tools)
-        assert exported_tools == expected_pack_tools
+        assert exported_tools == expected_tools
 
 
 def test_market_analyst_does_not_mount_legacy_alphaear_data_skills() -> None:
     forbidden = {"alphaear-stock", "alphaear-techlab"}
+    skill_root = Path("agents/market_analyst/skills")
     stage_text = Path("agents/market_analyst/STAGES.yaml").read_text(encoding="utf-8")
     manifest_text = Path("agents/market_analyst/skills/manifest.yaml").read_text(encoding="utf-8")
     skills_text = Path("agents/market_analyst/SKILLS.md").read_text(encoding="utf-8")
 
     for skill_name in forbidden:
+        assert not (skill_root / skill_name).exists()
         assert skill_name not in stage_text
         assert skill_name not in manifest_text
         assert skill_name not in skills_text
@@ -187,7 +195,8 @@ console.log(JSON.stringify(registrations));
     for item in registrations:
         assert item["schemaType"] == "object"
         assert item["additionalProperties"] is False
-        assert set(item["fields"]) == PACK_TOOL_PARAM_FIELDS
+        assert item["name"] == "claw_request_data"
+        assert set(item["fields"]) == DATA_NEED_TOOL_PARAM_FIELDS
 
 
 def test_frontline_plugin_legacy_rollback_flag_still_registers_only_canonical_tools() -> None:

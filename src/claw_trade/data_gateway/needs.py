@@ -2,14 +2,41 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, TypeAlias
+from typing import Any, Mapping, TypeAlias
 
 from pydantic import BaseModel, Field, model_validator
 
 from .models import GapReason, Market
 
 
-NeedKind: TypeAlias = str
+ApiId: TypeAlias = str
+_FORBIDDEN_CALL_SPEC_PARAM_KEYS = frozenset(
+    {
+        "provider",
+        "path",
+        "api_name",
+        "url",
+        "header",
+        "header_name",
+        "headers",
+        "token",
+        "api_key",
+        "secret",
+        "api_id",
+        "data_type",
+        "fields",
+        "worker",
+        "worker_id",
+        "requested_by_worker",
+        "consumer",
+        "domain",
+        "report_section",
+        "allowed_worker",
+        "allowed_domain",
+        "allowed_report_section",
+        "provider_scope",
+    }
+)
 
 
 class NeedPriority(str, Enum):
@@ -17,6 +44,11 @@ class NeedPriority(str, Enum):
     NORMAL = "normal"
     OPTIONAL = "optional"
     EXPENSIVE = "expensive"
+
+
+class ExecutionGroupKind(str, Enum):
+    FALLBACK_CHAIN = "fallback_chain"
+    COMPOSITION_GROUP = "composition_group"
 
 
 class NeedInstrument(BaseModel):
@@ -37,7 +69,7 @@ class NeedInstrument(BaseModel):
 
 class DataNeed(BaseModel):
     need_id: str
-    need_kind: NeedKind
+    api_id: ApiId
     market: Market
     instrument: str
     time_range_start: date | datetime | None = None
@@ -52,7 +84,7 @@ class DataNeed(BaseModel):
 
     @model_validator(mode="after")
     def validate_need(self) -> "DataNeed":
-        for field_name in ("need_id", "need_kind", "instrument", "requested_by_worker", "purpose"):
+        for field_name in ("need_id", "api_id", "instrument", "requested_by_worker", "purpose"):
             _require_non_empty(field_name, getattr(self, field_name))
         for field_name in ("granularity", "freshness_policy", "consumer"):
             value = getattr(self, field_name)
@@ -66,6 +98,16 @@ class DataNeed(BaseModel):
 class ProviderCallSpec(BaseModel):
     call_id: str
     method: str = "GET"
+    public_api_id: str | None = None
+    implementation_id: str | None = None
+    business_api_id: str | None = None
+    execution_group_id: str | None = None
+    execution_group_kind: ExecutionGroupKind | str | None = None
+    source_group_id: str | None = None
+    fallback_order: int = 0
+    component_id: str | None = None
+    satisfaction_contract_id: str | None = None
+    standard_output_contract_id: str | None = None
     provider_id: str
     catalog_endpoint_id: str
     official_path_or_api_name: str
@@ -78,6 +120,7 @@ class ProviderCallSpec(BaseModel):
     official_doc_ref: str
     deadline_at: datetime
     need_ids: tuple[str, ...]
+    priority: NeedPriority = NeedPriority.NORMAL
 
     @model_validator(mode="after")
     def validate_call_spec(self) -> "ProviderCallSpec":
@@ -99,19 +142,42 @@ class ProviderCallSpec(BaseModel):
             raise ValueError("need_ids 不能为空")
         for need_id in self.need_ids:
             _require_non_empty("need_ids", need_id)
+        for field_name in (
+            "business_api_id",
+            "execution_group_id",
+            "execution_group_kind",
+            "source_group_id",
+            "component_id",
+            "satisfaction_contract_id",
+            "standard_output_contract_id",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty(field_name, str(getattr(value, "value", value)))
+        if self.fallback_order < 0:
+            raise ValueError("fallback_order 必须 >= 0")
         _require_timezone("deadline_at", self.deadline_at)
+        forbidden_params = _forbidden_call_spec_param_keys(self.params)
+        if forbidden_params:
+            raise ValueError(f"ProviderCallSpec.params 含内部执行或业务范围字段: {', '.join(sorted(forbidden_params))}")
         return self
 
 
 class ScheduledCall(BaseModel):
     call_id: str
     need_ids: tuple[str, ...]
+    execution_group_id: str | None = None
+    execution_group_kind: ExecutionGroupKind | str | None = None
+    source_group_id: str | None = None
+    fallback_order: int = 0
+    component_id: str | None = None
     provider_id: str
     catalog_endpoint_id: str
     params: dict[str, Any] = Field(default_factory=dict)
     batch_key: str
     rate_limit_bucket: str
     earliest_start_at: datetime
+    rate_limit_reserved_at: datetime | None = None
     deadline_at: datetime
     priority: NeedPriority = NeedPriority.NORMAL
 
@@ -129,7 +195,15 @@ class ScheduledCall(BaseModel):
             raise ValueError("need_ids 不能为空")
         for need_id in self.need_ids:
             _require_non_empty("need_ids", need_id)
+        for field_name in ("execution_group_id", "execution_group_kind", "source_group_id", "component_id"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_non_empty(field_name, str(getattr(value, "value", value)))
+        if self.fallback_order < 0:
+            raise ValueError("fallback_order 必须 >= 0")
         _require_timezone("earliest_start_at", self.earliest_start_at)
+        if self.rate_limit_reserved_at is not None:
+            _require_timezone("rate_limit_reserved_at", self.rate_limit_reserved_at)
         _require_timezone("deadline_at", self.deadline_at)
         if self.earliest_start_at > self.deadline_at:
             raise ValueError("earliest_start_at 不能晚于 deadline_at")
@@ -169,11 +243,51 @@ class RateLimitEvidence(BaseModel):
     evidence_refs: tuple[str, ...] = ()
 
 
+class ExecutionGroup(BaseModel):
+    group_id: str
+    kind: ExecutionGroupKind
+    business_api_id: str
+    source_group_id: str | None = None
+    planned_call_ids: tuple[str, ...] = ()
+    initial_call_ids: tuple[str, ...] = ()
+    deferred_call_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_execution_group(self) -> "ExecutionGroup":
+        for field_name in ("group_id", "business_api_id"):
+            _require_non_empty(field_name, getattr(self, field_name))
+        if self.source_group_id is not None:
+            _require_non_empty("source_group_id", self.source_group_id)
+        if not self.planned_call_ids:
+            raise ValueError("planned_call_ids 不能为空")
+        return self
+
+
+class AttemptState(BaseModel):
+    plan_id: str
+    execution_group_id: str
+    call_id: str
+    attempt_outcome: str
+    contract_satisfied: bool
+    satisfied_component_ids: tuple[str, ...] = ()
+    missing_component_ids: tuple[str, ...] = ()
+    gap_reason: GapReason | None = None
+
+    @model_validator(mode="after")
+    def validate_attempt_state(self) -> "AttemptState":
+        for field_name in ("plan_id", "execution_group_id", "call_id", "attempt_outcome"):
+            _require_non_empty(field_name, str(getattr(self, field_name)))
+        return self
+
+
 class NeedPlan(BaseModel):
     plan_id: str
     needs: tuple[DataNeed, ...] = ()
+    execution_groups: tuple[ExecutionGroup, ...] = ()
     planned_calls: tuple[ProviderCallSpec, ...] = ()
+    initial_scheduled_calls: tuple[ProviderCallSpec, ...] = ()
     scheduled_calls: tuple[ScheduledCall, ...] = ()
+    deferred_calls: tuple[ProviderCallSpec, ...] = ()
     skipped_needs: tuple[DataNeedGap, ...] = ()
     merge_evidence: tuple[MergeEvidence, ...] = ()
     rate_limit_evidence: tuple[RateLimitEvidence, ...] = ()
@@ -203,12 +317,29 @@ def _require_ordered_range(start: date | datetime | None, end: date | datetime |
         raise ValueError("time_range_start 不能晚于 time_range_end")
 
 
+def _forbidden_call_spec_param_keys(value: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            key_text = str(key)
+            if key_text in _FORBIDDEN_CALL_SPEC_PARAM_KEYS or key_text.startswith(("allowed_", "only_for_")):
+                found.add(key_text)
+            found.update(_forbidden_call_spec_param_keys(child))
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            found.update(_forbidden_call_spec_param_keys(child))
+    return found
+
+
 __all__ = [
+    "AttemptState",
     "DataNeed",
     "DataNeedGap",
+    "ExecutionGroup",
+    "ExecutionGroupKind",
     "MergeEvidence",
     "NeedInstrument",
-    "NeedKind",
+    "ApiId",
     "NeedPlan",
     "NeedPriority",
     "ProviderCallSpec",

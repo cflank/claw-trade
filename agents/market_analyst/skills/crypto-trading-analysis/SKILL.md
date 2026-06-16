@@ -1,11 +1,11 @@
 ---
 name: crypto-trading-analysis
-description: Use only for claw-trade CRYPTO profile market analysis. Crypto trading analysis workflow for BTC, ETH, and major altcoins using claw-trade data layer market packs plus local technical analysis material, AMD/SMC, 123 reversal rules, chart patterns, Vegas/FVG/OB, RSI/MACD/KD, derivatives, liquidation maps, on-chain and macro risk checks. Do not use for US, CN_A, or HK equity profiles.
+description: Use only for claw-trade CRYPTO profile market analysis. Crypto trading analysis workflow for BTC, ETH, and major altcoins using claw-trade data layer market data needs plus local technical analysis material, AMD/SMC, 123 reversal rules, chart patterns, Vegas/FVG/OB, RSI/MACD/KD, derivatives, liquidation maps, on-chain and macro risk checks. Do not use for US, CN_A, or HK equity profiles.
 ---
 
 # Crypto Trading Analysis
 
-Use this skill to produce Chinese, evidence-grounded crypto trade analysis. The local technical analysis layer works over claw-trade normalized market data; it is not a data source, provider, external MCP, order system, wallet, account manager, or PM/trader decision owner.
+Use this skill to produce Chinese, evidence-grounded crypto trade analysis. The local technical analysis layer works over claw-trade normalized market data; it is not a data source, external data tool, order system, wallet, account manager, or PM/trader decision owner.
 
 ## Core Standard
 
@@ -29,7 +29,7 @@ Infer from the user request, or ask only when the answer changes the analysis:
 
 - asset: one uppercase symbol such as `BTC`, `ETH`, or `SOL`
 - timeframe: `long-term`, `swing`, `intraday`, or `scalp`
-- direction: `long`, `short`, or `neutral`
+- trade bias to test: long, short, neutral, or unknown
 - account/risk constraint: spot, contract, leverage context, or max loss if supplied
 - available user evidence: screenshot, browser page, chart note, price level, or existing plan
 
@@ -37,35 +37,35 @@ Do not use model memory as current market data.
 
 ## Data Routing
 
-Call the OpenClaw-visible market data pack tool first. This pack centrally reads market structure, derivatives, liquidation, on-chain, macro, events, and AHR999 through the claw-trade data layer when those sources are configured, then adds local OHLCV-derived indicators and PNG chart assets.
+Call the OpenClaw-visible `claw_request_data` data tool first. Request the business data items needed for the analysis, such as price/volume, technical indicators, derivatives, liquidation map, on-chain, macro, events, or AHR999. The claw-trade data layer handles source selection, rate limits, retries, and evidence writing, then returns usable material, gaps, and refs.
 
-The worker should use the pack's natural-language material, compact data summary, source-attempt notes, data gaps, conflicts, and data-quality state. Do not use raw analysis JSON, raw provider payload, legacy external crypto MCP atomic output, or provider raw JSON as the report body; raw payloads are evidence storage only.
+The worker should use the data result's natural-language material, compact data summary, source-attempt notes, data gaps, conflicts, and data-quality state. Do not use raw analysis JSON, raw data-source payload, legacy external crypto atomic output, or data-source raw JSON as the report body; raw payloads are evidence storage only.
 
-The data tool call does not need model-supplied ticker, market, company_name, or date fields; those values are locked by runtime context.
+The data tool call does not need model-supplied ticker, market, company_name, or date fields when runtime context already supplies them.
 
 Rules:
 
 - `ticker` must be a single symbol; do not mix exchange names, narratives, or pair suffixes into it.
-- Use `direction=long` for long-plan checks, `short` for short-plan checks, and `neutral` for general analysis.
-- Use only canonical domains: `market`, `technical`, `derivatives`, `liquidation_map`, `onchain`, `macro`, `events`, `ahr999`, `browser_evidence`.
+- The data tool input is business-facing only: request the data item, explain the purpose, and rely on runtime context for normal selectors. Do not pass data-source or execution details.
+- Put the trading bias in `purpose` only when it changes what evidence is needed; do not turn it into a data-source route.
 - Add `browser_evidence` only when structured data is missing and the user permits browser assistance, or when the user explicitly supplies a screenshot/page.
 - Fixture profiles such as `no-key`, `partial-key`, and `full-key` are for local verification; never present fixture data as live market evidence.
 
-## Market Pack Data Gap Path
+## Market Data Gap Path
 
-If the market data pack reports that the CRYPTO market route is unavailable:
+If `claw_request_data` reports that the CRYPTO market route is unavailable:
 
-1. For market data, call only the market data pack; do not call atomic provider tools, raw analysis tools, or any legacy external data tool.
-2. Treat the unavailable route as a data gap from the pack result, preserving source-attempt notes, data gaps, conflicts, and data-quality state.
+1. For market data, call only `claw_request_data`; do not call atomic source tools, raw analysis tools, or any legacy external data tool.
+2. Treat the unavailable route as a data gap from the data result, preserving source-attempt notes, data gaps, conflicts, and data-quality state.
 3. State which data-layer domains failed or were blocked, such as credential missing, rate limited, field missing, stale, or schema invalid.
-4. If the pack returns partial market facts, analyze only those facts and lower confidence where missing domains matter.
-5. If the pack returns no usable market facts, ask for rerun/provider health or user-provided chart/context and output a data gap report.
+4. If the data result returns partial market facts, analyze only those facts and lower confidence where missing domains matter.
+5. If the data result returns no usable market facts, ask for rerun/data-source health or user-provided chart/context and output a data gap report.
 
-Never hide this data gap. State which approved pack material was available and which data gaps remain open.
+Never hide this data gap. State which approved data material was available and which data gaps remain open.
 
 ## No Duplicate Ready-Domain Queries
 
-Read the full envelope first. Do not re-query ready domains in the same asset/time window unless one condition is true:
+Read the full data result first. Do not re-query ready material in the same asset/time window unless one condition is true:
 
 - the domain is missing from `data`
 - the data-quality state for the domain is not usable
@@ -83,12 +83,12 @@ Freshness guide:
 | `liquidation_map` | 60-300 seconds |
 | `events` | institutional product flows 1-6 hours; token unlocks 6-24 hours; news 5-30 minutes |
 | `macro` | 6-24 hours; recheck around major releases |
-| `onchain` | 1-6 hours unless provider says otherwise |
+| `onchain` | 1-6 hours unless source evidence says otherwise |
 | `ahr999` | 1-24 hours; never a short-term entry trigger |
 
 ## Conflict Rules
 
-Do not silently merge conflicting provider values.
+Do not silently merge conflicting source values.
 
 | field type | material conflict threshold |
 |---|---:|
@@ -149,10 +149,10 @@ Required subsections:
 
 Depth requirements:
 
-- `数据` must cite actual values, levels, counts, states, or missing field paths from the envelope.
+- `数据` must cite actual values, levels, counts, states, or missing field paths from the data result.
 - `推导` must explain why the data is bullish, bearish, neutral, conflicting, or not actionable.
 - `交易作用` must map the signal to support, resistance, trigger, target, invalidation, risk filter, or no-trade filter.
-- `失效` must give a price level, structure break, sample limitation, provider limitation, or missing-domain reason.
+- `失效` must give a price level, structure break, sample limitation, source limitation, or missing-domain reason.
 - If the signal is low confidence, explain the confidence cap instead of omitting it.
 - If timeframes conflict, name the conflicting timeframes and do not treat the lower timeframe as standalone confirmation.
 
@@ -207,9 +207,9 @@ Rules:
 
 - If a field exists but is neutral or low confidence, say `可分析` or `样本限制` instead of omitting it.
 - If rows exist but the requested date range is only partially covered, analyze the existing rows first and state `样本限制`; do not label it `缺失/不可用`.
-- If `tutorial_coverage` is missing from the envelope, say `coverage matrix missing from MCP output` and lower output confidence one level.
+- If `tutorial_coverage` is missing from the data result, say `coverage matrix missing from data result` and lower output confidence one level.
 - If an expected V2 field is missing from `technical.indicators` or `technical.patterns`, do not infer it from prose or tutorial text.
-- Do not repeat ready-domain tool calls only to fill prose. Use the first envelope and report the missing field path.
+- Do not repeat ready data calls only to fill prose. Use the first data result and report the missing field path.
 - Coverage is not enough by itself. The `指标推导过程` section must explain how covered tutorial fields affect the trade decision.
 
 ## Tutorial Signal Expansion Source
@@ -284,5 +284,5 @@ Stop or limit the answer if:
 - the user asks for a guaranteed or compulsory buy/sell instruction
 - the user asks to use screenshots or browser observation to close structured data gaps
 - samples are insufficient but the user asks for high-confidence AMD/FVG/123/rejection conclusions
-- provider failure, rate limit, missing key, or field drift makes structured input unreliable
+- data-source failure, rate limit, missing key, or field drift makes structured input unreliable
 - rule semantics are ambiguous enough to change analyzer thresholds or state definitions

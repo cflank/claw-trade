@@ -8,15 +8,15 @@ from pathlib import Path
 
 from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.models import (
-    CandidatePackManifest,
-    CandidatePackReadbackStatus,
-    CandidatePackRef,
+    CandidateCacheManifest,
+    CandidateCacheReadbackStatus,
+    CandidateCacheRef,
     SelectionBatchScope,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
     SelectionProfile,
-    SelectionProviderBatchPlan,
+    SelectionDataNeedAudit,
     SelectionRunPlan,
     SelectionTriggerSource,
     SelectRequest,
@@ -36,7 +36,7 @@ def test_selection_refresh_service_starts_background_job_and_dedupes_active_run(
         run_data_job=lambda plan: run_calls.append(plan.selection_run_id),  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-05-26",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 5, 26, 10, tzinfo=UTC),
         run_id_factory=lambda: "sel-refresh-1",
     )
@@ -65,7 +65,7 @@ def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> N
         run_data_job=lambda _plan: None,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
     )
     store.save_data_run_record(
@@ -77,7 +77,7 @@ def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> N
                 trade_date="2026-06-04",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -116,7 +116,7 @@ def test_selection_refresh_service_right_rail_prefers_latest_active_task_across_
         run_data_job=lambda _plan: None,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-05",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 5, 10, tzinfo=UTC),
     )
     store.save_data_run_record(
@@ -128,7 +128,7 @@ def test_selection_refresh_service_right_rail_prefers_latest_active_task_across_
                 trade_date="2026-06-05",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-05/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-05/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -153,7 +153,7 @@ def test_selection_refresh_service_right_rail_prefers_latest_active_task_across_
                 trade_date="2026-06-04",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -185,7 +185,7 @@ def test_selection_refresh_service_exposes_latest_terminal_failure_for_right_rai
         run_data_job=lambda _plan: None,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
     )
     store.save_data_run_record(
@@ -197,7 +197,7 @@ def test_selection_refresh_service_exposes_latest_terminal_failure_for_right_rai
                 trade_date="2026-06-04",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -226,12 +226,12 @@ def test_selection_refresh_service_exposes_latest_terminal_failure_for_right_rai
     assert progress["workflowRunId"] == "sel-refresh-failed-1"
 
 
-def test_selection_refresh_service_hides_failed_refresh_when_valid_pack_exists(tmp_path: Path) -> None:
+def test_selection_refresh_service_hides_failed_refresh_when_valid_candidate_cache_exists(tmp_path: Path) -> None:
     store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
-    _save_completed_candidate_pack_record(
+    _save_completed_candidate_cache_record(
         store=store,
         artifact_root=tmp_path / "artifacts",
-        selection_run_id="sel-existing-pack-for-right-rail",
+        selection_run_id="sel-existing-cache-for-right-rail",
         trade_date="2026-06-04",
     )
     service = SelectionDataRefreshService(
@@ -239,26 +239,26 @@ def test_selection_refresh_service_hides_failed_refresh_when_valid_pack_exists(t
         run_data_job=lambda _plan: None,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
     )
     store.save_data_run_record(
         SelectionDataRunRecord(
             run_plan=SelectionRunPlan(
-                selection_run_id="sel-refresh-failed-after-valid-pack",
+                selection_run_id="sel-refresh-failed-after-valid-cache",
                 market=SelectionMarket.CN_A,
                 profile=SelectionProfile.CN_A,
                 trade_date="2026-06-04",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
             data_run=SelectionDataRun(
-                selection_run_id="sel-refresh-failed-after-valid-pack",
+                selection_run_id="sel-refresh-failed-after-valid-cache",
                 status=SelectionDataRunStatus.FAILED,
-                lease_id="lease://sel-refresh-failed-after-valid-pack",
+                lease_id="lease://sel-refresh-failed-after-valid-cache",
                 started_at="2026-06-04T09:00:00+00:00",
                 failed_at="2026-06-04T09:05:00+00:00",
                 failure_code="selection_data_run_interrupted",
@@ -273,9 +273,9 @@ def test_selection_refresh_service_hides_failed_refresh_when_valid_pack_exists(t
     assert snapshot == {"selectionProgress": None}
 
 
-def test_selection_refresh_service_hides_non_trading_date_failure_when_canonical_pack_exists(tmp_path: Path) -> None:
+def test_selection_refresh_service_hides_non_trading_date_failure_when_canonical_candidate_cache_exists(tmp_path: Path) -> None:
     store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
-    _save_completed_candidate_pack_record(
+    _save_completed_candidate_cache_record(
         store=store,
         artifact_root=tmp_path / "artifacts",
         selection_run_id="sel-valid-20260605",
@@ -290,7 +290,7 @@ def test_selection_refresh_service_hides_non_trading_date_failure_when_canonical
                 trade_date="2026-06-06",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-06/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-06/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -311,7 +311,7 @@ def test_selection_refresh_service_hides_non_trading_date_failure_when_canonical
         run_data_job=lambda _plan: None,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: "2026-06-05" if value in {None, "2026-06-06"} else str(value),
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 6, 7, tzinfo=UTC),
     )
 
@@ -327,7 +327,7 @@ def test_selection_refresh_service_humanizes_provider_evidence_failure_for_right
         run_data_job=lambda _plan: None,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
     )
     store.save_data_run_record(
@@ -339,7 +339,7 @@ def test_selection_refresh_service_humanizes_provider_evidence_failure_for_right
                 trade_date="2026-06-04",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -403,7 +403,7 @@ def test_selection_refresh_service_startup_check_runs_data_job_and_dedupes_selec
         run_data_job=run_job,  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 8, tzinfo=UTC),
         run_id_factory=lambda: "sel-auto-check-1",
     )
@@ -416,12 +416,12 @@ def test_selection_refresh_service_startup_check_runs_data_job_and_dedupes_selec
     assert job_calls == ["sel-auto-check-1"]
 
 
-def test_selection_refresh_service_startup_check_reuses_valid_candidate_pack(tmp_path: Path) -> None:
+def test_selection_refresh_service_startup_check_reuses_valid_candidate_cache(tmp_path: Path) -> None:
     store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
-    _save_completed_candidate_pack_record(
+    _save_completed_candidate_cache_record(
         store=store,
         artifact_root=tmp_path / "artifacts",
-        selection_run_id="sel-existing-pack-1",
+        selection_run_id="sel-existing-cache-1",
         trade_date="2026-06-04",
     )
     check_calls: list[SelectionRunPlan] = []
@@ -431,7 +431,7 @@ def test_selection_refresh_service_startup_check_reuses_valid_candidate_pack(tmp
         run_data_check=lambda plan: check_calls.append(plan),
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
         run_id_factory=lambda: "sel-auto-check-should-not-run",
     )
@@ -439,17 +439,17 @@ def test_selection_refresh_service_startup_check_reuses_valid_candidate_pack(tmp
     result = service.run_automatic_refresh_once(reason="startup_data_check")
 
     assert result.status == "completed"
-    assert result.selection_run_id == "sel-existing-pack-1"
-    assert result.reason == "startup_data_check:candidate_pack_valid"
+    assert result.selection_run_id == "sel-existing-cache-1"
+    assert result.reason == "startup_data_check:candidate_cache_valid"
     assert check_calls == []
 
 
-def test_selection_refresh_service_request_refresh_reuses_valid_candidate_pack(tmp_path: Path) -> None:
+def test_selection_refresh_service_request_refresh_reuses_valid_candidate_cache(tmp_path: Path) -> None:
     store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
-    _save_completed_candidate_pack_record(
+    _save_completed_candidate_cache_record(
         store=store,
         artifact_root=tmp_path / "artifacts",
-        selection_run_id="sel-existing-pack-2",
+        selection_run_id="sel-existing-cache-2",
         trade_date="2026-06-04",
     )
     run_calls: list[SelectionRunPlan] = []
@@ -458,7 +458,7 @@ def test_selection_refresh_service_request_refresh_reuses_valid_candidate_pack(t
         run_data_job=lambda plan: run_calls.append(plan),  # type: ignore[arg-type]
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
         now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
         run_id_factory=lambda: "sel-refresh-should-not-run",
     )
@@ -466,12 +466,12 @@ def test_selection_refresh_service_request_refresh_reuses_valid_candidate_pack(t
     result = service.request_refresh(
         request=_request(trade_date="2026-06-04"),
         unavailable_code="no_completed_selection_run",
-        select_workflow_run_id="select-wf-valid-pack",
+        select_workflow_run_id="select-wf-valid-cache",
     )
 
     assert result.status == "completed"
-    assert result.selection_run_id == "sel-existing-pack-2"
-    assert result.reason == "no_completed_selection_run:candidate_pack_valid"
+    assert result.selection_run_id == "sel-existing-cache-2"
+    assert result.reason == "no_completed_selection_run:candidate_cache_valid"
     assert run_calls == []
 
 
@@ -486,7 +486,7 @@ def test_selection_refresh_service_auto_check_does_not_run_when_data_job_is_acti
                 trade_date="2026-06-04",
                 lookback_trading_days=260,
                 universe_scope="all_a_shares",
-                provider_batch_plan_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
                 approved_strategy_config_ref="config://cn-a-selection-v1",
                 trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
             ),
@@ -506,7 +506,7 @@ def test_selection_refresh_service_auto_check_does_not_run_when_data_job_is_acti
         run_data_check=lambda plan: check_calls.append(plan),
         resolve_closed_trade_date=lambda value: value or "2026-06-04",
         load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
-        build_provider_batch_plan=_provider_batch_plan,
+        build_data_need_audit=_data_need_audit,
     )
 
     result = service.run_automatic_refresh_once(reason="startup_data_check")
@@ -535,8 +535,8 @@ def _request(*, trade_date: str = "2026-05-26") -> SelectRequest:
     )
 
 
-def _provider_batch_plan(*, market: SelectionMarket, profile: SelectionProfile, trade_date: str) -> SelectionProviderBatchPlan:
-    return SelectionProviderBatchPlan(
+def _data_need_audit(*, market: SelectionMarket, profile: SelectionProfile, trade_date: str) -> SelectionDataNeedAudit:
+    return SelectionDataNeedAudit(
         plan_id=f"plan://selection/cn_a/{trade_date}/batch-v1",
         scope=SelectionBatchScope.SELECTION_BATCH,
         market=market,
@@ -545,22 +545,21 @@ def _provider_batch_plan(*, market: SelectionMarket, profile: SelectionProfile, 
         lookback_trading_days=260,
         universe_scope="all_a_shares",
         coverage_groups=("daily",),
-        provider_candidates=("cn_a_primary",),
         ttl_policy_ref="ttl://selection/cn_a",
         lineage_root_ref=f"lineage://selection/cn_a/{trade_date}",
     )
 
 
-def _save_completed_candidate_pack_record(
+def _save_completed_candidate_cache_record(
     *,
     store: SelectionRunStore,
     artifact_root: Path,
     selection_run_id: str,
     trade_date: str,
 ) -> None:
-    body_uri = f"local://selection/{selection_run_id}/candidate-pack/approved/body.md"
-    manifest_uri = f"local://selection/{selection_run_id}/candidate-pack/approved/manifest.json"
-    summary_uri = f"local://selection/{selection_run_id}/candidate-pack/approved/summary.md"
+    body_uri = f"local://selection/{selection_run_id}/candidate-cache/approved/body.md"
+    manifest_uri = f"local://selection/{selection_run_id}/candidate-cache/approved/manifest.json"
+    summary_uri = f"local://selection/{selection_run_id}/candidate-cache/approved/summary.md"
     body_path = _selection_artifact_path(artifact_root, body_uri)
     manifest_path = _selection_artifact_path(artifact_root, manifest_uri)
     summary_path = _selection_artifact_path(artifact_root, summary_uri)
@@ -570,22 +569,22 @@ def _save_completed_candidate_pack_record(
     body_path.write_text(body_text, encoding="utf-8")
     summary_path.write_text(body_text, encoding="utf-8")
     manifest_payload = {
-        "schema_version": "selection-candidate-pack-manifest-v1",
+        "schema_version": "selection-candidate-cache-manifest-v1",
         "selection_run_id": selection_run_id,
         "market": SelectionMarket.CN_A.value,
         "profile": SelectionProfile.CN_A.value,
         "trade_date": trade_date,
         "candidate_count": 1,
         "source_lineage_refs": ["dataset://normalized/CN_A/daily/600000"],
-        "pack_body_sha256": body_sha,
+        "cache_body_sha256": body_sha,
         "strategy_config_ref": "config://cn-a-selection-v1",
         "strategy_config_version": "cn_a.selection_strategy.v1",
         "weight_version": "cn_a.selection_weights.v1",
         "candidate_scores_ref": "score://selection/top20",
         "stable_top20_rule": {},
-        "readback_status": CandidatePackReadbackStatus.VERIFIED.value,
-        "stage": "approving_candidate_pack",
-        "target": "candidate_pack",
+        "readback_status": CandidateCacheReadbackStatus.VERIFIED.value,
+        "stage": "approving_candidate_cache",
+        "target": "candidate_cache",
     }
     manifest_text = f"{json.dumps(manifest_payload, ensure_ascii=False, indent=2)}\n"
     manifest_sha = sha256(manifest_text.encode("utf-8")).hexdigest()
@@ -600,19 +599,19 @@ def _save_completed_candidate_pack_record(
         trade_date=trade_date,
         lookback_trading_days=260,
         universe_scope="all_a_shares",
-        provider_batch_plan_ref=f"plan://selection/cn_a/{trade_date}/batch-v1",
+        data_need_audit_ref=f"plan://selection/cn_a/{trade_date}/batch-v1",
         approved_strategy_config_ref="config://cn-a-selection-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
-    candidate_pack_ref = CandidatePackRef(
+    candidate_cache_ref = CandidateCacheRef(
         selection_run_id=selection_run_id,
-        material_id=f"selection-candidate-pack-{selection_run_id}",
+        material_id=f"selection-candidate-cache-{selection_run_id}",
         l1_uri=body_uri,
         content_sha256=body_sha,
         manifest_ref=manifest_uri,
         approved_at="2026-06-04T08:00:00Z",
         expires_at="2026-06-06T08:00:00Z",
-        pack_summary_ref=summary_uri,
+        cache_summary_ref=summary_uri,
     )
     columnar_manifest_ref, columnar_manifest_sha256 = _write_columnar_manifest(
         root=artifact_root.parent / "columnar",
@@ -620,23 +619,23 @@ def _save_completed_candidate_pack_record(
         normalized_refs=("dataset://normalized/CN_A/daily/600000",),
         provider_attempt_refs=("attempt://akshare-1",),
     )
-    manifest = CandidatePackManifest(
-        schema_version="selection-candidate-pack-manifest-v1",
+    manifest = CandidateCacheManifest(
+        schema_version="selection-candidate-cache-manifest-v1",
         selection_run_id=selection_run_id,
         market=SelectionMarket.CN_A,
         profile=SelectionProfile.CN_A,
         trade_date=trade_date,
         candidate_count=1,
         source_lineage_refs=("dataset://normalized/CN_A/daily/600000",),
-        pack_body_sha256=body_sha,
+        cache_body_sha256=body_sha,
         strategy_config_ref="config://cn-a-selection-v1",
         strategy_config_version="cn_a.selection_strategy.v1",
         weight_version="cn_a.selection_weights.v1",
         candidate_scores_ref="score://selection/top20",
         stable_top20_rule={},
-        readback_status=CandidatePackReadbackStatus.VERIFIED,
-        stage="approving_candidate_pack",
-        target="candidate_pack",
+        readback_status=CandidateCacheReadbackStatus.VERIFIED,
+        stage="approving_candidate_cache",
+        target="candidate_cache",
     )
     store.save_data_run_record(
         SelectionDataRunRecord(
@@ -652,7 +651,7 @@ def _save_completed_candidate_pack_record(
                 columnar_manifest_ref=columnar_manifest_ref,
                 columnar_manifest_sha256=columnar_manifest_sha256,
                 feature_snapshot_ref=f"feature://selection/{selection_run_id}",
-                candidate_pack_ref=candidate_pack_ref,
+                candidate_cache_ref=candidate_cache_ref,
                 started_at="2026-06-04T08:00:00Z",
                 completed_at="2026-06-04T08:01:00Z",
             ),
