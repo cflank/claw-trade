@@ -55,7 +55,7 @@ def test_crypto_lens_derivatives_rows_do_not_imply_liquidation_map_or_cvd() -> N
     assert "cvd_proxy" not in data.domains.derivatives
 
 
-def test_crypto_lens_uses_real_cvd_before_taker_proxy() -> None:
+def test_crypto_lens_uses_real_cvd_without_taker_proxy() -> None:
     data = _crypto_lens_input(
         _result(
             "crypto_derivative_metric",
@@ -74,6 +74,54 @@ def test_crypto_lens_uses_real_cvd_before_taker_proxy() -> None:
     assert data.domains.derivatives is not None
     assert data.domains.derivatives["cvd"] == -2500.0
     assert "cvd_proxy" not in data.domains.derivatives
+
+
+def test_crypto_lens_does_not_compute_cvd_from_taker_volumes() -> None:
+    data = _crypto_lens_input(
+        _result(
+            "crypto_derivative_metric",
+            (
+                {
+                    "timestamp": "2026-06-12",
+                    "taker_buy_volume": 100.0,
+                    "taker_sell_volume": 80.0,
+                    "taker_volume_unit": "USD",
+                },
+            ),
+        )
+    )
+
+    assert data.domains.derivatives is not None
+    assert data.domains.derivatives["taker_buy_volume"] == 100.0
+    assert data.domains.derivatives["taker_sell_volume"] == 80.0
+    assert "cvd" not in data.domains.derivatives
+    assert "cvd_proxy" not in data.domains.derivatives
+
+
+def test_crypto_lens_liquidation_heatmap_keeps_source_points_without_aggregates() -> None:
+    data = _crypto_lens_input(
+        _result(
+            "crypto_derivative_metric",
+            (
+                {
+                    "timestamp": "2026-06-12",
+                    "liquidation_price": 100000.0,
+                    "liquidation_size": 2500.0,
+                    "long_liquidation": 50.0,
+                    "short_liquidation": 25.0,
+                    "symbol_id": "BTCUSDT",
+                },
+            ),
+        )
+    )
+
+    assert data.domains.liquidation_map is not None
+    assert data.domains.liquidation_map["heatmap_sample_count"] == 1
+    assert data.domains.liquidation_map["heatmap_points"][0]["price"] == 100000.0
+    assert "largest_cluster" not in data.domains.liquidation_map
+    assert "liquidation_value_total" not in data.domains.liquidation_map
+    assert "long_liquidation_total" not in data.domains.liquidation_map
+    assert "short_liquidation_total" not in data.domains.liquidation_map
 
 
 def test_crypto_lens_onchain_rows_do_not_imply_ahr999() -> None:

@@ -244,7 +244,7 @@ class BinanceSpotMarketPlugin:
                     data_type="crypto_derivative_metric",
                     source_role="official",
                     granularity=("realtime", "1h", "daily"),
-                    fields=("taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "taker_buy_sell_ratio", "cvd", "timestamp", "symbol_id"),
+                    fields=("taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
                     priority_rank=28,
                 ),
                 endpoint_capability(
@@ -1069,7 +1069,7 @@ class CoinglassCryptoPlugin:
             "data_type": "crypto_derivative_metric",
             "source_role": "paid_data",
             "granularity": ("1h", "daily"),
-            "fields": ("long_liquidation", "short_liquidation", "liquidation_value", "liquidation_value_unit", "timestamp", "symbol_id"),
+            "fields": ("long_liquidation", "short_liquidation", "liquidation_value_unit", "timestamp", "symbol_id"),
             "priority_rank": 12,
             "path": "/api/futures/liquidation/aggregated-history",
             "symbol_mode": "asset",
@@ -1736,11 +1736,7 @@ def _coinglass_futures_pairs_market_rows(
         _set_optional_metric(row, "long_liquidation", item, ("long_liquidation_usd_24h", "longLiquidationUsd24h", "long_liquidation", "longLiquidation", "longVolUsd"))
         _set_optional_metric(row, "short_liquidation", item, ("short_liquidation_usd_24h", "shortLiquidationUsd24h", "short_liquidation", "shortLiquidation", "shortVolUsd"))
 
-        long_liquidation = row.get("long_liquidation")
-        short_liquidation = row.get("short_liquidation")
         _set_optional_metric(row, "liquidation_value", item, ("liquidation_usd_24h", "liquidationUsd24h", "liquidation_value", "liquidationValue", "liquidation"))
-        if row.get("liquidation_value") is None and long_liquidation is not None and short_liquidation is not None:
-            row["liquidation_value"] = long_liquidation + short_liquidation
 
         timestamp = _coinglass_timestamp_or_none(item) or datetime.now(tz=UTC)
         row["timestamp"] = timestamp
@@ -2020,10 +2016,6 @@ def _coinglass_row_from_payload(
                 ("taker_sell_volume", "takerSellVolume", "sell_volume", "sellVolume", "sell", "aggregated_sell_volume_usd"),
             )
             _set_optional_metric(row, "taker_buy_sell_ratio", item, ("taker_buy_sell_ratio", "buySellRatio", "ratio", "value"))
-            buy = row.get("taker_buy_volume")
-            sell = row.get("taker_sell_volume")
-            if row.get("taker_buy_sell_ratio") is None and buy is not None and sell not in {None, 0}:
-                row["taker_buy_sell_ratio"] = buy / sell
             if any(row.get(field) is not None for field in ("taker_buy_volume", "taker_sell_volume")):
                 row["taker_volume_unit"] = "USD"
         elif spec.get("metric_kind") == "liquidation":
@@ -2040,10 +2032,6 @@ def _coinglass_row_from_payload(
                 ("short_liquidation", "shortLiquidation", "shortLiquidationUsd", "shortVolUsd", "aggregated_short_liquidation_usd"),
             )
             _set_optional_metric(row, "liquidation_value", item, ("liquidation_value", "liquidation", "liquidationUsd", "value"))
-            long_value = row.get("long_liquidation")
-            short_value = row.get("short_liquidation")
-            if row.get("liquidation_value") is None and long_value is not None and short_value is not None:
-                row["liquidation_value"] = long_value + short_value
             if any(row.get(field) is not None for field in ("long_liquidation", "short_liquidation", "liquidation_value")):
                 row["liquidation_value_unit"] = "USD"
         else:
@@ -3028,13 +3016,10 @@ def _binance_long_short_metric(endpoint_id: str) -> str:
 
 def _binance_taker_rows(payload: Any, *, task: Any, symbol: str, provider_id: str) -> tuple[dict[str, Any], ...]:
     rows: list[dict[str, Any]] = []
-    cvd = 0.0
     for item in _as_mapping_sequence(payload):
         timestamp = parse_datetime(item.get("timestamp") or item.get("time")) or datetime.now(tz=UTC)
         buy = _decimal_float(item.get("buyVol") or item.get("buyVolume") or item.get("takerBuyVolume"))
         sell = _decimal_float(item.get("sellVol") or item.get("sellVolume") or item.get("takerSellVolume"))
-        if buy is not None and sell is not None:
-            cvd += buy - sell
         row = _binance_base_row(task=task, symbol=str(item.get("symbol") or symbol), provider_id=provider_id, endpoint_id="futures_taker_buy_sell")
         row.update(
             {
@@ -3042,12 +3027,11 @@ def _binance_taker_rows(payload: Any, *, task: Any, symbol: str, provider_id: st
                 "taker_sell_volume": sell,
                 "taker_volume_unit": _split_symbol(symbol)[0] or "contracts",
                 "taker_buy_sell_ratio": _decimal_float(item.get("buySellRatio")),
-                "cvd": cvd if buy is not None and sell is not None else None,
                 "timestamp": timestamp,
             }
         )
         _apply_crypto_period(row, timestamp)
-        if row["taker_buy_volume"] is not None or row["taker_sell_volume"] is not None or row["cvd"] is not None:
+        if row["taker_buy_volume"] is not None or row["taker_sell_volume"] is not None:
             rows.append(row)
     return tuple(rows)
 

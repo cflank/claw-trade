@@ -125,7 +125,6 @@ def test_crypto_items_supported_by_public_sources_keep_free_provider_fallbacks()
         "crypto.open_interest": "crypto_binance_spot_market",
         "crypto.long_short_ratio": "crypto_binance_spot_market",
         "crypto.taker_buy_sell": "crypto_binance_spot_market",
-        "crypto.cvd": "crypto_binance_spot_market",
         "crypto.options_open_interest": "crypto_binance_spot_market",
         "crypto.options_volume": "crypto_binance_spot_market",
     }

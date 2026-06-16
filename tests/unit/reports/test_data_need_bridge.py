@@ -2363,7 +2363,7 @@ def test_report_data_evidence_summary_lists_crypto_success_readings_and_override
     assert "粒度 hourly" in summary
     assert "覆盖 2025-12-10 至 2026-06-15" in summary
     assert "多空比 1.32" in summary
-    assert "清算地图簇价 49935.58" in summary
+    assert "清算热图价格点 49935.58" in summary
     assert "CVD -6727312982.0 USD" in summary
     assert "ETF资金流 66400000.0 USD" in summary
     assert "样本 6923 行" in summary

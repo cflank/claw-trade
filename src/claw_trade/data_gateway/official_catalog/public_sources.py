@@ -658,9 +658,9 @@ _PUBLIC_OUTPUTS_BY_ENDPOINT_ID = {
         output_contract(
             market="CRYPTO",
             data_type="crypto_derivative_metric",
-            public_api_ids=('taker_buy_sell', 'cvd'),
+            public_api_ids=('taker_buy_sell',),
             granularity=("realtime", "1h", "daily"),
-            fields=("taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "taker_buy_sell_ratio", "cvd", "timestamp", "symbol_id"),
+            fields=("taker_buy_volume", "taker_sell_volume", "taker_volume_unit", "taker_buy_sell_ratio", "timestamp", "symbol_id"),
             priority_rank=28,
         ),
     ),

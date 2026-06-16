@@ -27,14 +27,12 @@ def analyze_derivatives(payload: Mapping[str, Any] | None, data: CryptoLensInput
     oi = _to_float(payload.get("oi"))
     long_short_ratio = _to_float(payload.get("long_short_ratio"))
     cvd = _to_float(payload.get("cvd"))
-    cvd_proxy = _to_float(payload.get("cvd_proxy"))
     funding_unit = str(payload.get("funding_unit") or "") or None
     oi_unit = str(payload.get("oi_unit") or "") or None
     funding_source_field = str(payload.get("funding_source_field") or "") or None
     oi_source_field = str(payload.get("oi_source_field") or "") or None
     cvd_source_field = str(payload.get("cvd_source_field") or "") or None
-    cvd_source = str(payload.get("cvd_proxy_source") or "") or None
-    cvd_unit = str(payload.get("cvd_unit") or payload.get("cvd_proxy_unit") or "") or None
+    cvd_unit = str(payload.get("cvd_unit") or "") or None
     notes: list[str] = []
     if funding is None:
         notes.append("funding 缺失")
@@ -50,8 +48,6 @@ def analyze_derivatives(payload: Mapping[str, Any] | None, data: CryptoLensInput
         summary += f" 多空比={long_short_ratio:.3f}."
     if cvd is not None:
         summary += f" CVD={cvd:.2f}{f' {cvd_unit}' if cvd_unit else ''}."
-    elif cvd_proxy is not None:
-        summary += f" 主动买卖量差代理={cvd_proxy:.2f}{f' {cvd_unit}' if cvd_unit else ''}."
 
     status = base_state
     if notes and status == AnalysisState.READY:
@@ -71,9 +67,6 @@ def analyze_derivatives(payload: Mapping[str, Any] | None, data: CryptoLensInput
             "cvd": cvd,
             "cvd_unit": cvd_unit if cvd is not None else None,
             "cvd_source_field": cvd_source_field,
-            "cvd_proxy": cvd_proxy,
-            "cvd_proxy_unit": cvd_unit,
-            "cvd_proxy_source": cvd_source,
         },
         gap_ids=data.gap_ids_for("derivatives"),
         notes=tuple(notes),

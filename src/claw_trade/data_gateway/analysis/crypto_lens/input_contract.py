@@ -265,9 +265,6 @@ def _derivatives_payload(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]
     if not rows:
         return None
     latest_values: dict[str, Any] = {}
-    taker_buy_total = 0.0
-    taker_sell_total = 0.0
-    saw_taker = False
     for row in rows:
         for source, target in (
             ("open_interest", "oi"),
@@ -289,23 +286,11 @@ def _derivatives_payload(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]
         buy = _to_float(row.get("taker_buy_volume"))
         sell = _to_float(row.get("taker_sell_volume"))
         if buy is not None or sell is not None:
-            saw_taker = True
-            taker_buy_total += buy or 0.0
-            taker_sell_total += sell or 0.0
-    if saw_taker:
-        latest_values["taker_buy_volume"] = taker_buy_total
-        latest_values["taker_sell_volume"] = taker_sell_total
-        if "cvd" not in latest_values:
-            latest_values["cvd_proxy"] = taker_buy_total - taker_sell_total
-            latest_values["cvd_proxy_source"] = "taker_buy_volume_minus_taker_sell_volume"
-        taker_unit = next(
-            (str(row.get("taker_volume_unit")) for row in rows if row.get("taker_volume_unit") is not None),
-            None,
-        )
-        if taker_unit:
-            latest_values["taker_volume_unit"] = taker_unit
-            if "cvd" not in latest_values:
-                latest_values["cvd_proxy_unit"] = taker_unit
+            latest_values["taker_buy_volume"] = buy
+            latest_values["taker_sell_volume"] = sell
+            taker_unit = row.get("taker_volume_unit")
+            if taker_unit is not None:
+                latest_values["taker_volume_unit"] = str(taker_unit)
     return latest_values or None
 
 
@@ -324,10 +309,6 @@ def _row_attempts_include(row: Mapping[str, Any], endpoint_id: str) -> bool:
 
 
 def _liquidation_payload(rows: Sequence[Mapping[str, Any]], *, current_price: float | None = None) -> Mapping[str, Any] | None:
-    liquidation_rows = [
-        row for row in rows
-        if any(row.get(field) is not None for field in ("long_liquidation", "short_liquidation", "liquidation_value"))
-    ]
     heatmap_rows = [
         row for row in rows
         if _to_float(row.get("liquidation_price")) is not None and _to_float(row.get("liquidation_size")) is not None
@@ -336,20 +317,12 @@ def _liquidation_payload(rows: Sequence[Mapping[str, Any]], *, current_price: fl
         row for row in heatmap_rows
         if _valid_liquidation_price(_to_float(row.get("liquidation_price")), current_price=current_price)
     ]
-    largest_cluster = _largest_liquidation_cluster(valid_heatmap_rows)
-    if largest_cluster is None:
+    if not valid_heatmap_rows:
         return None
-    long_total = sum(_to_float(row.get("long_liquidation")) or 0.0 for row in liquidation_rows)
-    short_total = sum(_to_float(row.get("short_liquidation")) or 0.0 for row in liquidation_rows)
-    total = sum(_to_float(row.get("liquidation_value")) or 0.0 for row in liquidation_rows) or long_total + short_total
     return {
-        "long_liquidation_total": long_total,
-        "short_liquidation_total": short_total,
-        "liquidation_value_total": total,
-        "sample_count": len(liquidation_rows),
         "heatmap_sample_count": len(heatmap_rows),
+        "heatmap_points": tuple(_liquidation_heatmap_point(row) for row in valid_heatmap_rows[:20]),
         "invalid_heatmap_sample_count": len(heatmap_rows) - len(valid_heatmap_rows),
-        "largest_cluster": largest_cluster,
     }
 
 
@@ -361,24 +334,13 @@ def _valid_liquidation_price(price: float | None, *, current_price: float | None
     return current_price * 0.05 <= price <= current_price * 20.0
 
 
-def _largest_liquidation_cluster(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
-    best: Mapping[str, Any] | None = None
-    best_size = -1.0
-    for row in rows:
-        size = _to_float(row.get("liquidation_size"))
-        price = _to_float(row.get("liquidation_price"))
-        if size is None or price is None or size < best_size:
-            continue
-        best = row
-        best_size = size
-    if best is None:
-        return None
+def _liquidation_heatmap_point(row: Mapping[str, Any]) -> Mapping[str, Any]:
     return {
-        "price": _to_float(best.get("liquidation_price")),
-        "size": _to_float(best.get("liquidation_size")),
-        "side": best.get("side"),
-        "price_unit": best.get("liquidation_price_unit") or _quote_from_symbol(best.get("symbol_id")) or "USDT",
-        "size_unit": best.get("liquidation_size_unit") or "USD",
+        "price": _to_float(row.get("liquidation_price")),
+        "size": _to_float(row.get("liquidation_size")),
+        "side": row.get("side"),
+        "price_unit": row.get("liquidation_price_unit") or _quote_from_symbol(row.get("symbol_id")) or "USDT",
+        "size_unit": row.get("liquidation_size_unit") or "USD",
     }
 
 

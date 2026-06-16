@@ -368,9 +368,9 @@ def _crypto_metric_lines(results: Sequence[Mapping[str, Any]]) -> list[str]:
     heatmap = _latest_result_row(results, "crypto_derivative_metric", require_any=("liquidation_price",))
     if heatmap:
         derivative_parts.append(
-            "清算地图簇价 "
+            "清算热图价格点 "
             f"{_value(heatmap.get('liquidation_price'))}"
-            f"，簇规模 {_value(heatmap.get('liquidation_size') or heatmap.get('liquidation_value'))}"
+            f"，规模 {_value(heatmap.get('liquidation_size') or heatmap.get('liquidation_value'))}"
             f"，时间 {_row_time(heatmap)}"
         )
     _append_latest_metric(

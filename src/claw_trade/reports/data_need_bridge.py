@@ -1515,15 +1515,6 @@ def _sample_limit_lines(results: Sequence[DataResult], *, market: Market, crypto
                 f"{subject}：已有 {len(result.rows)} 行{range_text}，"
                 f"样本或来源限制：{reason_text}；先分析现有样本，把限制作为置信度限制。"
             )
-    if market == Market.CRYPTO:
-        proxy_rows = _crypto_taker_proxy_rows(results)
-        if proxy_rows and _has_gap_subject(results, market=market, subject="标准 CVD"):
-            date_range = _row_date_range(proxy_rows)
-            range_text = f"，覆盖 {date_range[0]} 至 {date_range[1]}" if date_range else ""
-            lines.append(
-                f"标准 CVD：标准 CVD 序列未返回；已有主动买卖量代理 {len(proxy_rows)} 行{range_text}，"
-                "可先分析主动买卖量差额，把它作为代理指标。"
-            )
     return list(_dedupe(lines))
 
 
@@ -1545,25 +1536,6 @@ def _is_crypto_liquidation_fields(fields: Sequence[str]) -> bool:
             "liquidation_size",
         }
         & {str(field) for field in fields}
-    )
-
-
-def _crypto_taker_proxy_rows(results: Sequence[DataResult]) -> tuple[Mapping[str, Any], ...]:
-    rows: list[Mapping[str, Any]] = []
-    for result in results:
-        for row in result.rows:
-            if not isinstance(row, Mapping):
-                continue
-            if row.get("taker_buy_volume") is not None and row.get("taker_sell_volume") is not None:
-                rows.append(row)
-    return tuple(rows)
-
-
-def _has_gap_subject(results: Sequence[DataResult], *, market: Market, subject: str) -> bool:
-    return any(
-        _gap_subject_label(result, gap=gap, market=market) == subject
-        for result in results
-        for gap in result.gaps
     )
 
 
@@ -1769,7 +1741,8 @@ def _crypto_lens_coverage_rows(
     return [
         *rows,
         _liquidation_coverage_row(liquidation_evidence, base_asset=base_asset),
-        _coverage_row("CVD代理/主动买卖量", derivatives_evidence.get("cvd_proxy") is not None, "derivatives_context.evidence.cvd_proxy", _value_with_unit(derivatives_evidence.get("cvd_proxy"), derivatives_evidence.get("cvd_proxy_unit")), "标准 CVD 未返回时只能作为当前主动买卖量差代理"),
+        _coverage_row("CVD", derivatives_evidence.get("cvd") is not None, "derivatives_context.evidence.cvd", _value_with_unit(derivatives_evidence.get("cvd"), derivatives_evidence.get("cvd_unit")), "只使用数据源直接返回的 CVD；未返回就写数据缺失"),
+        _coverage_row("主动买卖量", derivatives_evidence.get("taker_buy_volume") is not None or derivatives_evidence.get("taker_sell_volume") is not None or derivatives_evidence.get("taker_buy_sell_ratio") is not None, "derivatives_context.evidence.taker_buy_volume / taker_sell_volume", _taker_buy_sell_text(derivatives_evidence), "只使用数据源直接返回的买卖量和比例；不自行计算 CVD 或比例"),
         _coverage_row("资金费率", derivatives_evidence.get("funding") is not None, "derivatives_context.evidence.funding", _value_with_unit(derivatives_evidence.get("funding"), derivatives_evidence.get("funding_unit")), "可用于描述当前费率水平和单位；不要编造历史分位或统计结论"),
         _coverage_row("OI/多空比", derivatives_evidence.get("oi") is not None or derivatives_evidence.get("long_short_ratio") is not None, "derivatives_context.evidence.oi / long_short_ratio", _oi_long_short_text(derivatives_evidence), "可用于描述当前持仓结构；数据结果会明示已知未平仓量单位；不要编造历史分位或统计结论"),
         _coverage_row("宏观", True, "macro_context.evidence", "宏观/新闻由新闻数据结果负责，行情数据结果不重复判断", "不要写成宏观缺失；应回看新闻/宏观数据结果"),
@@ -1791,7 +1764,7 @@ def _liquidation_coverage_row(evidence: Mapping[str, Any], *, base_asset: str = 
         bool(_non_empty_mapping(evidence)),
         "liquidation_context.evidence",
         _liquidation_evidence_text(evidence),
-        "只描述簇价格、规模、单位和样本限制；不能作为方向性价格依据",
+        "只描述数据源返回的热图价格点、规模、单位和样本限制；不能作为方向性价格依据",
     )
 
 
@@ -1828,15 +1801,6 @@ def _liquidation_evidence_text(evidence: Mapping[str, Any]) -> str:
     if not _non_empty_mapping(evidence):
         return "未取得"
     parts: list[str] = []
-    price = evidence.get("largest_cluster_price")
-    size = evidence.get("largest_cluster_size")
-    if price is not None:
-        parts.append(f"最大清算簇价格 {_value_with_unit(price, evidence.get('largest_cluster_price_unit'))}")
-    if size is not None:
-        parts.append(f"最大清算簇规模 {_value_with_unit(size, evidence.get('largest_cluster_size_unit'))}")
-    side = evidence.get("largest_cluster_side")
-    if side is not None:
-        parts.append(f"方向 {_display_value(side)}")
     heatmap_count = evidence.get("heatmap_sample_count")
     invalid_count = evidence.get("invalid_heatmap_sample_count")
     if heatmap_count is not None:
@@ -1844,18 +1808,18 @@ def _liquidation_evidence_text(evidence: Mapping[str, Any]) -> str:
         valid_count = _number_delta(heatmap_count, invalid_count)
         if valid_count is not None:
             parts.append(f"清算热力图有效样本 {valid_count:g}")
+    heatmap_points = evidence.get("heatmap_points")
+    if isinstance(heatmap_points, Sequence) and heatmap_points:
+        first = heatmap_points[0]
+        if isinstance(first, Mapping):
+            price = first.get("price")
+            size = first.get("size")
+            if price is not None:
+                parts.append(f"热图首个价格点 {_value_with_unit(price, first.get('price_unit'))}")
+            if size is not None:
+                parts.append(f"热图首个规模 {_value_with_unit(size, first.get('size_unit'))}")
     if invalid_count is not None:
         parts.append(f"剔除异常热力图价格点 {_display_value(invalid_count)}")
-    event_count = evidence.get("sample_count")
-    if event_count is not None:
-        parts.append(f"普通强平额样本 {_display_value(event_count)}")
-    long_total = evidence.get("long_liquidation_total")
-    short_total = evidence.get("short_liquidation_total")
-    total = evidence.get("liquidation_value_total")
-    if total is not None:
-        parts.append(f"普通强平总额 {_display_value(total)}")
-    if long_total is not None or short_total is not None:
-        parts.append(f"多头强平 {_display_value(long_total or 0)}，空头强平 {_display_value(short_total or 0)}")
     return "；".join(parts) or "未取得"
 
 
@@ -1872,6 +1836,21 @@ def _oi_long_short_text(evidence: Mapping[str, Any]) -> str:
     long_short_ratio = evidence.get("long_short_ratio")
     if long_short_ratio is not None:
         parts.append(f"多空比 {_display_value(long_short_ratio)}")
+    return "；".join(parts) or "未取得"
+
+
+def _taker_buy_sell_text(evidence: Mapping[str, Any]) -> str:
+    parts: list[str] = []
+    unit = str(evidence.get("taker_volume_unit") or "").strip()
+    buy = evidence.get("taker_buy_volume")
+    sell = evidence.get("taker_sell_volume")
+    ratio = evidence.get("taker_buy_sell_ratio")
+    if buy is not None:
+        parts.append(f"主动买量 {_value_with_unit(buy, unit)}")
+    if sell is not None:
+        parts.append(f"主动卖量 {_value_with_unit(sell, unit)}")
+    if ratio is not None:
+        parts.append(f"买卖比 {_display_value(ratio)}")
     return "；".join(parts) or "未取得"
 
 
@@ -2369,7 +2348,6 @@ def _compact_json(value: object) -> str:
 
 def _gap_lines(results: Sequence[DataResult], *, market: Market, crypto_base_asset: str = "") -> list[str]:
     lines: list[str] = []
-    has_crypto_cvd_proxy = market == Market.CRYPTO and bool(_crypto_taker_proxy_rows(results))
     for result in results:
         for gap in result.gaps:
             dataset = _gap_subject_label(result, gap=gap, market=market)
@@ -2377,8 +2355,6 @@ def _gap_lines(results: Sequence[DataResult], *, market: Market, crypto_base_ass
             if result.rows and reason in _ROW_LEVEL_LIMIT_REASONS:
                 continue
             if _is_non_btc_crypto_base(crypto_base_asset) and _is_crypto_liquidation_subject(dataset):
-                continue
-            if has_crypto_cvd_proxy and dataset == "标准 CVD":
                 continue
             required = "、".join(_field_label(field) for field in gap.required_fields)
             detail = f"{dataset}：{_gap_reason_label(reason)}"
@@ -2851,10 +2827,10 @@ def _field_label(value: str) -> str:
         "long_liquidation": "多头清算额",
         "short_liquidation": "空头清算额",
         "liquidation_value": "清算总额",
-        "liquidation_price": "清算簇价格",
-        "liquidation_size": "清算簇规模",
-        "liquidation_price_unit": "清算簇价格单位",
-        "liquidation_size_unit": "清算簇规模单位",
+        "liquidation_price": "清算热图价格",
+        "liquidation_size": "清算热图规模",
+        "liquidation_price_unit": "清算热图价格单位",
+        "liquidation_size_unit": "清算热图规模单位",
         "liquidation_value_unit": "清算金额单位",
         "net_inflow": "净流入",
         "net_inflow_unit": "净流入单位",

@@ -276,9 +276,6 @@ def _standard_output_contract_shape(*, api_id: str, dataset: str, required_field
     elif suffix == "order_book":
         all_of = tuple(field for field in required_fields if field not in {"bid_price", "ask_price"})
         any_of_groups = (("bid_price", "bid_price_1", "bids"), ("ask_price", "ask_price_1", "asks"))
-    elif suffix == "cvd":
-        all_of = tuple(field for field in required_fields if field != "cvd")
-        any_of_groups = (("cvd", "buy_volume", "taker_buy_volume"),)
     elif suffix == "liquidation":
         all_of = tuple(field for field in required_fields if field != "liquidation_value")
         any_of_groups = (("liquidation_value", "long_liquidation", "short_liquidation", "liquidation_quantity"),)

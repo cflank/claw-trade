@@ -277,7 +277,7 @@ def _coinglass_exact_outputs(endpoint_id: str, *, path: str) -> tuple[dict[str, 
                 market="CRYPTO",
                 data_type="crypto_derivative_metric",
                 granularity=("1h", "daily"),
-                fields=("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
+                fields=("long_liquidation", "short_liquidation", "timestamp", "symbol_id"),
                 public_api_ids=("liquidation",),
                 priority_rank=12,
             ),
@@ -520,16 +520,7 @@ def _glassnode_exact_outputs(endpoint_id: str) -> tuple[dict[str, Any], ...]:
             ),
         )
     if endpoint_id in _GLASSNODE_LIQUIDATION_ENDPOINTS:
-        return (
-            output_contract(
-                market="CRYPTO",
-                data_type="crypto_derivative_metric",
-                granularity=("1h", "daily"),
-                fields=("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
-                public_api_ids=("liquidation",),
-                priority_rank=18,
-            ),
-        )
+        return ()
     if endpoint_id in _GLASSNODE_CVD_ENDPOINTS:
         return (
             output_contract(

@@ -183,7 +183,7 @@ _CURATED_ENDPOINTS = (
                 market="CRYPTO",
                 data_type="crypto_derivative_metric",
                 granularity=("1h", "daily"),
-                fields=("long_liquidation", "short_liquidation", "liquidation_value", "timestamp", "symbol_id"),
+                fields=("long_liquidation", "short_liquidation", "timestamp", "symbol_id"),
                 public_api_ids=("liquidation",),
                 priority_rank=12,
             ),

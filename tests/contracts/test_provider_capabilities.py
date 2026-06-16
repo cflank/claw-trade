@@ -432,7 +432,7 @@ def test_crypto_binance_public_futures_endpoints_parse_derivative_rows() -> None
             "futures_taker_buy_sell",
             [{"symbol": "BTCUSDT", "buyVol": "100", "sellVol": "80", "buySellRatio": "1.25", "timestamp": 1772236800000}],
             "/futures/data/takerlongshortRatio",
-            {"taker_buy_volume": 100.0, "taker_sell_volume": 80.0, "taker_buy_sell_ratio": 1.25, "cvd": 20.0},
+            {"taker_buy_volume": 100.0, "taker_sell_volume": 80.0, "taker_buy_sell_ratio": 1.25},
         ),
     )
 
@@ -2006,7 +2006,7 @@ def test_crypto_coinglass_futures_pairs_markets_normalizes_binance_usdt_snapshot
     assert row["open_interest_unit"] == "USD"
     assert row["funding_rate"] == 0.004
     assert row["funding_rate_unit"] == "percent"
-    assert row["liquidation_value"] == 3500.0
+    assert "liquidation_value" not in row
     assert row["liquidation_value_unit"] == "USD"
 
 

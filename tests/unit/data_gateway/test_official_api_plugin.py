@@ -1113,7 +1113,7 @@ def test_coinglass_liquidation_aggregated_history_maps_official_fields() -> None
     row = result.payload["rows"][0]
     assert row["long_liquidation"] == 5916885.14234
     assert row["short_liquidation"] == 12969583.87632
-    assert row["liquidation_value"] == pytest.approx(18886469.01866)
+    assert "liquidation_value" not in row
 
 
 def test_coinglass_liquidation_heatmap_maps_official_matrix_payload() -> None:
@@ -1652,7 +1652,7 @@ def test_coinglass_fear_greed_history_maps_social_signal() -> None:
     assert row["timestamp"].tzinfo == UTC
 
 
-def test_coinglass_taker_buy_sell_derives_ratio_from_live_volumes() -> None:
+def test_coinglass_taker_buy_sell_does_not_derive_ratio_from_live_volumes() -> None:
     client = _RecordingHttpClient(
         '{"code":"0","data":[{"time":1772236800000,"aggregated_buy_volume_usd":"150",'
         '"aggregated_sell_volume_usd":"100"}]}'
@@ -1670,7 +1670,7 @@ def test_coinglass_taker_buy_sell_derives_ratio_from_live_volumes() -> None:
     row = result.payload["rows"][0]
     assert row["taker_buy_volume"] == 150.0
     assert row["taker_sell_volume"] == 100.0
-    assert row["taker_buy_sell_ratio"] == 1.5
+    assert "taker_buy_sell_ratio" not in row
 
 
 def test_coinglass_official_etf_flow_expands_nested_flow_rows() -> None:

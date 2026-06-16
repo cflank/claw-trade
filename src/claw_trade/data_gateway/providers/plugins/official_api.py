@@ -1205,20 +1205,10 @@ def _coerce_scalar(value: Any) -> Any:
 
 
 def _fill_derived_metric_fields(*, row: dict[str, Any], fields: tuple[str, ...]) -> None:
-    if "liquidation_value" in fields and "liquidation_value" not in row:
-        long_value = _decimal_float(row.get("long_liquidation"))
-        short_value = _decimal_float(row.get("short_liquidation"))
-        if long_value is not None and short_value is not None:
-            row["liquidation_value"] = long_value + short_value
     if "netflow" in fields and "netflow" not in row and row.get("net_inflow") is not None:
         row["netflow"] = row["net_inflow"]
     if "net_inflow" in fields and "net_inflow" not in row and row.get("netflow") is not None:
         row["net_inflow"] = row["netflow"]
-    if "taker_buy_sell_ratio" in fields and "taker_buy_sell_ratio" not in row:
-        taker_buy = _decimal_float(row.get("taker_buy_volume"))
-        taker_sell = _decimal_float(row.get("taker_sell_volume"))
-        if taker_buy is not None and taker_sell not in (None, 0):
-            row["taker_buy_sell_ratio"] = taker_buy / taker_sell
     if "value" in fields and "value" not in row:
         for candidate in (
             "net_inflow",
