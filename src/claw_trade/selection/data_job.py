@@ -476,6 +476,14 @@ class SelectionDataJob:
                 "data_need_audit_missing",
                 "data need audit trade_date 不匹配",
             )
+        blocker_gaps = tuple(gap for gap in provider_result.data_gaps if gap.severity == DataGapSeverity.BLOCKER)
+        if not provider_result.attempt_refs and blocker_gaps:
+            first_gap = blocker_gaps[0]
+            raise SelectionDataJobStepError(
+                first_gap.gap_code,
+                first_gap.reader_message,
+                data_gaps=blocker_gaps,
+            )
         if not provider_result.attempt_refs:
             raise SelectionDataJobStepError(
                 "provider_evidence_failed",

@@ -113,6 +113,9 @@ RUNTIME_ENV_PATH="${RUNTIME_DIR}/runtime.env"
 RUNS_PROBE_DIR="${ROOT_DIR}/runs/probe"
 LOCAL_MONGODB_START_SCRIPT="${ROOT_DIR}/scripts/start-local-mongodb.sh"
 LOCAL_MONGODB_PID_FILE="${ROOT_DIR}/.runtime/mongodb/run/mongod.pid"
+A_SHARE_FACTORY_SEED_PACKAGE="${A_SHARE_FACTORY_SEED_PACKAGE:-${ROOT_DIR}/data/a-share-cn-required-300td-20260608.tar}"
+A_SHARE_FACTORY_SEED_CHECKSUM="${A_SHARE_FACTORY_SEED_CHECKSUM:-${A_SHARE_FACTORY_SEED_PACKAGE}.sha256}"
+A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-${ROOT_DIR}/.runtime/factory-seeds/a-share-cn-required-300td-20260608/normalized}"
 UV_CACHE_DIR="${UV_CACHE_DIR:-${RUNTIME_DIR}/uv-cache}"
 UV_LINK_MODE="${UV_LINK_MODE:-copy}"
 export UV_CACHE_DIR UV_LINK_MODE
@@ -130,7 +133,7 @@ DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"
 DATA_GATEWAY_MONGODB_DATABASE="${DATA_GATEWAY_MONGODB_DATABASE:-${CN_A_MONGODB_DATABASE}}"
 DATA_GATEWAY_SEED_MONGODB_URI="${DATA_GATEWAY_SEED_MONGODB_URI:-${CN_A_MONGODB_URI}}"
 DATA_GATEWAY_SEED_MONGODB_DATABASE="${DATA_GATEWAY_SEED_MONGODB_DATABASE:-claw_trade_a_share_factory_seed}"
-DATA_GATEWAY_COLUMNAR_ROOT="${DATA_GATEWAY_COLUMNAR_ROOT:-}"
+DATA_GATEWAY_COLUMNAR_ROOT="${DATA_GATEWAY_COLUMNAR_ROOT:-${RUNTIME_DIR}/data-gateway/normalized}"
 export CN_A_MONGODB_URI CN_A_MONGODB_DATABASE CN_A_MONGODB_CACHE_COLLECTION
 export DATA_GATEWAY_MONGODB_URI DATA_GATEWAY_MONGODB_DATABASE
 export DATA_GATEWAY_SEED_MONGODB_URI DATA_GATEWAY_SEED_MONGODB_DATABASE DATA_GATEWAY_COLUMNAR_ROOT
@@ -483,6 +486,38 @@ start_local_mongodb_if_needed() {
   fi
 }
 
+ensure_a_share_factory_seed_restored() {
+  if [[ "${CLAW_TRADE_SKIP_A_SHARE_FACTORY_SEED_RESTORE:-0}" == "1" ]]; then
+    log_warn "已跳过 A 股 factory seed 恢复：CLAW_TRADE_SKIP_A_SHARE_FACTORY_SEED_RESTORE=1"
+    return 0
+  fi
+  if [[ ! -f "${A_SHARE_FACTORY_SEED_PACKAGE}" ]]; then
+    log_warn "A 股 factory seed 包不存在，跳过恢复：${A_SHARE_FACTORY_SEED_PACKAGE}"
+    return 0
+  fi
+  if [[ ! -f "${A_SHARE_FACTORY_SEED_CHECKSUM}" ]]; then
+    log_error "A 股 factory seed checksum 不存在：${A_SHARE_FACTORY_SEED_CHECKSUM}"
+    exit 1
+  fi
+
+  log_info "恢复 A 股 factory seed：${A_SHARE_FACTORY_SEED_PACKAGE}"
+  mkdir -p "$(dirname "${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}")" "${DATA_GATEWAY_COLUMNAR_ROOT}"
+  (
+    cd "${ROOT_DIR}"
+    uv run python scripts/selection/restore_a_share_factory_seed.py \
+      --package "${A_SHARE_FACTORY_SEED_PACKAGE}" \
+      --checksum "${A_SHARE_FACTORY_SEED_CHECKSUM}" \
+      --mongo-uri "${DATA_GATEWAY_SEED_MONGODB_URI}" \
+      --mongo-database "${DATA_GATEWAY_SEED_MONGODB_DATABASE}" \
+      --columnar-root "${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}" \
+      --replace-existing \
+      --confirm-replace-existing \
+      --output-json "${LOG_DIR}/a-share-factory-seed-restore.json" \
+      >"${LOG_DIR}/a-share-factory-seed-restore.log" 2>&1
+  )
+  log_info "A 股 factory seed 已恢复：columnar=${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}, mongo=${DATA_GATEWAY_SEED_MONGODB_DATABASE}"
+}
+
 ensure_openclaw_control_ui_assets() {
   if [[ -f "${OPENCLAW_CONTROL_UI_INDEX}" ]]; then
     return 0
@@ -703,6 +738,8 @@ export_runtime_env_for_child_commands() {
   export DATA_GATEWAY_SEED_MONGODB_URI
   export DATA_GATEWAY_SEED_MONGODB_DATABASE
   export DATA_GATEWAY_COLUMNAR_ROOT
+  export A_SHARE_FACTORY_SEED_PACKAGE
+  export A_SHARE_FACTORY_SEED_COLUMNAR_ROOT
   if [[ "${openviking_mcp_started}" == "1" ]]; then
     export OPENVIKING_MCP_URL
   else
@@ -1495,7 +1532,7 @@ stop_openclaw_gateway_service
 
 log_info "清理本地运行时审计目录（保留 runs 主目录、OpenViking data 与 OpenClaw state）"
 mkdir -p "${OPENVIKING_RUNTIME_DIR}" "${OPENVIKING_DATA_DIR}"
-find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_RUNTIME_DIR}" ! -path "${OPENCLAW_STATE_DIR}" ! -path "${OPENCLAW_DEFAULT_STATE_DIR}" -exec rm -rf {} +
+find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_RUNTIME_DIR}" ! -path "${OPENCLAW_STATE_DIR}" ! -path "${OPENCLAW_DEFAULT_STATE_DIR}" ! -path "${RUNTIME_DIR}/data-gateway" -exec rm -rf {} +
 find "${OPENVIKING_RUNTIME_DIR}" -mindepth 1 -maxdepth 1 ! -path "${OPENVIKING_DATA_DIR}" -exec rm -rf {} +
 mkdir -p "${LOG_DIR}" "${PID_DIR}"
 mkdir -p "${OPENCLAW_STATE_DIR}"
@@ -1503,6 +1540,7 @@ mkdir -p "${RUNS_PROBE_DIR}"
 find "${RUNS_PROBE_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 start_local_mongodb_if_needed
 load_mongo_ui_settings_into_process_env
+ensure_a_share_factory_seed_restored
 prune_missing_runtime_columnar_manifests
 configure_openviking_embedding_runtime_flags
 ensure_openclaw_control_ui_assets
@@ -1702,6 +1740,8 @@ write_runtime_env_var "DATA_GATEWAY_MONGODB_DATABASE" "${DATA_GATEWAY_MONGODB_DA
 write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_URI" "${DATA_GATEWAY_SEED_MONGODB_URI}"
 write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_DATABASE" "${DATA_GATEWAY_SEED_MONGODB_DATABASE}"
 write_runtime_env_var "DATA_GATEWAY_COLUMNAR_ROOT" "${DATA_GATEWAY_COLUMNAR_ROOT}"
+write_runtime_env_var "A_SHARE_FACTORY_SEED_PACKAGE" "${A_SHARE_FACTORY_SEED_PACKAGE}"
+write_runtime_env_var "A_SHARE_FACTORY_SEED_COLUMNAR_ROOT" "${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}"
 write_runtime_env_var "CLAW_TRADE_LOCAL_MONGODB_STARTED" "${local_mongodb_started}"
 if [[ "${openviking_mcp_started}" == "1" ]]; then
   write_runtime_env_var "OPENVIKING_MCP_URL" "${OPENVIKING_MCP_URL}"

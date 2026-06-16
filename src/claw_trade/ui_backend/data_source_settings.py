@@ -41,6 +41,7 @@ class _SupportedSourceProfile:
     default_display_name: str
     requires_key: bool
     env_key_map: dict[str, str]
+    default_endpoint_url: str | None = None
 
 
 def _api_env_map(prefix: str, *, api_key: str, endpoint_url: str | None = None, header_name: str | None = None) -> dict[str, str]:
@@ -65,6 +66,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         default_display_name="Tushare",
         requires_key=True,
         env_key_map=_api_env_map("TUSHARE", api_key="TUSHARE_TOKEN", endpoint_url="TUSHARE_HTTP_URL"),
+        default_endpoint_url="https://api.tushare.pro",
     ),
     _SupportedSourceProfile(
         supported_type="akshare",
@@ -170,6 +172,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         default_display_name="Finnhub",
         requires_key=True,
         env_key_map=_api_env_map("FINNHUB", api_key="FINNHUB_API_KEY", endpoint_url="FINNHUB_BASE_URL"),
+        default_endpoint_url="https://finnhub.io/api/v1",
     ),
     _SupportedSourceProfile(
         supported_type="sec_edgar",
@@ -198,6 +201,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         default_display_name="FRED",
         requires_key=True,
         env_key_map=_api_env_map("FRED", api_key="FRED_API_KEY", endpoint_url="FRED_BASE_URL"),
+        default_endpoint_url="https://api.stlouisfed.org",
     ),
     _SupportedSourceProfile(
         supported_type="world_bank",
@@ -258,9 +262,10 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
     _SupportedSourceProfile(
         supported_type="coingecko",
         group="crypto_data",
-        default_display_name="CoinGecko",
-        requires_key=False,
+        default_display_name="CoinGecko Demo",
+        requires_key=True,
         env_key_map={"api_key": "COINGECKO_DEMO_API_KEY", "endpoint_url": "COINGECKO_BASE_URL"},
+        default_endpoint_url="https://api.coingecko.com/api/v3",
     ),
     _SupportedSourceProfile(
         supported_type="coingecko_pro",
@@ -268,6 +273,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         default_display_name="CoinGecko Pro",
         requires_key=True,
         env_key_map=_api_env_map("COINGECKO_PRO", api_key="COINGECKO_PRO_API_KEY", endpoint_url="COINGECKO_PRO_BASE_URL"),
+        default_endpoint_url="https://pro-api.coingecko.com/api/v3",
     ),
     _SupportedSourceProfile(
         supported_type="binance",
@@ -301,6 +307,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
             endpoint_url="COINGLASS_API_BASE",
             header_name="COINGLASS_API_HEADER_NAME",
         ),
+        default_endpoint_url="https://open-api-v4.coinglass.com",
     ),
     _SupportedSourceProfile(
         supported_type="glassnode",
@@ -308,6 +315,7 @@ _SUPPORTED_SOURCE_PROFILES: tuple[_SupportedSourceProfile, ...] = (
         default_display_name="Glassnode",
         requires_key=True,
         env_key_map={"api_key": "GLASSNODE_API_KEY", "endpoint_url": "GLASSNODE_BASE_URL"},
+        default_endpoint_url="https://api.glassnode.com",
     ),
     _SupportedSourceProfile(
         supported_type="alternative_me",
@@ -332,6 +340,7 @@ _PROVIDER_BACKED_API_SETTINGS_SOURCE_TYPES: tuple[str, ...] = (
     "tushare",
     "finnhub",
     "fred",
+    "coingecko",
     "coingecko_pro",
     "coinglass",
     "glassnode",
@@ -577,8 +586,8 @@ class DataSourceSettingsService:
             "group": profile.group,
             "displayName": profile.default_display_name,
             "enabled": bool(data.get("enabled", False)),
-            "endpointUrl": _optional_str(data.get("endpointUrl")),
-            "endpoint_url": _optional_str(data.get("endpointUrl")),
+            "endpointUrl": _optional_str(data.get("endpointUrl")) or profile.default_endpoint_url,
+            "endpoint_url": _optional_str(data.get("endpointUrl")) or profile.default_endpoint_url,
             "proxy_url": None,
             "header_name": None,
             "priority": 100,
@@ -720,7 +729,7 @@ def to_data_source_instance_for_user(instance: Mapping[str, Any]) -> DataSourceI
         display_name=profile.default_display_name if profile is not None else str(instance.get("display_name", "")),
         enabled=bool(instance.get("enabled", False)),
         api_key_masked=mask_secret_ref(credential_ref),
-        endpoint_url=_optional_str(instance.get("endpoint_url")),
+        endpoint_url=_optional_str(instance.get("endpoint_url")) or (profile.default_endpoint_url if profile is not None else None),
         state=str(instance.get("state", "draft")),
         last_success_at=_optional_str(instance.get("last_success_at")),
         last_test_at=_optional_str(instance.get("last_test_at")),
@@ -822,7 +831,7 @@ def _built_in_source_row(supported_type: str) -> dict[str, Any]:
         "display_name": profile.default_display_name,
         "enabled": False,
         "credential_ref": None,
-        "endpoint_url": None,
+        "endpoint_url": profile.default_endpoint_url,
         "proxy_url": None,
         "header_name": None,
         "priority": 100,
@@ -853,7 +862,7 @@ _PROVIDER_ID_TO_SETTINGS_SOURCE_TYPES: dict[str, tuple[str, ...]] = {
     "us_finnhub_data": ("finnhub",),
     "hk_finnhub_data": ("finnhub",),
     "us_fred_macro": ("fred",),
-    "crypto_coingecko_market": ("coingecko_pro",),
+    "crypto_coingecko_market": ("coingecko", "coingecko_pro"),
     "crypto_coinglass_derivatives": ("coinglass",),
     "crypto_glassnode_onchain": ("glassnode",),
 }

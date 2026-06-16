@@ -19,7 +19,7 @@ _SUPPORTED_PROBE_TYPES = frozenset(
         "okx",
     }
 )
-_CREDENTIAL_REQUIRED_TYPES = frozenset({"tushare", "finnhub", "fred", "coingecko_pro", "coinglass", "glassnode"})
+_CREDENTIAL_REQUIRED_TYPES = frozenset({"tushare", "finnhub", "fred", "coingecko", "coingecko_pro", "coinglass", "glassnode"})
 
 
 def build_price_alert_quote_provider(

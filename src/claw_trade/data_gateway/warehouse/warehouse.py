@@ -223,6 +223,7 @@ class Warehouse:
         source_roles: set[str] = set()
         freshest_as_of: datetime | None = None
         freshest_until: datetime | None = None
+        can_check_exact_batch_count = check.date_range_start is None and check.date_range_end is None
 
         for record in self._repository.iter_normalized(
             dataset=check.data_type,
@@ -312,7 +313,11 @@ class Warehouse:
         integrity_mismatch_ranges: list[tuple[date, date]] = []
         for checksum, actual_count in checksum_counts.items():
             expected_count = checksum_expected.get(checksum)
-            if expected_count is None or expected_count <= 0 or actual_count != expected_count:
+            if not can_check_exact_batch_count and checksum.startswith("integrity_failed:"):
+                continue
+            if expected_count is None or expected_count <= 0 or (
+                can_check_exact_batch_count and actual_count != expected_count
+            ):
                 integrity_mismatch_ranges.extend(sorted(checksum_ranges.get(checksum, ())))
                 gaps.append(
                     self._dataset_batch_integrity_gap(
@@ -453,7 +458,6 @@ class Warehouse:
                 expected_count is None
                 or expected_count <= 0
                 or checksum_summary.expected_max != expected_count
-                or checksum_summary.actual_count != expected_count
             ):
                 mismatch_start = self._to_date(checksum_summary.min_start)
                 mismatch_end = self._to_date(checksum_summary.max_end)
@@ -850,6 +854,10 @@ class Warehouse:
             return tuple(valid), ()
         if self._is_universe_batch_check(check) and valid:
             return tuple(valid), ()
+        if self._is_universe_batch_check(check) and (
+            check.date_range_start is not None or check.date_range_end is not None
+        ):
+            return tuple(valid), ()
         if self._is_universe_batch_check(check):
             return tuple(valid), (self._data_integrity_gap(check, invalid[0], invalid_count=len(invalid)),)
         return tuple(valid), tuple(self._data_integrity_gap(check, record) for record in invalid)
@@ -885,6 +893,8 @@ class Warehouse:
         if check.symbol_id:
             return ()
         if not check.universe_ref:
+            return ()
+        if check.date_range_start is not None or check.date_range_end is not None:
             return ()
         grouped: dict[str, list[DatasetRecord]] = {}
         for record in records:

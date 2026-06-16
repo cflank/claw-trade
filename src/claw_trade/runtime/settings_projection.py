@@ -121,7 +121,7 @@ def _import_env_data_sources(database: Any, env: Mapping[str, str]) -> int:
         if endpoint_url:
             record["endpoint_url"] = endpoint_url
         else:
-            record.setdefault("endpoint_url", None)
+            record.setdefault("endpoint_url", getattr(profile, "default_endpoint_url", None))
         if header_name:
             record["header_name"] = header_name
         else:

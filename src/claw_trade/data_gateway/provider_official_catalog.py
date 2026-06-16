@@ -27,6 +27,11 @@ OFFICIAL_PROVIDER_CATALOG: tuple[OfficialProviderCatalogEntry, ...] = (
         interface_mode="rest_path",
     ),
     OfficialProviderCatalogEntry(
+        source_type="coingecko",
+        docs_url="https://docs.coingecko.com/reference/endpoint-overview",
+        interface_mode="rest_path",
+    ),
+    OfficialProviderCatalogEntry(
         source_type="coingecko_pro",
         docs_url="https://docs.coingecko.com/reference/endpoint-overview",
         interface_mode="rest_path",

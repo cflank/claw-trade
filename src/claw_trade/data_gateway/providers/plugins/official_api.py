@@ -312,6 +312,8 @@ class OfficialApiProviderPlugin:
                 query.setdefault("file_type", "json")
         elif self._spec.auth_mode == "header_x_cg_pro_api_key":
             headers["x-cg-pro-api-key"] = token
+        elif self._spec.auth_mode == "header_x_cg_demo_api_key":
+            headers["x-cg-demo-api-key"] = token
         elif self._spec.auth_mode == "coinglass_header":
             headers[_coinglass_header_name(ctx, self._spec.credential_name)] = token
         else:

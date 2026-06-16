@@ -114,7 +114,7 @@ class SelectionColumnarWarehouse:
             return False
         if manifest.coverage_status != "verified":
             return False
-        if manifest.daily_row_count <= 0 or manifest.feature_row_count <= 0:
+        if manifest.feature_row_count <= 0:
             return False
         for partition in (*manifest.daily_partitions, *manifest.feature_partitions):
             path = self.root / partition.relative_path

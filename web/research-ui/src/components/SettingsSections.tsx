@@ -200,7 +200,7 @@ const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
   { id: 'data', title: '数据源' },
 ];
 
-const DATA_SOURCE_TYPES = ['tushare', 'finnhub', 'fred', 'coingecko_pro', 'coinglass', 'glassnode'];
+const DATA_SOURCE_TYPES = ['tushare', 'finnhub', 'fred', 'coingecko', 'coingecko_pro', 'coinglass', 'glassnode'];
 
 function dataSourceByType(dataSources: DataSourceInstanceForUser[]) {
   return new Map(dataSources.map((item) => [item.supportedType, item]));

@@ -79,31 +79,13 @@ _SELECTION_DAILY_REQUEST: tuple[str, str, tuple[str, ...]] = (
 )
 _SELECTION_DAILY_QUERY_FIELDS = (
     "date",
-    "trade_date",
     "open",
     "high",
     "low",
     "close",
-    "price",
     "volume",
     "amount",
-    "turnover",
-    "p_change_pct",
-    "pct_chg",
-    "change_pct",
-    "ticker",
     "symbol_id",
-    "ts_code",
-    "code",
-    "company_name",
-    "name",
-    "stock_name",
-    "code_name",
-    "security_name",
-    "industry",
-    "sector",
-    "provider_lineage",
-    "amount_unit",
 )
 _SELECTION_SUPPLEMENTAL_REQUESTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("corporate_action", "event", ("event_type", "event_date", "title", "source", "symbol_id")),
@@ -1065,12 +1047,40 @@ def _selection_feature_rows_from_repository(
             continue
         latest_rows_by_ticker[ticker] = row
         latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
+    if not latest_rows_by_ticker and plan.universe_scope:
+        latest_records = _query_daily_records(
+            repository=repository,
+            plan=plan,
+            symbol_id=None,
+            universe_ref=None,
+            start=trade_day,
+            end=trade_day,
+        )
+        for record in latest_records:
+            row = _row_from_dataset_record(record)
+            ticker = _ticker_from_row(row)
+            if ticker is None:
+                continue
+            latest_rows_by_ticker[ticker] = row
+            latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
     tickers = tuple(sorted(latest_rows_by_ticker))
-    company_names_by_ticker = repository.find_company_names_by_symbol_ids(
+    company_names_by_ticker: dict[str, str] = {}
+    history_rows_by_ticker: dict[str, list[Mapping[str, Any]]] = {}
+    for record in repository.iter_normalized(
         dataset="daily_bar",
         market=Market.CN_A.value,
-        symbol_ids=tickers,
-    )
+        symbol_id=None,
+        universe_ref=None,
+        date_range_start=history_start,
+        date_range_end=trade_day,
+        require_integrity_metadata=True,
+        include_row=True,
+    ):
+        row = _row_from_dataset_record(record)
+        ticker = _ticker_from_row(row)
+        if ticker is None:
+            continue
+        history_rows_by_ticker.setdefault(ticker, []).append(row)
     _notify_fetch_progress(
         progress_callback,
         label="流式计算本地选股特征",
@@ -1089,30 +1099,12 @@ def _selection_feature_rows_from_repository(
             row_limit_exceeded = True
             break
         processed_ticker_count = index
-        history_records = _query_daily_records(
-            repository=repository,
-            plan=plan,
-            symbol_id=ticker,
-            universe_ref=plan.universe_scope,
-            start=history_start,
-            end=trade_day,
-        )
-        if not history_records and plan.universe_scope:
-            history_records = _query_daily_records(
-                repository=repository,
-                plan=plan,
-                symbol_id=ticker,
-                universe_ref=None,
-                start=history_start,
-                end=trade_day,
-            )
         history_source = tuple(
             sorted(
-                (_row_from_dataset_record(record) for record in history_records),
+                history_rows_by_ticker.get(ticker, ()),
                 key=lambda item: str(_row_date(item) or ""),
             )
         )
-        columnar_writer.add_daily_rows(_daily_bar_columnar_rows(plan=plan, ticker=ticker, rows=history_source))
         history = tuple(
             mapped
             for mapped in (_history_row(row) for row in history_source)
@@ -1257,7 +1249,8 @@ def _selection_feature_rows_from_repository(
 def _selection_history_start_date(*, plan: SelectionRunPlan) -> date:
     trade_day = date.fromisoformat(plan.trade_date)
     lookback_days = max(_DEFAULT_LOOKBACK_TRADING_DAYS, int(plan.lookback_trading_days or 0))
-    return trade_day - timedelta(days=lookback_days * 2)
+    calendar_days = (lookback_days * 3 + 1) // 2 + 20
+    return trade_day - timedelta(days=calendar_days)
 
 
 def _query_daily_records(
@@ -1537,19 +1530,26 @@ def _selection_universe_refresh_dates_from_metadata(*, plan: SelectionRunPlan, r
         integrity_ranges = _metadata_integrity_mismatch_ranges(coverage)
         missing_ranges = _metadata_missing_ranges(coverage)
         if integrity_ranges or missing_ranges:
-            return tuple(
+            refresh_dates = tuple(
                 day
                 for start, end in (*integrity_ranges, *missing_ranges)
                 for day in _daily_dates_between(start, min(end, trade_date))
                 if day <= trade_date
             )
+            return _prioritize_universe_refresh_dates(refresh_dates)
         actual_end = _parse_date(coverage.get("actual_end"))
         expected_end = _parse_date(coverage.get("expected_end")) or trade_date
         expected_end = min(expected_end, trade_date)
         if actual_end is None or actual_end >= expected_end:
             return ()
-        return _daily_dates_between(actual_end + timedelta(days=1), expected_end)
+        return _prioritize_universe_refresh_dates(_daily_dates_between(actual_end + timedelta(days=1), expected_end))
     return ()
+
+
+def _prioritize_universe_refresh_dates(refresh_dates: Sequence[date]) -> tuple[date, ...]:
+    # Provider/rate limits are finite; /select must fill the latest trade dates
+    # before spending calls on old lookback gaps already covered by the seed.
+    return tuple(sorted(set(refresh_dates), reverse=True))
 
 
 def _freshness_coverage_for_request(freshness: Mapping[str, Any], *, request_id: str) -> Mapping[str, Any] | None:
@@ -1608,7 +1608,7 @@ def _daily_dates_between(start: date, end: date) -> tuple[date, ...]:
 
 def _is_universe_refresh_trigger_gap(gap: DataGap) -> bool:
     reason = getattr(gap.reason, "value", str(gap.reason))
-    if reason in {"date_range_missing", "warehouse_stale", "data_integrity_failed"}:
+    if reason in {"date_range_missing", "warehouse_stale", "data_integrity_failed", "warehouse_missing"}:
         return True
     return reason == "provider_error" and str(gap.human_readable).strip() == "symbol_required"
 
