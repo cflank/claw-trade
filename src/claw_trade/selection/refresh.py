@@ -68,6 +68,7 @@ class SelectionDataRefreshService:
         request: SelectRequest,
         unavailable_code: object,
         select_workflow_run_id: str,
+        force_refresh: bool = False,
     ) -> SelectionDataRefreshResult:
         reason = str(getattr(unavailable_code, "value", unavailable_code))
         try:
@@ -82,19 +83,20 @@ class SelectionDataRefreshService:
             )
 
         with self._lock:
-            existing = self._store.load_latest_completed_selection_run(
-                market=request.market,
-                profile=request.profile,
-                trade_date=trade_date,
-                now=self._now_fn(),
-            )
-            if existing.is_available and existing.run is not None:
-                return SelectionDataRefreshResult(
-                    status="completed",
-                    selection_run_id=existing.run.run_plan.selection_run_id,
+            if not force_refresh:
+                existing = self._store.load_latest_completed_selection_run(
+                    market=request.market,
+                    profile=request.profile,
                     trade_date=trade_date,
-                    reason=f"{reason}:candidate_cache_valid",
+                    now=self._now_fn(),
                 )
+                if existing.is_available and existing.run is not None:
+                    return SelectionDataRefreshResult(
+                        status="completed",
+                        selection_run_id=existing.run.run_plan.selection_run_id,
+                        trade_date=trade_date,
+                        reason=f"{reason}:candidate_cache_valid",
+                    )
             active = self._store.load_active_data_run_record(
                 market=request.market,
                 profile=request.profile,
@@ -355,6 +357,8 @@ class SelectionDataRefreshService:
         return {"selectionProgress": _data_run_progress_for_user(record.data_run, trade_date=resolved_trade_date)}
 
     def _has_valid_completed_run_for_record(self, record: SelectionDataRunRecord) -> bool:
+        if record.data_run.status == SelectionDataRunStatus.COMPLETED:
+            return True
         if record.data_run.status != SelectionDataRunStatus.FAILED:
             return False
         return self._has_valid_completed_run_for_trade_date(

@@ -183,28 +183,20 @@ class ChannelTextInboundController:
             context_id=conversation_key,
             text=text,
         )
-
-        def run_select() -> None:
-            result = self._chat_controller.finish_channel_select_command(
-                request_id=message.request_id,
-                context_id=conversation_key,
-                text=text,
-            )
-            self._push_select_result_to_channel(
-                message=message,
-                conversation_key=conversation_key,
-                result=result,
-            )
-
-        self._background_submitter(run_select)
-        return self._remember(
-            message.request_id,
-            {
-                "handled": True,
-                "replyText": "收到，正在执行 /select 选股；完成后会显示在工作台。",
-                "state": "selection_processing",
-            },
+        result = self._chat_controller.finish_channel_select_command(
+            request_id=message.request_id,
+            context_id=conversation_key,
+            text=text,
         )
+        self._push_select_result_to_channel(
+            message=message,
+            conversation_key=conversation_key,
+            result=result,
+        )
+        selection = result.get("selection")
+        reply_text = _latest_selection_reply_text(result) or _extract_error(result) or "已收到 /select，但暂时没有返回选股结果。"
+        state = _selection_reply_state(selection) if isinstance(selection, dict) else "selection_unavailable"
+        return self._remember(message.request_id, {"handled": True, "replyText": reply_text, "state": state})
 
     def _handle_full_report_request(
         self,
@@ -451,7 +443,10 @@ def _looks_like_full_report_request(text: str) -> bool:
 
 def _looks_like_select_command(text: str) -> bool:
     normalized = text.strip().lower()
-    return normalized == "/select" or re.match(r"^/select\s+\d{4}-\d{2}-\d{2}$", normalized) is not None
+    return (
+        re.match(r"^/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?$", normalized)
+        is not None
+    )
 
 
 def _extract_error(result: dict[str, Any]) -> str | None:

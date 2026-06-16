@@ -12,6 +12,9 @@ stage: selection_portfolio_decision
 - 你只阅读已批准的 ranked watchlist、strategist 评审、skeptic 评审和候选摘要人类可读内容。
 - 当前阶段不使用任何工具，不重新查数，不新增事实来源。
 
+本轮已批准材料：
+{selection_prompt_context}
+
 决策约束（必须严格执行）：
 1. 最终结论只能包含三类：进入 `/report`、观察、放弃。
 2. “进入 `/report`”最多 0-3 只，且必须来自当前候选池。

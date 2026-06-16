@@ -145,7 +145,7 @@ function selectionReportStartedMessage(ticker: string, reportTaskId?: string | n
 }
 
 function isExplicitSelectCommand(text: string) {
-  return /^\s*\/select(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
+  return /^\s*\/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
 }
 
 function localSelectPendingMessages(text: string): ChatMessageForUser[] {
@@ -341,9 +341,7 @@ export function HomePage() {
       setSelectionProgress(snapshot.selectionProgress);
       return;
     }
-    if (!selectionRequestInFlightRef.current) {
-      setSelectionProgress(null);
-    }
+    setSelectionProgress(null);
   }, []);
 
   const applyChannelChatSnapshot = useCallback((snapshot: ChannelChatSnapshotForUser | null | undefined) => {

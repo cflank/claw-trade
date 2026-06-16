@@ -225,6 +225,7 @@ class SelectRequest:
     trade_date: str | None
     user_id: str | None
     created_at: str
+    force_refresh: bool = False
     entry_point: WorkflowEntryPoint = WorkflowEntryPoint.SELECT_COMMAND
     system_context_policy: SelectionSystemContextPolicy = SelectionSystemContextPolicy.SINGLE_WORKER_MINIMAL
 

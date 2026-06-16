@@ -560,7 +560,14 @@ class ChatController:
 
     @staticmethod
     def _is_explicit_select_command(text: str) -> bool:
-        return re.match(r"^\s*/select(?:\s+\d{4}-\d{2}-\d{2})?\s*$", text, re.IGNORECASE) is not None
+        return (
+            re.match(
+                r"^\s*/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$",
+                text,
+                re.IGNORECASE,
+            )
+            is not None
+        )
 
     def _assert_report_model_ready_for_draft(self, draft: Any) -> None:
         if self._report_model_ready_checker is None:

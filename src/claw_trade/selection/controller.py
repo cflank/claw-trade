@@ -427,6 +427,45 @@ class SelectionController:
         evidence_dir = self._workflow_evidence_root / workflow_run_id
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
+        if request.force_refresh:
+            payload = _base_workflow_evidence_payload(
+                request=request,
+                workflow_run_id=workflow_run_id,
+                status="force_refresh_requested",
+                selection_run_id=None,
+                reason="force_refresh_requested",
+            )
+            refresh_result = self._request_data_refresh_if_needed(
+                request=request,
+                unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                workflow_run_id=workflow_run_id,
+                force_refresh=True,
+            )
+            if refresh_result is not None:
+                payload["data_refresh"] = _data_refresh_payload(refresh_result)
+                evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                if refresh_result.status in {"started", "already_running"}:
+                    return SelectCommandResult(
+                        code=SelectCommandCode.DATA_REFRESH_REQUESTED,
+                        chat_text=_data_refresh_chat_text(refresh_result),
+                        select_workflow_run_id=workflow_run_id,
+                        evidence_path=evidence_path,
+                        unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                        data_refresh=refresh_result,
+                    )
+                return SelectCommandResult(
+                    code=SelectCommandCode.UNAVAILABLE,
+                    chat_text=_data_refresh_unavailable_chat_text(
+                        SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                        refresh_result,
+                    ),
+                    select_workflow_run_id=workflow_run_id,
+                    evidence_path=evidence_path,
+                    unavailable_code=SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN,
+                    failure_reason=refresh_result.error_code or refresh_result.reason,
+                    data_refresh=refresh_result,
+                )
+
         gate = self.load_latest_completed_for_select(request)
         if not gate.is_available:
             assert gate.unavailable_code is not None
@@ -711,6 +750,7 @@ class SelectionController:
         request: SelectRequest,
         unavailable_code: SelectUnavailableCode,
         workflow_run_id: str,
+        force_refresh: bool = False,
     ) -> SelectionDataRefreshResult | None:
         if unavailable_code not in _REFRESHABLE_UNAVAILABLE_CODES:
             return None
@@ -727,6 +767,7 @@ class SelectionController:
                 request=request,
                 unavailable_code=unavailable_code,
                 select_workflow_run_id=workflow_run_id,
+                force_refresh=force_refresh,
             )
         except Exception as exc:  # noqa: BLE001
             return SelectionDataRefreshResult(
@@ -748,7 +789,11 @@ def _parse_select_request(
 ) -> SelectRequest:
     text = raw_text.strip()
     trade_date: str | None = None
-    matched = re.match(r"^\s*/select(?:\s+(?P<trade_date>\d{4}-\d{2}-\d{2}))?\s*$", text, re.IGNORECASE)
+    matched = re.match(
+        r"^\s*/select(?:\s+(?P<refresh>refresh|刷新))?(?:\s+(?P<trade_date>\d{4}-\d{2}-\d{2}))?\s*$",
+        text,
+        re.IGNORECASE,
+    )
     if matched and matched.group("trade_date"):
         trade_date = matched.group("trade_date")
         date.fromisoformat(trade_date)
@@ -760,6 +805,7 @@ def _parse_select_request(
         trade_date=trade_date,
         user_id=user_id,
         created_at=created_at,
+        force_refresh=bool(matched and matched.group("refresh")),
         entry_point=WorkflowEntryPoint.SELECT_COMMAND,
         system_context_policy=SelectionSystemContextPolicy.SINGLE_WORKER_MINIMAL,
     )
