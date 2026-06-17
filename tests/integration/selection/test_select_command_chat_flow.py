@@ -346,6 +346,60 @@ def _candidate_cache_manifest_payload(*, run_id: str, body_sha: str) -> dict[str
     }
 
 
+@pytest.mark.parametrize(
+    ("text", "market"),
+    (
+        ("/select", "CN_A"),
+        ("/select 1", "CN_A"),
+        ("/select 2", "CRYPTO"),
+        ("/select CRYPTO refresh", "CRYPTO"),
+    ),
+)
+def test_select_command_chat_flow_parses_market_tokens(text: str, market: str) -> None:
+    controller, _, _ = _build_controller()
+
+    result = controller.send_chat_message(
+        request_id=f"sel-command-market-{market}-{abs(hash(text))}",
+        context_id=f"ctx-command-market-{market}-{abs(hash(text))}",
+        text=text,
+    )
+
+    assert "selection" in result
+    evidence_path = Path(result["selection"]["evidencePath"])
+    evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence_payload["market"] == market
+    assert evidence_payload["profile"] == market
+
+
+@pytest.mark.parametrize("text", ("/select refresh 2", "/select refresh CRYPTO"))
+def test_select_command_chat_flow_rejects_refresh_before_market(text: str) -> None:
+    controller, _, _ = _build_controller()
+
+    result = controller.send_chat_message(
+        request_id=f"sel-refresh-before-market-{text.split()[-1]}",
+        context_id=f"ctx-refresh-before-market-{text.split()[-1]}",
+        text=text,
+    )
+
+    assert "selection" not in result
+    assert result["error"]["code"] == "INVALID_INPUT"
+
+
+@pytest.mark.parametrize("text", ("select 1", "select 2"))
+def test_bare_select_number_uses_normal_chat_flow(text: str) -> None:
+    controller, transport, _ = _build_controller()
+
+    result = controller.send_chat_message(
+        request_id=f"sel-bare-normal-{text[-1]}",
+        context_id=f"ctx-bare-normal-{text[-1]}",
+        text=text,
+    )
+
+    assert "selection" not in result
+    assert result["assistantReply"] == f"echo:{text}"
+    assert transport.calls == 1
+
+
 def _write_columnar_manifest(plan: SelectionRunPlan):
     writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
     writer.add_daily_rows(

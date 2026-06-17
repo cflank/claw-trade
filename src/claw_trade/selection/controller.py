@@ -903,27 +903,61 @@ def _parse_select_request(
     now_fn: Callable[[], datetime],
 ) -> SelectRequest:
     text = raw_text.strip()
+    tokens = text.split()
+    if not tokens or tokens[0].lower() != "/select":
+        raise ValueError("invalid_select_command")
+    market = SelectionMarket.CN_A
+    profile = SelectionProfile.CN_A
+    force_refresh = False
     trade_date: str | None = None
-    matched = re.match(
-        r"^\s*/select(?:\s+(?P<refresh>refresh|刷新))?(?:\s+(?P<trade_date>\d{4}-\d{2}-\d{2}))?\s*$",
-        text,
-        re.IGNORECASE,
-    )
-    if matched and matched.group("trade_date"):
-        trade_date = matched.group("trade_date")
-        date.fromisoformat(trade_date)
+    rest = tokens[1:]
+    if rest:
+        first = rest[0]
+        parsed_market = _select_market_from_token(first)
+        if parsed_market is not None:
+            market = parsed_market
+            profile = SelectionProfile(parsed_market.value)
+            rest = rest[1:]
+            if rest:
+                if rest[0].lower() not in {"refresh", "刷新"}:
+                    raise ValueError("invalid_select_command")
+                force_refresh = True
+                rest = rest[1:]
+        elif first.lower() in {"refresh", "刷新"}:
+            force_refresh = True
+            rest = rest[1:]
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", first):
+            trade_date = first
+            date.fromisoformat(trade_date)
+            rest = rest[1:]
+        else:
+            raise ValueError("invalid_select_command")
+        if rest:
+            if len(rest) != 1 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", rest[0]):
+                raise ValueError("invalid_select_command")
+            trade_date = rest[0]
+            date.fromisoformat(trade_date)
     created_at = now_fn().isoformat()
     return SelectRequest(
         request_id=request_id,
-        market=SelectionMarket.CN_A,
-        profile=SelectionProfile.CN_A,
+        market=market,
+        profile=profile,
         trade_date=trade_date,
         user_id=user_id,
         created_at=created_at,
-        force_refresh=bool(matched and matched.group("refresh")),
+        force_refresh=force_refresh,
         entry_point=WorkflowEntryPoint.SELECT_COMMAND,
         system_context_policy=SelectionSystemContextPolicy.SINGLE_WORKER_MINIMAL,
     )
+
+
+def _select_market_from_token(token: str) -> SelectionMarket | None:
+    normalized = token.lower()
+    if normalized in {"1", "cn_a", "a"} or token == "A股":
+        return SelectionMarket.CN_A
+    if normalized in {"2", "crypto"} or token == "加密":
+        return SelectionMarket.CRYPTO
+    return None
 
 
 def _build_select_workflow_run_id(*, request_id: str, now_fn: Callable[[], datetime]) -> str:
