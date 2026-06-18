@@ -355,7 +355,7 @@ def test_single_worker_openclaw_failed_does_not_read_evidence(tmp_path: Path) ->
 
 def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
-    state = harness.store.create_run(replace(_request(), frontline_execution_mode="parallel"))
+    state = harness.store.create_run(_request())
     batch = StageBatch(
         run_id=state.run_id,
         stage=Stage.FRONTLINE,
@@ -402,9 +402,9 @@ def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None
     assert result.failures == ()
 
 
-def test_frontline_stage_batch_defaults_to_serial(tmp_path: Path) -> None:
+def test_frontline_stage_batch_respects_explicit_serial(tmp_path: Path) -> None:
     harness = _RunnerHarness(tmp_path)
-    state = harness.store.create_run(_request())
+    state = harness.store.create_run(replace(_request(), frontline_execution_mode="serial"))
     batch = StageBatch(
         run_id=state.run_id,
         stage=Stage.FRONTLINE,

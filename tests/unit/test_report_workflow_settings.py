@@ -31,10 +31,10 @@ def test_load_report_workflow_settings_reads_env_values() -> None:
     assert settings.default_currency_symbol == "¥"
 
 
-def test_load_report_workflow_settings_defaults_frontline_mode_to_serial() -> None:
+def test_load_report_workflow_settings_defaults_frontline_mode_to_parallel() -> None:
     settings = load_report_workflow_settings({})
 
-    assert settings.frontline_execution_mode == "serial"
+    assert settings.frontline_execution_mode == "parallel"
 
 
 def test_load_report_workflow_settings_rejects_rounds_above_hard_limit() -> None:

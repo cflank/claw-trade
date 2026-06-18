@@ -10,7 +10,6 @@ import { MessageStream } from '../components/MessageStream';
 import { RightRail } from '../components/RightRail';
 import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
-  askReportQuestion,
   confirmIntentDraft,
   confirmSelectionReport,
   createIntentDraft,
@@ -22,8 +21,10 @@ import {
   getReportQueueSnapshot,
   getSelectionRefreshSnapshot,
   listSavedReports,
+  listWorkerChatWorkers,
   loadLlmSettings,
   sendChatMessage,
+  sendWorkerChat,
   type ChannelChatSnapshotForUser,
   type ChannelStatusForUser,
   type ChatContextForUser,
@@ -36,6 +37,8 @@ import {
   type SavedReportForUser,
   type SelectionProgressForUser,
   type SelectionReportForUser,
+  type WorkerChatReplyForUser,
+  type WorkerChatWorkerForUser,
 } from '../api/workspace';
 
 const DEFAULT_CONTEXT: ChatContextForUser = {
@@ -47,6 +50,8 @@ const DEFAULT_CONTEXT: ChatContextForUser = {
 };
 const REPORT_INPUT_FORMAT_HINT = '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL；加密 AR/USDT。裸 AR 按美股，写加密请用 AR/USDT。';
 const DEVICE_UI_HREF = '/api/ui/open-device-interface';
+const WORKER_CHAT_UNAVAILABLE_MESSAGE = 'Worker chat 暂无可用 worker，请刷新页面后重试。';
+const WORKER_CHAT_LOAD_FAILED_MESSAGE = 'Worker chat 菜单加载失败，请刷新页面后重试。';
 
 const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
   runningTask: null,
@@ -86,6 +91,7 @@ type ReportQaEntry = {
   id: string;
   question: string;
   answer: string;
+  workerDisplayName: string;
   status: 'pending' | 'answered' | 'failed';
 };
 
@@ -146,6 +152,41 @@ function selectionReportStartedMessage(ticker: string, reportTaskId?: string | n
 
 function isExplicitSelectCommand(text: string) {
   return /^\s*\/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
+}
+
+function isWorkspaceCommand(text: string) {
+  return /^\s*\//.test(text);
+}
+
+function defaultWorkerId(workers: WorkerChatWorkerForUser[]) {
+  return workers.find((worker) => worker.default)?.workerId ?? workers[0]?.workerId ?? null;
+}
+
+function localWorkerChatMessages(
+  requestId: string,
+  text: string,
+  reply: WorkerChatReplyForUser,
+  contextKind: ChatContextForUser['kind'],
+): ChatMessageForUser[] {
+  const createdAt = new Date().toISOString();
+  return [
+    {
+      messageId: `local-worker-user-${requestId}`,
+      contextKind,
+      actor: 'user',
+      kind: 'plain',
+      text,
+      createdAt,
+    },
+    {
+      messageId: `local-worker-assistant-${requestId}`,
+      contextKind,
+      actor: 'assistant',
+      kind: 'plain',
+      text: reply.text,
+      createdAt: new Date().toISOString(),
+    },
+  ];
 }
 
 function localSelectPendingMessages(text: string): ChatMessageForUser[] {
@@ -289,6 +330,10 @@ export function HomePage() {
   const [activeSelectionDetail, setActiveSelectionDetail] = useState<SelectionReportForUser | null>(null);
   const [selectionProgress, setSelectionProgress] = useState<SelectionProgressForUser | null>(null);
   const [qaEntries, setQaEntries] = useState<ReportQaEntry[]>([]);
+  const [workerChatWorkers, setWorkerChatWorkers] = useState<WorkerChatWorkerForUser[]>([]);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  const [selectedReportWorkerId, setSelectedReportWorkerId] = useState<string | null>(null);
+  const [workerChatUnavailableMessage, setWorkerChatUnavailableMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingChatCommand, setPendingChatCommand] = useState<PendingChatCommand | null>(null);
@@ -300,6 +345,7 @@ export function HomePage() {
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const channelRefreshInFlightRef = useRef(false);
   const selectionRequestInFlightRef = useRef(false);
+  const localWorkerChatMessagesRef = useRef(false);
   const activeDetailRef = useRef<ReportDetailForUser | null>(null);
   const activeSelectionDetailRef = useRef<SelectionReportForUser | null>(null);
 
@@ -355,6 +401,9 @@ export function HomePage() {
     if (activeDetailRef.current || activeSelectionDetailRef.current) {
       return;
     }
+    if (localWorkerChatMessagesRef.current) {
+      return;
+    }
     setContext(snapshot.context);
     setMessages(snapshot.messages);
     if (snapshot.confirmationCards) {
@@ -367,14 +416,28 @@ export function HomePage() {
   const loadWorkspace = useCallback(async () => {
     setError('');
     try {
-      const [historyResult, queueResult, llmResult, channelChatResult, selectionRefreshResult] = await Promise.all([
+      const [historyResult, queueResult, llmResult, channelChatResult, selectionRefreshResult, workerChatResult] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
         loadLlmSettings().catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
+        listWorkerChatWorkers()
+          .then((result) => ({ workers: result.workers, failed: false }))
+          .catch(() => ({ workers: [], failed: true })),
       ]);
+      const workers = Array.isArray(workerChatResult.workers) ? workerChatResult.workers : [];
       setSavedReports(historyResult.items);
+      setWorkerChatWorkers(workers);
+      setWorkerChatUnavailableMessage(
+        workers.length > 0 ? '' : workerChatResult.failed ? WORKER_CHAT_LOAD_FAILED_MESSAGE : WORKER_CHAT_UNAVAILABLE_MESSAGE,
+      );
+      setSelectedWorkerId((current) =>
+        current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
+      );
+      setSelectedReportWorkerId((current) =>
+        current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
+      );
       applyQueueSnapshot(queueResult);
       applyChannelChatSnapshot(channelChatResult);
       applySelectionRefreshSnapshot(selectionRefreshResult);
@@ -442,6 +505,7 @@ export function HomePage() {
   const openReport = useCallback(async (report: SavedReportForUser) => {
     setError('');
     setQaEntries([]);
+    setSelectedReportWorkerId(defaultWorkerId(workerChatWorkers));
     try {
       const [detailResult, chartResult] = await Promise.all([
         getReportDetail(report.id),
@@ -465,7 +529,7 @@ export function HomePage() {
     } catch (openError) {
       setError((openError as Error).message);
     }
-  }, []);
+  }, [workerChatWorkers]);
 
   const printReportAsPdf = useCallback(() => {
     window.print();
@@ -481,6 +545,11 @@ export function HomePage() {
 
   const activeReportId = context.activeReportId ?? activeDetail?.report.id ?? null;
   const activeSelectionReportId = activeSelectionDetail?.id ?? null;
+  const selectedReportWorker = workerChatWorkers.find((worker) => worker.workerId === selectedReportWorkerId) ?? null;
+  const reportWorkerChatDisabled = sending || !selectedReportWorkerId;
+  const reportWorkerChatPlaceholder = selectedReportWorker
+    ? `和${selectedReportWorker.displayName}聊这份报告`
+    : 'Worker chat 暂不可用';
   const selectionReports = useMemo(() => {
     const reports = new Map<string, SelectionReportForUser>();
     for (const message of messages) {
@@ -541,6 +610,7 @@ export function HomePage() {
   const onSendChat = useCallback(
     async (text: string) => {
       const isSelectCommand = isExplicitSelectCommand(text);
+      const useCommandChat = isWorkspaceCommand(text);
       setSending(true);
       setPendingChatCommand(isSelectCommand ? 'select' : 'chat');
       setError('');
@@ -550,11 +620,30 @@ export function HomePage() {
         setSelectionProgress(runningSelectionProgress(text));
       }
       try {
+        if (!useCommandChat) {
+          if (!selectedWorkerId) {
+            throw new Error(workerChatUnavailableMessage || '请先选择一个 worker。');
+          }
+          const requestId = nextRequestId();
+          const reply = await sendWorkerChat({
+            requestId,
+            mode: 'generic_worker_chat',
+            workerId: selectedWorkerId,
+            text,
+            conversationId: context.contextId,
+          });
+          localWorkerChatMessagesRef.current = true;
+          setMessages((current) => [...current, ...localWorkerChatMessages(requestId, text, reply, context.kind)]);
+          setActiveDetail(null);
+          setActiveSelectionDetail(null);
+          return;
+        }
         const result = await sendChatMessage({
           requestId: nextRequestId(),
           contextId: context.contextId,
           text,
         });
+        localWorkerChatMessagesRef.current = false;
         setContext(result.context);
         setMessages(attachSelectionMetadata(result.messages, result.selection));
         mergeConfirmationCard(result.confirmationCard);
@@ -586,7 +675,15 @@ export function HomePage() {
         setPendingChatCommand(null);
       }
     },
-    [applyQueueSnapshot, applySelectionRefreshSnapshot, context.contextId, mergeConfirmationCard],
+    [
+      applyQueueSnapshot,
+      applySelectionRefreshSnapshot,
+      context.contextId,
+      context.kind,
+      mergeConfirmationCard,
+      selectedWorkerId,
+      workerChatUnavailableMessage,
+    ],
   );
 
   const onAskReport = useCallback(
@@ -594,28 +691,40 @@ export function HomePage() {
       if (!activeDetail) {
         return;
       }
+      if (!selectedReportWorkerId) {
+        setError(workerChatUnavailableMessage || WORKER_CHAT_UNAVAILABLE_MESSAGE);
+        return;
+      }
       setSending(true);
       setError('');
       const requestId = nextRequestId();
       const entryId = `qa-${requestId}`;
+      const workerDisplayName =
+        workerChatWorkers.find((worker) => worker.workerId === selectedReportWorkerId)?.displayName ?? 'worker';
       setQaEntries((current) => [
         ...current,
         {
           id: entryId,
           question: text,
           answer: '',
+          workerDisplayName,
           status: 'pending',
         },
       ]);
       try {
-        const reply = await askReportQuestion({
+        const reply = await sendWorkerChat({
           requestId,
+          mode: 'report_worker_chat',
+          workerId: selectedReportWorkerId,
           reportId: activeDetail.report.id,
           text,
+          conversationId: `report-${activeDetail.report.id}`,
         });
         setQaEntries((current) =>
           current.map((entry) =>
-            entry.id === entryId ? { ...entry, answer: reply.text, status: 'answered' } : entry,
+            entry.id === entryId
+              ? { ...entry, answer: reply.text, workerDisplayName: reply.workerDisplayName, status: 'answered' }
+              : entry,
           ),
         );
       } catch (askError) {
@@ -628,7 +737,7 @@ export function HomePage() {
         setSending(false);
       }
     },
-    [activeDetail],
+    [activeDetail, selectedReportWorkerId, workerChatUnavailableMessage, workerChatWorkers],
   );
 
   const openReportById = useCallback(
@@ -640,6 +749,7 @@ export function HomePage() {
       }
       setError('');
       setQaEntries([]);
+      setSelectedReportWorkerId(defaultWorkerId(workerChatWorkers));
       try {
         const [detailResult, chartResult] = await Promise.all([
           getReportDetail(reportId),
@@ -664,7 +774,7 @@ export function HomePage() {
         setError((openError as Error).message);
       }
     },
-    [openReport, savedReports],
+    [openReport, savedReports, workerChatWorkers],
   );
 
   useEffect(() => {
@@ -895,6 +1005,7 @@ export function HomePage() {
   const modelState = modelStatusState(modelDraft);
   const showModelWarning = !loading && !isReading && modelState !== 'ready';
   const modelWarningIsError = modelState === 'failed';
+  const mainComposerDisabled = sending;
 
   return (
     <AppShell>
@@ -964,32 +1075,43 @@ export function HomePage() {
               <article className="ct-report-prose" data-testid="reading-report-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{activeDetail.markdown}</ReactMarkdown>
               </article>
-              <div className="ct-qa-list" data-testid="reading-qa-list">
-                {qaEntries.map((entry) => (
-                  <section className={`ct-qa-item ct-qa-${entry.status}`} key={entry.id}>
-                    <div className="ct-qa-row">
-                      <span>你</span>
-                      <p>{entry.question}</p>
-                    </div>
-                    <div className="ct-qa-row">
-                      <span>助手</span>
-                      {entry.status === 'pending' ? (
-                        <p>正在回答...</p>
-                      ) : (
-                        <div className="ct-qa-answer-markdown">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.answer}</ReactMarkdown>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                ))}
-              </div>
-              <Composer
-                onSend={onAskReport}
-                disabled={sending}
-                placeholder="围绕当前报告继续追问"
-                buttonLabel={sending ? '追问中' : '追问'}
-              />
+              <section className="ct-reading-chat" aria-label="报告 worker 聊天">
+                <div className="ct-qa-list" data-testid="reading-qa-list">
+                  {qaEntries.map((entry) => (
+                    <section className={`ct-qa-item ct-qa-${entry.status}`} key={entry.id}>
+                      <div className="ct-qa-row">
+                        <span>你</span>
+                        <p>{entry.question}</p>
+                      </div>
+                      <div className="ct-qa-row">
+                        <span>{entry.workerDisplayName}</span>
+                        {entry.status === 'pending' ? (
+                          <p>worker 正在分析...</p>
+                        ) : (
+                          <div className="ct-qa-answer-markdown">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.answer}</ReactMarkdown>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+                {workerChatUnavailableMessage ? (
+                  <div className="ct-notice" role="status">
+                    {workerChatUnavailableMessage}
+                  </div>
+                ) : null}
+                <Composer
+                  onSend={onAskReport}
+                  disabled={reportWorkerChatDisabled}
+                  placeholder={reportWorkerChatPlaceholder}
+                  buttonLabel={sending ? '发送中' : '发送'}
+                  workerChatEnabled
+                  workers={workerChatWorkers}
+                  selectedWorkerId={selectedReportWorkerId ?? undefined}
+                  onWorkerChange={(workerId) => setSelectedReportWorkerId(workerId)}
+                />
+              </section>
             </>
           ) : activeSelectionDetail ? (
             <article className="ct-report-prose" data-testid="reading-selection-report-body">
@@ -1011,12 +1133,21 @@ export function HomePage() {
                 onConfirmSelectionCandidate={(item, ticker) => void confirmSelectionCandidate(item, ticker)}
                 onOpenSelectionReport={openSelectionReportFromMessage}
               />
+              {workerChatUnavailableMessage ? (
+                <div className="ct-notice" role="status">
+                  {workerChatUnavailableMessage}
+                </div>
+              ) : null}
               <Composer
                 onSend={onSendChat}
-                disabled={sending}
+                disabled={mainComposerDisabled}
                 placeholder="输入问题，或提交报告任务需求"
                 buttonLabel={pendingChatCommand === 'select' ? '选股中' : sending ? '发送中' : '发送'}
                 hint={REPORT_INPUT_FORMAT_HINT}
+                workerChatEnabled
+                workers={workerChatWorkers}
+                selectedWorkerId={selectedWorkerId ?? undefined}
+                onWorkerChange={(workerId) => setSelectedWorkerId(workerId)}
               />
             </>
           )}

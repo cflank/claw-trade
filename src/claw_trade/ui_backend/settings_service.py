@@ -165,7 +165,7 @@ class SettingsService:
         )
         frontline_execution_mode = str(
             patch.get("frontlineExecutionMode", current.frontline_execution_mode)
-        ).strip() or "serial"
+        ).strip() or "parallel"
         if frontline_execution_mode not in {"serial", "parallel"}:
             raise UiBoundaryError("INVALID_INPUT", "frontlineExecutionMode 只支持 serial 或 parallel。")
         snapshot = ReportWorkflowSettingsSnapshot(

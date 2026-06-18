@@ -16,6 +16,7 @@ import type {
   DeleteSavedReportOutput,
   GetReportChartEvidenceOutput,
   ListDataSourcesOutput,
+  ListWorkerChatWorkersOutput,
   ListSavedReportsOutput,
   LoadLlmSettingsOutput,
   PriceAlertForUser,
@@ -38,12 +39,14 @@ import type {
   SelectionRefreshSnapshotForUser,
   SendChatMessageInput,
   SendChatMessageOutput,
+  SendWorkerChatInput,
   TestDataSourceInput,
   TestDataSourceOutput,
   TestEmbeddingViaOpenVikingInput,
   TestEmbeddingViaOpenVikingOutput,
   TestLlmViaOpenClawInput,
   TestLlmViaOpenClawOutput,
+  WorkerChatReplyForUser,
 } from './contracts';
 
 type JsonRecord = Record<string, unknown>;
@@ -131,6 +134,17 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function sendChatMessage(input: SendChatMessageInput) {
   return requestJson<SendChatMessageOutput>('/api/ui/send-chat-message', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function listWorkerChatWorkers() {
+  return requestJson<ListWorkerChatWorkersOutput>('/api/ui/list-worker-chat-workers');
+}
+
+export function sendWorkerChat(input: SendWorkerChatInput) {
+  return requestJson<WorkerChatReplyForUser>('/api/ui/send-worker-chat', {
     method: 'POST',
     body: JSON.stringify(input),
   });

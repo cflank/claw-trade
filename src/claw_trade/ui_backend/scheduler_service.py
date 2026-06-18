@@ -375,7 +375,7 @@ class SchedulerService:
         return {
             "maxDebateRounds": int(source.get("maxDebateRounds", 1)),
             "maxRiskDiscussRounds": int(source.get("maxRiskDiscussRounds", 1)),
-            "frontlineExecutionMode": str(source.get("frontlineExecutionMode", "serial")),
+            "frontlineExecutionMode": str(source.get("frontlineExecutionMode", "parallel")),
             "defaultProfile": str(source.get("defaultProfile", profile)),
             "defaultMarket": str(source.get("defaultMarket", market.value)),
             "defaultCurrency": str(source.get("defaultCurrency", currency)),

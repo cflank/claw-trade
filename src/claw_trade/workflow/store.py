@@ -355,7 +355,7 @@ class WorkflowStore:
                 "max_risk_discuss_rounds",
             ),
             frontline_execution_mode=self._as_str(
-                payload.get("frontline_execution_mode", "serial"),
+                payload.get("frontline_execution_mode", "parallel"),
                 "frontline_execution_mode",
             ),
         )

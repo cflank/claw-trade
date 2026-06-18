@@ -6,7 +6,7 @@ from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
-from claw_trade.web.state import _handle_completed_workflow_report
+from claw_trade.web.state import _handle_completed_workflow_report, _save_completed_workflow_report
 
 
 class _FailPdfRenderer:
@@ -156,3 +156,68 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
             ),
         }
     ]
+
+
+def test_select_handoff_saved_report_includes_boundary_notice_without_polluting_summary(tmp_path) -> None:
+    run_dir = tmp_path / "run-select-report"
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "final-report.md").write_text(
+        "# 贵州茅台（600519.SH）投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终建议：卖出，等待基本面重新验证。\n",
+        encoding="utf-8",
+    )
+    repository = ReportRepository()
+    task = SimpleNamespace(
+        task_id="task-select",
+        run_id="run-select-report",
+        instrument_code="600519.SH",
+        instrument_name="贵州茅台",
+        market="CN_A",
+        selection_stage_marker="selection_report_handoff",
+    )
+    workflow_state = SimpleNamespace(
+        run_id="run-select-report",
+        run_dir=run_dir,
+        updated_at="2026-06-17T10:00:00Z",
+    )
+
+    report_id = _save_completed_workflow_report(repository, task=task, workflow_state=workflow_state)
+
+    saved = repository.get_report(report_id)
+    assert saved is not None
+    assert "本报告由 select 候选股票触发生成" in saved.markdown
+    assert "不代表买入建议" in saved.markdown
+    assert saved.summary_snippet == "组合经理最终建议：卖出，等待基本面重新验证。"
+
+
+def test_regular_saved_report_does_not_include_select_boundary_notice(tmp_path) -> None:
+    run_dir = tmp_path / "run-regular-report"
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "final-report.md").write_text(
+        "# BTC 报告\n\n"
+        "## 投资建议\n"
+        "维持观察，等待突破确认。\n",
+        encoding="utf-8",
+    )
+    repository = ReportRepository()
+    task = SimpleNamespace(
+        task_id="task-regular",
+        run_id="run-regular-report",
+        instrument_code="BTC",
+        instrument_name="Bitcoin",
+        market="CRYPTO",
+    )
+    workflow_state = SimpleNamespace(
+        run_id="run-regular-report",
+        run_dir=run_dir,
+        updated_at="2026-06-17T10:00:00Z",
+    )
+
+    report_id = _save_completed_workflow_report(repository, task=task, workflow_state=workflow_state)
+
+    saved = repository.get_report(report_id)
+    assert saved is not None
+    assert "本报告由 select 候选股票触发生成" not in saved.markdown

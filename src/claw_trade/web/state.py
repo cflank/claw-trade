@@ -71,11 +71,18 @@ from claw_trade.ui_backend.report_repository import ReportRepository, UiProductE
 from claw_trade.ui_backend.scheduler_service import SchedulerService
 from claw_trade.ui_backend.settings_service import SettingsService
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder, render_completion_summary_text
+from claw_trade.ui_backend.worker_chat import WorkerChatController
+from claw_trade.ui_backend.worker_chat_openclaw import OpenClawWorkerChatClient
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 from claw_trade.web.settings import ResearchUiServerSettings
 
 _DEFAULT_WORKFLOW_CREATE_TIMEOUT_SECONDS = 30.0
+_SELECTION_REPORT_HANDOFF_MARKER = "selection_report_handoff"
+_SELECT_TRIGGERED_REPORT_NOTICE = (
+    "> 本报告由 select 候选股票触发生成。select 仅表示该股票具备进一步研究价值，"
+    "不代表买入建议。报告结论由完整研究流程独立生成，可能与 select 候选方向不同。"
+)
 
 
 class _ControlWorkflowRunner:
@@ -199,6 +206,7 @@ class UiHttpServices:
     summary_builder: CompletionSummaryBuilder
     pdf_export_service: PdfExportService
     report_question_service: ReportQuestionService
+    worker_chat_controller: WorkerChatController
     data_source_settings: DataSourceSettingsService
     channel_bridge: ChannelBridge
     channel_text_inbound: ChannelTextInboundController
@@ -310,6 +318,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         context_policy=ReportQaContextPolicy(max_total_chars=_report_qa_max_chars()),
         context_retriever=ReportContextRetriever(run_root=run_root),
     )
+    worker_chat_controller = WorkerChatController(
+        repository,
+        OpenClawWorkerChatClient(rpc_client),
+    )
     data_source_settings = DataSourceSettingsService(
         data_source_store=data_source_settings_stores.data_source_store,
         secret_store=data_source_settings_stores.secret_store,
@@ -356,6 +368,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         summary_builder=summary_builder,
         pdf_export_service=pdf_export_service,
         report_question_service=report_question_service,
+        worker_chat_controller=worker_chat_controller,
         data_source_settings=data_source_settings,
         channel_bridge=channel_bridge,
         channel_text_inbound=channel_text_inbound,
@@ -382,7 +395,8 @@ def _save_completed_workflow_report(
 ) -> str:
     run_dir = Path(getattr(workflow_state, "run_dir"))
     report_path = run_dir / "reports" / "final-report.md"
-    markdown = report_path.read_text(encoding="utf-8")
+    original_markdown = report_path.read_text(encoding="utf-8")
+    markdown = _with_select_triggered_report_notice(original_markdown, task=task)
     generated_at = str(getattr(workflow_state, "updated_at", "") or "")
     report_id = str(
         getattr(workflow_state, "run_id", "")
@@ -396,10 +410,33 @@ def _save_completed_workflow_report(
         market=str(getattr(task, "market")),
         title=f"{getattr(task, 'instrument_code')} 报告",
         markdown=markdown,
+        summary_snippet=_report_summary_snippet(original_markdown),
         generated_at=generated_at or None,
         asset_dir=run_dir / "reports" / "assets",
     )
     return report_id
+
+
+def _with_select_triggered_report_notice(markdown: str, *, task: object) -> str:
+    marker = str(getattr(task, "selection_stage_marker", "") or "").strip()
+    if marker != _SELECTION_REPORT_HANDOFF_MARKER:
+        return markdown
+    text = markdown.strip()
+    if not text or _SELECT_TRIGGERED_REPORT_NOTICE in text:
+        return markdown
+    lines = text.splitlines()
+    if lines and lines[0].startswith("# "):
+        return "\n".join((lines[0], "", _SELECT_TRIGGERED_REPORT_NOTICE, "", *lines[1:])).strip() + "\n"
+    return f"{_SELECT_TRIGGERED_REPORT_NOTICE}\n\n{text}\n"
+
+
+def _report_summary_snippet(markdown: str) -> str | None:
+    for line in markdown.splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        return text[:120]
+    return None
 
 
 def _handle_completed_workflow_report(

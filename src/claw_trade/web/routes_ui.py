@@ -17,6 +17,8 @@ from claw_trade.ui_backend.report_queue import QueueError
 from claw_trade.ui_backend.report_repository import UiProductError
 from claw_trade.ui_backend.scheduler_service import UiServiceError as SchedulerServiceError
 from claw_trade.ui_backend.settings_service import UiBoundaryError
+from claw_trade.ui_backend.worker_chat_catalog import list_worker_chat_menu
+from claw_trade.ui_backend.worker_chat_models import WorkerChatReplyForUser, WorkerChatRequest
 from claw_trade.ui_contracts.user_dto import to_user_payload
 from claw_trade.web.session import resolve_context_id
 from claw_trade.web.state import UiHttpServices, build_report_detail_payload
@@ -523,6 +525,29 @@ def ask_report_question(payload: AskReportQuestionRequest, request: Request) -> 
         return _exception_response(exc)
 
 
+@router.get("/list-worker-chat-workers")
+def list_worker_chat_workers() -> JSONResponse:
+    return _success_response({"workers": list_worker_chat_menu()})
+
+
+@router.post("/send-worker-chat")
+def send_worker_chat(payload: dict[str, object], request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        chat_request = WorkerChatRequest.from_api_payload(payload)
+        reply = services.worker_chat_controller.send_worker_chat(
+            request_id=chat_request.request_id,
+            mode=chat_request.mode,
+            worker_id=chat_request.worker_id,
+            text=chat_request.text,
+            conversation_id=chat_request.conversation_id,
+            report_id=chat_request.report_id,
+        )
+        return _success_response(WorkerChatReplyForUser.from_controller_reply(reply).to_api_payload())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.get("/get-report-chart-evidence")
 def get_report_chart_evidence(request: Request, reportId: str = Query(...)) -> JSONResponse:
     services = _services(request)
@@ -854,6 +879,10 @@ def _status_code_for_error(code: str) -> int:
         "REPORT_NOT_FOUND": 404,
         "REPORT_NOT_READY": 409,
         "REPORT_CONTEXT_TOO_LONG": 413,
+        "REPORT_WORKER_MATERIAL_NOT_FOUND": 409,
+        "WORKER_CHAT_IDEMPOTENCY_CONFLICT": 409,
+        "WORKER_CHAT_WORKER_UNAVAILABLE": 400,
+        "WORKER_CHAT_WORKER_CONFLICT": 400,
         "NOTIFICATION_UNAVAILABLE": 503,
         "FILE_SEND_UNSUPPORTED": 409,
         "ASSISTANT_UNAVAILABLE": 503,

@@ -4,7 +4,17 @@ import { useParams } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
 import { Composer } from '../components/Composer';
 import { InlineErrorState, ReportErrorState } from '../components/ErrorStates';
-import { askReportQuestion, getReportDetail, getReportChartEvidence, type ReportDetailForUser } from '../api/workspace';
+import {
+  getReportDetail,
+  getReportChartEvidence,
+  listWorkerChatWorkers,
+  sendWorkerChat,
+  type ReportDetailForUser,
+  type WorkerChatWorkerForUser,
+} from '../api/workspace';
+
+const WORKER_CHAT_UNAVAILABLE_MESSAGE = 'Worker chat 暂无可用 worker，请刷新页面后重试。';
+const WORKER_CHAT_LOAD_FAILED_MESSAGE = 'Worker chat 菜单加载失败，请刷新页面后重试。';
 
 function nextRequestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -13,9 +23,16 @@ function nextRequestId() {
   return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function defaultWorkerId(workers: WorkerChatWorkerForUser[]) {
+  return workers.find((worker) => worker.default)?.workerId ?? workers[0]?.workerId ?? null;
+}
+
 export function ReportDetailPage() {
   const { reportId = '' } = useParams<{ reportId: string }>();
   const [detail, setDetail] = useState<ReportDetailForUser | null>(null);
+  const [workerChatWorkers, setWorkerChatWorkers] = useState<WorkerChatWorkerForUser[]>([]);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  const [workerChatUnavailableMessage, setWorkerChatUnavailableMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [statusCode, setStatusCode] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -26,10 +43,21 @@ export function ReportDetailPage() {
     setLoading(true);
     setError('');
     try {
-      const [detailResult, chartResult] = await Promise.all([
+      const [detailResult, chartResult, workerChatResult] = await Promise.all([
         getReportDetail(reportId),
         getReportChartEvidence(reportId),
+        listWorkerChatWorkers()
+          .then((result) => ({ workers: result.workers, failed: false }))
+          .catch(() => ({ workers: [], failed: true })),
       ]);
+      const workers = Array.isArray(workerChatResult.workers) ? workerChatResult.workers : [];
+      setWorkerChatWorkers(workers);
+      setWorkerChatUnavailableMessage(
+        workers.length > 0 ? '' : workerChatResult.failed ? WORKER_CHAT_LOAD_FAILED_MESSAGE : WORKER_CHAT_UNAVAILABLE_MESSAGE,
+      );
+      setSelectedWorkerId((current) =>
+        current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
+      );
       setStatusCode(null);
       setDetail({
         ...detailResult,
@@ -54,13 +82,20 @@ export function ReportDetailPage() {
     if (!detail) {
       return;
     }
+    if (!selectedWorkerId) {
+      setError(workerChatUnavailableMessage || WORKER_CHAT_UNAVAILABLE_MESSAGE);
+      return;
+    }
     setSending(true);
     setError('');
     try {
-      const reply = await askReportQuestion({
+      const reply = await sendWorkerChat({
         requestId: nextRequestId(),
+        mode: 'report_worker_chat',
+        workerId: selectedWorkerId,
         reportId: detail.report.id,
         text,
+        conversationId: `report-${detail.report.id}`,
       });
       setAnswer(reply.text);
     } catch (askError) {
@@ -69,6 +104,12 @@ export function ReportDetailPage() {
       setSending(false);
     }
   }
+
+  const selectedWorker = workerChatWorkers.find((worker) => worker.workerId === selectedWorkerId) ?? null;
+  const workerChatDisabled = sending || !selectedWorkerId;
+  const workerChatPlaceholder = selectedWorker
+    ? `和${selectedWorker.displayName}聊这份报告`
+    : 'Worker chat 暂不可用';
 
   return (
     <AppShell>
@@ -83,20 +124,33 @@ export function ReportDetailPage() {
                 {detail.report.instrumentCode} · {detail.report.market}
               </p>
             </header>
+            <div className="ct-report-qa">
+              <h2>报告 worker 聊天</h2>
+              {workerChatUnavailableMessage ? (
+                <div className="ct-notice" role="status">
+                  {workerChatUnavailableMessage}
+                </div>
+              ) : null}
+              <Composer
+                onSend={askQuestion}
+                disabled={workerChatDisabled}
+                placeholder={workerChatPlaceholder}
+                buttonLabel={sending ? '发送中' : '发送'}
+                workerChatEnabled
+                workers={workerChatWorkers}
+                selectedWorkerId={selectedWorkerId ?? undefined}
+                onWorkerChange={(workerId) => setSelectedWorkerId(workerId)}
+              />
+              {answer ? (
+                <div className="ct-report-answer">
+                  <ReactMarkdown>{answer}</ReactMarkdown>
+                </div>
+              ) : null}
+              {error ? <InlineErrorState message={error} /> : null}
+            </div>
             <article className="ct-report-prose" data-testid="report-body">
               <ReactMarkdown>{detail.markdown}</ReactMarkdown>
             </article>
-            <div className="ct-report-qa">
-              <h2>报告问答</h2>
-              <Composer
-                onSend={askQuestion}
-                disabled={sending}
-                placeholder="围绕这份报告继续提问"
-                buttonLabel={sending ? '追问中' : '追问'}
-              />
-              {answer ? <div className="ct-report-answer">{answer}</div> : null}
-              {error ? <InlineErrorState message={error} /> : null}
-            </div>
           </section>
         ) : null}
       </main>

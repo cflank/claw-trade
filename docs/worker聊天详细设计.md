@@ -28,7 +28,7 @@ Worker 聊天分两种模式：
   -> 不使用 /report workflow stage prompt，不改写报告，不重跑 workflow
 ```
 
-两种模式都要求请求里有明确 worker。用户未手动点名时，UI 必须显式填入默认 worker：`portfolio_manager`。
+两种模式都要求请求里有明确 worker。唯一可信来源是 UI worker 选择器产生的结构化 `worker_id`。用户没有选择时，UI 必须显式填入默认 worker：`portfolio_manager`。
 
 ## 2. 背景和纠偏
 
@@ -81,19 +81,16 @@ Worker 聊天分两种模式：
 
 ### 4.1 必须明确 worker
 
-后端不得让 LLM 判断该叫谁。
+后端不得让 LLM 判断该叫谁，也不得从消息正文解析 worker。
 
-允许两种明确方式：
+唯一明确方式：
 
 ```text
 UI worker 选择器：
   worker_id = portfolio_manager
-
-文本点名：
-  @组合经理 这份判断最容易错在哪里？
 ```
 
-如果用户未点名，UI 可以默认选择 `@组合经理`，但发给后端的请求必须已经包含：
+用户输入 `@` 时，UI 只弹出 7 个可聊天 worker 的选择列表。用户必须从列表选择，选择结果成为结构化 `worker_id`。如果用户未选择，UI 默认选择 `@组合经理`，但发给后端的请求必须已经包含：
 
 ```text
 worker_id = portfolio_manager
@@ -103,7 +100,7 @@ worker_id = portfolio_manager
 
 API 或后端直调缺少 `worker_id` 必须返回 400。后端不得补 `portfolio_manager` 默认值，也不得把用户文本交给 LLM 选择 worker。
 
-如果请求字段 `worker_id` 与用户文本点名冲突，以结构化 `worker_id` 为准；实现可以返回确定性冲突错误要求用户重新发送，但不得让 LLM 仲裁冲突。
+用户手动输入 `@xxx` 但没有从列表选择时，前端和后端都不解析、不切换 worker、不报冲突错误。该文本按普通消息正文处理，或由 UI 忽略 `@` 标记；请求里的 `worker_id` 仍来自选择器当前值。
 
 ### 4.2 普通用户不显示内部名
 
@@ -149,7 +146,8 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 它是“和某个 OpenClaw worker 身份聊天”，不是报告流程。
 
 ```text
-用户 -> @组合经理 你一般怎么判断买入条件？
+用户选择：组合经理
+用户 -> 你一般怎么判断买入条件？
 系统 -> 以 portfolio_manager 的普通聊天身份回答
 ```
 
@@ -251,10 +249,10 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 
 ### 6.3 材料分层
 
-被点名 worker 的材料优先级最高。
+结构化 `worker_id` 指定的 worker 的材料优先级最高。
 
 ```text
-第 1 层：被点名 worker 的 primary material
+第 1 层：当前选择的 worker 的 primary material
   - 非 PM worker：该 worker 自己的 approved L1（必需）
   - PM：优先 PM approved L1；若缺失可用 approved PM conclusion 作为 PM primary material
 第 2 层：最终报告正文和 PM 最终结论
@@ -266,7 +264,7 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 
 - approved final report Markdown / reader-visible body。
 - PM material 或 PM 最终结论。
-- 被点名 worker 的 approved L1 reader-visible body。
+- 当前选择的 worker 的 approved L1 reader-visible body。
 - 其它 approved L1 的 reader-visible body 中与问题相关的片段。
 
 禁止通过路径扫描 `raw/`、`provider/`、`debug/`、`evidence/`、receipt、hash、manifest 或 OpenViking/Mongo 协议目录拼材料。内部 refs 只能用于定位和审计，不能作为模型可见正文。
@@ -274,7 +272,8 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 示例：
 
 ```text
-@市场分析师 为什么技术面没让结论变成买入？
+用户选择：市场分析师
+用户问：为什么技术面没让结论变成买入？
 ```
 
 默认材料：
@@ -325,10 +324,10 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 
 规则：
 
-- 被点名 worker L1 缺失时，不得假装该 worker 有原始判断。
+- 当前选择的 worker L1 缺失时，不得假装该 worker 有原始判断。
 - 可以提示“这份报告没有保存该角色的独立材料”。
-- 如最终报告和 PM 结论存在，用户可改问 `@组合经理` 或基于最终报告提问。
-- 不自动用最终报告冒充被点名 worker 的 L1。
+- 如最终报告和 PM 结论存在，用户可在选择器中切换到“组合经理”，或基于最终报告提问。
+- 不自动用最终报告冒充当前选择的 worker 的 L1。
 
 ### 6.7 失败语义
 
@@ -336,7 +335,7 @@ Worker 聊天可以解释已保存内容，但不能改写已保存 Markdown、P
 |---|---|---|
 | 报告不存在 | “没有找到这份报告。” | 不猜最近报告 |
 | 报告未完成 | “报告完成后才能和 worker 聊。” | 不读 running 材料 |
-| 被点名 worker 材料缺失 | “这份报告没有保存该角色的独立材料。” | 不伪造 L1 |
+| 当前选择的 worker 材料缺失 | “这份报告没有保存该角色的独立材料。” | 不伪造 L1 |
 | 材料过长 | “材料过长，暂时无法回答。” | 不自动摘要压缩兜底 |
 | OpenClaw chat 失败 | “worker 聊天暂不可用。” | 不用 Python 代答 |
 
@@ -401,7 +400,7 @@ WorkerChatReplyForUser:
 
 ```text
 src/claw_trade/ui_backend/worker_chat_catalog.py
-  -> 7 个 worker 的确定性 catalog、中文别名解析、菜单 DTO。
+  -> 7 个 worker 的确定性 catalog、选择器内中文别名搜索、菜单 DTO。
 
 src/claw_trade/ui_backend/worker_chat_models.py
   -> WorkerChatRequest / WorkerChatTurn / WorkerChatReplyForUser 等后端 DTO。
@@ -454,7 +453,6 @@ class WorkerChatRequest:
     conversation_id: str
     client_source: Literal["ui", "wechat", "api"]
     report_id: str | None = None
-    mentioned_worker_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -535,9 +533,6 @@ handle(request):
   worker = resolve_chat_worker(request.worker_id)
   if worker not allowed:
       return user_error("这个角色暂不可用")
-
-  if request.mentioned_worker and request.mentioned_worker != request.worker_id:
-      return api_error(400, "worker mention conflicts with worker_id")
 
   if request.mode == generic_worker_chat:
       maybe_reject_report_question_without_report(request.text)
@@ -648,7 +643,6 @@ def parse_worker_chat_request(payload: Mapping[str, object]) -> WorkerChatReques
         conversation_id=require_non_empty_str(payload, "conversationId"),
         client_source=require_client_source(payload, "clientSource"),
         report_id=optional_non_empty_str(payload, "reportId"),
-        mentioned_worker_id=parse_text_worker_mention(payload.get("text")),
     )
 
 
@@ -659,9 +653,6 @@ def validate_worker_chat_request(request: WorkerChatRequest) -> ValidationResult
     if not catalog.is_allowed_worker(request.worker_id):
         return failed("WORKER_NOT_ALLOWED", "这个角色暂不可用。", http_status=400)
 
-    if request.mentioned_worker_id and request.mentioned_worker_id != request.worker_id:
-        return failed("WORKER_MENTION_CONFLICT", "聊天对象和文本点名不一致。", http_status=400)
-
     if request.mode == "generic_worker_chat" and request.report_id:
         return failed("GENERIC_CHAT_REPORT_CONTEXT_FORBIDDEN", "普通 worker 聊天不能绑定报告。", http_status=400)
 
@@ -671,18 +662,9 @@ def validate_worker_chat_request(request: WorkerChatRequest) -> ValidationResult
     return passed()
 ```
 
-`parse_text_worker_mention()` 只做确定性别名识别：
+请求解析不得调用正文 worker 解析函数。用户手动输入 `@xxx` 但没有从选择列表选择时，`text` 原样进入普通消息正文；后端只信任 `workerId` 字段，不能返回冲突错误。
 
-```python
-def parse_text_worker_mention(text: object) -> str | None:
-    normalized = normalize_text(text)
-    for alias, worker_id in WORKER_ALIAS_TO_ID.items():
-        if normalized.startswith(f"@{alias}") or normalized.startswith(f"{alias}："):
-            return worker_id
-    return None
-```
-
-不得把自然语言文本交给 LLM 判断 worker。
+不得把自然语言文本交给 LLM 或选择器搜索逻辑判断 worker。
 
 ### 8.3 Worker catalog 函数
 
@@ -712,7 +694,7 @@ def require_allowed_worker(worker_id: str) -> WorkerChatCatalogEntry:
     return entry
 ```
 
-测试必须断言以下 worker 不在 menu，也不能被 alias 解析出来：
+测试必须断言以下 worker 不在 menu，也不能通过选择器搜索出现：
 
 ```text
 bull_researcher
@@ -846,6 +828,8 @@ class OpenClawWorkerChatClient:
             )
 ```
 
+`aliases` 只用于 UI 选择列表内搜索，例如用户打开选择器后输入“市场”能筛到“市场分析师”。它不用于解析消息正文，也不允许把手打 `@市场` 转换成 `worker_id`。
+
 Stop condition：
 
 ```python
@@ -958,7 +942,7 @@ def build_report_worker_chat_materials(
 PM 结论缺失策略：
 
 - `portfolio_manager` 聊天：PM L1 和 approved PM conclusion 至少要有一个作为 PM primary；两者都缺失才返回 `PM_PRIMARY_MISSING`。
-- 非 PM worker 聊天：被点名 worker L1 和 final report 是硬要求；approved PM conclusion 默认加入，缺失时记录 internal gap，但不阻断，也不得用 final report 冒充 PM conclusion。
+- 非 PM worker 聊天：结构化 `worker_id` 指定 worker 的 L1 和 final report 是硬要求；approved PM conclusion 默认加入，缺失时记录 internal gap，但不阻断，也不得用 final report 冒充 PM conclusion。
 - 用户 DTO 不暴露 `pm_conclusion_missing` 这类 internal gap；它只用于诊断和验收。
 
 `select_related_worker_l1_snippets()` 必须走 approved reader-visible index，不可扫目录：
@@ -1306,6 +1290,8 @@ def assert_worker_chat_runtime_proof(
 
 用户可以切换 7 个开放角色。
 
+用户输入 `@` 时，只显示这 7 个 worker 的选择列表。只有从列表选择才会改变当前 worker；手动输入 `@xxx` 不改变当前 worker，也不影响发送请求里的 `workerId`。
+
 发送时，前端必须把选择器当前值作为 `worker_id` 发送；后端不从自然语言中猜。
 
 ### 9.2 报告阅读区
@@ -1319,6 +1305,8 @@ def assert_worker_chat_runtime_proof(
 ```
 
 报告阅读区发起请求时必须带当前 `report_id`。
+
+输入 `@` 的交互规则与主工作台一致：只弹 7 个 worker 的选择列表；手动输入 `@xxx` 不解析、不切换 worker。
 
 ### 9.3 文案
 
@@ -1354,7 +1342,7 @@ def assert_worker_chat_runtime_proof(
 - `generic_worker_chat` 不调用 report workflow runner。
 - `generic_worker_chat` 不使用 `/report` stage prompt。
 - API 直调缺 `worker_id` 返回 400；只有 UI 层可以在发送前显式填入 `portfolio_manager`。
-- 文本点名与结构化 `worker_id` 冲突时确定性失败或以字段为准，不能交给 LLM。
+- 手打 `@xxx` 不解析、不改变选择器 workerId、不产生冲突错误；请求里的 `workerId` 仍来自选择器。
 - `report_worker_chat` 必须绑定 completed report。
 - `report_worker_chat` 必须传 `prompt_profile + prompt_variables + user_message` 到 OpenClaw，不能传 Python 拼出的完整业务 prompt。
 - `report_worker_chat` 不调用 `/report` workflow runner。
@@ -1391,9 +1379,9 @@ def assert_worker_chat_runtime_proof(
 
 ### 10.4 集成测试
 
-- 主工作台默认 `@组合经理`，发送普通 worker 聊天成功。
-- 主工作台切换 `@市场分析师` 后，后端收到 `market_analyst`。
-- 报告阅读区默认 `@组合经理`，请求带当前 `report_id`。
+- 主工作台默认“组合经理”，发送普通 worker 聊天成功。
+- 主工作台从选择列表切换“市场分析师”后，后端收到 `market_analyst`。
+- 报告阅读区默认“组合经理”，请求带当前 `report_id`。
 - 报告阅读区切换 worker 后，只读取该报告对应 approved materials。
 - 材料缺失时返回可读错误，不伪造 worker L1。
 

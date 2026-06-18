@@ -48,15 +48,37 @@ class OpenClawGatewayRpcClient:
         _ = context_id
         return {"text": self._send_chat_and_read_reply(session_key=session_id, text=text, request_id=request_id)}
 
+    def worker_chat_send(
+        self,
+        *,
+        session_key: str,
+        message: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "sessionKey": session_key,
+            "message": message,
+            "deliver": False,
+            "idempotencyKey": idempotency_key,
+        }
+        return {"text": self._send_chat_params_and_read_reply(session_key=session_key, text=message, params=params)}
+
     def _send_chat_and_read_reply(self, *, session_key: str, text: str, request_id: str) -> str:
-        payload = self._call(
-            "chat.send",
-            {
+        return self._send_chat_params_and_read_reply(
+            session_key=session_key,
+            text=text,
+            params={
                 "sessionKey": session_key,
                 "message": text,
                 "deliver": False,
                 "idempotencyKey": request_id,
             },
+        )
+
+    def _send_chat_params_and_read_reply(self, *, session_key: str, text: str, params: Mapping[str, Any]) -> str:
+        payload = self._call(
+            "chat.send",
+            params,
             expect_final=True,
         )
         try:
@@ -90,12 +112,16 @@ class OpenClawGatewayRpcClient:
         if not isinstance(label, str) or not label.strip():
             label = key
         try:
+            params: dict[str, Any] = {
+                "key": key,
+                "label": label.strip(),
+            }
+            agent_id = metadata.get("agentId")
+            if isinstance(agent_id, str) and agent_id.strip():
+                params["agentId"] = agent_id.strip()
             payload = self._call(
                 "sessions.create",
-                {
-                    "key": key,
-                    "label": label.strip(),
-                },
+                params,
             )
         except RuntimeError as exc:
             if _session_already_exists(str(exc)):

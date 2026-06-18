@@ -133,4 +133,193 @@ def test_ask_report_question_uses_worker_l1_context_instead_of_full_report(tmp_p
 
     assert "fundamental_analyst L1" in gateway.last_prompt
     assert "AHR999" in gateway.last_prompt
+    assert "viking://" not in gateway.last_prompt
     assert "整篇正文不应该全部进入 prompt" not in gateway.last_prompt
+
+
+def test_ask_report_question_does_not_surface_raw_or_openviking_protocol_context(tmp_path) -> None:
+    run_id = "run-qa-protocol"
+    run_dir = tmp_path / run_id
+    (run_dir / "openviking").mkdir(parents=True)
+    (run_dir / "calls" / "call-risk").mkdir(parents=True)
+    (run_dir / "openviking" / "approved-manifest.json").write_text(
+        __import__("json").dumps(
+            {
+                "materials": [
+                    {
+                        "worker_id": "risk_moderator",
+                        "stage": "risk_debate",
+                        "call_id": "call-risk",
+                        "l1_uri": f"viking://resources/workflow/{run_id}/risk_debate/risk_moderator/call-risk/report.md",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "openviking" / "lineage-relations.json").write_text(
+        __import__("json").dumps(
+            {
+                "relations": [
+                    {
+                        "worker_id": "risk_moderator",
+                        "from_uri": "mongo://secret/source",
+                        "to_uri": "viking://secret/l1",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "calls" / "call-risk" / "raw-output.md").write_text(
+        "RAW OUTPUT SHOULD NOT BECOME REPORT QA CONTEXT",
+        encoding="utf-8",
+    )
+    repo = ReportRepository()
+    repo.save_succeeded_report(
+        report_id=run_id,
+        instrument_code="BTC",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown="# 正式报告\n正式报告风险片段：只允许这段进入 prompt。",
+    )
+    gateway = _FakeGateway()
+    service = ReportQuestionService(
+        repo,
+        gateway,
+        context_policy=ReportQaContextPolicy(max_total_chars=100_000),
+        context_retriever=ReportContextRetriever(
+            run_root=tmp_path,
+            openviking_backend_factory=_explode_if_openviking_is_used,
+            mongo_uri="mongodb://should-not-be-used",
+            mongo_database="should-not-be-used",
+            max_context_chars=2_000,
+        ),
+    )
+
+    service.ask_report_question(
+        report_id=run_id,
+        text="风险是什么？",
+        request_id="req-no-protocol",
+        context_id="ctx-1",
+    )
+
+    assert "正式报告风险片段" in gateway.last_prompt
+    assert "RAW OUTPUT SHOULD NOT BECOME REPORT QA CONTEXT" not in gateway.last_prompt
+    assert "OpenViking" not in gateway.last_prompt
+    assert "Mongo" not in gateway.last_prompt
+    assert "mongo://" not in gateway.last_prompt
+    assert "mongo://secret" not in gateway.last_prompt
+    assert "viking://" not in gateway.last_prompt
+    assert "viking://secret" not in gateway.last_prompt
+
+
+def test_ask_report_question_sanitizes_saved_report_protocol_text() -> None:
+    repo = ReportRepository()
+    repo.save_succeeded_report(
+        report_id="legacy-protocol",
+        instrument_code="BTC",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown=(
+            "# 正式报告\n"
+            "正式报告正文保留。 raw-output raw-output.json viking://report/path "
+            "mongo://report/source OpenViking Mongo"
+        ),
+    )
+    gateway = _FakeGateway()
+    service = ReportQuestionService(
+        repo,
+        gateway,
+        context_policy=ReportQaContextPolicy(max_total_chars=10_000),
+    )
+
+    service.ask_report_question(
+        report_id="legacy-protocol",
+        text="解释正式报告 viking://question/path mongo://question/source OpenViking Mongo raw-output.txt",
+        request_id="req-legacy-protocol",
+        context_id="ctx-1",
+    )
+
+    assert "正式报告正文保留" in gateway.last_prompt
+    for forbidden in (
+        "raw-output",
+        "raw-output.json",
+        "viking://",
+        "mongo://",
+        "report/path",
+        "report/source",
+        "question/path",
+        "question/source",
+        "OpenViking",
+        "Mongo",
+    ):
+        assert forbidden not in gateway.last_prompt
+
+
+def test_ask_report_question_sanitizes_worker_appendix_protocol_text(tmp_path) -> None:
+    run_id = "legacy-appendix-protocol"
+    run_dir = tmp_path / run_id
+    (run_dir / "openviking").mkdir(parents=True)
+    (run_dir / "reports" / "worker-appendix").mkdir(parents=True)
+    (run_dir / "openviking" / "approved-manifest.json").write_text(
+        __import__("json").dumps(
+            {
+                "materials": [
+                    {
+                        "worker_id": "market_analyst",
+                        "stage": "frontline",
+                        "call_id": "call-market",
+                        "l1_uri": f"viking://resources/workflow/{run_id}/frontline/market_analyst/call-market/report.md",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "reports" / "worker-appendix" / "03-market_analyst.md").write_text(
+        "市场附录正文保留。 raw-output.txt viking://appendix/path mongo://appendix/source OpenViking Mongo",
+        encoding="utf-8",
+    )
+    repo = ReportRepository()
+    repo.save_succeeded_report(
+        report_id=run_id,
+        instrument_code="BTC",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown="# 正式报告\n正式报告正文保留。",
+    )
+    gateway = _FakeGateway()
+    service = ReportQuestionService(
+        repo,
+        gateway,
+        context_policy=ReportQaContextPolicy(max_total_chars=100_000),
+        context_retriever=ReportContextRetriever(
+            run_root=tmp_path,
+            max_context_chars=2_000,
+        ),
+    )
+
+    service.ask_report_question(
+        report_id=run_id,
+        text="市场怎么看？",
+        request_id="req-legacy-appendix-protocol",
+        context_id="ctx-1",
+    )
+
+    assert "市场附录正文保留" in gateway.last_prompt
+    for forbidden in (
+        "raw-output",
+        "raw-output.txt",
+        "viking://",
+        "mongo://",
+        "appendix/path",
+        "appendix/source",
+        "OpenViking",
+        "Mongo",
+    ):
+        assert forbidden not in gateway.last_prompt
+
+
+def _explode_if_openviking_is_used() -> object:
+    raise AssertionError("report QA context must not call OpenViking for model-visible context")
