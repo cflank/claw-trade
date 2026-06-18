@@ -285,7 +285,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         store=scheduled_work_store,
         quote_provider=price_alert_quote_provider,
     )
-    scheduled_work_runner = ScheduledWorkRunner(price_alert_scan_service=price_alert_scan_service)
+    scheduled_work_runner = ScheduledWorkRunner(
+        price_alert_scan_service=price_alert_scan_service,
+        scheduler_service=scheduler_service,
+    )
     confirmation = ConfirmationController(
         queue,
         scheduler_service=scheduler_service,

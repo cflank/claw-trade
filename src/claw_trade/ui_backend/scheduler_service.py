@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
@@ -14,6 +15,7 @@ from claw_trade.ui_contracts.scope_guard import (
 )
 from claw_trade.ui_contracts.user_dto import (
     ReportQueueSnapshotForUser,
+    ReportTaskForUser,
     ScheduledReportForUser,
     to_report_queue_snapshot_for_user,
     to_report_task_for_user,
@@ -257,6 +259,45 @@ class SchedulerService:
         self._idempotency[request_id] = payload
         return payload
 
+    def handle_scheduled_report_cron_wake(
+        self,
+        *,
+        request_id: str,
+        scheduled_report_id: str,
+        cron_run_id: str,
+    ) -> dict[str, ReportTaskForUser | ReportQueueSnapshotForUser]:
+        cached = self._idempotency.get(request_id)
+        if cached is not None:
+            return cached
+        item = self._get_schedule_or_raise(scheduled_report_id)
+        if item.state == "deleted":
+            raise UiServiceError("SCHEDULE_NOT_FOUND", "定时报告不存在。")
+        if item.state == "paused":
+            raise UiServiceError("INVALID_INPUT", "定时报告已暂停。")
+
+        enqueue_result = self._enqueue_report_task(self._build_task_input(item), request_id)
+        task_source, snapshot_source = self._scheduled_report_enqueue_parts(enqueue_result)
+        task_for_user = self._task_for_user_from_enqueue_result(task_source, schedule=item)
+        item.last_run_task_id = task_for_user.task_id
+        item.last_cron_run_id = cron_run_id
+        item.next_run_at = self.compute_next_run_at(
+            frequency=item.frequency,
+            time_of_day=item.time_of_day,
+            weekday=item.weekday,
+            after=self._now_provider(),
+        )
+        item.state = "active"
+        item.updated_at = self._now_iso()
+        item.sync_error_message = None
+        self._store.save_scheduled_report(item)
+        snapshot = snapshot_source if snapshot_source is not None else self._queue_snapshot_provider()
+        payload: dict[str, ReportTaskForUser | ReportQueueSnapshotForUser] = {
+            "task": task_for_user,
+            "queueSnapshot": self._queue_snapshot_for_user(snapshot),
+        }
+        self._idempotency[request_id] = payload
+        return payload
+
     def tick_scheduled_reports(self, *, now: datetime | str | None = None) -> dict[str, tuple[TickItemResult, ...]]:
         if not self._allow_local_tick_for_tests:
             raise UiServiceError("INVALID_INPUT", "本地 tick 仅允许测试。")
@@ -363,7 +404,19 @@ class SchedulerService:
         payload.setdefault("finishedAt", None)
         return payload
 
-    def _queue_snapshot_for_user(self, snapshot: dict[str, Any]) -> ReportQueueSnapshotForUser:
+    def _scheduled_report_enqueue_parts(self, enqueue_result: Any) -> tuple[Any, Any | None]:
+        if isinstance(enqueue_result, Mapping) and "task" in enqueue_result:
+            return enqueue_result["task"], enqueue_result.get("queueSnapshot")
+        return enqueue_result, None
+
+    def _task_for_user_from_enqueue_result(self, task: Any, *, schedule: ScheduledReport) -> ReportTaskForUser:
+        if isinstance(task, Mapping):
+            return to_report_task_for_user(self._task_for_user_payload(task=dict(task), schedule=schedule))
+        return to_report_task_for_user(task)
+
+    def _queue_snapshot_for_user(self, snapshot: Any) -> ReportQueueSnapshotForUser:
+        if not isinstance(snapshot, Mapping):
+            return to_report_queue_snapshot_for_user(snapshot)
         normalized = dict(snapshot)
         queued = normalized.get("queuedTasks") or normalized.get("queued_tasks") or []
         normalized["queuedTasks"] = [self._normalize_snapshot_task(item) for item in queued]

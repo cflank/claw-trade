@@ -239,6 +239,27 @@ class _FakeScanService:
         )
 
 
+class _FakeSchedulerService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    def handle_scheduled_report_cron_wake(
+        self,
+        *,
+        request_id: str,
+        scheduled_report_id: str,
+        cron_run_id: str,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            {
+                "requestId": request_id,
+                "scheduledReportId": scheduled_report_id,
+                "cronRunId": cron_run_id,
+            }
+        )
+        return {"task": {"taskId": "task-1", "source": "scheduled"}, "queueSnapshot": {"queuedCount": 1}}
+
+
 def _client_for_runner(runner: ScheduledWorkRunner, *, token: str = "secret") -> TestClient:
     app = FastAPI()
     app.include_router(router)
@@ -312,6 +333,32 @@ def test_internal_cron_wake_route_calls_price_alert_scan_service() -> None:
             "last_error_message": None,
         },
     }
+
+
+def test_internal_cron_wake_route_forwards_scheduled_report_fields() -> None:
+    scheduler_service = _FakeSchedulerService()
+    client = _client_for_runner(ScheduledWorkRunner(scheduler_service=scheduler_service))
+
+    response = client.post(
+        "/internal/scheduled-work/cron-wake",
+        json={
+            "kind": "scheduled_report",
+            "scheduledReportId": "schedule-1",
+            "cronRunId": "cron-run-1",
+            "requestId": "cron-request-1",
+        },
+        headers={"x-claw-trade-internal-token": "secret"},
+    )
+
+    assert response.status_code == 200
+    assert scheduler_service.calls == [
+        {
+            "requestId": "cron-request-1",
+            "scheduledReportId": "schedule-1",
+            "cronRunId": "cron-run-1",
+        }
+    ]
+    assert response.json()["status"] == "ok"
 
 
 def test_internal_cron_wake_route_works_with_research_ui_api_prefix() -> None:

@@ -167,6 +167,12 @@ class ScheduledWorkCronWakeRequest(BaseModel):
     kind: str
     bucketKey: str | None = None
     cronRunId: str | None = None
+    requestId: str | None = None
+    scheduledReportId: str | None = None
+    market: str | None = None
+    jobKind: str | None = None
+    reason: str | None = None
+    maintenanceJobId: str | None = None
 
 
 @router.post("/send-chat-message")
@@ -291,15 +297,7 @@ def scheduled_work_cron_wake(payload: ScheduledWorkCronWakeRequest, request: Req
         return JSONResponse({"code": "FORBIDDEN", "message": "内部定时任务入口未授权。"}, status_code=403)
     services = _services(request)
     try:
-        return _success_response(
-            services.scheduled_work_runner.handle_wake(
-                {
-                    "kind": payload.kind,
-                    "bucketKey": payload.bucketKey,
-                    "cronRunId": payload.cronRunId,
-                }
-            )
-        )
+        return _success_response(services.scheduled_work_runner.handle_wake(payload.model_dump(exclude_none=True)))
     except Exception as exc:
         return _exception_response(exc)
 
