@@ -5,6 +5,7 @@ from typing import Protocol
 
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
+from claw_trade.ui_backend.report_worker_chat_context import sanitize_report_worker_chat_visible_text
 
 
 class OpenClawChatGateway(Protocol):
@@ -92,7 +93,7 @@ class ReportQuestionService:
         max_chars = self._context_policy.max_total_chars or 24_000
         if max_chars - len(question) < 200:
             return ""
-        return report_markdown[: max_chars - len(question)].rstrip()
+        return sanitize_report_worker_chat_visible_text(report_markdown[: max_chars - len(question)]).rstrip()
 
     def _get_or_create_session_id(self, *, report_id: str, context_id: str) -> str:
         key = (report_id, context_id)
@@ -114,12 +115,12 @@ class ReportQuestionService:
 
 def _build_report_qa_prompt(*, report_context: str, question: str) -> str:
     return (
-        "下面是从已保存正式报告、已批准 worker L1 材料、OpenViking/Mongo 证据中选出的相关上下文。\n"
+        "下面是从已保存正式报告和已批准 worker 材料中选出的相关上下文。\n"
         "请只基于这些上下文回答追问；上下文没有的信息，请明确说报告材料里没有。\n"
         "回答可以解释报告内容，但不得改写、覆盖或新增正式报告结论。\n\n"
         f"{report_context}\n\n"
         "用户追问：\n"
-        f"{question}"
+        f"{sanitize_report_worker_chat_visible_text(question)}"
     )
 
 

@@ -56,13 +56,13 @@ export function ReportReaderPanel({
       </article>
       <form className="ct-composer" onSubmit={submit}>
         <input
-          aria-label="报告追问输入"
+          aria-label="报告 worker 聊天输入"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="围绕当前报告继续追问"
+          placeholder="和 worker 聊这份报告"
         />
         <button type="submit" disabled={sending}>
-          {sending ? '发送中' : '追问'}
+          {sending ? '发送中' : '发送'}
         </button>
       </form>
       <div className="ct-report-toc-inline">

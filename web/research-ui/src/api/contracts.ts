@@ -476,6 +476,35 @@ export interface AskReportQuestionOutput {
   text: string;
 }
 
+export type WorkerChatMode = 'generic_worker_chat' | 'report_worker_chat';
+
+export interface WorkerChatWorkerForUser {
+  workerId: string;
+  displayName: string;
+  default: boolean;
+  aliases: string[];
+}
+
+export interface ListWorkerChatWorkersOutput {
+  workers: WorkerChatWorkerForUser[];
+}
+
+export interface SendWorkerChatInput {
+  requestId: string;
+  mode: WorkerChatMode;
+  workerId: string;
+  text: string;
+  conversationId: string;
+  reportId?: string | null;
+}
+
+export interface WorkerChatReplyForUser {
+  kind: 'worker_chat_reply';
+  workerDisplayName: string;
+  text: string;
+  mode: WorkerChatMode;
+}
+
 export interface ListSavedReportsOutput {
   items: SavedReportForUser[];
   nextCursor?: string;

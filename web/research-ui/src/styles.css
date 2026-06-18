@@ -437,6 +437,11 @@ body {
   grid-template-columns: minmax(0, 1fr) 100px;
   gap: 8px;
   flex: 0 0 auto;
+  align-items: start;
+}
+
+.ct-composer-with-worker {
+  grid-template-columns: minmax(132px, max-content) minmax(0, 1fr) 100px;
 }
 
 .ct-composer-hint {
@@ -448,7 +453,7 @@ body {
   overflow-wrap: anywhere;
 }
 
-.ct-composer button {
+.ct-composer > button {
   height: 36px;
   border: 1px solid var(--ct-primary);
   border-radius: 6px;
@@ -457,8 +462,87 @@ body {
   font: inherit;
 }
 
-.ct-composer button:disabled {
+.ct-composer > button:disabled {
   opacity: 0.6;
+}
+
+.ct-worker-selector {
+  position: relative;
+  min-width: 132px;
+}
+
+.ct-worker-selector-trigger {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--ct-border);
+  border-radius: 6px;
+  background: var(--ct-surface);
+  color: var(--ct-text);
+  font: inherit;
+  text-align: left;
+  padding: 0 10px;
+}
+
+.ct-worker-selector-trigger:hover,
+.ct-worker-selector-trigger:focus-visible {
+  border-color: var(--ct-primary);
+  outline: none;
+  box-shadow: var(--ct-focus-ring);
+}
+
+.ct-worker-selector-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  width: min(260px, 80vw);
+  padding: 8px;
+  border: 1px solid var(--ct-border);
+  border-radius: 8px;
+  background: var(--ct-surface);
+  box-shadow: var(--ct-shadow-panel);
+}
+
+.ct-worker-selector-menu input {
+  width: 100%;
+  height: 32px;
+  border: 1px solid var(--ct-border);
+  border-radius: 6px;
+  padding: 0 8px;
+  font: inherit;
+}
+
+.ct-worker-selector-list {
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 8px;
+}
+
+.ct-worker-selector-option {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ct-text);
+  font: inherit;
+  text-align: left;
+  padding: 7px 8px;
+}
+
+.ct-worker-selector-option:hover,
+.ct-worker-selector-option:focus-visible,
+.ct-worker-selector-option[aria-selected='true'] {
+  outline: none;
+  background: var(--ct-primary-soft);
+}
+
+.ct-worker-selector-empty {
+  padding: 8px;
+  color: var(--ct-text-muted);
+  font-size: 13px;
 }
 
 .ct-right-rail {
@@ -1609,7 +1693,11 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .ct-composer button {
+  .ct-composer-with-worker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ct-composer > button {
     width: 100%;
   }
 

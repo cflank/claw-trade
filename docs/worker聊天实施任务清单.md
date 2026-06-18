@@ -52,7 +52,7 @@ report_worker_chat
 | 任务编号 | 任务名 | 依赖 | 是否可并行 |
 |---|---|---|---|
 | WCH-00 | 文档和旧入口清理审计 | 无 | 否 |
-| WCH-01 | Worker 聊天 catalog 与别名解析 | WCH-00 | 是 |
+| WCH-01 | Worker 聊天 catalog 与选择器搜索 | WCH-00 | 是 |
 | WCH-02 | WorkerChat DTO、模式和用户 DTO 红线 | WCH-01 | 是 |
 | WCH-06 | OpenClaw worker chat seam discovery 与调用层 | WCH-02 | 否 |
 | WCH-03 | 普通 worker 聊天后端路径 | WCH-02, WCH-06 | 否 |
@@ -85,7 +85,7 @@ report_worker_chat
   - `rg -n "追问|report_qa" src web/research-ui/src tests`
   - 若命中内容仅说明旧设计已撤回，可接受；若仍把旧设计列为实现来源或验收项，必须修正文档。
 
-### WCH-01 Worker 聊天 catalog 与别名解析
+### WCH-01 Worker 聊天 catalog 与选择器搜索
 
 - 目标：实现 7 个开放 worker 的确定性 catalog。
 - 修改范围建议：
@@ -95,7 +95,8 @@ report_worker_chat
 - 实施要求：
   - catalog 标记 UI 默认 worker 是 `portfolio_manager`。
   - 普通用户显示中文名。
-  - 支持中文别名输入。
+  - 支持中文别名作为选择列表内搜索关键词。
+  - 别名只用于筛选选择列表，不用于解析消息正文，也不把手打 `@xxx` 转成 worker。
   - 不支持 LLM 自动选择 worker。
   - 不开放未批准 worker。
 - 验收：
@@ -137,7 +138,7 @@ report_worker_chat
   - 必须复用 WCH-06 交付的 OpenClaw seam discovery/client 结果；WCH-03 不再独立发明 chat seam 或字段合同。
   - worker chat session 必须绑定 worker 身份，例如 session key 使用 `agent:{worker_id}:...` 或等价 OpenClaw API 明确传入 agent id / worker id；不能只把 worker 名写进用户 prompt。
   - API 缺 `worker_id` 必须 400；后端不得补默认 `portfolio_manager`。UI 层发送前显式填入默认值。
-  - 文本点名与结构化 `worker_id` 冲突时，后端确定性处理或返回冲突错误；不得交给 LLM。
+  - 后端只信任结构化 `worker_id`。用户手动输入 `@xxx` 但没有从 UI 列表选择时，不解析、不切换 worker、不返回冲突错误，按普通消息正文处理。
   - `maybe_reject_report_question_without_report` 必须明确接入 controller 的 generic 分支，并在 OpenClaw 调用前执行。
   - 使用 OpenClaw 默认 agent chat / default session prompt。
   - 不构造 `RunRequest`。
@@ -161,18 +162,18 @@ report_worker_chat
   - `src/claw_trade/ui_backend/report_repository.py`
 - 实施要求：
   - 必须绑定 completed report。
-  - 非 PM worker：默认读取被点名 worker approved L1（必需）。
+  - 非 PM worker：默认读取结构化 `worker_id` 指定 worker 的 approved L1（必需）。
   - `portfolio_manager`：优先 PM approved L1；若缺失可用 approved PM conclusion 作为 PM primary material。
   - 最终报告是硬要求；PM 结论默认读取，有则加入，缺失时记录 internal gap。仅当 `portfolio_manager` 同时缺 PM L1 和 approved PM conclusion 时才阻断。
   - 相关其他 worker 材料只选片段；必须通过 approved reader-visible index 检索，不得扫目录。
   - related snippet 需要明确排序（相关性/时序/worker 优先级）、去重、预算上限和检索失败语义（检索失败可降级为无片段，但不得伪造命中）。
-  - 只能从 approved final report、PM material、被点名 worker approved L1、其它 approved L1 reader-visible body 读取。
+  - 只能从 approved final report、PM material、结构化 `worker_id` 指定 worker 的 approved L1、其它 approved L1 reader-visible body 读取。
   - 禁止扫描 raw/provider/debug/evidence 目录或 receipt/hash/manifest 协议文本拼模型材料。
   - 不读取 raw/provider/debug/receipt/hash/manifest 协议文本给模型。
-  - 非 PM worker 的被点名 L1 缺失时，不伪造；不能用 final report 冒充该 worker L1。
+  - 非 PM worker 的当前选择 worker L1 缺失时，不伪造；不能用 final report 冒充该 worker L1。
 - 验收：
-  - `@市场分析师` 默认包含 market L1 + final report，并在 approved PM conclusion 存在时包含 PM conclusion；PM conclusion 缺失时不阻断但记录 internal gap。
-  - `@组合经理` 默认包含 PM L1（优先）或 approved PM conclusion（兜底 primary）+ final report；PM L1 和 PM conclusion 都缺失时失败。
+  - 选择“市场分析师”时默认包含 market L1 + final report，并在 approved PM conclusion 存在时包含 PM conclusion；PM conclusion 缺失时不阻断但记录 internal gap。
+  - 选择“组合经理”时默认包含 PM L1（优先）或 approved PM conclusion（兜底 primary）+ final report；PM L1 和 PM conclusion 都缺失时失败。
   - 旧报告缺 worker L1 时返回可读错误或限制提示。
 - 测试：
   - `uv run pytest tests/unit/ui/test_report_worker_chat_context.py`
@@ -259,12 +260,18 @@ report_worker_chat
   - `web/research-ui/src/api/contracts.ts`
 - 实施要求：
   - 默认显示“组合经理”。
+  - 输入 `@` 只触发 worker 选择列表，列表仅包含 7 个开放 worker。
+  - 用户必须从列表选择才能改变当前 worker；手打 `@xxx` 不改变 workerId。
   - 可切换 7 个开放 worker。
   - 发送请求时必须带 `workerId`。
+  - 请求里的 `workerId` 必须来自选择器当前值；没有显式选择时 UI 填 `portfolio_manager`。
   - 不显示内部 worker id。
 - 验收：
   - 主工作台默认 `portfolio_manager`。
   - 切换后请求 workerId 正确。
+  - `@` 触发列表，列表仅 7 个 worker。
+  - 手打 `@xxx` 不改变 workerId。
+  - 网络请求里的 workerId 来自选择器。
 - 测试：
   - `pnpm --dir web/research-ui test -- worker-chat`
 
@@ -277,12 +284,18 @@ report_worker_chat
   - worker chat controller；若现有 `report_qa` 路径仍活跃，迁移或删除其 worker 聊天语义
 - 实施要求：
   - 默认显示“组合经理”。
+  - 输入 `@` 只触发 worker 选择列表，列表仅包含 7 个开放 worker。
+  - 用户必须从列表选择才能改变当前 worker；手打 `@xxx` 不改变 workerId。
   - 请求必须带 `reportId` 和 `workerId`。
+  - 请求里的 `workerId` 必须来自选择器当前值；没有显式选择时 UI 填 `portfolio_manager`。
   - 不再使用“追问”作为功能名。
   - 发送后报告正文不变。
 - 验收：
   - 报告阅读区 worker 聊天不触发新 report workflow。
   - 切换 worker 后材料 resolver 使用对应 worker。
+  - `@` 触发列表，列表仅 7 个 worker。
+  - 手打 `@xxx` 不改变 workerId。
+  - 网络请求里的 workerId 来自选择器。
 - 测试：
   - `pnpm --dir web/research-ui test -- report-worker-chat`
   - `uv run pytest tests/unit/ui/test_report_worker_chat.py`
@@ -305,6 +318,8 @@ report_worker_chat
   - `uv run pytest tests/unit/ui/test_report_worker_chat_pm_conclusion_gaps.py`
   - `uv run pytest tests/e2e/ui/test_worker_chat_user_flows.py`
   - `pnpm --dir web/research-ui test`
+- 必须覆盖：
+  - 手打 `@xxx` 不解析、不切换 workerId、不返回冲突错误；请求里的 workerId 仍来自选择器。
 - 反向验证：
   - `rg -n "A股选股@worker追问|selection_worker_mention" docs/A股选股总体设计.md docs/A股选股详细设计.md docs/A股选股实施任务清单.md src web/research-ui/src tests`
   - `rg -n "追问|report_qa" src web/research-ui/src tests`

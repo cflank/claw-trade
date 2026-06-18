@@ -74,7 +74,7 @@ class RunRequest:
     entry_point: WorkflowEntryPoint = WorkflowEntryPoint.GENERIC
     max_debate_rounds: int = 1
     max_risk_discuss_rounds: int = 1
-    frontline_execution_mode: str = "serial"
+    frontline_execution_mode: str = "parallel"
 
 
 @dataclass(frozen=True)
