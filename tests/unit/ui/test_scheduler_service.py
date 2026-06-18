@@ -177,6 +177,31 @@ def test_run_scheduled_report_now_uses_openclaw_cron_when_job_exists() -> None:
     assert saved.last_cron_run_id == "cron-run-1"
 
 
+def test_run_scheduled_report_now_rejects_paused_cron_schedule_without_cron_run() -> None:
+    fake_gateway = _FakeCronGateway()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=InMemoryScheduledWorkStore(),
+        now_provider=_fixed_now,
+    )
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    service.pause_scheduled_report(request_id="req-pause", scheduled_report_id=created.scheduledReportId)
+
+    with pytest.raises(UiServiceError) as exc:
+        service.run_scheduled_report_now(request_id="req-run-now", scheduled_report_id=created.scheduledReportId)
+
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.message == "定时报告已暂停。"
+    assert [call["method"] for call in fake_gateway.calls] == ["cron.add", "cron.update"]
+
+
 def test_cron_provision_failure_state_stays_internal() -> None:
     class FailingCronGateway(_FakeCronGateway):
         def cron_add(self, params: Mapping[str, Any]) -> dict[str, Any]:

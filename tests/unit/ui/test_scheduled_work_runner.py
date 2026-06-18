@@ -59,7 +59,7 @@ def test_scheduled_report_wake_dispatches_to_scheduler_queue() -> None:
     )
 
     assert len(queue_calls) == 1
-    assert queue_calls[0][1] == "cron-request-1"
+    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"
     assert queue_calls[0][0]["source"] == "scheduled"
     assert response["status"] == "ok"
     assert response["task"].source == "scheduled"
@@ -70,6 +70,64 @@ def test_scheduled_report_wake_dispatches_to_scheduler_queue() -> None:
     assert saved.last_run_task_id == "task-1"
     assert saved.last_cron_run_id == "cron-run-1"
     assert saved.next_run_at == "2026-05-20T09:30:00Z"
+
+
+def test_scheduled_report_wake_dedupes_different_cron_run_ids_for_same_window() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": f"task-{len(queue_calls)}",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {
+            "runningTask": {
+                "taskId": "task-1",
+                "instrumentCode": "AAPL",
+                "instrumentName": "AAPL",
+                "market": "US",
+                "status": "running",
+            },
+            "queuedTasks": [],
+            "queuedCount": 0,
+            "maxQueueSize": 10,
+        },
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    first = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+    second = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-2"}
+    )
+
+    assert len(queue_calls) == 1
+    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"
+    assert first["task"].task_id == "task-1"
+    assert second["task"].task_id == "task-1"
+    assert second["cronRunId"] == "cron-run-2"
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.last_run_task_id == "task-1"
+    assert saved.last_cron_run_id == "cron-run-1"
 
 
 def test_scheduled_report_wake_uses_production_queue_envelope() -> None:
@@ -183,7 +241,7 @@ def test_scheduled_report_wake_rejects_paused_schedule_without_enqueueing() -> N
     assert saved.last_cron_run_id is None
 
 
-def test_scheduled_report_wake_derives_request_id_when_missing() -> None:
+def test_scheduled_report_wake_uses_stable_schedule_window_request_id_when_missing() -> None:
     request_ids: list[str] = []
     store = InMemoryScheduledWorkStore()
 
@@ -209,7 +267,7 @@ def test_scheduled_report_wake_derives_request_id_when_missing() -> None:
         {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
     )
 
-    assert request_ids == [f"scheduled-report:{schedule.scheduledReportId}:cron-run-1"]
+    assert request_ids == [f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"]
 
 
 def test_selection_and_maintenance_wakes_fail_closed_without_runner() -> None:
