@@ -231,6 +231,8 @@ class SchedulerService:
         if self._cron_adapter is not None:
             if item.state == "paused":
                 raise UiServiceError("INVALID_INPUT", "定时报告已暂停。")
+            if item.last_run_task_id and self._is_duplicate_scheduled_report_window(item):
+                raise UiServiceError("INVALID_INPUT", "定时报告当前计划窗口已触发。")
             if not item.openclaw_cron_job_id:
                 raise UiServiceError("CRON_PROVISION_FAILED", "定时报告 OpenClaw cron 尚未配置。")
             result = self._cron_adapter.run_job(job_id=item.openclaw_cron_job_id, idempotency_key=request_id)
@@ -274,22 +276,26 @@ class SchedulerService:
         if item.state == "paused":
             raise UiServiceError("INVALID_INPUT", "定时报告已暂停。")
 
+        if item.last_run_task_id and self._is_duplicate_scheduled_report_wake(item, cron_run_id=cron_run_id):
+            snapshot = self._queue_snapshot_provider()
+            payload: dict[str, Any] = {
+                "queueSnapshot": self._queue_snapshot_for_user(snapshot),
+                "deduped": True,
+                "skipped": True,
+                "lastRunTaskId": item.last_run_task_id,
+            }
+            task = self._last_scheduled_report_task_for_user(snapshot=snapshot, schedule=item)
+            if task is not None:
+                payload["task"] = task
+            self._idempotency[request_id] = payload
+            return payload
+
         task_input = self._build_task_input(item)
         stable_request_id = self._scheduled_report_window_request_id(item, task_input)
         cached = self._idempotency.get(stable_request_id)
         if cached is not None:
             self._idempotency[request_id] = cached
             return cached
-        if item.last_run_task_id and self._is_duplicate_scheduled_report_window(item, task_input):
-            snapshot = self._queue_snapshot_provider()
-            payload = {
-                "task": self._last_scheduled_report_task_for_user(snapshot=snapshot, schedule=item),
-                "queueSnapshot": self._queue_snapshot_for_user(snapshot),
-                "deduped": True,
-            }
-            self._idempotency[request_id] = payload
-            self._idempotency[stable_request_id] = payload
-            return payload
 
         enqueue_result = self._enqueue_report_task(task_input, stable_request_id)
         task_source, snapshot_source = self._scheduled_report_enqueue_parts(enqueue_result)
@@ -440,19 +446,26 @@ class SchedulerService:
             f"{task_input['startDate']}:{task_input['endDate']}:{task_input['currentDate']}"
         )
 
-    def _is_duplicate_scheduled_report_window(self, item: ScheduledReport, task_input: Mapping[str, Any]) -> bool:
-        return (
-            item.start_date == str(task_input["startDate"])
-            and item.end_date == str(task_input["endDate"])
-            and item.current_date == str(task_input["currentDate"])
-        )
+    def _is_duplicate_scheduled_report_window(self, item: ScheduledReport) -> bool:
+        if not item.next_run_at:
+            return False
+        try:
+            next_run_at = self._as_datetime(item.next_run_at)
+        except Exception:
+            return False
+        return self._now_provider().astimezone(UTC) < next_run_at
+
+    def _is_duplicate_scheduled_report_wake(self, item: ScheduledReport, *, cron_run_id: str) -> bool:
+        if item.last_cron_run_id and cron_run_id and item.last_cron_run_id == cron_run_id:
+            return True
+        return self._is_duplicate_scheduled_report_window(item)
 
     def _last_scheduled_report_task_for_user(
         self,
         *,
         snapshot: Any,
         schedule: ScheduledReport,
-    ) -> ReportTaskForUser:
+    ) -> ReportTaskForUser | None:
         task_id = schedule.last_run_task_id
         if isinstance(snapshot, Mapping) and task_id:
             for candidate in (snapshot.get("runningTask"), snapshot.get("running_task")):
@@ -466,7 +479,7 @@ class SchedulerService:
                         found = self._snapshot_task_by_id(candidate, task_id)
                         if found is not None:
                             return to_report_task_for_user(self._task_for_user_payload(task=dict(found), schedule=schedule))
-        return to_report_task_for_user(self._task_for_user_payload(task={"taskId": task_id}, schedule=schedule))
+        return None
 
     @staticmethod
     def _snapshot_task_by_id(candidate: Any, task_id: str) -> Mapping[str, Any] | None:

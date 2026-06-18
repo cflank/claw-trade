@@ -130,6 +130,94 @@ def test_scheduled_report_wake_dedupes_different_cron_run_ids_for_same_window() 
     assert saved.last_cron_run_id == "cron-run-1"
 
 
+def test_scheduled_report_duplicate_wake_without_live_task_does_not_fabricate_task() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": f"task-{len(queue_calls)}",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+    response = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-2"}
+    )
+
+    assert len(queue_calls) == 1
+    assert response["deduped"] is True
+    assert response["skipped"] is True
+    assert response["lastRunTaskId"] == "task-1"
+    assert "task" not in response
+
+
+def test_scheduled_report_same_cron_run_id_dedupes_after_next_slot_boundary() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+    clock = {"now": datetime(2026, 5, 19, 12, 0, tzinfo=UTC)}
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": f"task-{len(queue_calls)}",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=lambda: clock["now"],
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+    clock["now"] = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    response = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+
+    assert len(queue_calls) == 1
+    assert response["deduped"] is True
+    assert response["skipped"] is True
+    assert response["lastRunTaskId"] == "task-1"
+    assert "task" not in response
+
+
 def test_scheduled_report_wake_uses_production_queue_envelope() -> None:
     queue_calls: list[tuple[dict[str, Any], str]] = []
     store = InMemoryScheduledWorkStore()

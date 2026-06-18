@@ -202,6 +202,35 @@ def test_run_scheduled_report_now_rejects_paused_cron_schedule_without_cron_run(
     assert [call["method"] for call in fake_gateway.calls] == ["cron.add", "cron.update"]
 
 
+def test_run_scheduled_report_now_rejects_already_triggered_cron_window_without_cron_run() -> None:
+    fake_gateway = _FakeCronGateway()
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=store,
+        now_provider=_fixed_now,
+    )
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    internal = store.get_scheduled_report(created.scheduledReportId)
+    assert internal is not None
+    internal.last_run_task_id = "task-1"
+    store.save_scheduled_report(internal)
+
+    with pytest.raises(UiServiceError) as exc:
+        service.run_scheduled_report_now(request_id="req-run-now", scheduled_report_id=created.scheduledReportId)
+
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.message == "定时报告当前计划窗口已触发。"
+    assert [call["method"] for call in fake_gateway.calls] == ["cron.add"]
+
+
 def test_cron_provision_failure_state_stays_internal() -> None:
     class FailingCronGateway(_FakeCronGateway):
         def cron_add(self, params: Mapping[str, Any]) -> dict[str, Any]:
