@@ -263,6 +263,8 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             workflow_state=workflow_state,
         ),
     )
+    scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
+    cron_adapter = OpenClawCronAdapter(rpc_client)
     scheduler_service = SchedulerService(
         enqueue_report_task=lambda task, request_id: queue.enqueue_report_task(
             request_id=request_id,
@@ -270,10 +272,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             source="scheduled",
         ),
         queue_snapshot_provider=queue.get_report_queue_snapshot_for_user,
+        store=scheduled_work_store,
+        cron_adapter=cron_adapter,
     )
     price_alert_quote_provider = build_price_alert_quote_provider()
-    scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
-    cron_adapter = OpenClawCronAdapter(rpc_client)
     price_alert_service = PriceAlertService(
         quote_provider=price_alert_quote_provider,
         store=scheduled_work_store,

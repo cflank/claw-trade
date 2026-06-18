@@ -4,9 +4,34 @@ import json
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
+from threading import Lock
 from typing import Any, Protocol
 
 from claw_trade.ui_contracts.enums import MarketProfile
+
+
+@dataclass
+class ScheduledReport:
+    id: str
+    instrument_code: str
+    instrument_name: str | None
+    market: MarketProfile
+    frequency: str
+    time_of_day: str
+    weekday: int | None
+    notification: dict[str, Any]
+    workflow_settings: dict[str, Any]
+    start_date: str
+    end_date: str
+    current_date: str
+    state: str
+    next_run_at: str | None
+    last_run_task_id: str | None
+    openclaw_cron_job_id: str | None
+    last_cron_run_id: str | None
+    sync_error_message: str | None
+    created_at: str
+    updated_at: str
 
 
 @dataclass
@@ -47,6 +72,12 @@ class PriceAlertScanBucket:
 
 
 class ScheduledWorkStore(Protocol):
+    def save_scheduled_report(self, report: ScheduledReport) -> None: ...
+
+    def get_scheduled_report(self, report_id: str) -> ScheduledReport | None: ...
+
+    def list_scheduled_reports(self, *, states: set[str] | None = None) -> list[ScheduledReport]: ...
+
     def save_price_alert(self, alert: PriceAlert) -> None: ...
 
     def get_price_alert(self, alert_id: str) -> PriceAlert | None: ...
@@ -60,8 +91,22 @@ class ScheduledWorkStore(Protocol):
 
 class InMemoryScheduledWorkStore:
     def __init__(self) -> None:
+        self._scheduled_reports: dict[str, ScheduledReport] = {}
         self._price_alerts: dict[str, PriceAlert] = {}
         self._scan_buckets: dict[str, PriceAlertScanBucket] = {}
+
+    def save_scheduled_report(self, report: ScheduledReport) -> None:
+        self._scheduled_reports[report.id] = replace(report)
+
+    def get_scheduled_report(self, report_id: str) -> ScheduledReport | None:
+        report = self._scheduled_reports.get(report_id)
+        return replace(report) if report is not None else None
+
+    def list_scheduled_reports(self, *, states: set[str] | None = None) -> list[ScheduledReport]:
+        reports = list(self._scheduled_reports.values())
+        if states is not None:
+            reports = [report for report in reports if report.state in states]
+        return [replace(report) for report in reports]
 
     def save_price_alert(self, alert: PriceAlert) -> None:
         self._price_alerts[alert.id] = replace(alert)
@@ -89,11 +134,33 @@ class InMemoryScheduledWorkStore:
 class JsonScheduledWorkStore:
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._write_lock = Lock()
+
+    def save_scheduled_report(self, report: ScheduledReport) -> None:
+        with self._write_lock:
+            payload = self._load()
+            payload["scheduled_reports"][report.id] = _scheduled_report_to_payload(report)
+            self._save(payload)
+
+    def get_scheduled_report(self, report_id: str) -> ScheduledReport | None:
+        payload = self._load()
+        raw = payload["scheduled_reports"].get(report_id)
+        if raw is None:
+            return None
+        return _scheduled_report_from_payload(raw)
+
+    def list_scheduled_reports(self, *, states: set[str] | None = None) -> list[ScheduledReport]:
+        payload = self._load()
+        reports = [_scheduled_report_from_payload(raw) for raw in payload["scheduled_reports"].values()]
+        if states is not None:
+            reports = [report for report in reports if report.state in states]
+        return reports
 
     def save_price_alert(self, alert: PriceAlert) -> None:
-        payload = self._load()
-        payload["price_alerts"][alert.id] = _price_alert_to_payload(alert)
-        self._save(payload)
+        with self._write_lock:
+            payload = self._load()
+            payload["price_alerts"][alert.id] = _price_alert_to_payload(alert)
+            self._save(payload)
 
     def get_price_alert(self, alert_id: str) -> PriceAlert | None:
         payload = self._load()
@@ -112,9 +179,10 @@ class JsonScheduledWorkStore:
         return alerts
 
     def save_scan_bucket(self, bucket: PriceAlertScanBucket) -> None:
-        payload = self._load()
-        payload["scan_buckets"][bucket.bucket_key] = _scan_bucket_to_payload(bucket)
-        self._save(payload)
+        with self._write_lock:
+            payload = self._load()
+            payload["scan_buckets"][bucket.bucket_key] = _scan_bucket_to_payload(bucket)
+            self._save(payload)
 
     def get_scan_bucket(self, bucket_key: str) -> PriceAlertScanBucket | None:
         payload = self._load()
@@ -130,11 +198,16 @@ class JsonScheduledWorkStore:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise TypeError("root is not an object")
-            price_alerts = raw.get("price_alerts")
-            scan_buckets = raw.get("scan_buckets")
-            if not isinstance(price_alerts, dict) or not isinstance(scan_buckets, dict):
+            scheduled_reports = raw.get("scheduled_reports", {})
+            price_alerts = raw.get("price_alerts", {})
+            scan_buckets = raw.get("scan_buckets", {})
+            if (
+                not isinstance(scheduled_reports, dict)
+                or not isinstance(price_alerts, dict)
+                or not isinstance(scan_buckets, dict)
+            ):
                 raise TypeError("missing scheduled work collections")
-            return {"price_alerts": price_alerts, "scan_buckets": scan_buckets}
+            return {"scheduled_reports": scheduled_reports, "price_alerts": price_alerts, "scan_buckets": scan_buckets}
         except Exception as exc:
             raise RuntimeError("scheduled_work_store_load_failed") from exc
 
@@ -149,7 +222,57 @@ class JsonScheduledWorkStore:
 
 
 def _empty_payload() -> dict[str, dict[str, Any]]:
-    return {"price_alerts": {}, "scan_buckets": {}}
+    return {"scheduled_reports": {}, "price_alerts": {}, "scan_buckets": {}}
+
+
+def _scheduled_report_to_payload(report: ScheduledReport) -> dict[str, Any]:
+    return {
+        "id": report.id,
+        "instrument_code": report.instrument_code,
+        "instrument_name": report.instrument_name,
+        "market": report.market.value,
+        "frequency": report.frequency,
+        "time_of_day": report.time_of_day,
+        "weekday": report.weekday,
+        "notification": report.notification,
+        "workflow_settings": report.workflow_settings,
+        "start_date": report.start_date,
+        "end_date": report.end_date,
+        "current_date": report.current_date,
+        "state": report.state,
+        "next_run_at": report.next_run_at,
+        "last_run_task_id": report.last_run_task_id,
+        "openclaw_cron_job_id": report.openclaw_cron_job_id,
+        "last_cron_run_id": report.last_cron_run_id,
+        "sync_error_message": report.sync_error_message,
+        "created_at": report.created_at,
+        "updated_at": report.updated_at,
+    }
+
+
+def _scheduled_report_from_payload(raw: dict[str, Any]) -> ScheduledReport:
+    return ScheduledReport(
+        id=str(raw["id"]),
+        instrument_code=str(raw["instrument_code"]),
+        instrument_name=None if raw.get("instrument_name") is None else str(raw["instrument_name"]),
+        market=MarketProfile(str(raw["market"])),
+        frequency=str(raw["frequency"]),
+        time_of_day=str(raw["time_of_day"]),
+        weekday=None if raw.get("weekday") is None else int(raw["weekday"]),
+        notification=dict(raw["notification"]),
+        workflow_settings=dict(raw["workflow_settings"]),
+        start_date=str(raw["start_date"]),
+        end_date=str(raw["end_date"]),
+        current_date=str(raw["current_date"]),
+        state=str(raw["state"]),
+        next_run_at=None if raw.get("next_run_at") is None else str(raw["next_run_at"]),
+        last_run_task_id=None if raw.get("last_run_task_id") is None else str(raw["last_run_task_id"]),
+        openclaw_cron_job_id=None if raw.get("openclaw_cron_job_id") is None else str(raw["openclaw_cron_job_id"]),
+        last_cron_run_id=None if raw.get("last_cron_run_id") is None else str(raw["last_cron_run_id"]),
+        sync_error_message=None if raw.get("sync_error_message") is None else str(raw["sync_error_message"]),
+        created_at=str(raw["created_at"]),
+        updated_at=str(raw["updated_at"]),
+    )
 
 
 def _price_alert_to_payload(alert: PriceAlert) -> dict[str, Any]:
