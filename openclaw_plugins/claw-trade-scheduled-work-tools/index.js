@@ -6,11 +6,17 @@ const DEFAULT_TIMEOUT_MS = 30000;
 const TOOL_INPUT_SCHEMA = Object.freeze({
   type: "object",
   additionalProperties: false,
-  required: ["kind", "bucketKey", "cronRunId"],
+  required: ["kind", "cronRunId"],
   properties: {
-    kind: { type: "string", enum: ["price_alert_scan"] },
-    bucketKey: { type: "string", minLength: 1 },
+    kind: { type: "string", enum: ["price_alert_scan", "scheduled_report", "selection_data_refresh", "data_maintenance"] },
     cronRunId: { type: "string", minLength: 1 },
+    requestId: { type: "string", minLength: 1 },
+    bucketKey: { type: "string", minLength: 1 },
+    scheduledReportId: { type: "string", minLength: 1 },
+    market: { type: "string", minLength: 1 },
+    jobKind: { type: "string", minLength: 1 },
+    reason: { type: "string", minLength: 1 },
+    maintenanceJobId: { type: "string", minLength: 1 },
   },
 });
 
@@ -61,18 +67,18 @@ function toolErrorResult(code, auditMessage, details = undefined) {
 
 function modelFacingToolText(payload, isError = false) {
   if (isRecord(payload) && payload.status === "ok") {
-    return "价格提醒扫描入口已唤醒。";
+    return "内部定时任务入口已唤醒。";
   }
   if (isRecord(payload) && payload.status === "error") {
-    return "价格提醒扫描入口返回失败状态。请报告失败，不要补写行情结果。";
+    return "内部定时任务入口返回失败状态。";
   }
-  return isError ? "定时任务唤醒工具失败。请报告失败，不要补写行情结果。" : "定时任务唤醒工具完成。";
+  return isError ? "内部定时任务唤醒工具失败。" : "内部定时任务唤醒工具完成。";
 }
 
 function safeModelErrorMessage(code) {
   switch (code) {
     case TOOL_ERROR_CODES.paramsInvalid:
-      return "工具参数不符合价格提醒扫描唤醒合同";
+      return "工具参数不符合定时任务唤醒合同";
     case TOOL_ERROR_CODES.configMissing:
       return "内部定时任务入口未配置";
     case TOOL_ERROR_CODES.httpFailed:
@@ -86,25 +92,89 @@ function validateParams(params) {
   if (!isRecord(params)) {
     throw new Error("tool params must be a JSON object");
   }
+  const kind = textValue(params.kind);
+  const allowedByKind = {
+    price_alert_scan: ["bucketKey", "cronRunId", "kind", "requestId"],
+    scheduled_report: ["cronRunId", "kind", "requestId", "scheduledReportId"],
+    selection_data_refresh: ["cronRunId", "kind", "reason", "requestId"],
+    data_maintenance: ["cronRunId", "jobKind", "kind", "maintenanceJobId", "market", "requestId"],
+  };
+  const allowed = allowedByKind[kind];
+  if (!allowed) {
+    throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, "unsupported scheduled work kind");
+  }
   const keys = Object.keys(params).sort();
-  const allowed = ["bucketKey", "cronRunId", "kind"];
   for (const key of keys) {
     if (!allowed.includes(key)) {
-      throw new Error(`unsupported tool param: ${key}`);
+      throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, `unsupported ${kind} tool param: ${key}`);
     }
   }
-  const kind = textValue(params.kind);
-  const bucketKey = textValue(params.bucketKey);
   const cronRunId = textValue(params.cronRunId);
-  if (kind !== "price_alert_scan" || !bucketKey || !cronRunId) {
-    throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, "kind, bucketKey, and cronRunId are required");
+  if (!cronRunId) {
+    throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, `${kind} requires cronRunId`);
   }
-  return { kind, bucketKey, cronRunId: cronRunId === "auto" ? buildCronRunId(bucketKey) : cronRunId };
+  const requestId = textValue(params.requestId);
+  const base = {
+    kind,
+    ...(requestId ? { requestId } : {}),
+  };
+  const withCronRunId = (payload, fallbackKey = undefined) => ({
+    ...payload,
+    cronRunId: cronRunId === "auto" ? buildCronRunId(kind, fallbackKey) : cronRunId,
+  });
+
+  if (kind === "price_alert_scan") {
+    const bucketKey = textValue(params.bucketKey);
+    if (!bucketKey) {
+      throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, "price_alert_scan requires bucketKey");
+    }
+    return withCronRunId({ ...base, bucketKey }, bucketKey);
+  }
+
+  if (kind === "scheduled_report") {
+    const scheduledReportId = textValue(params.scheduledReportId);
+    if (!scheduledReportId) {
+      throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, "scheduled_report requires scheduledReportId");
+    }
+    return withCronRunId({ ...base, scheduledReportId }, scheduledReportId);
+  }
+
+  if (kind === "selection_data_refresh") {
+    const reason = textValue(params.reason) ?? "scheduled_data_refresh";
+    return withCronRunId({ ...base, reason }, reason);
+  }
+
+  const market = textValue(params.market);
+  const jobKind = textValue(params.jobKind);
+  if (!market || !jobKind) {
+    throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, "data_maintenance requires market and jobKind");
+  }
+  const maintenanceJobId = textValue(params.maintenanceJobId);
+  return withCronRunId(
+    {
+      ...base,
+      market,
+      jobKind,
+      ...(maintenanceJobId ? { maintenanceJobId } : {}),
+    },
+    `${market}:${jobKind}`,
+  );
 }
 
-function buildCronRunId(bucketKey) {
-  const safeBucket = bucketKey.replace(/[^A-Za-z0-9_.:-]+/g, "_");
-  return `price-alert-scan:${safeBucket}:${Date.now()}:${crypto.randomUUID()}`;
+function safeCronRunIdPart(value) {
+  return String(value ?? "cron").replace(/[^A-Za-z0-9_.:-]+/g, "_");
+}
+
+function buildCronRunId(kind, key) {
+  const prefixByKind = {
+    price_alert_scan: "price-alert-scan",
+    scheduled_report: "scheduled-report",
+    selection_data_refresh: "selection-data-refresh",
+    data_maintenance: "data-maintenance",
+  };
+  const prefix = prefixByKind[kind] ?? safeCronRunIdPart(kind);
+  const safeKey = safeCronRunIdPart(key);
+  return `${prefix}:${safeKey}:${Date.now()}:${crypto.randomUUID()}`;
 }
 
 function internalWakeConfig() {
@@ -184,7 +254,7 @@ function registerScheduledWorkTool(api) {
     () => ({
       name: TOOL_NAME,
       label: TOOL_NAME,
-      description: "Wake the claw-trade internal scheduled-work route for a cron-provided price alert scan payload.",
+      description: "Wake the claw-trade internal scheduled-work route for a cron-provided payload.",
       parameters: TOOL_INPUT_SCHEMA,
       async execute(_callId, params) {
         return executeWakeTool(params);

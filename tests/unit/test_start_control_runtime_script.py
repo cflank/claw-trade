@@ -404,6 +404,8 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
         "selection_manager",
         "selection_portfolio_manager",
         "price_alert_scan_worker",
+        "scheduled_report_runner",
+        "market_data_maintenance_worker",
     )
     for worker in workers:
         assert f'"{worker}"' in text

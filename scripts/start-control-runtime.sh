@@ -1003,6 +1003,8 @@ const workers = [
   "selection_manager",
   "selection_portfolio_manager",
   "price_alert_scan_worker",
+  "scheduled_report_runner",
+  "market_data_maintenance_worker",
 ];
 
 function isPlainObject(value) {
