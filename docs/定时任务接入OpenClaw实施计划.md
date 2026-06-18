@@ -45,6 +45,8 @@
 - 价格提醒创建后只加入扫描桶；同一市场/频率只有一个扫描 cron job。
 - 价格扫描按 ticker 合并取 quote；同 ticker 多提醒不重复取行情。
 - 价格触发判断由确定性代码完成。
+- 价格提醒第一版触发后只提醒并关闭，不生成报告确认卡，不进入 `/report`。
+- HK 价格提醒显式不支持，不能 fallback 到 CN_A/US；US 自动扫描默认 skipped，等待 quote/calendar live 证据。
 - quote provider 未接通真实 data gateway 时必须 fail closed，不能假成功。
 - 后台数据维护 cron job 只触发 data gateway maintenance 入口，不通知普通用户。
 - live runtime 验收能看到 OpenClaw cron run history、worker wake、claw-trade 业务执行证据。
@@ -349,6 +351,8 @@ scan_bucket
 condition_version
 last_quote_evidence_ref
 notification_dedupe_key
+last_scan_run_id
+last_notification_result
 ```
 
 这些字段不得进入 `to_scheduled_report_for_user()` 或 `to_price_alert_for_user()`。
@@ -635,6 +639,8 @@ Stop conditions：
 ```text
 CRYPTO alert -> scan bucket CRYPTO:3m
 CN_A alert -> scan bucket CN_A:3m
+HK alert -> INVALID_INPUT，不创建 alert，不创建 bucket
+US alert -> scan bucket US:3m 但默认 skipped，直到 quote/calendar live 证据启用
 同 bucket 多 alert -> 只 ensure 一个 cron job
 新增 alert 不新增 per-alert cron job
 ```
@@ -665,6 +671,22 @@ save alert(scan_bucket=bucket_key)
 保存 scan summary
 ```
 
+`scan summary` 至少包含：
+
+```text
+scan_run_id
+bucket_key
+cron_run_id
+active_alert_count
+grouped_quote_count
+triggered_alert_count
+skipped_alert_count
+failed_alert_count
+quote_evidence_refs
+started_at
+finished_at
+```
+
 - [ ] **Step 4: 通知幂等**
 
 dedupe key：
@@ -675,6 +697,17 @@ alert_id + condition_version + quote_timestamp + trigger_side
 
 同一个 quote 不能重复发通知。
 
+- [ ] **Step 4.1: 站内提醒落点**
+
+Channel 未配置或不可用时：
+
+```text
+append in-app notification/chat message
+persist notification_dedupe_key
+do not mark as wechat sent
+do not treat channel failure as price not triggered
+```
+
 - [ ] **Step 5: 非交易时段 skip**
 
 第一版：
@@ -683,6 +716,7 @@ alert_id + condition_version + quote_timestamp + trigger_side
 CRYPTO: 不 skip
 CN_A: 非交易时段 skipped，不取行情
 US: 预留，未启用时 skipped
+HK: unsupported，不创建提醒
 ```
 
 如果市场日历缺失，记录 `market_calendar_unavailable`，不伪装成成功扫描。
@@ -738,6 +772,10 @@ Stop conditions：
 缺 evidence_helper/cache/rate_limit/single_flight/attempt_store -> evidence_chain_unavailable
 data_api 无 quote 路径 -> price_alert_quote_unavailable
 provider 返回缺 current_price -> invalid_quote_payload
+provider 返回缺 quote_timestamp -> invalid_quote_payload
+provider 返回缺 evidence_ref -> invalid_quote_payload
+price threshold 使用过期 quote -> stale_quote_unavailable
+percent_change 24h 缺 percent_change_24h -> invalid_quote_payload
 ```
 
 - [ ] **Step 2: 写 successful quote 测试**
@@ -747,10 +785,11 @@ provider 返回缺 current_price -> invalid_quote_payload
 ```python
 {
     "current_price": 71000.0,
-    "percent_change": 2.5,
     "percent_change_24h": 2.5,
+    "percent_change_intraday": 1.2,
     "quote_timestamp": "2026-05-19T12:00:00Z",
-    "evidence_ref": "dataset://normalized/quote_snapshot/..."
+    "evidence_ref": "dataset://normalized/quote_snapshot/...",
+    "source_market_session": "continuous"
 }
 ```
 
@@ -761,7 +800,6 @@ provider 返回缺 current_price -> invalid_quote_payload
 ```text
 quote_snapshot
 最近 intraday_bar close
-最近 daily_bar close
 ```
 
 要求：
@@ -770,6 +808,8 @@ quote_snapshot
 - request consumer 写 `price_alert`。
 - 保留 gaps 和 evidence ref。
 - 没有数据时 fail closed。
+- `daily_bar close` 不能作为价格阈值提醒的当前价 fallback；只能作为后续另行批准的非实时参考。
+- 24h 和 intraday 涨跌幅必须按市场窗口分别取证，不得互相 fallback。
 
 - [ ] **Step 4: `source_probe.py` 接入**
 
@@ -796,6 +836,8 @@ Stop conditions：
 - data gateway 当前没有 approved quote/bar 查询能力。
 - 需要硬编码第三方 HTTP 源绕过 gate。
 - 需要伪造 quote_timestamp 或 evidence_ref。
+- 需要用昨日收盘价伪装当前价格。
+- 需要在 HK 未批准时静默 fallback 到其它市场。
 
 ### TC-07：后台数据维护 cron runner
 
@@ -946,6 +988,8 @@ pause calls cron.update
 delete calls cron.remove
 run-now calls cron.run
 create two CRYPTO alerts only creates one price-alert-scan cron job
+create HK alert returns INVALID_INPUT and creates no cron job
+US alert scan returns skipped until quote/calendar live evidence exists
 ```
 
 - [ ] **Step 5: 跑测试**

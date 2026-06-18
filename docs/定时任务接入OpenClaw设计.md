@@ -168,6 +168,15 @@ price-alert-scan:CN_A:3m
 price-alert-scan:US:3m
 ```
 
+第一版市场口径：
+
+| 市场 | 创建提醒 | 自动扫描 | 说明 |
+| --- | --- | --- | --- |
+| CRYPTO | 支持 | 支持 | 24/7 扫描。 |
+| CN_A | 支持 | 支持 | 仅交易时段取行情。 |
+| US | 可保留接口 | 默认 skipped | 等待美股 quote 和交易日历 live 证据后启用。 |
+| HK | 不支持 | 不支持 | 需要单独批准 HK 行情、交易时段和标的解析策略；不得回退到 US/CN_A。 |
+
 以后如果产品允许不同频率，再扩展成：
 
 ```text
@@ -241,6 +250,31 @@ below: latest_price <= target_price
 - 不伪造价格。
 - 不把失败降级成成功。
 
+触发后动作：
+
+- 第一版只发送提醒并默认关闭该提醒。
+- 不自动生成报告。
+- 不生成“是否创建报告”的确认卡。
+- 不进入 `/report` 队列。
+
+quote payload 最小合同：
+
+```text
+current_price: number
+quote_timestamp: ISO-8601
+evidence_ref: data gateway 可追溯引用
+source_market_session: continuous | regular | closed
+percent_change_24h: number, 仅 24h 涨跌幅提醒需要
+percent_change_intraday: number, 仅 intraday 涨跌幅提醒需要
+```
+
+规则：
+
+- `current_price`、`quote_timestamp`、`evidence_ref` 缺一则 fail closed。
+- 价格阈值提醒不能用昨日收盘价伪装当前价。
+- 涨跌幅提醒必须使用与窗口匹配的字段；不能用无来源百分比替代。
+- quote 新鲜度由市场策略决定；过期 quote 记录失败，不触发。
+
 ### 扫描频率
 
 第一版建议：
@@ -250,6 +284,7 @@ below: latest_price <= target_price
 | CRYPTO | 3 分钟 | 24/7 |
 | CN_A | 3 分钟 | A 股交易时段 |
 | US | 3 分钟 | 美股交易时段，未来启用 |
+| HK | 不启用 | 等待单独批准 |
 
 如果 OpenClaw cron 本身不理解交易时段，做法是：
 
@@ -318,6 +353,8 @@ claw-trade 数据层负责：
 - last checked at。
 - last quote evidence ref。
 - notification idempotency key。
+- condition version。
+- user-visible notification target：`wechat_clawbot` 或 `in_app`。
 
 扫描桶记录需要保存：
 
@@ -327,6 +364,21 @@ claw-trade 数据层负责：
 - enabled 状态。
 - last scan run id。
 - last scan summary。
+- last error message。
+- skipped reason。
+
+扫描运行摘要需要保存：
+
+- scan run id。
+- bucket key。
+- cron run id。
+- active alert count。
+- grouped quote count。
+- triggered alert count。
+- skipped alert count。
+- failed alert count。
+- quote evidence refs。
+- started / finished timestamp。
 
 ### OpenClaw cron adapter
 
@@ -377,6 +429,13 @@ alert_id + condition_version + quote_timestamp + trigger_side
 ```
 
 同一个 quote 触发同一个提醒，不应重复通知。
+
+如果 Channel 未配置或不可用：
+
+- 写入站内提醒消息。
+- 保留同一个通知幂等 key。
+- 不把 Channel 失败当成价格未触发。
+- 不把站内提醒成功伪装成微信发送成功。
 
 ## 与现有代码的关系
 

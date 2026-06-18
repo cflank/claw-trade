@@ -1992,7 +1992,9 @@ toPdfExportForUser(record)
 | OpenClawChannelInboundBridge | 消费 OpenClaw 转发的微信消息通知/回调 | 不监听微信协议、不维护微信连接 | OpenClawGatewayClient、ReportNotificationService | `handleOpenClawChannelInboundEvent` | `mapInboundEventToAction` | 回调重复按 eventId 幂等 | “报告”与“发送完整报告”都能触发发送流程 |
 | ChannelBridge | 调 OpenClaw Channel 状态、配置、发送 | 不保存 Channel 密钥、不实现协议 | OpenClawGatewayClient | `getChannelStatus`, `saveChannelConfigViaOpenClaw`, `sendReportFileViaChannel` | `mapOpenClawChannelStatus`, `resolveClawBotChannelId` | OpenClaw 错误翻译 | 状态查询、文件能力未知时返回明确错误 |
 | SchedulerService | 定时报告保存、tick 到点入队 | 不直接执行报告、不支持每小时 | ReportTaskQueue、时钟 | `createScheduledReport`, `tickScheduledReports`, `runScheduledReportNow` | `computeNextRunAt`, `rejectUnsupportedFrequency` | 队列满保留下次重试说明 | 每天/每周、立即执行、队列串行 |
-| PriceAlertService | 价格提醒保存、检查、通知、触发后关闭 | 不生成报告、不做 AI 解释 | 数据源价格查询、ChannelBridge | `createPriceAlert`, `evaluatePriceAlert`, `runPriceAlertNow` | `fetchLatestPrice`, `compareCondition` | 数据源失败可读提醒 | 阈值、涨跌幅、触发关闭 |
+| PriceAlertService | 价格提醒保存、检查、通知、触发后关闭 | 不生成报告、不做 AI 解释、不生成报告确认卡 | data gateway quote provider、ChannelBridge、站内消息 store | `createPriceAlert`, `evaluatePriceAlert`, `runPriceAlertNow` | `fetchLatestPrice`, `compareCondition`, `notifyOrAppendInApp` | 数据源失败可读提醒 | 阈值、涨跌幅、触发关闭、Channel 缺失时写站内提醒 |
+| PriceAlertScanService | 按市场/频率扫描桶批量检查 active 价格提醒 | 不创建每条提醒 cron、不判断投资建议、不调用 LLM | ScheduledWorkStore、PriceAlertService、OpenClaw cron wake payload | `scanBucket` | `groupAlertsByInstrument`, `loadActiveAlerts`, `saveScanSummary` | 扫描失败记录 bucket 和 alert 错误 | 同 ticker 合并取 quote、非交易时段 skipped |
+| PriceAlertQuoteProvider | 为价格提醒读取当前 quote 和涨跌幅证据 | 不绕过 data gateway、不裸调第三方 HTTP、不伪造 quote | data gateway public API、provider evidence、market calendar | `getPriceAlertQuote` | `requestQuoteSnapshot`, `fallbackToRecentBar`, `validateQuotePayload` | 无证据或过期 quote fail closed | consumer=price_alert、quote_timestamp、evidence_ref |
 | DataSourceSettingsService | 数据源实例增删改、replace-only 密钥、首版后端受控写入 `.env.local` | 不支持未知 HTTP/JSON、不让前端或 controller 直接读写 `.env.local` | DataSourceHealthService、env allowlist writer | `listDataSources`, `saveDataSourceInstance`, `testDataSource` | `validateSupportedType`, `maskSecret`, `buildProviderManifest`, `writeAllowedEnvKeys` | 测试失败不可启用 | 支持类型硬编码限制、密钥掩码、env 写入原子性 |
 | DataSourceHealthService | 聚合本次数据源健康、失效提醒 | 不提醒未配置/未使用/关闭来源 | 运行尝试记录、run plan、instances | `collectConfiguredFailedDataSources` | `isConfiguredFailure`, `translateProviderStatus` | 状态缺失只进日志 | 提醒判定四条件 |
 | LlmSettingsBridge | 模型设置入口、调 OpenClaw 保存和测试 | 不保存真实 LLM 密钥、不直接调 provider | OpenClaw config/models APIs | `loadLlmSettings`, `saveLlmConfigViaOpenClaw`, `testLlmViaOpenClaw` | `buildConfigPatch`, `restoreMaskedSecret` | schema/版本冲突提示重试 | 密钥 replace-only、真实密钥不落 claw-trade |
@@ -3130,7 +3132,7 @@ function tickScheduledReports(now) {
 
 输入：`input: PriceAlertInput, requestId: string`
 
-输出：`PriceAlert`
+输出：`PriceAlertForUser`
 
 前置条件：用户已确认。
 
@@ -3147,6 +3149,9 @@ function createPriceAlert(input, requestId) {
   if (input.condition.type not in ["price_threshold", "percent_change"]) {
     throw userError("INVALID_INPUT", "当前只支持价格阈值或涨跌幅提醒。")
   }
+  if (input.market == "HK") {
+    throw userError("INVALID_INPUT", "第一版暂不支持港股价格提醒。")
+  }
   alert = PriceAlertStore.create({
     ...input,
     id: newId("alert"),
@@ -3154,7 +3159,7 @@ function createPriceAlert(input, requestId) {
     createdAt: nowIso(),
     updatedAt: nowIso(),
   })
-  return idempotency.save(requestId, alert)
+  return idempotency.save(requestId, toPriceAlertForUser(alert))
 }
 ```
 
@@ -3162,7 +3167,7 @@ function createPriceAlert(input, requestId) {
 
 输入：`priceAlertId: string, requestId: string`
 
-输出：`PriceAlert`
+输出：`PriceAlertForUser`
 
 前置条件：提醒存在且未关闭/删除。
 
@@ -3188,7 +3193,7 @@ function pausePriceAlert(priceAlertId, requestId) {
 
 输入：`priceAlertId: string, requestId: string`
 
-输出：`PriceAlert`
+输出：`PriceAlertForUser`
 
 前置条件：提醒处于暂停。
 
@@ -3214,7 +3219,7 @@ function resumePriceAlert(priceAlertId, requestId) {
 
 输入：`priceAlertId: string, requestId: string`
 
-输出：`{ deleted: true, id }`
+输出：`{ deleted: true, priceAlertId }`
 
 前置条件：提醒存在。
 
@@ -3229,9 +3234,9 @@ function deletePriceAlert(priceAlertId, requestId) {
   if (idempotency.exists(requestId)) return idempotency.result(requestId)
   alert = PriceAlertStore.get(priceAlertId)
   if (!alert) throw userError("ALERT_NOT_FOUND", "价格提醒不存在。")
-  if (alert.state == "deleted") return idempotency.save(requestId, { deleted: true, id: alert.id })
+  if (alert.state == "deleted") return idempotency.save(requestId, { deleted: true, priceAlertId: alert.id })
   PriceAlertStore.update(alert.id, { state: "deleted", updatedAt: nowIso() })
-  return idempotency.save(requestId, { deleted: true, id: alert.id })
+  return idempotency.save(requestId, { deleted: true, priceAlertId: alert.id })
 }
 ```
 
@@ -3258,7 +3263,7 @@ function evaluatePriceAlert(alertId, requestId) {
 
   PriceAlertStore.update(alert.id, { state: "checking" })
   try {
-    quote = PriceDataService.getLatestQuote(alert.instrumentCode, alert.market)
+    quote = PriceAlertQuoteProvider.getPriceAlertQuote(alert.instrumentCode, alert.market, alert.condition)
     triggered = compareCondition(quote, alert.condition)
     if (!triggered) {
       updated = PriceAlertStore.update(alert.id, { state: "active", lastCheckedAt: nowIso() })
@@ -3266,7 +3271,11 @@ function evaluatePriceAlert(alertId, requestId) {
     }
 
     text = renderPriceAlertMessage(alert, quote)
-    notifyResult = ChannelBridge.trySendTextOrInApp(text)
+    notifyResult = notifyOrAppendInApp(text, alert.notification, {
+      alertId: alert.id,
+      quoteTimestamp: quote.quote_timestamp,
+      evidenceRef: quote.evidence_ref,
+    })
     updated = PriceAlertStore.update(alert.id, {
       state: "closed",
       triggeredAt: nowIso(),
@@ -3285,6 +3294,28 @@ function evaluatePriceAlert(alertId, requestId) {
   }
 }
 ```
+
+`PriceAlertQuoteProvider.getPriceAlertQuote` 返回的最小合同：
+
+```ts
+interface PriceAlertQuote {
+  current_price: number;
+  percent_change?: number;
+  percent_change_24h?: number;
+  percent_change_intraday?: number;
+  quote_timestamp: string;
+  evidence_ref: string;
+  source_market_session: "continuous" | "regular" | "closed";
+}
+```
+
+要求：
+
+- `current_price`、`quote_timestamp`、`evidence_ref` 必须来自 data gateway 证据链，缺一即 `DATASOURCE_TEST_FAILED`。
+- 价格阈值提醒必须使用未过期 quote；不能用昨日收盘价伪装当前价格。
+- 涨跌幅提醒必须使用和 `window` 匹配的字段；缺少 `percent_change_24h` 或 `percent_change_intraday` 时不得用无来源百分比替代。
+- Channel 不可用时写入当前聊天/通知流的站内提醒；站内提醒也必须使用 `alert_id + condition_version + quote_timestamp + trigger_side` 去重。
+- 第一版触发后只提醒并关闭，不生成报告确认卡。
 
 ### saveDataSourceInstance
 

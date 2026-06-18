@@ -74,6 +74,90 @@ def test_config_get_uses_current_gateway_shape_without_paths_param(monkeypatch) 
     assert calls == [{"method": "config.get", "params": {}}]
 
 
+def test_default_local_gateway_with_token_does_not_pass_url_override(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    commands: list[list[str]] = []
+
+    def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
+        _ = (capture_output, text, check, env, timeout)
+        commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"result": {"status": "ok"}}), stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token="local-token",
+        password=None,
+    )
+
+    assert client.cron_status(job_id="job-1") == {"status": "ok"}
+    assert "--url" not in commands[0]
+    assert commands[0][commands[0].index("--token") + 1] == "local-token"
+
+
+def test_cron_add_does_not_unwrap_job_payload_field(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
+        _ = (command, capture_output, text, check, env, timeout)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "id": "job-1",
+                    "payload": {"kind": "agentTurn", "message": "wake"},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token="local-token",
+        password=None,
+    )
+
+    result = client.cron_add({"name": "job"})
+
+    assert result == {"id": "job-1", "payload": {"kind": "agentTurn", "message": "wake"}}
+
+
+def test_cron_methods_use_current_gateway_param_shapes(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
+        _ = (capture_output, text, check, env, timeout)
+        method = command[3]
+        params = json.loads(command[command.index("--params") + 1])
+        calls.append({"method": method, "params": params})
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"result": {"ok": True}}), stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token="local-token",
+        password=None,
+    )
+
+    client.cron_update({"jobId": "job-1", "enabled": False})
+    client.cron_remove(job_id="job-1")
+    client.cron_run(job_id="job-1", idempotency_key="ignored-by-openclaw-cron")
+    client.cron_status(job_id="job-1")
+    client.cron_runs(job_id="job-1", limit=3)
+
+    assert calls == [
+        {"method": "cron.update", "params": {"id": "job-1", "patch": {"enabled": False}}},
+        {"method": "cron.remove", "params": {"id": "job-1"}},
+        {"method": "cron.run", "params": {"id": "job-1", "mode": "force"}},
+        {"method": "cron.status", "params": {}},
+        {"method": "cron.runs", "params": {"id": "job-1", "limit": 3}},
+    ]
+
+
 def test_plugins_list_uses_local_openclaw_cli_shape(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     calls: list[dict[str, object]] = []
 

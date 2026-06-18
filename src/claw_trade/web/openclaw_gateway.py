@@ -286,6 +286,36 @@ class OpenClawGatewayRpcClient:
             if temp_media_path is not None:
                 temp_media_path.unlink(missing_ok=True)
 
+    def cron_add(self, params: Mapping[str, Any]) -> Any:
+        return self._call("cron.add", params, timeout_ms=15_000)
+
+    def cron_update(self, params: Mapping[str, Any]) -> Any:
+        raw = dict(params)
+        job_id = str(raw.pop("id", raw.pop("jobId", ""))).strip()
+        patch = raw.pop("patch", raw)
+        return self._call("cron.update", {"id": job_id, "patch": dict(patch)}, timeout_ms=15_000)
+
+    def cron_remove(self, *, job_id: str) -> Any:
+        return self._call("cron.remove", {"id": job_id}, timeout_ms=15_000)
+
+    def cron_run(self, *, job_id: str, idempotency_key: str | None = None) -> Any:
+        _ = idempotency_key
+        params: dict[str, Any] = {"id": job_id, "mode": "force"}
+        return self._call("cron.run", params, timeout_ms=30_000)
+
+    def cron_list(self, params: Mapping[str, Any] | None = None) -> Any:
+        return self._call("cron.list", params or {}, timeout_ms=15_000)
+
+    def cron_status(self, *, job_id: str) -> Any:
+        _ = job_id
+        return self._call("cron.status", {}, timeout_ms=15_000)
+
+    def cron_runs(self, *, job_id: str, limit: int | None = None) -> Any:
+        params: dict[str, Any] = {"id": job_id}
+        if limit is not None:
+            params["limit"] = limit
+        return self._call("cron.runs", params, timeout_ms=15_000)
+
     def _current_config_hash(self) -> str | None:
         payload = self._call("config.get", {}, timeout_ms=8000)
         if not isinstance(payload, Mapping):
@@ -318,7 +348,7 @@ class OpenClawGatewayRpcClient:
         params_text = json.dumps(params or {}, ensure_ascii=False)
         params_file: str | None = None
         command: list[str] = [self._gateway_call_bin, "gateway", "call", method]
-        if self._gateway_ws_url != _DEFAULT_GATEWAY_WS_URL or self._token or self._password:
+        if self._gateway_ws_url != _DEFAULT_GATEWAY_WS_URL:
             command.extend(["--url", self._gateway_ws_url])
         command.extend(["--timeout", str(effective_timeout_ms)])
         if expect_final:
@@ -411,7 +441,7 @@ def _unwrap_payload(raw: Any) -> Any:
     if isinstance(raw, Mapping):
         if "result" in raw:
             return raw["result"]
-        if "payload" in raw:
+        if "payload" in raw and ("ok" in raw or "error" in raw):
             return raw["payload"]
     return raw
 
