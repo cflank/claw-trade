@@ -6,6 +6,7 @@ from threading import Event, Lock, Thread
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from claw_trade.data_gateway.selection_api import resolve_crypto_selection_trade_date_for_scheduler
 from claw_trade.selection.data_job import SelectionDataJobExecution
 from claw_trade.selection.models import (
     SelectionDataRun,
@@ -72,7 +73,7 @@ class SelectionDataRefreshService:
     ) -> SelectionDataRefreshResult:
         reason = str(getattr(unavailable_code, "value", unavailable_code))
         try:
-            trade_date = self._resolve_closed_trade_date(request.trade_date)
+            trade_date = self._resolve_trade_date_for_market(request.market, request.trade_date)
         except Exception as exc:  # noqa: BLE001
             return SelectionDataRefreshResult(
                 status="failed",
@@ -117,7 +118,7 @@ class SelectionDataRefreshService:
                         trade_date=trade_date,
                         trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
                     ),
-                    resolve_closed_trade_date=self._resolve_closed_trade_date,
+                    resolve_closed_trade_date=self._resolver_for_market(request.market),
                     has_active_job=lambda market, profile, date_value: self._store.has_active_data_run(
                         market=market,
                         profile=profile,
@@ -336,7 +337,7 @@ class SelectionDataRefreshService:
                 )
             }
         try:
-            resolved_trade_date = self._resolve_closed_trade_date(trade_date)
+            resolved_trade_date = self._resolve_trade_date_for_market(market, trade_date)
         except Exception:  # noqa: BLE001
             return {"selectionProgress": None}
         record = self._store.load_active_data_run_record(
@@ -384,9 +385,19 @@ class SelectionDataRefreshService:
 
     def _canonical_trade_date_for_record(self, record: SelectionDataRunRecord) -> str:
         try:
-            return self._resolve_closed_trade_date(record.run_plan.trade_date)
+            return self._resolve_trade_date_for_market(record.run_plan.market, record.run_plan.trade_date)
         except Exception:  # noqa: BLE001
             return record.run_plan.trade_date
+
+    def _resolve_trade_date_for_market(self, market: SelectionMarket, trade_date: str | None) -> str:
+        if market == SelectionMarket.CRYPTO:
+            return resolve_crypto_selection_trade_date_for_scheduler(trade_date)
+        return self._resolve_closed_trade_date(trade_date)
+
+    def _resolver_for_market(self, market: SelectionMarket) -> Callable[[str | None], str]:
+        if market == SelectionMarket.CRYPTO:
+            return resolve_crypto_selection_trade_date_for_scheduler
+        return self._resolve_closed_trade_date
 
     def _run_job_and_record_failure(self, plan: SelectionRunPlan) -> None:
         try:

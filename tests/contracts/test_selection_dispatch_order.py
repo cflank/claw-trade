@@ -280,6 +280,8 @@ def test_selection_manager_pm_prompt_context_prepends_candidate_checklist(tmp_pa
                 "| 排名 | 股票代码 | 股票名称 | 行业 | 总分 |",
                 "| --- | --- | --- | --- | ---: |",
                 "| 1 | 003036.SZ | 泰坦股份 | - | 60.55 |",
+                "| 2 | NEARUSDT | NEAR/USDT | Crypto | 60.40 |",
+                "| 3 | CUSDT | C/USDT | Crypto | 60.30 |",
                 "| 6 | 600545.SH | 卓郎智能 | - | 60.20 |",
                 "| 20 | 688260.SH | 昀冢科技 | - | 56.83 |",
             ]
@@ -309,6 +311,8 @@ def test_selection_manager_pm_prompt_context_prepends_candidate_checklist(tmp_pa
         prompt_context = snapshot["runtime_vars"]["selection_prompt_context"]
         assert snapshot["runtime_vars"]["select_workflow_run_id"].startswith("sel-wf-")
         assert "[候选池完整核对清单]" in prompt_context
+        assert "- 2 | NEARUSDT | NEAR/USDT" in prompt_context
+        assert "- 3 | CUSDT | C/USDT" in prompt_context
         assert "- 6 | 600545.SH | 卓郎智能" in prompt_context
         assert prompt_context.index("[候选池完整核对清单]") < prompt_context.index("[模型可见已批准材料]")
 

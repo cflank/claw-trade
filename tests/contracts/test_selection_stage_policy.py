@@ -40,13 +40,14 @@ def test_selection_worker_stage_profile_and_tool_matrix(worker_id: str) -> None:
 
     profiles = parsed.get("profiles")
     assert isinstance(profiles, dict)
-    assert set(profiles.keys()) == {"CN_A"}
+    assert set(profiles.keys()) == {"CN_A", "CRYPTO"}
 
-    cn_a = profiles["CN_A"]
-    assert cn_a.get("approved") is True
-    assert cn_a.get("prompt") == "prompts/CN_A.md"
-    assert cn_a.get("tools") == SELECTION_WORKERS[worker_id]["tools"]
-    assert cn_a.get("openviking_access") == "none"
+    for profile in ("CN_A", "CRYPTO"):
+        profile_config = profiles[profile]
+        assert profile_config.get("approved") is True
+        assert profile_config.get("prompt") == f"prompts/{profile}.md"
+        assert profile_config.get("tools") == SELECTION_WORKERS[worker_id]["tools"]
+        assert profile_config.get("openviking_access") == "none"
 
     tool_policy = parsed.get("tool_policy")
     assert isinstance(tool_policy, dict)

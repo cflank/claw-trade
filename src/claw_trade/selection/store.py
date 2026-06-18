@@ -540,8 +540,6 @@ def _readback_verify_path(path: Path) -> Path:
 def _validate_warehouse_evidence_for_select(record: SelectionDataRunRecord) -> SelectUnavailableCode | None:
     if record.run_plan.market in {SelectionMarket.HK, SelectionMarket.US}:
         return SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED
-    if record.run_plan.market == SelectionMarket.CRYPTO:
-        return SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING
     if record.run_plan.data_need_audit_ref.startswith("restored://"):
         return SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING
     data_run = record.data_run

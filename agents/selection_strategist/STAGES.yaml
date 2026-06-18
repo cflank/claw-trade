@@ -11,6 +11,12 @@ profiles:
     tools:
       - selection_candidate_cache
     openviking_access: none
+  CRYPTO:
+    approved: true
+    prompt: prompts/CRYPTO.md
+    tools:
+      - selection_candidate_cache
+    openviking_access: none
 skills:
   mounted:
     - claw-trade-stage

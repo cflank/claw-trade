@@ -6,11 +6,12 @@ from zoneinfo import ZoneInfo
 from claw_trade.data_gateway._selection_batch import (
     build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
+    resolve_crypto_selection_trade_date_for_scheduler,
 )
 from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
 from claw_trade.selection.strategy_config import (
-    load_cn_a_selection_v1_strategy,
-    load_cn_a_selection_v1_strategy_config_ref,
+    load_selection_strategy as _load_selection_strategy,
+    load_selection_strategy_config_ref as _load_selection_strategy_config_ref,
 )
 
 _CN_A_CALENDAR = "CN_A_SSE_SZSE"
@@ -41,12 +42,38 @@ def previous_cn_a_selection_trade_date(candidate: date) -> date:
         current = current - timedelta(days=1)
     raise ValueError(f"cannot resolve CN_A trading day from {candidate.isoformat()}")
 
+
+def load_cn_a_selection_v1_strategy(config_ref: str):
+    """Backward-compatible API kept for legacy call sites."""
+    return _load_selection_strategy(config_ref)
+
+
+def load_selection_strategy(config_ref: str):
+    """General strategy loader for current multi-market callers."""
+    return _load_selection_strategy(config_ref)
+
+
+def load_cn_a_selection_v1_strategy_config_ref(
+    market: object,
+    profile: object,
+) -> str | None:
+    """Backward-compatible API kept for legacy call sites."""
+    return _load_selection_strategy_config_ref(market, profile)
+
+
+def load_selection_strategy_config_ref(market: object, profile: object) -> str | None:
+    """General strategy config resolver for all supported markets."""
+    return _load_selection_strategy_config_ref(market, profile)
+
 __all__ = [
     "build_selection_data_need_audit",
     "fetch_selection_batch_from_data_gateway",
     "load_cn_a_selection_v1_strategy",
     "load_cn_a_selection_v1_strategy_config_ref",
+    "load_selection_strategy",
+    "load_selection_strategy_config_ref",
     "previous_cn_a_selection_trade_date",
     "resolve_cn_a_selection_closed_trade_date",
     "resolve_cn_a_selection_trade_date_for_scheduler",
+    "resolve_crypto_selection_trade_date_for_scheduler",
 ]

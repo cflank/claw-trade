@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import gc
+import hashlib
 import json
 import logging
 import os
@@ -61,11 +62,20 @@ from claw_trade.selection.models import (
     SelectionDataNeedAudit,
     SelectionRunPlan,
 )
-from claw_trade.selection.strategy_config import load_cn_a_selection_v1_strategy
+from claw_trade.selection.strategy_config import (
+    load_selection_strategy,
+    load_selection_strategy_config_ref,
+)
 
 _CN_A_SELECTION_COVERAGE_GROUP = "cn_a_selection_batch"
+_CRYPTO_SELECTION_COVERAGE_GROUP = "crypto_selection_batch"
 _CN_A_SELECTION_TIMEZONE = "Asia/Shanghai"
 _CN_A_SELECTION_CALENDAR = "CN_A_SSE_SZSE"
+_CRYPTO_SELECTION_TIMEZONE = "UTC"
+_CRYPTO_SELECTION_CALENDAR = "CRYPTO_24_7"
+_CN_A_DEFAULT_UNIVERSE_SCOPE = "all_a_shares"
+_CRYPTO_DEFAULT_UNIVERSE_SCOPE = "spot_usdt"
+_CRYPTO_HISTORY_COLUMNAR_ROOT = Path("data/crypto-history-full/normalized-columnar-usdt-only")
 _DEFAULT_LOOKBACK_TRADING_DAYS = 260
 _MIN_HISTORY_DAYS = 250
 _UNIVERSE_REFRESH_CHUNK_SIZE = 5
@@ -76,6 +86,9 @@ _SELECTION_DAILY_REQUEST: tuple[str, str, tuple[str, ...]] = (
     "daily_bar",
     "daily",
     ("date", "open", "high", "low", "close", "volume", "amount"),
+)
+_SELECTION_DAILY_REQUESTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    _SELECTION_DAILY_REQUEST,
 )
 _SELECTION_DAILY_QUERY_FIELDS = (
     "date",
@@ -166,6 +179,34 @@ _OPTIONAL_SELECTION_SUPPLEMENTAL_DATA_TYPES = frozenset({"corporate_action", "va
 _LOGGER = logging.getLogger("uvicorn.error")
 
 
+def _selection_market_defaults(market: SelectionMarket) -> tuple[str, str, str]:
+    if market == SelectionMarket.CRYPTO:
+        return (
+            _CRYPTO_SELECTION_COVERAGE_GROUP,
+            _CRYPTO_SELECTION_TIMEZONE,
+            _CRYPTO_SELECTION_CALENDAR,
+        )
+    return (
+        _CN_A_SELECTION_COVERAGE_GROUP,
+        _CN_A_SELECTION_TIMEZONE,
+        _CN_A_SELECTION_CALENDAR,
+    )
+
+
+def _selection_universe_scope(market: SelectionMarket) -> str:
+    return _CN_A_DEFAULT_UNIVERSE_SCOPE if market == SelectionMarket.CN_A else _CRYPTO_DEFAULT_UNIVERSE_SCOPE
+
+
+def _selection_data_request_specs(market: SelectionMarket) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    if market == SelectionMarket.CRYPTO:
+        return _SELECTION_DAILY_REQUESTS
+    return _SELECTION_REQUESTS
+
+
+def _selection_market_value(plan_market: SelectionMarket) -> Market:
+    return Market(str(plan_market.value))
+
+
 @dataclass(frozen=True)
 class _SelectionGatewayContext:
     data_service: Any
@@ -199,9 +240,14 @@ def build_selection_data_need_audit(
     trade_date: str,
     plan_id: str | None = None,
 ) -> SelectionDataNeedAudit:
-    if market != SelectionMarket.CN_A or profile != SelectionProfile.CN_A:
-        raise ValueError("selection batch v1 仅支持 CN_A")
-    resolved_plan_id = plan_id or f"plan://selection/cn_a/{trade_date}/batch-v1"
+    if (market, profile) not in {
+        (SelectionMarket.CN_A, SelectionProfile.CN_A),
+        (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO),
+    }:
+        raise ValueError("selection batch v1 仅支持 CN_A/CRYPTO")
+    market_slug = market.value.lower()
+    coverage_group, timezone, _calendar = _selection_market_defaults(market)
+    resolved_plan_id = plan_id or f"plan://selection/{market_slug}/{trade_date}/batch-v1"
     return SelectionDataNeedAudit(
         plan_id=resolved_plan_id,
         scope=SelectionBatchScope.SELECTION_BATCH,
@@ -209,10 +255,10 @@ def build_selection_data_need_audit(
         profile=profile,
         trade_date=trade_date,
         lookback_trading_days=_DEFAULT_LOOKBACK_TRADING_DAYS,
-        universe_scope="all_a_shares",
-        coverage_groups=(_CN_A_SELECTION_COVERAGE_GROUP, "universe", "daily", "fundamental"),
-        ttl_policy_ref="ttl://selection/cn_a/batch-v1/900s",
-        lineage_root_ref=f"lineage://selection/cn_a/{trade_date}/batch-v1",
+        universe_scope=_selection_universe_scope(market),
+        coverage_groups=(coverage_group, "universe", "daily", "fundamental"),
+        ttl_policy_ref=f"ttl://selection/{market_slug}/batch-v1/900s",
+        lineage_root_ref=f"lineage://selection/{market_slug}/{trade_date}/batch-v1",
     )
 
 
@@ -246,6 +292,15 @@ def fetch_selection_batch_from_data_gateway(
             data_need_audit=data_need_audit,
             manifest=columnar_manifest,
             rows=rows,
+        )
+        _write_evidence(evidence_root=evidence_root, plan=plan, requests=(), results=(), provider_result=result)
+        return result
+
+    if plan.market == SelectionMarket.CRYPTO:
+        result = _provider_result_from_crypto_seed_columnar(
+            plan=plan,
+            data_need_audit=data_need_audit,
+            progress_callback=progress_callback,
         )
         _write_evidence(evidence_root=evidence_root, plan=plan, requests=(), results=(), provider_result=result)
         return result
@@ -592,7 +647,7 @@ def _provider_result_from_check_results(
 ) -> SelectionDataNeedResult:
     attempt_refs = _dedupe(ref for item in results for ref in item.attempt_refs)
     dataset_refs = _dedupe(ref for item in results for ref in item.dataset_refs)
-    normalized_refs = tuple(_normalized_ref(ref) for ref in dataset_refs)
+    normalized_refs = tuple(_normalized_ref(ref, market=plan.market) for ref in dataset_refs)
     data_gaps = tuple(
         _gap_from_data_gap(plan=plan, gap=gap, default_refs=attempt_refs or (data_need_audit.lineage_root_ref,))
         for item in results
@@ -625,7 +680,7 @@ def _provider_result_from_local_feature_rows(
             *local_feature_rows.attempt_refs,
         )
     )
-    normalized_refs = _normalize_normalized_refs(local_feature_rows.normalized_refs)
+    normalized_refs = _normalize_normalized_refs(local_feature_rows.normalized_refs, market=plan.market)
     raw_data_gaps = tuple(
         gap
         for item in results
@@ -680,11 +735,14 @@ def _provider_result_from_columnar_manifest(
     manifest: SelectionColumnarManifest,
     rows: tuple[Mapping[str, object], ...],
 ) -> SelectionDataNeedResult:
-    normalized_refs = _normalize_normalized_refs(manifest.normalized_refs or tuple(
-        str(row.get("source_ref") or "").strip()
-        for row in rows
-        if str(row.get("source_ref") or "").strip()
-    ))
+    normalized_refs = _normalize_normalized_refs(
+        manifest.normalized_refs or tuple(
+            str(row.get("source_ref") or "").strip()
+            for row in rows
+            if str(row.get("source_ref") or "").strip()
+        ),
+        market=data_need_audit.market,
+    )
     return SelectionDataNeedResult(
         data_need_audit=data_need_audit,
         attempt_refs=manifest.provider_attempt_refs,
@@ -695,6 +753,279 @@ def _provider_result_from_columnar_manifest(
         columnar_manifest_ref=manifest.manifest_ref,
         columnar_manifest_sha256=SelectionColumnarWarehouse.default().manifest_sha256(manifest.manifest_ref),
     )
+
+
+def resolve_crypto_selection_trade_date_for_scheduler(trade_date: str | None) -> str:
+    if trade_date is not None and trade_date.strip():
+        return date.fromisoformat(trade_date.strip()).isoformat()
+    latest = _latest_crypto_seed_trade_date()
+    if latest is None:
+        raise ValueError("crypto selection history seed has no daily spot data")
+    return latest.isoformat()
+
+
+def _provider_result_from_crypto_seed_columnar(
+    *,
+    plan: SelectionRunPlan,
+    data_need_audit: SelectionDataNeedAudit,
+    progress_callback: Callable[[SelectionDataFetchProgress], None] | None,
+) -> SelectionDataNeedResult:
+    _notify_fetch_progress(progress_callback, label="读取本地加密日线历史", completed=0, total=1)
+    rows_result = _crypto_seed_feature_rows(plan=plan, progress_callback=progress_callback)
+    if not rows_result.rows:
+        gap = _blocker_gap(
+            gap_id=f"{plan.selection_run_id}-crypto-select-history-missing",
+            gap_code="crypto_select_history_missing",
+            attempt_refs=rows_result.attempt_refs or (f"seed://crypto-history/{plan.trade_date}",),
+            reader_message="CRYPTO selection 未从本地列式历史仓库读到可用 spot USDT 日线，不能生成候选缓存。",
+            source_metadata=rows_result.metadata,
+        )
+        return SelectionDataNeedResult(
+            data_need_audit=data_need_audit,
+            attempt_refs=rows_result.attempt_refs,
+            normalized_refs=rows_result.normalized_refs,
+            rows=(),
+            data_gaps=(gap,),
+        )
+    _notify_fetch_progress(progress_callback, label="读取本地加密日线历史", completed=1, total=1)
+    return SelectionDataNeedResult(
+        data_need_audit=data_need_audit,
+        attempt_refs=rows_result.attempt_refs,
+        normalized_refs=rows_result.normalized_refs,
+        rows=rows_result.rows,
+        data_gaps=rows_result.data_gaps,
+        warehouse_check_ref=f"warehouse-check://crypto-seed-columnar/{plan.trade_date}",
+        columnar_manifest_ref=rows_result.columnar_manifest_ref,
+        columnar_manifest_sha256=rows_result.columnar_manifest_sha256,
+    )
+
+
+@dataclass(frozen=True)
+class _CryptoSeedRowsResult:
+    rows: tuple[Mapping[str, object], ...]
+    normalized_refs: tuple[str, ...]
+    attempt_refs: tuple[str, ...]
+    data_gaps: tuple[DataGapRef, ...]
+    columnar_manifest_ref: str | None
+    columnar_manifest_sha256: str | None
+    metadata: Mapping[str, object]
+
+
+def _crypto_seed_feature_rows(
+    *,
+    plan: SelectionRunPlan,
+    progress_callback: Callable[[SelectionDataFetchProgress], None] | None,
+) -> _CryptoSeedRowsResult:
+    root = _CRYPTO_HISTORY_COLUMNAR_ROOT
+    files = _crypto_seed_daily_files(root)
+    if not files:
+        return _CryptoSeedRowsResult(
+            rows=(),
+            normalized_refs=(),
+            attempt_refs=(),
+            data_gaps=(),
+            columnar_manifest_ref=None,
+            columnar_manifest_sha256=None,
+            metadata={"seed_root": str(root), "reason": "daily_parquet_missing"},
+        )
+    trade_day = date.fromisoformat(plan.trade_date)
+    history_start = _selection_history_start_date(plan=plan)
+    required_history_days = max(121 if plan.market == SelectionMarket.CRYPTO else _MIN_HISTORY_DAYS, int(plan.lookback_trading_days or 0))
+    documents = _read_crypto_seed_daily_documents(root=root, start=history_start, end=trade_day)
+    if not documents:
+        latest = _latest_crypto_seed_trade_date(root=root)
+        return _CryptoSeedRowsResult(
+            rows=(),
+            normalized_refs=(),
+            attempt_refs=_crypto_seed_attempt_refs(root=root, trade_date=plan.trade_date),
+            data_gaps=(),
+            columnar_manifest_ref=None,
+            columnar_manifest_sha256=None,
+            metadata={
+                "seed_root": str(root),
+                "latest_seed_trade_date": latest.isoformat() if latest else None,
+                "requested_trade_date": plan.trade_date,
+                "reason": "date_range_empty",
+            },
+        )
+    rows_by_ticker: dict[str, list[Mapping[str, object]]] = {}
+    refs_by_ticker: dict[str, list[str]] = {}
+    for row in documents:
+        ticker = _normalize_crypto_ticker(str(row.get("symbol_id") or row.get("ticker") or ""))
+        if ticker is None:
+            continue
+        rows_by_ticker.setdefault(ticker, []).append(row)
+        ref = str(row.get("dataset_ref") or "").strip()
+        if ref:
+            refs_by_ticker.setdefault(ticker, []).append(ref)
+    feature_rows: list[Mapping[str, object]] = []
+    lineage_refs: list[str] = []
+    dropped: list[str] = []
+    writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
+    tickers = tuple(sorted(rows_by_ticker))
+    _notify_fetch_progress(progress_callback, label="计算加密选币特征", completed=0, total=max(1, len(tickers)))
+    for index, ticker in enumerate(tickers, start=1):
+        history_source = tuple(sorted(rows_by_ticker[ticker], key=lambda item: str(_row_date(item) or "")))
+        history = tuple(
+            mapped
+            for mapped in (_history_row(row) for row in history_source)
+            if mapped is not None and (_parse_date(mapped.get("date")) or trade_day) <= trade_day
+        )
+        if len(history) < required_history_days:
+            dropped.append(ticker)
+            continue
+        latest_history_date = _parse_date(history[-1].get("date"))
+        if latest_history_date is None or latest_history_date < trade_day:
+            dropped.append(ticker)
+            continue
+        source_ref = _normalized_ref(refs_by_ticker.get(ticker, ("",))[-1], market=plan.market)
+        raw_row: dict[str, object] = {
+            "ticker": ticker,
+            "company_name": _crypto_company_name(history_source[-1], ticker),
+            "industry": "Crypto",
+            "history": history,
+            "source_ref": source_ref,
+        }
+        try:
+            feature_row = _materialized_feature_row(plan=plan, raw_row=raw_row, source_ref=source_ref)
+        except SelectionFeatureError:
+            dropped.append(ticker)
+            continue
+        feature_rows.append(feature_row)
+        writer.add_feature_rows((feature_row,))
+        lineage_refs.append(source_ref)
+        if index % 200 == 0 or index == len(tickers):
+            _notify_fetch_progress(progress_callback, label="计算加密选币特征", completed=index, total=max(1, len(tickers)))
+    normalized_refs = tuple(dict.fromkeys(lineage_refs))[:_LOCAL_FEATURE_REF_SAMPLE_LIMIT]
+    attempt_refs = _crypto_seed_attempt_refs(root=root, trade_date=plan.trade_date)
+    gaps: list[DataGapRef] = []
+    if dropped:
+        gaps.append(
+            _warn_gap(
+                gap_id=f"{plan.selection_run_id}-crypto-seed-rows-dropped",
+                gap_code="crypto_seed_rows_dropped",
+                attempt_refs=attempt_refs,
+                reader_message=f"CRYPTO seed 读取中部分交易对历史不足或特征不可用，已剔除。count={len(dropped)}。",
+                source_metadata={"tickers_sample": tuple(dropped[:20]), "required_history_days": required_history_days},
+            )
+        )
+    manifest_ref: str | None = None
+    manifest_sha256: str | None = None
+    if feature_rows:
+        manifest = writer.commit(
+            provider_attempt_refs=attempt_refs,
+            normalized_refs=normalized_refs,
+            coverage_status="verified",
+            coverage_gap_codes=tuple(gap.gap_code for gap in gaps),
+        )
+        manifest_ref = manifest.manifest_ref
+        manifest_sha256 = SelectionColumnarWarehouse.default().manifest_sha256(manifest.manifest_ref)
+    return _CryptoSeedRowsResult(
+        rows=tuple(feature_rows),
+        normalized_refs=normalized_refs,
+        attempt_refs=attempt_refs,
+        data_gaps=tuple(gaps),
+        columnar_manifest_ref=manifest_ref,
+        columnar_manifest_sha256=manifest_sha256,
+        metadata={
+            "seed_root": str(root),
+            "seed_file_count": len(files),
+            "row_count": len(documents),
+            "feature_row_count": len(feature_rows),
+            "dropped_count": len(dropped),
+        },
+    )
+
+
+def _crypto_seed_daily_files(root: Path) -> tuple[Path, ...]:
+    daily_dir = root / "market=CRYPTO" / "dataset=daily_bar" / "granularity=daily"
+    if not daily_dir.exists():
+        return ()
+    return tuple(sorted(daily_dir.glob("*.parquet")))
+
+
+def _latest_crypto_seed_trade_date(root: Path | None = None) -> date | None:
+    root = root or _CRYPTO_HISTORY_COLUMNAR_ROOT
+    files = _crypto_seed_daily_files(root)
+    if not files:
+        return None
+    import duckdb
+
+    glob_path = str(root / "market=CRYPTO" / "dataset=daily_bar" / "granularity=daily" / "*.parquet")
+    with duckdb.connect(":memory:") as conn:
+        value = conn.execute(
+            """
+            select max(period_end)
+            from read_parquet(?)
+            where dataset = 'daily_bar'
+              and market = 'CRYPTO'
+              and granularity = 'daily'
+              and universe_ref = 'binance_spot_all_symbols'
+              and json_extract_string(row_json, '$.quote_asset') = 'USDT'
+              and json_extract_string(row_json, '$.market_segment') = 'spot'
+            """,
+            [glob_path],
+        ).fetchone()[0]
+    parsed = _parse_date(value)
+    return parsed
+
+
+def _read_crypto_seed_daily_documents(*, root: Path, start: date, end: date) -> tuple[Mapping[str, object], ...]:
+    import duckdb
+
+    glob_path = str(root / "market=CRYPTO" / "dataset=daily_bar" / "granularity=daily" / "*.parquet")
+    with duckdb.connect(":memory:") as conn:
+        rows = conn.execute(
+            """
+            select dataset_ref, symbol_id, universe_ref, period_start, period_end, row_json
+            from read_parquet(?)
+            where dataset = 'daily_bar'
+              and market = 'CRYPTO'
+              and granularity = 'daily'
+              and universe_ref = 'binance_spot_all_symbols'
+              and period_start >= ?
+              and period_end <= ?
+              and json_extract_string(row_json, '$.quote_asset') = 'USDT'
+              and json_extract_string(row_json, '$.market_segment') = 'spot'
+            order by symbol_id, period_start
+            """,
+            [glob_path, start.isoformat(), end.isoformat()],
+        ).fetchall()
+    output: list[Mapping[str, object]] = []
+    for dataset_ref, symbol_id, universe_ref, period_start, period_end, row_json in rows:
+        try:
+            row = json.loads(str(row_json))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        row.update(
+            {
+                "dataset_ref": str(dataset_ref),
+                "symbol_id": str(symbol_id),
+                "ticker": str(symbol_id),
+                "universe_ref": str(universe_ref),
+                "period_start": str(period_start),
+                "period_end": str(period_end),
+            }
+        )
+        output.append(row)
+    return tuple(output)
+
+
+def _crypto_seed_attempt_refs(*, root: Path, trade_date: str) -> tuple[str, ...]:
+    digest = hashlib.sha256(f"{root.resolve()}:{trade_date}".encode("utf-8")).hexdigest()[:12]
+    return (f"attempt:local_crypto_prepackaged:binance_public_data_import:{digest}",)
+
+
+def _crypto_company_name(row: Mapping[str, object], ticker: str) -> str:
+    base = str(row.get("base_asset") or "").strip().upper()
+    quote = str(row.get("quote_asset") or "").strip().upper()
+    if base and quote:
+        return f"{base}/{quote}"
+    if ticker.endswith("USDT") and len(ticker) > 4:
+        return f"{ticker[:-4]}/USDT"
+    return ticker
 
 
 def _provider_result_with_columnar_manifest(
@@ -734,7 +1065,7 @@ def _provider_result_with_columnar_manifest(
         }
         for row in snapshot.rows
     )
-    normalized_refs = _normalize_normalized_refs(provider_result.normalized_refs)
+    normalized_refs = _normalize_normalized_refs(provider_result.normalized_refs, market=plan.market)
     manifest = writer.commit(
         provider_attempt_refs=provider_result.attempt_refs,
         normalized_refs=normalized_refs,
@@ -1023,6 +1354,7 @@ def _selection_feature_rows_from_repository(
     columnar_writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
     latest_records = _query_daily_records(
         repository=repository,
+        market=plan.market,
         plan=plan,
         symbol_id=None,
         universe_ref=plan.universe_scope,
@@ -1032,6 +1364,7 @@ def _selection_feature_rows_from_repository(
     if not latest_records and plan.universe_scope:
         latest_records = _query_daily_records(
             repository=repository,
+            market=plan.market,
             plan=plan,
             symbol_id=None,
             universe_ref=None,
@@ -1050,6 +1383,7 @@ def _selection_feature_rows_from_repository(
     if not latest_rows_by_ticker and plan.universe_scope:
         latest_records = _query_daily_records(
             repository=repository,
+            market=plan.market,
             plan=plan,
             symbol_id=None,
             universe_ref=None,
@@ -1064,11 +1398,15 @@ def _selection_feature_rows_from_repository(
             latest_rows_by_ticker[ticker] = row
             latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
     tickers = tuple(sorted(latest_rows_by_ticker))
-    company_names_by_ticker: dict[str, str] = {}
+    company_names_by_ticker = repository.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market=plan.market.value,
+        symbol_ids=tickers,
+    )
     history_rows_by_ticker: dict[str, list[Mapping[str, Any]]] = {}
     for record in repository.iter_normalized(
         dataset="daily_bar",
-        market=Market.CN_A.value,
+        market=plan.market.value,
         symbol_id=None,
         universe_ref=None,
         date_range_start=history_start,
@@ -1121,7 +1459,10 @@ def _selection_feature_rows_from_repository(
         if company_name is None:
             dropped.append(ticker)
             continue
-        source_ref = _row_source_ref(history_source[-1] if history_source else latest_rows_by_ticker[ticker])
+        source_ref = _row_source_ref(
+            history_source[-1] if history_source else latest_rows_by_ticker[ticker],
+            market=plan.market,
+        )
         raw_row: dict[str, object] = {
             "ticker": ticker,
             "company_name": company_name,
@@ -1155,7 +1496,7 @@ def _selection_feature_rows_from_repository(
         for refs in repository.find_provider_attempt_refs_by_dataset_ref(sampled_dataset_refs).values()
         for ref in refs
     )
-    normalized_refs = tuple(_normalized_ref(ref) for ref in sampled_dataset_refs)
+    normalized_refs = tuple(_normalized_ref(ref, market=plan.market) for ref in sampled_dataset_refs)
     gaps: list[DataGapRef] = []
     if dropped:
         gaps.append(
@@ -1256,6 +1597,7 @@ def _selection_history_start_date(*, plan: SelectionRunPlan) -> date:
 def _query_daily_records(
     *,
     repository: DatasetRepository,
+    market: SelectionMarket,
     plan: SelectionRunPlan,
     symbol_id: str | None,
     universe_ref: str | None,
@@ -1264,7 +1606,7 @@ def _query_daily_records(
 ) -> tuple[DatasetRecord, ...]:
     return repository.query_normalized(
         dataset="daily_bar",
-        market=Market.CN_A.value,
+        market=market.value,
         symbol_id=symbol_id,
         universe_ref=universe_ref,
         date_range_start=start,
@@ -1369,24 +1711,30 @@ def _materialized_feature_row(
 def _selection_data_requests(
     plan: SelectionRunPlan,
     *,
-    specs: tuple[tuple[str, str, tuple[str, ...]], ...] = _SELECTION_REQUESTS,
+    specs: tuple[tuple[str, str, tuple[str, ...]], ...] | None = None,
     start_index: int = 1,
     freshness_policy: str | None = None,
     consumer: str = "select",
     consumer_id: str | None = None,
 ) -> tuple[DataRequest, ...]:
+    resolved_specs = specs if specs is not None else _selection_data_request_specs(plan.market)
+    _, timezone, calendar = _selection_market_defaults(plan.market)
     as_of = datetime.now(tz=UTC)
     trade_date = date.fromisoformat(plan.trade_date)
     # Trading days are not natural days; use a wider calendar range for warehouse
     # matching and provider requests.
     start = trade_date - timedelta(days=max(plan.lookback_trading_days, _DEFAULT_LOOKBACK_TRADING_DAYS) * 2)
+    base_asset = "BTC" if plan.market == SelectionMarket.CRYPTO else None
+    quote_asset = "USDT" if plan.market == SelectionMarket.CRYPTO else None
     return tuple(
         DataRequest(
             request_id=f"{plan.selection_run_id}:selection:{index}:{data_type}",
-            market=Market.CN_A,
+            market=_selection_market_value(plan.market),
             universe_ref=plan.universe_scope,
-            timezone=_CN_A_SELECTION_TIMEZONE,
-            calendar=_CN_A_SELECTION_CALENDAR,
+            timezone=timezone,
+            calendar=calendar,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
             data_type=data_type,
             granularity=granularity,
             fields=fields,
@@ -1397,7 +1745,7 @@ def _selection_data_requests(
             consumer_id=consumer_id or plan.selection_run_id,
             as_of=as_of,
         )
-        for index, (data_type, granularity, fields) in enumerate(specs, start=start_index)
+        for index, (data_type, granularity, fields) in enumerate(resolved_specs, start=start_index)
     )
 
 
@@ -1414,7 +1762,8 @@ def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[
     if refresh_dates:
         return tuple(
             _selection_data_need(
-                need_id=f"{plan.selection_run_id}:selection:universe_refresh:{index}:all_a_shares:daily_bar",
+                market=plan.market,
+                need_id=f"{plan.selection_run_id}:selection:universe_refresh:{index}:{plan.universe_scope}:daily_bar",
                 instrument=plan.universe_scope,
                 start=refresh_date,
                 end=refresh_date,
@@ -1436,6 +1785,7 @@ def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[
         start = start_fallback if latest is None else min(latest + timedelta(days=1), trade_date)
         needs.append(
             _selection_data_need(
+                market=plan.market,
                 need_id=f"{plan.selection_run_id}:selection:universe_refresh:{len(needs) + 1}:{ticker}:daily_bar",
                 instrument=ticker,
                 start=start,
@@ -1448,6 +1798,7 @@ def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[
 
 def _selection_data_need(
     *,
+    market: SelectionMarket,
     need_id: str,
     instrument: str,
     start: date,
@@ -1457,7 +1808,7 @@ def _selection_data_need(
     return PublicDataRequest(
         request_id=need_id,
         item="日线",
-        market=Market.CN_A,
+        market=_selection_market_value(market),
         instrument=instrument,
         time_range_start=start,
         time_range_end=end,
@@ -1533,7 +1884,7 @@ def _selection_universe_refresh_dates_from_metadata(*, plan: SelectionRunPlan, r
             refresh_dates = tuple(
                 day
                 for start, end in (*integrity_ranges, *missing_ranges)
-                for day in _daily_dates_between(start, min(end, trade_date))
+                for day in _daily_dates_between(start, min(end, trade_date), market=plan.market)
                 if day <= trade_date
             )
             return _prioritize_universe_refresh_dates(refresh_dates)
@@ -1542,7 +1893,9 @@ def _selection_universe_refresh_dates_from_metadata(*, plan: SelectionRunPlan, r
         expected_end = min(expected_end, trade_date)
         if actual_end is None or actual_end >= expected_end:
             return ()
-        return _prioritize_universe_refresh_dates(_daily_dates_between(actual_end + timedelta(days=1), expected_end))
+        return _prioritize_universe_refresh_dates(
+            _daily_dates_between(actual_end + timedelta(days=1), expected_end, market=plan.market)
+        )
     return ()
 
 
@@ -1594,13 +1947,14 @@ def _metadata_integrity_mismatch_ranges(coverage: Mapping[str, Any]) -> tuple[tu
     return tuple(ranges)
 
 
-def _daily_dates_between(start: date, end: date) -> tuple[date, ...]:
+def _daily_dates_between(start: date, end: date, market: SelectionMarket = SelectionMarket.CN_A) -> tuple[date, ...]:
     if start > end:
         return ()
     dates: list[date] = []
     current = start
     while current <= end:
-        if is_expected_daily_date(current, _CN_A_SELECTION_CALENDAR):
+        _, _, calendar = _selection_market_defaults(market)
+        if is_expected_daily_date(current, calendar):
             dates.append(current)
         current += timedelta(days=1)
     return tuple(dates)
@@ -1761,7 +2115,7 @@ def _selection_rows_from_results(
             "company_name": company_name,
             "industry": _industry_from_rows(history_source),
             "history": history,
-            "source_ref": _row_source_ref(history_source[-1]),
+            "source_ref": _row_source_ref(history_source[-1], market=plan.market),
             "open": latest["open"],
             "high": latest["high"],
             "low": latest["low"],
@@ -1774,6 +2128,7 @@ def _selection_rows_from_results(
             ticker=ticker,
             trade_date=plan.trade_date,
             rows=valuation_rows,
+            market=plan.market,
         )
         row.update(valuation_fields)
         private_event = _private_placement_fields(
@@ -1781,6 +2136,7 @@ def _selection_rows_from_results(
             trade_date=plan.trade_date,
             rows=corporate_rows,
             coverage_available=has_private_placement_coverage,
+            market=plan.market,
         )
         if private_event is None:
             private_missing.append(ticker)
@@ -1967,6 +2323,7 @@ def _latest_valuation_fields(
     ticker: str,
     trade_date: str,
     rows: tuple[Mapping[str, Any], ...],
+    market: SelectionMarket = SelectionMarket.CN_A,
 ) -> Mapping[str, object]:
     trade_day = date.fromisoformat(trade_date)
     latest_date: date | None = None
@@ -1993,7 +2350,7 @@ def _latest_valuation_fields(
         value = _first_float(latest_row, candidates)
         if value is not None:
             result[target] = value
-    source_ref = _row_source_ref(latest_row)
+    source_ref = _row_source_ref(latest_row, market=market)
     if source_ref:
         result["valuation_source_ref"] = source_ref
     return result
@@ -2025,7 +2382,7 @@ def _map_direct_selection_row(row: Mapping[str, Any]) -> Mapping[str, object] | 
     }
     mapped["ticker"] = ticker
     mapped["company_name"] = company_name
-    mapped.setdefault("source_ref", _row_source_ref(row))
+    mapped.setdefault("source_ref", _row_source_ref(row, market=SelectionMarket.CN_A))
     normalized_history = tuple(item for item in history if isinstance(item, Mapping))
     if normalized_history:
         mapped["history"] = normalized_history
@@ -2043,6 +2400,7 @@ def _private_placement_fields(
     trade_date: str,
     rows: tuple[Mapping[str, Any], ...],
     coverage_available: bool,
+    market: SelectionMarket = SelectionMarket.CN_A,
 ) -> Mapping[str, object] | None:
     if not coverage_available:
         return None
@@ -2060,7 +2418,7 @@ def _private_placement_fields(
             continue
         if latest_event_date is None or event_date > latest_event_date:
             latest_event_date = event_date
-            latest_source_ref = _row_source_ref(row)
+            latest_source_ref = _row_source_ref(row, market=market)
     if latest_event_date is None:
         return {
             "private_placement_event_date": "none",
@@ -2078,7 +2436,7 @@ def _selection_missing_strategy_required_fields(
     plan: SelectionRunPlan,
     rows: tuple[Mapping[str, object], ...],
 ) -> tuple[str, ...]:
-    strategy = load_cn_a_selection_v1_strategy(plan.approved_strategy_config_ref)
+    strategy = _load_selection_strategy(plan)
     if strategy is None or not rows:
         return ()
     required_fields = _selection_strategy_required_source_fields(strategy=strategy)
@@ -2107,9 +2465,7 @@ def _selection_feature_projection_columns(plan: SelectionRunPlan) -> tuple[str, 
         "private_placement_event_date",
         "private_placement_source_ref",
     ]
-    strategy = load_cn_a_selection_v1_strategy(plan.approved_strategy_config_ref)
-    if strategy is None:
-        strategy = load_cn_a_selection_v1_strategy("config://cn-a-selection-v1")
+    strategy = _load_selection_strategy(plan)
     if strategy is not None:
         columns.extend(rule.field for rule in strategy.hard_filters)
         columns.append(strategy.stable_top20_rule.score_field)
@@ -2134,6 +2490,16 @@ def _selection_feature_projection_columns(plan: SelectionRunPlan) -> tuple[str, 
         )
     )
     return tuple(dict.fromkeys(column for column in columns if str(column).strip()))
+
+
+def _load_selection_strategy(plan: SelectionRunPlan) -> ApprovedSelectionStrategy | None:
+    strategy = load_selection_strategy(plan.approved_strategy_config_ref)
+    if strategy is not None:
+        return strategy
+    fallback_ref = load_selection_strategy_config_ref(plan.market, plan.profile)
+    if fallback_ref is None:
+        return None
+    return load_selection_strategy(fallback_ref)
 
 
 def _selection_strategy_required_source_fields(*, strategy: ApprovedSelectionStrategy) -> tuple[str, ...]:
@@ -2341,12 +2707,20 @@ def _enum_value(value: Any) -> str:
     return str(value)
 
 
-def _normalized_ref(dataset_ref: str) -> str:
-    return normalize_normalized_dataset_ref(dataset_ref, market=Market.CN_A.value)
+def _normalized_ref(
+    dataset_ref: str,
+    market: SelectionMarket = SelectionMarket.CN_A,
+) -> str:
+    return normalize_normalized_dataset_ref(dataset_ref, market=_enum_value(market))
 
 
-def _normalize_normalized_refs(refs: Iterable[str]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(_normalized_ref(str(ref)) for ref in refs if str(ref).strip()))
+def _normalize_normalized_refs(
+    refs: Iterable[str],
+    market: SelectionMarket = SelectionMarket.CN_A,
+) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(_normalized_ref(str(ref), market=market) for ref in refs if str(ref).strip())
+    )
 
 
 def _result_data_type(request_id: str) -> str:
@@ -2361,6 +2735,26 @@ def _ticker_from_row(row: Mapping[str, Any]) -> str | None:
         ticker = _normalize_cn_a_ticker(str(value))
         if ticker is not None:
             return ticker
+        ticker = _normalize_crypto_ticker(str(value))
+        if ticker is not None:
+            return ticker
+    return None
+
+
+def _normalize_crypto_ticker(value: str) -> str | None:
+    text = value.strip().upper()
+    if not text:
+        return None
+    cleaned = text.replace("-", "/").replace("_", "/")
+    if "/" in cleaned:
+        base, quote = cleaned.split("/", 1)
+        if base and quote:
+            return f"{base}{quote}"
+    for quote in ("USD", "USDT", "USDC", "FDUSD", "BUSD", "TUSD", "BTC", "ETH", "BNB"):
+        if cleaned.endswith(quote) and len(cleaned) > len(quote):
+            base = cleaned[: -len(quote)]
+            if base:
+                return f"{base}{quote}"
     return None
 
 
@@ -2534,17 +2928,21 @@ def _row_date(row: Mapping[str, Any]) -> str | None:
     return parsed.isoformat() if parsed is not None else None
 
 
-def _row_source_ref(row: Mapping[str, Any]) -> str:
+def _row_source_ref(
+    row: Mapping[str, Any],
+    *,
+    market: SelectionMarket = SelectionMarket.CN_A,
+) -> str:
     value = row.get("dataset_ref") or row.get("source_ref")
     if value is not None and str(value).strip():
-        return _normalized_ref(str(value).strip())
+        return _normalized_ref(str(value).strip(), market=market)
     lineage = row.get("provider_lineage")
     if isinstance(lineage, Mapping):
         provider_id = lineage.get("provider_id") or lineage.get("provider")
         endpoint_id = lineage.get("endpoint_id") or lineage.get("endpoint")
         if provider_id and endpoint_id:
             return f"provider://{provider_id}/{endpoint_id}"
-    return normalize_normalized_dataset_ref("unknown", market=Market.CN_A.value)
+    return normalize_normalized_dataset_ref("unknown", market=_enum_value(market))
 
 
 def _is_private_placement_event(row: Mapping[str, Any]) -> bool:

@@ -434,6 +434,8 @@ def _clean_markdown_table_value(value: str) -> str:
 
 
 def _looks_like_ticker(value: str) -> bool:
+    if re.match(r"^[A-Z0-9]{1,30}USDT$", value):
+        return True
     return bool(re.match(r"^[A-Z0-9][A-Z0-9._/-]*$", value)) and any(char.isdigit() for char in value)
 
 

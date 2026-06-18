@@ -51,6 +51,9 @@ from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
 from claw_trade.selection.strategy_config import (
     CN_A_SELECTION_V1_STRATEGY_CONFIG_VERSION,
     CN_A_SELECTION_V1_WEIGHT_VERSION,
+    CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
+    CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION,
+    CRYPTO_SELECTION_V1_WEIGHT_VERSION,
 )
 
 
@@ -249,6 +252,14 @@ class SelectionDataJob:
                 feature_snapshot_ref=feature_snapshot.feature_snapshot_ref,
                 score_ref=scoring.score_ref,
                 stable_top20_rule=strategy.stable_top20_rule,
+                strategy_config_version=_selection_strategy_config_version(
+                    plan=plan,
+                    strategy=strategy,
+                ),
+                weight_version=_selection_strategy_weight_version(
+                    plan=plan,
+                    strategy=strategy,
+                ),
             )
 
             self._save_status(plan, status=SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE, lease_id=lease_id)
@@ -662,8 +673,14 @@ class SelectionDataJob:
             "universe_scope": plan.universe_scope,
             "data_need_audit_ref": plan.data_need_audit_ref,
             "approved_strategy_config_ref": plan.approved_strategy_config_ref,
-            "strategy_config_version": CN_A_SELECTION_V1_STRATEGY_CONFIG_VERSION,
-            "weight_version": CN_A_SELECTION_V1_WEIGHT_VERSION,
+            "strategy_config_version": _selection_strategy_config_version(
+                plan=plan,
+                strategy=strategy,
+            ),
+            "weight_version": _selection_strategy_weight_version(
+                plan=plan,
+                strategy=strategy,
+            ),
             "strategy_variants": [
                 {
                     "variant_id": item.name,
@@ -807,7 +824,7 @@ def build_selection_data_plan(
                 "universe_scope": plan.universe_scope,
                 "granularity": "daily",
                 "coverage_groups": ("universe", "daily", "fundamental"),
-                "field_set": ("strategy_signal_myhhub_volume_rise", "private_placement_days_since", "amount"),
+                "field_set": _selection_plan_field_set(plan.market),
                 "target_ref_type": "dataset://normalized",
             },
         ),
@@ -846,8 +863,8 @@ def build_selection_data_plan(
                     "scope": SelectionBatchScope.SELECTION_BATCH.value,
                     "market": plan.market.value,
                     "profile": plan.profile.value,
-                    "coverage_group": "cn_a_selection_batch",
-                    "data_type": "cn_a_select_features",
+                    "coverage_group": _selection_batch_coverage_group(plan.market),
+                    "data_type": _selection_data_type(plan.market),
                     "params": {
                         "lookback_trading_days": plan.lookback_trading_days,
                         "universe_scope": plan.universe_scope,
@@ -855,36 +872,6 @@ def build_selection_data_plan(
                 },
             ),
             data_gap_ids=tuple(gap.gap_id for gap in gaps),
-            store_contract=store_contract,
-        )
-
-    if plan.market == SelectionMarket.CRYPTO:
-        gap = _SelectionDataPlanGap(
-            gap_id=f"{plan.selection_run_id}:select:mongo_missing",
-            requirement_id=requirement_id,
-            domain="selection",
-            reason="mongo_missing",
-            severity=DataGapSeverity.BLOCKER,
-            worker_visible_text="CRYPTO /select 历史包尚未批准进入标准化数据层，不能走旧 select plan 或本地文件入口。",
-            market=plan.market,
-            data_type="selection_history",
-            field_path=None,
-            next_action="approve_crypto_selection_history_ingest",
-        )
-        return _SelectionDataPlan(
-            plan_id=plan_id,
-            support_status=_SelectionPlanSupportStatus.TARGET_DESIGN,
-            requirement_batch=requirement_batch,
-            warehouse_checks=(
-                _SelectionWarehouseCheck(
-                    check_id=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}",
-                    status=_SelectionWarehouseStatus.MISSING,
-                    should_call_provider=False,
-                    data_gaps=(gap,),
-                ),
-            ),
-            provider_call_specs=(),
-            data_gap_ids=(gap.gap_id,),
             store_contract=store_contract,
         )
 
@@ -906,8 +893,8 @@ def build_selection_data_plan(
                 "scope": SelectionBatchScope.SELECTION_BATCH.value,
                 "market": plan.market.value,
                 "profile": plan.profile.value,
-                "coverage_group": "cn_a_selection_batch",
-                "data_type": "cn_a_select_features",
+                "coverage_group": _selection_batch_coverage_group(plan.market),
+                "data_type": _selection_data_type(plan.market),
                 "params": {
                     "lookback_trading_days": plan.lookback_trading_days,
                     "universe_scope": plan.universe_scope,
@@ -979,6 +966,56 @@ def _selection_plan_gap_snapshot(gap: _SelectionDataPlanGap) -> Mapping[str, obj
         "field_path": gap.field_path,
         "next_action": gap.next_action,
     }
+
+
+def _selection_batch_coverage_group(market: SelectionMarket) -> str:
+    if market == SelectionMarket.CRYPTO:
+        return "crypto_selection_batch"
+    return "cn_a_selection_batch"
+
+
+def _selection_data_type(market: SelectionMarket) -> str:
+    if market == SelectionMarket.CRYPTO:
+        return "crypto_select_features"
+    return "cn_a_select_features"
+
+
+def _selection_plan_field_set(market: SelectionMarket) -> tuple[str, ...]:
+    if market == SelectionMarket.CRYPTO:
+        return (
+            "history_days",
+            "amount",
+            "return_20d",
+            "return_60d",
+            "return_120d",
+            "rps20",
+            "rps60",
+            "rps120",
+            "range_pct",
+            "avg_abs_return_20d",
+            "max_drawdown_120d",
+        )
+    return ("strategy_signal_myhhub_volume_rise", "private_placement_days_since", "amount")
+
+
+def _selection_strategy_config_version(
+    *,
+    plan: SelectionRunPlan,
+    strategy: ApprovedSelectionStrategy | None,
+) -> str:
+    if (strategy is not None and strategy.config_ref == CRYPTO_SELECTION_STRATEGY_CONFIG_REF) or plan.market == SelectionMarket.CRYPTO:
+        return CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION
+    return CN_A_SELECTION_V1_STRATEGY_CONFIG_VERSION
+
+
+def _selection_strategy_weight_version(
+    *,
+    plan: SelectionRunPlan,
+    strategy: ApprovedSelectionStrategy | None,
+) -> str:
+    if (strategy is not None and strategy.config_ref == CRYPTO_SELECTION_STRATEGY_CONFIG_REF) or plan.market == SelectionMarket.CRYPTO:
+        return CRYPTO_SELECTION_V1_WEIGHT_VERSION
+    return CN_A_SELECTION_V1_WEIGHT_VERSION
 
 
 def _select_plan_blocker_gap_refs(select_data_plan: Any) -> tuple[DataGapRef, ...]:

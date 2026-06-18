@@ -102,7 +102,7 @@ _PM_DECISION_MATERIAL_TARGET = "selection_portfolio_decision"
 _PM_DECISION_MATERIAL_TYPE = "pm_decision"
 _EXPLICIT_TICKER_CORRECTION_RE = re.compile(
     r"(?:股票代码|代码|ticker)?\s*(?:应为|正确为|正确代码为|更正为)\s*[:：]?\s*"
-    r"(?P<ticker>\d{6}\.(?:SH|SZ|BJ))",
+    r"(?P<ticker>\d{6}\.(?:SH|SZ|BJ)|[A-Z0-9]{1,30}USDT)",
     re.IGNORECASE,
 )
 _CANDIDATE_CACHE_REQUIRED_SUMMARY_LABELS = (
@@ -359,6 +359,21 @@ _SELECTION_WORKER_LABELS: dict[SelectionWorkerId, str] = {
 }
 
 _SELECTION_WORKER_ORDER = tuple(_SELECTION_WORKER_LABELS)
+_SELECTION_CHAT_BOUNDARY_NOTICE = (
+    "`/select` 是候选研究池，不是买入建议；最终买入、持有或卖出，以完整 `/report` 的组合经理结论为准。"
+)
+_SELECTION_REPORT_BOUNDARY_NOTICE = (
+    "本次 select 结果是候选研究池，不是买入建议。select 主要根据当前可用数据筛出值得进一步研究的股票，"
+    "代表这些股票存在量价、资金、事件或策略特征上的研究价值，不等同于最终投资结论。最终是否买入、"
+    "持有或卖出，以完整 report 的组合经理结论为准。若后续 report 给出卖出或观望，表示该股票虽然触发了"
+    "候选筛选条件，但在基本面、估值、现金流、风险或交易条件上未通过最终投资判断。"
+)
+_CRYPTO_SELECTION_REPORT_BOUNDARY_NOTICE = (
+    "本次 select 结果是候选研究池，不是买入建议。select 主要根据当前可用数据筛出值得进一步研究的标的，"
+    "代表这些标的存在量价、资金、事件或策略特征上的研究价值，不等同于最终投资结论。最终是否买入、"
+    "持有或卖出，以完整 report 的组合经理结论为准。若后续 report 给出卖出或观望，表示该标的虽然触发了"
+    "候选筛选条件，但在基本面、估值、现金流、风险或交易条件上未通过最终投资判断。"
+)
 
 
 class SelectionController:
@@ -431,7 +446,11 @@ class SelectionController:
         user_id: str | None = None,
     ) -> SelectCommandResult:
         request = _parse_select_request(raw_text=raw_text, request_id=request_id, user_id=user_id, now_fn=self._now_fn)
-        if request.trade_date is None and self._default_trade_date_resolver is not None:
+        if (
+            request.market == SelectionMarket.CN_A
+            and request.trade_date is None
+            and self._default_trade_date_resolver is not None
+        ):
             resolved_trade_date = self._default_trade_date_resolver(None).strip()
             date.fromisoformat(resolved_trade_date)
             request = replace(request, trade_date=resolved_trade_date)
@@ -758,6 +777,7 @@ class SelectionController:
         reader_text = _render_selection_reader_chat_message(decision)
         reader_report_markdown = _render_selection_reader_report(
             decision,
+            market=latest.run_plan.market,
             selection_worker_reports=approved_l1,
             portfolio_manager_report=pm_raw_text,
             candidate_cache_summary_md=summary_md,
@@ -960,6 +980,11 @@ def _select_market_from_token(token: str) -> SelectionMarket | None:
     return None
 
 
+def _selection_market_label(market: object) -> str:
+    value = getattr(market, "value", market)
+    return "加密市场" if str(value).strip().upper() == "CRYPTO" else "A股"
+
+
 def _build_select_workflow_run_id(*, request_id: str, now_fn: Callable[[], datetime]) -> str:
     stamp = now_fn().strftime("%Y%m%dT%H%M%S")
     safe_request_id = re.sub(r"[^a-zA-Z0-9._-]+", "-", request_id).strip("-") or "request"
@@ -1044,7 +1069,7 @@ def _rebuild_candidate_cache_summary_from_json(candidate_cache_ref: CandidateCac
     candidate_count = _first_text(payload.get("candidate_count"), sidecar.get("candidate_count"), str(len(candidates)))
 
     lines = [
-        "# A股候选缓存",
+        f"# {_selection_market_label(market)}候选缓存",
         "",
         "## 本轮范围",
         f"- 交易日：{trade_date}",
@@ -1310,7 +1335,7 @@ def _extract_allowed_ticker_companies_from_summary(summary_md: str) -> dict[str,
             continue
         ticker = cells[1].upper()
         company_name = cells[2]
-        if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", ticker, re.IGNORECASE):
+        if not _is_supported_selection_ticker(ticker):
             continue
         if not company_name or company_name in {"-", "股票名称", "公司", "名称"}:
             continue
@@ -1468,7 +1493,7 @@ def _extract_group_table_decision_rows(text: str) -> dict[str, tuple[tuple[str, 
         if current_section is None:
             continue
         ticker = _strip_markdown_inline(cells[1]).upper()
-        if not re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)", ticker, re.IGNORECASE):
+        if not _is_supported_selection_ticker(ticker):
             continue
         company_name = _strip_markdown_inline(cells[2])
         reason = _strip_markdown_inline(cells[3])
@@ -1481,6 +1506,10 @@ def _extract_group_table_decision_rows(text: str) -> dict[str, tuple[tuple[str, 
             )
         )
     return {ticker: tuple(rows) for ticker, rows in rows_by_ticker.items()}
+
+
+def _is_supported_selection_ticker(ticker: str) -> bool:
+    return re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)|[A-Z0-9]{1,30}USDT", ticker, re.IGNORECASE) is not None
 
 
 def _strip_markdown_inline(value: str) -> str:
@@ -1615,6 +1644,7 @@ def _parse_decision_rows(lines: tuple[str, ...]) -> tuple[DecisionTicker, ...] |
 def _render_selection_reader_chat_message(decision: SelectionDecision) -> str:
     lines: list[str] = []
     lines.append("`/select` 已完成，本轮仅进入等待确认，不会自动启动 `/report`。")
+    lines.append(_SELECTION_CHAT_BOUNDARY_NOTICE)
     lines.append("")
     lines.append("简报：")
     lines.append(f"- 进入 `/report`：{_category_brief(decision.enter_report)}")
@@ -1637,13 +1667,16 @@ def _render_selection_reader_chat_message(decision: SelectionDecision) -> str:
 def _render_selection_reader_report(
     decision: SelectionDecision,
     *,
+    market: SelectionMarket = SelectionMarket.CN_A,
     selection_worker_reports: Mapping[SelectionWorkerId, str] | None = None,
     portfolio_manager_report: str | None = None,
     candidate_cache_summary_md: str | None = None,
 ) -> str:
     worker_reports = selection_worker_reports or {}
     lines: list[str] = [
-        "# A股选股报告",
+        f"# {_selection_market_label(market)}选股报告",
+        "",
+        _selection_report_boundary_notice(market),
         "",
         "## 一、候选分组结论",
         "",
@@ -1668,7 +1701,7 @@ def _render_selection_reader_report(
         "## 五、最终分流决策",
         _reader_friendly_selection_text(portfolio_manager_report or ""),
     ]
-    strategy_analysis = _reader_strategy_analysis(candidate_cache_summary_md)
+    strategy_analysis = _reader_strategy_analysis(candidate_cache_summary_md, market=market)
     if strategy_analysis:
         lines.extend(("", "## 六、策略命中与分析过程", strategy_analysis))
     summary = _reader_selection_summary(candidate_cache_summary_md)
@@ -1676,6 +1709,12 @@ def _render_selection_reader_report(
         lines.extend(("", "## 七、数据范围与质量", summary))
     lines.extend(("", "## 八、进入 `/report` 的验证重点", *_render_validation_focus_rows(decision.enter_report)))
     return "\n".join(lines).strip()
+
+
+def _selection_report_boundary_notice(market: SelectionMarket) -> str:
+    if market == SelectionMarket.CRYPTO:
+        return _CRYPTO_SELECTION_REPORT_BOUNDARY_NOTICE
+    return _SELECTION_REPORT_BOUNDARY_NOTICE
 
 
 def _category_brief(rows: tuple[DecisionTicker, ...]) -> str:
@@ -1709,7 +1748,7 @@ def _render_validation_focus_rows(rows: tuple[DecisionTicker, ...]) -> list[str]
     return [f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}" for row in rows]
 
 
-def _reader_strategy_analysis(candidate_cache_summary_md: str | None) -> str:
+def _reader_strategy_analysis(candidate_cache_summary_md: str | None, *, market: SelectionMarket = SelectionMarket.CN_A) -> str:
     summary = (candidate_cache_summary_md or "").strip()
     if not summary:
         return ""
@@ -1718,7 +1757,7 @@ def _reader_strategy_analysis(candidate_cache_summary_md: str | None) -> str:
     lines: list[str] = ["### 命中的策略条件"]
     if strategy_names:
         for name in strategy_names:
-            explanation = _READER_STRATEGY_EXPLANATIONS.get(name, _READER_STRATEGY_FALLBACK_EXPLANATION)
+            explanation = _READER_STRATEGY_EXPLANATIONS.get(name, _reader_strategy_fallback_explanation(market))
             lines.append(f"- {name}：{explanation}")
     else:
         lines.append("- 候选缓存没有提供可读的策略条件明细；本报告不补造策略名称。")
@@ -1739,7 +1778,7 @@ def _reader_strategy_analysis(candidate_cache_summary_md: str | None) -> str:
         (
             "",
             "### 分析过程",
-            "- 第一步：先看每只股票命中的策略条件数量，判断是否是多类信号共振，而不是单一指标触发。",
+            f"- 第一步：先看每只{_reader_subject_label(market)}命中的策略条件数量，判断是否是多类信号共振，而不是单一指标触发。",
             "- 第二步：再看趋势强度、相对强度和均线状态，确认上涨是否仍有延续性。",
             "- 第三步：检查成交额、量比等可交易性，排除流动性不足或异常波动过大的候选。",
             "- 第四步：扣除风险项和数据缺口，把候选分为进入 `/report`、观察、放弃三类。",
@@ -1747,6 +1786,18 @@ def _reader_strategy_analysis(candidate_cache_summary_md: str | None) -> str:
         )
     )
     return "\n".join(lines).strip()
+
+
+def _reader_strategy_fallback_explanation(market: SelectionMarket) -> str:
+    if market == SelectionMarket.CRYPTO:
+        return "用于确认候选标的在某一类趋势、量价、事件或风险条件上达标。"
+    return _READER_STRATEGY_FALLBACK_EXPLANATION
+
+
+def _reader_subject_label(market: SelectionMarket) -> str:
+    if market == SelectionMarket.CRYPTO:
+        return "标的"
+    return "股票"
 
 
 def _reader_candidate_strategy_rows(summary_md: str) -> tuple[tuple[str, str], ...]:
@@ -2038,7 +2089,7 @@ def _data_refresh_unavailable_chat_text(
 def _unavailable_chat_text(code: SelectUnavailableCode) -> str:
     messages = {
         SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN: "`/select` 当前不可用：没有可用的已完成选股批次。",
-        SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN: "`/select` 今日没有符合已批准策略条件的候选股票。",
+        SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN: "`/select` 今日没有符合已批准策略条件的候选标的。",
         SelectUnavailableCode.STALE_SELECTION_RUN: "`/select` 当前不可用：最新选股批次已过期。",
         SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED: "`/select` 当前不可用：候选缓存尚未批准。",
         SelectUnavailableCode.CANDIDATE_CACHE_HASH_MISMATCH: "`/select` 当前不可用：候选池完整性校验失败（hash 不一致）。",
@@ -2046,7 +2097,9 @@ def _unavailable_chat_text(code: SelectUnavailableCode) -> str:
         SelectUnavailableCode.CANDIDATE_CACHE_LINEAGE_INCOMPLETE: "`/select` 当前不可用：候选池 lineage 不完整。",
         SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING: "`/select` 当前不可用：最新选股批次缺少列式仓库 manifest、hash 或 provider 证据。",
         SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED: "`/select` 当前暂不支持该市场。",
-        SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING: "`/select` 当前不可用：Crypto 历史仓库尚未完成下载和入库。",
+        SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING: (
+            "`/select` 当前不可用：Crypto 列式历史仓库未读到可用 spot USDT 日线。"
+        ),
     }
     return messages.get(code, "`/select` 当前不可用：选股数据暂不可用。")
 
