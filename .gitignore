@@ -1,5 +1,7 @@
 src-bak/
 .venv/
+.worktrees
+.worktrees/
 .runtime/
 .env.local
 .claude/
