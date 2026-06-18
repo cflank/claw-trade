@@ -15,11 +15,17 @@ from claw_trade.selection.confirmation import (
     SelectionConfirmationController,
     SelectionConfirmRequest,
 )
-from claw_trade.selection.controller import SelectionController
+from claw_trade.selection.controller import (
+    SelectionController,
+    _extract_allowed_ticker_companies_from_summary,
+    _render_selection_reader_report,
+)
 from claw_trade.selection.models import (
     CandidateCacheManifest,
     CandidateCacheReadbackStatus,
     CandidateCacheRef,
+    DecisionTicker,
+    SelectionDecision,
     SelectionDataRun,
     SelectionDataRunStatus,
     SelectionMarket,
@@ -344,6 +350,96 @@ def _candidate_cache_manifest_payload(*, run_id: str, body_sha: str) -> dict[str
         "stage": "approving_candidate_cache",
         "target": "candidate_cache",
     }
+
+
+@pytest.mark.parametrize(
+    ("text", "market"),
+    (
+        ("/select", "CN_A"),
+        ("/select 1", "CN_A"),
+        ("/select 2", "CRYPTO"),
+        ("/select CRYPTO refresh", "CRYPTO"),
+    ),
+)
+def test_select_command_chat_flow_parses_market_tokens(text: str, market: str) -> None:
+    controller, _, _ = _build_controller()
+
+    result = controller.send_chat_message(
+        request_id=f"sel-command-market-{market}-{abs(hash(text))}",
+        context_id=f"ctx-command-market-{market}-{abs(hash(text))}",
+        text=text,
+    )
+
+    assert "selection" in result
+    evidence_path = Path(result["selection"]["evidencePath"])
+    evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence_payload["market"] == market
+    assert evidence_payload["profile"] == market
+
+
+def test_crypto_reader_report_title_uses_crypto_market_label() -> None:
+    markdown = _render_selection_reader_report(
+        SelectionDecision(
+            select_workflow_run_id="select-crypto-title",
+            enter_report=(DecisionTicker(ticker="BTCUSDT", company_name="BTC", rationale_excerpt="动量强"),),
+            watch=(),
+            reject=(),
+            report_questions=None,
+            source_summary=None,
+            approved_material_id="selection-pm-decision-select-crypto-title",
+        ),
+        market=SelectionMarket.CRYPTO,
+    )
+
+    assert "# 加密市场选股报告" in markdown
+    assert "# A股选股报告" not in markdown
+    assert "值得进一步研究的标的" in markdown
+    assert "股票" not in markdown
+
+
+def test_crypto_candidate_cache_summary_allows_usdt_tickers() -> None:
+    summary = """
+| 排名 | 股票代码 | 股票名称 | 行业 |
+| --- | --- | --- | --- |
+| 1 | BTCUSDT | BTC/USDT | Crypto |
+| 2 | ETHUSDT | ETH/USDT | Crypto |
+| 3 | CUSDT | C/USDT | Crypto |
+"""
+
+    assert _extract_allowed_ticker_companies_from_summary(summary) == {
+        "BTCUSDT": "BTC/USDT",
+        "ETHUSDT": "ETH/USDT",
+        "CUSDT": "C/USDT",
+    }
+
+
+@pytest.mark.parametrize("text", ("/select refresh 2", "/select refresh CRYPTO"))
+def test_select_command_chat_flow_rejects_refresh_before_market(text: str) -> None:
+    controller, _, _ = _build_controller()
+
+    result = controller.send_chat_message(
+        request_id=f"sel-refresh-before-market-{text.split()[-1]}",
+        context_id=f"ctx-refresh-before-market-{text.split()[-1]}",
+        text=text,
+    )
+
+    assert "selection" not in result
+    assert result["error"]["code"] == "INVALID_INPUT"
+
+
+@pytest.mark.parametrize("text", ("select 1", "select 2"))
+def test_bare_select_number_uses_normal_chat_flow(text: str) -> None:
+    controller, transport, _ = _build_controller()
+
+    result = controller.send_chat_message(
+        request_id=f"sel-bare-normal-{text[-1]}",
+        context_id=f"ctx-bare-normal-{text[-1]}",
+        text=text,
+    )
+
+    assert "selection" not in result
+    assert result["assistantReply"] == f"echo:{text}"
+    assert transport.calls == 1
 
 
 def _write_columnar_manifest(plan: SelectionRunPlan):
@@ -905,12 +1001,16 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     report_markdown = result["selection"]["readerReportMarkdown"]
     assert result["selection"]["readerReportPath"] == str(reader_report_path)
     assert reader_report_path.read_text(encoding="utf-8").strip() == report_markdown.strip()
+    assert "`/select` 是候选研究池，不是买入建议" in message
+    assert "完整 `/report` 的组合经理结论为准" in message
     assert "进入 `/report`" in message
     assert "观察：" in message
     assert "放弃：" in message
     assert "命中6/8" in message
     assert "候选缓存：" not in message
     assert "# A股选股报告" in report_markdown
+    assert "本次 select 结果是候选研究池，不是买入建议" in report_markdown
+    assert "最终是否买入、持有或卖出，以完整 report 的组合经理结论为准" in report_markdown
     assert "## 一、候选分组结论" in report_markdown
     assert "## 二、正方策略观点" in report_markdown
     assert "策略评审：优先关注 600519.SH 与 000858.SZ。" in report_markdown
@@ -943,9 +1043,14 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     assert "已批准的正向策略评审" in report_markdown
     assert "## 八、进入 `/report` 的验证重点" in report_markdown
     _assert_candidate_fact_body_is_reader_chinese(report_markdown)
-    assert "买入" not in message
-    assert "卖出" not in message
-    assert "持有" not in message
+    message_without_boundary_notice = "\n".join(
+        line
+        for line in message.splitlines()
+        if "`/select` 是候选研究池" not in line
+    )
+    assert "买入" not in message_without_boundary_notice
+    assert "卖出" not in message_without_boundary_notice
+    assert "持有" not in message_without_boundary_notice
     assert "目标价" not in message
     assert "止损" not in message
 

@@ -3,10 +3,16 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import claw_trade.data_gateway._selection_batch as selection_batch_impl
+from claw_trade.data_gateway.selection_api import (
+    fetch_selection_batch_from_data_gateway,
+    resolve_crypto_selection_trade_date_for_scheduler,
+)
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.data_job import (
     SelectionDataFetchProgress,
@@ -25,7 +31,13 @@ from claw_trade.selection.models import (
     SelectionTriggerSource,
 )
 from claw_trade.selection.store import SelectionRunStore
-from claw_trade.selection.strategy_config import load_cn_a_selection_v1_strategy
+from claw_trade.selection.strategy_config import (
+    CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
+    CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION,
+    CRYPTO_SELECTION_V1_WEIGHT_VERSION,
+    load_cn_a_selection_v1_strategy,
+    load_selection_strategy,
+)
 
 
 def _plan() -> SelectionRunPlan:
@@ -57,8 +69,29 @@ def _data_need_audit(plan_id: str = "plan://cn-a-2026-05-26") -> SelectionDataNe
     )
 
 
+def _crypto_data_need_audit(plan_id: str = "plan://crypto-2026-05-26") -> SelectionDataNeedAudit:
+    return SelectionDataNeedAudit(
+        plan_id=plan_id,
+        scope=SelectionBatchScope.SELECTION_BATCH,
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="approved_crypto_universe",
+        coverage_groups=("universe", "daily", "fundamental"),
+        ttl_policy_ref="ttl://daily",
+        lineage_root_ref="lineage://selection/2026-05-26",
+    )
+
+
 def _approved_strategy() -> ApprovedSelectionStrategy:
     strategy = load_cn_a_selection_v1_strategy("config://cn-a-approved-v1")
+    assert strategy is not None
+    return strategy
+
+
+def _approved_crypto_strategy() -> ApprovedSelectionStrategy:
+    strategy = load_selection_strategy(CRYPTO_SELECTION_STRATEGY_CONFIG_REF)
     assert strategy is not None
     return strategy
 
@@ -72,24 +105,37 @@ def test_select_data_plan_crypto_history_missing_has_blocker_gap() -> None:
         lookback_trading_days=260,
         universe_scope="approved_crypto_universe",
         data_need_audit_ref="plan://crypto-2026-05-26",
-        approved_strategy_config_ref="config://crypto-target-design",
+        approved_strategy_config_ref=CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
 
     select_data_plan = build_selection_data_plan(plan=plan)
 
-    assert select_data_plan.support_status.value == "target_design"
-    assert select_data_plan.provider_call_specs == ()
-    assert select_data_plan.data_gap_ids == ("sel-run-crypto-missing:select:mongo_missing",)
+    assert select_data_plan.support_status.value == "supported"
+    assert len(select_data_plan.provider_call_specs) == 1
+    [provider_spec] = select_data_plan.provider_call_specs
+    assert provider_spec["coverage_group"] == "crypto_selection_batch"
+    assert provider_spec["data_type"] == "crypto_select_features"
+    assert select_data_plan.data_gap_ids == ()
     [warehouse_check] = select_data_plan.warehouse_checks
     assert warehouse_check.status.value == "missing"
-    assert warehouse_check.should_call_provider is False
-    [gap] = warehouse_check.data_gaps
-    assert gap.reason == "mongo_missing"
-    assert "历史包尚未批准进入标准化数据层" in gap.root_cause
+    assert warehouse_check.should_call_provider is True
+    assert select_data_plan.requirement_batch["merged_requirements"][0]["field_set"] == (
+        "history_days",
+        "amount",
+        "return_20d",
+        "return_60d",
+        "return_120d",
+        "rps20",
+        "rps60",
+        "rps120",
+        "range_pct",
+        "avg_abs_return_20d",
+        "max_drawdown_120d",
+    )
 
 
-def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: Path) -> None:
+def test_data_job_crypto_provider_path_is_invoked(tmp_path: Path) -> None:
     plan = SelectionRunPlan(
         selection_run_id="sel-run-crypto-job-missing",
         market=SelectionMarket.CRYPTO,
@@ -98,14 +144,24 @@ def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: P
         lookback_trading_days=260,
         universe_scope="approved_crypto_universe",
         data_need_audit_ref="plan://crypto-2026-05-26",
-        approved_strategy_config_ref="config://crypto-target-design",
+        approved_strategy_config_ref=CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
     provider_calls = {"count": 0}
 
-    def provider_fetch(_: SelectionRunPlan) -> SelectionDataNeedResult:
+    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionDataNeedResult:
         provider_calls["count"] += 1
-        raise AssertionError("Crypto history missing must fail before provider fetch")
+        assert run_plan.selection_run_id == plan.selection_run_id
+        return SelectionDataNeedResult(
+            data_need_audit=_crypto_data_need_audit(plan.data_need_audit_ref),
+            attempt_refs=(),
+            normalized_refs=(),
+            rows=(),
+            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/empty",
+            columnar_manifest_ref="columnar://selection/empty/manifest",
+            columnar_manifest_sha256="0" * 64,
+            data_gaps=(),
+        )
 
     job = SelectionDataJob(
         store=SelectionRunStore(),
@@ -117,14 +173,144 @@ def test_data_job_crypto_history_missing_fails_before_provider_fetch(tmp_path: P
 
     result = job.run(plan)
 
-    assert provider_calls["count"] == 0
+    assert provider_calls["count"] == 1
     assert result.record.data_run.status == SelectionDataRunStatus.FAILED
-    assert result.record.data_run.failure_code == "selection_warehouse_unavailable"
+    assert result.record.data_run.failure_code == "provider_evidence_failed"
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
-    assert payload["failure_code"] == "selection_warehouse_unavailable"
+    assert payload["failure_code"] == "provider_evidence_failed"
     assert payload["select_data_plan"]["warehouse_checks"][0]["status"] == "missing"
-    assert payload["select_data_plan"]["provider_call_specs"] == []
-    assert payload["data_gaps"][0]["gap_code"] == "mongo_missing"
+    assert payload["select_data_plan"]["provider_call_specs"][0]["coverage_group"] == "crypto_selection_batch"
+    assert payload["select_data_plan"]["provider_call_specs"][0]["data_type"] == "crypto_select_features"
+    assert payload["data_gaps"][0]["gap_code"] == "provider_attempt_refs_missing"
+
+
+@pytest.mark.integration
+def test_data_job_crypto_uses_crypto_strategy_versions(tmp_path: Path) -> None:
+    plan = SelectionRunPlan(
+        selection_run_id="sel-run-crypto-success",
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="approved_crypto_universe",
+        data_need_audit_ref="plan://crypto-success-2026-05-26",
+        approved_strategy_config_ref=CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+
+    def provider_fetch(run_plan: SelectionRunPlan) -> SelectionDataNeedResult:
+        assert run_plan.selection_run_id == plan.selection_run_id
+        return _provider_result_crypto_success(run_plan, columnar_root=tmp_path / "columnar")
+
+    job = SelectionDataJob(
+        store=SelectionRunStore(),
+        provider_fetch_batch=provider_fetch,
+        strategy_config_loader=lambda config_ref: _approved_crypto_strategy()
+        if config_ref == CRYPTO_SELECTION_STRATEGY_CONFIG_REF
+        else None,
+        now_fn=lambda: datetime(2026, 5, 26, 9, 0, tzinfo=UTC),
+        evidence_root=tmp_path,
+    )
+
+    result = job.run(plan)
+
+    assert result.record.data_run.status == SelectionDataRunStatus.COMPLETED
+    assert result.record.data_run.failure_code is None
+    payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    assert payload["strategy_config_version"] == CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION
+    assert payload["weight_version"] == CRYPTO_SELECTION_V1_WEIGHT_VERSION
+    assert payload["candidate_cache_manifest"]["strategy_config_version"] == CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION
+    assert payload["candidate_cache_manifest"]["weight_version"] == CRYPTO_SELECTION_V1_WEIGHT_VERSION
+
+
+@pytest.mark.integration
+def test_data_job_crypto_reads_seed_columnar_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_root = tmp_path / "crypto-seed"
+    _write_crypto_seed_columnar(seed_root, trade_date="2026-06-06")
+    monkeypatch.setattr(selection_batch_impl, "_CRYPTO_HISTORY_COLUMNAR_ROOT", seed_root)
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_COLUMNAR_ROOT", str(tmp_path / "selection-columnar"))
+
+    assert resolve_crypto_selection_trade_date_for_scheduler(None) == "2026-06-06"
+
+    plan = SelectionRunPlan(
+        selection_run_id="sel-run-crypto-seed-columnar",
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-06-06",
+        lookback_trading_days=121,
+        universe_scope="spot_usdt",
+        data_need_audit_ref="plan://crypto-seed-columnar-2026-06-06",
+        approved_strategy_config_ref=CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    job = SelectionDataJob(
+        store=SelectionRunStore(),
+        provider_fetch_batch=fetch_selection_batch_from_data_gateway,
+        strategy_config_loader=lambda config_ref: load_selection_strategy(config_ref),
+        now_fn=lambda: datetime(2026, 6, 6, 9, 0, tzinfo=UTC),
+        evidence_root=tmp_path / "runs",
+    )
+
+    result = job.run(plan)
+
+    assert result.record.data_run.status == SelectionDataRunStatus.COMPLETED
+    payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    assert payload["market"] == "CRYPTO"
+    assert payload["candidate_cache_manifest"]["candidate_count"] == 20
+    assert payload["candidate_cache_manifest"]["strategy_config_version"] == CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION
+    assert payload["provider_attempt_refs"][0].startswith(
+        "attempt:local_crypto_prepackaged:binance_public_data_import:"
+    )
+    assert all(ref.startswith("dataset://normalized/CRYPTO/") for ref in payload["normalized_refs"])
+    body_uri = result.record.data_run.candidate_cache_ref.l1_uri
+    body_path = tmp_path / "runs" / "artifacts" / body_uri.removeprefix("local://selection/")
+    body_text = body_path.read_text(encoding="utf-8")
+    assert "# 加密市场候选缓存" in body_text
+    assert "# A股候选缓存" not in body_text
+    assert "标准化标的" in body_text
+    assert "标准化股票" not in body_text
+
+
+def _write_crypto_seed_columnar(root: Path, *, trade_date: str) -> None:
+    end = datetime.fromisoformat(trade_date).date()
+    start = end - timedelta(days=129)
+    records = []
+    for idx in range(20):
+        symbol = f"COIN{idx:02d}USDT"
+        for offset in range(130):
+            day = start + timedelta(days=offset)
+            open_price = 10.0 + idx * 0.1 + offset * 0.05
+            close_price = open_price + 0.03
+            records.append(
+                {
+                    "dataset_ref": f"dataset:daily_bar:CRYPTO:spot:{symbol}:daily:{day.isoformat()}:{day.isoformat()}",
+                    "dataset": "daily_bar",
+                    "market": "CRYPTO",
+                    "symbol_id": symbol,
+                    "universe_ref": "binance_spot_all_symbols",
+                    "granularity": "daily",
+                    "period_start": day.isoformat(),
+                    "period_end": day.isoformat(),
+                    "source_roles": ("local_seed", "built_in_public"),
+                    "row": {
+                        "symbol_id": symbol,
+                        "base_asset": f"COIN{idx:02d}",
+                        "quote_asset": "USDT",
+                        "market_segment": "spot",
+                        "date": day.isoformat(),
+                        "open": open_price,
+                        "high": close_price + 0.1,
+                        "low": open_price - 0.1,
+                        "close": close_price,
+                        "volume": 1000000 + idx * 1000 + offset,
+                        "amount": 2000000 + idx * 10000 + offset * 100,
+                    },
+                }
+            )
+    NormalizedColumnarWarehouse(root).write_records(records)
 
 
 def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> SelectionDataNeedResult:
@@ -170,6 +356,63 @@ def _provider_result_success(plan: SelectionRunPlan, *, columnar_root: Path) -> 
         ),
         root=columnar_root,
     )
+
+
+def _provider_result_crypto_success(plan: SelectionRunPlan, *, columnar_root: Path) -> SelectionDataNeedResult:
+    rows = []
+    normalized_refs: list[str] = []
+    for idx in range(20):
+        ticker = f"BTCUSDT-{idx:02d}"
+        ref = f"dataset://normalized/CRYPTO/daily/{ticker}"
+        normalized_refs.append(ref)
+        history = _crypto_history_rows(seed=100.0 + idx)
+        latest = history[-1]
+        close_price = float(latest["close"])
+        rows.append(
+            {
+                "ticker": ticker,
+                "company_name": ticker,
+                "industry": "Crypto",
+                "open": close_price - 0.3,
+                "high": close_price + 0.3,
+                "low": close_price - 0.5,
+                "close": close_price,
+                "amount": 2_000_000.0 + idx * 20_000.0,
+                "volume": 10000.0 + idx * 100.0,
+                "history": history,
+                "source_ref": ref,
+            }
+        )
+    return _with_columnar_manifest(
+        plan,
+        SelectionDataNeedResult(
+            data_need_audit=_crypto_data_need_audit(plan.data_need_audit_ref),
+            attempt_refs=("attempt://crypto-provider",),
+            normalized_refs=tuple(normalized_refs),
+            rows=tuple(rows),
+            warehouse_check_ref=f"warehouse-check://selection/{plan.selection_run_id}/{plan.trade_date}/success",
+        ),
+        root=columnar_root,
+    )
+
+
+def _crypto_history_rows(*, seed: float) -> tuple[dict[str, object], ...]:
+    base = datetime.strptime("2026-01-01", "%Y-%m-%d").date()
+    rows = []
+    for day in range(181):
+        close = seed + 0.08 * day
+        rows.append(
+            {
+                "date": (base + timedelta(days=day)).isoformat(),
+                "open": close - 0.2,
+                "high": close + 0.3,
+                "low": close - 0.6,
+                "close": close,
+                "volume": 1000.0 + day,
+                "amount": 1000.0 * 2_000_000,
+            }
+        )
+    return tuple(rows)
 
 
 def _with_columnar_manifest(

@@ -403,11 +403,16 @@ class ChatController:
         request_id: str,
         content: str,
     ) -> dict[str, Any]:
-        select_result = self._selection_controller.handle_select_command(
-            raw_text=content,
-            request_id=request_id,
-            user_id=context.id,
-        )
+        try:
+            select_result = self._selection_controller.handle_select_command(
+                raw_text=content,
+                request_id=request_id,
+                user_id=context.id,
+            )
+        except ValueError as exc:
+            if str(exc) != "invalid_select_command":
+                raise
+            raise QueueError("INVALID_INPUT", "invalid_input", "请输入完整的 /select 指令。") from exc
         if select_result.code == SelectCommandCode.COMPLETED:
             message_kind = "selection_result"
         elif select_result.code == SelectCommandCode.DATA_REFRESH_REQUESTED:
@@ -562,7 +567,7 @@ class ChatController:
     def _is_explicit_select_command(text: str) -> bool:
         return (
             re.match(
-                r"^\s*/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$",
+                r"^\s*/select(?:\s+.*)?\s*$",
                 text,
                 re.IGNORECASE,
             )

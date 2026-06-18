@@ -270,6 +270,8 @@ def _validate_v1_weights(*, plan: SelectionRunPlan, strategy: ApprovedSelectionS
         "risk_penalty_score": 20.0,
         "data_gap_penalty_score": 15.0,
     }
+    if strategy.config_ref == "config://crypto-selection-v1":
+        expected["industry_theme_score"] = 0.0
     actual = {key: float(value) for key, value in strategy.weights.items()}
     if actual != expected:
         raise SelectionEngineError(

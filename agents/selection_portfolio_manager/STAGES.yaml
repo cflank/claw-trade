@@ -10,6 +10,11 @@ profiles:
     prompt: prompts/CN_A.md
     tools: []
     openviking_access: none
+  CRYPTO:
+    approved: true
+    prompt: prompts/CRYPTO.md
+    tools: []
+    openviking_access: none
 skills:
   mounted:
     - claw-trade-stage

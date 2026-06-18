@@ -10,6 +10,7 @@ from claw_trade.selection.engine import (
 )
 
 CN_A_SELECTION_STRATEGY_CONFIG_REF = "config://cn-a-selection-v1"
+CRYPTO_SELECTION_STRATEGY_CONFIG_REF = "config://crypto-selection-v1"
 CN_A_SELECTION_STRATEGY_COMPAT_REFS = frozenset(
     {
         CN_A_SELECTION_STRATEGY_CONFIG_REF,
@@ -19,6 +20,8 @@ CN_A_SELECTION_STRATEGY_COMPAT_REFS = frozenset(
 
 CN_A_SELECTION_V1_WEIGHT_VERSION = "cn_a.selection_weights.v1"
 CN_A_SELECTION_V1_STRATEGY_CONFIG_VERSION = "cn_a.selection_strategy.v1"
+CRYPTO_SELECTION_V1_WEIGHT_VERSION = "crypto.selection_weights.v1"
+CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION = "crypto.selection_strategy.v1"
 
 CN_A_SELECTION_V1_WEIGHTS: dict[str, float] = {
     "strategy_hit_coverage_score": 30.0,
@@ -26,6 +29,17 @@ CN_A_SELECTION_V1_WEIGHTS: dict[str, float] = {
     "rps_trend_score": 20.0,
     "liquidity_tradability_score": 15.0,
     "industry_theme_score": 5.0,
+    "evidence_completeness_score": 5.0,
+    "risk_penalty_score": 20.0,
+    "data_gap_penalty_score": 15.0,
+}
+
+CRYPTO_SELECTION_V1_WEIGHTS: dict[str, float] = {
+    "strategy_hit_coverage_score": 30.0,
+    "strategy_inner_strength_score": 25.0,
+    "rps_trend_score": 20.0,
+    "liquidity_tradability_score": 15.0,
+    "industry_theme_score": 0.0,
     "evidence_completeness_score": 5.0,
     "risk_penalty_score": 20.0,
     "data_gap_penalty_score": 15.0,
@@ -92,6 +106,51 @@ _STRATEGY_VARIANTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Sequoia-X", "sequoia_private_placement", ("private_placement_event_date", "private_placement_days_since")),
 )
 
+_CRYPTO_STRATEGY_VARIANTS: tuple[tuple[str, tuple[StrategyCondition, ...], tuple[str, ...]], ...] = (
+    (
+        "crypto_return_20d_positive",
+        (StrategyCondition(field="return_20d", operator=">", value=0.0),),
+        ("return_20d",),
+    ),
+    (
+        "crypto_return_60d_positive",
+        (StrategyCondition(field="return_60d", operator=">", value=0.0),),
+        ("return_60d",),
+    ),
+    (
+        "crypto_return_120d_positive",
+        (StrategyCondition(field="return_120d", operator=">", value=0.0),),
+        ("return_120d",),
+    ),
+    (
+        "crypto_rps_leader",
+        (
+            StrategyCondition(field="rps20", operator=">=", value=60.0),
+            StrategyCondition(field="rps60", operator=">=", value=60.0),
+            StrategyCondition(field="rps120", operator=">=", value=60.0),
+        ),
+        ("rps20", "rps60", "rps120"),
+    ),
+    (
+        "crypto_liquid_quote_volume",
+        (StrategyCondition(field="amount", operator=">=", value=1000000.0),),
+        ("amount",),
+    ),
+    (
+        "crypto_orderly_volatility",
+        (
+            StrategyCondition(field="avg_abs_return_20d", operator="<=", value=10.0),
+            StrategyCondition(field="range_pct", operator=">", value=0.0),
+        ),
+        ("avg_abs_return_20d", "range_pct"),
+    ),
+    (
+        "crypto_controlled_drawdown",
+        (StrategyCondition(field="max_drawdown_120d", operator=">", value=-45.0),),
+        ("max_drawdown_120d",),
+    ),
+)
+
 
 def load_cn_a_selection_v1_strategy(config_ref: str) -> ApprovedSelectionStrategy | None:
     normalized_ref = config_ref.strip()
@@ -119,9 +178,56 @@ def load_cn_a_selection_v1_strategy(config_ref: str) -> ApprovedSelectionStrateg
     )
 
 
+def load_selection_strategy(config_ref: str) -> ApprovedSelectionStrategy | None:
+    normalized_ref = config_ref.strip()
+    cn_a_strategy = load_cn_a_selection_v1_strategy(normalized_ref)
+    if cn_a_strategy is not None:
+        return cn_a_strategy
+    if normalized_ref != CRYPTO_SELECTION_STRATEGY_CONFIG_REF:
+        return None
+    return ApprovedSelectionStrategy(
+        config_ref=normalized_ref,
+        hard_filters=(
+            HardFilterRule(name="crypto_history_ge_121d", field="history_days", operator=">=", value=121.0),
+            HardFilterRule(name="crypto_quote_volume_ge_1m", field="amount", operator=">=", value=1000000.0),
+        ),
+        strategy_set=tuple(
+            StrategyRule(
+                name=variant_id,
+                all_of=conditions,
+                source="crypto/daily_ohlcv",
+                required_fields=fields,
+            )
+            for variant_id, conditions, fields in _CRYPTO_STRATEGY_VARIANTS
+        ),
+        weights=CRYPTO_SELECTION_V1_WEIGHTS,
+        stable_top20_rule=StableTop20Rule(
+            score_field="score",
+            tie_break_fields=(
+                StableSortField(field="strategy_hit_count", descending=True),
+                StableSortField(field="rps_trend_score", descending=True),
+                StableSortField(field="liquidity_tradability_score", descending=True),
+                StableSortField(field="amount", descending=True),
+                StableSortField(field="data_gap_penalty_score", descending=False),
+                StableSortField(field="risk_penalty_score", descending=False),
+            ),
+            missing_policy="fail",
+        ),
+    )
+
+
 def load_cn_a_selection_v1_strategy_config_ref(market: object, profile: object) -> str | None:
     if getattr(market, "value", market) == "CN_A" and getattr(profile, "value", profile) == "CN_A":
         return CN_A_SELECTION_STRATEGY_CONFIG_REF
+    return None
+
+
+def load_selection_strategy_config_ref(market: object, profile: object) -> str | None:
+    cn_a_ref = load_cn_a_selection_v1_strategy_config_ref(market, profile)
+    if cn_a_ref is not None:
+        return cn_a_ref
+    if getattr(market, "value", market) == "CRYPTO" and getattr(profile, "value", profile) == "CRYPTO":
+        return CRYPTO_SELECTION_STRATEGY_CONFIG_REF
     return None
 
 

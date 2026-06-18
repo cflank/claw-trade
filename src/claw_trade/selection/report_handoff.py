@@ -33,14 +33,16 @@ def build_report_handoff_request(
     current_date: str,
     company_name: str,
     selection_context_ref: str,
+    market: SelectionMarket = SelectionMarket.CN_A,
+    profile: SelectionProfile = SelectionProfile.CN_A,
 ) -> ReportHandoffRequest:
     if decision.approved_material_id != selection_context_ref:
         raise ValueError("selection_context_ref must match approved selection context")
     report_request = build_report_run_request(
         ticker=confirmation.ticker,
         company_name=company_name,
-        market=SelectionMarket.CN_A.value,
-        profile=SelectionProfile.CN_A.value,
+        market=market.value,
+        profile=profile.value,
         current_date=current_date,
         settings=settings,
         entry_point=WorkflowEntryPoint.REPORT_COMMAND,
@@ -49,8 +51,8 @@ def build_report_handoff_request(
         confirmation_id=confirmation.confirmation_id,
         ticker=confirmation.ticker,
         company_name=company_name,
-        market=SelectionMarket.CN_A,
-        profile=SelectionProfile.CN_A,
+        market=market,
+        profile=profile,
         current_date=current_date,
         selection_context_ref=selection_context_ref,
         selection_stage_marker=SelectionStage.SELECTION_REPORT_HANDOFF,

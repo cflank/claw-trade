@@ -363,6 +363,8 @@ def test_selection_reader_message_only_contains_three_buckets() -> None:
     rendered = _render_selection_reader_chat_message(decision)
 
     assert "不会自动启动 `/report`" in rendered
+    assert "`/select` 是候选研究池，不是买入建议" in rendered
+    assert "完整 `/report` 的组合经理结论为准" in rendered
     assert "进入 `/report`：" in rendered
     assert "观察：" in rendered
     assert "放弃：" in rendered

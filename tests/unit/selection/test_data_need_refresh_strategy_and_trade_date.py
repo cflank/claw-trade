@@ -10,16 +10,17 @@ from claw_trade.data_gateway._selection_batch import (
     _history_row,
     _LocalFeatureRowsResult,
     _refresh_need_chunks,
+    _selection_data_need,
+    _selection_data_requests,
+    _selection_feature_projection_columns,
     _selection_feature_rows_from_repository,
     _selection_missing_strategy_required_fields,
+    _ticker_from_row,
     _selection_strategy_required_source_fields,
 )
 from claw_trade.data_gateway.needs import DataNeed
 from claw_trade.data_gateway._selection_batch import (
     fetch_selection_batch_from_data_gateway as fetch_gateway_selection_batch,
-)
-from claw_trade.data_gateway._selection_batch import (
-    load_cn_a_selection_v1_strategy as load_gateway_strategy,
 )
 from claw_trade.data_gateway.models import (
     DataGap,
@@ -58,7 +59,14 @@ from claw_trade.selection.data_need_refresh import (
 )
 from claw_trade.selection.strategy_config import (
     CN_A_SELECTION_V1_WEIGHTS,
+    CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
+    CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION,
     cn_a_selection_v1_variant_ids,
+    load_selection_strategy,
+    load_selection_strategy_config_ref,
+)
+from claw_trade.data_gateway.selection_api import (
+    load_cn_a_selection_v1_strategy as load_gateway_strategy,
 )
 
 
@@ -183,6 +191,223 @@ def test_load_cn_a_selection_v1_strategy_exposes_all_approved_variants() -> None
     assert strategy is not None
     assert tuple(rule.name for rule in strategy.strategy_set) == cn_a_selection_v1_variant_ids()
     assert len(strategy.strategy_set) == 17
+
+
+def test_crypto_selection_strategy_resolves_to_crypto_v1() -> None:
+    assert (
+        load_selection_strategy_config_ref(SelectionMarket.CRYPTO, SelectionProfile.CRYPTO)
+        == CRYPTO_SELECTION_STRATEGY_CONFIG_REF
+    )
+    strategy = load_selection_strategy(CRYPTO_SELECTION_STRATEGY_CONFIG_REF)
+    assert strategy is not None
+    assert strategy.config_ref == CRYPTO_SELECTION_STRATEGY_CONFIG_REF
+    assert CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION == "crypto.selection_strategy.v1"
+    assert strategy.weights["industry_theme_score"] == 0.0
+
+
+def test_crypto_strategy_required_fields_include_volatility_or_range() -> None:
+    strategy = load_selection_strategy(CRYPTO_SELECTION_STRATEGY_CONFIG_REF)
+    assert strategy is not None
+
+    required_fields = {field for rule in strategy.strategy_set for field in rule.required_fields}
+
+    assert {"avg_abs_return_20d", "range_pct"} & required_fields
+
+
+def test_crypto_strategy_weights_are_accepted_by_scoring_engine() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-crypto-weights")
+    strategy = load_selection_strategy(CRYPTO_SELECTION_STRATEGY_CONFIG_REF)
+    assert strategy is not None
+
+    scoring = score_candidates(
+        plan=plan,
+        strategy=strategy,
+        filtered=FilteredUniverse(
+            rows=(
+                FeatureRow(
+                    ticker="BTCUSDT",
+                    company_name="Bitcoin",
+                    industry=None,
+                    source_ref="normalized://crypto/BTCUSDT",
+                    feature_values={
+                        "history_days": 181.0,
+                        "amount": 2000000.0,
+                        "return_20d": 10.0,
+                        "return_60d": 20.0,
+                        "return_120d": 30.0,
+                        "rps20": 100.0,
+                        "rps60": 100.0,
+                        "rps120": 100.0,
+                        "avg_abs_return_20d": 4.0,
+                        "range_pct": 60.0,
+                        "max_drawdown_120d": -20.0,
+                    },
+                ),
+            ),
+            decisions=(),
+        ),
+    )
+
+    assert scoring.top20[0].feature_values["industry_theme_score"] == 0.0
+
+
+def test_crypto_history_rows_derive_20_60_120_day_returns() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-crypto-history-returns")
+    inputs = normalize_selection_inputs(
+        plan=plan,
+        normalized_refs=("normalized://crypto/history/BTCUSDT",),
+        attempt_refs=("attempt://crypto-history"),
+        raw_rows=(
+            {
+                "ticker": "BTCUSDT",
+                "company_name": "Bitcoin",
+                "source_ref": "normalized://crypto/history/BTCUSDT",
+                "history": _crypto_history_rows(
+                    ticker="BTCUSDT",
+                    closes={0: 100.0, 60: 125.0, 120: 150.0, 160: 175.0, 180: 200.0},
+                ),
+            },
+        ),
+    )
+
+    snapshot = build_feature_snapshot(plan=plan, inputs=inputs)
+
+    values = snapshot.rows[0].feature_values
+    assert values["return_20d"] == pytest.approx((200.0 - 175.0) / 175.0 * 100.0)
+    assert values["return_60d"] == pytest.approx((200.0 - 150.0) / 150.0 * 100.0)
+    assert values["return_120d"] == pytest.approx((200.0 - 125.0) / 125.0 * 100.0)
+
+
+def test_crypto_feature_snapshot_attaches_rps20_60_120() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-crypto-rps")
+    inputs = normalize_selection_inputs(
+        plan=plan,
+        normalized_refs=("normalized://crypto/BTC", "normalized://crypto/ETH", "normalized://crypto/SOL"),
+        attempt_refs=("attempt://crypto-rps"),
+        raw_rows=(
+            _crypto_raw_row("BTCUSDT", {0: 100.0, 60: 120.0, 120: 140.0, 160: 160.0, 180: 200.0}),
+            _crypto_raw_row("ETHUSDT", {0: 100.0, 60: 110.0, 120: 120.0, 160: 130.0, 180: 150.0}),
+            _crypto_raw_row("SOLUSDT", {0: 100.0, 60: 105.0, 120: 110.0, 160: 115.0, 180: 125.0}),
+        ),
+    )
+
+    snapshot = build_feature_snapshot(plan=plan, inputs=inputs)
+
+    by_ticker = {row.ticker: row.feature_values for row in snapshot.rows}
+    for field in ("rps20", "rps60", "rps120"):
+        assert by_ticker["BTCUSDT"][field] == pytest.approx(100.0)
+        assert by_ticker["ETHUSDT"][field] == pytest.approx(200.0 / 3.0)
+        assert by_ticker["SOLUSDT"][field] == pytest.approx(100.0 / 3.0)
+
+
+def test_build_selection_data_need_audit_supports_crypto_market_defaults() -> None:
+    plan = build_selection_data_need_audit(
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-06-17",
+    )
+
+    assert plan.market == SelectionMarket.CRYPTO
+    assert plan.profile == SelectionProfile.CRYPTO
+    assert plan.universe_scope == "spot_usdt"
+    assert plan.coverage_groups == ("crypto_selection_batch", "universe", "daily", "fundamental")
+    assert plan.ttl_policy_ref == "ttl://selection/crypto/batch-v1/900s"
+    assert plan.lineage_root_ref == "lineage://selection/crypto/2026-06-17/batch-v1"
+
+
+def test_selection_data_requests_for_crypto_uses_crypto_time_assets() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-data-requests-crypto")
+    requests = _selection_data_requests(plan=plan)
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.market == Market.CRYPTO
+    assert request.timezone == "UTC"
+    assert request.calendar == "CRYPTO_24_7"
+    assert request.base_asset == "BTC"
+    assert request.quote_asset == "USDT"
+    assert request.universe_ref == "spot_usdt"
+    assert request.consumer == "select"
+
+
+def test_crypto_missing_strategy_fields_are_history_based() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-crypto-missing-fields")
+
+    missing = _selection_missing_strategy_required_fields(
+        plan=plan,
+        rows=(
+            {
+                "ticker": "BTCUSDT",
+                "company_name": "BTC",
+                "amount": 2000000.0,
+                "return_20d": 1.0,
+            },
+        ),
+    )
+
+    assert "history" in missing
+    assert "private_placement_event_date" not in missing
+    assert "private_placement_days_since" not in missing
+
+
+def test_selection_feature_projection_columns_for_crypto_includes_crypto_strategy_fields() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-crypto-projection")
+    columns = _selection_feature_projection_columns(plan)
+
+    assert "return_120d" in columns
+    assert "avg_abs_return_20d" in columns
+    assert "max_drawdown_120d" in columns
+    assert "industry_theme_score" in columns
+    assert "rps120" in columns
+    assert not any(column.startswith("strategy_signal_") for column in columns)
+
+
+def test_daily_dates_between_for_crypto_keeps_weekend_dates() -> None:
+    assert _daily_dates_between(
+        date(2026, 6, 12),
+        date(2026, 6, 15),
+        market=SelectionMarket.CRYPTO,
+    ) == (
+        date(2026, 6, 12),
+        date(2026, 6, 13),
+        date(2026, 6, 14),
+        date(2026, 6, 15),
+    )
+
+
+def test_ticker_from_row_normalizes_crypto_formats() -> None:
+    assert _ticker_from_row({"ticker": "BTCUSDT"}) == "BTCUSDT"
+    assert _ticker_from_row({"ticker": "BTC-USDT"}) == "BTCUSDT"
+    assert _ticker_from_row({"symbol_id": "BTC_USDT"}) == "BTCUSDT"
+    assert _ticker_from_row({"ts_code": "BTC/USDT"}) == "BTCUSDT"
+
+
+def test_crypto_features_do_not_require_cn_a_only_strategy_signals() -> None:
+    plan = _crypto_selection_run_plan("sel-unit-crypto-no-cn-a-signals")
+    inputs = normalize_selection_inputs(
+        plan=plan,
+        normalized_refs=("normalized://crypto/BTC",),
+        attempt_refs=("attempt://crypto-no-cn-a-signals"),
+        raw_rows=(_crypto_raw_row("BTCUSDT", {0: 100.0, 60: 125.0, 120: 150.0, 160: 175.0, 180: 200.0}),),
+    )
+
+    snapshot = build_feature_snapshot(plan=plan, inputs=inputs)
+    strategy = load_selection_strategy(CRYPTO_SELECTION_STRATEGY_CONFIG_REF)
+
+    assert strategy is not None
+    required_fields = {field for rule in strategy.strategy_set for field in rule.required_fields}
+    assert not any(field.startswith("strategy_signal_") for field in snapshot.rows[0].feature_values)
+    assert required_fields.isdisjoint(
+        {
+            "limit_up_recent",
+            "limit_down_today",
+            "limit_up_yesterday",
+            "private_placement_event_date",
+            "private_placement_days_since",
+            "strategy_signal_sequoia_private_placement",
+            "strategy_signal_myhhub_volume_rise",
+        }
+    )
 
 
 def test_build_feature_snapshot_derives_all_approved_strategy_signals() -> None:
@@ -1008,12 +1233,12 @@ def test_selection_gateway_expands_metadata_only_coverage_gap_to_universe_refres
     assert fake_api.calls[0][0].freshness_policy == "warehouse_only"
     refresh_needs = tuple(need for call in fake_gateway.data_need_calls for need in call)
     assert [need.time_range_start for need in refresh_needs] == [
-        date(2026, 5, 28),
-        date(2026, 5, 29),
-        date(2026, 6, 1),
-        date(2026, 6, 2),
-        date(2026, 6, 3),
         date(2026, 6, 4),
+        date(2026, 6, 3),
+        date(2026, 6, 2),
+        date(2026, 6, 1),
+        date(2026, 5, 29),
+        date(2026, 5, 28),
     ]
     assert all(need.time_range_start == need.time_range_end for need in refresh_needs)
     assert all(need.instrument == "all_a_shares" for need in refresh_needs)
@@ -1802,6 +2027,51 @@ def _selection_run_plan(selection_run_id: str) -> SelectionRunPlan:
         approved_strategy_config_ref="config://cn-a-selection-v1",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
+
+
+def _crypto_selection_run_plan(selection_run_id: str) -> SelectionRunPlan:
+    return SelectionRunPlan(
+        selection_run_id=selection_run_id,
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-06-17",
+        lookback_trading_days=180,
+        universe_scope="spot_usdt",
+        data_need_audit_ref="plan://selection/crypto/2026-06-17/batch-v1",
+        approved_strategy_config_ref="config://crypto-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+
+
+def _crypto_raw_row(ticker: str, closes: dict[int, float]) -> dict[str, object]:
+    return {
+        "ticker": ticker,
+        "company_name": ticker.removesuffix("USDT"),
+        "source_ref": f"normalized://crypto/history/{ticker}",
+        "history": _crypto_history_rows(ticker=ticker, closes=closes),
+    }
+
+
+def _crypto_history_rows(*, ticker: str, closes: dict[int, float]) -> tuple[dict[str, object], ...]:
+    start = date(2026, 1, 1)
+    rows: list[dict[str, object]] = []
+    current = closes.get(0, 100.0)
+    for idx in range(181):
+        current = closes.get(idx, current)
+        rows.append(
+            {
+                "symbol_id": ticker,
+                "ticker": ticker,
+                "date": (start + timedelta(days=idx)).isoformat(),
+                "open": current * 0.99,
+                "high": current * 1.02,
+                "low": current * 0.98,
+                "close": current,
+                "volume": 1000.0 + idx,
+                "amount": current * (1000.0 + idx),
+            }
+        )
+    return tuple(rows)
 
 
 class _FakeDataAPI:

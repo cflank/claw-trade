@@ -182,6 +182,7 @@ def normalize_selection_inputs(
 
 def build_feature_snapshot(*, plan: SelectionRunPlan, inputs: SelectionNormalizedInputs) -> FeatureSnapshot:
     feature_rows: list[FeatureRow] = []
+    include_cn_a_strategy_features = _is_cn_a_plan(plan)
     for row in inputs.rows:
         feature_values: dict[str, float | str] = dict(row.numeric_fields)
         feature_values.update(row.text_fields)
@@ -195,7 +196,12 @@ def build_feature_snapshot(*, plan: SelectionRunPlan, inputs: SelectionNormalize
         if high_value is not None and low_value is not None and low_value > 0:
             feature_values["intraday_range_pct"] = (high_value - low_value) / low_value * 100.0
             feature_values.setdefault("range_pct", feature_values["intraday_range_pct"])
-        feature_values.update(_derive_history_features(row.history_rows))
+        feature_values.update(
+            _derive_history_features(
+                row.history_rows,
+                include_cn_a_strategy_features=include_cn_a_strategy_features,
+            )
+        )
         feature_rows.append(
             FeatureRow(
                 ticker=row.ticker,
@@ -219,23 +225,28 @@ def build_feature_snapshot(*, plan: SelectionRunPlan, inputs: SelectionNormalize
             ),
         )
     feature_rows = _attach_rps_fields(tuple(feature_rows))
-    feature_rows = tuple(
-        FeatureRow(
-            ticker=row.ticker,
-            company_name=row.company_name,
-            industry=row.industry,
-            feature_values={**row.feature_values, **_derive_strategy_signals(row.feature_values)},
-            source_ref=row.source_ref,
+    if include_cn_a_strategy_features:
+        feature_rows = tuple(
+            FeatureRow(
+                ticker=row.ticker,
+                company_name=row.company_name,
+                industry=row.industry,
+                feature_values={**row.feature_values, **_derive_strategy_signals(row.feature_values)},
+                source_ref=row.source_ref,
+            )
+            for row in feature_rows
         )
-        for row in feature_rows
-    )
     return FeatureSnapshot(
         feature_snapshot_ref=f"feature://{plan.selection_run_id}",
         rows=feature_rows,
     )
 
 
-def _derive_history_features(history_rows: tuple[Mapping[str, float | str], ...]) -> dict[str, float]:
+def _derive_history_features(
+    history_rows: tuple[Mapping[str, float | str], ...],
+    *,
+    include_cn_a_strategy_features: bool,
+) -> dict[str, float]:
     bars = [row for row in history_rows if _has_ohlc(row)]
     if not bars:
         return {}
@@ -249,6 +260,7 @@ def _derive_history_features(history_rows: tuple[Mapping[str, float | str], ...]
     if not closes or closes[-1] is None:
         return {}
     result: dict[str, float] = {}
+    result["history_days"] = float(len(bars))
     latest_close = closes[-1]
     latest_open = opens[-1]
     latest_high = highs[-1]
@@ -306,10 +318,16 @@ def _derive_history_features(history_rows: tuple[Mapping[str, float | str], ...]
         if ma30_30 is not None and ma30_30 > 0:
             result["ma30_growth_30d"] = (ma30_current - ma30_30) / ma30_30 * 100.0
 
-    for window in (40, 60, 120):
+    for window in (20, 40, 60, 120):
         return_value = _window_return(closes, window)
         if return_value is not None:
             result[f"return_{window}d"] = return_value
+    avg_abs_return_20 = _mean([abs(value) for value in p_changes[-20:] if value is not None])
+    if avg_abs_return_20 is not None:
+        result["avg_abs_return_20d"] = avg_abs_return_20
+    max_drawdown_120 = _max_drawdown(closes, 120)
+    if max_drawdown_120 is not None:
+        result["max_drawdown_120d"] = max_drawdown_120
     min_return_60 = _min_recent_change(p_changes, 60)
     if min_return_60 is not None:
         result["single_day_min_return_60d"] = min_return_60
@@ -341,6 +359,8 @@ def _derive_history_features(history_rows: tuple[Mapping[str, float | str], ...]
     if history_high is not None and history_low is not None and history_low > 0:
         result["range_pct"] = (history_high - history_low) / history_low * 100.0
 
+    if not include_cn_a_strategy_features:
+        return result
     result.update(_limit_features(bars=bars, p_changes=p_changes))
     result.update(_parking_apron_features(bars=bars, p_changes=p_changes))
     result.update(_backtrace_ma250_features(bars=bars, closes=closes, volumes=volumes))
@@ -353,7 +373,7 @@ def _attach_rps_fields(rows: tuple[FeatureRow, ...]) -> tuple[FeatureRow, ...]:
     if not rows:
         return rows
     by_window: dict[str, dict[str, float]] = {}
-    for window in ("60", "120"):
+    for window in ("20", "60", "120"):
         values: list[tuple[str, float]] = []
         field = f"return_{window}d"
         for row in rows:
@@ -647,6 +667,24 @@ def _min_recent_change(changes: Sequence[float | None], window: int) -> float | 
     if not values:
         return None
     return min(values)
+
+
+def _max_drawdown(closes: Sequence[float | None], window: int) -> float | None:
+    if len(closes) < window:
+        return None
+    peak: float | None = None
+    max_drawdown = 0.0
+    for close in closes[-window:]:
+        if close is None or close <= 0:
+            continue
+        peak = close if peak is None else max(peak, close)
+        if peak > 0:
+            max_drawdown = min(max_drawdown, (close - peak) / peak * 100.0)
+    return max_drawdown
+
+
+def _is_cn_a_plan(plan: SelectionRunPlan) -> bool:
+    return getattr(plan.market, "value", plan.market) == "CN_A" and getattr(plan.profile, "value", plan.profile) == "CN_A"
 
 
 def _limit_features(

@@ -29,19 +29,20 @@ FORBIDDEN_PROMPT_TOKENS = (
 
 
 @pytest.mark.parametrize("worker_id", tuple(WORKER_STAGE))
-def test_selection_workers_have_required_cn_a_prompt_files(worker_id: str) -> None:
+def test_selection_workers_have_required_prompt_files(worker_id: str) -> None:
     worker_dir = Path("agents") / worker_id
-    for relative in ("IDENTITY.md", "SKILLS.md", "STAGES.yaml", "prompts/CN_A.md"):
+    for relative in ("IDENTITY.md", "SKILLS.md", "STAGES.yaml", "prompts/CN_A.md", "prompts/CRYPTO.md"):
         assert (worker_dir / relative).is_file(), f"{worker_id} 缺少 {relative}"
 
 
+@pytest.mark.parametrize("profile", ("CN_A", "CRYPTO"))
 @pytest.mark.parametrize("worker_id", tuple(WORKER_STAGE))
-def test_selection_prompt_front_matter_and_boundary(worker_id: str) -> None:
-    prompt_path = Path("agents") / worker_id / "prompts" / "CN_A.md"
+def test_selection_prompt_front_matter_and_boundary(worker_id: str, profile: str) -> None:
+    prompt_path = Path("agents") / worker_id / "prompts" / f"{profile}.md"
     text = prompt_path.read_text(encoding="utf-8")
     front_matter = _front_matter(prompt_path)
 
-    assert front_matter["profile"] == "CN_A"
+    assert front_matter["profile"] == profile
     assert front_matter["profile_status"] == "approved"
     assert front_matter["worker_id"] == worker_id
     assert front_matter["stage"] == WORKER_STAGE[worker_id]

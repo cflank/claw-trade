@@ -196,9 +196,10 @@ def build_candidate_cache(
         )
 
     data_quality_summary = _build_data_quality_summary(data_gaps=data_gaps)
+    normalized_subject = "标的" if plan.market.value == "CRYPTO" else "股票"
     source_summary = (
         "来源摘要：交易日全市场标准化快照、特征快照与确定性评分结果。"
-        f"本批次数据源调用 {len(provider_attempt_refs)} 次，标准化股票 {len(inputs.normalized_refs)} 行。"
+        f"本批次数据源调用 {len(provider_attempt_refs)} 次，标准化{normalized_subject} {len(inputs.normalized_refs)} 行。"
     )
     summary_md = _render_summary_md(
         plan=plan,
@@ -357,8 +358,9 @@ def _render_summary_md(
     data_quality_summary: str,
     source_summary: str,
 ) -> str:
+    market_label = "加密市场" if plan.market.value == "CRYPTO" else "A股"
     lines = [
-        "# A股候选缓存",
+        f"# {market_label}候选缓存",
         "",
         "## 本轮范围",
         f"- 交易日：{plan.trade_date}",

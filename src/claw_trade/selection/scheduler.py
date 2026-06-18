@@ -58,8 +58,11 @@ def schedule_selection_job(
     build_data_need_audit: Callable[..., SelectionDataNeedAudit],
     run_id_factory: Callable[[], str] | None = None,
 ) -> SelectionRunPlan:
-    if context.market != SelectionMarket.CN_A or context.profile != SelectionProfile.CN_A:
-        raise SelectionSchedulingError("market_strategy_unapproved", "SEL-03 仅允许 CN_A")
+    if (context.market, context.profile) not in {
+        (SelectionMarket.CN_A, SelectionProfile.CN_A),
+        (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO),
+    }:
+        raise SelectionSchedulingError("market_strategy_unapproved", "SEL-03 仅允许 CN_A 或 CRYPTO")
 
     if context.trigger_source not in {
         SelectionTriggerSource.SCHEDULED,

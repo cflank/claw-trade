@@ -13,6 +13,8 @@ from claw_trade.selection.models import (
     SelectionConfirmationStatus,
     SelectionDataRunStatus,
     SelectionDecision,
+    SelectionMarket,
+    SelectionProfile,
 )
 from claw_trade.selection.report_handoff import (
     build_report_handoff_request,
@@ -78,6 +80,8 @@ class _SelectionWorkflowContext:
     select_workflow_run_id: str
     status: str
     selection_run_id: str
+    market: SelectionMarket | None
+    profile: SelectionProfile | None
     enter_report_tickers: frozenset[str]
     decision_approved_material_id: str
     company_name_by_ticker: dict[str, str]
@@ -114,6 +118,13 @@ class SelectionConfirmationController:
             raise SelectionConfirmationError("ticker_not_allowed", "该标的不在可确认进入 /report 列表。")
 
         record = self._load_and_validate_record(context)
+        if context.market is None or context.profile is None:
+            context = replace(context, market=record.run_plan.market, profile=record.run_plan.profile)
+        market = context.market
+        profile = context.profile
+        assert market is not None
+        assert profile is not None
+
         report_handoff_dedupe_key = _handoff_dedupe_key(
             select_workflow_run_id=request.select_workflow_run_id,
             ticker=normalized_ticker,
@@ -137,6 +148,7 @@ class SelectionConfirmationController:
         company_name = _resolve_company_name(
             ticker=normalized_ticker,
             company_name_by_ticker=context.company_name_by_ticker,
+            market=market,
         )
         decision = SelectionDecision(
             select_workflow_run_id=context.select_workflow_run_id,
@@ -154,6 +166,8 @@ class SelectionConfirmationController:
             current_date=self._today_fn(),
             company_name=company_name,
             selection_context_ref=context.decision_approved_material_id,
+            market=market,
+            profile=profile,
         )
         queue_request_id = f"selection-handoff:{report_handoff_dedupe_key}"
         started = enqueue_report_handoff(
@@ -231,6 +245,8 @@ class SelectionConfirmationController:
             select_workflow_run_id=select_workflow_run_id,
             status=status,
             selection_run_id=selection_run_id,
+            market=_selection_market_from_evidence(payload.get("market")),
+            profile=_selection_profile_from_evidence(payload.get("profile")),
             enter_report_tickers=frozenset(str(item).strip().upper() for item in raw_enter if str(item).strip()),
             decision_approved_material_id=approved_material_id,
             company_name_by_ticker=company_name_by_ticker,
@@ -314,11 +330,36 @@ def _handoff_for_payload(handoff: Any) -> dict[str, Any]:
     }
 
 
-def _resolve_company_name(*, ticker: str, company_name_by_ticker: dict[str, str]) -> str:
+def _selection_market_from_evidence(raw_value: object) -> SelectionMarket | None:
+    normalized = str(raw_value or "").strip().upper()
+    if not normalized:
+        return None
+    try:
+        return SelectionMarket(normalized)
+    except ValueError as exc:
+        raise SelectionConfirmationError("selection_workflow_invalid", "选股工作流缺失市场信息。") from exc
+
+
+def _selection_profile_from_evidence(raw_value: object) -> SelectionProfile | None:
+    normalized = str(raw_value or "").strip().upper()
+    if not normalized:
+        return None
+    try:
+        return SelectionProfile(normalized)
+    except ValueError as exc:
+        raise SelectionConfirmationError("selection_workflow_invalid", "选股工作流缺失市场信息。") from exc
+
+
+def _resolve_company_name(
+    *,
+    ticker: str,
+    company_name_by_ticker: dict[str, str],
+    market: SelectionMarket | None,
+) -> str:
     resolved = company_name_by_ticker.get(ticker)
     if resolved:
         return resolved
-    identity = resolve_instrument_identity(ticker, market_hint="CN_A")
+    identity = resolve_instrument_identity(ticker, market_hint=market.value if market is not None else "CN_A")
     return identity.ticker
 
 
