@@ -177,7 +177,10 @@ CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-probe-
 if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"
 fi
-export OPENCLAW_GATEWAY_TOKEN
+if [[ -z "${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN:-}" ]]; then
+  CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN="claw-trade-scheduled-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"
+fi
+export OPENCLAW_GATEWAY_TOKEN CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN
 CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
 CLAW_TRADE_OPENVIKING_SERVER_BIN="${CLAW_TRADE_OPENVIKING_SERVER_BIN:-}"
@@ -999,6 +1002,7 @@ const workers = [
   "selection_skeptic",
   "selection_manager",
   "selection_portfolio_manager",
+  "price_alert_scan_worker",
 ];
 
 function isPlainObject(value) {
@@ -1288,11 +1292,15 @@ if (llm) {
 }
 const clawTradeFrontlinePluginPath = `${rootDir}/openclaw_plugins/claw-trade-frontline-tools`;
 const clawTradeSelectionPluginPath = `${rootDir}/openclaw_plugins/claw-trade-selection-tools`;
+const clawTradeScheduledWorkPluginPath = `${rootDir}/openclaw_plugins/claw-trade-scheduled-work-tools`;
 const existingFrontlinePluginEntry = isPlainObject(existingPluginEntries["claw-trade-frontline-tools"])
   ? existingPluginEntries["claw-trade-frontline-tools"]
   : {};
 const existingSelectionPluginEntry = isPlainObject(existingPluginEntries["claw-trade-selection-tools"])
   ? existingPluginEntries["claw-trade-selection-tools"]
+  : {};
+const existingScheduledWorkPluginEntry = isPlainObject(existingPluginEntries["claw-trade-scheduled-work-tools"])
+  ? existingPluginEntries["claw-trade-scheduled-work-tools"]
   : {};
 const existingWeixinPluginEntry = isPlainObject(existingPluginEntries["openclaw-weixin"])
   ? existingPluginEntries["openclaw-weixin"]
@@ -1305,6 +1313,10 @@ const mergedPluginEntries = {
   },
   "claw-trade-selection-tools": {
     ...existingSelectionPluginEntry,
+    enabled: true,
+  },
+  "claw-trade-scheduled-work-tools": {
+    ...existingScheduledWorkPluginEntry,
     enabled: true,
   },
   "openclaw-weixin": {
@@ -1324,7 +1336,7 @@ if (llm) {
 const mergedPlugins = {
   enabled: true,
   load: {
-    paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath],
+    paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath, clawTradeScheduledWorkPluginPath],
   },
   entries: mergedPluginEntries,
 };
@@ -1683,6 +1695,7 @@ OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH}" \
 CLAW_TRADE_OPENVIKING_PROBE_RUN_ID="${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}" \
 CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL}" \
 CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}" \
+CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN="${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN}" \
   "${gateway_cmd[@]}" > "${OPENCLAW_GATEWAY_LOG}" 2>&1 &
 OPENCLAW_GATEWAY_PID=$!
 STARTED_PIDS+=("${OPENCLAW_GATEWAY_PID}")
@@ -1721,6 +1734,7 @@ write_runtime_env_var "DEEPSEEK_BASE_URL" "${DEEPSEEK_BASE_URL}"
 write_runtime_env_var "QWEN_BASE_URL" "${QWEN_BASE_URL}"
 write_runtime_env_var "CLAW_TRADE_UI_INBOUND_URL" "${CLAW_TRADE_UI_INBOUND_URL}"
 write_runtime_env_var "CLAW_TRADE_UI_INBOUND_TIMEOUT_MS" "${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}"
+write_runtime_env_var "CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN" "${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN}"
 write_runtime_env_var "UV_CACHE_DIR" "${UV_CACHE_DIR}"
 write_runtime_env_var "UV_LINK_MODE" "${UV_LINK_MODE}"
 write_runtime_env_var "OPENVIKING_ENDPOINT" "${OPENVIKING_ENDPOINT}"

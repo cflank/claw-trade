@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
+from threading import Lock
 from typing import Any, Callable
 
 from claw_trade.instruments.resolver import resolve_instrument_identity
+from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
+from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, PriceAlert, ScheduledWorkStore
+from claw_trade.ui_backend.scheduled_work_store import PriceAlertScanBucket
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.user_dto import PriceAlertForUser, to_price_alert_for_user
 from claw_trade.workflow.report_request_factory import report_display_name
+
+_PRICE_ALERT_SCAN_INTERVAL_MS = 180_000
+_PRICE_ALERT_SCAN_FREQUENCY = "3m"
+_PRICE_ALERT_SCAN_AGENT_ID = "price_alert_scan_worker"
 
 
 class UiServiceError(RuntimeError):
@@ -17,36 +24,26 @@ class UiServiceError(RuntimeError):
         self.message = message
 
 
-@dataclass
-class PriceAlert:
-    id: str
-    instrument_code: str
-    instrument_name: str | None
-    market: MarketProfile
-    condition: dict[str, Any]
-    notification: dict[str, Any]
-    state: str
-    last_checked_at: str | None
-    triggered_at: str | None
-    last_error_message: str | None
-    created_at: str
-    updated_at: str
-
-
 class PriceAlertService:
     def __init__(
         self,
         *,
         quote_provider: Callable[[str, MarketProfile], dict[str, Any]],
-        notifier: Callable[[str, dict[str, Any]], None] | None = None,
+        store: ScheduledWorkStore | None = None,
+        cron_adapter: OpenClawCronAdapter | None = None,
+        notifier: Callable[[str, dict[str, Any]], Any] | None = None,
+        in_app_notifier: Callable[[str, str], None] | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._quote_provider = quote_provider
+        self._store = store or InMemoryScheduledWorkStore()
+        self._cron_adapter = cron_adapter
         self._notifier = notifier or (lambda _text, _notification: None)
+        self._in_app_notifier = in_app_notifier or (lambda _alert_id, _text: None)
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
-        self._items: dict[str, PriceAlert] = {}
         self._idempotency: dict[str, Any] = {}
-        self._seq = 0
+        self._seq = self._highest_alert_seq()
+        self._mutation_lock = Lock()
 
     def create_price_alert(
         self,
@@ -58,32 +55,43 @@ class PriceAlertService:
         notification: dict[str, Any] | None = None,
         instrument_name: str | None = None,
     ) -> PriceAlertForUser:
-        cached = self._idempotency.get(request_id)
-        if cached is not None:
-            return cached
-        market_value = self._as_market_profile(market)
-        identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
-        market_value = MarketProfile(identity.profile)
-        normalized_condition = self._normalize_condition(condition)
-        now_iso = self._now_iso()
-        item = PriceAlert(
-            id=self._next_alert_id(),
-            instrument_code=identity.ticker,
-            instrument_name=instrument_name or report_display_name(identity.ticker, identity.profile),
-            market=market_value,
-            condition=normalized_condition,
-            notification=self._normalize_notification(notification),
-            state="active",
-            last_checked_at=None,
-            triggered_at=None,
-            last_error_message=None,
-            created_at=now_iso,
-            updated_at=now_iso,
-        )
-        self._items[item.id] = item
-        dto = to_price_alert_for_user(item)
-        self._idempotency[request_id] = dto
-        return dto
+        with self._mutation_lock:
+            cached = self._idempotency.get(request_id)
+            if cached is not None:
+                return cached
+            market_value = self._as_market_profile(market)
+            identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
+            market_value = MarketProfile(identity.profile)
+            if market_value == MarketProfile.HK:
+                raise UiServiceError("INVALID_INPUT", "第一版暂不支持港股价格提醒。")
+            normalized_condition = self._normalize_condition(condition)
+            now_iso = self._now_iso()
+            scan_bucket = f"{market_value.value}:{_PRICE_ALERT_SCAN_FREQUENCY}"
+            self._ensure_scan_bucket(scan_bucket, market=market_value, now_iso=now_iso)
+            item = PriceAlert(
+                id=self._next_alert_id(),
+                instrument_code=identity.ticker,
+                instrument_name=instrument_name or report_display_name(identity.ticker, identity.profile),
+                market=market_value,
+                condition=normalized_condition,
+                condition_version=1,
+                notification=self._normalize_notification(notification),
+                state="active",
+                scan_bucket=scan_bucket,
+                last_checked_at=None,
+                triggered_at=None,
+                last_error_message=None,
+                last_quote_evidence_ref=None,
+                last_scan_run_id=None,
+                notification_dedupe_key=None,
+                last_notification_result=None,
+                created_at=now_iso,
+                updated_at=now_iso,
+            )
+            self._store.save_price_alert(item)
+            dto = to_price_alert_for_user(item)
+            self._idempotency[request_id] = dto
+            return dto
 
     def pause_price_alert(self, *, request_id: str, price_alert_id: str) -> PriceAlertForUser:
         cached = self._idempotency.get(request_id)
@@ -98,6 +106,7 @@ class PriceAlertService:
             raise UiServiceError("INVALID_INPUT", "当前状态不能暂停。")
         item.state = "paused"
         item.updated_at = self._now_iso()
+        self._store.save_price_alert(item)
         dto = to_price_alert_for_user(item)
         self._idempotency[request_id] = dto
         return dto
@@ -115,6 +124,7 @@ class PriceAlertService:
             raise UiServiceError("INVALID_INPUT", "当前状态不能恢复。")
         item.state = "active"
         item.updated_at = self._now_iso()
+        self._store.save_price_alert(item)
         dto = to_price_alert_for_user(item)
         self._idempotency[request_id] = dto
         return dto
@@ -123,11 +133,12 @@ class PriceAlertService:
         cached = self._idempotency.get(request_id)
         if cached is not None:
             return cached
-        item = self._items.get(price_alert_id)
+        item = self._store.get_price_alert(price_alert_id)
         if item is None:
             raise UiServiceError("ALERT_NOT_FOUND", "价格提醒不存在。")
         item.state = "deleted"
         item.updated_at = self._now_iso()
+        self._store.save_price_alert(item)
         payload = {"deleted": True, "priceAlertId": item.id}
         self._idempotency[request_id] = payload
         return payload
@@ -140,7 +151,7 @@ class PriceAlertService:
             cached = self._idempotency.get(request_id)
             if cached is not None:
                 return cached
-        item = self._items.get(price_alert_id)
+        item = self._store.get_price_alert(price_alert_id)
         if item is None or item.state in {"deleted", "closed"}:
             raise UiServiceError("ALERT_NOT_FOUND", "价格提醒不存在。")
         if item.state == "paused":
@@ -151,24 +162,30 @@ class PriceAlertService:
 
         item.state = "checking"
         item.updated_at = self._now_iso()
+        self._store.save_price_alert(item)
         try:
             quote = self._quote_provider(item.instrument_code, item.market)
             triggered = self._is_triggered(condition=item.condition, quote=quote)
             now_iso = self._now_iso()
+            item.last_quote_evidence_ref = self._quote_evidence_ref(quote)
             if not triggered:
                 item.state = "active"
                 item.last_checked_at = now_iso
                 item.last_error_message = None
                 item.updated_at = now_iso
+                self._store.save_price_alert(item)
                 payload = {"alert": to_price_alert_for_user(item), "triggered": False}
             else:
                 message = self._render_triggered_message(item, quote)
-                self._notifier(message, item.notification)
+                notification_result = self._deliver_notification(item, message=message, quote=quote)
                 item.state = "closed"
                 item.triggered_at = now_iso
                 item.last_checked_at = now_iso
                 item.last_error_message = None
+                item.notification_dedupe_key = str(notification_result["dedupe_key"])
+                item.last_notification_result = notification_result
                 item.updated_at = now_iso
+                self._store.save_price_alert(item)
                 payload = {"alert": to_price_alert_for_user(item), "triggered": True, "message": message}
         except UiServiceError:
             raise
@@ -177,6 +194,7 @@ class PriceAlertService:
             item.last_checked_at = self._now_iso()
             item.last_error_message = "价格提醒检查失败，请稍后重试。"
             item.updated_at = self._now_iso()
+            self._store.save_price_alert(item)
             raise UiServiceError("DATASOURCE_TEST_FAILED", "价格提醒检查失败，请稍后重试。") from exc
 
         if request_id:
@@ -187,7 +205,7 @@ class PriceAlertService:
         return to_price_alert_for_user(self._get_alert_or_raise(price_alert_id))
 
     def _get_alert_or_raise(self, price_alert_id: str) -> PriceAlert:
-        item = self._items.get(price_alert_id)
+        item = self._store.get_price_alert(price_alert_id)
         if item is None or item.state in {"deleted", "closed"}:
             raise UiServiceError("ALERT_NOT_FOUND", "价格提醒不存在。")
         return item
@@ -230,6 +248,10 @@ class PriceAlertService:
 
     @staticmethod
     def _is_triggered(*, condition: dict[str, Any], quote: dict[str, Any]) -> bool:
+        return PriceAlertService.condition_is_triggered(condition=condition, quote=quote)
+
+    @staticmethod
+    def condition_is_triggered(*, condition: dict[str, Any], quote: dict[str, Any]) -> bool:
         condition_type = condition["type"]
         operator = condition["operator"]
         value = float(condition["value"])
@@ -266,9 +288,111 @@ class PriceAlertService:
         percent_change = PriceAlertService._quote_percent_change(condition=item.condition, quote=quote)
         return f"{code} 已触发涨跌幅提醒，当前变动 {percent_change:.2f}%。"
 
+    @staticmethod
+    def _quote_evidence_ref(quote: dict[str, Any]) -> str | None:
+        value = quote.get("evidence_ref")
+        return None if value is None else str(value)
+
+    def _deliver_notification(self, item: PriceAlert, *, message: str, quote: dict[str, Any]) -> dict[str, Any]:
+        dedupe_key = self._notification_dedupe_key(item, quote=quote)
+        if item.notification_dedupe_key == dedupe_key and item.last_notification_result is not None:
+            return dict(item.last_notification_result)
+        channel = str(item.notification.get("channel") or "in_app")
+        enabled = bool(item.notification.get("enabled", True))
+        if not enabled or channel == "in_app":
+            self._in_app_notifier(item.id, message)
+            return {"channel": "in_app", "delivered": True, "dedupe_key": dedupe_key}
+        try:
+            result = self._notifier(message, {**item.notification, "dedupeKey": dedupe_key})
+        except Exception:
+            self._in_app_notifier(item.id, message)
+            return {
+                "channel": "in_app",
+                "delivered": True,
+                "fallback_from": channel,
+                "channel_delivered": False,
+                "dedupe_key": dedupe_key,
+            }
+        if isinstance(result, dict):
+            sent = bool(result.get("sent", result.get("ok", True)))
+            if not sent:
+                self._in_app_notifier(item.id, message)
+                return {
+                    "channel": "in_app",
+                    "delivered": True,
+                    "fallback_from": channel,
+                    "channel_delivered": False,
+                    "dedupe_key": dedupe_key,
+                }
+            return {"channel": channel, "delivered": True, "dedupe_key": dedupe_key, **result}
+        return {"channel": channel, "delivered": True, "dedupe_key": dedupe_key}
+
+    @staticmethod
+    def _notification_dedupe_key(item: PriceAlert, *, quote: dict[str, Any]) -> str:
+        quote_timestamp = str(quote.get("quote_timestamp") or item.last_checked_at or "unknown")
+        trigger_side = f"{item.condition.get('type')}:{item.condition.get('operator')}"
+        return f"{item.id}:{item.condition_version}:{quote_timestamp}:{trigger_side}"
+
+    def _ensure_scan_bucket(self, bucket_key: str, *, market: MarketProfile, now_iso: str) -> None:
+        bucket = self._store.get_scan_bucket(bucket_key)
+        if bucket is None:
+            enabled = market in {MarketProfile.CRYPTO, MarketProfile.CN_A}
+            bucket = PriceAlertScanBucket(
+                bucket_key=bucket_key,
+                market=market,
+                frequency=_PRICE_ALERT_SCAN_FREQUENCY,
+                enabled=enabled,
+                openclaw_cron_job_id=None,
+                last_scan_run_id=None,
+                last_scan_summary=None,
+                last_error_message=None,
+                skipped_reason=None if enabled else "quote_calendar_live_evidence_required",
+                created_at=now_iso,
+                updated_at=now_iso,
+            )
+        if bucket.enabled and bucket.openclaw_cron_job_id is None and self._cron_adapter is not None:
+            job = self._cron_adapter.add_job(
+                name=f"price-alert-scan:{bucket.market.value}:{bucket.frequency}",
+                schedule={"kind": "every", "everyMs": _PRICE_ALERT_SCAN_INTERVAL_MS},
+                agent_id=_PRICE_ALERT_SCAN_AGENT_ID,
+                payload={
+                    "kind": "agentTurn",
+                    "message": self._scan_cron_message(bucket.bucket_key),
+                    "toolsAllow": ["claw-trade-scheduled-work-wake"],
+                    "timeoutSeconds": 60,
+                },
+                session_target="isolated",
+                wake_mode="now",
+                delivery={"mode": "none"},
+                enabled=True,
+            )
+            bucket.openclaw_cron_job_id = job.openclaw_cron_job_id
+            bucket.updated_at = now_iso
+        self._store.save_scan_bucket(bucket)
+
+    def _highest_alert_seq(self) -> int:
+        highest = 0
+        for alert in self._store.list_price_alerts():
+            prefix, sep, suffix = alert.id.partition("-")
+            if prefix != "alert" or sep != "-":
+                continue
+            try:
+                highest = max(highest, int(suffix))
+            except ValueError:
+                continue
+        return highest
+
     def _next_alert_id(self) -> str:
         self._seq += 1
         return f"alert-{self._seq}"
+
+    @staticmethod
+    def _scan_cron_message(bucket_key: str) -> str:
+        return (
+            "Call `claw-trade-scheduled-work-wake` exactly once with this JSON payload and no other tool calls:\n"
+            f'{{"kind":"price_alert_scan","bucketKey":"{bucket_key}","cronRunId":"auto"}}\n'
+            "Do not compare prices, write investment commentary, or fabricate quote results."
+        )
 
     def _now_iso(self) -> str:
         value = self._now_provider().astimezone(UTC).replace(microsecond=0)

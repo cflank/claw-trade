@@ -1,0 +1,40 @@
+worker: price_alert_scan_worker
+runtime: openclaw
+stage: scheduled_work
+completion: openclaw_agent_turn
+artifact:
+  canonical_output: scheduled_work_wake_receipt
+profiles:
+  CRYPTO:
+    approved: true
+    prompt: USER.md
+    tools:
+      - claw-trade-scheduled-work-wake
+    openviking_access: none
+  CN_A:
+    approved: true
+    prompt: USER.md
+    tools:
+      - claw-trade-scheduled-work-wake
+    openviking_access: none
+  US:
+    approved: false
+    prompt: USER.md
+    tools: []
+    openviking_access: none
+  HK:
+    approved: false
+    prompt: USER.md
+    tools: []
+    openviking_access: none
+skills:
+  mounted:
+    - claw-trade-scheduled-work-wake
+tool_policy:
+  owner: stage_profile
+  python_calls_tools: false
+business_policy:
+  judge_prices: false
+  create_reports: false
+  investment_advice: false
+  fabricate_quotes: false

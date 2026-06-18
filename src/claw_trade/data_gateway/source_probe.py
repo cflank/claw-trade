@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
+from claw_trade.data_gateway.price_quote_provider import PriceAlertDataAPI, PriceAlertQuoteProvider
 from claw_trade.ui_contracts.enums import MarketProfile
 
 _SUPPORTED_PROBE_TYPES = frozenset(
@@ -25,17 +27,26 @@ _CREDENTIAL_REQUIRED_TYPES = frozenset({"tushare", "finnhub", "fred", "coingecko
 def build_price_alert_quote_provider(
     *,
     env: Mapping[str, str] | None = None,
-    now_provider: Callable[[], object] | None = None,
+    now_provider: Callable[[], datetime] | None = None,
+    data_api: PriceAlertDataAPI | None = None,
     **evidence_chain: object,
-) -> Callable[[str, MarketProfile], dict[str, float]]:
-    del env, now_provider
+) -> Callable[[str, MarketProfile], dict[str, Any]]:
+    del env
     required = ("evidence_helper", "cache_store", "rate_limit_store", "single_flight", "attempt_store")
 
-    def _provider(instrument_code: str, market_profile: MarketProfile) -> dict[str, float]:
+    def _provider(instrument_code: str, market_profile: MarketProfile) -> dict[str, Any]:
         del instrument_code, market_profile
         if any(evidence_chain.get(key) is None for key in required):
             raise RuntimeError("datasource_test_failed: evidence_chain_unavailable")
-        raise RuntimeError("datasource_test_failed: price_alert_quote_provider_unimplemented")
+        resolved_data_api = data_api
+        if resolved_data_api is None:
+            try:
+                from claw_trade.data_gateway.runtime import build_data_api_from_env
+
+                resolved_data_api = build_data_api_from_env()
+            except Exception as exc:
+                raise RuntimeError("datasource_test_failed: price_alert_quote_unavailable") from exc
+        return PriceAlertQuoteProvider(data_api=resolved_data_api, now_provider=now_provider)(instrument_code, market_profile)
 
     return _provider
 

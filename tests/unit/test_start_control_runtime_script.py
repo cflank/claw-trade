@@ -347,9 +347,14 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "models: mergedModels," in text
     assert "openclaw_plugins/claw-trade-frontline-tools" in text
     assert "openclaw_plugins/claw-trade-selection-tools" in text
-    assert "paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath]" in text
+    assert "openclaw_plugins/claw-trade-scheduled-work-tools" in text
+    assert "paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath, clawTradeScheduledWorkPluginPath]" in text
     assert '"claw-trade-frontline-tools": {' in text
     assert '"claw-trade-selection-tools": {' in text
+    assert '"claw-trade-scheduled-work-tools": {' in text
+    assert "CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN=\"claw-trade-scheduled-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}\"" in text
+    assert "export OPENCLAW_GATEWAY_TOKEN CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN" in text
+    assert 'write_runtime_env_var "CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN"' in text
     assert '"openclaw-weixin": {' in text
     assert "const existingPluginEntries = isPlainObject(existingPluginsConfig.entries) ? existingPluginsConfig.entries : {};" in text
     assert "const mergedPluginEntries = {" in text
@@ -398,6 +403,7 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
         "selection_skeptic",
         "selection_manager",
         "selection_portfolio_manager",
+        "price_alert_scan_worker",
     )
     for worker in workers:
         assert f'"{worker}"' in text
@@ -531,7 +537,7 @@ def test_start_control_runtime_script_preserves_openclaw_state_on_restart() -> N
     runtime_cleanup_line = (
         'find "${RUNTIME_DIR}" -mindepth 1 -maxdepth 1 '
         '! -path "${OPENVIKING_RUNTIME_DIR}" ! -path "${OPENCLAW_STATE_DIR}" '
-        '! -path "${OPENCLAW_DEFAULT_STATE_DIR}" -exec rm -rf {} +'
+        '! -path "${OPENCLAW_DEFAULT_STATE_DIR}" ! -path "${RUNTIME_DIR}/data-gateway" -exec rm -rf {} +'
     )
     assert runtime_cleanup_line in text
     assert 'rm -rf "${OPENCLAW_STATE_DIR}"' not in text

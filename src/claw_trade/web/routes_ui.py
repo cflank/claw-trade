@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import is_dataclass
 from typing import Any
@@ -16,6 +17,7 @@ from claw_trade.ui_backend.price_alert_service import UiServiceError as PriceAle
 from claw_trade.ui_backend.report_queue import QueueError
 from claw_trade.ui_backend.report_repository import UiProductError
 from claw_trade.ui_backend.scheduler_service import UiServiceError as SchedulerServiceError
+from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunnerError
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 from claw_trade.ui_contracts.user_dto import to_user_payload
 from claw_trade.web.session import resolve_context_id
@@ -159,6 +161,12 @@ class ExportReportPdfRequest(BaseModel):
     force: bool = False
 
 
+class ScheduledWorkCronWakeRequest(BaseModel):
+    kind: str
+    bucketKey: str | None = None
+    cronRunId: str | None = None
+
+
 @router.post("/send-chat-message")
 def send_chat_message(payload: SendChatMessageRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -271,6 +279,25 @@ def channel_inbound_message(payload: ChannelInboundMessageRequest, request: Requ
             )
         )
         return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/internal/scheduled-work/cron-wake")
+def scheduled_work_cron_wake(payload: ScheduledWorkCronWakeRequest, request: Request) -> JSONResponse:
+    if not _valid_internal_cron_token(request):
+        return JSONResponse({"code": "FORBIDDEN", "message": "内部定时任务入口未授权。"}, status_code=403)
+    services = _services(request)
+    try:
+        return _success_response(
+            services.scheduled_work_runner.handle_wake(
+                {
+                    "kind": payload.kind,
+                    "bucketKey": payload.bucketKey,
+                    "cronRunId": payload.cronRunId,
+                }
+            )
+        )
     except Exception as exc:
         return _exception_response(exc)
 
@@ -781,6 +808,16 @@ def _services(request: Request) -> UiHttpServices:
     return request.app.state.ui_services
 
 
+def _valid_internal_cron_token(request: Request) -> bool:
+    expected = str(
+        getattr(request.app.state, "scheduled_work_internal_token", None)
+        or os.environ.get("CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN")
+        or ""
+    ).strip()
+    provided = str(request.headers.get("x-claw-trade-internal-token") or "").strip()
+    return bool(expected) and provided == expected
+
+
 def _device_interface_url(gateway_ws_url: str) -> str:
     parsed = urlsplit(gateway_ws_url)
     scheme = {"ws": "http", "wss": "https"}.get(parsed.scheme, parsed.scheme or "http")
@@ -810,6 +847,8 @@ def _exception_response(exc: Exception) -> JSONResponse:
     if isinstance(exc, SchedulerServiceError):
         return _error_response(exc.code, exc.message)
     if isinstance(exc, PriceAlertServiceError):
+        return _error_response(exc.code, exc.message)
+    if isinstance(exc, ScheduledWorkRunnerError):
         return _error_response(exc.code, exc.message)
     if isinstance(exc, SelectionConfirmationError):
         return _error_response("CONFIRMATION_REQUIRED", exc.user_message)
@@ -862,6 +901,7 @@ def _status_code_for_error(code: str) -> int:
         "SCHEDULE_NOT_FOUND": 404,
         "ALERT_NOT_FOUND": 404,
         "UNAUTHORIZED": 401,
+        "FORBIDDEN": 403,
         "CONFLICT": 409,
     }
     return mapping.get(code, 500)

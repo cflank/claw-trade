@@ -1,0 +1,17 @@
+{
+  "id": "claw-trade-scheduled-work-tools",
+  "name": "claw-trade scheduled work tools",
+  "description": "Registers the internal scheduled-work wake tool for cron-woken workers.",
+  "contracts": {
+    "tools": [
+      "claw-trade-scheduled-work-wake"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

@@ -58,10 +58,12 @@ from claw_trade.ui_backend.data_source_settings import (
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
+from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
 from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
 from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
 from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_capabilities
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
+from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanService
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
@@ -69,6 +71,8 @@ from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestio
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.scheduler_service import SchedulerService
+from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner
+from claw_trade.ui_backend.scheduled_work_store import JsonScheduledWorkStore
 from claw_trade.ui_backend.settings_service import SettingsService
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder, render_completion_summary_text
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
@@ -206,6 +210,8 @@ class UiHttpServices:
     report_notification_service: ReportNotificationService
     scheduler_service: SchedulerService
     price_alert_service: PriceAlertService
+    price_alert_scan_service: PriceAlertScanService
+    scheduled_work_runner: ScheduledWorkRunner
     settings_service: SettingsService
     selection_confirmation: SelectionConfirmationController
     selection_refresh_service: SelectionDataRefreshService
@@ -257,9 +263,18 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         queue_snapshot_provider=queue.get_report_queue_snapshot_for_user,
     )
     price_alert_quote_provider = build_price_alert_quote_provider()
+    scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
+    cron_adapter = OpenClawCronAdapter(rpc_client)
     price_alert_service = PriceAlertService(
         quote_provider=price_alert_quote_provider,
+        store=scheduled_work_store,
+        cron_adapter=cron_adapter,
     )
+    price_alert_scan_service = PriceAlertScanService(
+        store=scheduled_work_store,
+        quote_provider=price_alert_quote_provider,
+    )
+    scheduled_work_runner = ScheduledWorkRunner(price_alert_scan_service=price_alert_scan_service)
     confirmation = ConfirmationController(
         queue,
         scheduler_service=scheduler_service,
@@ -361,6 +376,8 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         report_notification_service=report_notification_service,
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
+        price_alert_scan_service=price_alert_scan_service,
+        scheduled_work_runner=scheduled_work_runner,
         settings_service=settings_service,
         selection_confirmation=selection_confirmation,
         selection_refresh_service=selection_refresh_service,

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from threading import Barrier, Lock, Thread
+from time import sleep
 
 import pytest
 from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
 from claw_trade.ui_backend.price_alert_service import PriceAlertService, UiServiceError
+from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, JsonScheduledWorkStore
 from claw_trade.ui_contracts.enums import MarketProfile
 
 
@@ -49,7 +53,6 @@ def test_create_price_alert_only_supports_threshold_and_percent_change() -> None
     ("raw_code", "market", "expected_code"),
     (
         ("SH600519", MarketProfile.CN_A, "600519.SH"),
-        ("HK00700", MarketProfile.HK, "00700.HK"),
         ("AAPL.US", MarketProfile.US, "AAPL"),
         ("AR", MarketProfile.CRYPTO, "AR/USDT"),
     ),
@@ -75,6 +78,103 @@ def test_create_price_alert_normalizes_market_specific_codes(
     assert created.market == market.value
 
 
+def test_create_price_alert_rejects_hk_until_strategy_approved() -> None:
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {"current_price": 1, "percent_change": 0},
+        now_provider=_fixed_now,
+    )
+
+    with pytest.raises(UiServiceError) as exc:
+        service.create_price_alert(
+            request_id="req-hk",
+            instrument_code="HK00700",
+            market=MarketProfile.HK,
+            condition={"type": "price_threshold", "operator": "above", "value": 1},
+        )
+
+    assert exc.value.code == "INVALID_INPUT"
+    assert "暂不支持港股价格提醒" in exc.value.message
+
+
+def test_price_alerts_persist_across_service_reconstruction(tmp_path) -> None:
+    store_path = tmp_path / ".ui-scheduled-work.json"
+    first_service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {"current_price": 1, "percent_change": 0},
+        store=JsonScheduledWorkStore(store_path),
+        now_provider=_fixed_now,
+    )
+    created = first_service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 1},
+    )
+
+    second_service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {"current_price": 1, "percent_change": 0},
+        store=JsonScheduledWorkStore(store_path),
+        now_provider=_fixed_now,
+    )
+    reloaded = second_service.get_price_alert(created.priceAlertId)
+    next_alert = second_service.create_price_alert(
+        request_id="req-next",
+        instrument_code="ETH",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 1},
+    )
+
+    assert reloaded.priceAlertId == "alert-1"
+    assert reloaded.instrumentCode == created.instrumentCode
+    assert next_alert.priceAlertId == "alert-2"
+
+
+def test_concurrent_price_alert_creation_provisions_one_scan_bucket_cron() -> None:
+    class SlowCronAdapter:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self._lock = Lock()
+
+        def add_job(self, *, name: str, **_kwargs: object) -> SimpleNamespace:
+            sleep(0.05)
+            with self._lock:
+                self.calls.append(name)
+                job_id = f"job-{len(self.calls)}"
+            return SimpleNamespace(openclaw_cron_job_id=job_id)
+
+    store = InMemoryScheduledWorkStore()
+    cron_adapter = SlowCronAdapter()
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {"current_price": 1, "percent_change": 0},
+        store=store,
+        cron_adapter=cron_adapter,  # type: ignore[arg-type]
+        now_provider=_fixed_now,
+    )
+    barrier = Barrier(2)
+    created: list[str] = []
+
+    def create(request_id: str) -> None:
+        barrier.wait(timeout=2)
+        dto = service.create_price_alert(
+            request_id=request_id,
+            instrument_code="BTC",
+            market=MarketProfile.CRYPTO,
+            condition={"type": "price_threshold", "operator": "above", "value": 1},
+        )
+        created.append(dto.priceAlertId)
+
+    threads = [Thread(target=create, args=(f"req-{idx}",)) for idx in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert sorted(created) == ["alert-1", "alert-2"]
+    assert cron_adapter.calls == ["price-alert-scan:CRYPTO:3m"]
+    bucket = store.get_scan_bucket("CRYPTO:3m")
+    assert bucket is not None
+    assert bucket.openclaw_cron_job_id == "job-1"
+
+
 def test_runtime_quote_provider_fails_closed_without_evidence_chain() -> None:
     provider = ui_runtime_checks.build_price_alert_quote_provider(env={}, now_provider=_fixed_now)
 
@@ -82,7 +182,7 @@ def test_runtime_quote_provider_fails_closed_without_evidence_chain() -> None:
         provider("BTC", MarketProfile.CRYPTO)
 
 
-def test_runtime_quote_provider_fails_closed_without_approved_data_api_quote_path() -> None:
+def test_runtime_quote_provider_fails_closed_without_data_api_quote_path() -> None:
     provider = ui_runtime_checks.build_price_alert_quote_provider(
         env={},
         now_provider=_fixed_now,
@@ -93,7 +193,7 @@ def test_runtime_quote_provider_fails_closed_without_approved_data_api_quote_pat
         attempt_store=object(),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(RuntimeError, match="price_alert_quote_provider_unimplemented"):
+    with pytest.raises(RuntimeError, match="price_alert_quote_unavailable"):
         provider("BTC", MarketProfile.CRYPTO)
 
 
@@ -109,6 +209,7 @@ def test_run_price_alert_now_triggers_and_closes_by_default() -> None:
         instrument_code="BTC",
         market=MarketProfile.CRYPTO,
         condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
     )
     first = service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
     second = service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
@@ -118,6 +219,134 @@ def test_run_price_alert_now_triggers_and_closes_by_default() -> None:
     assert len(sent) == 1
     assert second["triggered"] is True
     assert len(sent) == 1
+
+
+def test_triggered_price_alert_records_channel_notification_success() -> None:
+    store = InMemoryScheduledWorkStore()
+    sent: list[dict[str, object]] = []
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.2,
+            "quote_timestamp": "2026-05-19T12:00:00Z",
+        },
+        store=store,
+        notifier=lambda text, notification: sent.append({"text": text, "notification": notification})
+        or {"sent": True, "messageId": "m-1"},
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+
+    payload = service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
+    stored = store.get_price_alert(alert.priceAlertId)
+
+    assert payload["triggered"] is True
+    assert sent[0]["notification"]["dedupeKey"] == "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above"
+    assert stored is not None
+    assert stored.last_notification_result == {
+        "channel": "wechat_clawbot",
+        "delivered": True,
+        "dedupe_key": "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above",
+        "sent": True,
+        "messageId": "m-1",
+    }
+
+
+def test_triggered_price_alert_falls_back_to_in_app_when_channel_unavailable() -> None:
+    store = InMemoryScheduledWorkStore()
+    in_app: list[tuple[str, str]] = []
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.2,
+            "quote_timestamp": "2026-05-19T12:00:00Z",
+        },
+        store=store,
+        notifier=lambda _text, _notification: {"sent": False},
+        in_app_notifier=lambda alert_id, text: in_app.append((alert_id, text)),
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+
+    service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
+    stored = store.get_price_alert(alert.priceAlertId)
+
+    assert len(in_app) == 1
+    assert stored is not None
+    assert stored.state == "closed"
+    assert stored.last_notification_result == {
+        "channel": "in_app",
+        "delivered": True,
+        "fallback_from": "wechat_clawbot",
+        "channel_delivered": False,
+        "dedupe_key": "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above",
+    }
+
+
+def test_price_alert_notification_dedupe_prevents_duplicate_delivery() -> None:
+    store = InMemoryScheduledWorkStore()
+    sent: list[str] = []
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.2,
+            "quote_timestamp": "2026-05-19T12:00:00Z",
+        },
+        store=store,
+        notifier=lambda text, _notification: sent.append(text) or {"sent": True, "messageId": "m-1"},
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+    service.run_price_alert_now(request_id="req-run-1", price_alert_id=alert.priceAlertId)
+    stored = store.get_price_alert(alert.priceAlertId)
+    assert stored is not None
+    stored.state = "active"
+    store.save_price_alert(stored)
+
+    service.run_price_alert_now(request_id="req-run-2", price_alert_id=alert.priceAlertId)
+
+    assert len(sent) == 1
+
+
+def test_triggered_price_alert_does_not_create_report_confirmation_card() -> None:
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.2,
+            "quote_timestamp": "2026-05-19T12:00:00Z",
+        },
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+    )
+
+    payload = service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
+
+    assert "confirmationCard" not in payload
+    assert "reportTask" not in payload
+    assert "scheduledReport" not in payload
 
 
 def test_paused_alert_skip_checking() -> None:
