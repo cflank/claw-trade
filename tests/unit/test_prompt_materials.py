@@ -230,6 +230,58 @@ def test_cn_a_research_manager_prompt_materials_inline_frontline_and_debate(tmp_
     _assert_no_model_visible_protocol(prompt_vars)
 
 
+def test_prompt_materials_remove_missing_data_meta_before_downstream_prompt(tmp_path: Path) -> None:
+    run_id = "run-filter-missing-data-materials"
+    manifest, openviking = _manifest_with_texts(
+        tmp_path,
+        run_id,
+        {
+            ("market_analyst", Stage.FRONTLINE): "# 市场分析\n完整市场报告正文",
+            ("fundamental_analyst", Stage.FRONTLINE): "# 基本面分析\n完整基本面报告正文",
+            ("news_analyst", Stage.FRONTLINE): "# 新闻分析\n完整新闻报告正文",
+            (
+                "social_analyst",
+                Stage.FRONTLINE,
+            ): "# 社交舆情\n情绪升温。\n输入材料未提供散户与机构分群体的情绪数据，无法直接对比两类投资者的观点分歧程度。\n## 四、轮动节奏：板块资金数据缺失，无法做行业迁移判断\n未触发止损条件。",
+            ("bull_researcher", Stage.INVESTMENT_DEBATE): "# 多方观点\n完整多方报告正文",
+            ("bear_researcher", Stage.INVESTMENT_DEBATE): "# 空方观点\n完整空方报告正文",
+        },
+    )
+    runner = ControlRunner(
+        store=WorkflowStore(tmp_path / "runs"),
+        manifest_store=ManifestStore(tmp_path / "runs"),
+        openclaw=_OpenClaw(),  # type: ignore[arg-type]
+        openviking=openviking,
+    )
+    call = _worker_call(
+        tmp_path=tmp_path,
+        run_id=run_id,
+        worker_id="research_manager",
+        stage=Stage.INVESTMENT_DECISION,
+        upstream_materials=manifest.for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+        openviking_read_capabilities=manifest.capabilities_for_worker_call(
+            stage=Stage.INVESTMENT_DECISION,
+            worker_id="research_manager",
+            run_id=run_id,
+        ),
+    )
+
+    result = runner.attach_prompt_materials(call=call, manifest=manifest)
+
+    assert result.ok is True
+    assert result.call is not None
+    text = result.call.prompt_runtime_vars["sentiment_report"]
+    assert "情绪升温" in text
+    assert "未触发止损条件" in text
+    assert "输入材料未提供" not in text
+    assert "无法直接对比" not in text
+    assert "板块资金数据缺失" not in text
+
+
 def test_crypto_research_manager_prompt_materials_inline_frontline_and_debate(tmp_path: Path) -> None:
     run_id = "run-crypto-research-manager-materials"
     manifest, openviking = _manifest_with_texts(
@@ -500,7 +552,7 @@ def test_cn_a_portfolio_manager_prompt_materials_use_research_plan_and_risk_hist
     prompt_vars = result.call.prompt_runtime_vars
     assert prompt_vars["currency"] == "CNY"
     assert prompt_vars["currency_symbol"] == "¥"
-    assert prompt_vars["trader_plan"] == "# 投资计划\n完整研究经理报告正文"
+    assert "trader_plan" not in prompt_vars
     assert prompt_vars["research_plan"] == "# 投资计划\n完整研究经理报告正文"
     assert prompt_vars["trader_decision"] == "# 交易决策\n完整交易员报告正文"
     assert prompt_vars["history"] == (

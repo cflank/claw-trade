@@ -10,7 +10,6 @@ from claw_trade.data_gateway._selection_batch import (
     _history_row,
     _LocalFeatureRowsResult,
     _refresh_need_chunks,
-    _selection_data_need,
     _selection_data_requests,
     _selection_feature_projection_columns,
     _selection_feature_rows_from_repository,
@@ -24,7 +23,6 @@ from claw_trade.data_gateway._selection_batch import (
 )
 from claw_trade.data_gateway.models import (
     DataGap,
-    DataRequest,
     DataResult,
     DataResultStatus,
     Market,
@@ -1481,6 +1479,38 @@ def test_selection_local_feature_rows_normalize_legacy_mongo_source_refs() -> No
     assert stored_feature_rows
     assert all(str(row["source_ref"]).startswith("dataset://normalized/") for row in stored_feature_rows)
     assert not any("normalized://mongo" in str(row["source_ref"]) for row in stored_feature_rows)
+
+
+def test_selection_local_feature_rows_use_history_company_names_before_repository_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-history-name",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    repository = DatasetRepository(collections={name: {} for name in DatasetRepository.collection_names()})
+    ticker = "600204.SH"
+    trade_day = date.fromisoformat(plan.trade_date)
+    for row in _history_rows_from(start=trade_day - timedelta(days=259), count=260, ticker=ticker):
+        row["company_name"] = "上海电力"
+        repository.insert_normalized(_selection_daily_dataset_record(ticker=ticker, row=row))
+
+    def fail_lookup(**_kwargs: object) -> dict[str, str]:
+        pytest.fail("history company_name should avoid repository company-name lookup")
+
+    monkeypatch.setattr(repository, "find_company_names_by_symbol_ids", fail_lookup)
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["company_name"] == "上海电力"
 
 
 def test_selection_local_feature_rows_stop_at_explicit_row_limit(monkeypatch: pytest.MonkeyPatch) -> None:

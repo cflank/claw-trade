@@ -554,11 +554,10 @@ def _data_need_model_visible_text(
 ) -> str:
     result_gaps = _data_result_gaps(data_results)
     has_body_usable_result = _has_body_usable_result(data_results)
-    display_status = "ready" if need_satisfied and has_body_usable_result else status
     market = _market_from_request_payload(request)
     instrument = str(request.get("instrument") or "标的")
     lines = [
-        f"数据结果：{market.value} {instrument} 的{_business_data_label_from_request(request)}，状态：{_status_zh(display_status)}。",
+        f"数据结果：{market.value} {instrument} 的{_business_data_label_from_request(request)}。",
     ]
     if data_results:
         lines.extend(_data_need_row_summary_lines(data_results=data_results, market=market, domain=need_domain))
@@ -576,40 +575,23 @@ def _data_need_model_visible_text(
         if need_satisfied and has_body_usable_result:
             lines.append("本次数据结果已经可用于正文；不要重复请求同一数据需求。")
         elif result_gaps:
-            lines.append("本次数据结果只有部分可用于正文；正文必须说明下列数据缺口，不要重复请求同一数据需求。")
+            lines.append("本次数据需求已经完成；报告只引用已返回的可引用材料，不要重复请求同一数据需求。")
         else:
-            lines.append("本次返回了结构化数据，但没有满足当前数据需求；只能作为缺口证据，不要当成正文可引用结论。")
-            lines.append("不要重复请求同一数据需求；如需补充，只能提出更具体的新数据需求。")
+            lines.append("本次返回了结构化数据；只使用已返回的可引用材料，不要重复请求同一数据需求。")
     elif attempts:
         if need_satisfied:
-            lines.append("本次真实查询未返回事件记录；可在正文中表述为当前查询范围内未发现该类事件。")
+            lines.append("本次真实查询范围内未发现该类事件记录。")
             lines.append("不要重复请求同一数据需求。")
         else:
             lines.append("本次数据需求已经完成真实数据尝试；不要重复请求同一数据需求。")
-            lines.append("当前没有返回可直接引用的结构化数值或明细行；原始材料不等于正文可引用指标。")
             lines.append("不得用模型记忆、公开常识或工具外资料补写营收、利润、ROE、PE/PB、目标价、新闻事实或情绪结论。")
-    if need_satisfied and has_body_usable_result:
-        all_gap_text: list[str] = []
-    else:
-        all_gap_text = _visible_gap_labels((*tuple(gaps), *refs.gaps))
-    if need_satisfied and all_gap_text:
-        result_gap_text = _visible_gap_labels(result_gaps)
-        candidate_gap_text = [label for label in all_gap_text if label not in set(result_gap_text)]
-        if result_gap_text:
-            if has_body_usable_result:
-                lines.append("补充说明：" + "；".join(result_gap_text[:6]) + "。当前数据需求已有可用结论。")
-            else:
-                lines.append("数据缺口：" + "；".join(result_gap_text[:6]))
-        if candidate_gap_text:
-            lines.append("补充说明：" + "；".join(candidate_gap_text[:6]) + "。当前数据需求已有可用结论。")
-        all_gap_text = []
-    if all_gap_text:
-        lines.append("数据缺口：" + "；".join(all_gap_text[:6]))
     if attempts and not need_satisfied and not (refs.dataset_refs or refs.raw_refs):
-        lines.append("已执行真实数据尝试，但没有产生可引用的结构化或原始材料。")
-        lines.append("没有可引用数据时，不得写具体价格、技术指标数值、支撑压力、评级、目标价或止损位。")
+        lines.append("报告只引用已返回的可引用材料，不描述数据请求过程。")
+        lines.append("具体价格、技术指标数值、支撑压力、评级、目标价或止损位必须来自可引用材料。")
     if not attempts and planned_count == 0:
-        lines.append("当前没有可用的数据材料；这是数据层覆盖缺口，不代表所有数据来源永久不可用。")
+        lines.append("只引用已批准上游材料中的已有事实，不描述资料范围或请求过程。")
+    elif not data_results and not attempts:
+        lines.append("报告只引用已返回的可引用材料，不描述数据请求过程。")
     return "\n".join(lines)
 
 
@@ -1578,8 +1560,8 @@ def _chart_brief_lines(chart_payload: Mapping[str, Any]) -> list[str]:
                 lines.append(f"本地指标快照：{_compact_json(indicators)}")
                 lines.extend(_chart_indicator_interpretation_lines(summary if isinstance(summary, Mapping) else {}, indicators))
         return lines
-    reason = _human_error(str(chart_payload.get("chart_error") or "market data result did not generate chart assets"))
-    return [f"图表资产：缺失，原因：{reason}。"]
+    _ = chart_payload
+    return []
 
 
 def _chart_indicator_interpretation_lines(summary: Mapping[str, Any], indicators: Mapping[str, Any]) -> list[str]:
@@ -1637,12 +1619,12 @@ def _indicator_available(indicators: Mapping[str, Any], key: str) -> bool:
 
 def _indicator_text(indicators: Mapping[str, Any], key: str) -> str:
     payload = indicators.get(key)
-    return _compact_json(payload) if _indicator_available(indicators, key) else "未取得"
+    return _compact_json(payload) if _indicator_available(indicators, key) else ""
 
 
 def _oscillator_zone(value: float | None) -> str:
     if value is None:
-        return "未提供"
+        return "—"
     if value < 20:
         return "超卖"
     if value <= 25:
@@ -1662,13 +1644,13 @@ def _crypto_lens_brief_lines(
     include_context_rows: bool = False,
 ) -> list[str]:
     if not crypto_lens_payload:
-        return ["CryptoLens 指标材料：缺失，原因：市场数据结果没有生成结构化指标分析。"]
+        return []
     if crypto_lens_payload.get("crypto_lens_status") == "error":
-        return [f"CryptoLens 指标材料：缺失，原因：{_human_error(str(crypto_lens_payload.get('crypto_lens_error') or 'analysis failed'))}。"]
+        return []
 
     analysis = crypto_lens_payload.get("crypto_lens_analysis")
     if not isinstance(analysis, Mapping):
-        return ["CryptoLens 指标材料：缺失，原因：分析结果结构无效。"]
+        return []
     local_technical_analysis = crypto_lens_payload.get("crypto_lens_local_technical_analysis")
     if not isinstance(local_technical_analysis, Mapping):
         local_technical_analysis = analysis.get("local_technical_analysis")
@@ -1722,6 +1704,8 @@ def _crypto_lens_coverage_rows(
                 chart_indicators[str(key)] = value
 
     rows = [
+        row
+        for row in (
         _coverage_row("布林带", _indicator_available(chart_indicators, "boll"), "technical_analysis.indicators.boll", _indicator_text(chart_indicators, "boll"), "可用于描述当前通道位置；不要编造目标价或回测结论"),
         _coverage_row("维加斯通道", bool(_non_empty_mapping(technical_evidence.get("vegas"))), "technical_patterns.evidence.vegas", _vegas_evidence_text(technical_evidence.get("vegas")), "可用于描述当前趋势结构；不要编造统计结论或回测结论"),
         _coverage_row("双线反转", bool(_non_empty_mapping(technical_evidence.get("double_line_reversal"))), "technical_patterns.evidence.double_line_reversal", _double_line_evidence_text(technical_evidence.get("double_line_reversal")), "可用于描述 EMA20/EMA50 当前结构；不要编造反转统计或回测结论"),
@@ -1735,23 +1719,32 @@ def _crypto_lens_coverage_rows(
         _coverage_row("TD 9/13", bool(_non_empty_mapping(technical_evidence.get("td_sequential"))), "technical_patterns.evidence.td_sequential", _td_evidence_text(technical_evidence.get("td_sequential")), "可用于描述当前计数；不要编造衰竭统计或交易动作"),
         _coverage_row("谐波形态", _pattern_ready(pattern_evidence.get("harmonic")), "technical_patterns.evidence.patterns.harmonic", _pattern_evidence_text("harmonic", pattern_evidence.get("harmonic")), "输出最近摆动比例筛选状态和比例值"),
         _coverage_row("交易密集带/成交量分布", _pattern_ready(pattern_evidence.get("volume_profile")), "technical_patterns.evidence.patterns.volume_profile", _pattern_evidence_text("volume_profile", pattern_evidence.get("volume_profile")), "输出 POC 和价值区间；基于 OHLCV 近似分桶"),
+        )
+        if row is not None
     ]
     if not include_context_rows:
         return rows
+    context_rows = [
+        row
+        for row in (
+            _liquidation_coverage_row(liquidation_evidence, base_asset=base_asset),
+            _coverage_row("CVD", derivatives_evidence.get("cvd") is not None, "derivatives_context.evidence.cvd", _value_with_unit(derivatives_evidence.get("cvd"), derivatives_evidence.get("cvd_unit")), "只使用数据源直接返回的 CVD；不根据空白项补写判断"),
+            _coverage_row("主动买卖量", derivatives_evidence.get("taker_buy_volume") is not None or derivatives_evidence.get("taker_sell_volume") is not None or derivatives_evidence.get("taker_buy_sell_ratio") is not None, "derivatives_context.evidence.taker_buy_volume / taker_sell_volume", _taker_buy_sell_text(derivatives_evidence), "只使用数据源直接返回的买卖量和比例；不自行计算 CVD 或比例"),
+            _coverage_row("资金费率", derivatives_evidence.get("funding") is not None, "derivatives_context.evidence.funding", _value_with_unit(derivatives_evidence.get("funding"), derivatives_evidence.get("funding_unit")), "可用于描述当前费率水平和单位；不要编造历史分位或统计结论"),
+            _coverage_row("OI/多空比", derivatives_evidence.get("oi") is not None or derivatives_evidence.get("long_short_ratio") is not None, "derivatives_context.evidence.oi / long_short_ratio", _oi_long_short_text(derivatives_evidence), "可用于描述当前持仓结构；数据结果会明示已知未平仓量单位；不要编造历史分位或统计结论"),
+            _coverage_row("宏观", True, "macro_context.evidence", "宏观/新闻由新闻数据结果负责，行情数据结果不重复判断", "行情数据结果不重复判断宏观；回看新闻/宏观数据结果"),
+            _coverage_row("链上", bool(_non_empty_mapping(onchain_evidence)), "onchain_context.evidence", _onchain_evidence_text(onchain_evidence), "只保留当前读数；单位或样本不足时不推导流入/流出含义"),
+            _ahr999_coverage_row(ahr999_evidence, base_asset=base_asset),
+        )
+        if row is not None
+    ]
     return [
         *rows,
-        _liquidation_coverage_row(liquidation_evidence, base_asset=base_asset),
-        _coverage_row("CVD", derivatives_evidence.get("cvd") is not None, "derivatives_context.evidence.cvd", _value_with_unit(derivatives_evidence.get("cvd"), derivatives_evidence.get("cvd_unit")), "只使用数据源直接返回的 CVD；未返回就写数据缺失"),
-        _coverage_row("主动买卖量", derivatives_evidence.get("taker_buy_volume") is not None or derivatives_evidence.get("taker_sell_volume") is not None or derivatives_evidence.get("taker_buy_sell_ratio") is not None, "derivatives_context.evidence.taker_buy_volume / taker_sell_volume", _taker_buy_sell_text(derivatives_evidence), "只使用数据源直接返回的买卖量和比例；不自行计算 CVD 或比例"),
-        _coverage_row("资金费率", derivatives_evidence.get("funding") is not None, "derivatives_context.evidence.funding", _value_with_unit(derivatives_evidence.get("funding"), derivatives_evidence.get("funding_unit")), "可用于描述当前费率水平和单位；不要编造历史分位或统计结论"),
-        _coverage_row("OI/多空比", derivatives_evidence.get("oi") is not None or derivatives_evidence.get("long_short_ratio") is not None, "derivatives_context.evidence.oi / long_short_ratio", _oi_long_short_text(derivatives_evidence), "可用于描述当前持仓结构；数据结果会明示已知未平仓量单位；不要编造历史分位或统计结论"),
-        _coverage_row("宏观", True, "macro_context.evidence", "宏观/新闻由新闻数据结果负责，行情数据结果不重复判断", "不要写成宏观缺失；应回看新闻/宏观数据结果"),
-        _coverage_row("链上", bool(_non_empty_mapping(onchain_evidence)), "onchain_context.evidence", _onchain_evidence_text(onchain_evidence), "只保留当前读数；单位或样本不足时不推导流入/流出含义"),
-        _ahr999_coverage_row(ahr999_evidence, base_asset=base_asset),
+        *context_rows,
     ]
 
 
-def _liquidation_coverage_row(evidence: Mapping[str, Any], *, base_asset: str = "") -> tuple[str, str, str, str]:
+def _liquidation_coverage_row(evidence: Mapping[str, Any], *, base_asset: str = "") -> tuple[str, str, str, str] | None:
     if _is_non_btc_crypto_base(base_asset):
         return (
             "清算地图",
@@ -1787,8 +1780,8 @@ def _ahr999_coverage_row(evidence: Mapping[str, Any], *, base_asset: str = "") -
     return (
         "AHR999",
         "由基本面/链上数据结果负责",
-        "行情数据结果未取得 AHR999；如基本面数据结果有读数，以基本面数据结果为准",
-        "不要写成全局缺失；不要编造历史分位、定投或抄底结论",
+        "如基本面数据结果有读数，以基本面数据结果为准",
+        "不要编造历史分位、定投或抄底结论",
     )
 
 
@@ -1799,7 +1792,7 @@ def _analysis_section(analysis: Mapping[str, Any], key: str) -> Mapping[str, Any
 
 def _liquidation_evidence_text(evidence: Mapping[str, Any]) -> str:
     if not _non_empty_mapping(evidence):
-        return "未取得"
+        return ""
     parts: list[str] = []
     heatmap_count = evidence.get("heatmap_sample_count")
     invalid_count = evidence.get("invalid_heatmap_sample_count")
@@ -1820,7 +1813,7 @@ def _liquidation_evidence_text(evidence: Mapping[str, Any]) -> str:
                 parts.append(f"热图首个规模 {_value_with_unit(size, first.get('size_unit'))}")
     if invalid_count is not None:
         parts.append(f"剔除异常热力图价格点 {_display_value(invalid_count)}")
-    return "；".join(parts) or "未取得"
+    return "；".join(parts)
 
 
 def _oi_long_short_text(evidence: Mapping[str, Any]) -> str:
@@ -1832,11 +1825,11 @@ def _oi_long_short_text(evidence: Mapping[str, Any]) -> str:
         if oi_unit:
             parts.append(f"未平仓量 {rendered}（单位已明示：{oi_unit}）")
         else:
-            parts.append(f"未平仓量 {rendered}（单位未确认）")
+            parts.append(f"未平仓量 {rendered}")
     long_short_ratio = evidence.get("long_short_ratio")
     if long_short_ratio is not None:
         parts.append(f"多空比 {_display_value(long_short_ratio)}")
-    return "；".join(parts) or "未取得"
+    return "；".join(parts)
 
 
 def _taker_buy_sell_text(evidence: Mapping[str, Any]) -> str:
@@ -1851,7 +1844,7 @@ def _taker_buy_sell_text(evidence: Mapping[str, Any]) -> str:
         parts.append(f"主动卖量 {_value_with_unit(sell, unit)}")
     if ratio is not None:
         parts.append(f"买卖比 {_display_value(ratio)}")
-    return "；".join(parts) or "未取得"
+    return "；".join(parts)
 
 
 def _number_delta(value: object, minus: object) -> float | None:
@@ -1869,13 +1862,13 @@ def _section_evidence(section: Mapping[str, Any]) -> Mapping[str, Any]:
     return evidence if isinstance(evidence, Mapping) else {}
 
 
-def _coverage_row(module: str, has_data: bool, path: str, value: str, impact: str) -> tuple[str, str, str, str]:
+def _coverage_row(module: str, has_data: bool, path: str, value: str, impact: str) -> tuple[str, str, str, str] | None:
+    if not has_data:
+        return None
     if has_data:
         status = "可分析"
-    elif value.startswith("当前统一数据层未提供结构化"):
-        status = "未覆盖/未实现"
     else:
-        status = "缺失/不可用"
+        status = ""
     _ = path
     return (module, status, value, impact)
 
@@ -1896,10 +1889,10 @@ def _reader_status(value: object) -> str:
         "open": "未回补",
         "filled": "已回补",
         "partially_filled": "部分回补",
-        "unknown": "未确认",
+        "unknown": "状态不明",
         "no_pattern": "未识别到有效结构",
         "no_candidate": "未匹配到有效候选",
-        "no_recent_break_of_structure": "近期没有确认的结构突破",
+        "no_recent_break_of_structure": "近期无确认结构突破",
         "no_source_candle": "未找到结构突破前的来源K线",
         "insufficient": "样本不足",
         "insufficient_ohlc": "K线样本不足",
@@ -1944,18 +1937,18 @@ def _reader_status(value: object) -> str:
         "range_or_transition": "区间或转换结构",
         "markup": "上行推进阶段",
         "markdown": "下跌推进阶段",
-        "accumulation_or_distribution_unconfirmed": "结构阶段未确认",
+        "accumulation_or_distribution_unconfirmed": "结构阶段待确认",
     }
     if raw in labels:
         return labels[raw]
     if "_" in raw:
-        return "未识别状态"
-    return raw or "未取得"
+        return "状态不明"
+    return raw or "—"
 
 
 def _vegas_evidence_text(value: object) -> str:
     if not isinstance(value, Mapping) or not value:
-        return "未取得"
+        return ""
     return (
         f"位置 {_reader_status(value.get('band_position'))}，"
         f"主趋势 {_reader_status(value.get('major_trend'))}，"
@@ -1967,7 +1960,7 @@ def _vegas_evidence_text(value: object) -> str:
 
 def _double_line_evidence_text(value: object) -> str:
     if not isinstance(value, Mapping) or not value:
-        return "未取得"
+        return ""
     return (
         f"状态 {_reader_status(value.get('state'))}，"
         f"EMA20 {_display_value(value.get('fast_value'))}，"
@@ -1978,7 +1971,7 @@ def _double_line_evidence_text(value: object) -> str:
 
 def _fvg_evidence_text(value: object) -> str:
     if not isinstance(value, Mapping) or not value:
-        return "未取得"
+        return ""
     candidates = value.get("candidates")
     candidate_count = len(candidates) if isinstance(candidates, Sequence) and not isinstance(candidates, (str, bytes, bytearray)) else value.get("candidate_count")
     parts = [
@@ -1996,7 +1989,7 @@ def _fvg_evidence_text(value: object) -> str:
 
 def _kd_evidence_text(value: object) -> str:
     if not isinstance(value, Mapping) or not value:
-        return "未取得"
+        return ""
     return (
         f"K {_display_value(value.get('k'))}（{_reader_status(value.get('k_state'))}），"
         f"D {_display_value(value.get('d'))}（{_reader_status(value.get('d_state'))}），"
@@ -2006,7 +1999,7 @@ def _kd_evidence_text(value: object) -> str:
 
 def _td_evidence_text(value: object) -> str:
     if not isinstance(value, Mapping) or not value:
-        return "未取得"
+        return ""
     return (
         f"方向 {_reader_status(value.get('setup_direction'))}，"
         f"启动计数 {_display_value(value.get('setup_count'))}，"
@@ -2018,7 +2011,7 @@ def _td_evidence_text(value: object) -> str:
 
 def _onchain_evidence_text(evidence: Mapping[str, Any]) -> str:
     if not _non_empty_mapping(evidence):
-        return "未取得"
+        return ""
     parts: list[str] = []
     if evidence.get("exchange_netflow") is not None:
         parts.append(f"交易所净流量 {_value_with_unit(evidence.get('exchange_netflow'), evidence.get('exchange_netflow_unit'))}")
@@ -2037,16 +2030,16 @@ def _onchain_evidence_text(evidence: Mapping[str, Any]) -> str:
 
 def _ahr999_evidence_text(evidence: Mapping[str, Any]) -> str:
     if not _non_empty_mapping(evidence):
-        return "未取得"
+        return ""
     value = evidence.get("ahr999") or evidence.get("value")
     if value is None:
-        return "已返回 AHR999 材料，但当前读数未取得"
+        return "已返回 AHR999 材料"
     return f"AHR999 当前读数 {_display_value(value)}（无量纲/指数读数）"
 
 
 def _pattern_evidence_text(kind: str, value: object) -> str:
     if not isinstance(value, Mapping) or not value:
-        return "未取得"
+        return ""
     status = str(value.get("status") or "unknown")
     if kind == "volume_profile":
         if status != "ready":
@@ -2089,7 +2082,7 @@ def _pattern_evidence_text(kind: str, value: object) -> str:
             f"BC/AB {_display_value(ratios.get('bc_ab'))}，"
             f"CD/BC {_display_value(ratios.get('cd_bc'))}"
             if ratios
-            else "比例未取得"
+            else "比例 —"
         )
         return f"状态 {_reader_status(status)}，形态 {_reader_status(value.get('pattern'))}，方向 {_reader_status(value.get('direction'))}，{ratio_text}"
     return _compact_json(value)
@@ -2097,7 +2090,7 @@ def _pattern_evidence_text(kind: str, value: object) -> str:
 
 def _pivot_price_text(value: object) -> str:
     if not isinstance(value, Mapping):
-        return "未取得"
+        return "—"
     return f"{_display_value(value.get('price'))}@{_display_value(value.get('time'))}"
 
 
@@ -2975,24 +2968,24 @@ def _human_error(value: str | None) -> str:
 
 def _display_value(value: object) -> str:
     if value is None:
-        return "未提供"
+        return "—"
     if isinstance(value, (list, tuple)):
-        return "、".join(str(item) for item in value) or "未提供"
+        return "、".join(str(item) for item in value) or "—"
     return str(value)
 
 
 def _value_with_unit(value: object, unit: object) -> str:
     rendered = _display_value(value)
     unit_text = str(unit or "").strip()
-    return f"{rendered} {unit_text}" if unit_text and rendered != "未提供" else rendered
+    return f"{rendered} {unit_text}" if unit_text and rendered != "—" else rendered
 
 
 def _status_zh(status: str) -> str:
     return {
         "ready": "可用",
-        "partial": "部分可用",
+        "partial": "部分",
         "insufficient": "不足",
-        "missing": "缺失",
+        "missing": "",
         "error": "错误",
     }.get(status, status)
 

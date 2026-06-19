@@ -224,6 +224,7 @@ def test_selection_refresh_service_exposes_latest_terminal_failure_for_right_rai
     assert progress["currentAction"] == "选股数据刷新失败，请查看失败原因。"
     assert progress["workerStatusLabels"] == ["失败原因：上一次进程已中断。"]
     assert progress["workflowRunId"] == "sel-refresh-failed-1"
+    assert service.latest_progress_for_user(include_terminal=False) == {"selectionProgress": None}
 
 
 def test_selection_refresh_service_hides_failed_refresh_when_valid_candidate_cache_exists(tmp_path: Path) -> None:
@@ -416,6 +417,103 @@ def test_selection_refresh_service_startup_check_runs_data_job_and_dedupes_selec
     assert job_calls == ["sel-auto-check-1"]
 
 
+def test_selection_refresh_service_startup_batch_runs_cn_a_and_crypto(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "claw_trade.selection.refresh.resolve_crypto_selection_trade_date_for_scheduler",
+        lambda value: value or "2026-06-04",
+    )
+    store = SelectionRunStore()
+    run_ids = iter(("sel-auto-cn-a-1", "sel-auto-crypto-1"))
+    markets: list[SelectionMarket] = []
+
+    def run_check(plan: SelectionRunPlan) -> None:
+        markets.append(plan.market)
+        store.save_data_run_record(
+            SelectionDataRunRecord(
+                run_plan=plan,
+                data_run=SelectionDataRun(
+                    selection_run_id=plan.selection_run_id,
+                    status=SelectionDataRunStatus.NO_CANDIDATE,
+                    lease_id=f"lease://{plan.selection_run_id}",
+                    started_at="2026-06-04T08:00:00+00:00",
+                    completed_at="2026-06-04T08:01:00+00:00",
+                ),
+                manifest=None,
+            )
+        )
+
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=run_check,  # type: ignore[arg-type]
+        run_data_check=run_check,
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=_strategy_config_ref,
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 6, 4, 8, tzinfo=UTC),
+        run_id_factory=lambda: next(run_ids),
+    )
+
+    service._run_automatic_refresh_batch(reason="startup_data_check")
+
+    assert markets == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
+    crypto_record = store.load_latest_data_run_record(
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-06-04",
+    )
+    assert crypto_record is not None
+    assert crypto_record.run_plan.approved_strategy_config_ref == "config://crypto-selection-v1"
+    assert crypto_record.run_plan.universe_scope == "spot_usdt"
+
+
+def test_selection_refresh_service_auto_check_dedupes_by_market_not_only_date(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "claw_trade.selection.refresh.resolve_crypto_selection_trade_date_for_scheduler",
+        lambda value: value or "2026-06-04",
+    )
+    store = SelectionRunStore()
+    run_ids = iter(("sel-auto-cn-a-1", "sel-auto-crypto-1"))
+    nested_results: list[tuple[str, str | None]] = []
+    markets: list[SelectionMarket] = []
+
+    def run_check(plan: SelectionRunPlan) -> None:
+        markets.append(plan.market)
+        if plan.market == SelectionMarket.CN_A:
+            crypto_result = service.run_automatic_refresh_once(reason="startup_data_check", market=SelectionMarket.CRYPTO)
+            nested_results.append((crypto_result.status, crypto_result.selection_run_id))
+        store.save_data_run_record(
+            SelectionDataRunRecord(
+                run_plan=plan,
+                data_run=SelectionDataRun(
+                    selection_run_id=plan.selection_run_id,
+                    status=SelectionDataRunStatus.NO_CANDIDATE,
+                    lease_id=f"lease://{plan.selection_run_id}",
+                    started_at="2026-06-04T08:00:00+00:00",
+                    completed_at="2026-06-04T08:01:00+00:00",
+                ),
+                manifest=None,
+            )
+        )
+
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=run_check,  # type: ignore[arg-type]
+        run_data_check=run_check,
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=_strategy_config_ref,
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 6, 4, 8, tzinfo=UTC),
+        run_id_factory=lambda: next(run_ids),
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup_data_check")
+
+    assert result.status == "completed"
+    assert result.selection_run_id == "sel-auto-cn-a-1"
+    assert nested_results == [("completed", "sel-auto-crypto-1")]
+    assert markets == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
+
+
 def test_selection_refresh_service_startup_check_reuses_valid_candidate_cache(tmp_path: Path) -> None:
     store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
     _save_completed_candidate_cache_record(
@@ -536,18 +634,30 @@ def _request(*, trade_date: str = "2026-05-26") -> SelectRequest:
 
 
 def _data_need_audit(*, market: SelectionMarket, profile: SelectionProfile, trade_date: str) -> SelectionDataNeedAudit:
+    if market == SelectionMarket.CRYPTO:
+        segment = "crypto"
+        universe_scope = "spot_usdt"
+    else:
+        segment = "cn_a"
+        universe_scope = "all_a_shares"
     return SelectionDataNeedAudit(
-        plan_id=f"plan://selection/cn_a/{trade_date}/batch-v1",
+        plan_id=f"plan://selection/{segment}/{trade_date}/batch-v1",
         scope=SelectionBatchScope.SELECTION_BATCH,
         market=market,
         profile=profile,
         trade_date=trade_date,
         lookback_trading_days=260,
-        universe_scope="all_a_shares",
+        universe_scope=universe_scope,
         coverage_groups=("daily",),
-        ttl_policy_ref="ttl://selection/cn_a",
-        lineage_root_ref=f"lineage://selection/cn_a/{trade_date}",
+        ttl_policy_ref=f"ttl://selection/{segment}",
+        lineage_root_ref=f"lineage://selection/{segment}/{trade_date}",
     )
+
+
+def _strategy_config_ref(market: SelectionMarket, profile: SelectionProfile) -> str:
+    if (market, profile) == (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO):
+        return "config://crypto-selection-v1"
+    return "config://cn-a-selection-v1"
 
 
 def _save_completed_candidate_cache_record(

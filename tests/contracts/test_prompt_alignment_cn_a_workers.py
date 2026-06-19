@@ -66,25 +66,24 @@ FORBIDDEN_PROMPT_PROTOCOL_TOKENS = (
 
 TRUTHFULNESS_REDLINE_SNIPPETS = {
     "policy_analyst": (
-        "当数据结果状态为 blocked/partial/empty",
-        "只能写“无法确认”或“未取得可核验证据”",
-        "不得把缺口改写成“政策不存在”",
+        "只把输入材料中已经出现且来源清楚的政策、来源、日期、机构或影响判断写进报告正文",
+        "正文不要说明资料范围、查询状态或省略原因",
+        "不得把新闻线索当作官方政策事实",
+        "不得外推材料中没有提供的政策发布日期、发布机构和影响级别",
     ),
     "hot_money_tracker": (
-        "当关键数据状态为 blocked/partial/empty",
-        "只能写“无法确认”或“未取得可核验证据”",
-        "不得把缺口外推成“未发生异动”",
+        "只把输入材料中已经出现且来源清楚的资金、席位、方向、日期、金额或比例判断写进报告正文",
+        "不得把输入之外的内容写入正文当作多空理由",
+        "正文不要说明资料范围、查询状态或省略原因",
         "金额/比例/日期必须逐字沿用数据结果原始单位与数值",
         "不得把 CNY 改写为亿元、万元或百分比",
     ),
     "lockup_watcher": (
-        "当数据结果状态为 blocked/partial/empty",
-        "当前无可核验解禁/筹码数据",
-        "不得把缺口外推成“无任何解禁记录”",
-        "“减持概率极低”",
-        "“预计某月分红除息”",
-        "禁止输出预测性数值、预计日期、派息金额区间",
-        "只能如实陈述“未取得可核验证据，无法确认”",
+        "只把输入材料中已经出现且来源清楚的解禁、筹码、减持、分红、日期、规模或概率判断写进报告正文",
+        "正文不要说明资料范围、查询状态或省略原因",
+        "不得把材料空白改写成“已确认没有风险”",
+        "禁止输出无证据支持的预测性数值、预计日期、派息金额区间",
+        "没有官方原文或关键字段支持时，不得给出预计除权除息日",
     ),
 }
 
@@ -147,7 +146,8 @@ def test_cn_a_prompt_front_matter_and_tool_boundary(worker_id: str) -> None:
     assert CN_A_VISIBLE_TOOL in text
     assert "可用工具" in text
     assert "最终报告正文必须直接从报告标题或正文第一句开始" in text
-    assert "数据限制与风险提示" in text
+    assert "风险提示" in text
+    assert "数据限制与风险提示" not in text
     assert "{company_name}" in text
     assert "{ticker}" in text
     assert "{current_date}" in text

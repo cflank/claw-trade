@@ -11,6 +11,39 @@ SECTION_NUMERAL_TO_NUMBER = {numeral: index for index, numeral in SECTION_NUMBER
 _H1_RE = re.compile(r"^# (?!#)(.*)$")
 _H2_SECTION_RE = re.compile(r"^## ([一二三四五六七八])[、.．]")
 _H2_TITLE_RE = re.compile(r"^## .*(投资研究报告|Investment Research Report)\s*$")
+_MISSING_DATA_META_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(输入材料|上游材料|材料|资料|数据结果|数据工具|数据接口|接口|工具).{0,32}(未提供|未返回|未取得|不可见|未可用|返回空|未调用成功|覆盖不足|覆盖限制|数据限制|缺失|资料缺口|缺少|无法验证|无法确认|无法确定|不能判断|没有可引用|没有可用|未形成可引用)"),
+    re.compile(r"(未提供|未返回|未取得).{0,32}(数据|材料|资料|指标|数值|个股|散户|机构|情绪|来源|证据)"),
+    re.compile(r"(无法验证|无法确认|无法确定|不能判断).{0,32}(数据|材料|资料|指标|数值|观点|分歧|来源|证据)"),
+    re.compile(r"(当前缺少|缺少证据|没有证据|数据空白|资料状态|工具状态|请求失败|不掌握)"),
+    re.compile(r"(数据|资料|材料|信息|样本|窗口|融资融券|板块资金|公开财务解释).{0,32}(缺失|缺乏|不足)"),
+    re.compile(r"(缺失|缺乏|不足).{0,32}(数据|资料|材料|信息|样本|解释|支撑|证据)"),
+    re.compile(r"(未得到|没有|无).{0,32}(官方信息|公开财务解释|公司公告|行业新闻|订单支撑|证据|材料|数据|支撑)"),
+)
+_MISSING_DATA_META_TOKENS: tuple[str, ...] = (
+    "无法验证",
+    "无法确认",
+    "无法确定",
+    "不能判断",
+    "未取得",
+    "未提供",
+    "未返回",
+    "未形成可引用",
+    "覆盖不足",
+    "覆盖限制",
+    "数据空白",
+    "资料状态",
+    "工具状态",
+    "请求失败",
+    "没有可引用",
+    "没有可用",
+    "当前缺少",
+    "缺少证据",
+    "没有证据",
+    "输入材料未",
+    "材料未",
+    "不掌握",
+)
 
 
 @dataclass(frozen=True)
@@ -232,12 +265,33 @@ def validate_final_report_text(text: str) -> FinalReportStructureResult:
     )
 
 
+def remove_missing_data_meta_lines(text: str) -> str:
+    """Remove human-approved missing-data meta narration from reader-facing copies."""
+    kept_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not _is_markdown_table_separator(stripped) and _is_missing_data_meta_line(stripped):
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines).strip() + ("\n" if text.endswith("\n") else "")
+
+
 def _first_nonblank_line(text: str) -> str:
     for line in text.splitlines():
         stripped = line.strip()
         if stripped:
             return stripped
     return ""
+
+
+def _is_markdown_table_separator(stripped: str) -> bool:
+    return bool(re.fullmatch(r"\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?", stripped))
+
+
+def _is_missing_data_meta_line(stripped: str) -> bool:
+    return any(token in stripped for token in _MISSING_DATA_META_TOKENS) or any(
+        pattern.search(stripped) for pattern in _MISSING_DATA_META_PATTERNS
+    )
 
 
 def _h1_count(text: str) -> int:

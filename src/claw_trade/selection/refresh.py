@@ -61,7 +61,7 @@ class SelectionDataRefreshService:
         self._lock = Lock()
         self._auto_refresh_stop = Event()
         self._auto_refresh_thread: Thread | None = None
-        self._auto_refresh_trade_date: str | None = None
+        self._auto_refresh_key: tuple[SelectionMarket, SelectionProfile, str] | None = None
 
     def request_refresh(
         self,
@@ -182,9 +182,17 @@ class SelectionDataRefreshService:
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout_seconds)
 
-    def run_automatic_refresh_once(self, *, reason: str) -> SelectionDataRefreshResult:
+    def run_automatic_refresh_once(
+        self,
+        *,
+        reason: str,
+        market: SelectionMarket = SelectionMarket.CN_A,
+        profile: SelectionProfile | None = None,
+    ) -> SelectionDataRefreshResult:
+        if profile is None:
+            profile = SelectionProfile.CRYPTO if market == SelectionMarket.CRYPTO else SelectionProfile.CN_A
         try:
-            trade_date = self._resolve_closed_trade_date(None)
+            trade_date = self._resolve_trade_date_for_market(market, None)
         except Exception as exc:  # noqa: BLE001
             return SelectionDataRefreshResult(
                 status="failed",
@@ -194,10 +202,11 @@ class SelectionDataRefreshService:
                 error_code=type(exc).__name__,
             )
 
+        auto_refresh_key = (market, profile, trade_date)
         with self._lock:
             existing = self._store.load_latest_completed_selection_run(
-                market=SelectionMarket.CN_A,
-                profile=SelectionProfile.CN_A,
+                market=market,
+                profile=profile,
                 trade_date=trade_date,
                 now=self._now_fn(),
             )
@@ -208,7 +217,7 @@ class SelectionDataRefreshService:
                     trade_date=trade_date,
                     reason=f"{reason}:candidate_cache_valid",
                 )
-            if self._auto_refresh_trade_date == trade_date:
+            if self._auto_refresh_key == auto_refresh_key:
                 return SelectionDataRefreshResult(
                     status="already_running",
                     selection_run_id=None,
@@ -216,8 +225,8 @@ class SelectionDataRefreshService:
                     reason=reason,
                 )
             if self._store.has_active_data_run(
-                market=SelectionMarket.CN_A,
-                profile=SelectionProfile.CN_A,
+                market=market,
+                profile=profile,
                 trade_date=trade_date,
             ):
                 return SelectionDataRefreshResult(
@@ -229,12 +238,12 @@ class SelectionDataRefreshService:
             try:
                 plan = schedule_selection_job(
                     context=SelectionScheduleContext(
-                        market=SelectionMarket.CN_A,
-                        profile=SelectionProfile.CN_A,
+                        market=market,
+                        profile=profile,
                         trade_date=trade_date,
                         trigger_source=SelectionTriggerSource.SCHEDULED,
                     ),
-                    resolve_closed_trade_date=self._resolve_closed_trade_date,
+                    resolve_closed_trade_date=self._resolver_for_market(market),
                     has_active_job=lambda market, profile, date_value: self._store.has_active_data_run(
                         market=market,
                         profile=profile,
@@ -258,13 +267,13 @@ class SelectionDataRefreshService:
                     data_run=SelectionDataRun(
                         selection_run_id=plan.selection_run_id,
                         status=SelectionDataRunStatus.PLANNED,
-                        lease_id=f"auto-refresh://{reason}",
+                        lease_id=f"auto-refresh://{reason}/{market.value}",
                         started_at=self._now_fn().isoformat(),
                     ),
                     manifest=None,
                 )
             )
-            self._auto_refresh_trade_date = trade_date
+            self._auto_refresh_key = auto_refresh_key
 
         try:
             self._run_data_check(plan)
@@ -276,7 +285,7 @@ class SelectionDataRefreshService:
                     data_run=SelectionDataRun(
                         selection_run_id=plan.selection_run_id,
                         status=SelectionDataRunStatus.FAILED,
-                        lease_id=f"auto-refresh://{reason}",
+                        lease_id=f"auto-refresh://{reason}/{market.value}",
                         started_at=failed_at,
                         failed_at=failed_at,
                         failure_code="selection_auto_refresh_failed",
@@ -294,8 +303,8 @@ class SelectionDataRefreshService:
             )
         finally:
             with self._lock:
-                if self._auto_refresh_trade_date == trade_date:
-                    self._auto_refresh_trade_date = None
+                if self._auto_refresh_key == auto_refresh_key:
+                    self._auto_refresh_key = None
 
         return SelectionDataRefreshResult(
             status="completed",
@@ -310,10 +319,13 @@ class SelectionDataRefreshService:
         market: SelectionMarket = SelectionMarket.CN_A,
         profile: SelectionProfile = SelectionProfile.CN_A,
         trade_date: str | None = None,
+        include_terminal: bool = True,
     ) -> dict[str, object]:
         if trade_date is None:
             record = self._store.load_latest_active_data_run_record(market=market, profile=profile)
             if record is None:
+                if not include_terminal:
+                    return {"selectionProgress": None}
                 record = self._store.load_latest_any_data_run_record(market=market, profile=profile)
             if record is None:
                 return {"selectionProgress": None}
@@ -346,6 +358,8 @@ class SelectionDataRefreshService:
             trade_date=resolved_trade_date,
         )
         if record is None:
+            if not include_terminal:
+                return {"selectionProgress": None}
             record = self._store.load_latest_data_run_record(
                 market=market,
                 profile=profile,
@@ -421,9 +435,16 @@ class SelectionDataRefreshService:
             )
 
     def _automatic_refresh_loop(self) -> None:
-        self.run_automatic_refresh_once(reason="startup_data_check")
+        self._run_automatic_refresh_batch(reason="startup_data_check")
         while not self._auto_refresh_stop.wait(_seconds_until_next_daily_refresh(self._now_fn())):
-            self.run_automatic_refresh_once(reason="daily_1600_data_check")
+            self._run_automatic_refresh_batch(reason="daily_1600_data_check")
+
+    def _run_automatic_refresh_batch(self, *, reason: str) -> None:
+        for market, profile in (
+            (SelectionMarket.CN_A, SelectionProfile.CN_A),
+            (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO),
+        ):
+            self.run_automatic_refresh_once(reason=reason, market=market, profile=profile)
 
 
 def _utc_now() -> datetime:

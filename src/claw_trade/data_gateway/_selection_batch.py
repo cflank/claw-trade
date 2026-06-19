@@ -1398,10 +1398,11 @@ def _selection_feature_rows_from_repository(
             latest_rows_by_ticker[ticker] = row
             latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
     tickers = tuple(sorted(latest_rows_by_ticker))
-    company_names_by_ticker = repository.find_company_names_by_symbol_ids(
-        dataset="daily_bar",
-        market=plan.market.value,
-        symbol_ids=tickers,
+    _notify_fetch_progress(
+        progress_callback,
+        label="读取本地全市场历史日线",
+        completed=0,
+        total=1,
     )
     history_rows_by_ticker: dict[str, list[Mapping[str, Any]]] = {}
     for record in repository.iter_normalized(
@@ -1419,6 +1420,32 @@ def _selection_feature_rows_from_repository(
         if ticker is None:
             continue
         history_rows_by_ticker.setdefault(ticker, []).append(row)
+    _notify_fetch_progress(
+        progress_callback,
+        label="读取本地全市场历史日线",
+        completed=1,
+        total=1,
+    )
+    company_names_by_ticker = {
+        ticker: company_name
+        for ticker in tickers
+        if (
+            company_name := _company_name_from_rows(
+                (*history_rows_by_ticker.get(ticker, ()), latest_rows_by_ticker[ticker])
+            )
+        )
+        is not None
+    }
+    missing_company_name_tickers = tuple(ticker for ticker in tickers if ticker not in company_names_by_ticker)
+    if missing_company_name_tickers:
+        company_names_by_ticker = {
+            **repository.find_company_names_by_symbol_ids(
+                dataset="daily_bar",
+                market=plan.market.value,
+                symbol_ids=missing_company_name_tickers,
+            ),
+            **company_names_by_ticker,
+        }
     _notify_fetch_progress(
         progress_callback,
         label="流式计算本地选股特征",
@@ -1455,7 +1482,7 @@ def _selection_feature_rows_from_repository(
         if latest_history_date is None or latest_history_date < trade_day:
             dropped.append(ticker)
             continue
-        company_name = _company_name_from_rows((*history_source, latest_rows_by_ticker[ticker])) or company_names_by_ticker.get(ticker)
+        company_name = company_names_by_ticker.get(ticker)
         if company_name is None:
             dropped.append(ticker)
             continue

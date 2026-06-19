@@ -92,6 +92,26 @@ def test_report_intent_only_builds_confirmation_card() -> None:
     assert workflow_runner.calls == 0
 
 
+def test_report_completion_message_is_idempotent_for_same_task() -> None:
+    controller, _, _ = _build_controller()
+
+    controller.append_report_completed_message(
+        context_id="ctx-completed",
+        report_id="run-1",
+        task_id="task-1",
+        text="报告已完成。",
+    )
+    result = controller.append_report_completed_message(
+        context_id="ctx-completed",
+        report_id="run-1",
+        task_id="task-1",
+        text="报告已完成。",
+    )
+
+    completed = [message for message in result["messages"] if message["kind"] == "report_completed"]
+    assert len(completed) == 1
+
+
 def test_natural_language_report_intent_stays_normal_chat_without_report_command() -> None:
     controller, transport, workflow_runner = _build_controller()
     result = controller.send_chat_message(request_id="req-2b", context_id="ctx-2b", text="请给我 BTC 报告")

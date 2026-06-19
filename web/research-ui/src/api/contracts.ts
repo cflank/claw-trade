@@ -455,10 +455,12 @@ export interface ConfirmIntentDraftInput {
   draftId: string;
   decision: 'confirm' | 'cancel';
   overrides?: Record<string, unknown>;
+  contextId?: string | null;
 }
 
 export interface ConfirmIntentDraftOutput {
   status: 'confirmed' | 'cancelled';
+  context?: ChatContextForUser;
   task?: ReportTaskForUser;
   scheduledReport?: ScheduledReportForUser;
   priceAlert?: PriceAlertForUser;

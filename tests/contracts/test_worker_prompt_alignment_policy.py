@@ -293,6 +293,11 @@ FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS: tuple[str, ...] = (
     "不要输出“我将调用工具”",
     "数据限制与风险提示",
 )
+CN_A_FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS: tuple[str, ...] = (
+    "最终报告正文必须直接从报告标题或正文第一句开始",
+    "不要输出“我将调用工具”",
+    "风险提示",
+)
 
 FRONTLINE_MACHINE_PROTOCOL_KEYWORDS: tuple[str, ...] = (
     "artifact",
@@ -731,8 +736,9 @@ def test_research_manager_prompt_placeholders_follow_profile_material_boundaries
 def test_cn_a_frontline_prompts_enforce_no_process_opening_and_no_machine_protocol_keywords() -> None:
     for worker_id in FRONTLINE_WORKERS:
         text = (Path("agents") / worker_id / "prompts" / "CN_A.md").read_text(encoding="utf-8")
-        for snippet in FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS:
+        for snippet in CN_A_FRONTLINE_PROCESS_PROSE_RULE_SNIPPETS:
             assert snippet in text, f"{worker_id} missing required process-prose rule: {snippet!r}"
+        assert "数据限制与风险提示" not in text
         for token in FRONTLINE_MACHINE_PROTOCOL_KEYWORDS:
             assert token not in text, f"{worker_id} prompt contains machine protocol keyword {token!r}"
 
@@ -1078,6 +1084,18 @@ def test_report_polisher_prompts_support_sectioned_generation_without_protocol_l
     assert "当它给定时只写指定章节" in user_text
 
 
+def test_cn_a_report_polisher_rewrites_a_share_market_order_execution_language() -> None:
+    text = (Path("agents") / "report_polisher" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+    assert "不能写成美股式“立即市价清仓”或“触发即保证成交”" in text
+    assert "即使上游在极端风险情景中写了“不计成本”“市价单”“强制卖出”" in text
+    assert "终稿也要改成“下一个可交易窗口按限价/分批/盘口流动性执行" in text
+    assert "不得保留市价强制成交口吻" in text
+    assert "开盘后30分钟内" in text
+    assert "输入材料没有分时或盘口证据支撑" in text
+    assert "“盘中高点/盘中低点”只作为历史价格描述时可以保留" in text
+
+
 def test_us_downstream_prompts_keep_truthfulness_redlines_from_becoming_memo_style_bans() -> None:
     for worker_id in DOWNSTREAM_DECISION_WORKERS:
         text = (Path("agents") / worker_id / "prompts" / "US.md").read_text(encoding="utf-8")
@@ -1109,6 +1127,208 @@ def test_hk_portfolio_manager_prompt_uses_research_plan_and_trader_decision_vari
     assert "{trader_plan}" not in text
     assert "研究经理投资计划" in text
     assert "交易员交易计划" in text
+
+
+def test_cn_a_portfolio_manager_prompt_uses_research_plan_and_trader_decision_variables() -> None:
+    text = (Path("agents") / "portfolio_manager" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+    assert "{research_plan}" in text
+    assert "{trader_decision}" in text
+    assert "{trader_plan}" not in text
+    assert "研究经理投资计划" in text
+    assert "交易员交易决策" in text
+    assert "**{research_plan}**" not in text
+    assert "**{trader_decision}**" not in text
+
+
+def test_cn_a_decision_prompts_use_ta_cn_debate_logic_without_strategy_weights() -> None:
+    research_manager_text = (Path("agents") / "research_manager" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    trader_text = (Path("agents") / "trader" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+    portfolio_manager_text = (Path("agents") / "portfolio_manager" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    risk_challenger_text = (Path("agents") / "risk_challenger" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    bear_researcher_text = (Path("agents") / "bear_researcher" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    risk_guardian_text = (Path("agents") / "risk_guardian" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    risk_moderator_text = (Path("agents") / "risk_moderator" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    assert "作为投资组合经理和辩论主持人" in research_manager_text
+    assert "支持看跌分析师、看涨分析师" in research_manager_text
+    assert "您的建议——买入、卖出或持有——必须明确且可操作" in research_manager_text
+    assert "避免仅仅因为双方都有有效观点就默认选择持有" in research_manager_text
+    assert "要基于辩论中最强有力的论点做出承诺" in research_manager_text
+    assert "事实核对边界" in research_manager_text
+    assert "写成已确认事实" in research_manager_text
+    assert "正文只写材料里已经出现且来源清楚的事实，材料外内容直接省略" in research_manager_text
+    assert "除此之外，按辩论中最强有力的论点做买入、卖出或持有判断" in research_manager_text
+    assert "决策方式要贴近 TradingAgents-CN" in research_manager_text
+    assert "买入、卖出、持有三种结论地位相同" in research_manager_text
+    assert "不要默认风险更安全就选择卖出" in research_manager_text
+    assert "持有/观望、持有并降仓、条件买入本身也可以是明确承诺" in research_manager_text
+    assert "可以给出买入或有条件买入" in research_manager_text
+    assert "普通的不确定性、等待确认、未来兑现风险，应写成交易条件或风险提示" in research_manager_text
+    assert "不要把所有买入都推迟到“信号完全确认之后”" in research_manager_text
+    assert "可以裁决为买入、分批买入、回调买入或突破加仓" in research_manager_text
+    assert "“等待回调”不能替代买入裁决" in research_manager_text
+    assert "顶层建议必须把这一点写出来" in research_manager_text
+    assert "不要把空仓者的买入计划藏在“持有/观望”标题下面" in research_manager_text
+    assert "不要设计“开盘后半小时”“前半小时缩量”“盘中急拉后接回”这类分钟级条件" in research_manager_text
+    assert "减仓一部分、保留剩余仓位、设置止损、等待回调再买" in research_manager_text
+    assert "不要写“卖出”" in research_manager_text
+    assert "单纯“涨多了、估值偏高、等待回调、当前不追高”不是卖出的充分理由" in research_manager_text
+    assert "静态估值高、短线超买、利好可能已定价、单季数据不能简单年化" in research_manager_text
+    assert "优先把它们转成更低仓位、更严格买点、持有观望或等待财报验证" in research_manager_text
+    assert "如果上游技术面、基本面、新闻面或情绪面仍然支持趋势、持有或逢回调参与" in research_manager_text
+    assert "不要直接写成清仓式卖出" in research_manager_text
+    assert "预期差可能落空" in research_manager_text
+    assert "主力净流入占成交额比例不高" in research_manager_text
+    assert "不等于业绩验证失败、资金趋势反转或趋势已经破坏" in research_manager_text
+    assert "不支持全部清仓式卖出" in research_manager_text
+    assert "输出“卖出”尤其是“全部清仓”前，先核对是否存在清仓级证据" in research_manager_text
+    assert "不能因为写成公式就自动压过另一方证据" in research_manager_text
+    for forbidden in (
+        "裁决优先级",
+        "裁决规则",
+        "CN_A 策略口径",
+        "裁决前先做赔率对照",
+    ):
+        assert forbidden not in research_manager_text
+
+    assert "您是一位专业的交易员" in trader_text
+    assert "提供具体的买入、卖出或持有建议" in trader_text
+    assert "最终交易建议: **买入/持有/卖出**" in trader_text
+    assert "以下是研究经理为 {ticker} 制定的投资计划" in trader_text
+    assert "事实核对边界" in trader_text
+    assert "写成已确认事实" in trader_text
+    assert "正文只写材料里已经出现且来源清楚的事实，材料外内容直接省略" in trader_text
+    assert "按研究经理投资计划和你的交易判断做决策" in trader_text
+    assert "把研究经理计划变成可执行交易方案" in trader_text
+    assert "不是重新把风险偏好改成只卖出" in trader_text
+    assert "优先把它落实为买入区间、仓位、止损、加减仓和失效条件" in trader_text
+    assert "不要自动把最终交易建议降成持有" in trader_text
+    assert "小仓位先手+回调加仓" in trader_text
+    assert "最终交易建议不要只写“持有/观望”" in trader_text
+    assert "持仓者：持有/控仓；空仓者：条件买入" in trader_text
+    assert "不要把可执行买入压成象征性的极小仓位" in trader_text
+    assert "不要用“开盘后半小时”“前半小时缩量”“盘中急拉后接回”作为买入或卖出触发条件" in trader_text
+    assert "最终交易建议写“持有/观望”或“持有并降仓”" in trader_text
+    assert "“当前不追高、等待更好买点”不是卖出" in trader_text
+    assert "不要把它当成硬数学事实" in trader_text
+    assert "不要因为仍需财报、均线、资金或催化兑现，就自动把买入方案降成持有或卖出" in trader_text
+    assert "不要机械执行全部清仓" in trader_text
+    assert "这些风险还不是清仓级证据" in trader_text
+    assert "最终交易建议写“持有”或“持有/观望”" in trader_text
+    for forbidden in (
+        "交易前先做赔率对照",
+        "未持仓者绝对不买",
+    ):
+        assert forbidden not in trader_text
+
+    assert "积极倡导高回报、高风险的投资机会" in risk_challenger_text
+    assert "强调为什么高风险方法是最优的" in risk_challenger_text
+    assert "如果你使用情景概率、期望值或目标区间来反驳看涨方" in bear_researcher_text
+    assert "不要因为数字看起来精确就替代证据" in bear_researcher_text
+    assert "保护资产、最小化波动性" in risk_guardian_text
+    assert "证明低风险策略相对于他们方法的优势" in risk_guardian_text
+    assert "你的角色是提出低风险调整，不是替组合经理提前下最终禁令" in risk_guardian_text
+    assert "优先把风险写成更低仓位、更低买入价、等待触发、止损、失效条件或部分减仓" in risk_guardian_text
+    assert "即使交易员方案本身已经是卖出/清仓，也要独立核对是否有清仓级硬证据" in risk_guardian_text
+    assert "不要把“不能保证未来兑现”本身当成反对买入的充分理由" in risk_guardian_text
+    assert "这是你的保守假设和推理" in risk_guardian_text
+    assert "不要用“绝对禁止任何买入”“0仓位永远观望”这类最终裁决口吻代替风险调整建议" in risk_guardian_text
+    assert "可以作为风险提示，但在没有跌破关键趋势位、连续资金净流出、业绩验证失败或重大利空时" in risk_guardian_text
+    assert "不要把它们说成已经证明必须全部清仓" in risk_guardian_text
+    assert "提供平衡的视角" in risk_moderator_text
+    assert "挑战他们的每个观点" in risk_moderator_text
+    assert "安全/保守方把可控风险直接说成“绝对不能买入”或“只能清仓”" in risk_moderator_text
+    assert "中性方案可以是持有、分批、低仓位试探、条件买入、部分减仓或等待触发" in risk_moderator_text
+    assert "风险存在=必须卖出" in risk_moderator_text
+    assert "如果保守方把“预期差可能落空、游资散户主导、主力净流入占比不高" in risk_moderator_text
+    assert "这是风险推理，不是已发生的反转事实" in risk_moderator_text
+    for risk_text in (risk_challenger_text, risk_guardian_text, risk_moderator_text):
+        assert "事实核对边界" in risk_text
+        assert "写成已确认事实" in risk_text
+    assert "不支持全部清仓式卖出" in portfolio_manager_text
+    assert "交易员或安全派如果用这些推理给出全部清仓" in portfolio_manager_text
+
+    assert "作为风险管理委员会主席和辩论主持人" in portfolio_manager_text
+    assert "您的决策必须产生明确的建议：买入、卖出或持有" in portfolio_manager_text
+    assert "只有在有具体论据强烈支持时才选择持有" in portfolio_manager_text
+    assert "力求清晰和果断" in portfolio_manager_text
+    assert "从交易员交易方案开始" in portfolio_manager_text
+    assert "事实核对边界" in portfolio_manager_text
+    assert "写成已确认事实" in portfolio_manager_text
+    assert "正文只写材料里已经出现且来源清楚的事实，材料外内容直接省略" in portfolio_manager_text
+    assert "最终裁决方式要贴近 TradingAgents-CN" in portfolio_manager_text
+    assert "三种结论地位相同" in portfolio_manager_text
+    assert "不是天然否决买入的最后一票" in portfolio_manager_text
+    assert "持有/观望、持有并降仓、条件买入本身也可以是清晰果断的最终裁决" in portfolio_manager_text
+    assert "可以裁定为买入或有条件买入" in portfolio_manager_text
+    assert "不要因为“还要等财报确认、还要等回调、还要等突破”就把最终裁决压成观望" in portfolio_manager_text
+    assert "买入门槛抬到所有风险都消失" in portfolio_manager_text
+    assert "如果最终方案允许空仓者建立有实际意义的先手仓位、回调仓位或突破仓位" in portfolio_manager_text
+    assert "不要只写“持有/观望”" in portfolio_manager_text
+    assert "如果只给 1% 这类象征性仓位" in portfolio_manager_text
+    assert "顶层裁决必须分开写" in portfolio_manager_text
+    assert "持仓者：持有并控仓；空仓者：有条件买入" in portfolio_manager_text
+    assert "没有既有持仓的读者需要看到清楚的入场结论" in portfolio_manager_text
+    assert "不要设计“开盘后半小时”“前半小时缩量”“盘中急拉后接回”这类分钟级触发条件" in portfolio_manager_text
+    assert "只有风险辩论用明确硬负面事实证明核心投资逻辑已经被破坏" in portfolio_manager_text
+    assert "仓位、价格、止损、等待验证都不能降低主要风险" in portfolio_manager_text
+    assert "不能因为写成公式就自动压过其他证据" in portfolio_manager_text
+    assert "如果最终方案保留多头仓位、只是部分减仓、收紧止损、等待回调后再加仓" in portfolio_manager_text
+    assert "顶层裁决写“持有/观望”或“持有并降仓”" in portfolio_manager_text
+    assert "不要把“当前不追高、涨多后等回调、锁定部分利润”自动等同于看空卖出" in portfolio_manager_text
+    assert "普通不确定性应转化为仓位、价格和触发条件" in portfolio_manager_text
+    assert "静态估值高、短线超买、利好可能已定价、单季数据不能简单年化" in portfolio_manager_text
+    assert "不是天然的清仓理由" in portfolio_manager_text
+    assert "优先考虑持有、减仓、观望或不追高" in portfolio_manager_text
+    assert "不要直接升级成清仓式卖出" in portfolio_manager_text
+    assert "交易员和安全派重复同一个清仓理由，不算两份独立证据" in portfolio_manager_text
+    assert "不要因为清仓方案听起来更保守而采纳全部清仓" in portfolio_manager_text
+    for forbidden in (
+        "最终裁决前先做赔率对照",
+        "若没有证明下行赔率压倒上行赔率",
+        "买入不要求同时满足低估值、低风险和所有数据齐全",
+        "永久有效，无失效条件",
+    ):
+        assert forbidden not in portfolio_manager_text
+
+def test_cn_a_memory_reflection_prompts_do_not_invent_empty_past_mistakes() -> None:
+    worker_ids = (
+        "bull_researcher",
+        "bear_researcher",
+        "research_manager",
+        "trader",
+        "portfolio_manager",
+    )
+
+    for worker_id in worker_ids:
+        text = (Path("agents") / worker_id / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+
+        assert "具体原文案例" in text
+        assert "不要编造过去错误" in text
+
+    research_manager_text = (Path("agents") / "research_manager" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+    trader_text = (Path("agents") / "trader" / "prompts" / "CN_A.md").read_text(encoding="utf-8")
+    portfolio_manager_text = (Path("agents") / "portfolio_manager" / "prompts" / "CN_A.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "考虑您在类似情况下的过去错误" not in research_manager_text
+    assert "请不要忘记利用过去决策的经验教训" not in trader_text
+    assert "建立在过去经验教训的基础上" not in portfolio_manager_text
 
 
 def test_cn_a_market_prompt_keeps_tradingagents_cn_visual_headings_without_emoji_ban() -> None:

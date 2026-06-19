@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -21,7 +21,7 @@ from claw_trade.guards.export_claims import (
     validate_export_claims_are_supported,
     validate_export_mapping_identity,
 )
-from claw_trade.reports.structure import validate_final_report_text
+from claw_trade.reports.structure import remove_missing_data_meta_lines, validate_final_report_text
 from claw_trade.workflow.models import ExportResult, Stage, WorkflowState
 from claw_trade.workflow.workers import all_worker_ids, stage_plans_for_market
 
@@ -437,6 +437,11 @@ def export_final_report(
         rendered = _attach_missing_chart_assets_note(rendered=rendered, note=missing_chart_note)
     else:
         rendered = _attach_report_image_assets(rendered=rendered, image_assets=image_assets)
+    rendered = RenderedReport(
+        text=remove_missing_data_meta_lines(rendered.text),
+        claim_links=rendered.claim_links,
+    )
+    worker_appendices = _remove_missing_data_meta_from_appendices(worker_appendices)
     structure = validate_final_report_text(rendered.text)
     structure_path = state.run_dir / "reports" / "final-report-structure.json"
     structure_path.parent.mkdir(parents=True, exist_ok=True)
@@ -462,6 +467,10 @@ def export_final_report(
         guard=guard,
         chart_cleanup=chart_cleanup,
     )
+
+
+def _remove_missing_data_meta_from_appendices(appendices: tuple[WorkerAppendix, ...]) -> tuple[WorkerAppendix, ...]:
+    return tuple(replace(appendix, text=remove_missing_data_meta_lines(appendix.text)) for appendix in appendices)
 
 
 class FinalReportExporter:

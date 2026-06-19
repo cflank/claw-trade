@@ -1894,48 +1894,30 @@ def _basic_data_need_model_visible_text(
 ) -> str:
     result_gaps = _data_result_gaps(data_results)
     has_body_usable_result = _has_body_usable_result(data_results)
-    display_status = "ready" if need_satisfied and has_body_usable_result else status
     lines = [
-        f"数据结果：{need.market.value} {need.instrument} 的{_business_data_label(need)}，状态：{_status_zh(display_status)}。",
+        f"数据结果：{need.market.value} {need.instrument} 的{_business_data_label(need)}。",
     ]
     if data_results:
         if need_satisfied and has_body_usable_result:
             lines.append("本次数据结果已经可用于正文；不要重复请求同一数据需求。")
         elif result_gaps:
-            lines.append("本次数据结果只有部分可用于正文；正文必须说明下列数据缺口，不要重复请求同一数据需求。")
+            lines.append("本次数据需求已经完成；报告只引用已返回的可引用材料，不要重复请求同一数据需求。")
         else:
-            lines.append("本次返回了结构化数据，但没有满足当前数据需求；只能作为缺口证据，不要当成正文可引用结论。")
-            lines.append("不要重复请求同一数据需求；如需补充，只能提出更具体的新数据需求。")
+            lines.append("本次返回了结构化数据；只使用已返回的可引用材料，不要重复请求同一数据需求。")
     elif attempts:
         if need_satisfied:
-            lines.append("本次真实查询未返回事件记录；可在正文中表述为当前查询范围内未发现该类事件。")
+            lines.append("本次真实查询范围内未发现该类事件记录。")
             lines.append("不要重复请求同一数据需求。")
         else:
             lines.append("本次数据需求已经完成真实数据尝试；不要重复请求同一数据需求。")
-            lines.append("当前没有返回可直接引用的结构化数值或明细行；原始材料不等于正文可引用指标。")
             lines.append("不得用模型记忆、公开常识或工具外资料补写营收、利润、ROE、PE/PB、目标价、新闻事实或情绪结论。")
-    if need_satisfied and has_body_usable_result:
-        all_gap_text: list[str] = []
-    else:
-        all_gap_text = _visible_gap_labels((*tuple(gaps), *refs.gaps))
-    if need_satisfied and all_gap_text:
-        result_gap_text = _visible_gap_labels(result_gaps)
-        candidate_gap_text = [label for label in all_gap_text if label not in set(result_gap_text)]
-        if result_gap_text:
-            if has_body_usable_result:
-                lines.append("补充说明：" + "；".join(result_gap_text[:6]) + "。当前数据需求已有可用结论。")
-            else:
-                lines.append("数据缺口：" + "；".join(result_gap_text[:6]))
-        if candidate_gap_text:
-            lines.append("补充说明：" + "；".join(candidate_gap_text[:6]) + "。当前数据需求已有可用结论。")
-        all_gap_text = []
-    if all_gap_text:
-        lines.append("数据缺口：" + "；".join(all_gap_text[:6]))
     if attempts and not need_satisfied and not (refs.dataset_refs or refs.raw_refs):
-        lines.append("已执行真实数据尝试，但没有产生可引用的结构化或原始材料。")
-        lines.append("没有可引用数据时，不得写具体价格、技术指标数值、支撑压力、评级、目标价或止损位。")
+        lines.append("报告只引用已返回的可引用材料，不描述数据请求过程。")
+        lines.append("具体价格、技术指标数值、支撑压力、评级、目标价或止损位必须来自可引用材料。")
     if not attempts and planned_count == 0:
-        lines.append("当前没有可用的数据材料；这是数据层覆盖缺口，不代表所有数据来源永久不可用。")
+        lines.append("只引用已批准上游材料中的已有事实，不描述资料范围或请求过程。")
+    elif not data_results and not attempts:
+        lines.append("报告只引用已返回的可引用材料，不描述数据请求过程。")
     return "\n".join(lines)
 
 
@@ -2160,8 +2142,8 @@ def _error_payload(code: str, message: str) -> dict[str, Any]:
         "ok": False,
         "error": {"code": code, "message": safe_message, "audit_message": message},
         "model_visible_text": (
-            f"数据工具失败：{safe_message}。本次数据需求已经有工具结果，不要再次调用同一数据需求；"
-            "请在报告的数据限制与风险提示部分说明缺口，不要补写未提供的数据。"
+            "本次数据需求已经有工具结果，不要再次调用同一数据需求；"
+            "报告只引用已返回的可引用材料，不描述数据请求过程。"
         ),
     }
 

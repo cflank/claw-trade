@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from claw_trade.selection.confirmation import SelectionConfirmationError, SelectionConfirmRequest
+from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.ui_backend.channel_text_inbound import ChannelTextMessage
 from claw_trade.ui_backend.error_translator import translate_internal_error_for_user
 from claw_trade.ui_backend.price_alert_service import UiServiceError as PriceAlertServiceError
@@ -56,6 +57,7 @@ class ConfirmIntentDraftRequest(BaseModel):
     draftId: str
     decision: str
     overrides: dict[str, Any] | None = None
+    contextId: str | None = None
 
 
 class ConfirmSelectionReportRequest(BaseModel):
@@ -207,12 +209,22 @@ def create_intent_draft(payload: CreateIntentDraftRequest, request: Request) -> 
 def confirm_intent_draft(payload: ConfirmIntentDraftRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
-        result = services.chat_controller.confirm_intent_draft(
-            request_id=payload.requestId,
-            draft_id=payload.draftId,
-            decision=payload.decision,
-            overrides=payload.overrides,
-        )
+        if payload.contextId:
+            result = services.chat_controller.confirm_intent_draft_from_chat(
+                request_id=payload.requestId,
+                context_id=resolve_context_id(payload.contextId),
+                draft_id=payload.draftId,
+                decision=payload.decision,
+                text="确认" if payload.decision == "confirm" else "取消",
+                overrides=payload.overrides,
+            )
+        else:
+            result = services.chat_controller.confirm_intent_draft(
+                request_id=payload.requestId,
+                draft_id=payload.draftId,
+                decision=payload.decision,
+                overrides=payload.overrides,
+            )
         service_error = _service_error(result)
         if service_error is not None:
             return _error_response(service_error["code"], service_error["message"])
@@ -313,6 +325,15 @@ def get_channel_chat_snapshot(request: Request) -> JSONResponse:
         return _exception_response(exc)
 
 
+@router.get("/get-chat-session")
+def get_chat_session(request: Request, contextId: str = Query(...)) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.chat_controller.get_chat_session(context_id=resolve_context_id(contextId)))
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.get("/get-report-queue-snapshot")
 def get_report_queue_snapshot(request: Request) -> JSONResponse:
     services = _services(request)
@@ -329,7 +350,25 @@ def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
         workflow_snapshot = services.selection_controller.latest_progress_for_user()
         if workflow_snapshot.get("selectionProgress"):
             return _success_response(workflow_snapshot)
-        return _success_response(services.selection_refresh_service.latest_progress_for_user())
+        refresh_snapshot = services.selection_refresh_service.latest_progress_for_user(include_terminal=False)
+        if refresh_snapshot.get("selectionProgress"):
+            return _success_response(refresh_snapshot)
+        crypto_refresh_snapshot = services.selection_refresh_service.latest_progress_for_user(
+            market=SelectionMarket.CRYPTO,
+            profile=SelectionProfile.CRYPTO,
+            include_terminal=False,
+        )
+        if crypto_refresh_snapshot.get("selectionProgress"):
+            return _success_response(crypto_refresh_snapshot)
+        refresh_snapshot = services.selection_refresh_service.latest_progress_for_user()
+        if refresh_snapshot.get("selectionProgress"):
+            return _success_response(refresh_snapshot)
+        return _success_response(
+            services.selection_refresh_service.latest_progress_for_user(
+                market=SelectionMarket.CRYPTO,
+                profile=SelectionProfile.CRYPTO,
+            )
+        )
     except Exception as exc:
         return _exception_response(exc)
 

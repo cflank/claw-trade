@@ -116,7 +116,7 @@ def test_data_need_model_visible_text_hides_execution_layer_gap_details() -> Non
         attempts=({"status": "partial"},),
     )
 
-    assert "数据粒度不匹配" in text
+    assert "数据粒度不匹配" not in text
     assert "provider granularity" not in text
     assert "requested event" not in text
 
@@ -1491,7 +1491,7 @@ def test_data_need_model_visible_text_omits_candidate_gaps_when_need_satisfied()
         need_satisfied=True,
     )
 
-    assert "状态：可用" in text
+    assert "状态：" not in text
     assert "数据缺口" not in text
     assert "补充说明" not in text
     assert "未覆盖完整分析区间" not in text
@@ -1547,7 +1547,7 @@ def test_data_need_model_visible_text_hides_failed_candidate_when_clean_result_s
         need_satisfied=True,
     )
 
-    assert "状态：可用" in text
+    assert "状态：" not in text
     assert "已经可用于正文" in text
     assert "数据缺口" not in text
     assert "补充说明" not in text
@@ -1595,7 +1595,7 @@ def test_data_need_model_visible_text_hides_non_material_candidate_gap_when_rows
         need_satisfied=True,
     )
 
-    assert "状态：可用" in text
+    assert "状态：" not in text
     assert "已经可用于正文" in text
     assert "数据缺口" not in text
     assert "接口凭证缺失" not in text
@@ -1643,7 +1643,7 @@ def test_data_need_model_visible_text_treats_crypto_derivative_date_range_gap_as
         need_satisfied=True,
     )
 
-    assert "状态：可用" in text
+    assert "状态：" not in text
     assert "已经可用于正文" in text
     assert "数据缺口" not in text
     assert "未覆盖完整分析区间" not in text
@@ -1692,7 +1692,7 @@ def test_data_need_model_visible_text_treats_macro_series_date_range_gap_as_usab
         need_satisfied=True,
     )
 
-    assert "状态：可用" in text
+    assert "状态：" not in text
     assert "已经可用于正文" in text
     assert "最新读数：宏观序列 FEDFUNDS 4.33 FRED" in text
     assert "来源 FRED/US" in text
@@ -1719,8 +1719,9 @@ def test_data_need_model_visible_text_allows_empty_lockup_event_as_no_records_fo
         need_satisfied=True,
     )
 
-    assert "状态：可用" in text
-    assert "未返回事件记录" in text
+    assert "状态：" not in text
+    assert "查询范围内未发现该类事件记录" in text
+    assert "未返回事件记录" not in text
     assert "数据缺口" not in text
     assert "不得写具体价格" not in text
 
@@ -1807,8 +1808,9 @@ def test_unsatisfied_rows_are_not_presented_as_body_usable() -> None:
     )
 
     assert "已经可用于正文" not in text
-    assert "没有满足当前数据需求" in text
-    assert "不要当成正文可引用结论" in text
+    assert "没有满足当前数据需求" not in text
+    assert "不要当成正文可引用结论" not in text
+    assert "只使用已返回的可引用材料" in text
 
 
 def test_data_need_model_visible_text_keeps_current_result_gap_visible() -> None:
@@ -1861,10 +1863,12 @@ def test_data_need_model_visible_text_keeps_current_result_gap_visible() -> None
         need_satisfied=True,
     )
 
-    assert "状态：部分可用" in text
-    assert "只有部分可用于正文" in text
-    assert "数据缺口" in text
-    assert "必需字段缺失" in text
+    assert "状态：" not in text
+    assert "本次数据需求已经完成" in text
+    assert "报告只引用已返回的可引用材料" in text
+    assert "只有部分可用于正文" not in text
+    assert "数据缺口" not in text
+    assert "必需字段缺失" not in text
     assert "候选尝试限制" not in text
 
 
@@ -1897,9 +1901,11 @@ def test_data_need_model_visible_text_hides_resolver_mapping_machine_reason() ->
         attempts=(),
     )
 
-    assert "项目数据项未绑定可调用接口" in text
+    assert "项目数据项未绑定可调用接口" not in text
     assert "catalog match missing" not in text
     assert "catalog_match_missing" not in text
+    assert "只引用已批准上游材料中的已有事实" in text
+    assert "材料外内容直接跳过" not in text
 
 
 def test_data_need_model_visible_text_for_raw_refs_only_forbids_model_memory_fill() -> None:
@@ -1930,7 +1936,8 @@ def test_data_need_model_visible_text_for_raw_refs_only_forbids_model_memory_fil
     )
 
     assert "不要重复请求同一数据需求" in text
-    assert "没有返回可直接引用的结构化数值或明细行" in text
+    assert "没有返回可直接引用的结构化数值或明细行" not in text
+    assert "缺口" not in text
     assert "不得用模型记忆" in text
     assert "营收、利润、ROE、PE/PB、目标价" in text
 
@@ -1965,7 +1972,9 @@ def test_report_data_prefetch_is_disabled_and_writes_manifest(tmp_path) -> None:
     manifest_path = tmp_path / "data-layer" / "report-prefetch.json"
     assert manifest_path.exists()
     summary = summarize_report_prefetch_manifest(manifest_path, ticker="600519.SH", company_name="贵州茅台")
-    assert "本次数据层整体状态：缺失" in summary
+    assert "已返回数据读数" in summary
+    assert "材料外内容直接跳过" not in summary
+    assert "缺失" not in summary
 
 
 def test_report_data_evidence_summary_reads_data_need_results(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -2004,20 +2013,33 @@ def test_report_data_evidence_summary_reads_data_need_results(tmp_path) -> None:
                         "sample_rows": [],
                         "gaps": [{"reason": "catalog_match_missing"}],
                     },
-                    {
-                        "request_id": "data_need:call:flow:2:capital_flow",
-                        "status": "ready",
-                        "sample_rows": [
-                            {
-                                "date": "2026-06-12",
-                                "amount": 175700000.0,
-                            }
-                        ],
-                    }
-                ],
-            },
-            ensure_ascii=False,
-        ),
+                        {
+                            "request_id": "data_need:call:flow:2:capital_flow",
+                            "status": "ready",
+                            "sample_rows": [
+                                {
+                                    "date": "2026-06-12",
+                                    "amount": 175700000.0,
+                                }
+                            ],
+                        },
+                        {
+                            "request_id": "data_need:call:flow:3:northbound_flow",
+                            "status": "ready",
+                            "sample_rows": [
+                                {
+                                    "date": "2026-06-12",
+                                    "hgt_net": 1.2,
+                                    "sgt_net": -0.4,
+                                    "northbound_net": 0.8,
+                                    "amount_unit": "CNY 亿元",
+                                }
+                            ],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
         encoding="utf-8",
     )
     missing_path = tmp_path / "data-layer" / "data-need-results" / "run-need" / "call-sector" / "result.json"
@@ -2049,19 +2071,76 @@ def test_report_data_evidence_summary_reads_data_need_results(tmp_path) -> None:
         company_name="贵州茅台",
     )
 
-    assert "本次数据层整体状态：部分可用" in summary
+    assert "已返回数据读数" in summary
+    assert "材料外内容直接跳过" not in summary
     assert "数据源调用证据" not in summary
     assert "候选尝试" not in summary
     assert "财务指标最新记录" in summary
     assert "ROE 31.2" in summary
     assert "毛利率 91.7" in summary
     assert "EPS/PE口径" in summary
-    assert "不得直接用季度EPS计算全年、TTM或静态PE" in summary
-    assert "宏观口径" in summary
-    assert "社零、CPI、消费信心、政策落地进展等只能写为待验证" in summary
-    assert "资金流口径" in summary
-    assert "不能判断主力接筹、机构增减持或北向方向" in summary
-    assert "板块缺失（接口权限不足）" in summary
+    assert "可以把季度EPS年化作为前瞻情景推演" in summary
+    assert "不能冒充静态PE、TTM PE或已确认全年EPS" in summary
+    assert "不得直接用季度EPS计算全年、TTM或静态PE" not in summary
+    assert "北向资金口径" in summary
+    assert "市场/通道级背景" in summary
+    assert "不等同于 贵州茅台 个股北向净买入或净卖出" in summary
+    assert "不得写成该股被北向资金、外资或聪明钱单独增减持" in summary
+    assert "板块缺失（接口权限不足）" not in summary
+    assert "数据缺口" not in summary
+    assert "缺失" not in summary
+    assert "未取得" not in summary
+
+
+def test_report_data_evidence_summary_normalizes_cny_10k_market_cap_for_margin_ratio(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    result_path = tmp_path / "data-layer" / "data-need-results" / "run-need" / "call-valuation" / "result.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "data_need_tool_evidence.v1",
+                "status": "ready",
+                "data_results": [
+                    {
+                        "request_id": "data_need:call:fundamental:0:valuation_metric",
+                        "status": "ready",
+                        "sample_rows": [
+                            {
+                                "date": "2026-06-18",
+                                "pe": 77.89,
+                                "market_cap": 2463945.1208,
+                                "market_cap_unit": "CNY_10K",
+                            }
+                        ],
+                    },
+                    {
+                        "request_id": "data_need:call:hot_money:1:margin_trading",
+                        "status": "ready",
+                        "sample_rows": [
+                            {
+                                "date": "2026-06-17",
+                                "financing_balance": 1090578848.0,
+                                "margin_balance": 1090578848.0,
+                            }
+                        ],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = summarize_report_data_need_results(
+        tmp_path / "data-layer" / "data-need-results" / "run-need",
+        ticker="300319.SZ",
+        company_name="麦捷科技",
+    )
+
+    assert "市值 2463945.1208 CNY_10K（约246.39亿元）" in summary
+    assert "融资余额 1090578848.0 CNY（约10.91亿元）" in summary
+    assert "融资余额/市值约 4.43%" in summary
+    assert "44%" not in summary
 
 
 @pytest.mark.parametrize("gap_reason", ["field_missing", "credential_missing", "provider_error"])
@@ -2109,7 +2188,7 @@ def test_report_data_evidence_summary_does_not_report_gap_when_dataset_has_clean
     )
 
     assert "宏观口径" not in summary
-    assert "仍需披露的数据缺口" not in summary
+    assert "数据缺口" not in summary
     assert "必需字段缺失" not in summary
     assert "接口凭证缺失" not in summary
 
@@ -2357,7 +2436,8 @@ def test_report_data_evidence_summary_lists_crypto_success_readings_and_override
         company_name="Bitcoin",
     )
 
-    assert "同一数据项只要这里已有可用读数" in summary
+    assert "已返回数据读数" in summary
+    assert "材料外内容直接跳过" not in summary
     assert "资金费率 -0.004 percent" in summary
     assert "样本 4500 行" in summary
     assert "粒度 hourly" in summary
@@ -2491,7 +2571,8 @@ def test_cn_a_market_need_refreshes_remote_when_local_seed_is_stale(monkeypatch)
     assert payload["gaps"][0]["reason"] == GapReason.DATE_RANGE_MISSING.value
     assert payload["data_results"][0]["request_id"] == "data_need:warehouse:market:0:daily_bar"
     assert payload["data_results"][1]["rows"][0]["date"] == "2026-06-13"
-    assert "未覆盖完整分析区间" in payload["model_visible_text"]
+    assert "未覆盖完整分析区间" not in payload["model_visible_text"]
+    assert "报告只引用已返回的可引用材料" in payload["model_visible_text"]
     assert "进入调度" not in payload["model_visible_text"]
 
 
@@ -2544,7 +2625,9 @@ def test_data_need_returns_budget_gap_instead_of_spawning_provider_after_deadlin
     assert payload["provider_attempts_summary"] == []
     assert payload["gaps"][0]["reason"] == GapReason.RATE_LIMITED_BY_TOOL_BUDGET.value
     assert "数据结果：" in payload["model_visible_text"]
-    assert "任务预算内无法等待限流窗口" in payload["model_visible_text"]
+    assert "任务预算内无法等待限流窗口" not in payload["model_visible_text"]
+    assert "报告只引用已返回的可引用材料" in payload["model_visible_text"]
+    assert "材料外内容直接跳过" not in payload["model_visible_text"]
 
 
 def test_data_need_provider_timeout_becomes_formal_attempt_not_subprocess_timeout(monkeypatch) -> None:  # type: ignore[no-untyped-def]

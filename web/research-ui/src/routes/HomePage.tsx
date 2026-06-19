@@ -16,6 +16,7 @@ import {
   deleteSavedReport,
   getChannelChatSnapshot,
   getChannelStatus,
+  getChatSession,
   getReportChartEvidence,
   getReportDetail,
   getReportQueueSnapshot,
@@ -37,6 +38,7 @@ import {
   type SavedReportForUser,
   type SelectionProgressForUser,
   type SelectionReportForUser,
+  type SendChatMessageOutput,
   type WorkerChatReplyForUser,
   type WorkerChatWorkerForUser,
 } from '../api/workspace';
@@ -165,7 +167,7 @@ function defaultWorkerId(workers: WorkerChatWorkerForUser[]) {
 function localWorkerChatMessages(
   requestId: string,
   text: string,
-  reply: WorkerChatReplyForUser,
+  assistantText: string,
   contextKind: ChatContextForUser['kind'],
 ): ChatMessageForUser[] {
   const createdAt = new Date().toISOString();
@@ -183,10 +185,17 @@ function localWorkerChatMessages(
       contextKind,
       actor: 'assistant',
       kind: 'plain',
-      text: reply.text,
+      text: assistantText,
       createdAt: new Date().toISOString(),
     },
   ];
+}
+
+function replaceLocalWorkerChatAssistantMessage(messages: ChatMessageForUser[], requestId: string, text: string) {
+  const assistantMessageId = `local-worker-assistant-${requestId}`;
+  return messages.map((message) =>
+    message.messageId === assistantMessageId ? { ...message, text, createdAt: new Date().toISOString() } : message,
+  );
 }
 
 function localSelectPendingMessages(text: string): ChatMessageForUser[] {
@@ -243,6 +252,10 @@ function attachSelectionMetadata(
     }
     return message;
   }).reverse();
+}
+
+function hasReportCompletedMessage(messages: ChatMessageForUser[]) {
+  return messages.some((message) => message.kind === 'report_completed' && Boolean(message.reportId));
 }
 
 function selectionReportFromMessage(message: ChatMessageForUser): SelectionReportForUser | null {
@@ -401,7 +414,26 @@ export function HomePage() {
     if (activeDetailRef.current || activeSelectionDetailRef.current) {
       return;
     }
-    if (localWorkerChatMessagesRef.current) {
+    if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
+      return;
+    }
+    setContext(snapshot.context);
+    setMessages(snapshot.messages);
+    if (snapshot.confirmationCards) {
+      setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
+    }
+    setActiveDetail(null);
+    setActiveSelectionDetail(null);
+  }, []);
+
+  const applyChatSessionSnapshot = useCallback((snapshot: SendChatMessageOutput | null | undefined) => {
+    if (!snapshot?.context || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
+      return;
+    }
+    if (activeDetailRef.current || activeSelectionDetailRef.current) {
+      return;
+    }
+    if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
       return;
     }
     setContext(snapshot.context);
@@ -468,15 +500,21 @@ export function HomePage() {
 
   const refreshWorkspace = useCallback(async () => {
     try {
-      const [historyResult, queueResult, channelChatResult, selectionRefreshResult] = await Promise.all([
+      const shouldLoadCurrentChat = context.kind !== 'normal_chat';
+      const [historyResult, queueResult, channelChatResult, selectionRefreshResult, currentChatResult] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
+        shouldLoadCurrentChat ? getChatSession(context.contextId).catch(() => null) : Promise.resolve(null),
       ]);
       setSavedReports(historyResult.items);
       applyQueueSnapshot(queueResult);
-      applyChannelChatSnapshot(channelChatResult);
+      if (currentChatResult?.messages?.length) {
+        applyChatSessionSnapshot(currentChatResult);
+      } else {
+        applyChannelChatSnapshot(channelChatResult);
+      }
       applySelectionRefreshSnapshot(selectionRefreshResult);
     } catch {
       // 保留当前 UI 状态，轮询失败不打断用户操作。
@@ -493,7 +531,15 @@ export function HomePage() {
       .finally(() => {
         channelRefreshInFlightRef.current = false;
       });
-  }, [applyChannelChatSnapshot, applyQueueSnapshot, applySelectionRefreshSnapshot, channelStatus?.qrCodeImageDataUrl]);
+  }, [
+    applyChannelChatSnapshot,
+    applyChatSessionSnapshot,
+    applyQueueSnapshot,
+    applySelectionRefreshSnapshot,
+    channelStatus?.qrCodeImageDataUrl,
+    context.contextId,
+    context.kind,
+  ]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -611,6 +657,7 @@ export function HomePage() {
     async (text: string) => {
       const isSelectCommand = isExplicitSelectCommand(text);
       const useCommandChat = isWorkspaceCommand(text);
+      let pendingWorkerRequestId: string | null = null;
       setSending(true);
       setPendingChatCommand(isSelectCommand ? 'select' : 'chat');
       setError('');
@@ -625,6 +672,9 @@ export function HomePage() {
             throw new Error(workerChatUnavailableMessage || '请先选择一个 worker。');
           }
           const requestId = nextRequestId();
+          pendingWorkerRequestId = requestId;
+          localWorkerChatMessagesRef.current = true;
+          setMessages((current) => [...current, ...localWorkerChatMessages(requestId, text, 'worker 正在分析...', context.kind)]);
           const reply = await sendWorkerChat({
             requestId,
             mode: 'generic_worker_chat',
@@ -632,8 +682,7 @@ export function HomePage() {
             text,
             conversationId: context.contextId,
           });
-          localWorkerChatMessagesRef.current = true;
-          setMessages((current) => [...current, ...localWorkerChatMessages(requestId, text, reply, context.kind)]);
+          setMessages((current) => replaceLocalWorkerChatAssistantMessage(current, requestId, reply.text));
           setActiveDetail(null);
           setActiveSelectionDetail(null);
           return;
@@ -668,6 +717,11 @@ export function HomePage() {
         if (isSelectCommand) {
           selectionRequestInFlightRef.current = false;
           setSelectionProgress(null);
+        }
+        if (pendingWorkerRequestId) {
+          setMessages((current) =>
+            replaceLocalWorkerChatAssistantMessage(current, pendingWorkerRequestId, 'worker 回复失败，请稍后重试。'),
+          );
         }
         setError((sendError as Error).message);
       } finally {
@@ -799,6 +853,7 @@ export function HomePage() {
           requestId: nextRequestId(),
           draftId: card.draftId,
           decision,
+          contextId: context.contextId,
           overrides:
             decision === 'confirm'
               ? {
@@ -824,9 +879,11 @@ export function HomePage() {
         if (result.queueSnapshot) {
           applyQueueSnapshot(result.queueSnapshot);
         }
-        if (result.task) {
+        if (result.context) {
+          setContext(result.context);
+        } else if (result.task) {
           setContext({
-            contextId: `task-${result.task.taskId}`,
+            contextId: context.contextId,
             kind: 'task_following',
             title: `任务跟进：${result.task.instrumentCode}`,
             activeTaskId: result.task.taskId,
@@ -842,7 +899,7 @@ export function HomePage() {
         setCardSubmittingId(null);
       }
     },
-    [applyQueueSnapshot, refreshWorkspace, showFailedTask],
+    [applyQueueSnapshot, context.contextId, refreshWorkspace, showFailedTask],
   );
 
   const confirmSelectionCandidate = useCallback(
@@ -874,7 +931,7 @@ export function HomePage() {
         }
         if (result.task) {
           setContext({
-            contextId: `task-${result.task.taskId}`,
+            contextId: context.contextId,
             kind: 'task_following',
             title: `任务跟进：${result.task.instrumentCode}`,
             activeTaskId: result.task.taskId,

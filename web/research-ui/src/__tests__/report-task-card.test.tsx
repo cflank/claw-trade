@@ -58,6 +58,19 @@ function mockFetchForTaskCard() {
         isFull: false,
       });
     }
+    if (url.includes('/api/ui/list-worker-chat-workers')) {
+      return json({
+        workers: [{ workerId: 'portfolio_manager', displayName: '组合经理', default: true, aliases: ['组合经理', 'PM'] }],
+      });
+    }
+    if (url.includes('/api/ui/send-worker-chat') && init?.method === 'POST') {
+      return json({
+        kind: 'worker_chat_reply',
+        workerDisplayName: '组合经理',
+        text: '普通聊天回复',
+        mode: 'generic_worker_chat',
+      });
+    }
     if (url.includes('/api/ui/send-chat-message') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as { contextId: string; text: string };
       if (body.text === '/report BTC') {

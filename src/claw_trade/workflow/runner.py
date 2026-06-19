@@ -28,7 +28,7 @@ from claw_trade.guards.tool_calls import validate_tool_calls
 from claw_trade.guards.visible_tools import validate_visible_tools
 from claw_trade.guards.workspace_evidence import validate_workspace_evidence
 from claw_trade.reports.data_evidence_summary import summarize_report_data_need_results
-from claw_trade.reports.structure import validate_report_polisher_segment_text
+from claw_trade.reports.structure import remove_missing_data_meta_lines, validate_report_polisher_segment_text
 from claw_trade.runtime.evidence_reader import (
     EvidenceReader,
     EvidenceReadResult,
@@ -866,7 +866,7 @@ class ControlRunner:
                     ),
                 )
             try:
-                text = read_result.content.decode("utf-8")
+                text = remove_missing_data_meta_lines(read_result.content.decode("utf-8"))
             except UnicodeDecodeError as exc:
                 return PromptMaterialResult(
                     ok=False,
@@ -1422,7 +1422,6 @@ def build_profile_prompt_vars(
             "currency": call.currency,
             "currency_symbol": call.currency_symbol,
             "research_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
-            "trader_plan": material_texts.get(("research_manager", Stage.INVESTMENT_DECISION), ""),
             "trader_decision": material_texts.get(("trader", Stage.TRADE_DECISION), ""),
             "history": _conversation_history(*risk_arguments),
             "past_memory_str": _default_memory_for_worker(call.worker_id),

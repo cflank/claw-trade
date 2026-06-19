@@ -25,8 +25,10 @@ function mockWorkspaceFetch(
     confirmImmediateFailure?: boolean;
     confirmWithoutMessages?: boolean;
     channelChatSnapshot?: unknown | (() => unknown);
+    chatSessionSnapshot?: unknown | (() => unknown);
     selectionRefreshSnapshot?: unknown | (() => unknown);
     selectSendResponse?: Promise<Response>;
+    workerChatResponse?: Promise<Response>;
     workerChatListFails?: boolean;
     workerChatWorkers?: typeof WORKERS;
   } = {},
@@ -64,6 +66,25 @@ function mockWorkspaceFetch(
           ? options.channelChatSnapshot()
           : options.channelChatSnapshot;
       return json(snapshot ?? { channelKind: 'wechat_clawbot', messages: [], confirmationCards: {} });
+    }
+
+    if (url.includes('/api/ui/get-chat-session')) {
+      const snapshot =
+        typeof options.chatSessionSnapshot === 'function'
+          ? options.chatSessionSnapshot()
+          : options.chatSessionSnapshot;
+      return json(
+        snapshot ?? {
+          context: {
+            contextId: 'normal-chat',
+            kind: 'normal_chat',
+            title: '普通聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: [],
+        },
+      );
     }
 
     if (url.includes('/api/ui/get-channel-status')) {
@@ -219,6 +240,9 @@ function mockWorkspaceFetch(
     if (url.includes('/api/ui/send-worker-chat') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       workerChatBodies.push(body);
+      if (options.workerChatResponse) {
+        return options.workerChatResponse;
+      }
       return json({
         kind: 'worker_chat_reply',
         workerDisplayName: '组合经理',
@@ -1197,6 +1221,43 @@ describe('home page', () => {
     expect(mocked.getChatBodies()).toHaveLength(0);
   });
 
+  it('shows a local worker chat pending reply before the slow worker response returns', async () => {
+    let resolveWorkerChat: (response: Response) => void = () => undefined;
+    const workerChatResponse = new Promise<Response>((resolve) => {
+      resolveWorkerChat = resolve;
+    });
+    const mocked = mockWorkspaceFetch({ workerChatResponse });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '帮我看下茅台' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('帮我看下茅台')).toBeInTheDocument();
+    expect(screen.getByText('worker 正在分析...')).toBeInTheDocument();
+    expect(screen.queryByText('收到，正在分析。')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveWorkerChat(
+        json({
+          kind: 'worker_chat_reply',
+          workerDisplayName: '组合经理',
+          text: '收到，正在分析。',
+          mode: 'generic_worker_chat',
+        }),
+      );
+    });
+
+    expect(await screen.findByText('收到，正在分析。')).toBeInTheDocument();
+    expect(screen.queryByText('worker 正在分析...')).not.toBeInTheDocument();
+  });
+
   it('keeps local worker chat messages when later channel polling returns messages', async () => {
     let channelHasMessages = false;
     const intervalCallbacks: Array<() => void> = [];
@@ -1605,6 +1666,76 @@ describe('home page', () => {
 
     expect(await screen.findByText('报告已进入队列。')).toBeInTheDocument();
     expect(mocked.getConfirmBodies().at(0)?.decision).toBe('confirm');
+  });
+
+  it('shows completed report brief from current chat polling after confirmation', async () => {
+    let chatHasCompletion = false;
+    const intervalCallbacks: Array<() => void> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: () =>
+        chatHasCompletion
+          ? {
+              context: {
+                contextId: 'normal-chat',
+                kind: 'report_reading',
+                title: 'BTC 报告',
+                activeTaskId: 'task-2',
+                activeReportId: 'report-1',
+              },
+              messages: [
+                {
+                  messageId: 'msg-completed',
+                  contextKind: 'report_reading',
+                  actor: 'system',
+                  kind: 'report_completed',
+                  text: '报告已完成。\n最终结论：维持观察，等待突破确认。\n核心理由：日线趋势改善\n主要风险：估值波动',
+                  reportId: 'report-1',
+                  createdAt: '2026-05-19T10:10:00.000Z',
+                },
+              ],
+            }
+          : {
+              context: {
+                contextId: 'normal-chat',
+                kind: 'task_following',
+                title: '任务跟进：BTC',
+                activeTaskId: 'task-2',
+                activeReportId: null,
+              },
+              messages: [],
+            },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确认' }));
+    expect(await screen.findByText('报告已进入队列。')).toBeInTheDocument();
+    expect(mocked.getConfirmBodies().at(0)).toMatchObject({ decision: 'confirm', contextId: 'normal-chat' });
+
+    chatHasCompletion = true;
+    await act(async () => {
+      intervalCallbacks.at(-1)?.();
+    });
+
+    expect(await screen.findByText('正式报告已完成')).toBeInTheDocument();
+    expect(screen.getByText(/最终结论：维持观察/)).toBeInTheDocument();
   });
 
   it('shows an explicit failure when a confirmed report task fails immediately', async () => {

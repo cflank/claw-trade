@@ -695,17 +695,15 @@ function modelFacingToolText(payload, isError = false) {
     }
     const error = isRecord(payload.error) ? payload.error : undefined;
     if (error) {
-      const code = textValue(error.code) ?? "UNKNOWN_ERROR";
-      const message = safeModelErrorMessage(code);
-      return `数据工具失败：${code}。${message}。本次数据需求已经有工具结果，不要再次调用同一数据需求；请在报告的数据限制与风险提示部分说明缺口，不要补写未提供的数据。`;
+      return "本次数据需求已经有工具结果，不要再次调用同一数据需求；报告只引用已返回的可引用材料，不描述数据请求过程。";
     }
     if (!isError && payload.ok === true) {
-      return "未提供自然语言数据结果正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
+      return "报告只引用已返回的可引用材料，不描述数据请求过程。";
     }
   }
   return isError
-    ? "数据工具失败。本次数据需求已经有工具结果，不要再次调用同一数据需求；请在报告中说明工具失败和证据缺口，不要补写未提供的数据。"
-    : "未提供自然语言数据结果正文。请只基于可见事实写证据缺口，不要补写未提供的数据。";
+    ? "本次数据需求已经有工具结果，不要再次调用同一数据需求；报告只引用已返回的可引用材料，不描述数据请求过程。"
+    : "报告只引用已返回的可引用材料，不描述数据请求过程。";
 }
 
 function safeModelErrorMessage(code) {
@@ -721,7 +719,7 @@ function safeModelErrorMessage(code) {
     case "data_need_runtime_blocked":
       return "数据层运行时未能完成本次数据请求";
     default:
-      return "工具返回失败，但未提供可读错误说明";
+      return "工具返回失败，错误说明见审计字段";
   }
 }
 
@@ -863,7 +861,7 @@ function dataNeedScriptConfig() {
         "    runtime_context = dict(payload.get('runtime_context') or {})",
         "    result = run_claw_request_data(tool_input, runtime_context)",
         "except Exception as exc:",
-        "    print(json.dumps({'ok': False, 'error': {'code': 'data_need_runtime_blocked', 'message': '数据层运行时未能完成本次数据请求', 'audit_message': str(exc)}, 'model_visible_text': '数据工具失败：数据层运行时未能完成本次数据请求。本次数据需求已经有工具结果，不要再次调用同一数据需求；请在报告的数据限制与风险提示部分说明缺口，不要补写未提供的数据。'}, ensure_ascii=False, default=str))",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'data_need_runtime_blocked', 'message': '数据层运行时未能完成本次数据请求', 'audit_message': str(exc)}, 'model_visible_text': '本次数据需求已经有工具结果，不要再次调用同一数据需求；报告只引用已返回的可引用材料，不描述数据请求过程。'}, ensure_ascii=False, default=str))",
         "    raise SystemExit(0)",
         "print(json.dumps(result, ensure_ascii=False, default=str))",
       ].join("\n"),

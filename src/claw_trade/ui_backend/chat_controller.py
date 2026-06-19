@@ -132,6 +132,7 @@ class ChatController:
         draft_id: str,
         decision: str,
         text: str,
+        overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if request_id in self._idempotency:
             return self._idempotency[request_id]
@@ -147,6 +148,7 @@ class ChatController:
             request_id=request_id,
             draft_id=draft_id,
             decision=decision,
+            overrides=overrides,
             origin_context_id=context.id,
         )
         error = result.get("error")
@@ -208,6 +210,8 @@ class ChatController:
         context = self._get_or_create_context(context_id)
         context = switch_chat_context(context, kind=ChatContextKind.REPORT_READING, active_report_id=report_id)
         self._contexts[context_id] = context
+        if self._has_completed_message(context.id, task_id, report_id=report_id):
+            return self._chat_result(context)
         self._append_message(
             context_id=context.id,
             context_kind=context.kind,
@@ -490,11 +494,19 @@ class ChatController:
             return
         self._confirmation_cards.setdefault(context_id, {})[card_id] = card
 
-    def _has_completed_message(self, context_id: str, task_id: str | None) -> bool:
+    def _has_completed_message(self, context_id: str, task_id: str | None, *, report_id: str | None = None) -> bool:
         for message in reversed(self._messages.get(context_id, [])):
             if message.kind != "report_completed":
                 continue
-            if task_id is None or message.task_id == task_id:
+            if task_id is not None:
+                if message.task_id == task_id:
+                    return True
+                continue
+            if report_id is not None:
+                if message.report_id == report_id:
+                    return True
+                continue
+            if task_id is None:
                 return True
         return False
 

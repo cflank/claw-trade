@@ -324,7 +324,11 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert result.get("isError") is True
     text = result["content"][0]["text"]
     assert "不要再次调用同一数据需求" in text
-    assert "不要补写未提供的数据" in text
+    assert "报告只引用已返回的可引用材料" in text
+    assert "不描述数据请求过程" in text
+    assert "材料外内容直接跳过" not in text
+    assert "数据限制" not in text
+    assert "缺口" not in text
 
 
 def test_data_need_error_text_hides_internal_execution_details_from_model(tmp_path: Path) -> None:
@@ -353,7 +357,8 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 
     assert result.get("isError") is True
     text = result["content"][0]["text"]
-    assert "数据层运行时未能完成本次数据请求" in text
+    assert "报告只引用已返回的可引用材料" in text
+    assert "不描述数据请求过程" in text
     for forbidden in ("official_api_tushare", "api_name", "hk_mins", "token", "secret", "path=/"):
         assert forbidden not in text
 

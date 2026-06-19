@@ -154,6 +154,10 @@ export function getReportQueueSnapshot() {
   return requestJson<ReportQueueSnapshotForUser>('/api/ui/get-report-queue-snapshot');
 }
 
+export function getChatSession(contextId: string) {
+  return requestJson<SendChatMessageOutput>(`/api/ui/get-chat-session?contextId=${encodeURIComponent(contextId)}`);
+}
+
 export function getSelectionRefreshSnapshot() {
   return requestJson<SelectionRefreshSnapshotForUser>('/api/ui/get-selection-refresh-snapshot');
 }

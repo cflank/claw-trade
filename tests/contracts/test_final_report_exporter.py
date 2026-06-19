@@ -123,6 +123,77 @@ def test_export_final_report_passes_and_writes_outputs(tmp_path: Path) -> None:
     assert not (state.run_dir / "reports" / "export-result.json").exists()
 
 
+def test_export_final_report_removes_missing_data_meta_from_reader_outputs(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-remove-missing-data-meta", market="CN_A", profile="CN_A")
+    manifest, reader = _build_manifest_and_reader(state)
+    report_material = manifest.materials_for_stage(Stage.FINAL_REPORT, run_id=state.run_id)[0]
+    social_material = next(
+        material
+        for material in manifest.materials_for_stage(Stage.FRONTLINE, run_id=state.run_id)
+        if material.worker_id == "social_analyst"
+    )
+    reader._content_by_material_id[report_material.material_id] = (
+        "# 贵州茅台（600519）投资研究报告\n\n"
+        "## 一、投资结论与组合动作\n"
+        "组合经理最终裁决：维持审慎增持，按条件分步执行。\n\n"
+        "## 二、技术指标分析\n"
+        "技术面结论：量价结构改善，趋势仍需成交量确认。\n\n"
+        "## 三、基本面分析\n"
+        "基本面结论：盈利韧性尚可，估值处于历史中枢附近。\n\n"
+        "## 四、消息面与行业环境\n"
+        "新闻结论：近期公司与行业信息偏中性，未见重大突发利空。\n\n"
+        "## 五、市场情绪与交易结构\n"
+        "情绪分化但成交结构仍可跟踪。\n"
+        "输入材料未提供散户与机构分群体的情绪数据，无法直接对比两类投资者的观点分歧程度。\n"
+        "无法确认趋势逆转。\n"
+        "2024年对比数据是缺失的。\n"
+        "未得到任何公司官方信息或公开财务解释的支撑。\n"
+        "| 指标 | 结论 |\n"
+        "|---|---|\n"
+        "| 北向资金 | 未返回个股数据，无法验证 |\n"
+        "| 止损 | 未触发止损条件 |\n\n"
+        "## 六、交易计划与组合风险\n"
+        "交易计划：分批建仓，触发条件明确，执行时控制仓位节奏。\n\n"
+        "## 七、关键分歧与跟踪条件\n"
+        "多空分歧集中在估值安全边际和需求验证。\n\n"
+        "## 八、最终结论\n"
+        "维持组合经理审慎增持结论，等待关键条件确认。"
+    ).encode("utf-8")
+    reader._content_by_material_id[social_material.material_id] = (
+        "社媒结论：讨论热度抬升。\n"
+        "输入材料未提供散户与机构分群体的情绪数据，无法直接对比两类投资者的观点分歧程度。\n"
+        "游资数据接口未返回该股近期龙虎榜席位明细。\n"
+        "## 四、轮动节奏：板块资金数据缺失，无法做行业迁移判断\n"
+        "板块资金数据缺失，无法做行业迁移判断。\n"
+        "| 北向资金 | 未返回个股数据，无法验证 |\n"
+        "跟踪条件：未触发止损条件。"
+    ).encode("utf-8")
+    source_chart = state.run_dir / "calls" / "call-01" / "evidence" / "techlab" / "charts-local" / "market-structure.png"
+    source_chart.parent.mkdir(parents=True, exist_ok=True)
+    source_chart.write_bytes(b"\x89PNG\r\n\x1a\nreport-asset-missing-data-meta")
+
+    result = export_final_report(state=state, manifest=manifest, openviking=reader)
+
+    assert result.status == "passed"
+    assert result.final_report_path is not None
+    report_text = result.final_report_path.read_text(encoding="utf-8")
+    appendix_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (state.run_dir / "reports" / "worker-appendix").glob("*.md")
+    )
+    for text in (report_text, appendix_text):
+        assert "输入材料未提供" not in text
+        assert "数据接口未返回" not in text
+        assert "未返回个股数据" not in text
+        assert "无法验证" not in text
+        assert "无法确认趋势逆转" not in text
+        assert "数据是缺失的" not in text
+        assert "未得到任何公司官方信息" not in text
+        assert "板块资金数据缺失" not in text
+        assert "轮动节奏：板块资金数据缺失" not in text
+        assert "未触发止损条件" in text
+
+
 @pytest.mark.parametrize(
     ("market", "profile"),
     (
