@@ -142,10 +142,20 @@ def test_export_final_report_removes_missing_data_meta_from_reader_outputs(tmp_p
         "基本面结论：盈利韧性尚可，估值处于历史中枢附近。\n\n"
         "## 四、消息面与行业环境\n"
         "新闻结论：近期公司与行业信息偏中性，未见重大突发利空。\n\n"
+        "### 项目与行业事件\n"
+        "当前阶段未返回经可靠来源确认的项目公告、交易所公告或安全事件。\n\n"
+        "当前无其他已由可靠来源确认的项目公告、监管事件、安全事件或行业事件可进入论证。\n"
+        "当前无上游可靠来源确认的项目公告、交易所公告、监管事件、安全事件或机构资金流入流出信息。\n"
         "## 五、市场情绪与交易结构\n"
         "情绪分化但成交结构仍可跟踪。\n"
         "输入材料未提供散户与机构分群体的情绪数据，无法直接对比两类投资者的观点分歧程度。\n"
         "无法确认趋势逆转。\n"
+        "未返回真实社交平台样本，无法对社区叙事、参与者结构或交易拥挤度进行进一步判断。\n"
+        "### 空缺口小节\n"
+        "链上数据因图片附件无法提取，未进入论证。\n"
+        "样本边界：仅1条记录，无法判断该读数是否处于极端历史区间。\n"
+        "### 投资含义\n"
+        "整个基本面框架缺乏项目收入、代币供应、解锁计划、生态采用和竞争地位等可引用判断。\n"
         "2024年对比数据是缺失的。\n"
         "未得到任何公司官方信息或公开财务解释的支撑。\n"
         "| 指标 | 结论 |\n"
@@ -154,6 +164,7 @@ def test_export_final_report_removes_missing_data_meta_from_reader_outputs(tmp_p
         "| 止损 | 未触发止损条件 |\n\n"
         "## 六、交易计划与组合风险\n"
         "交易计划：分批建仓，触发条件明确，执行时控制仓位节奏。\n\n"
+        "当前组合动作是研究性买入。不因缺少可执行价位条件而改变研究性方向。\n\n"
         "## 七、关键分歧与跟踪条件\n"
         "多空分歧集中在估值安全边际和需求验证。\n\n"
         "## 八、最终结论\n"
@@ -187,11 +198,22 @@ def test_export_final_report_removes_missing_data_meta_from_reader_outputs(tmp_p
         assert "未返回个股数据" not in text
         assert "无法验证" not in text
         assert "无法确认趋势逆转" not in text
+        assert "无法对社区叙事" not in text
+        assert "当前无其他已由可靠来源确认" not in text
+        assert "当前无上游可靠来源确认" not in text
+        assert "整个基本面框架缺乏" not in text
+        assert "不因缺少可执行价位条件" not in text
+        assert "无法判断该读数" not in text
+        assert "因图片附件无法提取" not in text
+        assert "未进入论证" not in text
+        assert "项目与行业事件" not in text
+        assert "### 空缺口小节" not in text
         assert "数据是缺失的" not in text
         assert "未得到任何公司官方信息" not in text
         assert "板块资金数据缺失" not in text
         assert "轮动节奏：板块资金数据缺失" not in text
         assert "未触发止损条件" in text
+    assert "当前组合动作是研究性买入" in report_text
 
 
 @pytest.mark.parametrize(

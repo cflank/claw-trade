@@ -486,10 +486,10 @@ def test_approved_crypto_market_prompt_uses_compact_pack_boundary() -> None:
     assert "资料就绪度只能说明资料覆盖和通道质量" in text
     assert "若上游材料含内部字段名、键值串、英文状态词" in text
     assert "任何工具名、审计计数、机器状态码、带下划线字段" in text
-    assert "不得推断其正常、过热或极端" in text
+    assert "必须有具体数值和可引用材料才写" in text
     assert "如果数据结果只列出价格历史和本地技术指标成功" in text
     assert "每个小节必须使用 Markdown 表格" in text
-    assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in text
+    assert "| 指标 | 数据 | 推导 | 交易作用 | 样本边界 |" in text
     assert "每个关键指标单独一行" in text
 
 
@@ -497,10 +497,10 @@ def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> N
     expected_snippets = {
         "fundamental_analyst": ("加密资产基本面分析师", "代币经济分析", "FDV/TVL", "买入/持有/卖出"),
         "news_analyst": ("加密市场新闻与事件分析师", "监管", "机构资金", "Markdown 表格"),
-        "social_analyst": ("加密社区与市场情绪分析师", "真实平台样本", "1-5 天市场反应"),
+        "social_analyst": ("加密社区与市场情绪分析师", "平台样本", "价格影响结论"),
         "bull_researcher": ("看涨加密资产研究员", "反驳看跌观点", "已由上游材料证明的清算相关行情"),
         "bear_researcher": ("看跌加密资产研究员", "反驳看涨观点", "代币释放/解锁"),
-        "research_manager": ("买入、卖出或持有", "避免仅仅因为双方都有有效观点就默认选择持有", "价格区间与交易条件分析"),
+        "research_manager": ("买入、卖出或持有", "避免仅仅因为双方都有有效观点、风险尚未完全消失或执行细节不完整就默认选择持有", "价格区间与交易条件分析"),
         "trader": ("最终交易建议: **买入/持有/卖出**", "入场条件", "止损/失效位"),
         "risk_challenger": ("激进风险分析师", "承担风险可能带来的好处", "清算相关行情"),
         "risk_guardian": ("安全/保守风险分析师", "保护资产", "交易所风险"),
@@ -521,6 +521,117 @@ def test_crypto_prompts_preserve_cn_a_role_strength_with_crypto_semantics() -> N
             "portfolio_manager",
         }:
             assert "PE/PB/ROE" in text
+
+
+def test_crypto_decision_prompts_follow_ta_cn_direction_logic_without_default_observe() -> None:
+    research_manager_text = (Path("agents") / "research_manager" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+    trader_text = (Path("agents") / "trader" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+    risk_guardian_text = (Path("agents") / "risk_guardian" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+    risk_moderator_text = (Path("agents") / "risk_moderator" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+    portfolio_manager_text = (
+        Path("agents") / "portfolio_manager" / "prompts" / "CRYPTO.md"
+    ).read_text(encoding="utf-8")
+    polisher_text = (Path("agents") / "report_polisher" / "prompts" / "CRYPTO.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "买入、卖出、持有三种结论地位相同" in research_manager_text
+    assert "不要把缺少真实持仓参数、执行参数不完整或普通资料缺口默认等同于持有/观望" in research_manager_text
+    assert "仍应按已验证多空证据给出研究性方向判断" in research_manager_text
+    assert "只要已验证看涨或看跌证据更强，就应给出相应研究性买入或卖出方向" in research_manager_text
+    assert "当前读数可以作为研究性多空推理线索" in research_manager_text
+    assert "不能单独把顶层结论推成卖出" in research_manager_text
+    assert "TD13 中等置信度、MACD 柱转负、成交量萎缩/价量背离" in research_manager_text
+    assert "不得把这组证据写成核心多头逻辑失效" in research_manager_text
+    assert "上涨后动能放缓但趋势未破" in research_manager_text
+    assert "突破未确认" in research_manager_text
+    assert "卖出/规避需要更硬的看跌证据" in research_manager_text
+    assert "不是加密资产估值模型" in research_manager_text
+    assert "没有看到新增买盘来源，都不是卖出证据" in research_manager_text
+    assert "这不是有效卖出理由" in research_manager_text
+
+    assert "证据不足不等于自动观望" in trader_text
+    assert "这不限制研究性买入、持有或卖出方向" in trader_text
+    assert "不得把它降成观望" in trader_text
+    assert "不能单独把交易员顶层建议推成卖出" in trader_text
+    assert "即使由研究经理写成“三项独立证据”" in trader_text
+    assert "交易员不得延续卖出结论" in trader_text
+    assert "重复计数不能把持有/观望升级为卖出" in trader_text
+    assert "不得用“当前价格距离上方参考位更近、距离下方支撑或 FVG 更远”" in trader_text
+    assert "POC、价值区间、FVG 和成交量密集区只是技术参考" in trader_text
+    assert "不能作为研究性卖出理由" in trader_text
+    assert "不得输出“等待某个参考价位突破确认后再做决策”" in trader_text
+
+    assert "不得仅因未知持仓否定研究性买入" in risk_guardian_text
+    assert "不是天然否决买入或自动支持卖出" in risk_guardian_text
+    assert "不能写成核心多头逻辑失效" in risk_guardian_text
+    assert "成交量萎缩只能作为当前成交量状态和短线风险线索" in risk_guardian_text
+    assert "Fear & Greed 只能写当前分数、刻度、来源和样本日期" in risk_guardian_text
+    assert "不得使用“唯一安全路径”“必须退出”“一触即溃”“接飞刀”" in risk_guardian_text
+    assert "而不是默认不交易" in risk_moderator_text
+    assert "不能因为卖出听起来更安全" in risk_moderator_text
+    assert "不是趋势反转或卖出依据" in risk_moderator_text
+    assert "必须指出这只是无证据风险放大" in risk_moderator_text
+    assert "不得用“当前价格距离上方参考位更近、距离下方支撑或 FVG 更远”" in risk_moderator_text
+    assert "不得输出“等待某个参考价位突破确认后再做决策”" in risk_moderator_text
+
+    assert "最终裁决方式要贴近 TradingAgents-CN" in portfolio_manager_text
+    assert "三种结论地位相同" in portfolio_manager_text
+    assert "不是天然否决买入的最后一票" in portfolio_manager_text
+    assert "不能把买入门槛抬到所有风险都消失" in portfolio_manager_text
+    assert "缺少真实持仓参数只限制真实持仓调整" in portfolio_manager_text
+    assert "不能单独把最终组合动作推成卖出" in portfolio_manager_text
+    assert "即使被研究经理或交易员包装成“三项独立证据”或“证据密度最高”" in portfolio_manager_text
+    assert "最终裁决不得因为上游已有卖出字样就继续卖出" in portfolio_manager_text
+    assert "最终裁决不得用弱信号数量覆盖趋势未破这一事实" in portfolio_manager_text
+    assert "中性结论作为更高质量的风险层输入" in portfolio_manager_text
+    assert "执行入场条件、目标价、止损、仓位或真实持仓参数缺失，不是“为什么不是买入”的理由" in portfolio_manager_text
+    assert "不得作为唯一理由把中期多头结构压成持有/观望" in portfolio_manager_text
+    assert "持有/观望必须有独立的持有论据" in portfolio_manager_text
+    assert "不得把它升级为持续供给压力" in portfolio_manager_text
+    assert "不得写“风险收益比不清晰所以不买入”" in portfolio_manager_text
+    assert "最终裁决不得采纳该卖出链条" in portfolio_manager_text
+    assert "不得输出“等待某个参考价位突破确认后再做决策”" in portfolio_manager_text
+
+    assert "不得把组合经理的买入/有条件买入改写成持有/观望" in polisher_text
+    assert "终稿全篇所有组合动作必须与 `portfolio_manager_report` 的最终裁决一致" in polisher_text
+    assert "不得出现“动作约束”“执行约束”“删除所有数字化执行参数”" in polisher_text
+    assert "终稿不得用“项目定位、代币供需、TVL、协议收入、解锁压力、社区叙事、参与者结构、连续趋势、多日聚合样本、真实社交平台样本”等具体主题来说明没有材料" in polisher_text
+    assert "不得写“缺乏对项目收入、基本面改善、供给/解锁压力的可引用判断”" in polisher_text
+    assert "不要改写为固定观望模板" in polisher_text
+    assert "对无证据故事直接删除，不写成缺口理由" in polisher_text
+    assert "无法展开、无法写入" in polisher_text
+    assert "不得用资料限制段、执行约束段、样本不足段或免责声明替代正文" in polisher_text
+    assert "如果指定章节没有可写证据，不要输出该章节标题" in polisher_text
+    assert "不复述“核心逻辑失效”“唯一安全路径”“必须退出”“一触即溃”" in polisher_text
+    assert "风险收益比不支持/不清晰所以不买入" in polisher_text
+    assert "不得保留“不进行买入或卖出操作，等待某个参考价位突破确认/方向确认”" in polisher_text
+    assert "估值过高、系统性获利了结压力、风险收益比不利、缺乏新增买盘来源或研究性卖出" in polisher_text
+
+    forbidden_direction_bias = (
+        "当前不新增买入或卖出",
+        "没有可验证买入或卖出证据时，最终动作只能是持有/观望",
+        "没有可验证交易证据时，交易动作只能是不新开仓",
+        "平衡结论只能是不新增买入或卖出",
+    )
+    for text in (
+        research_manager_text,
+        trader_text,
+        risk_guardian_text,
+        risk_moderator_text,
+        portfolio_manager_text,
+        polisher_text,
+    ):
+        for phrase in forbidden_direction_bias:
+            assert phrase not in text
 
 
 def test_crypto_downstream_materials_are_not_inlined_inside_instruction_sentences() -> None:
@@ -550,12 +661,12 @@ def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() ->
     expected_snippets = {
         "fundamental_analyst": (
             "`claw_request_data`",
-            "数据结果未可用 / 未调用成功 / 覆盖不足",
-            "不得用模型常识、历史印象或上游未提供的证据补写缺失事实",
+            "只写本次基本面数据结果已经返回且来源清楚的事实",
+            "不得用模型常识、历史印象或上游未给出的证据补写",
         ),
         "news_analyst": (
             "`claw_request_data`",
-            "不得写真实新闻、真实公告、真实监管事件或真实市场反应结论",
+            "不要编造新闻、公告、监管事件、机构资金流、交易所动作、安全事件、治理提案、代币解锁、黑客攻击、合作或市场反应",
             "搜索摘要和媒体聚合标题只能作为发现线索",
             "即使线索提到机构资金、监管、链上活动或其它市场主题，也不能写成已验证事实",
             "事件预期来源只能表达“市场预期线索”",
@@ -563,11 +674,11 @@ def test_crypto_frontline_prompts_force_missing_data_into_worker_l1_reports() ->
         ),
         "social_analyst": (
             "`claw_request_data`",
-            "不得写真实社交平台观点、真实 KOL 立场、真实社区共识或真实情绪结论",
-            "搜索摘要只能作为公开讨论线索",
-            "即使搜索摘要涉及机构资金、链上大户或交易所行为，也不能写成已验证事实",
-            "事件预期来源只能表达“市场预期线索”",
-            "市场级情绪指标只能表达市场级情绪",
+            "只使用本次数据结果真实返回的情绪分数、来源、日期、平台样本、话题样本和可引用文本",
+            "默认输出结构只包含标题和 `## 市场级情绪读数` 一节",
+            "`市场级情绪读数` 只写分数、刻度、情绪区间、来源和样本日期；该节之后直接结束",
+            "全文必须以 `市场级情绪读数` 表格最后一行收尾",
+            "材料未支撑的主题直接不写",
         ),
     }
     for worker_id, snippets in expected_snippets.items():
@@ -582,7 +693,8 @@ def test_crypto_downstream_prompts_condition_on_upstream_data_gaps_without_filli
         assert "数据结果未可用、未调用成功、覆盖不足或内容为空" in text
         assert "不得补写缺失事实" in text
         assert "数据缺口本身不是看涨或看跌事实" in text
-        assert "必须逐项写明缺少哪些数据" in text
+        assert "必须逐项写明缺少哪些数据" not in text
+        assert "删除缺口叙述" in text
         assert "搜索发现、模型记忆或历史印象不能填补机构资金、链上、衍生品、清算或社交共识缺口" in text
 
 
@@ -596,7 +708,8 @@ def test_crypto_trader_and_polisher_forbid_unaudited_liquidation_price_calculati
         assert "交易所、合约类型、保证金模式、维持保证金率和实际持仓参数" in text
         assert "不得" in text
         assert "具体清算价或合约清算相关价格" in text
-        assert "清算价无法由现有材料审计计算" in text
+        assert "直接删除" in text
+        assert "清算价无法由现有材料审计计算" not in text
 
 
 def test_crypto_prompts_forbid_public_knowledge_gap_fill_facts() -> None:
@@ -615,7 +728,12 @@ def test_crypto_prompts_forbid_public_knowledge_gap_fill_facts() -> None:
     for prompt_path in prompt_paths:
         text = prompt_path.read_text(encoding="utf-8")
         assert "输出前做读者版清理" in text
-        assert "不要列举具体" in text or "具体事实名称" in text or "具体内容" in text
+        assert (
+            "不要列举具体" in text
+            or "具体事实名称" in text
+            or "具体内容" in text
+            or "材料外维度不写" in text
+        )
         assert (
             "上游数据" in text
             or "数据层证据" in text
@@ -626,13 +744,15 @@ def test_crypto_prompts_forbid_public_knowledge_gap_fill_facts() -> None:
         )
 
     bull_text = (Path("agents") / "bull_researcher" / "prompts" / "CRYPTO.md").read_text(encoding="utf-8")
-    assert "没有可用的基本面多头证据" in bull_text
+    assert "数据结果缺失时，本节整节省略，不写缺失说明" in bull_text
+    assert "没有可用的基本面多头证据" not in bull_text
     assert "不得来自模型记忆或信仰叙事" in bull_text
 
     challenger_text = (Path("agents") / "risk_challenger" / "prompts" / "CRYPTO.md").read_text(
         encoding="utf-8"
     )
-    assert "只能列为待验证数据类别" in challenger_text
+    assert "就只删除无证据进攻方向" in challenger_text
+    assert "只能列为待验证数据类别" not in challenger_text
 
 
 @pytest.mark.parametrize(("worker_id", "profile"), APPROVED_CRYPTO_PROMPT_CASES)
@@ -909,41 +1029,43 @@ def test_report_polisher_prompts_require_chinese_long_form_output_without_summar
     assert "不得把上游报告压缩成几个概述段" in crypto_text
     assert "终稿中的市场结构与技术指标章节不得比 `market_analyst_report` 更提纲化" in crypto_text
     assert "专业加密资产研究终稿" in crypto_text
-    assert "证据 -> 解读 -> 投资含义 -> 风险、触发或失效条件" in crypto_text
+    assert "证据 -> 解读 -> 投资含义 -> 风险" in crypto_text
     assert "不要把分析链挪到附录" in crypto_text
     assert "# {company_name}（{ticker}）加密资产投资研究报告" in crypto_text
     assert "## 二、市场结构与技术指标分析" in crypto_text
-    assert "数据状态" in crypto_text
-    assert "指标覆盖" in crypto_text
+    assert "数据证据边界" in crypto_text
+    assert "已返回指标的推导过程" in crypto_text
     assert "OB/订单块" in crypto_text
     assert "FVG" in crypto_text
     assert "AHR999" in crypto_text
-    assert "数据 -> 推导 -> 交易作用 -> 待确认条件" in crypto_text
+    assert "数据 -> 推导 -> 交易作用 -> 样本边界" in crypto_text
     assert "必须用 Markdown 表格排版" in crypto_text
-    assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
+    assert "| 指标 | 数据 | 推导 | 交易作用 | 样本边界 |" in crypto_text
     assert "不要把 Vegas、布林带、RSI、MACD、KD 挤在同一段" in crypto_text
     assert "不得原样粘贴 `market_analyst_report` 的整段“市场分析师完整指标材料”" in crypto_text
-    assert "不得把缺数据写成市场没有多头/中性氛围" in crypto_text
+    assert "数据缺口本身不是看涨或看跌事实" in crypto_text
     assert "资金费率、OI、多空比、清算地图" in crypto_text
     assert "项目与代币基本面分析" in crypto_text
     assert "FDV、市值、TVL、协议收入" in crypto_text
     assert "不得把搜索摘要写成事实" in crypto_text
     assert "不得把原始内部标识直接放进正文" in crypto_text
     assert "带下划线字段" in crypto_text
-    assert "审计计数写成" in crypto_text
-    assert "时间覆盖缺口写成" in crypto_text
+    assert "审计计数、计数为零" in crypto_text
+    assert "样本不足总表" in crypto_text
     assert "终稿输出前最后自检" in crypto_text
     assert "不要用反引号保留内部标识" in crypto_text
-    assert "对应数据结果的可引用材料状态" in crypto_text
+    assert "若某数据结果未形成可引用材料，终稿直接不写该主题" in crypto_text
     assert "不得扩写成全局外部来源没有调用" in crypto_text
-    assert "不要为了说明某条论据不可引用而写出未验证事实本身" in crypto_text
-    assert "未验证的供给、网络采用、机构资金、宏观或链上线索" in crypto_text
+    assert "不要改写成缺口描述" in crypto_text
+    assert "未验证的具体机构产品、供给事件、扩容生态" in crypto_text
     assert "任何工具名、审计计数、机器状态码、带下划线字段" in crypto_text
     assert "未验证的具体机构产品" in crypto_text
-    assert "不要写“某工具标记为就绪”这类内部过程句" in crypto_text
+    assert "内部状态、样本不足总表和技术分析内部名都不要写给读者" in crypto_text
     assert "终稿必须完整写到 `## 八、最终结论`" in crypto_text
     assert "不得停在任一中间章节、半句或列表项" in crypto_text
     assert "如果材料过长，优先压缩各节内部重复内容" in crypto_text
+    assert "不得输出只有标题没有正文的空章节" in crypto_text
+    assert "报告优先使用以下 Markdown 结构；没有已返回正文证据的章节整节省略" in crypto_text
     assert "最后一段必须是完整自然段" in crypto_text
     assert "不得以“在……背景下”" in crypto_text
     assert "这里可以简洁，但前面各节不能压缩成摘要" in crypto_text
@@ -1073,9 +1195,9 @@ def test_report_polisher_prompts_support_sectioned_generation_without_protocol_l
     assert "最后一段仍必须是完整自然段" in crypto_text
     assert "事件预期" in crypto_text
     assert "数据缺口本身不是看涨或看跌事实" in crypto_text
-    assert "| 指标 | 数据 | 推导 | 交易作用 | 失效条件 |" in crypto_text
-    assert "如果保留来源名有助于读者理解" in crypto_text
-    assert "可用性状态写成“资料可用性/资料就绪”" in crypto_text
+    assert "| 指标 | 数据 | 推导 | 交易作用 | 样本边界 |" in crypto_text
+    assert "读者版正文不得出现内部来源 id" in crypto_text
+    assert "可用性状态、缺口清单、来源尝试" in crypto_text
 
     user_text = (Path("agents") / "report_polisher" / "USER.md").read_text(encoding="utf-8")
     assert "final_report_section_instruction" in user_text
