@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
@@ -10,7 +9,7 @@ from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
-from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
+from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
@@ -26,6 +25,7 @@ class _FakeWorkflowRunner:
     def __init__(self) -> None:
         self.calls = 0
         self.requests: list[object] = []
+        self.cancelled_runs: list[str] = []
 
     def create_run(self, request):  # type: ignore[no-untyped-def]
         self.calls += 1
@@ -35,6 +35,10 @@ class _FakeWorkflowRunner:
     def load_state(self, run_id: str) -> _FakeWorkflowState:
         _ = run_id
         return _FakeWorkflowState()
+
+    def cancel_run(self, run_id: str) -> bool:
+        self.cancelled_runs.append(run_id)
+        return True
 
 
 class _FakeChatTransport:
@@ -211,7 +215,7 @@ def test_pdf_file_failure_returns_file_send_unsupported() -> None:
     assert result["code"] == "FILE_SEND_UNSUPPORTED"
 
 
-def test_wechat_report_confirm_flow_and_running_cancel_rejected() -> None:
+def test_wechat_report_confirm_flow_and_running_cancel_stops_task() -> None:
     controller, queue, _runner, _transport = _build_controller()
     draft = controller.send_chat_message(request_id="wx-1", context_id="wx-ctx", text="/report TSLA")
     confirm = controller.confirm_intent_draft(
@@ -220,6 +224,7 @@ def test_wechat_report_confirm_flow_and_running_cancel_rejected() -> None:
         decision="confirm",
     )
     task_id = confirm["task"]["taskId"]
-    with pytest.raises(QueueError) as exc:
-        queue.cancel_report_task(request_id="wx-3", task_id=task_id)
-    assert exc.value.code == "TASK_NOT_CANCELLABLE"
+    cancelled = queue.cancel_report_task(request_id="wx-3", task_id=task_id)
+
+    assert cancelled["task"]["status"] == "cancelled"
+    assert cancelled["queueSnapshot"]["runningTask"] is None

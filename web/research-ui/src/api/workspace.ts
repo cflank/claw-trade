@@ -1,5 +1,6 @@
 import {
   askReportQuestion,
+  cancelReportTask,
   confirmIntentDraft,
   confirmSelectionReport,
   createIntentDraft,
@@ -43,6 +44,7 @@ import {
 
 export {
   askReportQuestion,
+  cancelReportTask,
   confirmIntentDraft,
   confirmSelectionReport,
   createIntentDraft,
@@ -87,6 +89,7 @@ export {
 export type {
   ChannelStatusForUser,
   ChannelChatSnapshotForUser,
+  CancelReportTaskOutput,
   AdvancedDiagnosticsEvidenceFailureReasonSummaryOutput,
   AdvancedDiagnosticsLiveRunGapSummaryOutput,
   AdvancedDiagnosticsProviderHealthOutput,
@@ -111,6 +114,7 @@ export type {
   ReportAssetForUser,
   ReportDetailForUser,
   ReportQueueSnapshotForUser,
+  ReportTaskForUser,
   ResetSettingsToDefaultsOutput,
   RunPriceAlertNowOutput,
   RunScheduledReportNowOutput,

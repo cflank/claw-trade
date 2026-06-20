@@ -67,6 +67,11 @@ class ConfirmSelectionReportRequest(BaseModel):
     originContextId: str | None = None
 
 
+class CancelReportTaskRequest(BaseModel):
+    requestId: str
+    taskId: str
+
+
 class CreateScheduledReportRequest(BaseModel):
     requestId: str
     instrumentCode: str
@@ -339,6 +344,20 @@ def get_report_queue_snapshot(request: Request) -> JSONResponse:
     services = _services(request)
     try:
         return _success_response(services.queue.get_report_queue_snapshot_for_user())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/cancel-report-task")
+def cancel_report_task(payload: CancelReportTaskRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.queue.cancel_report_task(
+                request_id=payload.requestId,
+                task_id=payload.taskId,
+            )
+        )
     except Exception as exc:
         return _exception_response(exc)
 

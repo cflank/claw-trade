@@ -173,7 +173,21 @@ class ReportTaskQueue:
             self._cancel_idempotency[request_id] = payload
             return payload
         if task.status == ReportTaskStatus.RUNNING:
-            raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "报告正在生成，当前不能中途取消。")
+            if not task.run_id or not self._bridge.cancel_workflow_run(task.run_id):
+                raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "报告正在生成，当前运行时不支持停止。")
+            task.status = ReportTaskStatus.CANCELLED
+            task.finished_at = _now_iso()
+            self._right_rail_active.discard(task.task_id)
+            self._last_terminal_task_id = task.task_id
+            self._refresh_queue_positions()
+            payload = {
+                "task": self.to_report_task_for_user(task),
+                "queueSnapshot": self.get_report_queue_snapshot_for_user(),
+                "message": "已停止报告任务。",
+            }
+            self._cancel_idempotency[request_id] = payload
+            self.start_next_report_task_if_idle()
+            return payload
         if task.status != ReportTaskStatus.QUEUED:
             raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "当前状态不支持取消。")
         task.status = ReportTaskStatus.CANCELLED

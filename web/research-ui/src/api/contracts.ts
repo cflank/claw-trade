@@ -414,6 +414,17 @@ export interface ConfirmSelectionReportOutput {
   queueSnapshot?: ReportQueueSnapshotForUser;
 }
 
+export interface CancelReportTaskInput {
+  requestId: string;
+  taskId: string;
+}
+
+export interface CancelReportTaskOutput {
+  task: ReportTaskForUser;
+  queueSnapshot: ReportQueueSnapshotForUser;
+  message: string;
+}
+
 export interface ChannelChatSnapshotForUser {
   channelKind: 'wechat_clawbot';
   context?: ChatContextForUser | null;

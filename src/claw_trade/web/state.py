@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
@@ -80,6 +81,7 @@ from claw_trade.ui_backend.worker_chat_openclaw import OpenClawWorkerChatClient
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 from claw_trade.web.settings import ResearchUiServerSettings
+from claw_trade.workflow.models import RunStatus
 
 _DEFAULT_WORKFLOW_CREATE_TIMEOUT_SECONDS = 30.0
 _SELECTION_REPORT_HANDOFF_MARKER = "selection_report_handoff"
@@ -134,6 +136,24 @@ class _ControlWorkflowRunner:
         try:
             runner = self._require_runner()
             return runner.store.load_state(run_id)
+        except Exception as exc:
+            raise RuntimeError("assistant_unavailable") from exc
+
+    def cancel_run(self, run_id: str) -> bool:
+        try:
+            runner = self._require_runner()
+            state = runner.store.load_state(run_id)
+            if state.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
+                return True
+            cancelled = replace(
+                state,
+                status=RunStatus.CANCELLED,
+                active_stage=None,
+                updated_at=datetime.now(tz=UTC).isoformat(),
+                failure_reason="user_cancelled",
+            )
+            runner.store.save_state(cancelled)
+            return True
         except Exception as exc:
             raise RuntimeError("assistant_unavailable") from exc
 

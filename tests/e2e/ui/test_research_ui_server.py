@@ -9,7 +9,9 @@ from types import SimpleNamespace
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.web.app import build_research_ui_app
 from claw_trade.web.routes_ui import (
+    CancelReportTaskRequest,
     ConfirmIntentDraftRequest,
+    cancel_report_task,
     confirm_intent_draft,
     get_chat_session,
     get_selection_refresh_snapshot,
@@ -180,6 +182,30 @@ def test_get_chat_session_returns_current_context_messages() -> None:
     assert chat.session_context_ids == ["normal-chat"]
 
 
+def test_cancel_report_task_route_calls_queue() -> None:
+    queue = _QueueProbe()
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/cancel-report-task",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(ui_services=SimpleNamespace(queue=queue))),
+        }
+    )
+
+    response = cancel_report_task(
+        CancelReportTaskRequest(requestId="req-cancel", taskId="task-1"),
+        request,
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["task"]["status"] == "cancelled"
+    assert payload["queueSnapshot"]["runningTask"] is None
+    assert queue.calls == [{"request_id": "req-cancel", "task_id": "task-1"}]
+
+
 def test_module_entrypoint_help_for_claw_trade_web_app() -> None:
     completed = subprocess.run(
         [sys.executable, "-m", "claw_trade.web.app", "--help"],
@@ -264,4 +290,23 @@ class _ChatControllerProbe:
                     "createdAt": "2026-06-18T10:00:00Z",
                 }
             ],
+        }
+
+
+class _QueueProbe:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str]] = []
+
+    def cancel_report_task(self, *, request_id: str, task_id: str) -> dict[str, object]:
+        self.calls.append({"request_id": request_id, "task_id": task_id})
+        return {
+            "task": {"taskId": task_id, "status": "cancelled"},
+            "queueSnapshot": {
+                "runningTask": None,
+                "queuedTasks": [],
+                "queueLimit": 10,
+                "queuedCount": 0,
+                "isFull": False,
+            },
+            "message": "已停止报告任务。",
         }

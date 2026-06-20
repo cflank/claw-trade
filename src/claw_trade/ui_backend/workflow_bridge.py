@@ -80,6 +80,12 @@ class ReportWorkflowBridge:
     def load_workflow_state(self, run_id: str) -> Any:
         return self._runner.load_state(run_id)
 
+    def cancel_workflow_run(self, run_id: str) -> bool:
+        cancel_run = getattr(self._runner, "cancel_run", None)
+        if not callable(cancel_run):
+            return False
+        return bool(cancel_run(run_id))
+
     def _company_name_for_task(self, *, task: dict[str, Any], ticker: str, market: str) -> str:
         fallback = str(task.get("companyName") or task.get("instrumentName") or "").strip()
         safe_fallback = fallback if fallback and fallback.upper() != ticker.upper() else _UNRESOLVED_COMPANY_NAME

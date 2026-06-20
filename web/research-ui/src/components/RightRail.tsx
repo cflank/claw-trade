@@ -3,6 +3,7 @@ import type {
   PdfExportForUser,
   ReportDetailForUser,
   ReportQueueSnapshotForUser,
+  ReportTaskForUser,
   SavedReportForUser,
   SelectionProgressForUser,
 } from '../api/contracts';
@@ -93,7 +94,15 @@ function SelectionTaskBlock({ progress }: { progress?: SelectionProgressForUser 
   );
 }
 
-function TaskBlock({ queue }: { queue: ReportQueueSnapshotForUser }) {
+function TaskBlock({
+  queue,
+  onCancelTask,
+  cancellingTaskId,
+}: {
+  queue: ReportQueueSnapshotForUser;
+  onCancelTask?: (task: ReportTaskForUser) => void;
+  cancellingTaskId?: string | null;
+}) {
   const rows = [
     ...(queue.runningTask ? [queue.runningTask] : []),
     ...queue.queuedTasks,
@@ -132,6 +141,16 @@ function TaskBlock({ queue }: { queue: ReportQueueSnapshotForUser }) {
             <div className="ct-task-list-line">
               <span>待执行：{(progress?.waitingRoleLabels ?? []).join('、') || '暂无'}</span>
             </div>
+            {onCancelTask ? (
+              <button
+                type="button"
+                className={`ct-text-button${task.status === 'running' ? ' ct-task-stop-button' : ''}`}
+                onClick={() => onCancelTask(task)}
+                disabled={cancellingTaskId === task.taskId}
+              >
+                {cancellingTaskId === task.taskId ? '处理中' : task.status === 'running' ? '停止任务' : '取消排队'}
+              </button>
+            ) : null}
           </article>
         );
       })}
@@ -242,6 +261,8 @@ export function RightRail({
   channel,
   latestReport,
   onPrintReport,
+  onCancelTask,
+  cancellingTaskId,
 }: {
   queue: ReportQueueSnapshotForUser;
   detail: ReportDetailForUser | null;
@@ -249,6 +270,8 @@ export function RightRail({
   channel: ChannelStatusForUser | null;
   latestReport: SavedReportForUser | null;
   onPrintReport?: () => void;
+  onCancelTask?: (task: ReportTaskForUser) => void;
+  cancellingTaskId?: string | null;
 }) {
   return (
     <aside className="ct-panel ct-right" data-testid="right-rail">
@@ -257,7 +280,7 @@ export function RightRail({
         <ReportBlock detail={detail} onPrintReport={onPrintReport} />
       ) : (
         <>
-          <TaskBlock queue={queue} />
+          <TaskBlock queue={queue} onCancelTask={onCancelTask} cancellingTaskId={cancellingTaskId} />
           <SelectionTaskBlock progress={selectionProgress} />
         </>
       )}

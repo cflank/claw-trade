@@ -7,6 +7,8 @@ import type {
   AdvancedDiagnosticsRuntimeServiceStatusOutput,
   ChannelChatSnapshotForUser,
   ChannelStatusForUser,
+  CancelReportTaskInput,
+  CancelReportTaskOutput,
   ConfirmSelectionReportInput,
   ConfirmSelectionReportOutput,
   ConfirmIntentDraftInput,
@@ -152,6 +154,13 @@ export function sendWorkerChat(input: SendWorkerChatInput) {
 
 export function getReportQueueSnapshot() {
   return requestJson<ReportQueueSnapshotForUser>('/api/ui/get-report-queue-snapshot');
+}
+
+export function cancelReportTask(input: CancelReportTaskInput) {
+  return requestJson<CancelReportTaskOutput>('/api/ui/cancel-report-task', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export function getChatSession(contextId: string) {

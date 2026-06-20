@@ -36,6 +36,7 @@ function mockWorkspaceFetch(
   const originalFetch = globalThis.fetch;
   let queueCount = 0;
   const confirmBodies: Array<Record<string, unknown>> = [];
+  const cancelBodies: Array<Record<string, unknown>> = [];
   const deleteBodies: Array<Record<string, unknown>> = [];
   const chatBodies: Array<Record<string, unknown>> = [];
   const workerChatBodies: Array<Record<string, unknown>> = [];
@@ -235,6 +236,38 @@ function mockWorkspaceFetch(
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       deleteBodies.push(body);
       return json({ deleted: true, reportId: body.reportId });
+    }
+
+    if (url.includes('/api/ui/cancel-report-task') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      cancelBodies.push(body);
+      return json({
+        task: {
+          taskId: body.taskId,
+          source: 'manual',
+          status: 'cancelled',
+          statusLabel: '已取消',
+          instrumentCode: '600519.SH',
+          market: 'CN_A',
+          companyName: '贵州茅台',
+          currencySymbol: '¥',
+          startDate: '2026-05-01',
+          endDate: '2026-05-19',
+          currentDate: '2026-05-19',
+          queuePosition: null,
+          createdAt: '2026-05-19T09:55:00.000Z',
+          finishedAt: '2026-05-19T10:00:00.000Z',
+        },
+        queueSnapshot: {
+          runningTask: null,
+          queuedTasks: [],
+          lastTerminalTask: null,
+          queueLimit: 10,
+          queuedCount: 0,
+          isFull: false,
+        },
+        message: '已停止报告任务。',
+      });
     }
 
     if (url.includes('/api/ui/send-worker-chat') && init?.method === 'POST') {
@@ -472,6 +505,7 @@ function mockWorkspaceFetch(
     },
     getQueueCount: () => queueCount,
     getConfirmBodies: () => confirmBodies,
+    getCancelBodies: () => cancelBodies,
     getDeleteBodies: () => deleteBodies,
     getChatBodies: () => chatBodies,
     getWorkerChatBodies: () => workerChatBodies,
@@ -508,6 +542,25 @@ describe('home page', () => {
     expect(screen.getByText(/投资辩论中/)).toBeInTheDocument();
     expect(screen.getByText('多头研究员')).toBeInTheDocument();
     expect(screen.getByText('多头研究员：执行中')).toBeInTheDocument();
+  });
+
+  it('stops the running report task from the right rail', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '停止任务' }));
+
+    await waitFor(() => expect(mocked.getCancelBodies()).toHaveLength(1));
+    expect(mocked.getCancelBodies()[0]).toMatchObject({ taskId: 'task-1' });
+    expect(await screen.findByText('已停止报告任务。')).toBeInTheDocument();
+    expect(screen.getByText('暂无运行中或排队中的报告任务')).toBeInTheDocument();
   });
 
   it('shows the report instrument format hint near the chat input only', async () => {

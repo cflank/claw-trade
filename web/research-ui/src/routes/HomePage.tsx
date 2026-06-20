@@ -10,6 +10,7 @@ import { MessageStream } from '../components/MessageStream';
 import { RightRail } from '../components/RightRail';
 import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
+  cancelReportTask,
   confirmIntentDraft,
   confirmSelectionReport,
   createIntentDraft,
@@ -35,6 +36,7 @@ import {
   type LlmConfigDraft,
   type ReportDetailForUser,
   type ReportQueueSnapshotForUser,
+  type ReportTaskForUser,
   type SavedReportForUser,
   type SelectionProgressForUser,
   type SelectionReportForUser,
@@ -124,6 +126,18 @@ function taskAcceptedMessage(task: NonNullable<ConfirmIntentDraftOutput['task']>
     actor: 'system',
     kind: 'task_progress',
     text: isRunning ? '报告任务已启动，正在生成。' : '报告已进入队列。',
+    taskId: task.taskId,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function cancelledTaskMessage(task: ReportTaskForUser, text: string): ChatMessageForUser {
+  return {
+    messageId: `local-cancelled-task-${task.taskId}-${Date.now()}`,
+    contextKind: 'task_following',
+    actor: 'system',
+    kind: 'task_progress',
+    text,
     taskId: task.taskId,
     createdAt: new Date().toISOString(),
   };
@@ -352,6 +366,7 @@ export function HomePage() {
   const [pendingChatCommand, setPendingChatCommand] = useState<PendingChatCommand | null>(null);
   const [cardSubmittingId, setCardSubmittingId] = useState<string | null>(null);
   const [selectionSubmittingKey, setSelectionSubmittingKey] = useState<string | null>(null);
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [modelDraft, setModelDraft] = useState<LlmConfigDraft>(DEFAULT_LLM_DRAFT);
   const consumedReportIdRef = useRef<string | null>(null);
@@ -651,6 +666,36 @@ export function HomePage() {
       }
     },
     [activeReportId],
+  );
+
+  const cancelTask = useCallback(
+    async (task: ReportTaskForUser) => {
+      const isRunning = task.status === 'running';
+      const question = isRunning
+        ? `停止「${task.instrumentCode}」报告任务？当前模型请求可能会在后台结束，但不会继续调度后续阶段。`
+        : `取消「${task.instrumentCode}」排队任务？`;
+      if (!window.confirm(question)) {
+        return;
+      }
+      setCancellingTaskId(task.taskId);
+      setError('');
+      try {
+        const result = await cancelReportTask({
+          requestId: nextRequestId(),
+          taskId: task.taskId,
+        });
+        applyQueueSnapshot(result.queueSnapshot);
+        setMessages((current) => [...current, cancelledTaskMessage(task, result.message)]);
+        if (context.activeTaskId === task.taskId) {
+          setContext(DEFAULT_CONTEXT);
+        }
+      } catch (cancelError) {
+        setError((cancelError as Error).message);
+      } finally {
+        setCancellingTaskId(null);
+      }
+    },
+    [applyQueueSnapshot, context.activeTaskId],
   );
 
   const onSendChat = useCallback(
@@ -1217,6 +1262,8 @@ export function HomePage() {
           channel={channelStatus}
           latestReport={savedReports[0] ?? null}
           onPrintReport={activeDetail ? printReportAsPdf : undefined}
+          onCancelTask={cancelTask}
+          cancellingTaskId={cancellingTaskId}
         />
       </main>
     </AppShell>

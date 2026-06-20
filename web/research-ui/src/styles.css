@@ -1319,6 +1319,16 @@ body {
   margin-top: 8px;
 }
 
+.ct-task-stop-button {
+  border-color: var(--ct-danger-border);
+  color: var(--ct-danger);
+}
+
+.ct-task-stop-button:hover {
+  border-color: var(--ct-danger);
+  background: var(--ct-danger-bg);
+}
+
 .ct-source-grid {
   margin-top: 12px;
   display: grid;

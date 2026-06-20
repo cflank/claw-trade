@@ -16,6 +16,7 @@ from claw_trade.workflow.models import (
     Decision,
     DecisionKind,
     ExportResult,
+    FailureRecord,
     ReadPolicy,
     RunRequest,
     RunStatus,
@@ -400,6 +401,61 @@ def test_frontline_stage_batch_runs_workers_concurrently(tmp_path: Path) -> None
     assert set(started) == set(batch.worker_ids)
     assert max_active == len(batch.worker_ids)
     assert result.failures == ()
+
+
+def test_wake_stage_preserves_cancelled_state_written_during_batch(tmp_path: Path) -> None:
+    harness = _RunnerHarness(tmp_path)
+    state = harness.store.create_run(_request())
+    batch = StageBatch(
+        run_id=state.run_id,
+        stage=Stage.FRONTLINE,
+        worker_ids=("market_analyst",),
+        scope=BatchScope.FULL_STAGE,
+        collect_first=True,
+        stop_point=StopPoint.NONE,
+    )
+    decision = Decision(
+        kind=DecisionKind.WAKE_STAGE,
+        stage=Stage.FRONTLINE,
+        batch=batch,
+        next_status=RunStatus.FRONTLINE_RUNNING,
+    )
+
+    def _run_stage_batch(running: WorkflowState, active_batch: StageBatch) -> StageBatchResult:
+        cancelled = replace(
+            running,
+            status=RunStatus.CANCELLED,
+            active_stage=None,
+            updated_at="2026-05-04T12:01:00Z",
+            failure_reason="user_cancelled",
+        )
+        harness.store.save_state(cancelled)
+        failure = FailureRecord(
+            run_id=running.run_id,
+            call_id=None,
+            worker_id="market_analyst",
+            stage=active_batch.stage,
+            category="openclaw_runtime",
+            reason="worker returned after cancellation",
+            evidence_paths=(running.run_dir / "state.json",),
+            early_stop=True,
+            human_action_required=None,
+        )
+        return StageBatchResult(
+            run_id=running.run_id,
+            stage=active_batch.stage,
+            worker_results=(),
+            failures=(failure,),
+            early_stop_used=True,
+            collect_first_report_path=running.run_dir / "stage-batches" / "frontline.json",
+        )
+
+    harness.runner.run_stage_batch = _run_stage_batch  # type: ignore[method-assign]
+
+    result = harness.runner.apply_decision(state, decision, state.run_dir / "decisions" / "wake.json")
+
+    assert result.status == RunStatus.CANCELLED
+    assert harness.store.load_state(state.run_id).status == RunStatus.CANCELLED
 
 
 def test_frontline_stage_batch_respects_explicit_serial(tmp_path: Path) -> None:

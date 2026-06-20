@@ -346,6 +346,10 @@ class ControlRunner:
         )
 
     def apply_decision(self, state: WorkflowState, decision: Decision, decision_path: Path) -> WorkflowState:
+        cancelled = self._cancelled_state_if_requested(state.run_id)
+        if cancelled is not None:
+            return cancelled
+
         if decision.kind == DecisionKind.WAIT:
             waiting = replace(state, updated_at=self.now_text(), last_decision_path=decision_path)
             self.store.save_state(waiting)
@@ -400,6 +404,9 @@ class ControlRunner:
             self.store.save_state(running)
             batch_result = self.run_stage_batch(running, decision.batch)
             self.store.save_stage_batch_result(batch_result)
+            cancelled = self._cancelled_state_if_requested(running.run_id)
+            if cancelled is not None:
+                return cancelled
             if batch_result.early_stop_used and batch_result.failures:
                 failure = merge_stage_failures(running.run_id, decision.stage, batch_result.failures)
                 return self.fail_run(running, failure, decision_path)
@@ -417,6 +424,9 @@ class ControlRunner:
             manifest = self.manifest_store.load(exporting.run_id)
             exported = self.export_final_report(exporting, manifest)
             self.store.save_export_result(exported)
+            cancelled = self._cancelled_state_if_requested(exporting.run_id)
+            if cancelled is not None:
+                return cancelled
             if exported.status == "passed" and self.lineage_writer is not None:
                 lineage = self.lineage_writer.link_after_export(
                     state=exporting,
@@ -492,6 +502,10 @@ class ControlRunner:
             human_action_required=None,
         )
         return self.fail_run(state, failure, decision_path)
+
+    def _cancelled_state_if_requested(self, run_id: str) -> WorkflowState | None:
+        current = self.store.load_state(run_id)
+        return current if current.status == RunStatus.CANCELLED else None
 
     def export_final_report(self, state: WorkflowState, manifest: ApprovedManifest) -> ExportResult:
         # B11 前 exporter 不可用时必须明确失败，禁止把导出阶段标记成成功。

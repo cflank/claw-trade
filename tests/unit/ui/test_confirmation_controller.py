@@ -21,6 +21,7 @@ class _FakeState:
 class _FakeRunner:
     def __init__(self) -> None:
         self.calls = 0
+        self.cancelled_runs: list[str] = []
 
     def create_run(self, request):  # type: ignore[no-untyped-def]
         self.calls += 1
@@ -29,6 +30,10 @@ class _FakeRunner:
     def load_state(self, run_id: str) -> _FakeState:
         _ = run_id
         return _FakeState()
+
+    def cancel_run(self, run_id: str) -> bool:
+        self.cancelled_runs.append(run_id)
+        return True
 
 
 def _build_controller() -> tuple[ConfirmationController, ReportTaskQueue, _FakeRunner, IntentRecognizer]:
@@ -290,7 +295,7 @@ def test_unapproved_profile_strategy_blocks_report_confirmation(profile: str) ->
     assert snapshot["queuedTasks"] == []
 
 
-def test_running_task_cancel_is_rejected_and_state_unchanged() -> None:
+def test_running_task_cancel_stops_workflow_and_marks_task_cancelled() -> None:
     runner = _FakeRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(runner))
     controller = ConfirmationController(queue)
@@ -305,9 +310,10 @@ def test_running_task_cancel_is_rejected_and_state_unchanged() -> None:
     confirmed = controller.confirm_intent_draft(request_id="c-4", draft_id=draft.draft_id, decision="confirm")
     task_id = confirmed["task"]["taskId"]
 
-    with pytest.raises(QueueError) as exc:
-        queue.cancel_report_task(request_id="cancel-1", task_id=task_id)
-    assert exc.value.code == "TASK_NOT_CANCELLABLE"
+    cancelled = queue.cancel_report_task(request_id="cancel-1", task_id=task_id)
+
+    assert cancelled["task"]["status"] == "cancelled"
+    assert runner.cancelled_runs == ["run-1"]
     task = queue.get_task_for_testing(task_id)
     assert task is not None
-    assert task.status.value == "running"
+    assert task.status.value == "cancelled"
