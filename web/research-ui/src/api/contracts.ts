@@ -16,6 +16,7 @@ export type ReportTaskStatus =
   | 'failed'
   | 'cancelled';
 export type UserVisibleSeverity = 'info' | 'success' | 'warning' | 'error';
+export type ReportRetentionDays = 7 | 14 | 30;
 
 export type ChatMessageKind =
   | 'plain'
@@ -560,6 +561,23 @@ export interface DeleteSavedReportOutput {
   };
 }
 
+export interface ReportCleanupSettingsForUser {
+  reportRetentionDays: ReportRetentionDays;
+}
+
+export interface GetReportCleanupSettingsOutput {
+  reportCleanup: ReportCleanupSettingsForUser;
+}
+
+export interface SaveReportCleanupSettingsInput {
+  requestId: string;
+  reportRetentionDays: ReportRetentionDays;
+}
+
+export interface SaveReportCleanupSettingsOutput {
+  reportCleanup: ReportCleanupSettingsForUser;
+}
+
 export interface GetReportChartEvidenceOutput {
   reportId: string;
   items: ChartEvidenceForUser[];
@@ -658,6 +676,7 @@ export interface ResetSettingsToDefaultsOutput {
     updatedAt: string;
   };
   channel: ChannelStatusForUser;
+  reportCleanup: ReportCleanupSettingsForUser;
 }
 
 export interface AdvancedDiagnosticsProviderHealthOutput {

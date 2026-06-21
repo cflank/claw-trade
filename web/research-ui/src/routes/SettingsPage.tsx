@@ -5,12 +5,14 @@ import { SettingsSections } from '../components/SettingsSections';
 import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   getChannelStatus,
+  getReportCleanupSettings,
   listDataSources,
   loadLlmSettings,
   resetSettingsToDefaults,
   saveChannelConfig,
   saveDataSourceInstance,
   saveEmbeddingConfig,
+  saveReportCleanupSettings,
   saveReportModelConfig,
   testDataSource,
   testEmbeddingConnection,
@@ -19,6 +21,8 @@ import {
   type DataSourceInstanceDraftInput,
   type DataSourceInstanceForUser,
   type LlmConfigDraft,
+  type ReportCleanupSettingsForUser,
+  type ReportRetentionDays,
 } from '../api/workspace';
 
 type SectionErrors = {
@@ -26,6 +30,7 @@ type SectionErrors = {
   llm?: string;
   embedding?: string;
   dataSources?: string;
+  reportCleanup?: string;
   reset?: string;
 };
 
@@ -58,6 +63,7 @@ const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
     enabled: false,
   },
 });
+const DEFAULT_REPORT_CLEANUP: ReportCleanupSettingsForUser = { reportRetentionDays: 7 };
 
 function currentEmbeddingDraft(draft: LlmConfigDraft): NonNullable<LlmConfigDraft['embedding']> {
   return (
@@ -175,6 +181,9 @@ export function SettingsPage() {
   const [dataSourceDraft, setDataSourceDraft] = useState<DataSourceInstanceDraftInput>(() =>
     createDataSourceDraft(),
   );
+  const [reportCleanup, setReportCleanup] = useState<ReportCleanupSettingsForUser>(
+    DEFAULT_REPORT_CLEANUP,
+  );
   const [loading, setLoading] = useState(true);
   const [sectionErrors, setSectionErrors] = useState<SectionErrors>({});
   const [channelActionBusy, setChannelActionBusy] = useState(false);
@@ -186,6 +195,8 @@ export function SettingsPage() {
   const [embeddingActionOk, setEmbeddingActionOk] = useState(false);
   const [dataSourceActionBusy, setDataSourceActionBusy] = useState(false);
   const [dataSourceActionMessage, setDataSourceActionMessage] = useState('');
+  const [cleanupActionBusy, setCleanupActionBusy] = useState(false);
+  const [cleanupActionMessage, setCleanupActionMessage] = useState('');
   const [resetActionBusy, setResetActionBusy] = useState(false);
   const [resetActionMessage, setResetActionMessage] = useState('');
   const autoQrRequestedRef = useRef(false);
@@ -198,8 +209,9 @@ export function SettingsPage() {
       setChannelActionMessage('');
       setLlmActionMessage('');
       setDataSourceActionMessage('');
+      setCleanupActionMessage('');
       setResetActionMessage('');
-      let pending = 3;
+      let pending = 4;
       const finishOne = () => {
         pending -= 1;
         if (active && pending <= 0) {
@@ -251,6 +263,24 @@ export function SettingsPage() {
         .catch((loadError) => {
           if (active) {
             setSectionErrors((current) => ({ ...current, dataSources: (loadError as Error).message }));
+          }
+        })
+        .finally(finishOne);
+      void withSettingsTimeout(
+        getReportCleanupSettings(),
+        '报告保留设置暂不可用，请稍后重试。',
+      )
+        .then((result) => {
+          if (active) {
+            setReportCleanup(result.reportCleanup);
+          }
+        })
+        .catch((loadError) => {
+          if (active) {
+            setSectionErrors((current) => ({
+              ...current,
+              reportCleanup: (loadError as Error).message,
+            }));
           }
         })
         .finally(finishOne);
@@ -574,9 +604,33 @@ export function SettingsPage() {
     }
   }
 
+  async function saveReportCleanup() {
+    setCleanupActionBusy(true);
+    setCleanupActionMessage('');
+    setSectionErrors((current) => ({ ...current, reportCleanup: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        saveReportCleanupSettings({
+          requestId: `report-cleanup-save-${Date.now()}`,
+          reportRetentionDays: reportCleanup.reportRetentionDays,
+        }),
+        '报告保留设置暂不可保存，请稍后重试。',
+      );
+      setReportCleanup(result.reportCleanup);
+      setCleanupActionMessage('报告保留时间已保存。');
+    } catch (saveError) {
+      setSectionErrors((current) => ({
+        ...current,
+        reportCleanup: (saveError as Error).message,
+      }));
+    } finally {
+      setCleanupActionBusy(false);
+    }
+  }
+
   async function resetSettings() {
     const confirmed = window.confirm(
-      '恢复默认设置会清空本页保存的报告模型、Embedding、增强数据源和微信通知连接设置，但不会删除历史报告。确定继续吗？',
+      '恢复默认设置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间和微信通知连接设置，但不会删除历史报告。确定继续吗？',
     );
     if (!confirmed) {
       return;
@@ -595,11 +649,13 @@ export function SettingsPage() {
       setChannel(result.channel);
       setDataSources(result.dataSources.instances);
       setDataSourceDraft(createDataSourceDraft(result.dataSources.instances[0]));
+      setReportCleanup(result.reportCleanup);
       setEmbeddingActionMessage('');
       setEmbeddingActionOk(false);
       setLlmActionMessage('');
       setDataSourceActionMessage('');
       setChannelActionMessage('');
+      setCleanupActionMessage('');
       setResetActionMessage(result.userMessage);
     } catch (resetError) {
       setSectionErrors((current) => ({ ...current, reset: (resetError as Error).message }));
@@ -623,6 +679,7 @@ export function SettingsPage() {
           llm={llm ?? DEFAULT_LLM_DRAFT}
           dataSources={dataSources}
           dataSourceDraft={dataSourceDraft}
+          reportCleanup={reportCleanup}
           sectionErrors={sectionErrors}
           channelActionBusy={channelActionBusy}
           channelActionMessage={channelActionMessage}
@@ -633,6 +690,8 @@ export function SettingsPage() {
           embeddingActionOk={embeddingActionOk}
           dataSourceActionBusy={dataSourceActionBusy}
           dataSourceActionMessage={dataSourceActionMessage}
+          cleanupActionBusy={cleanupActionBusy}
+          cleanupActionMessage={cleanupActionMessage}
           resetActionBusy={resetActionBusy}
           resetActionMessage={resetActionMessage}
           onReconnectChannel={reconnectChannel}
@@ -655,6 +714,10 @@ export function SettingsPage() {
           onEditDataSource={(item) => setDataSourceDraft(draftFromDataSource(item))}
           onSaveDataSource={saveDataSource}
           onTestDataSource={testDataSourceDraft}
+          onReportCleanupChange={(reportRetentionDays: ReportRetentionDays) =>
+            setReportCleanup({ reportRetentionDays })
+          }
+          onSaveReportCleanup={saveReportCleanup}
           onResetSettings={resetSettings}
         />
       </div>

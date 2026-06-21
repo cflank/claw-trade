@@ -4,6 +4,8 @@ import type {
   DataSourceInstanceDraftInput,
   DataSourceInstanceForUser,
   LlmConfigDraft,
+  ReportCleanupSettingsForUser,
+  ReportRetentionDays,
 } from '../api/contracts';
 import {
   LLM_PROVIDER_PRESETS,
@@ -201,6 +203,11 @@ const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
 ];
 
 const DATA_SOURCE_TYPES = ['tushare', 'finnhub', 'fred', 'coingecko', 'coingecko_pro', 'coinglass', 'glassnode'];
+const REPORT_RETENTION_OPTIONS: Array<{ value: ReportRetentionDays; label: string }> = [
+  { value: 7, label: '7 天' },
+  { value: 14, label: '14 天' },
+  { value: 30, label: '1 个月' },
+];
 
 function dataSourceByType(dataSources: DataSourceInstanceForUser[]) {
   return new Map(dataSources.map((item) => [item.supportedType, item]));
@@ -211,6 +218,7 @@ export function SettingsSections({
   llm,
   dataSources,
   dataSourceDraft,
+  reportCleanup,
   sectionErrors,
   channelActionBusy,
   channelActionMessage,
@@ -221,6 +229,8 @@ export function SettingsSections({
   embeddingActionOk,
   dataSourceActionBusy,
   dataSourceActionMessage,
+  cleanupActionBusy,
+  cleanupActionMessage,
   resetActionBusy,
   resetActionMessage,
   onReconnectChannel,
@@ -237,13 +247,23 @@ export function SettingsSections({
   onEditDataSource,
   onSaveDataSource,
   onTestDataSource,
+  onReportCleanupChange,
+  onSaveReportCleanup,
   onResetSettings,
 }: {
   channel: ChannelStatusForUser | null;
   llm: LlmConfigDraft;
   dataSources: DataSourceInstanceForUser[];
   dataSourceDraft: DataSourceInstanceDraftInput;
-  sectionErrors: { channel?: string; llm?: string; embedding?: string; dataSources?: string; reset?: string };
+  reportCleanup: ReportCleanupSettingsForUser;
+  sectionErrors: {
+    channel?: string;
+    llm?: string;
+    embedding?: string;
+    dataSources?: string;
+    reportCleanup?: string;
+    reset?: string;
+  };
   channelActionBusy: boolean;
   channelActionMessage: string;
   llmActionBusy: boolean;
@@ -253,6 +273,8 @@ export function SettingsSections({
   embeddingActionOk: boolean;
   dataSourceActionBusy: boolean;
   dataSourceActionMessage: string;
+  cleanupActionBusy: boolean;
+  cleanupActionMessage: string;
   resetActionBusy: boolean;
   resetActionMessage: string;
   onReconnectChannel: () => void;
@@ -269,6 +291,8 @@ export function SettingsSections({
   onEditDataSource: (item: DataSourceInstanceForUser) => void;
   onSaveDataSource: () => void;
   onTestDataSource: () => void;
+  onReportCleanupChange: (reportRetentionDays: ReportRetentionDays) => void;
+  onSaveReportCleanup: () => void;
   onResetSettings: () => void;
 }) {
   const embedding = embeddingDraft(llm);
@@ -637,6 +661,38 @@ export function SettingsSections({
 
         {activeSettingsTab === 'general' ? (
           <>
+      <section className="ct-settings-section" data-testid="settings-section-report-cleanup">
+        <div className="ct-section-head">
+          <h2>报告保留时间</h2>
+        </div>
+        <p className="ct-section-desc">设置历史报告自动保留多久；已保存报告会按这个时间清理。</p>
+        <label className="ct-field">
+          <span>报告保留时间</span>
+          <select
+            value={reportCleanup.reportRetentionDays}
+            onChange={(event) => onReportCleanupChange(Number(event.target.value) as ReportRetentionDays)}
+          >
+            {REPORT_RETENTION_OPTIONS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="ct-button-row ct-settings-actions">
+          <button
+            type="button"
+            className="ct-button ct-button-secondary"
+            onClick={onSaveReportCleanup}
+            disabled={cleanupActionBusy}
+          >
+            {cleanupActionBusy ? '保存中...' : '保存报告保留时间'}
+          </button>
+        </div>
+        {cleanupActionMessage ? <div className="ct-inline-alert is-success">{cleanupActionMessage}</div> : null}
+        {sectionErrors.reportCleanup ? <div className="ct-inline-alert is-error">{sectionErrors.reportCleanup}</div> : null}
+      </section>
+
       <section className="ct-settings-section" data-testid="settings-section-wechat">
         <div className="ct-section-head">
           <h2>微信通知</h2>
@@ -704,7 +760,7 @@ export function SettingsSections({
         <div className="ct-section-head">
           <h2>恢复默认设置</h2>
         </div>
-        <p className="ct-section-desc">清空本页保存的模型、Embedding、增强数据源和微信通知连接设置；历史报告不会删除。</p>
+        <p className="ct-section-desc">清空本页保存的模型、Embedding、增强数据源、报告保留时间和微信通知连接设置；历史报告不会删除。</p>
         <div className="ct-button-row ct-settings-actions">
           <button
             type="button"

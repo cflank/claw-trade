@@ -3,6 +3,7 @@ import { act } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsPage } from '../routes/SettingsPage';
+import type { DeleteSavedReportOutput } from '../api/contracts';
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -18,6 +19,10 @@ function errorJson(message: string) {
   });
 }
 
+function reportCleanupJson(reportRetentionDays: 7 | 14 | 30 = 7) {
+  return json({ reportCleanup: { reportRetentionDays } });
+}
+
 describe('settings-wechat settings page', () => {
   const originalFetch = globalThis.fetch;
   const originalConfirm = window.confirm;
@@ -28,9 +33,42 @@ describe('settings-wechat settings page', () => {
     vi.useRealTimers();
   });
 
+  it('accepts saved-report delete contract outputs for deleted and skipped reports', () => {
+    const deleted = {
+      deleted: true,
+      reportId: 'report-deleted',
+      userMessage: '报告已删除。',
+      cleanup: {
+        deletedRunIds: ['run-1'],
+        skippedRunIds: [],
+        failedRunIds: [],
+        deletedBytesApprox: 128,
+        warnings: [],
+      },
+    } satisfies DeleteSavedReportOutput;
+    const skipped = {
+      deleted: false,
+      reportId: 'report-skipped',
+      userMessage: '报告仍在发送中，暂未删除。',
+      cleanup: {
+        deletedRunIds: [],
+        skippedRunIds: ['run-2'],
+        failedRunIds: [],
+        deletedBytesApprox: 0,
+        warnings: [],
+      },
+    } satisfies DeleteSavedReportOutput;
+
+    expect(deleted.deleted).toBe(true);
+    expect(skipped.deleted).toBe(false);
+  });
+
   it('renders separate report model and embedding sections', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson(14);
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -112,6 +150,13 @@ describe('settings-wechat settings page', () => {
     expect(within(modelSection).getByLabelText('模型')).toHaveValue('deepseek/deepseek-chat');
     expect(within(modelSection).getByLabelText('接口地址')).toHaveValue('https://api.example.com');
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const cleanupSection = await screen.findByTestId('settings-section-report-cleanup');
+    expect(within(cleanupSection).getByRole('heading', { name: '报告保留时间' })).toBeInTheDocument();
+    expect(within(cleanupSection).getByLabelText('报告保留时间')).toHaveValue('14');
+    expect(within(cleanupSection).getByRole('option', { name: '7 天' })).toBeInTheDocument();
+    expect(within(cleanupSection).getByRole('option', { name: '14 天' })).toBeInTheDocument();
+    expect(within(cleanupSection).getByRole('option', { name: '1 个月' })).toBeInTheDocument();
+    expect(within(cleanupSection).getByRole('button', { name: '保存报告保留时间' })).toBeInTheDocument();
     expect(await screen.findByText('微信通知')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '恢复默认设置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '恢复默认设置' })).toBeInTheDocument();
@@ -166,6 +211,9 @@ describe('settings-wechat settings page', () => {
   it('shows report model defaults before slow saved settings load finishes', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/load-llm-settings')) {
         return new Promise<Response>(() => undefined);
       }
@@ -215,6 +263,9 @@ describe('settings-wechat settings page', () => {
   it('does not invent data source defaults before slow saved settings load finishes', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/list-data-sources')) {
         return new Promise<Response>(() => undefined);
       }
@@ -265,6 +316,9 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson(30);
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -356,6 +410,7 @@ describe('settings-wechat settings page', () => {
             qrCodeImageDataUrl: null,
             qrCodeRefreshRequired: true,
           },
+          reportCleanup: { reportRetentionDays: 7 },
         });
       }
       return json({});
@@ -375,6 +430,8 @@ describe('settings-wechat settings page', () => {
     expect(await screen.findByText('设置已恢复默认。')).toBeInTheDocument();
     expect(seenUrls.some((url) => url.includes('/api/ui/reset-settings-to-defaults'))).toBe(true);
     expect(window.confirm).toHaveBeenCalledTimes(1);
+    const cleanupSection = screen.getByTestId('settings-section-report-cleanup');
+    expect(within(cleanupSection).getByLabelText('报告保留时间')).toHaveValue('7');
     fireEvent.click(screen.getByRole('tab', { name: '模型' }));
     const modelSection = screen.getByRole('heading', { name: '报告模型' }).closest('section') as HTMLElement;
     expect(within(modelSection).getAllByText('未配置').length).toBeGreaterThanOrEqual(1);
@@ -387,6 +444,9 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         const refreshed = url.includes('refreshQr=true');
         const includesQr = url.includes('includeQr=true');
@@ -456,6 +516,9 @@ describe('settings-wechat settings page', () => {
     let testCalls = 0;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -544,6 +607,9 @@ describe('settings-wechat settings page', () => {
   it('keeps model surfaces free of forbidden setting terms in visible UI text', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -599,6 +665,9 @@ describe('settings-wechat settings page', () => {
     vi.useFakeTimers();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         if (!url.includes('refreshQr=true')) {
           return json({
@@ -681,6 +750,9 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         channelStatusCalls += 1;
         if (url.includes('refreshQr=true')) {
@@ -768,6 +840,9 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -843,6 +918,12 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/save-report-cleanup-settings')) {
+        return json({ reportCleanup: { reportRetentionDays: 30 } });
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -1015,11 +1096,24 @@ describe('settings-wechat settings page', () => {
     expect(dataSave?.body).toContain('"rateLimitSafetyMargin":"1"');
     expect(dataSave?.body).toContain('"rateLimitOverflow":"wait"');
     expect(dataSave?.body).toContain('"rateLimitWaitTimeoutSeconds":"75"');
+
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const cleanupSection = screen.getByTestId('settings-section-report-cleanup');
+    fireEvent.change(within(cleanupSection).getByLabelText('报告保留时间'), {
+      target: { value: '30' },
+    });
+    fireEvent.click(within(cleanupSection).getByRole('button', { name: '保存报告保留时间' }));
+    expect(await screen.findByText('报告保留时间已保存。')).toBeInTheDocument();
+    const cleanupSave = calls.find((call) => call.url.includes('/api/ui/save-report-cleanup-settings'));
+    expect(cleanupSave?.body).toContain('"reportRetentionDays":30');
   });
 
   it('settings-embedding shows optional embedding guidance without runtime internals', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -1093,6 +1187,9 @@ describe('settings-wechat settings page', () => {
   it('keeps channel and data source settings visible when model loading fails', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -1142,6 +1239,9 @@ describe('settings-wechat settings page', () => {
     vi.useFakeTimers();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',

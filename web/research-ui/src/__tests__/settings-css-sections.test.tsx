@@ -3,7 +3,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import type { ChannelStatusForUser, DataSourceInstanceDraftInput, LlmConfigDraft } from '../api/contracts';
+import type {
+  ChannelStatusForUser,
+  DataSourceInstanceDraftInput,
+  LlmConfigDraft,
+  ReportCleanupSettingsForUser,
+} from '../api/contracts';
 import { SettingsSections } from '../components/SettingsSections';
 
 const noop = () => {};
@@ -52,6 +57,10 @@ const dataSourceDraft: DataSourceInstanceDraftInput = {
   requiresKey: true,
 };
 
+const reportCleanup: ReportCleanupSettingsForUser = {
+  reportRetentionDays: 14,
+};
+
 const fixedSources = [
   { instanceId: 'ds-tushare', supportedType: 'tushare', group: 'cn_a_data', displayName: 'Tushare' },
   { instanceId: 'ds-wind', supportedType: 'wind', group: 'cn_a_data', displayName: 'Wind' },
@@ -89,6 +98,7 @@ describe('settings-css-sections', () => {
             lastTestAt: index === 0 ? '2026-05-23T08:10:00Z' : null,
           }))}
         dataSourceDraft={dataSourceDraft}
+        reportCleanup={reportCleanup}
         sectionErrors={{}}
         channelActionBusy={false}
         channelActionMessage=""
@@ -99,6 +109,8 @@ describe('settings-css-sections', () => {
         embeddingActionOk={false}
         dataSourceActionBusy={false}
         dataSourceActionMessage=""
+        cleanupActionBusy={false}
+        cleanupActionMessage=""
         resetActionBusy={false}
         resetActionMessage=""
         onReconnectChannel={noop}
@@ -114,6 +126,8 @@ describe('settings-css-sections', () => {
         onEditDataSource={noop}
         onSaveDataSource={noop}
         onTestDataSource={noop}
+        onReportCleanupChange={noop}
+        onSaveReportCleanup={noop}
         onResetSettings={noop}
       />,
     );
@@ -176,9 +190,12 @@ describe('settings-css-sections', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
     expect(screen.getByRole('tab', { name: '通用' })).toHaveAttribute('aria-selected', 'true');
+    const cleanupSection = screen.getByTestId('settings-section-report-cleanup');
     const wechatSection = screen.getByTestId('settings-section-wechat');
     expect(screen.getByTestId('settings-section-reset')).toBeInTheDocument();
     expect(screen.queryByTestId('settings-section-data-sources')).not.toBeInTheDocument();
+    expect(within(cleanupSection).getByLabelText('报告保留时间')).toHaveValue('14');
+    expect(within(cleanupSection).getByRole('button', { name: '保存报告保留时间' })).toBeInTheDocument();
     expect(within(wechatSection).getByText('请先在微信端启用插件：')).toBeInTheDocument();
     expect(within(wechatSection).getByText('我 → 设置 → 插件 → 微信 ClawBot')).toBeInTheDocument();
     expect(within(wechatSection).queryByText('Channel ID')).not.toBeInTheDocument();
