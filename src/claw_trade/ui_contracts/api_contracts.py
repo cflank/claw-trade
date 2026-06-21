@@ -27,6 +27,11 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
         "{ deleted: boolean, reportId, userMessage, cleanup: { deletedRunIds, skippedRunIds, failedRunIds, deletedBytesApprox, warnings } }",
         ("runId", "artifact", "path", "hash", "receipt"),
     ),
+    UiApiContract(
+        "deleteSavedReports",
+        "{ deletedRunIds, skippedRunIds, failedRunIds, deletedBytesApprox, warnings, userMessage, runs: { reportId, status, deletedBytesApprox, warnings, userMessage }[] }",
+        ("artifact", "path", "hash", "receipt"),
+    ),
     UiApiContract("askReportQuestion", "{ text: string }", ("runId", "lockedWorkflowRunId")),
     UiApiContract("createScheduledReport", "ScheduledReportForUser", ("lastRunTaskId",)),
     UiApiContract("pauseScheduledReport", "ScheduledReportForUser", ("runId",)),

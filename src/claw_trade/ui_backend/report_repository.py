@@ -118,6 +118,9 @@ class ReportRepository:
     def is_deleted_report(self, report_id: str) -> bool:
         return report_id in self._deleted_report_ids
 
+    def deleted_report_ids(self) -> tuple[str, ...]:
+        return tuple(sorted(self._deleted_report_ids))
+
     def delete_saved_report(self, report_id: str) -> bool:
         existed = report_id in self._reports or report_id in self._deleted_report_ids
         for artifact in self._pdf_artifacts.get(report_id, ()):

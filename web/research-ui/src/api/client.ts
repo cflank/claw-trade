@@ -18,6 +18,7 @@ import type {
   CreateIntentDraftInput,
   CreateIntentDraftOutput,
   DeleteSavedReportOutput,
+  DeleteSavedReportsOutput,
   GetReportChartEvidenceOutput,
   GetReportCleanupSettingsOutput,
   ListDataSourcesOutput,
@@ -221,6 +222,13 @@ export function deleteSavedReport(requestId: string, reportId: string) {
   return requestJson<DeleteSavedReportOutput>('/api/ui/delete-saved-report', {
     method: 'POST',
     body: JSON.stringify({ requestId, reportId }),
+  });
+}
+
+export function deleteSavedReports(requestId: string, reportIds: string[]) {
+  return requestJson<DeleteSavedReportsOutput>('/api/ui/delete-saved-reports', {
+    method: 'POST',
+    body: JSON.stringify({ requestId, reportIds }),
   });
 }
 

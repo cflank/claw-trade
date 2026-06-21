@@ -46,6 +46,11 @@ class DeleteSavedReportRequest(BaseModel):
     reportId: str
 
 
+class DeleteSavedReportsRequest(BaseModel):
+    requestId: str
+    reportIds: list[str] = Field(min_length=1, max_length=500)
+
+
 class CreateIntentDraftRequest(BaseModel):
     requestId: str
     sourceMessageId: str
@@ -664,6 +669,35 @@ def delete_saved_report(payload: DeleteSavedReportRequest, request: Request) -> 
                     "deletedBytesApprox": cleanup.deletedBytesApprox,
                     "warnings": cleanup.warnings,
                 },
+            }
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/delete-saved-reports")
+def delete_saved_reports(payload: DeleteSavedReportsRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        cleanup = services.report_cleanup_service.delete_report_runs(payload.reportIds)
+        return _success_response(
+            {
+                "deletedRunIds": cleanup.deletedRunIds,
+                "skippedRunIds": cleanup.skippedRunIds,
+                "failedRunIds": cleanup.failedRunIds,
+                "deletedBytesApprox": cleanup.deletedBytesApprox,
+                "warnings": cleanup.warnings,
+                "userMessage": cleanup.userMessage,
+                "runs": [
+                    {
+                        "reportId": item.runId,
+                        "status": item.status,
+                        "deletedBytesApprox": item.deletedBytesApprox,
+                        "warnings": item.warnings,
+                        "userMessage": item.userMessage,
+                    }
+                    for item in cleanup.runs
+                ],
             }
         )
     except Exception as exc:

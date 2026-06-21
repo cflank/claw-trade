@@ -16,6 +16,7 @@ import {
   confirmSelectionReport,
   createIntentDraft,
   deleteSavedReport,
+  deleteSavedReports,
   getChannelChatSnapshot,
   getChannelStatus,
   getChatSession,
@@ -701,21 +702,30 @@ export function HomePage() {
         return;
       }
       setError('');
-      const deletedIds: string[] = [];
-      const failedMessages: string[] = [];
-      for (const report of reports) {
-        try {
-          const result = await deleteSavedReport(nextRequestId(), report.id);
-          if (result.deleted) {
-            deletedIds.push(report.id);
-          } else {
+      const reportById = new Map(reports.map((report) => [report.id, report]));
+      let deletedIds: string[] = [];
+      let failedMessages: string[] = [];
+      try {
+        const result = await deleteSavedReports(
+          nextRequestId(),
+          reports.map((report) => report.id),
+        );
+        deletedIds = result.deletedRunIds;
+        failedMessages = result.runs
+          .filter((item) => item.status !== 'deleted')
+          .map((item) => {
+            const message = item.userMessage.trim();
+            return message || `${reportById.get(item.reportId)?.title ?? item.reportId} 未删除。`;
+          });
+        if (!failedMessages.length) {
+          failedMessages = [...result.skippedRunIds, ...result.failedRunIds].map((reportId) => {
             const message = result.userMessage.trim();
-            failedMessages.push(message || `${report.title} 未删除。`);
-          }
-        } catch (deleteError) {
-          const message = (deleteError as Error).message.trim();
-          failedMessages.push(message || `${report.title} 删除失败。`);
+            return message || `${reportById.get(reportId)?.title ?? reportId} 未删除。`;
+          });
         }
+      } catch (deleteError) {
+        const message = (deleteError as Error).message.trim();
+        failedMessages = [message || `${reports.length} 份报告删除失败。`];
       }
 
       if (deletedIds.length) {

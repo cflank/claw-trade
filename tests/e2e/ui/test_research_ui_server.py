@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
-from claw_trade.ui_backend.report_cleanup import ReportCleanupResult
+from claw_trade.ui_backend.report_cleanup import ReportCleanupResult, ReportCleanupRunResult
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
@@ -16,10 +16,12 @@ from claw_trade.web.routes_ui import (
     CancelSelectionProgressRequest,
     ConfirmIntentDraftRequest,
     DeleteSavedReportRequest,
+    DeleteSavedReportsRequest,
     cancel_report_task,
     cancel_selection_progress,
     confirm_intent_draft,
     delete_saved_report,
+    delete_saved_reports,
     get_chat_session,
     get_selection_refresh_snapshot,
 )
@@ -448,6 +450,78 @@ def test_delete_saved_report_route_returns_failed_cleanup_details_without_error(
             "deletedBytesApprox": 0,
             "warnings": ["删除 run-delete-failed 失败：permission denied"],
         },
+    }
+
+
+def test_delete_saved_reports_route_calls_cleanup_service_once_for_batch() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=["run-delete-1"],
+            skippedRunIds=["run-delete-2"],
+            failedRunIds=[],
+            deletedBytesApprox=128,
+            warnings=[],
+            userMessage="已删除 1 份报告，1 份已跳过。",
+            runs=[
+                ReportCleanupRunResult(
+                    runId="run-delete-1",
+                    status="deleted",
+                    deletedBytesApprox=128,
+                    userMessage="报告已硬删除。",
+                ),
+                ReportCleanupRunResult(
+                    runId="run-delete-2",
+                    status="skipped",
+                    userMessage="运行仍受保护。",
+                ),
+            ],
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-reports",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_reports(
+        DeleteSavedReportsRequest(
+            requestId="req-delete-batch",
+            reportIds=["run-delete-1", "run-delete-2"],
+        ),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-1", "run-delete-2"]]
+    assert json.loads(response.body) == {
+        "deletedRunIds": ["run-delete-1"],
+        "skippedRunIds": ["run-delete-2"],
+        "failedRunIds": [],
+        "deletedBytesApprox": 128,
+        "warnings": [],
+        "userMessage": "已删除 1 份报告，1 份已跳过。",
+        "runs": [
+            {
+                "reportId": "run-delete-1",
+                "status": "deleted",
+                "deletedBytesApprox": 128,
+                "warnings": [],
+                "userMessage": "报告已硬删除。",
+            },
+            {
+                "reportId": "run-delete-2",
+                "status": "skipped",
+                "deletedBytesApprox": 0,
+                "warnings": [],
+                "userMessage": "运行仍受保护。",
+            },
+        ],
     }
 
 

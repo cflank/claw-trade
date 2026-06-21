@@ -561,6 +561,22 @@ export interface DeleteSavedReportOutput {
   };
 }
 
+export interface DeleteSavedReportsOutput {
+  deletedRunIds: string[];
+  skippedRunIds: string[];
+  failedRunIds: string[];
+  deletedBytesApprox: number;
+  warnings: string[];
+  userMessage: string;
+  runs: {
+    reportId: string;
+    status: string;
+    deletedBytesApprox: number;
+    warnings: string[];
+    userMessage: string;
+  }[];
+}
+
 export interface ReportCleanupSettingsForUser {
   reportRetentionDays: ReportRetentionDays;
 }

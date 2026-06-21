@@ -16,6 +16,7 @@ def test_ui_api_contract_registry_covers_core_phase_one_scope() -> None:
     assert "enqueueReportTask" in names
     assert "cancelReportTask" in names
     assert "deleteSavedReport" in names
+    assert "deleteSavedReports" in names
     assert "createScheduledReport" in names
     assert "createPriceAlert" in names
 
@@ -53,6 +54,41 @@ def test_delete_saved_report_contract_exposes_cleanup_result() -> None:
                 "deletedBytesApprox": 0,
                 "warnings": [],
             },
+        },
+    )
+
+
+def test_delete_saved_reports_contract_exposes_batch_cleanup_result() -> None:
+    contract = get_ui_api_contract("deleteSavedReports")
+    assert contract.response_shape == (
+        "{ deletedRunIds, skippedRunIds, failedRunIds, deletedBytesApprox, warnings, "
+        "userMessage, runs: { reportId, status, deletedBytesApprox, warnings, userMessage }[] }"
+    )
+    validate_ui_api_response(
+        "deleteSavedReports",
+        {
+            "deletedRunIds": ["run-deleted"],
+            "skippedRunIds": ["run-skipped"],
+            "failedRunIds": [],
+            "deletedBytesApprox": 128,
+            "warnings": [],
+            "userMessage": "已删除 1 份报告，1 份已跳过。",
+            "runs": [
+                {
+                    "reportId": "run-deleted",
+                    "status": "deleted",
+                    "deletedBytesApprox": 128,
+                    "warnings": [],
+                    "userMessage": "报告已硬删除。",
+                },
+                {
+                    "reportId": "run-skipped",
+                    "status": "skipped",
+                    "deletedBytesApprox": 0,
+                    "warnings": [],
+                    "userMessage": "运行仍受保护。",
+                },
+            ],
         },
     )
 

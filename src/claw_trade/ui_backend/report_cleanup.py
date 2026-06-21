@@ -115,6 +115,7 @@ class ReportCleanupScheduler:
 
     def _run_cleanup_once(self) -> None:
         try:
+            self._cleanup_service.cleanup_deleted_report_tombstones()
             settings = self._settings_service.load_settings()
             retention_days = settings["reportRetentionDays"]
             self._cleanup_service.cleanup_expired_reports(retention_days=retention_days)
@@ -161,25 +162,37 @@ class ReportCleanupService:
     def delete_report_runs(self, run_ids: Iterable[str]) -> ReportCleanupResult:
         return self._delete_report_runs(run_ids, cutoff=None)
 
+    def cleanup_deleted_report_tombstones(self) -> ReportCleanupResult:
+        return self._delete_report_runs(self._repository.deleted_report_ids(), cutoff=None)
+
     def _delete_report_runs(self, run_ids: Iterable[str], *, cutoff: datetime | None) -> ReportCleanupResult:
         with self._lock:
             protected = set(self._protected_run_ids_provider())
             protected.update(self._in_flight_report_ids_provider())
+            raw_run_ids = tuple(str(raw_run_id or "").strip() for raw_run_id in run_ids)
+            openclaw_deleted_by_run = _delete_openclaw_session_files_for_runs(
+                self._openclaw_state_root,
+                self._batch_openclaw_session_cleanup_ids(raw_run_ids, protected=protected, cutoff=cutoff),
+            )
             deleted: list[str] = []
             skipped: list[str] = []
             failed: list[str] = []
             warnings: list[str] = []
             run_results: list[ReportCleanupRunResult] = []
             deleted_bytes = 0
-            for raw_run_id in run_ids:
-                run_id = str(raw_run_id or "").strip()
+            for run_id in raw_run_ids:
                 if not _is_valid_run_id(run_id):
                     failed.append(run_id or "<empty>")
                     message = f"已拒绝无效运行 ID：{run_id or '<empty>'}"
                     warnings.append(message)
                     run_results.append(ReportCleanupRunResult(runId=run_id, status="failed", warnings=[message]))
                     continue
-                run_result = self._delete_one_run(run_id, protected=protected, cutoff=cutoff)
+                run_result = self._delete_one_run(
+                    run_id,
+                    protected=protected,
+                    cutoff=cutoff,
+                    openclaw_session_deleted_bytes=openclaw_deleted_by_run.get(run_id),
+                )
                 run_results.append(run_result)
                 warnings.extend(run_result.warnings)
                 if run_result.status == "deleted":
@@ -199,36 +212,70 @@ class ReportCleanupService:
                 runs=run_results,
             )
 
+    def _batch_openclaw_session_cleanup_ids(
+        self,
+        run_ids: Iterable[str],
+        *,
+        protected: set[str],
+        cutoff: datetime | None,
+    ) -> set[str]:
+        candidates: set[str] = set()
+        for run_id in run_ids:
+            if not _is_valid_run_id(run_id) or run_id in protected:
+                continue
+            if cutoff is None:
+                candidates.add(run_id)
+                continue
+            run_dir = _safe_run_dir(self._run_root, run_id)
+            if run_dir is None:
+                continue
+            state = _read_json_object(run_dir / "state.json")
+            status = str((state or {}).get("status") or "").strip().lower()
+            if status not in _TERMINAL_STATUSES:
+                continue
+            if cutoff is not None:
+                age = self._run_age(run_dir, state=state)
+                if age is None or age >= cutoff:
+                    continue
+            candidates.add(run_id)
+        return candidates
+
     def _delete_one_run(
         self,
         run_id: str,
         *,
         protected: set[str],
         cutoff: datetime | None,
+        openclaw_session_deleted_bytes: int | None = None,
     ) -> ReportCleanupRunResult:
-        run_dir = _safe_run_dir(self._run_root, run_id)
-        if run_dir is None:
-            return ReportCleanupRunResult(runId=run_id, status="failed", warnings=[f"运行目录越界：{run_id}"])
         if run_id in protected:
             return ReportCleanupRunResult(runId=run_id, status="skipped", userMessage="运行仍受保护。")
-        state = _read_json_object(run_dir / "state.json")
-        status = str((state or {}).get("status") or "").strip().lower()
-        if status not in _TERMINAL_STATUSES:
-            return ReportCleanupRunResult(runId=run_id, status="skipped", userMessage="运行尚未进入终态。")
-        if cutoff is not None:
-            age = self._run_age(run_dir, state=state)
-            if age is None or age >= cutoff:
-                return ReportCleanupRunResult(runId=run_id, status="skipped", userMessage="运行仍在保留期内。")
+        run_dir = _safe_run_dir(self._run_root, run_id)
+        if run_dir is None and cutoff is not None:
+            return ReportCleanupRunResult(runId=run_id, status="failed", warnings=[f"运行目录不存在：{run_id}"])
+        if run_dir is not None:
+            state = _read_json_object(run_dir / "state.json")
+            status = str((state or {}).get("status") or "").strip().lower()
+            if status not in _TERMINAL_STATUSES:
+                return ReportCleanupRunResult(runId=run_id, status="skipped", userMessage="运行尚未进入终态。")
+            if cutoff is not None:
+                age = self._run_age(run_dir, state=state)
+                if age is None or age >= cutoff:
+                    return ReportCleanupRunResult(runId=run_id, status="skipped", userMessage="运行仍在保留期内。")
 
         warnings: list[str] = []
         deleted_bytes = 0
         try:
-            deleted_bytes += _delete_openclaw_session_files(self._openclaw_state_root, run_id)
+            deleted_bytes += (
+                _delete_openclaw_session_files(self._openclaw_state_root, run_id)
+                if openclaw_session_deleted_bytes is None
+                else openclaw_session_deleted_bytes
+            )
             queue_bytes, queue_warnings = _clean_delivery_queue(self._openclaw_state_root, run_id)
             deleted_bytes += queue_bytes
             warnings.extend(queue_warnings)
             deleted_bytes += _delete_openviking_workflow_dir(self._openviking_workflow_root, run_id)
-            if run_dir.exists():
+            if run_dir is not None and run_dir.exists():
                 deleted_bytes += _path_size(run_dir)
                 shutil.rmtree(run_dir)
         except OSError as exc:
@@ -271,10 +318,16 @@ class ReportCleanupService:
 
 
 def _delete_openclaw_session_files(openclaw_state_root: Path, run_id: str) -> int:
+    return _delete_openclaw_session_files_for_runs(openclaw_state_root, {run_id}).get(run_id, 0)
+
+
+def _delete_openclaw_session_files_for_runs(openclaw_state_root: Path, run_ids: set[str]) -> dict[str, int]:
+    deleted_by_run = {run_id: 0 for run_id in run_ids}
+    if not run_ids:
+        return deleted_by_run
     sessions_parent = openclaw_state_root / "agents"
     if sessions_parent.is_symlink() or not sessions_parent.is_dir():
-        return 0
-    deleted_bytes = 0
+        return deleted_by_run
     for agent_dir in sorted(sessions_parent.iterdir()):
         if agent_dir.is_symlink() or not agent_dir.is_dir():
             continue
@@ -286,12 +339,19 @@ def _delete_openclaw_session_files(openclaw_state_root: Path, run_id: str) -> in
             if path.is_symlink() or session_stem is None:
                 continue
             text = _read_text(path)
-            if text is None or not _text_uniquely_matches_run(text, run_id):
+            if text is None:
                 continue
-            deleted_bytes += _file_size(path)
+            matched_run_ids = set(_RUN_ID_RE.findall(text))
+            owner_run_ids = {
+                run_id for run_id in run_ids if _run_tokens_belong_to_run(matched_run_ids, run_id)
+            }
+            if len(owner_run_ids) != 1:
+                continue
+            run_id = next(iter(owner_run_ids))
+            deleted_by_run[run_id] += _file_size(path)
             path.unlink()
-            deleted_bytes += _delete_openclaw_session_sidecars(path.parent, session_stem)
-    return deleted_bytes
+            deleted_by_run[run_id] += _delete_openclaw_session_sidecars(path.parent, session_stem)
+    return deleted_by_run
 
 
 def _clean_delivery_queue(openclaw_state_root: Path, run_id: str) -> tuple[int, list[str]]:
@@ -439,7 +499,14 @@ def _loads_json(text: str) -> Any:
 
 
 def _text_uniquely_matches_run(text: str, run_id: str) -> bool:
-    return set(_RUN_ID_RE.findall(text)) == {run_id}
+    return _run_tokens_belong_to_run(set(_RUN_ID_RE.findall(text)), run_id)
+
+
+def _run_tokens_belong_to_run(tokens: set[str], run_id: str) -> bool:
+    return bool(tokens) and all(
+        token == run_id or token.startswith(f"{run_id}-") or token.startswith(f"{run_id}__")
+        for token in tokens
+    )
 
 
 def _parse_datetime(value: object) -> datetime | None:

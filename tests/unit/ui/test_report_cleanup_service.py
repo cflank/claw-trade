@@ -99,7 +99,12 @@ class _CleanupSchedulerCleanupProbe:
         self._lock = Lock()
         self._changed = Event()
         self.retention_days: list[int] = []
+        self.tombstone_cleanup_calls = 0
         self.exceptions: list[Exception] = []
+
+    def cleanup_deleted_report_tombstones(self) -> ReportCleanupResult:
+        self.tombstone_cleanup_calls += 1
+        return ReportCleanupResult()
 
     def cleanup_expired_reports(self, *, retention_days: int) -> ReportCleanupResult:
         try:
@@ -143,6 +148,11 @@ class _BlockingCleanupSchedulerCleanupProbe:
         self._changed = Event()
         self._release = Event()
         self.retention_days: list[int] = []
+        self.tombstone_cleanup_calls = 0
+
+    def cleanup_deleted_report_tombstones(self) -> ReportCleanupResult:
+        self.tombstone_cleanup_calls += 1
+        return ReportCleanupResult()
 
     def cleanup_expired_reports(self, *, retention_days: int) -> ReportCleanupResult:
         with self._lock:
@@ -182,6 +192,7 @@ def test_cleanup_scheduler_start_calls_cleanup_once() -> None:
         scheduler.stop()
 
     assert cleanup.retention_days == [14]
+    assert cleanup.tombstone_cleanup_calls == 1
     assert cleanup.exceptions == []
     assert settings.calls == 1
 
@@ -463,6 +474,28 @@ def test_openclaw_session_file_with_only_run_id_deleted(tmp_path: Path) -> None:
     assert not session_path.exists()
 
 
+def test_openclaw_session_file_with_derived_run_ids_deleted(tmp_path: Path) -> None:
+    run_id = "run-20260620-134154-9ac325d0"
+    service, run_root, _, openclaw_root, _ = _service(tmp_path)
+    _write_run(run_root, run_id, updated_at="2026-05-01T00:00:00Z")
+    session_path = openclaw_root / "agents" / "market" / "sessions" / "single-worker-s1.jsonl"
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text(
+        "\n".join(
+            [
+                run_id,
+                f"{run_id}-frontline-t00-social_analyst-20260620T134154193668Z-9c0511e3",
+                f"{run_id}-frontline-t00-social_analyst-20260620T134154193668Z-9c0511e3__tool",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    service.cleanup_expired_reports(retention_days=30)
+
+    assert not session_path.exists()
+
+
 def test_openclaw_session_sidecar_removed_only_after_matching_primary(tmp_path: Path) -> None:
     service, run_root, _, openclaw_root, _ = _service(tmp_path)
     _write_run(run_root, "run-old", updated_at="2026-05-01T00:00:00Z")
@@ -592,6 +625,50 @@ def test_tombstone_removed_after_hard_delete(tmp_path: Path) -> None:
     assert ReportRepository(deletion_index_path=tmp_path / "runs" / ".ui-deleted-reports.json").is_deleted_report(
         "run-old"
     ) is False
+
+
+def test_legacy_tombstoned_report_is_hard_deleted(tmp_path: Path) -> None:
+    repo = ReportRepository(deletion_index_path=tmp_path / "runs" / ".ui-deleted-reports.json")
+    repo.save_succeeded_report(
+        report_id="run-old",
+        instrument_code="BTC",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown="正文",
+    )
+    repo.delete_saved_report("run-old")
+    service, run_root, workflow_root, openclaw_root, _ = _service(tmp_path, repository=repo)
+    _write_run(run_root, "run-old", updated_at="2026-06-19T00:00:00Z")
+    (workflow_root / "run-old").mkdir(parents=True)
+    session_path = openclaw_root / "agents" / "market" / "sessions" / "single-worker-s1.jsonl"
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text('{"run_id":"run-old"}\n', encoding="utf-8")
+
+    result = service.cleanup_deleted_report_tombstones()
+
+    assert result.deletedRunIds == ["run-old"]
+    assert not (run_root / "run-old").exists()
+    assert not (workflow_root / "run-old").exists()
+    assert not session_path.exists()
+    assert ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json").deleted_report_ids() == ()
+
+
+def test_tombstoned_report_without_run_dir_still_cleans_related_artifacts(tmp_path: Path) -> None:
+    repo = ReportRepository(deletion_index_path=tmp_path / "runs" / ".ui-deleted-reports.json")
+    repo.delete_saved_report("run-partial")
+    service, run_root, workflow_root, openclaw_root, _ = _service(tmp_path, repository=repo)
+    (workflow_root / "run-partial").mkdir(parents=True)
+    session_path = openclaw_root / "agents" / "market" / "sessions" / "single-worker-partial.jsonl"
+    session_path.parent.mkdir(parents=True)
+    session_path.write_text('{"run_id":"run-partial"}\n', encoding="utf-8")
+
+    result = service.cleanup_deleted_report_tombstones()
+
+    assert result.deletedRunIds == ["run-partial"]
+    assert not (run_root / "run-partial").exists()
+    assert not (workflow_root / "run-partial").exists()
+    assert not session_path.exists()
+    assert ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json").deleted_report_ids() == ()
 
 
 def test_repository_cleanup_failure_is_returned_without_aborting_batch(tmp_path: Path) -> None:
