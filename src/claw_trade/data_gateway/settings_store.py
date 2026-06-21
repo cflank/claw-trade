@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 UI_DATA_SOURCE_SETTINGS_COLLECTION = "ui_data_source_settings"
 UI_EMBEDDING_SETTINGS_COLLECTION = "ui_embedding_settings"
+UI_REPORT_CLEANUP_SETTINGS_COLLECTION = "ui_report_cleanup_settings"
 UI_REPORT_MODEL_CONFIG_COLLECTION = "ui_report_model_config"
 UI_REPORT_MODEL_STATUS_COLLECTION = "ui_report_model_status"
 UI_SECRET_SETTINGS_COLLECTION = "ui_secret_settings"
@@ -145,6 +146,35 @@ class MongoEmbeddingConfigStore:
 
     def clear(self) -> None:
         self._collection.delete_one({"_id": "embedding"})
+
+
+class MongoReportCleanupSettingsStore:
+    def __init__(self, collection: Any) -> None:
+        self._collection = collection
+
+    def read(self) -> dict[str, Any]:
+        doc = self._collection.find_one({"_id": "report_cleanup_settings"})
+        if not isinstance(doc, Mapping):
+            return {}
+        payload = doc.get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("report cleanup settings payload must be an object")
+        return dict(payload)
+
+    def write(self, payload: Mapping[str, Any]) -> None:
+        self._collection.replace_one(
+            {"_id": "report_cleanup_settings"},
+            {
+                "_id": "report_cleanup_settings",
+                "payload": dict(payload),
+                "schemaVersion": "ui-report-cleanup-settings-v1",
+                "updatedAt": _now_iso(),
+            },
+            upsert=True,
+        )
+
+    def clear(self) -> None:
+        self._collection.delete_one({"_id": "report_cleanup_settings"})
 
 
 class MongoReportModelConfigStore:

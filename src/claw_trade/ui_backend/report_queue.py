@@ -5,6 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from claw_trade.ui_backend.error_translator import (
@@ -72,6 +73,7 @@ class ReportTaskQueue:
         self._sequence = 0
         self._right_rail_active: set[str] = set()
         self._last_terminal_task_id: str | None = None
+        self._state_lock = Lock()
 
     def enqueue_report_task(
         self,
@@ -81,172 +83,190 @@ class ReportTaskQueue:
         source: str,
         origin_context_id: str | None = None,
     ) -> dict[str, Any]:
-        if request_id in self._enqueue_idempotency:
-            return self._enqueue_idempotency[request_id]
-        dedupe_key = self._build_dedupe_key(task_input)
-        existing = self._find_existing_queued(dedupe_key)
-        if existing:
-            if source == "manual" and existing.source == "scheduled":
-                existing.priority = 100
-            payload = {"task": self.to_report_task_for_user(existing), "deduped": True}
+        with self._state_lock:
+            if request_id in self._enqueue_idempotency:
+                return self._enqueue_idempotency[request_id]
+            dedupe_key = self._build_dedupe_key(task_input)
+            existing = self._find_existing_queued(dedupe_key)
+            if existing:
+                if source == "manual" and existing.source == "scheduled":
+                    existing.priority = 100
+                task_payload = self.to_report_task_for_user(existing)
+            else:
+                task_payload = None
+            if task_payload is None:
+                queued_count = len(self._queued_tasks())
+                if queued_count >= self._queue_limit:
+                    raise QueueError("QUEUE_FULL", "queue_full", "报告队列已满，请稍后再试。")
+                self._sequence += 1
+                now = _now_iso()
+                task = ReportTask(
+                    task_id=f"task-{self._sequence}",
+                    source=source,
+                    status=ReportTaskStatus.QUEUED,
+                    instrument_code=str(task_input["instrumentCode"]),
+                    instrument_name=task_input.get("instrumentName"),
+                    market=str(task_input["market"]),
+                    company_name=str(task_input.get("companyName") or task_input["instrumentCode"]),
+                    currency_symbol=str(task_input.get("currencySymbol") or ""),
+                    start_date=str(task_input["startDate"]),
+                    end_date=str(task_input["endDate"]),
+                    current_date=str(task_input["currentDate"]),
+                    workflow_settings=dict(task_input["workflowSettings"]),
+                    dedupe_key=dedupe_key,
+                    priority=100 if source == "manual" else 10,
+                    created_at=now,
+                    origin_context_id=origin_context_id,
+                    selection_context_ref=_optional_task_text(task_input.get("selectionContextRef")),
+                    selection_stage_marker=_optional_task_text(task_input.get("selectionStageMarker")),
+                )
+                self._tasks[task.task_id] = task
+                self._right_rail_active.add(task.task_id)
+                self._refresh_queue_positions()
+        if task_payload is not None:
+            payload = {"task": task_payload, "deduped": True}
             payload["queueSnapshot"] = self.get_report_queue_snapshot_for_user()
-            self._enqueue_idempotency[request_id] = payload
+            with self._state_lock:
+                self._enqueue_idempotency[request_id] = payload
             return payload
-        queued_count = len(self._queued_tasks())
-        if queued_count >= self._queue_limit:
-            raise QueueError("QUEUE_FULL", "queue_full", "报告队列已满，请稍后再试。")
-        self._sequence += 1
-        now = _now_iso()
-        task = ReportTask(
-            task_id=f"task-{self._sequence}",
-            source=source,
-            status=ReportTaskStatus.QUEUED,
-            instrument_code=str(task_input["instrumentCode"]),
-            instrument_name=task_input.get("instrumentName"),
-            market=str(task_input["market"]),
-            company_name=str(task_input.get("companyName") or task_input["instrumentCode"]),
-            currency_symbol=str(task_input.get("currencySymbol") or ""),
-            start_date=str(task_input["startDate"]),
-            end_date=str(task_input["endDate"]),
-            current_date=str(task_input["currentDate"]),
-            workflow_settings=dict(task_input["workflowSettings"]),
-            dedupe_key=dedupe_key,
-            priority=100 if source == "manual" else 10,
-            created_at=now,
-            origin_context_id=origin_context_id,
-            selection_context_ref=_optional_task_text(task_input.get("selectionContextRef")),
-            selection_stage_marker=_optional_task_text(task_input.get("selectionStageMarker")),
-        )
-        self._tasks[task.task_id] = task
-        self._right_rail_active.add(task.task_id)
-        self._refresh_queue_positions()
         self.start_next_report_task_if_idle()
         queue_snapshot = self.get_report_queue_snapshot_for_user()
-        payload = {"task": self.to_report_task_for_user(task), "deduped": False}
-        payload["queueSnapshot"] = queue_snapshot
-        self._enqueue_idempotency[request_id] = payload
-        return payload
+        with self._state_lock:
+            payload = {"task": self.to_report_task_for_user(task), "deduped": False}
+            payload["queueSnapshot"] = queue_snapshot
+            self._enqueue_idempotency[request_id] = payload
+            return payload
 
     def start_next_report_task_if_idle(self) -> ReportTask | None:
-        if self._running_task() is not None:
-            return None
-        queued = self._queued_tasks()
-        if not queued:
-            return None
-        queued.sort(key=lambda item: (-item.priority, item.created_at))
-        task = queued[0]
-        try:
-            run = self._bridge.create_workflow_run(
-                {
-                    "instrumentCode": task.instrument_code,
-                    "instrumentName": task.instrument_name,
-                    "market": task.market,
-                    "companyName": task.company_name,
-                    "currencySymbol": task.currency_symbol,
-                    "startDate": task.start_date,
-                    "endDate": task.end_date,
-                    "currentDate": task.current_date,
-                    "workflowSettings": dict(task.workflow_settings),
-                }
-            )
+        with self._state_lock:
+            if self._running_task() is not None:
+                return None
+            queued = self._queued_tasks()
+            if not queued:
+                return None
+            queued.sort(key=lambda item: (-item.priority, item.created_at))
+            task = queued[0]
             task.status = ReportTaskStatus.RUNNING
-            task.run_id = run.run_id
-            task.started_at = _now_iso()
             task.queue_position = None
+            task.started_at = _now_iso()
+            self._refresh_queue_positions()
+            task_input = {
+                "instrumentCode": task.instrument_code,
+                "instrumentName": task.instrument_name,
+                "market": task.market,
+                "companyName": task.company_name,
+                "currencySymbol": task.currency_symbol,
+                "startDate": task.start_date,
+                "endDate": task.end_date,
+                "currentDate": task.current_date,
+                "workflowSettings": dict(task.workflow_settings),
+            }
+        try:
+            run = self._bridge.create_workflow_run(task_input)
         except Exception as exc:
             self.handle_report_failed(task.task_id, exc)
-        self._refresh_queue_positions()
+            return task
+        with self._state_lock:
+            current = self._tasks.get(task.task_id)
+            if current is task:
+                task.run_id = run.run_id
         return task
 
     def cancel_report_task(self, *, request_id: str, task_id: str) -> dict[str, Any]:
-        if request_id in self._cancel_idempotency:
-            return self._cancel_idempotency[request_id]
-        task = self._tasks.get(task_id)
-        if task is None:
-            raise QueueError("TASK_NOT_FOUND", "invalid_input", "没有找到对应任务，请刷新后重试。")
-        if task.status == ReportTaskStatus.CANCELLED:
-            payload = {
-                "task": self.to_report_task_for_user(task),
-                "queueSnapshot": self.get_report_queue_snapshot_for_user(),
-                "message": "任务已取消。",
-            }
-            self._cancel_idempotency[request_id] = payload
-            return payload
-        if task.status == ReportTaskStatus.RUNNING:
-            if not task.run_id or not self._bridge.cancel_workflow_run(task.run_id):
+        with self._state_lock:
+            if request_id in self._cancel_idempotency:
+                return self._cancel_idempotency[request_id]
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise QueueError("TASK_NOT_FOUND", "invalid_input", "没有找到对应任务，请刷新后重试。")
+            if task.status == ReportTaskStatus.CANCELLED:
+                task_payload = self.to_report_task_for_user(task)
+                message = "任务已取消。"
+                needs_start_next = False
+            elif task.status == ReportTaskStatus.RUNNING:
+                run_id = task.run_id
+                task_payload = None
+                message = "已停止报告任务。"
+                needs_start_next = True
+            elif task.status != ReportTaskStatus.QUEUED:
+                raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "当前状态不支持取消。")
+            else:
+                run_id = None
+                task.status = ReportTaskStatus.CANCELLED
+                task.finished_at = _now_iso()
+                self._right_rail_active.discard(task.task_id)
+                self._last_terminal_task_id = task.task_id
+                self._refresh_queue_positions()
+                task_payload = self.to_report_task_for_user(task)
+                message = "已取消排队任务。"
+                needs_start_next = True
+        if task_payload is None:
+            if not run_id or not self._bridge.cancel_workflow_run(run_id):
                 raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "报告正在生成，当前运行时不支持停止。")
-            task.status = ReportTaskStatus.CANCELLED
+            with self._state_lock:
+                task.status = ReportTaskStatus.CANCELLED
+                task.finished_at = _now_iso()
+                self._right_rail_active.discard(task.task_id)
+                self._last_terminal_task_id = task.task_id
+                self._refresh_queue_positions()
+                task_payload = self.to_report_task_for_user(task)
+        payload = {
+            "task": task_payload,
+            "queueSnapshot": self.get_report_queue_snapshot_for_user(),
+            "message": message,
+        }
+        with self._state_lock:
+            self._cancel_idempotency[request_id] = payload
+        if needs_start_next:
+            self.start_next_report_task_if_idle()
+        return payload
+
+    def handle_report_failed(self, task_id: str, error: Exception | str) -> ReportTask | None:
+        with self._state_lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            failure = translate_internal_error_for_user(error)
+            task.status = ReportTaskStatus.FAILED
+            task.failure = failure
             task.finished_at = _now_iso()
             self._right_rail_active.discard(task.task_id)
             self._last_terminal_task_id = task.task_id
             self._refresh_queue_positions()
-            payload = {
-                "task": self.to_report_task_for_user(task),
-                "queueSnapshot": self.get_report_queue_snapshot_for_user(),
-                "message": "已停止报告任务。",
-            }
-            self._cancel_idempotency[request_id] = payload
-            self.start_next_report_task_if_idle()
-            return payload
-        if task.status != ReportTaskStatus.QUEUED:
-            raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "当前状态不支持取消。")
-        task.status = ReportTaskStatus.CANCELLED
-        task.finished_at = _now_iso()
-        self._right_rail_active.discard(task.task_id)
-        self._last_terminal_task_id = task.task_id
-        self._refresh_queue_positions()
-        payload = {
-            "task": self.to_report_task_for_user(task),
-            "queueSnapshot": self.get_report_queue_snapshot_for_user(),
-            "message": "已取消排队任务。",
-        }
-        self._cancel_idempotency[request_id] = payload
-        self.start_next_report_task_if_idle()
-        return payload
-
-    def handle_report_failed(self, task_id: str, error: Exception | str) -> ReportTask | None:
-        task = self._tasks.get(task_id)
-        if task is None:
-            return None
-        failure = translate_internal_error_for_user(error)
-        task.status = ReportTaskStatus.FAILED
-        task.failure = failure
-        task.finished_at = _now_iso()
-        self._right_rail_active.discard(task.task_id)
-        self._last_terminal_task_id = task.task_id
-        self._refresh_queue_positions()
         self.start_next_report_task_if_idle()
         return task
 
     def list_saved_reports_for_user(self) -> list[dict[str, Any]]:
-        reports: list[dict[str, Any]] = []
-        for task in self._tasks.values():
-            if task.status == ReportTaskStatus.SUCCEEDED:
-                reports.append(
-                    {
-                        "id": task.task_id,
-                        "instrumentCode": task.instrument_code,
-                        "instrumentName": task.instrument_name,
-                        "market": task.market,
-                        "title": f"{task.instrument_code} 报告",
-                        "generatedAt": task.finished_at or task.created_at,
-                        "summarySnippet": "完整结论请查看报告正文。",
-                    }
-                )
-        return reports
+        with self._state_lock:
+            reports: list[dict[str, Any]] = []
+            for task in self._tasks.values():
+                if task.status == ReportTaskStatus.SUCCEEDED:
+                    reports.append(
+                        {
+                            "id": task.task_id,
+                            "instrumentCode": task.instrument_code,
+                            "instrumentName": task.instrument_name,
+                            "market": task.market,
+                            "title": f"{task.instrument_code} 报告",
+                            "generatedAt": task.finished_at or task.created_at,
+                            "summarySnippet": "完整结论请查看报告正文。",
+                        }
+                    )
+            return reports
 
     def get_report_queue_snapshot_for_user(self) -> dict[str, Any]:
         self.refresh_running_task_status()
-        running = self._running_task()
-        queued = sorted(self._queued_tasks(), key=lambda item: item.queue_position or 0)
-        return {
-            "runningTask": self.to_report_task_for_user(running) if running else None,
-            "queuedTasks": [self.to_report_task_for_user(item) for item in queued],
-            "lastTerminalTask": self.to_report_task_for_user(self._last_terminal_task()),
-            "queueLimit": self._queue_limit,
-            "queuedCount": len(queued),
-            "isFull": len(queued) >= self._queue_limit,
-        }
+        with self._state_lock:
+            running = self._running_task()
+            queued = sorted(self._queued_tasks(), key=lambda item: item.queue_position or 0)
+            return {
+                "runningTask": self.to_report_task_for_user(running) if running else None,
+                "queuedTasks": [self.to_report_task_for_user(item) for item in queued],
+                "lastTerminalTask": self.to_report_task_for_user(self._last_terminal_task()),
+                "queueLimit": self._queue_limit,
+                "queuedCount": len(queued),
+                "isFull": len(queued) >= self._queue_limit,
+            }
 
     def to_report_task_for_user(self, task: ReportTask | None) -> dict[str, Any] | None:
         if task is None:
@@ -286,53 +306,83 @@ class ReportTaskQueue:
         return payload
 
     def refresh_running_task_status(self) -> ReportTask | None:
-        task = self._running_task()
-        if task is None or not task.run_id:
-            return task
+        with self._state_lock:
+            task = self._running_task()
+            if task is None or not task.run_id:
+                return task
+            run_id = task.run_id
+            market = task.market
         try:
-            workflow_state = self._bridge.load_workflow_state(task.run_id)
+            workflow_state = self._bridge.load_workflow_state(run_id)
         except Exception:
             return task
 
-        task.progress = map_workflow_progress_to_ui_state(
+        progress = map_workflow_progress_to_ui_state(
             workflow_state,
-            _worker_progress_from_run_evidence(workflow_state, market=task.market),
+            _worker_progress_from_run_evidence(workflow_state, market=market),
         )
         status = _workflow_status_value(workflow_state)
         if status == RunStatus.COMPLETED.value:
-            if self._completed_report_writer is not None and not task.completed_report_saved:
+            with self._state_lock:
+                should_write = self._completed_report_writer is not None and not task.completed_report_saved
+                if should_write:
+                    task.completed_report_saved = True
+            if should_write:
                 try:
                     self._completed_report_writer(task, workflow_state)
-                    task.completed_report_saved = True
                 except Exception as exc:
                     self.handle_report_failed(task.task_id, exc)
                     return task
-            task.status = ReportTaskStatus.SUCCEEDED
-            task.finished_at = _now_iso()
-            self._right_rail_active.discard(task.task_id)
-            self._last_terminal_task_id = task.task_id
+            with self._state_lock:
+                task.progress = progress
+                task.status = ReportTaskStatus.SUCCEEDED
+                task.finished_at = _now_iso()
+                self._right_rail_active.discard(task.task_id)
+                self._last_terminal_task_id = task.task_id
             self.start_next_report_task_if_idle()
         elif status == RunStatus.FAILED.value:
             reason = _read_state_value(workflow_state, "failure_reason", default="workflow_failed")
             self.handle_report_failed(task.task_id, str(reason or "workflow_failed"))
         elif status == RunStatus.CANCELLED.value:
-            task.status = ReportTaskStatus.CANCELLED
-            task.finished_at = _now_iso()
-            self._right_rail_active.discard(task.task_id)
-            self._last_terminal_task_id = task.task_id
+            with self._state_lock:
+                task.progress = progress
+                task.status = ReportTaskStatus.CANCELLED
+                task.finished_at = _now_iso()
+                self._right_rail_active.discard(task.task_id)
+                self._last_terminal_task_id = task.task_id
             self.start_next_report_task_if_idle()
+        else:
+            with self._state_lock:
+                task.progress = progress
         return task
 
     def get_task_for_testing(self, task_id: str) -> ReportTask | None:
-        return self._tasks.get(task_id)
+        with self._state_lock:
+            return self._tasks.get(task_id)
 
     def set_task_origin_context(self, task_id: str, context_id: str) -> None:
-        task = self._tasks.get(task_id)
-        if task is not None:
-            task.origin_context_id = context_id
+        with self._state_lock:
+            task = self._tasks.get(task_id)
+            if task is not None:
+                task.origin_context_id = context_id
 
     def right_rail_active_task_ids(self) -> set[str]:
-        return set(self._right_rail_active)
+        with self._state_lock:
+            return set(self._right_rail_active)
+
+    def protected_run_ids_for_cleanup(self) -> set[str]:
+        protected_statuses = {
+            ReportTaskStatus.QUEUED,
+            ReportTaskStatus.RUNNING,
+            ReportTaskStatus.SAVING_REPORT,
+            ReportTaskStatus.PDF_EXPORTING,
+        }
+        with self._state_lock:
+            return {
+                task.run_id
+                for task in self._tasks.values()
+                if task.run_id and task.status in protected_statuses
+            }
 
     def _find_existing_queued(self, dedupe_key: str) -> ReportTask | None:
         for task in self._tasks.values():

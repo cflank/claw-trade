@@ -16,6 +16,7 @@ export type ReportTaskStatus =
   | 'failed'
   | 'cancelled';
 export type UserVisibleSeverity = 'info' | 'success' | 'warning' | 'error';
+export type ReportRetentionDays = 7 | 14 | 30;
 
 export type ChatMessageKind =
   | 'plain'
@@ -548,8 +549,49 @@ export interface ListSavedReportsOutput {
 }
 
 export interface DeleteSavedReportOutput {
-  deleted: true;
+  deleted: boolean;
   reportId: string;
+  userMessage: string;
+  cleanup: {
+    deletedRunIds: string[];
+    skippedRunIds: string[];
+    failedRunIds: string[];
+    deletedBytesApprox: number;
+    warnings: string[];
+  };
+}
+
+export interface DeleteSavedReportsOutput {
+  deletedRunIds: string[];
+  skippedRunIds: string[];
+  failedRunIds: string[];
+  deletedBytesApprox: number;
+  warnings: string[];
+  userMessage: string;
+  runs: {
+    reportId: string;
+    status: string;
+    deletedBytesApprox: number;
+    warnings: string[];
+    userMessage: string;
+  }[];
+}
+
+export interface ReportCleanupSettingsForUser {
+  reportRetentionDays: ReportRetentionDays;
+}
+
+export interface GetReportCleanupSettingsOutput {
+  reportCleanup: ReportCleanupSettingsForUser;
+}
+
+export interface SaveReportCleanupSettingsInput {
+  requestId: string;
+  reportRetentionDays: ReportRetentionDays;
+}
+
+export interface SaveReportCleanupSettingsOutput {
+  reportCleanup: ReportCleanupSettingsForUser;
 }
 
 export interface GetReportChartEvidenceOutput {
@@ -650,6 +692,7 @@ export interface ResetSettingsToDefaultsOutput {
     updatedAt: string;
   };
   channel: ChannelStatusForUser;
+  reportCleanup: ReportCleanupSettingsForUser;
 }
 
 export interface AdvancedDiagnosticsProviderHealthOutput {

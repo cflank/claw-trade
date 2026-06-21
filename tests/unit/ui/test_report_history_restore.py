@@ -84,3 +84,19 @@ def test_deleted_restored_report_stays_hidden_without_removing_run_files(tmp_pat
     assert restored == 0
     assert reloaded.list_saved_reports() == []
     assert (run_dir / "reports" / "final-report.md").exists()
+
+
+def test_discarded_tombstone_allows_restore_when_run_files_still_exist(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    _write_completed_run(run_root, "run-visible-again")
+    deletion_index = run_root / ".ui-deleted-reports.json"
+    repo = ReportRepository(deletion_index_path=deletion_index)
+    restore_completed_workflow_reports(repo, run_root)
+    repo.delete_saved_report("run-visible-again")
+    repo.discard_deleted_report_id("run-visible-again")
+
+    reloaded = ReportRepository(deletion_index_path=deletion_index)
+    restored = restore_completed_workflow_reports(reloaded, run_root)
+
+    assert restored == 1
+    assert reloaded.list_saved_reports()[0]["id"] == "run-visible-again"

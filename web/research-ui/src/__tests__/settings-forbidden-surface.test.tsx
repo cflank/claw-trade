@@ -25,6 +25,9 @@ describe('settings forbidden surface', () => {
   it('keeps ordinary settings surface free of forbidden terms and unapproved providers', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return json({ reportCleanup: { reportRetentionDays: 7 } });
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',

@@ -26,6 +26,18 @@ const DEFAULT_SAVED_REPORTS = [
 ];
 
 type MockSavedReport = (typeof DEFAULT_SAVED_REPORTS)[number] & { canForwardToChannel?: boolean };
+type MockDeleteSavedReportResponse = {
+  deleted: boolean;
+  reportId: unknown;
+  userMessage?: string;
+  cleanup?: {
+    deletedRunIds: string[];
+    skippedRunIds: string[];
+    failedRunIds: string[];
+    deletedBytesApprox: number;
+    warnings: string[];
+  };
+};
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -46,6 +58,8 @@ function mockWorkspaceFetch(
     workerChatListFails?: boolean;
     workerChatWorkers?: typeof WORKERS;
     savedReports?: MockSavedReport[];
+    deleteSavedReportResponses?: Record<string, MockDeleteSavedReportResponse>;
+    deleteSavedReportFailures?: Record<string, Response | Error>;
     channelStatus?: Record<string, unknown>;
     sendReportFileResponse?: Promise<Response>;
   } = {},
@@ -243,10 +257,77 @@ function mockWorkspaceFetch(
       return json({ text: '**当前结论**来自已保存报告正文。\n\n- 继续跟踪渠道修复。' });
     }
 
+    if (url.includes('/api/ui/delete-saved-reports') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      deleteBodies.push(body);
+      const reportIds = Array.isArray(body.reportIds) ? body.reportIds.map((item) => String(item)) : [];
+      for (const reportId of reportIds) {
+        const configuredFailure = options.deleteSavedReportFailures?.[reportId];
+        if (configuredFailure instanceof Error) {
+          throw configuredFailure;
+        }
+        if (configuredFailure) {
+          return configuredFailure;
+        }
+      }
+
+      const runs = reportIds.map((reportId) => {
+        const configuredResponse = options.deleteSavedReportResponses?.[reportId];
+        if (!configuredResponse || configuredResponse.deleted) {
+          return {
+            reportId,
+            status: 'deleted',
+            deletedBytesApprox: configuredResponse?.cleanup?.deletedBytesApprox ?? 128,
+            warnings: configuredResponse?.cleanup?.warnings ?? [],
+            userMessage: configuredResponse?.userMessage ?? '报告已删除。',
+          };
+        }
+        const cleanup = configuredResponse.cleanup;
+        const status = cleanup?.failedRunIds.includes(reportId) ? 'failed' : 'skipped';
+        return {
+          reportId,
+          status,
+          deletedBytesApprox: cleanup?.deletedBytesApprox ?? 0,
+          warnings: cleanup?.warnings ?? [],
+          userMessage: configuredResponse.userMessage ?? '',
+        };
+      });
+      return json({
+        deletedRunIds: runs.filter((item) => item.status === 'deleted').map((item) => item.reportId),
+        skippedRunIds: runs.filter((item) => item.status === 'skipped').map((item) => item.reportId),
+        failedRunIds: runs.filter((item) => item.status === 'failed').map((item) => item.reportId),
+        deletedBytesApprox: runs.reduce((total, item) => total + item.deletedBytesApprox, 0),
+        warnings: runs.flatMap((item) => item.warnings),
+        userMessage: '批量删除已处理。',
+        runs,
+      });
+    }
+
     if (url.includes('/api/ui/delete-saved-report') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       deleteBodies.push(body);
-      return json({ deleted: true, reportId: body.reportId });
+      const configuredFailure = options.deleteSavedReportFailures?.[String(body.reportId)];
+      if (configuredFailure instanceof Error) {
+        throw configuredFailure;
+      }
+      if (configuredFailure) {
+        return configuredFailure;
+      }
+      const configuredResponse = options.deleteSavedReportResponses?.[String(body.reportId)];
+      return json(
+        configuredResponse ?? {
+          deleted: true,
+          reportId: body.reportId,
+          userMessage: '报告已删除。',
+          cleanup: {
+            deletedRunIds: [String(body.reportId)],
+            skippedRunIds: [],
+            failedRunIds: [],
+            deletedBytesApprox: 128,
+            warnings: [],
+          },
+        },
+      );
     }
 
     if (url.includes('/api/ui/cancel-report-task') && init?.method === 'POST') {
@@ -2187,7 +2268,7 @@ describe('home page', () => {
   it('removes a saved report from history after confirmation', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(
       <MemoryRouter>
@@ -2198,10 +2279,52 @@ describe('home page', () => {
     const deleteButton = await screen.findByRole('button', { name: /删除 茅台投研报告/ });
     fireEvent.click(deleteButton);
 
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '永久删除「茅台投研报告」？将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。',
+    );
     await waitFor(() => {
       expect(mocked.getDeleteBodies().at(0)?.reportId).toBe('report-1');
     });
     expect(screen.queryByText('茅台投研报告')).not.toBeInTheDocument();
+  });
+
+  it('keeps a saved report visible when delete cleanup skips it', async () => {
+    const mocked = mockWorkspaceFetch({
+      deleteSavedReportResponses: {
+        'report-1': {
+          deleted: false,
+          reportId: 'report-1',
+          userMessage: '报告仍在发送中，暂未删除。',
+          cleanup: {
+            deletedRunIds: [],
+            skippedRunIds: ['report-1'],
+            failedRunIds: [],
+            deletedBytesApprox: 0,
+            warnings: [],
+          },
+        },
+      },
+    });
+    restoreList.push(mocked.restore);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const deleteButton = await screen.findByRole('button', { name: /删除 茅台投研报告/ });
+    fireEvent.click(deleteButton);
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '永久删除「茅台投研报告」？将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。',
+    );
+    await waitFor(() => {
+      expect(mocked.getDeleteBodies().at(0)?.reportId).toBe('report-1');
+    });
+    expect(screen.getByText('茅台投研报告')).toBeInTheDocument();
+    expect(screen.getByText('报告仍在发送中，暂未删除。')).toBeInTheDocument();
   });
 
   it('forwards a saved report PDF to connected WeChat from history', async () => {
@@ -2288,7 +2411,7 @@ describe('home page', () => {
       ],
     });
     restoreList.push(mocked.restore);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(
       <MemoryRouter>
@@ -2300,8 +2423,11 @@ describe('home page', () => {
     fireEvent.change(screen.getByLabelText('搜索报告'), { target: { value: '苹果' } });
     fireEvent.click(screen.getByRole('button', { name: '删除搜索结果' }));
 
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '删除当前搜索结果中的 1 份正式报告？每个目标报告运行都会被硬删除。将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。',
+    );
     await waitFor(() => {
-      expect(mocked.getDeleteBodies().map((body) => body.reportId)).toEqual(['report-2']);
+      expect(mocked.getDeleteBodies().at(0)?.reportIds).toEqual(['report-2']);
     });
     expect(screen.queryByText('苹果投研报告')).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('搜索报告'), { target: { value: '' } });
@@ -2324,7 +2450,7 @@ describe('home page', () => {
       ],
     });
     restoreList.push(mocked.restore);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     render(
       <MemoryRouter>
@@ -2335,11 +2461,131 @@ describe('home page', () => {
     expect(await screen.findByText('茅台投研报告')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '清空' }));
 
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '清空 2 份正式报告？每个目标报告运行都会被硬删除。将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。',
+    );
     await waitFor(() => {
-      expect(mocked.getDeleteBodies().map((body) => body.reportId)).toEqual(['report-1', 'report-2']);
+      expect(mocked.getDeleteBodies().at(0)?.reportIds).toEqual(['report-1', 'report-2']);
     });
     expect(screen.queryByText('茅台投研报告')).not.toBeInTheDocument();
     expect(screen.queryByText('苹果投研报告')).not.toBeInTheDocument();
+  });
+
+  it('keeps skipped reports visible during bulk clear and reports partial failure', async () => {
+    const mocked = mockWorkspaceFetch({
+      savedReports: [
+        ...DEFAULT_SAVED_REPORTS,
+        {
+          id: 'report-2',
+          instrumentCode: 'AAPL',
+          instrumentName: '苹果',
+          market: 'US',
+          title: '苹果投研报告',
+          generatedAt: '2026-05-19T11:00:00.000Z',
+          summarySnippet: '关注新品周期。',
+        },
+        {
+          id: 'report-3',
+          instrumentCode: 'MSFT',
+          instrumentName: '微软',
+          market: 'US',
+          title: '微软投研报告',
+          generatedAt: '2026-05-19T12:00:00.000Z',
+          summarySnippet: '关注云业务增长。',
+        },
+      ],
+      deleteSavedReportResponses: {
+        'report-2': {
+          deleted: false,
+          reportId: 'report-2',
+          userMessage: '报告仍在发送中，暂未删除。',
+          cleanup: {
+            deletedRunIds: [],
+            skippedRunIds: ['report-2'],
+            failedRunIds: [],
+            deletedBytesApprox: 0,
+            warnings: [],
+          },
+        },
+        'report-3': {
+          deleted: false,
+          reportId: 'report-3',
+          userMessage: '清理本地缓存失败，暂未删除。',
+          cleanup: {
+            deletedRunIds: [],
+            skippedRunIds: [],
+            failedRunIds: ['report-3'],
+            deletedBytesApprox: 0,
+            warnings: [],
+          },
+        },
+      },
+    });
+    restoreList.push(mocked.restore);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('茅台投研报告')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清空' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '清空 3 份正式报告？每个目标报告运行都会被硬删除。将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。',
+    );
+    await waitFor(() => {
+      expect(mocked.getDeleteBodies().at(0)?.reportIds).toEqual(['report-1', 'report-2', 'report-3']);
+    });
+    expect(screen.queryByText('茅台投研报告')).not.toBeInTheDocument();
+    expect(screen.getByText('苹果投研报告')).toBeInTheDocument();
+    expect(screen.getByText('微软投研报告')).toBeInTheDocument();
+    expect(
+      screen.getByText('已删除 1 份报告，2 份未删除。原因：报告仍在发送中，暂未删除。；清理本地缓存失败，暂未删除。'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps all reports visible when the bulk clear request throws', async () => {
+    const mocked = mockWorkspaceFetch({
+      savedReports: [
+        ...DEFAULT_SAVED_REPORTS,
+        {
+          id: 'report-2',
+          instrumentCode: 'AAPL',
+          instrumentName: '苹果',
+          market: 'US',
+          title: '苹果投研报告',
+          generatedAt: '2026-05-19T11:00:00.000Z',
+          summarySnippet: '关注新品周期。',
+        },
+      ],
+      deleteSavedReportFailures: {
+        'report-1': new Error('网络删除失败。'),
+      },
+    });
+    restoreList.push(mocked.restore);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('茅台投研报告')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清空' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      '清空 2 份正式报告？每个目标报告运行都会被硬删除。将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。',
+    );
+    await waitFor(() => {
+      expect(mocked.getDeleteBodies().at(0)?.reportIds).toEqual(['report-1', 'report-2']);
+    });
+    expect(screen.getByText('茅台投研报告')).toBeInTheDocument();
+    expect(screen.getByText('苹果投研报告')).toBeInTheDocument();
+    expect(screen.getByText('1 份报告未删除。原因：网络删除失败。')).toBeInTheDocument();
   });
 
   it('opens report in workspace when reportId query is provided', async () => {

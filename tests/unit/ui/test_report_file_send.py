@@ -8,6 +8,7 @@ from claw_trade.ui_backend.pdf_runtime_capabilities import (
     PdfRuntimeCapabilities,
     PdfRuntimeCapability,
 )
+from claw_trade.ui_backend.report_cleanup import ReportFileSendTracker
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
@@ -108,6 +109,7 @@ def _make_service(
     asset_dir: Path | None = None,
     renderer=None,
     origin_context_id: str | None = None,
+    file_send_tracker: ReportFileSendTracker | None = None,
 ) -> ReportNotificationService:  # type: ignore[no-untyped-def]
     repo = ReportRepository()
     repo.save_succeeded_report(
@@ -126,7 +128,13 @@ def _make_service(
         runtime_capabilities_provider=_ready_capabilities,
     )
     pdf_service.export_saved_markdown_to_pdf("r-file", request_id="seed-pdf")
-    return ReportNotificationService(repo, summary_builder, pdf_service, channel)
+    return ReportNotificationService(
+        repo,
+        summary_builder,
+        pdf_service,
+        channel,
+        file_send_tracker=file_send_tracker,
+    )
 
 
 def test_request_full_report_file_requires_file_capability(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -150,6 +158,31 @@ def test_request_full_report_file_sends_ready_pdf(tmp_path, monkeypatch) -> None
     assert channel.last_file_path is not None
     assert channel.last_file_path.exists()
     assert "localPath" not in result
+
+
+def test_request_full_report_file_marks_report_in_flight_while_sending(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    tracker = ReportFileSendTracker()
+    seen_active_ids: list[set[str]] = []
+    channel = _FileChannelBridge(state="connected", can_send_file=True)
+    service = _make_service(
+        channel,
+        asset_dir=tmp_path / "reports" / "assets",
+        file_send_tracker=tracker,
+    )
+    original_send = channel.send_report_file_via_channel
+
+    def _send_with_tracking(**kwargs):  # type: ignore[no-untyped-def]
+        seen_active_ids.append(tracker.active_report_ids())
+        return original_send(**kwargs)
+
+    channel.send_report_file_via_channel = _send_with_tracking  # type: ignore[method-assign]
+
+    result = service.request_full_report_file("r-file", "req-file-in-flight", target="sender-1")
+
+    assert result["sent"] is True
+    assert seen_active_ids == [{"r-file"}]
+    assert tracker.active_report_ids() == set()
 
 
 def test_request_full_report_file_uses_saved_wechat_origin_when_target_is_not_explicit(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

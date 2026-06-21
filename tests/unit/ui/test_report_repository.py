@@ -71,6 +71,43 @@ def test_delete_saved_report_hides_report_and_persists_tombstone(tmp_path) -> No
     assert reloaded.is_deleted_report("r-delete") is True
 
 
+def test_remove_report_state_does_not_add_tombstone(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    deletion_index = tmp_path / ".ui-deleted-reports.json"
+    repo = ReportRepository(deletion_index_path=deletion_index)
+    repo.save_succeeded_report(
+        report_id="r-hard-delete",
+        instrument_code="BTC",
+        instrument_name="Bitcoin",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown="# 标题\n正文",
+    )
+
+    assert repo.remove_report_state("r-hard-delete") is True
+
+    reloaded = ReportRepository(deletion_index_path=deletion_index)
+    assert reloaded.is_deleted_report("r-hard-delete") is False
+
+
+def test_discard_deleted_report_id_persists_tombstone_removal(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    deletion_index = tmp_path / ".ui-deleted-reports.json"
+    repo = ReportRepository(deletion_index_path=deletion_index)
+    repo.save_succeeded_report(
+        report_id="r-discard",
+        instrument_code="BTC",
+        instrument_name="Bitcoin",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown="# 标题\n正文",
+    )
+    repo.delete_saved_report("r-discard")
+
+    assert repo.discard_deleted_report_id("r-discard") is True
+
+    reloaded = ReportRepository(deletion_index_path=deletion_index)
+    assert reloaded.is_deleted_report("r-discard") is False
+
+
 def test_report_detail_rewrites_local_image_assets_and_resolves_files(tmp_path) -> None:  # type: ignore[no-untyped-def]
     asset_dir = tmp_path / "reports" / "assets"
     asset_dir.mkdir(parents=True)

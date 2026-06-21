@@ -17,6 +17,10 @@ function errorJson(message: string, status = 400) {
   });
 }
 
+function reportCleanupJson() {
+  return json({ reportCleanup: { reportRetentionDays: 7 } });
+}
+
 describe('settings-enhanced-sources', () => {
   const originalFetch = globalThis.fetch;
 
@@ -28,6 +32,9 @@ describe('settings-enhanced-sources', () => {
   it('renders provider-backed enhanced sources by market and hides probe-only placeholders', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',
@@ -166,6 +173,9 @@ describe('settings-enhanced-sources', () => {
   it('shows actionable error when enabling enhanced source without passing real test', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',

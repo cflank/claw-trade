@@ -6,15 +6,22 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
+from claw_trade.ui_backend.report_cleanup import ReportCleanupResult, ReportCleanupRunResult
+from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
     CancelReportTaskRequest,
     CancelSelectionProgressRequest,
     ConfirmIntentDraftRequest,
+    DeleteSavedReportRequest,
+    DeleteSavedReportsRequest,
     cancel_report_task,
     cancel_selection_progress,
     confirm_intent_draft,
+    delete_saved_report,
+    delete_saved_reports,
     get_chat_session,
     get_selection_refresh_snapshot,
 )
@@ -74,12 +81,55 @@ def test_list_saved_reports_enables_forward_when_wechat_has_default_target(tmp_p
     assert [item["canForwardToChannel"] for item in payload["items"]] == [True, True]
 
 
+def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    cleanup = ReportCleanupSettingsService(json_path=tmp_path / "runs" / ".ui-report-cleanup-settings.json")
+    services = SimpleNamespace(
+        report_cleanup_settings=cleanup,
+        llm_bridge=_ResetLlmProbe(),
+        data_source_settings=_ResetDataSourcesProbe(),
+        channel_bridge=_ResetChannelProbe(),
+    )
+    app = build_research_ui_app(
+        settings=ResearchUiServerSettings(frontend_dist=dist),
+        services=services,  # type: ignore[arg-type]
+    )
+    client = TestClient(app)
+
+    loaded = client.get("/api/ui/get-report-cleanup-settings")
+    assert loaded.status_code == 200
+    assert loaded.json()["reportCleanup"] == {"reportRetentionDays": 7}
+
+    saved = client.post(
+        "/api/ui/save-report-cleanup-settings",
+        json={"requestId": "req-save-cleanup", "reportRetentionDays": 14},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["reportCleanup"] == {"reportRetentionDays": 14}
+
+    rejected = client.post(
+        "/api/ui/save-report-cleanup-settings",
+        json={"requestId": "req-save-cleanup-invalid", "reportRetentionDays": 21},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "INVALID_INPUT"
+
+    reset = client.post("/api/ui/reset-settings-to-defaults", json={"requestId": "req-reset"})
+    assert reset.status_code == 200
+    assert reset.json()["reportCleanup"] == {"reportRetentionDays": 7}
+    assert cleanup.load_settings() == {"reportRetentionDays": 7}
+
+
 def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     refresh = _RefreshServiceProbe()
-    services = SimpleNamespace(selection_refresh_service=refresh)
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
     monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
@@ -87,8 +137,31 @@ def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Pa
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
         assert refresh.started == 1
+        assert cleanup.started == 1
 
     assert refresh.stopped == 1
+    assert cleanup.stopped == 1
+
+
+def test_app_startup_stops_selection_when_cleanup_scheduler_start_fails(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe(fail_start=True)
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
+    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with pytest.raises(RuntimeError, match="cleanup scheduler failed"):
+        with TestClient(app):
+            pass
+
+    assert refresh.started == 1
+    assert refresh.stopped == 1
+    assert cleanup.started == 1
+    assert cleanup.stopped == 0
 
 
 def test_app_startup_does_not_start_owned_selection_auto_refresh_when_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -96,16 +169,19 @@ def test_app_startup_does_not_start_owned_selection_auto_refresh_when_disabled(t
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     refresh = _RefreshServiceProbe()
-    services = SimpleNamespace(selection_refresh_service=refresh)
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     monkeypatch.setenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", "0")
     monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
 
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
+        assert cleanup.started == 1
 
     assert refresh.started == 0
     assert refresh.stopped == 0
+    assert cleanup.stopped == 1
 
 
 def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Path) -> None:
@@ -113,7 +189,8 @@ def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Pa
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     refresh = _RefreshServiceProbe()
-    services = SimpleNamespace(selection_refresh_service=refresh)
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist), services=services)  # type: ignore[arg-type]
 
     with TestClient(app) as client:
@@ -121,6 +198,8 @@ def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Pa
 
     assert refresh.started == 0
     assert refresh.stopped == 0
+    assert cleanup.started == 0
+    assert cleanup.stopped == 0
 
 
 def test_parse_args_uses_runtime_gateway_token_when_env_is_missing(tmp_path: Path, monkeypatch) -> None:
@@ -242,6 +321,210 @@ def test_cancel_report_task_route_calls_queue() -> None:
     assert queue.calls == [{"request_id": "req-cancel", "task_id": "task-1"}]
 
 
+def test_delete_saved_report_route_calls_cleanup_service() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=["run-delete-1"],
+            skippedRunIds=[],
+            failedRunIds=[],
+            deletedBytesApprox=128,
+            warnings=[],
+            userMessage="已删除 1 份报告。",
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-report",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_report(
+        DeleteSavedReportRequest(requestId="req-delete", reportId="run-delete-1"),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-1"]]
+    assert json.loads(response.body) == {
+        "deleted": True,
+        "reportId": "run-delete-1",
+        "userMessage": "已删除 1 份报告。",
+        "cleanup": {
+            "deletedRunIds": ["run-delete-1"],
+            "skippedRunIds": [],
+            "failedRunIds": [],
+            "deletedBytesApprox": 128,
+            "warnings": [],
+        },
+    }
+
+
+def test_delete_saved_report_route_returns_partial_cleanup_details_without_error() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=[],
+            skippedRunIds=["run-delete-skipped"],
+            failedRunIds=[],
+            deletedBytesApprox=0,
+            warnings=["运行仍受保护。"],
+            userMessage="0 份报告已删除，1 份已跳过。",
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-report",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_report(
+        DeleteSavedReportRequest(requestId="req-delete", reportId="run-delete-skipped"),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-skipped"]]
+    assert json.loads(response.body) == {
+        "deleted": False,
+        "reportId": "run-delete-skipped",
+        "userMessage": "0 份报告已删除，1 份已跳过。",
+        "cleanup": {
+            "deletedRunIds": [],
+            "skippedRunIds": ["run-delete-skipped"],
+            "failedRunIds": [],
+            "deletedBytesApprox": 0,
+            "warnings": ["运行仍受保护。"],
+        },
+    }
+
+
+def test_delete_saved_report_route_returns_failed_cleanup_details_without_error() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=[],
+            skippedRunIds=[],
+            failedRunIds=["run-delete-failed"],
+            deletedBytesApprox=0,
+            warnings=["删除 run-delete-failed 失败：permission denied"],
+            userMessage="0 份报告已删除，1 份删除失败。",
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-report",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_report(
+        DeleteSavedReportRequest(requestId="req-delete", reportId="run-delete-failed"),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-failed"]]
+    assert json.loads(response.body) == {
+        "deleted": False,
+        "reportId": "run-delete-failed",
+        "userMessage": "0 份报告已删除，1 份删除失败。",
+        "cleanup": {
+            "deletedRunIds": [],
+            "skippedRunIds": [],
+            "failedRunIds": ["run-delete-failed"],
+            "deletedBytesApprox": 0,
+            "warnings": ["删除 run-delete-failed 失败：permission denied"],
+        },
+    }
+
+
+def test_delete_saved_reports_route_calls_cleanup_service_once_for_batch() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=["run-delete-1"],
+            skippedRunIds=["run-delete-2"],
+            failedRunIds=[],
+            deletedBytesApprox=128,
+            warnings=[],
+            userMessage="已删除 1 份报告，1 份已跳过。",
+            runs=[
+                ReportCleanupRunResult(
+                    runId="run-delete-1",
+                    status="deleted",
+                    deletedBytesApprox=128,
+                    userMessage="报告已硬删除。",
+                ),
+                ReportCleanupRunResult(
+                    runId="run-delete-2",
+                    status="skipped",
+                    userMessage="运行仍受保护。",
+                ),
+            ],
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-reports",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_reports(
+        DeleteSavedReportsRequest(
+            requestId="req-delete-batch",
+            reportIds=["run-delete-1", "run-delete-2"],
+        ),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-1", "run-delete-2"]]
+    assert json.loads(response.body) == {
+        "deletedRunIds": ["run-delete-1"],
+        "skippedRunIds": ["run-delete-2"],
+        "failedRunIds": [],
+        "deletedBytesApprox": 128,
+        "warnings": [],
+        "userMessage": "已删除 1 份报告，1 份已跳过。",
+        "runs": [
+            {
+                "reportId": "run-delete-1",
+                "status": "deleted",
+                "deletedBytesApprox": 128,
+                "warnings": [],
+                "userMessage": "报告已硬删除。",
+            },
+            {
+                "reportId": "run-delete-2",
+                "status": "skipped",
+                "deletedBytesApprox": 0,
+                "warnings": [],
+                "userMessage": "运行仍受保护。",
+            },
+        ],
+    }
+
+
 def test_cancel_selection_progress_route_cancels_workflow_and_refresh() -> None:
     selection = _SelectionCancelProbe(cancelled=False)
     refresh = _RefreshCancelProbe(cancelled=True)
@@ -301,6 +584,21 @@ class _RefreshServiceProbe:
         self.stopped += 1
 
 
+class _CleanupSchedulerProbe:
+    def __init__(self, *, fail_start: bool = False) -> None:
+        self.started = 0
+        self.stopped = 0
+        self._fail_start = fail_start
+
+    def start(self) -> None:
+        self.started += 1
+        if self._fail_start:
+            raise RuntimeError("cleanup scheduler failed")
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+
 class _SavedReportQueueProbe:
     def get_report_queue_snapshot_for_user(self) -> dict[str, object]:
         return {}
@@ -340,6 +638,43 @@ class _ConnectedChannelBridgeProbe:
     def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str]:
         assert channel_kind == "wechat_clawbot"
         return ("sender-1@im.wechat", "account-1")
+
+
+class _ResetLlmProbe:
+    def __init__(self) -> None:
+        self.request_ids: list[str] = []
+
+    def reset_llm_settings_to_defaults(self, *, request_id: str) -> dict[str, object]:
+        self.request_ids.append(request_id)
+        return {"status": "reset"}
+
+
+class _ResetDataSourcesProbe:
+    def __init__(self) -> None:
+        self.request_ids: list[str] = []
+
+    def reset_to_defaults(self, request_id: str) -> dict[str, object]:
+        self.request_ids.append(request_id)
+        return {"status": "reset"}
+
+
+class _ResetChannelProbe:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def save_channel_config_via_openclaw(self, **kwargs) -> dict[str, object]:  # type: ignore[no-untyped-def]
+        self.calls.append(dict(kwargs))
+        return {"status": "disabled"}
+
+
+class _ReportCleanupProbe:
+    def __init__(self, result: ReportCleanupResult) -> None:
+        self._result = result
+        self.calls: list[list[str]] = []
+
+    def delete_report_runs(self, run_ids) -> ReportCleanupResult:  # type: ignore[no-untyped-def]
+        self.calls.append(list(run_ids))
+        return self._result
 
 
 class _SelectionControllerSnapshotProbe:

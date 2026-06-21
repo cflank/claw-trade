@@ -18,7 +18,9 @@ import type {
   CreateIntentDraftInput,
   CreateIntentDraftOutput,
   DeleteSavedReportOutput,
+  DeleteSavedReportsOutput,
   GetReportChartEvidenceOutput,
+  GetReportCleanupSettingsOutput,
   ListDataSourcesOutput,
   ListWorkerChatWorkersOutput,
   ListSavedReportsOutput,
@@ -33,6 +35,8 @@ import type {
   RunScheduledReportNowOutput,
   SaveChannelConfigViaOpenClawInput,
   SaveChannelConfigViaOpenClawOutput,
+  SaveReportCleanupSettingsInput,
+  SaveReportCleanupSettingsOutput,
   SaveEmbeddingConfigViaOpenVikingInput,
   SaveEmbeddingConfigViaOpenVikingOutput,
   SaveDataSourceInstanceInput,
@@ -221,6 +225,13 @@ export function deleteSavedReport(requestId: string, reportId: string) {
   });
 }
 
+export function deleteSavedReports(requestId: string, reportIds: string[]) {
+  return requestJson<DeleteSavedReportsOutput>('/api/ui/delete-saved-reports', {
+    method: 'POST',
+    body: JSON.stringify({ requestId, reportIds }),
+  });
+}
+
 export function sendReportFileViaChannel(input: SendReportFileViaChannelInput) {
   return requestJson<SendReportFileViaChannelOutput>('/api/ui/send-report-file-via-channel', {
     method: 'POST',
@@ -270,6 +281,17 @@ export function getChannelChatSnapshot() {
 
 export function loadLlmSettings() {
   return requestJson<LoadLlmSettingsOutput>('/api/ui/load-llm-settings');
+}
+
+export function getReportCleanupSettings() {
+  return requestJson<GetReportCleanupSettingsOutput>('/api/ui/get-report-cleanup-settings');
+}
+
+export function saveReportCleanupSettings(input: SaveReportCleanupSettingsInput) {
+  return requestJson<SaveReportCleanupSettingsOutput>('/api/ui/save-report-cleanup-settings', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export function getAdvancedDiagnosticsProviderHealth() {
