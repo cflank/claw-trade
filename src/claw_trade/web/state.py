@@ -68,7 +68,7 @@ from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_ca
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
 from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanService
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
-from claw_trade.ui_backend.report_cleanup import ReportCleanupService, ReportFileSendTracker
+from claw_trade.ui_backend.report_cleanup import ReportCleanupScheduler, ReportCleanupService, ReportFileSendTracker
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
@@ -244,6 +244,7 @@ class UiHttpServices:
     llm_bridge: LlmSettingsBridge
     report_notification_service: ReportNotificationService
     report_cleanup_service: ReportCleanupService
+    report_cleanup_scheduler: ReportCleanupScheduler
     scheduler_service: SchedulerService
     price_alert_service: PriceAlertService
     price_alert_scan_service: PriceAlertScanService
@@ -402,6 +403,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         protected_run_ids_provider=queue.protected_run_ids_for_cleanup,
         in_flight_report_ids_provider=file_send_tracker.active_report_ids,
     )
+    report_cleanup_scheduler = ReportCleanupScheduler(
+        cleanup_service=report_cleanup_service,
+        settings_service=report_cleanup_settings,
+    )
     channel_text_inbound = ChannelTextInboundController(
         chat_controller,
         request_full_report_file=lambda report_id, request_id, target: report_notification_service.request_full_report_file(
@@ -442,6 +447,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         llm_bridge=llm_bridge,
         report_notification_service=report_notification_service,
         report_cleanup_service=report_cleanup_service,
+        report_cleanup_scheduler=report_cleanup_scheduler,
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
         price_alert_scan_service=price_alert_scan_service,

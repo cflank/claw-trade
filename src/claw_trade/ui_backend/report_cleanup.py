@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import threading
@@ -9,12 +10,19 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from claw_trade.ui_backend.report_repository import ReportRepository
 
 _RUN_ID_RE = re.compile(r"\brun-[A-Za-z0-9][A-Za-z0-9_.-]*\b")
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+_DAILY_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+
+_LOGGER = logging.getLogger("uvicorn.error")
+
+
+class _ReportCleanupSettings(Protocol):
+    def load_settings(self) -> dict[str, int]: ...
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,60 @@ class ReportFileSendTracker:
     def active_report_ids(self) -> set[str]:
         with self._lock:
             return set(self._active)
+
+
+class ReportCleanupScheduler:
+    def __init__(
+        self,
+        *,
+        cleanup_service: "ReportCleanupService",
+        settings_service: _ReportCleanupSettings,
+        interval_seconds: float = _DAILY_CLEANUP_INTERVAL_SECONDS,
+        initial_delay_seconds: float = 5.0,
+    ) -> None:
+        self._cleanup_service = cleanup_service
+        self._settings_service = settings_service
+        self._interval_seconds = interval_seconds
+        self._initial_delay_seconds = initial_delay_seconds
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                if self._stop_event.is_set():
+                    raise RuntimeError("report cleanup scheduler is still stopping")
+                return
+            self._stop_event.clear()
+            self._thread = threading.Thread(
+                target=self._run_loop,
+                daemon=True,
+                name="report-cleanup-scheduler",
+            )
+            self._thread.start()
+
+    def stop(self, *, timeout_seconds: float = 1.0) -> None:
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout_seconds)
+
+    def _run_loop(self) -> None:
+        if self._stop_event.wait(self._initial_delay_seconds):
+            return
+        while not self._stop_event.is_set():
+            self._run_cleanup_once()
+            if self._stop_event.wait(self._interval_seconds):
+                return
+
+    def _run_cleanup_once(self) -> None:
+        try:
+            settings = self._settings_service.load_settings()
+            retention_days = settings["reportRetentionDays"]
+            self._cleanup_service.cleanup_expired_reports(retention_days=retention_days)
+        except Exception:
+            _LOGGER.exception("Report cleanup scheduler run failed.")
 
 
 class ReportCleanupService:

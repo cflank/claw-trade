@@ -3,10 +3,16 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
-from claw_trade.ui_backend.report_cleanup import ReportCleanupService, ReportFileSendTracker
+from claw_trade.ui_backend.report_cleanup import (
+    ReportCleanupResult,
+    ReportCleanupScheduler,
+    ReportCleanupService,
+    ReportFileSendTracker,
+)
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository
@@ -85,6 +91,163 @@ class _RepositoryFailingForRun(ReportRepository):
         if report_id == self._failed_run_id:
             raise OSError("index write failed")
         return super().discard_deleted_report_id(report_id)
+
+
+class _CleanupSchedulerCleanupProbe:
+    def __init__(self, *, fail_calls: int = 0) -> None:
+        self._fail_calls = fail_calls
+        self._lock = Lock()
+        self._changed = Event()
+        self.retention_days: list[int] = []
+        self.exceptions: list[Exception] = []
+
+    def cleanup_expired_reports(self, *, retention_days: int) -> ReportCleanupResult:
+        try:
+            with self._lock:
+                self.retention_days.append(retention_days)
+                call_count = len(self.retention_days)
+                self._changed.set()
+                self._changed.clear()
+            if call_count <= self._fail_calls:
+                raise RuntimeError("cleanup failed")
+            return ReportCleanupResult()
+        except Exception as exc:
+            with self._lock:
+                self.exceptions.append(exc)
+            raise
+
+    def wait_for_calls(self, count: int, *, timeout: float = 1.0) -> bool:
+        deadline = datetime.now(UTC).timestamp() + timeout
+        while datetime.now(UTC).timestamp() < deadline:
+            with self._lock:
+                if len(self.retention_days) >= count:
+                    return True
+            self._changed.wait(timeout=0.01)
+        return False
+
+
+class _CleanupSchedulerSettingsProbe:
+    def __init__(self, days: list[int]) -> None:
+        self._days = days
+        self.calls = 0
+
+    def load_settings(self) -> dict[str, int]:
+        day = self._days[min(self.calls, len(self._days) - 1)]
+        self.calls += 1
+        return {"reportRetentionDays": day}
+
+
+class _BlockingCleanupSchedulerCleanupProbe:
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._changed = Event()
+        self._release = Event()
+        self.retention_days: list[int] = []
+
+    def cleanup_expired_reports(self, *, retention_days: int) -> ReportCleanupResult:
+        with self._lock:
+            self.retention_days.append(retention_days)
+            self._changed.set()
+            self._changed.clear()
+        self._release.wait()
+        return ReportCleanupResult()
+
+    def release(self) -> None:
+        self._release.set()
+
+    def wait_for_calls(self, count: int, *, timeout: float = 1.0) -> bool:
+        deadline = datetime.now(UTC).timestamp() + timeout
+        while datetime.now(UTC).timestamp() < deadline:
+            with self._lock:
+                if len(self.retention_days) >= count:
+                    return True
+            self._changed.wait(timeout=0.01)
+        return False
+
+
+def test_cleanup_scheduler_start_calls_cleanup_once() -> None:
+    cleanup = _CleanupSchedulerCleanupProbe()
+    settings = _CleanupSchedulerSettingsProbe([14])
+    scheduler = ReportCleanupScheduler(
+        cleanup_service=cleanup,  # type: ignore[arg-type]
+        settings_service=settings,
+        initial_delay_seconds=0,
+        interval_seconds=60,
+    )
+
+    scheduler.start()
+    try:
+        assert cleanup.wait_for_calls(1)
+    finally:
+        scheduler.stop()
+
+    assert cleanup.retention_days == [14]
+    assert cleanup.exceptions == []
+    assert settings.calls == 1
+
+
+def test_cleanup_scheduler_stop_exits_cleanly() -> None:
+    cleanup = _CleanupSchedulerCleanupProbe()
+    scheduler = ReportCleanupScheduler(
+        cleanup_service=cleanup,  # type: ignore[arg-type]
+        settings_service=_CleanupSchedulerSettingsProbe([7]),
+        initial_delay_seconds=60,
+        interval_seconds=60,
+    )
+
+    scheduler.start()
+    scheduler.stop(timeout_seconds=1)
+
+    thread = scheduler._thread  # noqa: SLF001
+    assert thread is not None
+    assert not thread.is_alive()
+    assert cleanup.retention_days == []
+
+
+def test_cleanup_scheduler_start_raises_while_previous_thread_is_stopping() -> None:
+    cleanup = _BlockingCleanupSchedulerCleanupProbe()
+    scheduler = ReportCleanupScheduler(
+        cleanup_service=cleanup,  # type: ignore[arg-type]
+        settings_service=_CleanupSchedulerSettingsProbe([7, 14]),
+        initial_delay_seconds=0,
+        interval_seconds=60,
+    )
+
+    scheduler.start()
+    assert cleanup.wait_for_calls(1)
+    scheduler.stop(timeout_seconds=0.001)
+
+    with pytest.raises(RuntimeError, match="still stopping"):
+        scheduler.start()
+
+    cleanup.release()
+    scheduler.stop(timeout_seconds=1)
+    scheduler.start()
+    try:
+        assert cleanup.wait_for_calls(2)
+    finally:
+        scheduler.stop()
+
+    assert cleanup.retention_days == [7, 14]
+
+
+def test_cleanup_scheduler_exception_does_not_crash_scheduler() -> None:
+    cleanup = _CleanupSchedulerCleanupProbe(fail_calls=1)
+    scheduler = ReportCleanupScheduler(
+        cleanup_service=cleanup,  # type: ignore[arg-type]
+        settings_service=_CleanupSchedulerSettingsProbe([7, 30]),
+        initial_delay_seconds=0,
+        interval_seconds=0.01,
+    )
+
+    scheduler.start()
+    try:
+        assert cleanup.wait_for_calls(2)
+    finally:
+        scheduler.stop()
+
+    assert cleanup.retention_days[:2] == [7, 30]
+    assert [type(exc) for exc in cleanup.exceptions] == [RuntimeError]
 
 
 def test_expired_inactive_run_deleted(tmp_path: Path) -> None:

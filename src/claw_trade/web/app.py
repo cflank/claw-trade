@@ -25,15 +25,24 @@ def build_research_ui_app(
 ) -> FastAPI:
     owns_services = services is None
     selection_auto_refresh_enabled = owns_services and _selection_auto_refresh_enabled()
+    report_cleanup_scheduler_enabled = owns_services
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        if app.state.selection_auto_refresh_enabled:
-            app.state.ui_services.selection_refresh_service.start_automatic_refresh_scheduler()
+        selection_started = False
+        cleanup_started = False
         try:
+            if app.state.selection_auto_refresh_enabled:
+                app.state.ui_services.selection_refresh_service.start_automatic_refresh_scheduler()
+                selection_started = True
+            if app.state.report_cleanup_scheduler_enabled:
+                app.state.ui_services.report_cleanup_scheduler.start()
+                cleanup_started = True
             yield
         finally:
-            if app.state.selection_auto_refresh_enabled:
+            if cleanup_started:
+                app.state.ui_services.report_cleanup_scheduler.stop()
+            if selection_started:
                 app.state.ui_services.selection_refresh_service.stop_automatic_refresh_scheduler()
 
     app = FastAPI(title="claw-trade research ui", lifespan=lifespan)
@@ -41,6 +50,7 @@ def build_research_ui_app(
     app.state.ui_services = services or build_ui_http_services(settings)
     app.state.owns_ui_services = owns_services
     app.state.selection_auto_refresh_enabled = selection_auto_refresh_enabled
+    app.state.report_cleanup_scheduler_enabled = report_cleanup_scheduler_enabled
 
     @app.exception_handler(RequestValidationError)
     async def ui_validation_error_handler(request: Request, exc: RequestValidationError):

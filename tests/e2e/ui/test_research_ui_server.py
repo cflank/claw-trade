@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.ui_backend.report_cleanup import ReportCleanupResult
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
@@ -125,7 +126,8 @@ def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Pa
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     refresh = _RefreshServiceProbe()
-    services = SimpleNamespace(selection_refresh_service=refresh)
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
     monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
@@ -133,8 +135,31 @@ def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Pa
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
         assert refresh.started == 1
+        assert cleanup.started == 1
 
     assert refresh.stopped == 1
+    assert cleanup.stopped == 1
+
+
+def test_app_startup_stops_selection_when_cleanup_scheduler_start_fails(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe(fail_start=True)
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
+    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with pytest.raises(RuntimeError, match="cleanup scheduler failed"):
+        with TestClient(app):
+            pass
+
+    assert refresh.started == 1
+    assert refresh.stopped == 1
+    assert cleanup.started == 1
+    assert cleanup.stopped == 0
 
 
 def test_app_startup_does_not_start_owned_selection_auto_refresh_when_disabled(tmp_path: Path, monkeypatch) -> None:
@@ -142,16 +167,19 @@ def test_app_startup_does_not_start_owned_selection_auto_refresh_when_disabled(t
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     refresh = _RefreshServiceProbe()
-    services = SimpleNamespace(selection_refresh_service=refresh)
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     monkeypatch.setenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", "0")
     monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
 
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
+        assert cleanup.started == 1
 
     assert refresh.started == 0
     assert refresh.stopped == 0
+    assert cleanup.stopped == 1
 
 
 def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Path) -> None:
@@ -159,7 +187,8 @@ def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Pa
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     refresh = _RefreshServiceProbe()
-    services = SimpleNamespace(selection_refresh_service=refresh)
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist), services=services)  # type: ignore[arg-type]
 
     with TestClient(app) as client:
@@ -167,6 +196,8 @@ def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Pa
 
     assert refresh.started == 0
     assert refresh.stopped == 0
+    assert cleanup.started == 0
+    assert cleanup.stopped == 0
 
 
 def test_parse_args_uses_runtime_gateway_token_when_env_is_missing(tmp_path: Path, monkeypatch) -> None:
@@ -476,6 +507,21 @@ class _RefreshServiceProbe:
         self.started += 1
 
     def stop_automatic_refresh_scheduler(self) -> None:
+        self.stopped += 1
+
+
+class _CleanupSchedulerProbe:
+    def __init__(self, *, fail_start: bool = False) -> None:
+        self.started = 0
+        self.stopped = 0
+        self._fail_start = fail_start
+
+    def start(self) -> None:
+        self.started += 1
+        if self._fail_start:
+            raise RuntimeError("cleanup scheduler failed")
+
+    def stop(self) -> None:
         self.stopped += 1
 
 
