@@ -57,6 +57,7 @@ const REPORT_INPUT_FORMAT_HINT = '格式提示：A股 600519.SH；港股 00700.H
 const DEVICE_UI_HREF = '/api/ui/open-device-interface';
 const WORKER_CHAT_UNAVAILABLE_MESSAGE = 'Worker chat 暂无可用 worker，请刷新页面后重试。';
 const WORKER_CHAT_LOAD_FAILED_MESSAGE = 'Worker chat 菜单加载失败，请刷新页面后重试。';
+const REPORT_DELETE_SCOPE_COPY = '将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。';
 
 const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
   runningTask: null,
@@ -666,7 +667,7 @@ export function HomePage() {
 
   const deleteReport = useCallback(
     async (report: SavedReportForUser) => {
-      const shouldDelete = window.confirm(`永久删除「${report.title}」？相关运行证据也会删除。`);
+      const shouldDelete = window.confirm(`永久删除「${report.title}」？${REPORT_DELETE_SCOPE_COPY}`);
       if (!shouldDelete) {
         return;
       }
@@ -696,31 +697,28 @@ export function HomePage() {
         return;
       }
       const action = scope === 'search' ? `删除当前搜索结果中的 ${reports.length} 份正式报告` : `清空 ${reports.length} 份正式报告`;
-      if (!window.confirm(`${action}？相关运行证据也会删除。`)) {
+      if (!window.confirm(`${action}？每个目标报告运行都会被硬删除。${REPORT_DELETE_SCOPE_COPY}`)) {
         return;
       }
       setError('');
       const deletedIds: string[] = [];
-      let firstNonDeletedMessage = '';
-      try {
-        for (const report of reports) {
+      const failedMessages: string[] = [];
+      for (const report of reports) {
+        try {
           const result = await deleteSavedReport(nextRequestId(), report.id);
           if (result.deleted) {
             deletedIds.push(report.id);
-          } else if (!firstNonDeletedMessage) {
+          } else {
             const message = result.userMessage.trim();
-            if (message) {
-              firstNonDeletedMessage = message;
-              setError(message);
-            }
+            failedMessages.push(message || `${report.title} 未删除。`);
           }
+        } catch (deleteError) {
+          const message = (deleteError as Error).message.trim();
+          failedMessages.push(message || `${report.title} 删除失败。`);
         }
-      } catch (deleteError) {
-        setError((deleteError as Error).message);
-      } finally {
-        if (!deletedIds.length) {
-          return;
-        }
+      }
+
+      if (deletedIds.length) {
         const deletedSet = new Set(deletedIds);
         setSavedReports((current) => current.filter((item) => !deletedSet.has(item.id)));
         if (activeReportId && deletedSet.has(activeReportId)) {
@@ -728,6 +726,14 @@ export function HomePage() {
           setQaEntries([]);
           setContext(DEFAULT_CONTEXT);
         }
+      }
+
+      if (failedMessages.length) {
+        const uniqueMessages = [...new Set(failedMessages)];
+        const prefix = deletedIds.length
+          ? `已删除 ${deletedIds.length} 份报告，${failedMessages.length} 份未删除。`
+          : `${failedMessages.length} 份报告未删除。`;
+        setError(`${prefix}原因：${uniqueMessages.join('；')}`);
       }
     },
     [activeReportId],
