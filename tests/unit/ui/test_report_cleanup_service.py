@@ -560,7 +560,7 @@ def test_openclaw_sessions_symlink_dir_is_not_traversed(tmp_path: Path) -> None:
     assert sessions_link.exists()
 
 
-def test_shared_delivery_queue_file_warned_and_skipped(tmp_path: Path) -> None:
+def test_shared_delivery_queue_list_prunes_matching_item(tmp_path: Path) -> None:
     service, run_root, _, openclaw_root, _ = _service(tmp_path)
     _write_run(run_root, "run-old", updated_at="2026-05-01T00:00:00Z")
     queue_path = openclaw_root / "delivery-queue" / "shared.json"
@@ -573,7 +573,25 @@ def test_shared_delivery_queue_file_warned_and_skipped(tmp_path: Path) -> None:
     result = service.cleanup_expired_reports(retention_days=30)
 
     assert queue_path.exists()
-    assert "shared.json" in result.warnings[0]
+    assert result.warnings == []
+    assert json.loads(queue_path.read_text(encoding="utf-8")) == [{"reportId": "run-other"}]
+
+
+def test_shared_delivery_queue_list_removed_after_batch_delete(tmp_path: Path) -> None:
+    service, run_root, _, openclaw_root, _ = _service(tmp_path)
+    _write_run(run_root, "run-old", updated_at="2026-05-01T00:00:00Z")
+    _write_run(run_root, "run-other", updated_at="2026-05-01T00:00:00Z")
+    queue_path = openclaw_root / "delivery-queue" / "shared.json"
+    queue_path.parent.mkdir(parents=True)
+    queue_path.write_text(
+        json.dumps([{"reportId": "run-old"}, {"reportId": "run-other"}]),
+        encoding="utf-8",
+    )
+
+    result = service.delete_report_runs(["run-old", "run-other"])
+
+    assert result.deletedRunIds == ["run-old", "run-other"]
+    assert not queue_path.exists()
 
 
 def test_delivery_queue_symlink_dir_is_not_traversed(tmp_path: Path) -> None:

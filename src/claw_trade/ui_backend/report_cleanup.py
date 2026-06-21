@@ -366,10 +366,6 @@ def _clean_delivery_queue(openclaw_state_root: Path, run_id: str) -> tuple[int, 
         text = _read_text(path)
         if text is None or run_id not in text:
             continue
-        run_ids = set(_RUN_ID_RE.findall(text))
-        if run_ids and run_ids != {run_id}:
-            warnings.append(f"跳过共享发送队列文件：{path.name}")
-            continue
         payload = _loads_json(text)
         if isinstance(payload, list):
             kept: list[Any] = []
@@ -391,6 +387,10 @@ def _clean_delivery_queue(openclaw_state_root: Path, run_id: str) -> tuple[int, 
             else:
                 deleted_bytes += old_size
                 path.unlink()
+            continue
+        run_ids = set(_RUN_ID_RE.findall(text))
+        if run_ids and not _run_tokens_belong_to_run(run_ids, run_id):
+            warnings.append(f"跳过共享发送队列文件：{path.name}")
             continue
         if _text_uniquely_matches_run(text, run_id):
             deleted_bytes += _file_size(path)
