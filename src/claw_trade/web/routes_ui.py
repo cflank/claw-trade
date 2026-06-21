@@ -651,8 +651,21 @@ def get_report_asset(
 def delete_saved_report(payload: DeleteSavedReportRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
-        services.repository.delete_saved_report(payload.reportId)
-        return _success_response({"deleted": True, "reportId": payload.reportId})
+        cleanup = services.report_cleanup_service.delete_report_runs([payload.reportId])
+        return _success_response(
+            {
+                "deleted": payload.reportId in cleanup.deletedRunIds,
+                "reportId": payload.reportId,
+                "userMessage": cleanup.userMessage,
+                "cleanup": {
+                    "deletedRunIds": cleanup.deletedRunIds,
+                    "skippedRunIds": cleanup.skippedRunIds,
+                    "failedRunIds": cleanup.failedRunIds,
+                    "deletedBytesApprox": cleanup.deletedBytesApprox,
+                    "warnings": cleanup.warnings,
+                },
+            }
+        )
     except Exception as exc:
         return _exception_response(exc)
 

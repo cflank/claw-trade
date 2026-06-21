@@ -119,7 +119,7 @@ export function HistoryRail({
                     type="button"
                     className="ct-history-delete"
                     aria-label={`删除 ${item.title}`}
-                    title="从历史中移除"
+                    title="永久删除报告"
                     onClick={() => onDeleteReport(item)}
                   >
                     删除

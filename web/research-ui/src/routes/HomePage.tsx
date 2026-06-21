@@ -666,13 +666,17 @@ export function HomePage() {
 
   const deleteReport = useCallback(
     async (report: SavedReportForUser) => {
-      const shouldDelete = window.confirm(`从历史中移除「${report.title}」？底层运行证据会保留。`);
+      const shouldDelete = window.confirm(`永久删除「${report.title}」？相关运行证据也会删除。`);
       if (!shouldDelete) {
         return;
       }
       setError('');
       try {
-        await deleteSavedReport(nextRequestId(), report.id);
+        const result = await deleteSavedReport(nextRequestId(), report.id);
+        if (!result.deleted) {
+          setError(result.userMessage);
+          return;
+        }
         setSavedReports((current) => current.filter((item) => item.id !== report.id));
         if (activeReportId === report.id) {
           setActiveDetail(null);
@@ -692,15 +696,24 @@ export function HomePage() {
         return;
       }
       const action = scope === 'search' ? `删除当前搜索结果中的 ${reports.length} 份正式报告` : `清空 ${reports.length} 份正式报告`;
-      if (!window.confirm(`${action}？底层运行证据会保留。`)) {
+      if (!window.confirm(`${action}？相关运行证据也会删除。`)) {
         return;
       }
       setError('');
       const deletedIds: string[] = [];
+      let firstNonDeletedMessage = '';
       try {
         for (const report of reports) {
-          await deleteSavedReport(nextRequestId(), report.id);
-          deletedIds.push(report.id);
+          const result = await deleteSavedReport(nextRequestId(), report.id);
+          if (result.deleted) {
+            deletedIds.push(report.id);
+          } else if (!firstNonDeletedMessage) {
+            const message = result.userMessage.trim();
+            if (message) {
+              firstNonDeletedMessage = message;
+              setError(message);
+            }
+          }
         }
       } catch (deleteError) {
         setError((deleteError as Error).message);

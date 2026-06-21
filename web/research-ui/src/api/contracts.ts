@@ -548,8 +548,16 @@ export interface ListSavedReportsOutput {
 }
 
 export interface DeleteSavedReportOutput {
-  deleted: true;
+  deleted: boolean;
   reportId: string;
+  userMessage: string;
+  cleanup: {
+    deletedRunIds: string[];
+    skippedRunIds: string[];
+    failedRunIds: string[];
+    deletedBytesApprox: number;
+    warnings: string[];
+  };
 }
 
 export interface GetReportChartEvidenceOutput {

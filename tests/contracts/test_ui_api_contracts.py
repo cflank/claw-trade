@@ -34,6 +34,29 @@ def test_ui_api_contract_has_forbidden_internal_fields() -> None:
     assert "dedupeKey" in contract.forbidden_response_fields
 
 
+def test_delete_saved_report_contract_exposes_cleanup_result() -> None:
+    contract = get_ui_api_contract("deleteSavedReport")
+    assert contract.response_shape == (
+        "{ deleted: boolean, reportId, userMessage, cleanup: { deletedRunIds, "
+        "skippedRunIds, failedRunIds, deletedBytesApprox, warnings } }"
+    )
+    validate_ui_api_response(
+        "deleteSavedReport",
+        {
+            "deleted": False,
+            "reportId": "run-selected",
+            "userMessage": "部分报告未删除。",
+            "cleanup": {
+                "deletedRunIds": [],
+                "skippedRunIds": ["run-selected"],
+                "failedRunIds": [],
+                "deletedBytesApprox": 0,
+                "warnings": [],
+            },
+        },
+    )
+
+
 def test_validate_ui_api_response_rejects_internal_field() -> None:
     payload = {"task": {"reportTaskId": "task-1", "runId": "run-secret"}}
     with pytest.raises(ValueError, match="禁止字段"):

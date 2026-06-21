@@ -7,15 +7,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
+from claw_trade.ui_backend.report_cleanup import ReportCleanupResult
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
     CancelReportTaskRequest,
     CancelSelectionProgressRequest,
     ConfirmIntentDraftRequest,
+    DeleteSavedReportRequest,
     cancel_report_task,
     cancel_selection_progress,
     confirm_intent_draft,
+    delete_saved_report,
     get_chat_session,
     get_selection_refresh_snapshot,
 )
@@ -285,6 +288,138 @@ def test_cancel_report_task_route_calls_queue() -> None:
     assert queue.calls == [{"request_id": "req-cancel", "task_id": "task-1"}]
 
 
+def test_delete_saved_report_route_calls_cleanup_service() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=["run-delete-1"],
+            skippedRunIds=[],
+            failedRunIds=[],
+            deletedBytesApprox=128,
+            warnings=[],
+            userMessage="已删除 1 份报告。",
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-report",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_report(
+        DeleteSavedReportRequest(requestId="req-delete", reportId="run-delete-1"),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-1"]]
+    assert json.loads(response.body) == {
+        "deleted": True,
+        "reportId": "run-delete-1",
+        "userMessage": "已删除 1 份报告。",
+        "cleanup": {
+            "deletedRunIds": ["run-delete-1"],
+            "skippedRunIds": [],
+            "failedRunIds": [],
+            "deletedBytesApprox": 128,
+            "warnings": [],
+        },
+    }
+
+
+def test_delete_saved_report_route_returns_partial_cleanup_details_without_error() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=[],
+            skippedRunIds=["run-delete-skipped"],
+            failedRunIds=[],
+            deletedBytesApprox=0,
+            warnings=["运行仍受保护。"],
+            userMessage="0 份报告已删除，1 份已跳过。",
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-report",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_report(
+        DeleteSavedReportRequest(requestId="req-delete", reportId="run-delete-skipped"),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-skipped"]]
+    assert json.loads(response.body) == {
+        "deleted": False,
+        "reportId": "run-delete-skipped",
+        "userMessage": "0 份报告已删除，1 份已跳过。",
+        "cleanup": {
+            "deletedRunIds": [],
+            "skippedRunIds": ["run-delete-skipped"],
+            "failedRunIds": [],
+            "deletedBytesApprox": 0,
+            "warnings": ["运行仍受保护。"],
+        },
+    }
+
+
+def test_delete_saved_report_route_returns_failed_cleanup_details_without_error() -> None:
+    cleanup = _ReportCleanupProbe(
+        ReportCleanupResult(
+            deletedRunIds=[],
+            skippedRunIds=[],
+            failedRunIds=["run-delete-failed"],
+            deletedBytesApprox=0,
+            warnings=["删除 run-delete-failed 失败：permission denied"],
+            userMessage="0 份报告已删除，1 份删除失败。",
+        )
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/delete-saved-report",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(report_cleanup_service=cleanup))
+            ),
+        }
+    )
+
+    response = delete_saved_report(
+        DeleteSavedReportRequest(requestId="req-delete", reportId="run-delete-failed"),
+        request,
+    )
+
+    assert response.status_code == 200
+    assert cleanup.calls == [["run-delete-failed"]]
+    assert json.loads(response.body) == {
+        "deleted": False,
+        "reportId": "run-delete-failed",
+        "userMessage": "0 份报告已删除，1 份删除失败。",
+        "cleanup": {
+            "deletedRunIds": [],
+            "skippedRunIds": [],
+            "failedRunIds": ["run-delete-failed"],
+            "deletedBytesApprox": 0,
+            "warnings": ["删除 run-delete-failed 失败：permission denied"],
+        },
+    }
+
+
 def test_cancel_selection_progress_route_cancels_workflow_and_refresh() -> None:
     selection = _SelectionCancelProbe(cancelled=False)
     refresh = _RefreshCancelProbe(cancelled=True)
@@ -410,6 +545,16 @@ class _ResetChannelProbe:
     def save_channel_config_via_openclaw(self, **kwargs) -> dict[str, object]:  # type: ignore[no-untyped-def]
         self.calls.append(dict(kwargs))
         return {"status": "disabled"}
+
+
+class _ReportCleanupProbe:
+    def __init__(self, result: ReportCleanupResult) -> None:
+        self._result = result
+        self.calls: list[list[str]] = []
+
+    def delete_report_runs(self, run_ids) -> ReportCleanupResult:  # type: ignore[no-untyped-def]
+        self.calls.append(list(run_ids))
+        return self._result
 
 
 class _SelectionControllerSnapshotProbe:
