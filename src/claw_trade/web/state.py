@@ -15,6 +15,7 @@ from claw_trade.config.report_workflow_settings import (
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
 )
+from claw_trade.data_gateway.runtime import build_data_api_from_env
 from claw_trade.data_gateway.selection_api import (
     build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
@@ -24,12 +25,13 @@ from claw_trade.data_gateway.selection_api import (
 from claw_trade.data_gateway.selection_api import (
     resolve_cn_a_selection_trade_date_for_scheduler as resolve_cn_a_closed_trade_date_for_scheduler,
 )
-from claw_trade.data_gateway.runtime import build_data_api_from_env
 from claw_trade.data_gateway.settings_store import (
     UI_EMBEDDING_SETTINGS_COLLECTION,
+    UI_REPORT_CLEANUP_SETTINGS_COLLECTION,
     UI_REPORT_MODEL_CONFIG_COLLECTION,
     UI_REPORT_MODEL_STATUS_COLLECTION,
     MongoEmbeddingConfigStore,
+    MongoReportCleanupSettingsStore,
     MongoReportModelConfigStore,
     MongoReportModelStatusStore,
     build_data_source_settings_stores,
@@ -66,16 +68,20 @@ from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_ca
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
 from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanService
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
+from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestionService
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
-from claw_trade.ui_backend.scheduler_service import SchedulerService
 from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner
 from claw_trade.ui_backend.scheduled_work_store import JsonScheduledWorkStore
+from claw_trade.ui_backend.scheduler_service import SchedulerService
 from claw_trade.ui_backend.settings_service import SettingsService
-from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder, render_completion_summary_text
+from claw_trade.ui_backend.summary_builder import (
+    CompletionSummaryBuilder,
+    render_completion_summary_text,
+)
 from claw_trade.ui_backend.worker_chat import WorkerChatController
 from claw_trade.ui_backend.worker_chat_openclaw import OpenClawWorkerChatClient
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
@@ -241,6 +247,7 @@ class UiHttpServices:
     price_alert_scan_service: PriceAlertScanService
     scheduled_work_runner: ScheduledWorkRunner
     settings_service: SettingsService
+    report_cleanup_settings: ReportCleanupSettingsService
     selection_confirmation: SelectionConfirmationController
     selection_controller: SelectionController
     selection_refresh_service: SelectionDataRefreshService
@@ -363,6 +370,12 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         env_writer=None,
         health_tester=build_data_source_health_tester(),
     )
+    report_cleanup_settings = ReportCleanupSettingsService(
+        store=MongoReportCleanupSettingsStore(ui_settings_db[UI_REPORT_CLEANUP_SETTINGS_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+        json_path=run_root / ".ui-report-cleanup-settings.json",
+    )
     channel_bridge = ChannelBridge(rpc_client)
     report_notification_service = ReportNotificationService(
         repository,
@@ -414,6 +427,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         price_alert_scan_service=price_alert_scan_service,
         scheduled_work_runner=scheduled_work_runner,
         settings_service=settings_service,
+        report_cleanup_settings=report_cleanup_settings,
         selection_confirmation=selection_confirmation,
         selection_controller=selection_controller,
         selection_refresh_service=selection_refresh_service,

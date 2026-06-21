@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
+from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
     CancelReportTaskRequest,
@@ -72,6 +73,48 @@ def test_list_saved_reports_enables_forward_when_wechat_has_default_target(tmp_p
     assert response.status_code == 200
     payload = response.json()
     assert [item["canForwardToChannel"] for item in payload["items"]] == [True, True]
+
+
+def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    cleanup = ReportCleanupSettingsService(json_path=tmp_path / "runs" / ".ui-report-cleanup-settings.json")
+    services = SimpleNamespace(
+        report_cleanup_settings=cleanup,
+        llm_bridge=_ResetLlmProbe(),
+        data_source_settings=_ResetDataSourcesProbe(),
+        channel_bridge=_ResetChannelProbe(),
+    )
+    app = build_research_ui_app(
+        settings=ResearchUiServerSettings(frontend_dist=dist),
+        services=services,  # type: ignore[arg-type]
+    )
+    client = TestClient(app)
+
+    loaded = client.get("/api/ui/get-report-cleanup-settings")
+    assert loaded.status_code == 200
+    assert loaded.json()["reportCleanup"] == {"reportRetentionDays": 7}
+
+    saved = client.post(
+        "/api/ui/save-report-cleanup-settings",
+        json={"requestId": "req-save-cleanup", "reportRetentionDays": 14},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["reportCleanup"] == {"reportRetentionDays": 14}
+
+    rejected = client.post(
+        "/api/ui/save-report-cleanup-settings",
+        json={"requestId": "req-save-cleanup-invalid", "reportRetentionDays": 21},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "INVALID_INPUT"
+
+    reset = client.post("/api/ui/reset-settings-to-defaults", json={"requestId": "req-reset"})
+    assert reset.status_code == 200
+    assert reset.json()["reportCleanup"] == {"reportRetentionDays": 7}
+    assert cleanup.load_settings() == {"reportRetentionDays": 7}
 
 
 def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
@@ -340,6 +383,33 @@ class _ConnectedChannelBridgeProbe:
     def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str]:
         assert channel_kind == "wechat_clawbot"
         return ("sender-1@im.wechat", "account-1")
+
+
+class _ResetLlmProbe:
+    def __init__(self) -> None:
+        self.request_ids: list[str] = []
+
+    def reset_llm_settings_to_defaults(self, *, request_id: str) -> dict[str, object]:
+        self.request_ids.append(request_id)
+        return {"status": "reset"}
+
+
+class _ResetDataSourcesProbe:
+    def __init__(self) -> None:
+        self.request_ids: list[str] = []
+
+    def reset_to_defaults(self, request_id: str) -> dict[str, object]:
+        self.request_ids.append(request_id)
+        return {"status": "reset"}
+
+
+class _ResetChannelProbe:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def save_channel_config_via_openclaw(self, **kwargs) -> dict[str, object]:  # type: ignore[no-untyped-def]
+        self.calls.append(dict(kwargs))
+        return {"status": "disabled"}
 
 
 class _SelectionControllerSnapshotProbe:

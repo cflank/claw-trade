@@ -17,8 +17,8 @@ from claw_trade.ui_backend.error_translator import translate_internal_error_for_
 from claw_trade.ui_backend.price_alert_service import UiServiceError as PriceAlertServiceError
 from claw_trade.ui_backend.report_queue import QueueError
 from claw_trade.ui_backend.report_repository import UiProductError
-from claw_trade.ui_backend.scheduler_service import UiServiceError as SchedulerServiceError
 from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunnerError
+from claw_trade.ui_backend.scheduler_service import UiServiceError as SchedulerServiceError
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 from claw_trade.ui_backend.worker_chat_catalog import list_worker_chat_menu
 from claw_trade.ui_backend.worker_chat_models import WorkerChatReplyForUser, WorkerChatRequest
@@ -147,6 +147,23 @@ class TestEmbeddingRequest(BaseModel):
 class SaveEmbeddingConfigRequest(BaseModel):
     requestId: str
     embedding: dict[str, Any]
+
+
+class ReportCleanupSettingsForUser(BaseModel):
+    reportRetentionDays: int
+
+
+class GetReportCleanupSettingsResponse(BaseModel):
+    reportCleanup: ReportCleanupSettingsForUser
+
+
+class SaveReportCleanupSettingsRequest(BaseModel):
+    requestId: str
+    reportRetentionDays: int
+
+
+class SaveReportCleanupSettingsResponse(BaseModel):
+    reportCleanup: ReportCleanupSettingsForUser
 
 
 class ResetSettingsToDefaultsRequest(BaseModel):
@@ -872,6 +889,29 @@ def save_embedding_config_via_openviking(payload: SaveEmbeddingConfigRequest, re
         return _exception_response(exc)
 
 
+@router.get("/get-report-cleanup-settings")
+def get_report_cleanup_settings(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(_report_cleanup_settings_response(services.report_cleanup_settings.load_settings()))
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/save-report-cleanup-settings")
+def save_report_cleanup_settings(payload: SaveReportCleanupSettingsRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        response = SaveReportCleanupSettingsResponse(
+            reportCleanup=ReportCleanupSettingsForUser(
+                **services.report_cleanup_settings.save_settings(payload.reportRetentionDays)
+            )
+        )
+        return _success_response(response.model_dump())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/reset-settings-to-defaults")
 def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -887,6 +927,7 @@ def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request:
             channel_kind="wechat_clawbot",
             config_patch={"enabled": False},
         )
+        report_cleanup_result = services.report_cleanup_settings.reset_to_defaults()
         return _success_response(
             {
                 "status": "reset",
@@ -894,6 +935,7 @@ def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request:
                 "llm": llm_result,
                 "dataSources": data_sources_result,
                 "channel": channel_result.get("status"),
+                "reportCleanup": report_cleanup_result,
             }
         )
     except Exception as exc:
@@ -937,6 +979,11 @@ def save_data_source_instance(payload: SaveDataSourceInstanceRequest, request: R
 
 def _services(request: Request) -> UiHttpServices:
     return request.app.state.ui_services
+
+
+def _report_cleanup_settings_response(settings: dict[str, int]) -> dict[str, Any]:
+    response = GetReportCleanupSettingsResponse(reportCleanup=ReportCleanupSettingsForUser(**settings))
+    return response.model_dump()
 
 
 def _valid_internal_cron_token(request: Request) -> bool:
