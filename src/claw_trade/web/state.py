@@ -24,7 +24,8 @@ from claw_trade.data_gateway.selection_api import (
 from claw_trade.data_gateway.selection_api import (
     resolve_cn_a_selection_trade_date_for_scheduler as resolve_cn_a_closed_trade_date_for_scheduler,
 )
-from claw_trade.data_gateway.runtime import build_data_api_from_env
+from claw_trade.data_gateway.maintenance import CollectionMaintenanceJobRepository, ScheduledDataMaintenanceRunner
+from claw_trade.data_gateway.runtime import build_data_api_from_env, build_data_gateway_runtime_from_env
 from claw_trade.data_gateway.settings_store import (
     UI_EMBEDDING_SETTINGS_COLLECTION,
     UI_REPORT_MODEL_CONFIG_COLLECTION,
@@ -221,6 +222,40 @@ class _ReportQaGatewayAdapter:
         )
 
 
+class _LazyDataMaintenanceRunner:
+    def __init__(self) -> None:
+        self._runner: ScheduledDataMaintenanceRunner | None = None
+        self._lock = Lock()
+
+    def run(
+        self,
+        *,
+        market: str,
+        job_kind: str,
+        cron_run_id: str | None,
+        maintenance_job_id: str | None,
+    ) -> object:
+        return self._require_runner().run(
+            market=market,
+            job_kind=job_kind,
+            cron_run_id=cron_run_id,
+            maintenance_job_id=maintenance_job_id,
+        )
+
+    def _require_runner(self) -> ScheduledDataMaintenanceRunner:
+        if self._runner is not None:
+            return self._runner
+        with self._lock:
+            if self._runner is None:
+                runtime = build_data_gateway_runtime_from_env()
+                self._runner = ScheduledDataMaintenanceRunner(
+                    data_api=runtime.data_api,
+                    job_repository=CollectionMaintenanceJobRepository(runtime.repository),
+                    dataset_repository=runtime.repository,
+                )
+        return self._runner
+
+
 @dataclass(frozen=True)
 class UiHttpServices:
     report_settings: ReportWorkflowSettings
@@ -283,6 +318,8 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             workflow_state=workflow_state,
         ),
     )
+    scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
+    cron_adapter = OpenClawCronAdapter(rpc_client)
     scheduler_service = SchedulerService(
         enqueue_report_task=lambda task, request_id: queue.enqueue_report_task(
             request_id=request_id,
@@ -290,10 +327,10 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             source="scheduled",
         ),
         queue_snapshot_provider=queue.get_report_queue_snapshot_for_user,
+        store=scheduled_work_store,
+        cron_adapter=cron_adapter,
     )
     price_alert_quote_provider = build_price_alert_quote_provider()
-    scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
-    cron_adapter = OpenClawCronAdapter(rpc_client)
     price_alert_service = PriceAlertService(
         quote_provider=price_alert_quote_provider,
         store=scheduled_work_store,
@@ -303,7 +340,6 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         store=scheduled_work_store,
         quote_provider=price_alert_quote_provider,
     )
-    scheduled_work_runner = ScheduledWorkRunner(price_alert_scan_service=price_alert_scan_service)
     confirmation = ConfirmationController(
         queue,
         scheduler_service=scheduler_service,
@@ -324,6 +360,12 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         resolve_closed_trade_date=resolve_cn_a_closed_trade_date_for_scheduler,
         load_approved_strategy_config_ref=load_cn_a_selection_v1_strategy_config_ref,
         build_data_need_audit=build_selection_data_need_audit,
+    )
+    scheduled_work_runner = ScheduledWorkRunner(
+        price_alert_scan_service=price_alert_scan_service,
+        scheduler_service=scheduler_service,
+        selection_data_refresh_runner=selection_refresh_service,
+        data_maintenance_runner=_LazyDataMaintenanceRunner(),
     )
     selection_controller = SelectionController(
         store=selection_store,

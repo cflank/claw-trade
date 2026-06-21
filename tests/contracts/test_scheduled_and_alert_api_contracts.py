@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, Mapping
 
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
+from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
 from claw_trade.ui_backend.scheduler_service import SchedulerService
+from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore
 from claw_trade.ui_contracts.api_contracts import validate_ui_api_response
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.user_dto import to_user_payload
@@ -11,6 +14,20 @@ from claw_trade.ui_contracts.user_dto import to_user_payload
 
 def _fixed_now() -> datetime:
     return datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
+
+
+class _FakeCronGateway:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def cron_add(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(params)
+        self.calls.append({"method": "cron.add", "params": payload})
+        return {"jobId": payload["name"]}
+
+    def cron_run(self, *, job_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
+        self.calls.append({"method": "cron.run", "params": {"jobId": job_id, "idempotencyKey": idempotency_key}})
+        return {"runId": "cron-run-1"}
 
 
 def _scheduler() -> SchedulerService:
@@ -28,6 +45,24 @@ def _scheduler() -> SchedulerService:
             "queuedCount": 1,
             "maxQueueSize": 10,
         },
+        now_provider=_fixed_now,
+    )
+
+
+def _cron_scheduler(gateway: _FakeCronGateway) -> SchedulerService:
+    def enqueue(_task: dict[str, object], _request_id: str) -> dict[str, object]:
+        raise AssertionError("cron run-now must not enqueue directly")
+
+    return SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {
+            "runningTask": None,
+            "queuedTasks": [],
+            "queuedCount": 0,
+            "maxQueueSize": 10,
+        },
+        store=InMemoryScheduledWorkStore(),
+        cron_adapter=OpenClawCronAdapter(gateway),
         now_provider=_fixed_now,
     )
 
@@ -92,6 +127,46 @@ def test_scheduled_report_api_contracts_return_user_dto_and_safe_payload() -> No
 
     deleted_payload = service.delete_scheduled_report(request_id="req-delete", scheduled_report_id=created.scheduledReportId)
     validate_ui_api_response("deleteScheduledReport", deleted_payload)
+
+
+def test_cron_scheduled_report_run_now_contract_returns_trigger_without_fake_task() -> None:
+    gateway = _FakeCronGateway()
+    service = _cron_scheduler(gateway)
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    run_now_payload = service.run_scheduled_report_now(
+        request_id="req-run-now",
+        scheduled_report_id=created.scheduledReportId,
+    )
+    serialized = {
+        "scheduledReport": to_user_payload(run_now_payload["scheduledReport"]),
+        "triggered": run_now_payload["triggered"],
+        "cronRunId": run_now_payload["cronRunId"],
+        "queueSnapshot": to_user_payload(run_now_payload["queueSnapshot"]),
+    }
+
+    validate_ui_api_response("runScheduledReportNow", serialized)
+    assert "task" not in run_now_payload
+    assert serialized == {
+        "scheduledReport": to_user_payload(created),
+        "triggered": True,
+        "cronRunId": "cron-run-1",
+        "queueSnapshot": {
+            "runningTask": None,
+            "queuedTasks": [],
+            "lastTerminalTask": None,
+            "queueLimit": 10,
+            "queuedCount": 0,
+            "isFull": False,
+        },
+    }
+    assert [call["method"] for call in gateway.calls] == ["cron.add", "cron.run"]
 
 
 def test_price_alert_api_contracts_return_user_dto_and_safe_payload() -> None:

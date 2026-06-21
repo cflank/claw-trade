@@ -657,10 +657,18 @@ def _request_range(request: Any | None) -> dict[str, Any]:
         return {"start": None, "end": None}
     if isinstance(request, Mapping):
         start = request.get("date_range_start")
+        if start is None:
+            start = request.get("time_range_start")
         end = request.get("date_range_end")
+        if end is None:
+            end = request.get("time_range_end")
     else:
         start = getattr(request, "date_range_start", None)
+        if start is None:
+            start = getattr(request, "time_range_start", None)
         end = getattr(request, "date_range_end", None)
+        if end is None:
+            end = getattr(request, "time_range_end", None)
     return {"start": _stringify_range_value(start), "end": _stringify_range_value(end)}
 
 

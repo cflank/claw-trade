@@ -749,10 +749,25 @@ export interface PriceAlertInput {
   notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
 }
 
-export interface RunScheduledReportNowOutput {
+export interface RunScheduledReportNowQueuedOutput {
   task: ReportTaskForUser;
   queueSnapshot: ReportQueueSnapshotForUser;
+  scheduledReport?: never;
+  triggered?: never;
+  cronRunId?: never;
 }
+
+export interface RunScheduledReportNowCronOutput {
+  scheduledReport: ScheduledReportForUser;
+  triggered: true;
+  cronRunId?: string | null;
+  queueSnapshot: ReportQueueSnapshotForUser;
+  task?: never;
+}
+
+export type RunScheduledReportNowOutput =
+  | RunScheduledReportNowCronOutput
+  | RunScheduledReportNowQueuedOutput;
 
 export interface RunPriceAlertNowOutput {
   alert: PriceAlertForUser;

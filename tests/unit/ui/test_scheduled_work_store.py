@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from claw_trade.ui_backend.scheduled_work_store import JsonScheduledWorkStore, PriceAlert, PriceAlertScanBucket
+from claw_trade.ui_backend.scheduled_work_store import (
+    JsonScheduledWorkStore,
+    PriceAlert,
+    PriceAlertScanBucket,
+    ScheduledReport,
+)
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.user_dto import to_price_alert_for_user, to_user_payload
 
@@ -44,6 +49,63 @@ def _bucket() -> PriceAlertScanBucket:
         created_at="2026-05-19T12:00:00Z",
         updated_at="2026-05-19T12:03:00Z",
     )
+
+
+def _scheduled_report(report_id: str = "schedule-1", *, state: str = "active") -> ScheduledReport:
+    return ScheduledReport(
+        id=report_id,
+        instrument_code="AAPL",
+        instrument_name="Apple Inc.",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+        weekday=None,
+        notification={"channel": "in_app", "enabled": True},
+        workflow_settings={
+            "maxDebateRounds": 1,
+            "maxRiskDiscussRounds": 1,
+            "frontlineExecutionMode": "parallel",
+            "defaultProfile": "US",
+            "defaultMarket": "US",
+            "defaultCurrency": "USD",
+            "defaultCurrencySymbol": "$",
+        },
+        start_date="2026-05-19",
+        end_date="2026-05-19",
+        current_date="2026-05-19",
+        state=state,
+        next_run_at="2026-05-20T09:30:00Z",
+        last_run_task_id=None,
+        openclaw_cron_job_id="scheduled-report:schedule-1",
+        last_cron_run_id=None,
+        sync_error_message=None,
+        created_at="2026-05-19T12:00:00Z",
+        updated_at="2026-05-19T12:00:00Z",
+    )
+
+
+def test_scheduled_reports_persist_across_store_instances(tmp_path) -> None:
+    report = _scheduled_report()
+    store = JsonScheduledWorkStore(tmp_path / "scheduled.json")
+    store.save_scheduled_report(report)
+
+    second = JsonScheduledWorkStore(tmp_path / "scheduled.json")
+
+    assert second.get_scheduled_report(report.id) == report
+    assert second.list_scheduled_reports(states={"active"}) == [report]
+
+
+def test_json_store_loads_old_payload_without_scheduled_reports(tmp_path) -> None:
+    store_path = tmp_path / ".ui-scheduled-work.json"
+    store_path.write_text('{"price_alerts": {}, "scan_buckets": {}}\n', encoding="utf-8")
+    store = JsonScheduledWorkStore(store_path)
+
+    assert store.list_scheduled_reports() == []
+
+    report = _scheduled_report()
+    store.save_scheduled_report(report)
+
+    assert JsonScheduledWorkStore(store_path).get_scheduled_report(report.id) == report
 
 
 def test_json_store_saves_loads_and_filters_price_alerts(tmp_path) -> None:

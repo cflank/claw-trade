@@ -28,7 +28,13 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
     UiApiContract("pauseScheduledReport", "ScheduledReportForUser", ("runId",)),
     UiApiContract("resumeScheduledReport", "ScheduledReportForUser", ("runId",)),
     UiApiContract("deleteScheduledReport", "{ deleted: true, scheduledReportId }", ("runId",)),
-    UiApiContract("runScheduledReportNow", "{ task: ReportTaskForUser, queueSnapshot: ReportQueueSnapshotForUser }", ("runId",)),
+    UiApiContract(
+        "runScheduledReportNow",
+        "{ scheduledReport: ScheduledReportForUser, triggered: true, cronRunId?, "
+        "queueSnapshot: ReportQueueSnapshotForUser } | "
+        "{ task: ReportTaskForUser, queueSnapshot: ReportQueueSnapshotForUser }",
+        ("runId",),
+    ),
     UiApiContract("createPriceAlert", "PriceAlertForUser", ("runId",)),
     UiApiContract("pausePriceAlert", "PriceAlertForUser", ("runId",)),
     UiApiContract("resumePriceAlert", "PriceAlertForUser", ("runId",)),

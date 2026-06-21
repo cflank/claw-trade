@@ -1,0 +1,496 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+
+from claw_trade.ui_backend.scheduler_service import SchedulerService, UiServiceError
+from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner, ScheduledWorkRunnerError
+from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore
+from claw_trade.ui_contracts.enums import MarketProfile
+
+
+def _fixed_now() -> datetime:
+    return datetime(2026, 5, 19, 12, 0, tzinfo=UTC)
+
+
+def test_scheduled_report_wake_dispatches_to_scheduler_queue() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": "task-1",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {
+            "runningTask": None,
+            "queuedTasks": [{"taskId": "task-1", "instrumentCode": "AAPL", "market": "US", "status": "queued"}],
+            "queuedCount": 1,
+            "maxQueueSize": 10,
+        },
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    response = runner.handle_wake(
+        {
+            "kind": "scheduled_report",
+            "scheduledReportId": schedule.scheduledReportId,
+            "cronRunId": "cron-run-1",
+            "requestId": "cron-request-1",
+        }
+    )
+
+    assert len(queue_calls) == 1
+    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"
+    assert queue_calls[0][0]["source"] == "scheduled"
+    assert response["status"] == "ok"
+    assert response["task"].source == "scheduled"
+    assert response["task"].task_id == "task-1"
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.state == "active"
+    assert saved.last_run_task_id == "task-1"
+    assert saved.last_cron_run_id == "cron-run-1"
+    assert saved.next_run_at == "2026-05-20T09:30:00Z"
+
+
+def test_scheduled_report_wake_dedupes_different_cron_run_ids_for_same_window() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": f"task-{len(queue_calls)}",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {
+            "runningTask": {
+                "taskId": "task-1",
+                "instrumentCode": "AAPL",
+                "instrumentName": "AAPL",
+                "market": "US",
+                "status": "running",
+            },
+            "queuedTasks": [],
+            "queuedCount": 0,
+            "maxQueueSize": 10,
+        },
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    first = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+    second = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-2"}
+    )
+
+    assert len(queue_calls) == 1
+    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"
+    assert first["task"].task_id == "task-1"
+    assert second["task"].task_id == "task-1"
+    assert second["cronRunId"] == "cron-run-2"
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.last_run_task_id == "task-1"
+    assert saved.last_cron_run_id == "cron-run-1"
+
+
+def test_scheduled_report_duplicate_wake_without_live_task_does_not_fabricate_task() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": f"task-{len(queue_calls)}",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+    response = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-2"}
+    )
+
+    assert len(queue_calls) == 1
+    assert response["deduped"] is True
+    assert response["skipped"] is True
+    assert response["lastRunTaskId"] == "task-1"
+    assert "task" not in response
+
+
+def test_scheduled_report_same_cron_run_id_dedupes_after_next_slot_boundary() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+    clock = {"now": datetime(2026, 5, 19, 12, 0, tzinfo=UTC)}
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": f"task-{len(queue_calls)}",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=lambda: clock["now"],
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    runner = ScheduledWorkRunner(scheduler_service=service)
+
+    runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+    clock["now"] = datetime(2026, 5, 20, 10, 0, tzinfo=UTC)
+    response = runner.handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+
+    assert len(queue_calls) == 1
+    assert response["deduped"] is True
+    assert response["skipped"] is True
+    assert response["lastRunTaskId"] == "task-1"
+    assert "task" not in response
+
+
+def test_scheduled_report_wake_uses_production_queue_envelope() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "task": {
+                "taskId": "task-1",
+                "instrumentCode": task["instrumentCode"],
+                "instrumentName": task["instrumentName"],
+                "market": task["market"],
+                "status": "queued",
+            },
+            "deduped": False,
+            "queueSnapshot": {
+                "runningTask": None,
+                "queuedTasks": [
+                    {
+                        "taskId": "task-1",
+                        "instrumentCode": task["instrumentCode"],
+                        "instrumentName": task["instrumentName"],
+                        "market": task["market"],
+                        "status": "queued",
+                    }
+                ],
+                "queuedCount": 1,
+                "maxQueueSize": 10,
+            },
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {
+            "runningTask": None,
+            "queuedTasks": [{"taskId": "stale-task", "instrumentCode": "MSFT", "market": "US", "status": "queued"}],
+            "queuedCount": 99,
+            "maxQueueSize": 100,
+        },
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    response = ScheduledWorkRunner(scheduler_service=service).handle_wake(
+        {
+            "kind": "scheduled_report",
+            "scheduledReportId": schedule.scheduledReportId,
+            "cronRunId": "cron-run-1",
+            "requestId": "cron-request-1",
+        }
+    )
+
+    assert queue_calls[0][0]["source"] == "scheduled"
+    assert response["task"].task_id == "task-1"
+    assert response["queueSnapshot"].queued_count == 1
+    assert response["queueSnapshot"].queued_tasks[0].task_id == "task-1"
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.last_run_task_id == "task-1"
+
+
+def test_scheduled_report_wake_rejects_paused_schedule_without_enqueueing() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {"taskId": "task-1", "instrumentCode": task["instrumentCode"], "market": task["market"], "status": "queued"}
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    service.pause_scheduled_report(request_id="pause-schedule", scheduled_report_id=schedule.scheduledReportId)
+
+    with pytest.raises(UiServiceError) as exc:
+        ScheduledWorkRunner(scheduler_service=service).handle_wake(
+            {
+                "kind": "scheduled_report",
+                "scheduledReportId": schedule.scheduledReportId,
+                "cronRunId": "cron-run-1",
+                "requestId": "cron-request-1",
+            }
+        )
+
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.message == "定时报告已暂停。"
+    assert queue_calls == []
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.state == "paused"
+    assert saved.last_run_task_id is None
+    assert saved.last_cron_run_id is None
+
+
+def test_scheduled_report_wake_uses_stable_schedule_window_request_id_when_missing() -> None:
+    request_ids: list[str] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        request_ids.append(request_id)
+        return {"taskId": "task-1", "instrumentCode": task["instrumentCode"], "market": task["market"], "status": "queued"}
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    ScheduledWorkRunner(scheduler_service=service).handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
+    )
+
+    assert request_ids == [f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"]
+
+
+def test_selection_and_maintenance_wakes_fail_closed_without_runner() -> None:
+    runner = ScheduledWorkRunner()
+
+    for kind in ("selection_data_refresh", "data_maintenance"):
+        with pytest.raises(ScheduledWorkRunnerError) as exc:
+            runner.handle_wake({"kind": kind, "cronRunId": "cron-run-1"})
+
+        assert exc.value.code == "INVALID_INPUT"
+
+
+class FakeSelectionRefreshRunner:
+    def __init__(self, result: dict[str, str] | None = None) -> None:
+        self.reasons: list[str] = []
+        self.result = result or {"status": "completed", "runId": "selection-run-1"}
+
+    def run_automatic_refresh_once(self, *, reason: str) -> dict[str, str]:
+        self.reasons.append(reason)
+        return self.result
+
+
+def test_selection_data_refresh_wake_dispatches_to_refresh_service() -> None:
+    refresh = FakeSelectionRefreshRunner()
+    runner = ScheduledWorkRunner(selection_data_refresh_runner=refresh)
+
+    response = runner.handle_wake(
+        {"kind": "selection_data_refresh", "reason": "cron_refresh", "cronRunId": "cron-run-1"}
+    )
+
+    assert refresh.reasons == ["cron_refresh"]
+    assert response["kind"] == "selection_data_refresh"
+    assert response["status"] == "completed"
+    assert response["result"]["status"] == "completed"
+    assert response["reason"] == "cron_refresh"
+
+
+def test_selection_data_refresh_wake_defaults_reason() -> None:
+    refresh = FakeSelectionRefreshRunner()
+
+    ScheduledWorkRunner(selection_data_refresh_runner=refresh).handle_wake({"kind": "selection_data_refresh"})
+
+    assert refresh.reasons == ["scheduled_data_refresh"]
+
+
+def test_selection_data_refresh_wake_preserves_already_running_status() -> None:
+    refresh = FakeSelectionRefreshRunner(
+        {"status": "already_running", "selection_run_id": "selection-run-1", "reason": "scheduled_data_refresh"}
+    )
+
+    response = ScheduledWorkRunner(selection_data_refresh_runner=refresh).handle_wake(
+        {"kind": "selection_data_refresh", "reason": "scheduled_data_refresh"}
+    )
+
+    assert response["status"] == "already_running"
+    assert response["result"]["status"] == "already_running"
+
+
+def test_selection_data_refresh_wake_failed_result_raises_explicit_error() -> None:
+    refresh = FakeSelectionRefreshRunner(
+        {
+            "status": "failed",
+            "selection_run_id": "",
+            "reason": "scheduled_data_refresh:trade_date_resolution_failed",
+            "error_code": "RuntimeError",
+        }
+    )
+
+    with pytest.raises(ScheduledWorkRunnerError) as exc:
+        ScheduledWorkRunner(selection_data_refresh_runner=refresh).handle_wake({"kind": "selection_data_refresh"})
+
+    assert exc.value.code == "SELECTION_DATA_REFRESH_FAILED"
+    assert exc.value.message == (
+        "selection_data_refresh failed: RuntimeError (scheduled_data_refresh:trade_date_resolution_failed)"
+    )
+
+
+class FakeDataMaintenanceRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run(
+        self,
+        *,
+        market: str,
+        job_kind: str,
+        cron_run_id: str | None,
+        maintenance_job_id: str | None,
+    ) -> object:
+        self.calls.append(
+            {
+                "market": market,
+                "job_kind": job_kind,
+                "cron_run_id": cron_run_id,
+                "maintenance_job_id": maintenance_job_id,
+            }
+        )
+        return type("Job", (), {"job_id": maintenance_job_id or "job-1", "status": "succeeded", "error": None})()
+
+
+def test_data_maintenance_wake_dispatches_to_runner_with_payload_fields() -> None:
+    maintenance = FakeDataMaintenanceRunner()
+    runner = ScheduledWorkRunner(data_maintenance_runner=maintenance)
+
+    response = runner.handle_wake(
+        {
+            "kind": "data_maintenance",
+            "market": "CRYPTO",
+            "jobKind": "kline-refresh",
+            "cronRunId": "cron-run-1",
+            "maintenanceJobId": "job-crypto",
+        }
+    )
+
+    assert maintenance.calls == [
+        {
+            "market": "CRYPTO",
+            "job_kind": "kline-refresh",
+            "cron_run_id": "cron-run-1",
+            "maintenance_job_id": "job-crypto",
+        }
+    ]
+    assert response["status"] == "ok"
+    assert response["maintenanceJobId"] == "job-crypto"
+
+
+def test_data_maintenance_failures_preserve_error_code() -> None:
+    class FailingDataMaintenanceRunner:
+        def run(self, **_kwargs: object) -> object:
+            raise ValueError("CRYPTO daily_bar maintenance scope is empty in data layer")
+
+    runner = ScheduledWorkRunner(data_maintenance_runner=FailingDataMaintenanceRunner())
+
+    with pytest.raises(ScheduledWorkRunnerError) as exc:
+        runner.handle_wake({"kind": "data_maintenance", "market": "CRYPTO", "jobKind": "kline-refresh"})
+
+    assert exc.value.code == "DATA_MAINTENANCE_FAILED"
+    assert exc.value.message == "CRYPTO daily_bar maintenance scope is empty in data layer"

@@ -12,9 +12,11 @@ from .jobs import (
 from .normalized_rows import NormalizedMongoDiscardResult, discard_normalized_mongo_rows
 from .repair import run_repair
 from .seed import run_seed_import
+from .scheduled_runner import DailyBarMaintenanceGap, ScheduledDataMaintenanceRunner
 
 __all__ = [
     "CollectionMaintenanceJobRepository",
+    "DailyBarMaintenanceGap",
     "InMemoryMaintenanceJobRepository",
     "JobAlreadyRunningError",
     "JobInvariantError",
@@ -23,6 +25,7 @@ __all__ = [
     "MaintenanceJob",
     "MaintenanceJobRepository",
     "NormalizedMongoDiscardResult",
+    "ScheduledDataMaintenanceRunner",
     "discard_normalized_mongo_rows",
     "run_daily_incremental",
     "run_repair",

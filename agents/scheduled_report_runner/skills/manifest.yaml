@@ -1,0 +1,8 @@
+skills:
+  - path: scheduled-work-wake/SKILL.md
+    skill_id: scheduled-work-wake
+    skill_version: 0.1.0
+    workers:
+      - scheduled_report_runner
+    tool_exports:
+      - claw-trade-scheduled-work-wake
