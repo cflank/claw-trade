@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
+from claw_trade.ui_backend.report_cleanup import ReportFileSendTracker
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.summary_builder import (
     CompletionSummaryBuilder,
@@ -50,12 +51,14 @@ class ReportNotificationService:
         channel_bridge: ChannelUserBridge,
         *,
         in_app_notifier: Callable[[str, str], None] | None = None,
+        file_send_tracker: ReportFileSendTracker | None = None,
     ) -> None:
         self._repository = repository
         self._summary_builder = summary_builder
         self._pdf_export_service = pdf_export_service
         self._channel_bridge = channel_bridge
         self._in_app_notifier = in_app_notifier or (lambda _report_id, _text: None)
+        self._file_send_tracker = file_send_tracker or ReportFileSendTracker()
 
     def notify_report_completion(
         self,
@@ -119,6 +122,24 @@ class ReportNotificationService:
         channel_kind: str = "wechat_clawbot",
         target: str | None = None,
         account_id: str | None = None,
+    ) -> dict[str, object]:
+        with self._file_send_tracker.track(report_id):
+            return self._request_full_report_file(
+                report_id,
+                request_id,
+                channel_kind=channel_kind,
+                target=target,
+                account_id=account_id,
+            )
+
+    def _request_full_report_file(
+        self,
+        report_id: str,
+        request_id: str,
+        *,
+        channel_kind: str,
+        target: str | None,
+        account_id: str | None,
     ) -> dict[str, object]:
         report = self._repository.get_report(report_id)
         if report is None:

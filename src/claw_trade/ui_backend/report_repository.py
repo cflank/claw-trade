@@ -130,6 +130,20 @@ class ReportRepository:
         self._persist_deleted_report_ids()
         return existed
 
+    def remove_report_state(self, report_id: str) -> bool:
+        existed = report_id in self._reports or report_id in self._pdf_artifacts
+        self._reports.pop(report_id, None)
+        self._report_order = [item for item in self._report_order if item != report_id]
+        self._pdf_artifacts.pop(report_id, None)
+        return existed
+
+    def discard_deleted_report_id(self, report_id: str) -> bool:
+        existed = report_id in self._deleted_report_ids
+        self._deleted_report_ids.discard(report_id)
+        if existed:
+            self._persist_deleted_report_ids()
+        return existed
+
     def read_markdown(self, report_id: str) -> str | None:
         report = self._reports.get(report_id)
         return None if report is None else report.markdown

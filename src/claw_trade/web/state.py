@@ -68,6 +68,7 @@ from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_ca
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
 from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanService
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
+from claw_trade.ui_backend.report_cleanup import ReportCleanupService, ReportFileSendTracker
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
@@ -242,6 +243,7 @@ class UiHttpServices:
     channel_text_inbound: ChannelTextInboundController
     llm_bridge: LlmSettingsBridge
     report_notification_service: ReportNotificationService
+    report_cleanup_service: ReportCleanupService
     scheduler_service: SchedulerService
     price_alert_service: PriceAlertService
     price_alert_scan_service: PriceAlertScanService
@@ -277,6 +279,13 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         else None,
     )
     run_root = Path(report_settings.run_dir).resolve()
+    openviking_data_dir = Path(
+        os.environ.get("OPENVIKING_DATA_DIR", "").strip() or ".runtime/dev-services/openviking/data"
+    ).resolve()
+    openviking_workflow_root = openviking_data_dir / "viking" / "default" / "resources" / "workflow"
+    openclaw_state_root = Path(
+        os.environ.get("OPENCLAW_STATE_DIR", "").strip() or ".runtime/dev-services/openclaw-state"
+    ).resolve()
     repository = ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json")
     restore_completed_workflow_reports(repository, run_root)
     workflow_runner = _ControlWorkflowRunner(run_dir=run_root)
@@ -377,11 +386,21 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         json_path=run_root / ".ui-report-cleanup-settings.json",
     )
     channel_bridge = ChannelBridge(rpc_client)
+    file_send_tracker = ReportFileSendTracker()
     report_notification_service = ReportNotificationService(
         repository,
         summary_builder,
         pdf_export_service,
         channel_bridge,
+        file_send_tracker=file_send_tracker,
+    )
+    report_cleanup_service = ReportCleanupService(
+        run_root=run_root,
+        openviking_workflow_root=openviking_workflow_root,
+        openclaw_state_root=openclaw_state_root,
+        repository=repository,
+        protected_run_ids_provider=queue.protected_run_ids_for_cleanup,
+        in_flight_report_ids_provider=file_send_tracker.active_report_ids,
     )
     channel_text_inbound = ChannelTextInboundController(
         chat_controller,
@@ -422,6 +441,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         channel_text_inbound=channel_text_inbound,
         llm_bridge=llm_bridge,
         report_notification_service=report_notification_service,
+        report_cleanup_service=report_cleanup_service,
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
         price_alert_scan_service=price_alert_scan_service,
