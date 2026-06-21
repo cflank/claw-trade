@@ -13,6 +13,20 @@ const WORKERS = [
   { workerId: 'risk_moderator', displayName: '风险经理', default: false, aliases: ['风险经理', '风险'] },
 ];
 
+const DEFAULT_SAVED_REPORTS = [
+  {
+    id: 'report-1',
+    instrumentCode: '600519.SH',
+    instrumentName: '贵州茅台',
+    market: 'CN_A',
+    title: '茅台投研报告',
+    generatedAt: '2026-05-19T10:00:00.000Z',
+    summarySnippet: '结论偏积极，关注估值与渠道恢复。',
+  },
+];
+
+type MockSavedReport = (typeof DEFAULT_SAVED_REPORTS)[number] & { canForwardToChannel?: boolean };
+
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -31,33 +45,28 @@ function mockWorkspaceFetch(
     workerChatResponse?: Promise<Response>;
     workerChatListFails?: boolean;
     workerChatWorkers?: typeof WORKERS;
+    savedReports?: MockSavedReport[];
+    channelStatus?: Record<string, unknown>;
+    sendReportFileResponse?: Promise<Response>;
   } = {},
 ) {
   const originalFetch = globalThis.fetch;
   let queueCount = 0;
   const confirmBodies: Array<Record<string, unknown>> = [];
   const cancelBodies: Array<Record<string, unknown>> = [];
+  const cancelSelectionBodies: Array<Record<string, unknown>> = [];
   const deleteBodies: Array<Record<string, unknown>> = [];
   const chatBodies: Array<Record<string, unknown>> = [];
   const workerChatBodies: Array<Record<string, unknown>> = [];
   const askReportQuestionBodies: Array<Record<string, unknown>> = [];
+  const sendReportFileBodies: Array<Record<string, unknown>> = [];
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
 
     if (url.includes('/api/ui/list-saved-reports')) {
       return json({
-        items: [
-          {
-            id: 'report-1',
-            instrumentCode: '600519.SH',
-            instrumentName: '贵州茅台',
-            market: 'CN_A',
-            title: '茅台投研报告',
-            generatedAt: '2026-05-19T10:00:00.000Z',
-            summarySnippet: '结论偏积极，关注估值与渠道恢复。',
-          },
-        ],
+        items: options.savedReports ?? DEFAULT_SAVED_REPORTS,
       });
     }
 
@@ -89,15 +98,17 @@ function mockWorkspaceFetch(
     }
 
     if (url.includes('/api/ui/get-channel-status')) {
-      return json({
-        channelKind: 'wechat_clawbot',
-        onboardingState: 'completed',
-        state: 'disconnected',
-        displayName: '微信 ClawBot',
-        accountLabel: null,
-        canSendText: false,
-        canSendFile: false,
-      });
+      return json(
+        options.channelStatus ?? {
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+        },
+      );
     }
 
     if (url.includes('/api/ui/load-llm-settings')) {
@@ -268,6 +279,18 @@ function mockWorkspaceFetch(
         },
         message: '已停止报告任务。',
       });
+    }
+
+    if (url.includes('/api/ui/cancel-selection-progress') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      cancelSelectionBodies.push(body);
+      return json({ cancelled: true, selectionProgress: null, message: '已停止选股任务。' });
+    }
+
+    if (url.includes('/api/ui/send-report-file-via-channel') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      sendReportFileBodies.push(body);
+      return options.sendReportFileResponse ?? json({ sent: true, messageId: 'msg-1', userMessage: '完整报告已发送。' });
     }
 
     if (url.includes('/api/ui/send-worker-chat') && init?.method === 'POST') {
@@ -506,10 +529,12 @@ function mockWorkspaceFetch(
     getQueueCount: () => queueCount,
     getConfirmBodies: () => confirmBodies,
     getCancelBodies: () => cancelBodies,
+    getCancelSelectionBodies: () => cancelSelectionBodies,
     getDeleteBodies: () => deleteBodies,
     getChatBodies: () => chatBodies,
     getWorkerChatBodies: () => workerChatBodies,
     getAskReportQuestionBodies: () => askReportQuestionBodies,
+    getSendReportFileBodies: () => sendReportFileBodies,
   };
 }
 
@@ -620,6 +645,42 @@ describe('home page', () => {
     expect(screen.getByText('正在读取本地仓库并补齐缺失行情。')).toBeInTheDocument();
     expect(screen.getByText('拉取/补齐行情数据：补数据中')).toBeInTheDocument();
     expect(screen.getByText('工作流：sel-refresh-active-1')).toBeInTheDocument();
+  });
+
+  it('stops backend selection progress from the right rail', async () => {
+    const mocked = mockWorkspaceFetch({
+      selectionRefreshSnapshot: {
+        selectionProgress: {
+          kind: 'data_refresh',
+          status: 'running',
+          statusLabel: '补数据中',
+          command: '/select 2026-06-04',
+          stageLabel: '拉取/补齐行情数据',
+          currentAction: '正在读取本地仓库并补齐缺失行情。',
+          percent: 35,
+          workerStatusLabels: ['拉取/补齐行情数据：补数据中'],
+          completedRoleLabels: [],
+          waitingRoleLabels: [],
+          startedAt: '2026-06-04T10:00:00Z',
+          workflowRunId: 'sel-refresh-active-1',
+        },
+      },
+    });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '停止选股' }));
+
+    await waitFor(() => expect(mocked.getCancelSelectionBodies()).toHaveLength(1));
+    expect(mocked.getCancelSelectionBodies()[0]).toMatchObject({ workflowRunId: 'sel-refresh-active-1' });
+    expect(screen.getByText('已停止选股任务。')).toBeInTheDocument();
+    expect(screen.queryByText('选股数据刷新')).not.toBeInTheDocument();
   });
 
   it('keeps workspace visible and shows a model warning without onboarding dialogs', async () => {
@@ -1575,6 +1636,59 @@ describe('home page', () => {
     expect(selectionReport).not.toHaveTextContent('权重版本');
   });
 
+  it('stops local select progress and ignores the late select response', async () => {
+    let resolveSelect!: (response: Response) => void;
+    const selectSendResponse = new Promise<Response>((resolve) => {
+      resolveSelect = resolve;
+    });
+    const mocked = mockWorkspaceFetch({ selectSendResponse });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/select' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: '停止选股' }));
+
+    expect(screen.getByText('已停止选股任务。')).toBeInTheDocument();
+    expect(screen.queryByText('选股任务进度')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveSelect(
+        json({
+          context: {
+            contextId: 'normal-chat',
+            kind: 'normal_chat',
+            title: '普通聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: [
+            {
+              messageId: 'msg-select-late-result',
+              contextKind: 'normal_chat',
+              actor: 'system',
+              kind: 'selection_result',
+              text: '`/select` 已完成，本轮仅进入等待确认。',
+              createdAt: '2026-05-19T10:09:00.000Z',
+            },
+          ],
+        }),
+      );
+      await selectSendResponse;
+    });
+
+    expect(screen.queryByText(/已完成，本轮仅进入等待确认/)).not.toBeInTheDocument();
+    expect(mocked.getCancelSelectionBodies()).toHaveLength(0);
+  });
+
   it('keeps local select worker progress when polling returns empty progress mid-run', async () => {
     let resolveSelect!: (response: Response) => void;
     const selectSendResponse = new Promise<Response>((resolve) => {
@@ -2088,6 +2202,144 @@ describe('home page', () => {
       expect(mocked.getDeleteBodies().at(0)?.reportId).toBe('report-1');
     });
     expect(screen.queryByText('茅台投研报告')).not.toBeInTheDocument();
+  });
+
+  it('forwards a saved report PDF to connected WeChat from history', async () => {
+    const mocked = mockWorkspaceFetch({
+      savedReports: [{ ...DEFAULT_SAVED_REPORTS[0], canForwardToChannel: true }],
+      channelStatus: {
+        channelKind: 'wechat_clawbot',
+        onboardingState: 'completed',
+        state: 'connected',
+        displayName: '微信 ClawBot',
+        accountLabel: '测试号',
+        canSendText: true,
+        canSendFile: true,
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '转发 茅台投研报告' }));
+
+    await waitFor(() => {
+      expect(mocked.getSendReportFileBodies().at(0)).toMatchObject({
+        reportId: 'report-1',
+        channelKind: 'wechat_clawbot',
+      });
+    });
+    expect(await screen.findByText('完整报告已发送。')).toBeInTheDocument();
+  });
+
+  it('shows a clear report forward error when the channel send fails', async () => {
+    const message = '完整报告文件暂不可发送，请在设备界面查看。';
+    const mocked = mockWorkspaceFetch({
+      savedReports: [{ ...DEFAULT_SAVED_REPORTS[0], canForwardToChannel: true }],
+      channelStatus: {
+        channelKind: 'wechat_clawbot',
+        onboardingState: 'completed',
+        state: 'connected',
+        displayName: '微信 ClawBot',
+        accountLabel: '测试号',
+        canSendText: true,
+        canSendFile: true,
+      },
+      sendReportFileResponse: Promise.resolve(
+        new Response(JSON.stringify({ message, code: 'FILE_SEND_UNSUPPORTED' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '转发 茅台投研报告' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(message).length).toBeGreaterThan(0);
+    });
+    expect(mocked.getSendReportFileBodies()).toHaveLength(1);
+  });
+
+  it('deletes only searched reports from history', async () => {
+    const mocked = mockWorkspaceFetch({
+      savedReports: [
+        ...DEFAULT_SAVED_REPORTS,
+        {
+          id: 'report-2',
+          instrumentCode: 'AAPL',
+          instrumentName: '苹果',
+          market: 'US',
+          title: '苹果投研报告',
+          generatedAt: '2026-05-19T11:00:00.000Z',
+          summarySnippet: '关注新品周期。',
+        },
+      ],
+    });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('茅台投研报告')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('搜索报告'), { target: { value: '苹果' } });
+    fireEvent.click(screen.getByRole('button', { name: '删除搜索结果' }));
+
+    await waitFor(() => {
+      expect(mocked.getDeleteBodies().map((body) => body.reportId)).toEqual(['report-2']);
+    });
+    expect(screen.queryByText('苹果投研报告')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('搜索报告'), { target: { value: '' } });
+    expect(screen.getByText('茅台投研报告')).toBeInTheDocument();
+  });
+
+  it('clears all saved reports when no search is active', async () => {
+    const mocked = mockWorkspaceFetch({
+      savedReports: [
+        ...DEFAULT_SAVED_REPORTS,
+        {
+          id: 'report-2',
+          instrumentCode: 'AAPL',
+          instrumentName: '苹果',
+          market: 'US',
+          title: '苹果投研报告',
+          generatedAt: '2026-05-19T11:00:00.000Z',
+          summarySnippet: '关注新品周期。',
+        },
+      ],
+    });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('茅台投研报告')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清空' }));
+
+    await waitFor(() => {
+      expect(mocked.getDeleteBodies().map((body) => body.reportId)).toEqual(['report-1', 'report-2']);
+    });
+    expect(screen.queryByText('茅台投研报告')).not.toBeInTheDocument();
+    expect(screen.queryByText('苹果投研报告')).not.toBeInTheDocument();
   });
 
   it('opens report in workspace when reportId query is provided', async () => {

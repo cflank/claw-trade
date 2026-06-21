@@ -150,10 +150,16 @@ def test_start_control_runtime_script_child_command_mode_uses_cleanup_trap() -> 
     assert 'if [[ "${1}" != "--" ]]; then' in text
     assert 'RUNTIME_COMMAND=("$@")' in text
     assert '"${RUNTIME_COMMAND[@]}"' in text
+    assert "wait_report_runs_started_after() {" in text
+    assert 'command_started_epoch="$(date +%s)"' in text
+    assert 'wait_report_runs_started_after "${command_started_epoch}"' in text
     assert 'exit "${command_status}"' in text
     trap_index = text.index("trap 'on_script_exit $?' EXIT")
+    since_index = text.index('command_started_epoch="$(date +%s)"')
     command_index = text.index('"${RUNTIME_COMMAND[@]}"')
+    wait_index = text.index('wait_report_runs_started_after "${command_started_epoch}"')
     assert trap_index < command_index
+    assert since_index < command_index < wait_index
 
 
 def test_start_control_runtime_script_blocks_factory_columnar_root_by_default() -> None:

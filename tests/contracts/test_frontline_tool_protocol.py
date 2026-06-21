@@ -289,7 +289,50 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
     assert forbidden.isdisjoint(stdin_payload["tool_input"])
 
 
-def test_data_need_error_text_tells_worker_not_to_retry_same_need(tmp_path: Path) -> None:
+def test_data_need_normalizes_lowercase_market_before_python(tmp_path: Path) -> None:
+    stdin_path = tmp_path / "stdin.json"
+    probe_python = tmp_path / "probe_python.sh"
+    payload = {
+        "ok": True,
+        "schema_version": "data_need_result.v1",
+        "tool_name": "claw_request_data",
+        "model_visible_text": "数据需求结果：可用。",
+    }
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env bash
+cat > {stdin_path}
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+
+    result = _run_tool(
+        tool_name="claw_request_data",
+        ctx=_runtime_ctx(
+            worker_id="social_analyst",
+            runtime_vars={
+                "ticker": "ALLO/USDT",
+                "market": "CRYPTO",
+                "profile": "CRYPTO",
+                "company_name": "Allora",
+                "currency": "USDT",
+            },
+        ),
+        params={
+            "item": "社交情绪",
+            "instrument": "ALLO/USDT",
+            "market": "crypto",
+            "purpose": "social_report",
+        },
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
+    )
+
+    assert result.get("isError") is False
+    stdin_payload = json.loads(stdin_path.read_text(encoding="utf-8"))
+    assert stdin_payload["tool_input"]["market"] == "CRYPTO"
+
+
+def test_data_need_runtime_error_text_tells_worker_not_to_fill_missing_results(tmp_path: Path) -> None:
     probe_python = tmp_path / "probe_python.sh"
     payload = {
         "ok": False,
@@ -323,12 +366,47 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 
     assert result.get("isError") is True
     text = result["content"][0]["text"]
-    assert "不要再次调用同一数据需求" in text
-    assert "报告只引用已返回的可引用材料" in text
-    assert "不描述数据请求过程" in text
+    assert "数据工具执行超时" in text
+    assert "不要补写不存在的数据结果" in text
     assert "材料外内容直接跳过" not in text
     assert "数据限制" not in text
     assert "缺口" not in text
+
+
+def test_data_need_subprocess_timeout_returns_when_descendant_keeps_pipe_open(tmp_path: Path) -> None:
+    probe_python = tmp_path / "probe_python.sh"
+    _write_executable(
+        probe_python,
+        """#!/usr/bin/env bash
+(sleep 60) &
+echo started >&2
+sleep 60
+""",
+    )
+
+    result = _run_tool(
+        tool_name="claw_request_data",
+        ctx=_runtime_ctx(
+            worker_id="market_analyst",
+            runtime_vars={
+                "ticker": "ALLO/USDT",
+                "market": "CRYPTO",
+                "profile": "CRYPTO",
+                "company_name": "Allora",
+                "currency": "USDT",
+            },
+        ),
+        params={"item": "资金费率", "purpose": "market_report"},
+        env_overrides={
+            "CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python),
+            "CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS": "1",
+            "CN_A_PROVIDER_TOTAL_TIMEOUT_MS": "1",
+        },
+    )
+
+    assert result.get("isError") is True
+    assert _error_code(result) == "TOOL_SUBPROCESS_TIMEOUT"
+    assert "数据工具执行超时" in result["content"][0]["text"]
 
 
 def test_data_need_error_text_hides_internal_execution_details_from_model(tmp_path: Path) -> None:
@@ -357,15 +435,45 @@ echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
 
     assert result.get("isError") is True
     text = result["content"][0]["text"]
-    assert "报告只引用已返回的可引用材料" in text
-    assert "不描述数据请求过程" in text
+    assert "数据层运行时未能完成本次数据请求" in text
+    assert "不要补写不存在的数据结果" in text
     for forbidden in ("official_api_tushare", "api_name", "hk_mins", "token", "secret", "path=/"):
         assert forbidden not in text
+
+
+def test_successful_empty_data_need_result_is_blank_to_model(tmp_path: Path) -> None:
+    probe_python = tmp_path / "probe_python.sh"
+    payload = {
+        "ok": True,
+        "status": "missing",
+        "need_satisfied": False,
+        "model_visible_text": "",
+        "readable_summary": "",
+    }
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env bash
+cat > /dev/null
+echo {json.dumps(json.dumps(payload, ensure_ascii=False))}
+""",
+    )
+
+    result = _run_tool(
+        tool_name="claw_request_data",
+        ctx=_runtime_ctx(worker_id="market_analyst"),
+        params={"item": "清算地图", "purpose": "market_report"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
+    )
+
+    assert result.get("isError") is False
+    assert result["content"][0]["text"] == ""
+    assert result["details"]["data_result_status"] == "missing"
 
 
 def test_provider_total_timeout_contract_keeps_subprocess_with_completion_buffer() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
     assert "DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS" in source
     assert "CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS" in source
-    assert "SUBPROCESS_TIMEOUT_BUFFER_MS = 30000" in source
+    assert "SUBPROCESS_TIMEOUT_BUFFER_MS = 5000" in source
+    assert "SUBPROCESS_TIMEOUT_CLOSE_GRACE_MS" in source
     assert "Math.max(totalTimeout + SUBPROCESS_TIMEOUT_BUFFER_MS, DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS)" in source

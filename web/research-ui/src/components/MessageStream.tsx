@@ -17,6 +17,7 @@ const KIND_LABEL: Record<ChatMessageForUser['kind'], string> = {
   report_completed: '报告完成',
   report_failed: '报告失败',
   selection_result: '选股结果',
+  selection_refreshing: '选股刷新',
   selection_unavailable: '选股不可用',
   price_alert: '价格提醒',
   file_send_failed: '发送失败',

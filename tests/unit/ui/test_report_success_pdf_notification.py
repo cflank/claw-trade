@@ -138,6 +138,7 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
 
     saved_reports = repository.list_saved_reports()
     assert [item["id"] for item in saved_reports] == ["run-1"]
+    assert saved_reports[0]["canForwardToChannel"] is True
     assert saved_reports[0]["summarySnippet"] == "维持观察，等待突破确认。"
     assert notification.report_ids == ["run-1"]
     assert notification.targets == [("sender-1", "account-1", "wechat_clawbot")]

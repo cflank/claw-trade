@@ -123,6 +123,8 @@ class SelectionRunStore:
 
     def save_data_run_record(self, record: SelectionDataRunRecord) -> None:
         existing = self._runs.get(record.run_plan.selection_run_id)
+        if existing is not None and existing.data_run.failure_code == "selection_refresh_cancelled":
+            return
         if existing is not None and existing.data_run.status in {
             SelectionDataRunStatus.COMPLETED,
             SelectionDataRunStatus.NO_CANDIDATE,

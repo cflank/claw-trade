@@ -723,6 +723,8 @@ class CoinGeckoCryptoPlugin:
         item = payload[0]
         if not isinstance(item, Mapping):
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
+        if not _coingecko_symbol_matches_base_asset(item, base_asset):
+            return FetchResult.from_empty(task, error=RuntimeError("identity_mismatch"), http_observations=observations)
         row = _crypto_base_row(
             dataset="valuation_metric",
             symbol=symbol or symbols.crypto_provider_symbol or base_asset,
@@ -783,6 +785,8 @@ class CoinGeckoCryptoPlugin:
             return error
         if not isinstance(payload, Mapping):
             return FetchResult.from_empty(task, error=RuntimeError("empty_result"))
+        if not _coingecko_symbol_matches_base_asset(payload, base_asset):
+            return FetchResult.from_empty(task, error=RuntimeError("identity_mismatch"), http_observations=observations)
         row = _crypto_base_row(
             dataset="company_profile",
             symbol=symbol,
@@ -813,6 +817,13 @@ class CoinGeckoCryptoPlugin:
             }
         )
         return FetchResult.from_success(task, payload={"rows": [row]}, row_count=1, http_observations=observations)
+
+
+def _coingecko_symbol_matches_base_asset(payload: Mapping[str, Any], base_asset: str) -> bool:
+    payload_symbol = non_empty(payload.get("symbol"))
+    if not payload_symbol:
+        return True
+    return payload_symbol.upper() == base_asset.upper()
 
 
 class DefiLlamaCryptoPlugin:

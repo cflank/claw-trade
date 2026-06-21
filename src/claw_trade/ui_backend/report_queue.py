@@ -15,7 +15,7 @@ from claw_trade.ui_backend.progress_mapper import map_workflow_progress_to_ui_st
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.ui_contracts.enums import ReportTaskStatus
 from claw_trade.workflow.models import RunStatus
-from claw_trade.workflow.workers import all_worker_ids
+from claw_trade.workflow.workers import all_worker_ids, stage_plans_for_market
 
 
 class QueueError(RuntimeError):
@@ -296,7 +296,7 @@ class ReportTaskQueue:
 
         task.progress = map_workflow_progress_to_ui_state(
             workflow_state,
-            _worker_progress_from_run_evidence(workflow_state),
+            _worker_progress_from_run_evidence(workflow_state, market=task.market),
         )
         status = _workflow_status_value(workflow_state)
         if status == RunStatus.COMPLETED.value:
@@ -412,8 +412,8 @@ def _read_state_value(workflow_state: dict[str, Any] | Any, key: str, *, default
     return getattr(workflow_state, key, default)
 
 
-def _worker_progress_from_run_evidence(workflow_state: dict[str, Any] | Any) -> dict[str, Any]:
-    worker_order = all_worker_ids()
+def _worker_progress_from_run_evidence(workflow_state: dict[str, Any] | Any, *, market: str) -> dict[str, Any]:
+    worker_order = tuple(worker_id for plan in stage_plans_for_market(market) for worker_id in plan.workers)
     worker_statuses = _read_worker_statuses_from_calls(_read_state_value(workflow_state, "run_dir"))
     completed_workers = set(_read_state_value(workflow_state, "completed_workers", default=()) or ())
     completed_workers.update(

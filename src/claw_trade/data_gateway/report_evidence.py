@@ -1894,6 +1894,8 @@ def _basic_data_need_model_visible_text(
 ) -> str:
     result_gaps = _data_result_gaps(data_results)
     has_body_usable_result = _has_body_usable_result(data_results)
+    if not any(result.rows for result in data_results):
+        return ""
     lines = [
         f"数据结果：{need.market.value} {need.instrument} 的{_business_data_label(need)}。",
     ]
@@ -2142,8 +2144,7 @@ def _error_payload(code: str, message: str) -> dict[str, Any]:
         "ok": False,
         "error": {"code": code, "message": safe_message, "audit_message": message},
         "model_visible_text": (
-            "本次数据需求已经有工具结果，不要再次调用同一数据需求；"
-            "报告只引用已返回的可引用材料，不描述数据请求过程。"
+            f"{safe_message}；不要补写不存在的数据结果。"
         ),
     }
 

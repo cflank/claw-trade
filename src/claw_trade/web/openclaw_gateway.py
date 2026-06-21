@@ -299,10 +299,10 @@ class OpenClawGatewayRpcClient:
             raise RuntimeError("file payload unavailable")
         params: dict[str, Any] = {
             "channel": channel,
-            "to": to,
             "message": file_name,
             "mediaUrl": str(media_path),
             "idempotencyKey": dedupe_key,
+            "to": to,
         }
         if account_id:
             params["accountId"] = account_id

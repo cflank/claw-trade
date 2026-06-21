@@ -524,6 +524,7 @@ def _business_item_suffix(value: str) -> str | None:
         "期权成交": "options_volume",
         "options_volume": "options_volume",
         "etf资金流": "etf_flow",
+        "机构产品资金流": "etf_flow",
         "etf_flow": "etf_flow",
         "借贷利率": "borrow_interest_rate",
         "borrow_interest_rate": "borrow_interest_rate",

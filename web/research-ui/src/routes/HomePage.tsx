@@ -11,6 +11,7 @@ import { RightRail } from '../components/RightRail';
 import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   cancelReportTask,
+  cancelSelectionProgress,
   confirmIntentDraft,
   confirmSelectionReport,
   createIntentDraft,
@@ -26,6 +27,7 @@ import {
   listWorkerChatWorkers,
   loadLlmSettings,
   sendChatMessage,
+  sendReportFileViaChannel,
   sendWorkerChat,
   type ChannelChatSnapshotForUser,
   type ChannelStatusForUser,
@@ -41,7 +43,6 @@ import {
   type SelectionProgressForUser,
   type SelectionReportForUser,
   type SendChatMessageOutput,
-  type WorkerChatReplyForUser,
   type WorkerChatWorkerForUser,
 } from '../api/workspace';
 
@@ -99,6 +100,8 @@ type ReportQaEntry = {
   status: 'pending' | 'answered' | 'failed';
 };
 
+type ReportForwardState = Record<string, { kind: 'success' | 'error'; message: string } | undefined>;
+
 function nextRequestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -139,6 +142,17 @@ function cancelledTaskMessage(task: ReportTaskForUser, text: string): ChatMessag
     kind: 'task_progress',
     text,
     taskId: task.taskId,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function cancelledSelectionMessage(text: string): ChatMessageForUser {
+  return {
+    messageId: `local-cancelled-selection-${Date.now()}`,
+    contextKind: 'normal_chat',
+    actor: 'system',
+    kind: 'task_progress',
+    text,
     createdAt: new Date().toISOString(),
   };
 }
@@ -367,12 +381,16 @@ export function HomePage() {
   const [cardSubmittingId, setCardSubmittingId] = useState<string | null>(null);
   const [selectionSubmittingKey, setSelectionSubmittingKey] = useState<string | null>(null);
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
+  const [cancellingSelectionId, setCancellingSelectionId] = useState<string | null>(null);
+  const [forwardingReportId, setForwardingReportId] = useState<string | null>(null);
+  const [reportForwardState, setReportForwardState] = useState<ReportForwardState>({});
   const [error, setError] = useState('');
   const [modelDraft, setModelDraft] = useState<LlmConfigDraft>(DEFAULT_LLM_DRAFT);
   const consumedReportIdRef = useRef<string | null>(null);
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const channelRefreshInFlightRef = useRef(false);
   const selectionRequestInFlightRef = useRef(false);
+  const selectionCancelTokenRef = useRef(0);
   const localWorkerChatMessagesRef = useRef(false);
   const activeDetailRef = useRef<ReportDetailForUser | null>(null);
   const activeSelectionDetailRef = useRef<SelectionReportForUser | null>(null);
@@ -668,6 +686,66 @@ export function HomePage() {
     [activeReportId],
   );
 
+  const deleteReports = useCallback(
+    async (reports: SavedReportForUser[], scope: 'search' | 'all') => {
+      if (!reports.length) {
+        return;
+      }
+      const action = scope === 'search' ? `删除当前搜索结果中的 ${reports.length} 份正式报告` : `清空 ${reports.length} 份正式报告`;
+      if (!window.confirm(`${action}？底层运行证据会保留。`)) {
+        return;
+      }
+      setError('');
+      const deletedIds: string[] = [];
+      try {
+        for (const report of reports) {
+          await deleteSavedReport(nextRequestId(), report.id);
+          deletedIds.push(report.id);
+        }
+      } catch (deleteError) {
+        setError((deleteError as Error).message);
+      } finally {
+        if (!deletedIds.length) {
+          return;
+        }
+        const deletedSet = new Set(deletedIds);
+        setSavedReports((current) => current.filter((item) => !deletedSet.has(item.id)));
+        if (activeReportId && deletedSet.has(activeReportId)) {
+          setActiveDetail(null);
+          setQaEntries([]);
+          setContext(DEFAULT_CONTEXT);
+        }
+      }
+    },
+    [activeReportId],
+  );
+
+  const forwardReportToWechat = useCallback(async (report: SavedReportForUser) => {
+    setReportForwardState((current) => ({ ...current, [report.id]: undefined }));
+    setError('');
+    setForwardingReportId(report.id);
+    try {
+      const result = await sendReportFileViaChannel({
+        requestId: nextRequestId(),
+        reportId: report.id,
+        channelKind: 'wechat_clawbot',
+      });
+      setReportForwardState((current) => ({
+        ...current,
+        [report.id]: { kind: 'success', message: result.userMessage || '已转发到微信。' },
+      }));
+    } catch (forwardError) {
+      const message = (forwardError as Error).message || '完整报告文件暂不可发送，请在设备界面查看。';
+      setReportForwardState((current) => ({
+        ...current,
+        [report.id]: { kind: 'error', message },
+      }));
+      setError(message);
+    } finally {
+      setForwardingReportId(null);
+    }
+  }, []);
+
   const cancelTask = useCallback(
     async (task: ReportTaskForUser) => {
       const isRunning = task.status === 'running';
@@ -698,11 +776,42 @@ export function HomePage() {
     [applyQueueSnapshot, context.activeTaskId],
   );
 
+  const cancelSelection = useCallback(async (progress: SelectionProgressForUser) => {
+    if (!window.confirm(`停止「${progress.command}」？当前请求可能会在后台结束，但页面不会继续跟进本次结果。`)) {
+      return;
+    }
+    selectionCancelTokenRef.current += 1;
+    selectionRequestInFlightRef.current = false;
+    setSending(false);
+    setPendingChatCommand(null);
+    setSelectionProgress(null);
+    setMessages((current) => [...current, cancelledSelectionMessage('已停止选股任务。')]);
+    if (!progress.workflowRunId) {
+      return;
+    }
+    setCancellingSelectionId(progress.workflowRunId);
+    setError('');
+    try {
+      await cancelSelectionProgress({
+        requestId: nextRequestId(),
+        workflowRunId: progress.workflowRunId,
+      });
+    } catch (cancelError) {
+      setError((cancelError as Error).message);
+    } finally {
+      setCancellingSelectionId(null);
+    }
+  }, []);
+
   const onSendChat = useCallback(
     async (text: string) => {
       const isSelectCommand = isExplicitSelectCommand(text);
       const useCommandChat = isWorkspaceCommand(text);
       let pendingWorkerRequestId: string | null = null;
+      const selectToken = isSelectCommand ? selectionCancelTokenRef.current + 1 : selectionCancelTokenRef.current;
+      if (isSelectCommand) {
+        selectionCancelTokenRef.current = selectToken;
+      }
       setSending(true);
       setPendingChatCommand(isSelectCommand ? 'select' : 'chat');
       setError('');
@@ -737,6 +846,9 @@ export function HomePage() {
           contextId: context.contextId,
           text,
         });
+        if (isSelectCommand && selectionCancelTokenRef.current !== selectToken) {
+          return;
+        }
         localWorkerChatMessagesRef.current = false;
         setContext(result.context);
         setMessages(attachSelectionMetadata(result.messages, result.selection));
@@ -759,13 +871,17 @@ export function HomePage() {
         setActiveDetail(null);
         setActiveSelectionDetail(null);
       } catch (sendError) {
+        if (isSelectCommand && selectionCancelTokenRef.current !== selectToken) {
+          return;
+        }
         if (isSelectCommand) {
           selectionRequestInFlightRef.current = false;
           setSelectionProgress(null);
         }
-        if (pendingWorkerRequestId) {
+        const failedWorkerRequestId = pendingWorkerRequestId;
+        if (failedWorkerRequestId) {
           setMessages((current) =>
-            replaceLocalWorkerChatAssistantMessage(current, pendingWorkerRequestId, 'worker 回复失败，请稍后重试。'),
+            replaceLocalWorkerChatAssistantMessage(current, failedWorkerRequestId, 'worker 回复失败，请稍后重试。'),
           );
         }
         setError((sendError as Error).message);
@@ -1117,8 +1233,12 @@ export function HomePage() {
           selectionItems={selectionReports}
           activeReportId={activeReportId}
           activeSelectionReportId={activeSelectionReportId}
+          forwardingReportId={forwardingReportId}
+          forwardStatusByReportId={reportForwardState}
           onOpenReport={(report) => void openReport(report)}
+          onForwardReport={(report) => void forwardReportToWechat(report)}
           onDeleteReport={(report) => void deleteReport(report)}
+          onDeleteReports={(reports, scope) => void deleteReports(reports, scope)}
           onOpenSelectionReport={openSelectionReport}
         />
 
@@ -1264,6 +1384,8 @@ export function HomePage() {
           onPrintReport={activeDetail ? printReportAsPdf : undefined}
           onCancelTask={cancelTask}
           cancellingTaskId={cancellingTaskId}
+          onCancelSelection={cancelSelection}
+          cancellingSelectionId={cancellingSelectionId}
         />
       </main>
     </AppShell>

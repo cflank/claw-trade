@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
 from typing import Callable
@@ -370,6 +370,26 @@ class SelectionDataRefreshService:
         if self._has_valid_completed_run_for_record(record):
             return {"selectionProgress": None}
         return {"selectionProgress": _data_run_progress_for_user(record.data_run, trade_date=resolved_trade_date)}
+
+    def cancel_refresh(self, *, selection_run_id: str) -> bool:
+        record = self._store.load_data_run_record(selection_run_id)
+        if record is None:
+            return False
+        if record.data_run.status in {
+            SelectionDataRunStatus.NO_CANDIDATE,
+            SelectionDataRunStatus.COMPLETED,
+            SelectionDataRunStatus.FAILED,
+        }:
+            return record.data_run.failure_code == "selection_refresh_cancelled"
+        cancelled = replace(
+            record.data_run,
+            status=SelectionDataRunStatus.FAILED,
+            failed_at=self._now_fn().isoformat(),
+            failure_code="selection_refresh_cancelled",
+            failure_reason="用户取消了本次选股数据刷新。",
+        )
+        self._store.save_data_run_record(replace(record, data_run=cancelled, manifest=None))
+        return True
 
     def _has_valid_completed_run_for_record(self, record: SelectionDataRunRecord) -> bool:
         if record.data_run.status == SelectionDataRunStatus.COMPLETED:

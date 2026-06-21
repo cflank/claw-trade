@@ -751,6 +751,23 @@ def test_crypto_onchain_project_item_plans_to_coinglass_onchain_interfaces() -> 
     assert ("official_api_coinglass", "coinglass.raw_index_bitcoin_net_unrealized_profit_loss", "crypto.onchain_metric") in calls
 
 
+def test_crypto_institutional_product_flow_alias_plans_to_etf_flow_interfaces() -> None:
+    request = _request(
+        request_id="crypto-institutional-product-flow",
+        item="机构产品资金流",
+        market=Market.CRYPTO,
+        instrument="BTC",
+        granularity="daily",
+        purpose="fundamental_report",
+    )
+
+    plan = plan_public_data_requests((request,))
+
+    assert request.api_id == "crypto.etf_flow"
+    assert plan.skipped_needs == ()
+    assert {call.public_api_id for call in plan.planned_calls} == {"crypto.etf_flow"}
+
+
 def test_worker_consumer_labels_do_not_change_provider_candidates() -> None:
     consumers = ("report", "select", "ui_probe", "maintenance")
     candidate_sets = []

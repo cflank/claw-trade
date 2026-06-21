@@ -329,6 +329,24 @@ def test_channel_file_send_uses_local_temp_media_path_and_cleans_up(monkeypatch)
     ]
 
 
+def test_channel_file_send_requires_target() -> None:
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token=None,
+        password=None,
+    )
+
+    with pytest.raises(TypeError, match="required keyword-only argument: 'to'"):
+        client.channels_send_file(
+            channel="openclaw-weixin",
+            file_name="完整报告.pdf",
+            payload=b"%PDF-1.4 test payload",
+            dedupe_key="file:r-current",
+        )
+
+
 def test_channel_file_send_uses_supplied_file_path_without_temp_copy(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     pdf_path = tmp_path / "already-generated.pdf"
     pdf_path.write_bytes(b"%PDF-1.4 existing file")

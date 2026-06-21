@@ -196,6 +196,7 @@ export interface SavedReportForUser {
   title: string;
   generatedAt: string;
   summarySnippet: string;
+  canForwardToChannel?: boolean;
 }
 
 export interface DataSourceHealthEventForUser {
@@ -380,6 +381,18 @@ export interface PdfExportForUser {
   updatedAt?: string | null;
 }
 
+export interface SendReportFileViaChannelInput {
+  requestId: string;
+  reportId: string;
+  channelKind?: 'wechat_clawbot';
+}
+
+export interface SendReportFileViaChannelOutput {
+  sent: true;
+  messageId?: string | null;
+  userMessage: string;
+}
+
 export interface SendChatMessageInput {
   requestId: string;
   contextId: string;
@@ -422,6 +435,17 @@ export interface CancelReportTaskInput {
 export interface CancelReportTaskOutput {
   task: ReportTaskForUser;
   queueSnapshot: ReportQueueSnapshotForUser;
+  message: string;
+}
+
+export interface CancelSelectionProgressInput {
+  requestId: string;
+  workflowRunId: string;
+}
+
+export interface CancelSelectionProgressOutput {
+  cancelled: boolean;
+  selectionProgress: null;
   message: string;
 }
 

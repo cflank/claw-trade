@@ -38,6 +38,8 @@ class ChannelUserBridge(Protocol):
         account_id: str | None = None,
     ) -> dict[str, object]: ...
 
+    def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None: ...
+
 
 class ReportNotificationService:
     def __init__(
@@ -122,6 +124,26 @@ class ReportNotificationService:
         if report is None:
             raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
 
+        resolved_target = str(target or "").strip()
+        resolved_account_id = str(account_id or "").strip() or None
+        if not resolved_target:
+            report_target = _report_target_from_origin_context(
+                report.origin_context_id,
+                channel_kind=channel_kind,
+            )
+            if report_target is not None:
+                resolved_target, resolved_account_id = report_target
+        if not resolved_target:
+            report_target = self._channel_bridge.resolve_default_report_file_target(channel_kind=channel_kind)
+            if report_target is not None:
+                resolved_target, resolved_account_id = report_target
+        if not resolved_target:
+            return {
+                "sent": False,
+                "code": "FILE_SEND_UNSUPPORTED",
+                "userMessage": "完整报告文件暂不可发送，请在设备界面查看。",
+            }
+
         latest_pdf = self._pdf_export_service.get_latest_record(report_id)
         if latest_pdf is None or latest_pdf.state != "ready":
             latest_pdf = self._pdf_export_service.export_saved_markdown_to_pdf(
@@ -133,13 +155,6 @@ class ReportNotificationService:
                 "sent": False,
                 "code": "FILE_SEND_UNSUPPORTED",
                 "userMessage": "完整报告文件暂不可发送，请在设备界面查看。",
-            }
-
-        if not target:
-            return {
-                "sent": False,
-                "code": "NOTIFICATION_UNAVAILABLE",
-                "userMessage": "微信通知暂不可用，请在设备界面查看。",
             }
 
         status = self._channel_bridge.get_channel_status(probe=True)
@@ -177,8 +192,8 @@ class ReportNotificationService:
                 file_name=f"{report.instrument_code}_report.pdf",
                 payload=payload,
                 file_path=file_path,
-                target=target,
-                account_id=account_id,
+                target=resolved_target,
+                account_id=resolved_account_id,
             )
         except Exception as exc:
             code = str(getattr(exc, "code", "FILE_SEND_UNSUPPORTED"))
@@ -219,3 +234,20 @@ class ReportNotificationService:
             "messageId": message_id,
             "userMessage": "完整报告已发送。",
         }
+
+
+def _report_target_from_origin_context(
+    origin_context_id: object,
+    *,
+    channel_kind: str,
+) -> tuple[str, str | None] | None:
+    text = str(origin_context_id or "").strip()
+    if not text:
+        return None
+    parts = [part.strip() for part in text.split(":", 2)]
+    if len(parts) != 3:
+        return None
+    origin_channel, account_id, sender_id = parts
+    if origin_channel != channel_kind or not sender_id:
+        return None
+    return sender_id, account_id or None

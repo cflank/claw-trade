@@ -35,9 +35,7 @@ describe('RightRail channel state text', () => {
       qrCodeImageDataUrl: null,
       qrCodeExpiresAt: null,
       qrCodeRefreshRequired: false,
-      userMessage: null,
       lastErrorMessage: null,
-      checkedAt: null,
     };
     render(<RightRail queue={EMPTY_QUEUE} detail={null} channel={channel} latestReport={null} />);
     expect(screen.getByText('已连接')).toBeInTheDocument();
@@ -91,5 +89,37 @@ describe('RightRail channel state text', () => {
 
     expect(onCancelTask).toHaveBeenNthCalledWith(1, expect.objectContaining({ taskId: 'task-running' }));
     expect(onCancelTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ taskId: 'task-queued' }));
+  });
+
+  it('shows stop control for active selection progress', () => {
+    const onCancelSelection = vi.fn();
+
+    render(
+      <RightRail
+        queue={EMPTY_QUEUE}
+        detail={null}
+        channel={null}
+        latestReport={null}
+        selectionProgress={{
+          kind: 'selection_workflow',
+          status: 'running',
+          statusLabel: '选股中',
+          command: '/select',
+          stageLabel: '选股工作流执行中',
+          currentAction: '正在运行策略评审。',
+          percent: 25,
+          workerStatusLabels: ['策略评审：执行中'],
+          completedRoleLabels: [],
+          waitingRoleLabels: ['反方评审'],
+          startedAt: '2026-06-04T10:00:00Z',
+          workflowRunId: 'select-run-1',
+        }}
+        onCancelSelection={onCancelSelection}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '停止选股' }));
+
+    expect(onCancelSelection).toHaveBeenCalledWith(expect.objectContaining({ workflowRunId: 'select-run-1' }));
   });
 });

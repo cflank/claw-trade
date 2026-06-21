@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -15,10 +16,22 @@ _DISPLAY_NAME = "微信 ClawBot"
 _QR_LOGIN_BACKGROUND_WAIT_TIMEOUT_MS = 480_000
 _CONFIG_PATCH_STATUS_SETTLE_TIMEOUT_SECONDS = 18.0
 _CONFIG_PATCH_STATUS_SETTLE_INTERVAL_SECONDS = 0.5
+_FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS = 2
 
 
 def _qr_login_connected(raw: Mapping[str, Any]) -> bool:
     return raw.get("connected") is True or raw.get("alreadyConnected") is True
+
+
+def _is_cdn_upload_server_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    for _ in range(6):
+        if current is None:
+            return False
+        if "CDN upload server error" in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class ChannelBridge:
@@ -544,9 +557,10 @@ class ChannelBridge:
         _ = report_id
         if payload is None and file_path is None:
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
+        resolved_target = str(target or "").strip()
+        if not resolved_target:
+            raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
         provider_channel = self.resolve_clawbot_channel_id(channel_kind)
-        if not target:
-            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。")
         status = self.get_channel_status(probe=True)
         if str(status.get("state")) != "connected":
             raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。")
@@ -556,18 +570,22 @@ class ChannelBridge:
             sender = _resolve_file_sender(self._client)
         except AttributeError as exc:
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
-        try:
-            raw = sender(
-                channel=provider_channel,
-                file_name=file_name,
-                payload=payload,
-                file_path=file_path,
-                dedupe_key=request_id,
-                to=target,
-                account_id=account_id,
-            )
-        except Exception as exc:
-            raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
+        for attempt in range(_FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS):
+            try:
+                raw = sender(
+                    channel=provider_channel,
+                    file_name=file_name,
+                    payload=payload,
+                    file_path=file_path,
+                    dedupe_key=request_id if attempt == 0 else f"{request_id}:cdn-retry-{attempt}",
+                    to=resolved_target,
+                    account_id=account_id,
+                )
+                break
+            except Exception as exc:
+                if attempt + 1 < _FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS and _is_cdn_upload_server_error(exc):
+                    continue
+                raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
         result = _to_send_result(
             raw,
             default_sent=False,
@@ -576,7 +594,20 @@ class ChannelBridge:
         )
         if not bool(result.get("sent")):
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
+        if attempt > 0:
+            _cleanup_superseded_file_delivery_queue_entries(
+                channel=provider_channel,
+                target=resolved_target,
+                account_id=account_id,
+                file_name=file_name,
+                file_path=file_path,
+                original_dedupe_key=request_id,
+            )
         return result
+
+    def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None:
+        self.resolve_clawbot_channel_id(channel_kind)
+        return _single_weixin_report_file_target()
 
 
 def to_channel_status_for_user(status: Mapping[str, Any]) -> dict[str, Any]:
@@ -667,6 +698,133 @@ def _resolve_openclaw_state_dir() -> Path | None:
     if config_path:
         return Path(config_path).parent
     return None
+
+
+def _single_weixin_report_file_target() -> tuple[str, str | None] | None:
+    state_dir = _resolve_openclaw_state_dir()
+    if state_dir is None:
+        default_state_dir = Path(".runtime/dev-services/openclaw-state")
+        state_dir = default_state_dir if default_state_dir.is_dir() else None
+    if state_dir is None:
+        return None
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    if not accounts_dir.is_dir():
+        return None
+    candidates: set[tuple[str, str | None]] = set()
+    for path in sorted(accounts_dir.glob("*.context-tokens.json")):
+        account_id = path.name.removesuffix(".context-tokens.json").strip()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, Mapping):
+            continue
+        for raw_user_id, raw_token in data.items():
+            user_id = str(raw_user_id or "").strip()
+            token = str(raw_token or "").strip()
+            if user_id.endswith("@im.wechat") and token:
+                candidates.add((user_id, account_id or None))
+    if len(candidates) != 1:
+        return None
+    return next(iter(candidates))
+
+
+def _cleanup_superseded_file_delivery_queue_entries(
+    *,
+    channel: str,
+    target: str,
+    account_id: str | None,
+    file_name: str,
+    file_path: Path | None,
+    original_dedupe_key: str,
+) -> None:
+    state_dir = _resolve_openclaw_state_dir()
+    if state_dir is None:
+        default_state_dir = Path(".runtime/dev-services/openclaw-state")
+        state_dir = default_state_dir if default_state_dir.is_dir() else None
+    if state_dir is None:
+        return
+    queue_dir = state_dir / "delivery-queue"
+    if not queue_dir.is_dir():
+        return
+    expected_media_url = str(file_path) if file_path is not None else None
+    for queue_path in sorted(queue_dir.glob("*.json")):
+        try:
+            entry = json.loads(queue_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(entry, Mapping):
+            continue
+        if not _queued_delivery_matches_superseded_retry(
+            entry,
+            channel=channel,
+            target=target,
+            account_id=account_id,
+            file_name=file_name,
+            expected_media_url=expected_media_url,
+            original_dedupe_key=original_dedupe_key,
+        ):
+            continue
+        _mark_delivery_queue_entry_superseded(queue_path)
+
+
+def _queued_delivery_matches_superseded_retry(
+    entry: Mapping[str, Any],
+    *,
+    channel: str,
+    target: str,
+    account_id: str | None,
+    file_name: str,
+    expected_media_url: str | None,
+    original_dedupe_key: str,
+) -> bool:
+    if str(entry.get("channel") or "") != channel:
+        return False
+    if str(entry.get("to") or "") != target:
+        return False
+    if account_id is not None and str(entry.get("accountId") or "") != account_id:
+        return False
+    if "CDN upload server error" not in str(entry.get("lastError") or ""):
+        return False
+    mirror = entry.get("mirror")
+    if not isinstance(mirror, Mapping):
+        return False
+    if str(mirror.get("idempotencyKey") or "") != original_dedupe_key:
+        return False
+    if expected_media_url and _queued_delivery_has_media_url(entry, expected_media_url):
+        return True
+    return _queued_delivery_has_file_name(entry, file_name)
+
+
+def _queued_delivery_has_media_url(entry: Mapping[str, Any], expected_media_url: str) -> bool:
+    payloads = entry.get("payloads")
+    if isinstance(payloads, list):
+        for payload in payloads:
+            if isinstance(payload, Mapping) and str(payload.get("mediaUrl") or "") == expected_media_url:
+                return True
+    mirror = entry.get("mirror")
+    if not isinstance(mirror, Mapping):
+        return False
+    media_urls = mirror.get("mediaUrls")
+    return isinstance(media_urls, list) and expected_media_url in {str(item) for item in media_urls}
+
+
+def _queued_delivery_has_file_name(entry: Mapping[str, Any], file_name: str) -> bool:
+    payloads = entry.get("payloads")
+    if isinstance(payloads, list):
+        for payload in payloads:
+            if isinstance(payload, Mapping) and str(payload.get("text") or "") == file_name:
+                return True
+    mirror = entry.get("mirror")
+    return isinstance(mirror, Mapping) and str(mirror.get("text") or "") == file_name
+
+
+def _mark_delivery_queue_entry_superseded(queue_path: Path) -> None:
+    marker = queue_path.with_name(f"{queue_path.name}.superseded-{int(time.time() * 1000)}")
+    try:
+        queue_path.replace(marker)
+    except OSError:
+        pass
 
 
 def _unlink_if_file(path: Path) -> None:

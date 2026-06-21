@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from claw_trade.ui_backend.report_repository import ReportRepository
@@ -46,6 +47,26 @@ def test_restore_completed_workflow_reports_from_run_files(tmp_path: Path) -> No
     assert items[0]["id"] == "run-restore-1"
     assert items[0]["instrumentCode"] == "BTC"
     assert items[0]["summarySnippet"] == "维持观察，等待突破确认。"
+
+
+def test_restore_completed_workflow_reports_restores_existing_pdf(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    run_dir = _write_completed_run(run_root, "run-pdf-1")
+    pdf_dir = run_dir / "reports" / "pdf"
+    pdf_dir.mkdir()
+    old_pdf_path = pdf_dir / "pdf_old.pdf"
+    old_pdf_path.write_bytes(b"%PDF-1.7\n" + (b"B" * 700))
+    os.utime(old_pdf_path, (1_000, 1_000))
+    pdf_path = pdf_dir / "pdf_new.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7\n" + (b"A" * 700))
+    os.utime(pdf_path, (2_000, 2_000))
+    repo = ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json")
+
+    restore_completed_workflow_reports(repo, run_root)
+
+    artifact = repo.latest_pdf_artifact("run-pdf-1")
+    assert artifact is not None
+    assert artifact.path == pdf_path.resolve()
 
 
 def test_deleted_restored_report_stays_hidden_without_removing_run_files(tmp_path: Path) -> None:

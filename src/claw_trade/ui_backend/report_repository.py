@@ -39,6 +39,7 @@ class SavedReportRecord:
     created_at: str
     updated_at: str
     asset_dir: Path | None = None
+    origin_context_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class ReportRepository:
         summary_snippet: str | None = None,
         pm_final_conclusion: str | None = None,
         asset_dir: Path | None = None,
+        origin_context_id: str | None = None,
         source_status: str = "succeeded",
     ) -> SavedReportRecord:
         if source_status != "succeeded":
@@ -96,6 +98,7 @@ class ReportRepository:
             created_at=now,
             updated_at=now,
             asset_dir=asset_dir.resolve() if asset_dir is not None else None,
+            origin_context_id=_optional_report_text(origin_context_id),
         )
         self._reports[report_id] = record
         if report_id not in self._report_order:
@@ -193,6 +196,32 @@ class ReportRepository:
             path=content_path,
             content_hash=sha256(pdf_bytes).hexdigest(),
             created_at=_now_iso(),
+        )
+        self._pdf_artifacts.setdefault(report_id, []).append(artifact)
+        return artifact
+
+    def restore_pdf_artifact(self, report_id: str, pdf_path: Path) -> PdfArtifactRecord | None:
+        report = self._reports.get(report_id)
+        if report is None or not pdf_path.is_file() or not pdf_path.stem.startswith("pdf_"):
+            return None
+        artifact_id = pdf_path.stem
+        for item in self._pdf_artifacts.get(report_id, ()):
+            if item.id == artifact_id:
+                return item
+        try:
+            pdf_bytes = pdf_path.read_bytes()
+            created_at = datetime.fromtimestamp(pdf_path.stat().st_mtime, UTC).isoformat()
+        except OSError:
+            return None
+        if not pdf_bytes.startswith(b"%PDF-"):
+            return None
+        artifact = PdfArtifactRecord(
+            id=artifact_id,
+            report_id=report_id,
+            content=None,
+            path=pdf_path.resolve(),
+            content_hash=sha256(pdf_bytes).hexdigest(),
+            created_at=created_at,
         )
         self._pdf_artifacts.setdefault(report_id, []).append(artifact)
         return artifact
@@ -299,7 +328,21 @@ def to_saved_report_for_user(report: SavedReportRecord) -> dict[str, Any]:
         "title": report.title,
         "generatedAt": report.generated_at,
         "summarySnippet": report.summary_snippet,
+        "canForwardToChannel": _has_channel_reply_target(report.origin_context_id),
     }
+
+
+def _optional_report_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _has_channel_reply_target(origin_context_id: object) -> bool:
+    text = str(origin_context_id or "").strip()
+    if not text:
+        return False
+    parts = [part.strip() for part in text.split(":", 2)]
+    return len(parts) == 3 and bool(parts[0]) and bool(parts[2])
 
 
 def _default_summary_snippet(markdown: str) -> str:

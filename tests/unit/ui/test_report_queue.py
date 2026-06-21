@@ -128,6 +128,9 @@ def test_running_snapshot_derives_worker_status_from_run_evidence(tmp_path: Path
     assert "市场分析师" in progress["completedRoleLabels"]
     assert "投资组合经理" in progress["completedRoleLabels"]
     assert "市场分析师" not in progress["waitingRoleLabels"]
+    assert "政策分析师" not in str(progress)
+    assert "游资资金跟踪员" not in str(progress)
+    assert "限售筹码观察员" not in str(progress)
     assert "报告整理员：执行中" in progress["workerStatusLabels"]
     assert "投资组合经理：已完成" in progress["workerStatusLabels"]
 

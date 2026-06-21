@@ -1102,6 +1102,43 @@ def test_select_command_exposes_current_worker_progress_while_running(tmp_path: 
 
 
 @pytest.mark.integration
+def test_select_command_cancel_stops_after_current_worker_returns(tmp_path: Path) -> None:
+    blocking_runner = _BlockingSelectionOpenClawRunner()
+    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, selection_runner=blocking_runner)
+    result_holder: dict[str, object] = {}
+    errors: list[BaseException] = []
+
+    def _run_select() -> None:
+        try:
+            result_holder["result"] = selection_controller.handle_select_command(
+                raw_text="/select",
+                request_id="sel-08-cancel",
+                user_id="ctx-cancel",
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced by assertions below
+            errors.append(exc)
+
+    thread = Thread(target=_run_select, daemon=True)
+    thread.start()
+    assert blocking_runner.worker_started.wait(timeout=2)
+    progress = selection_controller.latest_progress_for_user()["selectionProgress"]
+    assert isinstance(progress, dict)
+    assert selection_controller.cancel_progress(workflow_run_id=str(progress["workflowRunId"])) is True
+    assert selection_controller.latest_progress_for_user() == {"selectionProgress": None}
+
+    blocking_runner.release_worker.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert errors == []
+    result = result_holder["result"]
+    assert getattr(result, "code").value == "failed"
+    assert getattr(result, "failure_reason") == "selection_workflow_cancelled:user_cancelled"
+    assert [payload["worker_id"] for payload in blocking_runner.payloads] == ["selection_strategist"]
+    assert selection_controller.latest_progress_for_user() == {"selectionProgress": None}
+
+
+@pytest.mark.integration
 def test_select_command_rejects_approved_candidate_cache_with_missing_strategy_fields(tmp_path: Path) -> None:
     selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
     payload_path = tmp_path / "candidate-cache.json"

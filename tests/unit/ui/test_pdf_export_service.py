@@ -130,6 +130,31 @@ def test_export_saved_markdown_to_pdf_writes_file_when_report_has_asset_dir(tmp_
     assert pdf_path.stat().st_size == len(pdf_bytes)
 
 
+def test_export_saved_markdown_to_pdf_reuses_restored_pdf(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    repo = ReportRepository()
+    asset_dir = tmp_path / "reports" / "assets"
+    repo.save_succeeded_report(
+        report_id="r-restored-pdf",
+        instrument_code="TSLA",
+        market="US",
+        title="TSLA 报告",
+        markdown="# 标题\n正文",
+        asset_dir=asset_dir,
+    )
+    pdf_dir = tmp_path / "reports" / "pdf"
+    pdf_dir.mkdir(parents=True)
+    pdf_path = pdf_dir / "pdf_restored.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7\n" + (b"A" * 700))
+    repo.restore_pdf_artifact("r-restored-pdf", pdf_path)
+    service = PdfExportService(repo, renderer=_FailRenderer(), runtime_capabilities_provider=_ready_capabilities)
+
+    record = service.export_saved_markdown_to_pdf("r-restored-pdf", request_id="pdf-restored")
+
+    assert record.state == "ready"
+    assert record.pdf_artifact_id == "pdf_restored"
+    assert repo.pdf_artifact_path("r-restored-pdf", "pdf_restored") == pdf_path.resolve()
+
+
 def test_pdf_export_failure_does_not_write_artifact_when_validation_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     repo = _repo()
     renderer = _PassRenderer()

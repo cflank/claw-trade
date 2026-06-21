@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 _DATA_LAYER_ATTEMPT_SUMMARY_KEY = "provider_" + "attempts_summary"
+_PRICE_IDENTITY_CONFLICT_FACTOR = 5.0
 
 
 def summarize_report_prefetch_manifest(
@@ -182,8 +183,10 @@ def _summarize_report_data_payload(
         if valuation_text:
             lines.append("估值指标最新记录：" + _dated_text(valuation, valuation_text) + "。")
 
+    market_price = _trusted_market_price(results)
     realtime_valuation = _latest_result_row(results, "valuation_metric", require_any=("price",))
-    if realtime_valuation:
+    valuation_identity_conflict = _price_conflicts_with_market_reference(realtime_valuation, market_price)
+    if realtime_valuation and not valuation_identity_conflict:
         realtime_text = _available_field_text(
             realtime_valuation,
             (
@@ -194,7 +197,10 @@ def _summarize_report_data_payload(
         if realtime_text:
             lines.append("实时估值/行情快照：" + _dated_text(realtime_valuation, realtime_text) + "。")
 
-    crypto_lines = _crypto_metric_lines(results)
+    crypto_lines = _crypto_metric_lines(
+        results,
+        suppress_project_profile=valuation_identity_conflict,
+    )
     if crypto_lines:
         lines.extend(crypto_lines)
 
@@ -234,7 +240,10 @@ def _summarize_report_data_payload(
         )
         if margin_text:
             lines.append("融资融券数据可用：" + _dated_text(margin_trading, margin_text) + "。")
-        leverage_line = _margin_to_market_cap_line(margin_trading, valuation or realtime_valuation)
+        leverage_line = _margin_to_market_cap_line(
+            margin_trading,
+            valuation or (None if valuation_identity_conflict else realtime_valuation),
+        )
         if leverage_line:
             lines.append(leverage_line)
     sector = _latest_result_row(results, "sector_snapshot")
@@ -294,6 +303,47 @@ def _latest_result_and_row(
     return sorted(pairs, key=lambda pair: _row_sort_text(pair[1]), reverse=True)[0]
 
 
+def _trusted_market_price(results: Sequence[Mapping[str, Any]]) -> float | None:
+    for dataset, fields in (
+        ("quote_snapshot", ("price", "last_price", "close")),
+        ("daily_bar", ("close", "price", "last_price")),
+    ):
+        row = _latest_result_row(results, dataset, require_any=fields)
+        if row is None:
+            continue
+        price = _first_positive_float(row, fields)
+        if price is not None:
+            return price
+    return None
+
+
+def _price_conflicts_with_market_reference(row: Mapping[str, Any] | None, market_price: float | None) -> bool:
+    if row is None or market_price is None:
+        return False
+    valuation_price = _first_positive_float(row, ("price", "last_price", "close"))
+    if valuation_price is None:
+        return False
+    lower = min(market_price, valuation_price)
+    if lower <= 0:
+        return False
+    return max(market_price, valuation_price) / lower >= _PRICE_IDENTITY_CONFLICT_FACTOR
+
+
+def _first_positive_float(row: Mapping[str, Any], fields: Sequence[str]) -> float | None:
+    for field in fields:
+        value = _float_value(row.get(field))
+        if value is not None and value > 0:
+            return value
+    return None
+
+
+def _float_value(value: Any) -> float | None:
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def _available_field_text(
     row: Mapping[str, Any],
     fields: Sequence[tuple[str, str, str | None]],
@@ -319,12 +369,20 @@ def _dated_text(row: Mapping[str, Any], text: str) -> str:
     return f"{row_time}，{text}" if row_time else text
 
 
-def _crypto_metric_lines(results: Sequence[Mapping[str, Any]]) -> list[str]:
+def _crypto_metric_lines(
+    results: Sequence[Mapping[str, Any]],
+    *,
+    suppress_project_profile: bool = False,
+) -> list[str]:
     project_parts: list[str] = []
-    profile = _latest_result_row(
-        results,
-        "company_profile",
-        require_any=("circulating_supply", "total_supply", "max_supply"),
+    profile = (
+        None
+        if suppress_project_profile
+        else _latest_result_row(
+            results,
+            "company_profile",
+            require_any=("circulating_supply", "total_supply", "max_supply"),
+        )
     )
     if profile:
         supply_unit = profile.get("supply_unit")

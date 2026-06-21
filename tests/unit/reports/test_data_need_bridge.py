@@ -701,6 +701,7 @@ def test_crypto_social_visible_text_includes_fear_greed_scale() -> None:
 
     assert "分数范围 0-100" in text
     assert "分数越高代表越贪婪/乐观" in text
+    assert "不是社交平台原文样本" not in text
 
 
 def test_data_need_model_visible_text_shows_northbound_and_margin_fields() -> None:
@@ -1720,7 +1721,8 @@ def test_data_need_model_visible_text_allows_empty_lockup_event_as_no_records_fo
     )
 
     assert "状态：" not in text
-    assert "查询范围内未发现该类事件记录" in text
+    assert text == ""
+    assert "查询范围内未发现该类事件记录" not in text
     assert "未返回事件记录" not in text
     assert "数据缺口" not in text
     assert "不得写具体价格" not in text
@@ -1810,7 +1812,8 @@ def test_unsatisfied_rows_are_not_presented_as_body_usable() -> None:
     assert "已经可用于正文" not in text
     assert "没有满足当前数据需求" not in text
     assert "不要当成正文可引用结论" not in text
-    assert "只使用已返回的可引用材料" in text
+    assert text == ""
+    assert "只使用已返回的可引用材料" not in text
 
 
 def test_data_need_model_visible_text_keeps_current_result_gap_visible() -> None:
@@ -1904,7 +1907,8 @@ def test_data_need_model_visible_text_hides_resolver_mapping_machine_reason() ->
     assert "项目数据项未绑定可调用接口" not in text
     assert "catalog match missing" not in text
     assert "catalog_match_missing" not in text
-    assert "只引用已批准上游材料中的已有事实" in text
+    assert text == ""
+    assert "只引用已批准上游材料中的已有事实" not in text
     assert "材料外内容直接跳过" not in text
 
 
@@ -1935,11 +1939,12 @@ def test_data_need_model_visible_text_for_raw_refs_only_forbids_model_memory_fil
         data_results=(),
     )
 
-    assert "不要重复请求同一数据需求" in text
+    assert text == ""
+    assert "不要重复请求同一数据需求" not in text
     assert "没有返回可直接引用的结构化数值或明细行" not in text
     assert "缺口" not in text
-    assert "不得用模型记忆" in text
-    assert "营收、利润、ROE、PE/PB、目标价" in text
+    assert "不得用模型记忆" not in text
+    assert "营收、利润、ROE、PE/PB、目标价" not in text
 
 
 def test_data_need_without_data_refs_is_missing_even_when_attempts_exist() -> None:
@@ -2454,6 +2459,106 @@ def test_report_data_evidence_summary_lists_crypto_success_readings_and_override
     assert "接口凭证缺失" not in summary
 
 
+def test_report_data_evidence_summary_suppresses_conflicting_crypto_valuation_identity(
+    tmp_path,
+) -> None:  # type: ignore[no-untyped-def]
+    root = tmp_path / "data-layer" / "data-need-results" / "run-need"
+    market_path = root / "call-market-daily" / "result.json"
+    market_path.parent.mkdir(parents=True, exist_ok=True)
+    market_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "data_need_tool_evidence.v1",
+                "status": "ready",
+                "data_results": [
+                    {
+                        "request_id": "data_need:call:market:0:daily_bar",
+                        "status": "ready",
+                        "sample_rows": [
+                            {
+                                "date": "2026-06-20",
+                                "symbol_id": "ALLO/USDT",
+                                "close": 0.3968,
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    valuation_path = root / "call-fundamental-valuation" / "result.json"
+    valuation_path.parent.mkdir(parents=True, exist_ok=True)
+    valuation_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "data_need_tool_evidence.v1",
+                "status": "ready",
+                "data_results": [
+                    {
+                        "request_id": "data_need:call:fundamental:0:valuation_metric",
+                        "status": "ready",
+                        "sample_rows": [
+                            {
+                                "timestamp": "2026-06-20T13:26:44Z",
+                                "symbol_id": "ALLO/USDT",
+                                "price": 0.0012925,
+                                "price_unit": "USD",
+                                "market_cap": 2327958.0,
+                                "market_cap_unit": "USD",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    profile_path = root / "call-fundamental-profile" / "result.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "data_need_tool_evidence.v1",
+                "status": "ready",
+                "data_results": [
+                    {
+                        "request_id": "data_need:call:fundamental:1:company_profile",
+                        "status": "ready",
+                        "sample_rows": [
+                            {
+                                "timestamp": "2026-06-20T13:26:44Z",
+                                "symbol_id": "ALLO/USDT",
+                                "circulating_supply": 1800000000.0,
+                                "total_supply": 10000000000.0,
+                                "max_supply": 10000000000.0,
+                                "supply_unit": "ALLO",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = summarize_report_data_need_results(
+        root,
+        ticker="ALLO/USDT",
+        company_name="Allora",
+    )
+
+    assert "已返回数据读数" in summary
+    assert "实时估值/行情快照" not in summary
+    assert "0.0012925" not in summary
+    assert "2327958.0" not in summary
+    assert "项目资料可用" not in summary
+    assert "1800000000.0" not in summary
+
+
 def test_cn_a_market_need_refreshes_remote_when_local_seed_is_stale(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import claw_trade.data_gateway.report_evidence as report_evidence
 
@@ -2624,9 +2729,10 @@ def test_data_need_returns_budget_gap_instead_of_spawning_provider_after_deadlin
     assert payload["readable_summary"] == payload["model_visible_text"]
     assert payload["provider_attempts_summary"] == []
     assert payload["gaps"][0]["reason"] == GapReason.RATE_LIMITED_BY_TOOL_BUDGET.value
-    assert "数据结果：" in payload["model_visible_text"]
+    assert payload["model_visible_text"] == ""
+    assert "数据结果：" not in payload["model_visible_text"]
     assert "任务预算内无法等待限流窗口" not in payload["model_visible_text"]
-    assert "报告只引用已返回的可引用材料" in payload["model_visible_text"]
+    assert "报告只引用已返回的可引用材料" not in payload["model_visible_text"]
     assert "材料外内容直接跳过" not in payload["model_visible_text"]
 
 

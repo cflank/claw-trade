@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -208,6 +209,19 @@ class _RawFileResponseClient(_FakeChannelClient):
     def channels_send_file(self, *, channel, file_name, dedupe_key, to, payload=None, file_path=None, account_id=None):
         _ = (channel, file_name, dedupe_key, to, payload, file_path, account_id)
         return self.raw_response
+
+
+class _OneTimeCdnFailureFileClient(_FakeChannelClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.dedupe_keys: list[str] = []
+
+    def channels_send_file(self, *, channel, file_name, dedupe_key, to, payload=None, file_path=None, account_id=None):
+        _ = (channel, file_name, to, payload, file_path, account_id)
+        self.dedupe_keys.append(dedupe_key)
+        if len(self.dedupe_keys) == 1:
+            raise RuntimeError("CDN upload server error: status 500")
+        return {"sent": True, "messageId": "msg-after-cdn-retry"}
 
 
 def test_get_channel_status_hides_provider_channel_id() -> None:
@@ -754,6 +768,100 @@ def test_save_channel_config_disabled_clears_weixin_login_state(tmp_path: Path, 
     assert not legacy_sync.exists()
 
 
+def test_save_channel_config_disabled_does_not_clear_default_runtime_without_explicit_state_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("OPENCLAW_STATE_DIR", raising=False)
+    monkeypatch.delenv("OPENCLAW_CONFIG_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    accounts_dir = tmp_path / ".runtime" / "dev-services" / "openclaw-state" / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    account_file = accounts_dir / "acc-1.json"
+    account_file.write_text('{"token":"secret"}', encoding="utf-8")
+
+    bridge = ChannelBridge(_FakeChannelClient(connected=True))
+    result = bridge.save_channel_config_via_openclaw(
+        request_id="req-disable-wechat-no-env",
+        channel_kind="wechat_clawbot",
+        config_patch={"enabled": False},
+    )
+
+    assert result["status"]["state"] == "disconnected"
+    assert account_file.exists()
+
+
+def test_resolve_default_report_file_target_uses_single_weixin_context_token(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (accounts_dir / "acc-1.context-tokens.json").write_text(
+        '{"sender-1@im.wechat":"token-1"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_FakeChannelClient(connected=True))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) == (
+        "sender-1@im.wechat",
+        "acc-1",
+    )
+
+
+def test_resolve_default_report_file_target_returns_none_for_multiple_weixin_targets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (accounts_dir / "acc-1.context-tokens.json").write_text(
+        '{"sender-1@im.wechat":"token-1","sender-2@im.wechat":"token-2"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_FakeChannelClient(connected=True))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) is None
+
+
+def test_resolve_default_report_file_target_ignores_login_user_without_context_token(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (state_dir / "openclaw-weixin" / "accounts.json").write_text('["acc-1"]', encoding="utf-8")
+    (accounts_dir / "acc-1.json").write_text(
+        '{"userId":"sender-login@im.wechat","token":"secret"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_FakeChannelClient(connected=True))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) is None
+
+
+def test_resolve_default_report_file_target_ignores_login_users_without_context_tokens(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (state_dir / "openclaw-weixin" / "accounts.json").write_text('["acc-1","acc-2"]', encoding="utf-8")
+    (accounts_dir / "acc-1.json").write_text('{"userId":"sender-1@im.wechat"}', encoding="utf-8")
+    (accounts_dir / "acc-2.json").write_text('{"userId":"sender-2@im.wechat"}', encoding="utf-8")
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_FakeChannelClient(connected=True))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) is None
+
+
 def test_save_channel_config_hides_provider_error_detail() -> None:
     class _FailingConfigClient(_FakeChannelClient):
         def config_patch(self, *, expected_settings_version=None, patch=None):  # type: ignore[no-untyped-def]
@@ -842,6 +950,93 @@ def test_send_report_file_returns_provider_result_without_fake_message_id() -> N
     )
     assert result["sent"] is True
     assert result["messageId"] == "msg-1"
+
+
+def test_send_report_file_retries_once_after_cdn_server_error() -> None:
+    client = _OneTimeCdnFailureFileClient()
+    bridge = ChannelBridge(client)
+    result = bridge.send_report_file_via_channel(
+        request_id="r-cdn",
+        report_id="rp-cdn",
+        channel_kind="wechat_clawbot",
+        file_name="report.pdf",
+        payload=b"pdf",
+        target="sender-1",
+    )
+    assert result["sent"] is True
+    assert result["messageId"] == "msg-after-cdn-retry"
+    assert client.dedupe_keys == ["r-cdn", "r-cdn:cdn-retry-1"]
+
+
+def test_send_report_file_cleans_superseded_cdn_retry_queue_entry(tmp_path: Path, monkeypatch) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    queue_dir = state_dir / "delivery-queue"
+    queue_dir.mkdir(parents=True)
+    pdf_path = tmp_path / "report.pdf"
+    pdf_path.write_bytes(b"%PDF-1.7\nreport")
+    stale_queue_path = queue_dir / "stale-delivery.json"
+    stale_queue_path.write_text(
+        json.dumps(
+            {
+                "id": "stale-delivery",
+                "channel": "openclaw-weixin",
+                "to": "sender-1",
+                "accountId": "acc-1",
+                "payloads": [{"text": "report.pdf", "mediaUrl": str(pdf_path)}],
+                "mirror": {
+                    "idempotencyKey": "r-cdn-cleanup",
+                    "text": "report.pdf",
+                    "mediaUrls": [str(pdf_path)],
+                },
+                "retryCount": 1,
+                "lastError": "CDN upload server error: status 500",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+
+    client = _OneTimeCdnFailureFileClient()
+    bridge = ChannelBridge(client)
+    result = bridge.send_report_file_via_channel(
+        request_id="r-cdn-cleanup",
+        report_id="rp-cdn-cleanup",
+        channel_kind="wechat_clawbot",
+        file_name="report.pdf",
+        file_path=pdf_path,
+        target="sender-1",
+        account_id="acc-1",
+    )
+
+    assert result["sent"] is True
+    assert not stale_queue_path.exists()
+    assert list(queue_dir.glob("*.json")) == []
+    assert len(list(queue_dir.glob("*.json.superseded-*"))) == 1
+
+
+def test_send_report_file_requires_explicit_wechat_target() -> None:
+    class _NoTargetFileClient(_FakeChannelClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.targets: list[object] = []
+
+        def channels_send_file(self, *, channel, file_name, dedupe_key, to=None, payload=None, file_path=None, account_id=None):
+            self.targets.append(to)
+            return {"sent": True, "messageId": "msg-current"}
+
+    client = _NoTargetFileClient()
+    bridge = ChannelBridge(client)
+    with pytest.raises(UiBoundaryError) as exc:
+        bridge.send_report_file_via_channel(
+            request_id="r-current",
+            report_id="rp-current",
+            channel_kind="wechat_clawbot",
+            file_name="report.pdf",
+            payload=b"pdf",
+    )
+    assert exc.value.code == "FILE_SEND_UNSUPPORTED"
+    assert exc.value.user_message == "完整报告文件暂不可发送，请在设备界面查看。"
+    assert client.targets == []
 
 
 @pytest.mark.parametrize(

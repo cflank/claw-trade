@@ -7,11 +7,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
-from claw_trade.web.app import build_research_ui_app
+from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
     CancelReportTaskRequest,
+    CancelSelectionProgressRequest,
     ConfirmIntentDraftRequest,
     cancel_report_task,
+    cancel_selection_progress,
     confirm_intent_draft,
     get_chat_session,
     get_selection_refresh_snapshot,
@@ -48,6 +50,28 @@ def test_spa_fallback_is_last_and_api_prefix_keeps_json(tmp_path: Path) -> None:
     missing_api = client.get("/api/ui/not-exists")
     assert missing_api.status_code == 404
     assert missing_api.headers["content-type"].startswith("application/json")
+
+
+def test_list_saved_reports_enables_forward_when_wechat_has_default_target(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    services = SimpleNamespace(
+        queue=_SavedReportQueueProbe(),
+        repository=_SavedReportRepositoryProbe(),
+        channel_bridge=_ConnectedChannelBridgeProbe(),
+    )
+    app = build_research_ui_app(
+        settings=ResearchUiServerSettings(frontend_dist=dist),
+        services=services,  # type: ignore[arg-type]
+    )
+
+    response = TestClient(app).get("/api/ui/list-saved-reports")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["canForwardToChannel"] for item in payload["items"]] == [True, True]
 
 
 def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
@@ -97,6 +121,18 @@ def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Pa
 
     assert refresh.started == 0
     assert refresh.stopped == 0
+
+
+def test_parse_args_uses_runtime_gateway_token_when_env_is_missing(tmp_path: Path, monkeypatch) -> None:
+    runtime_env = tmp_path / ".runtime" / "dev-services" / "runtime.env"
+    runtime_env.parent.mkdir(parents=True)
+    runtime_env.write_text("OPENCLAW_GATEWAY_TOKEN=runtime-token\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    args = parse_args([])
+
+    assert args.gateway_token == "runtime-token"
 
 
 def test_selection_refresh_snapshot_falls_back_to_crypto_refresh_progress() -> None:
@@ -206,6 +242,42 @@ def test_cancel_report_task_route_calls_queue() -> None:
     assert queue.calls == [{"request_id": "req-cancel", "task_id": "task-1"}]
 
 
+def test_cancel_selection_progress_route_cancels_workflow_and_refresh() -> None:
+    selection = _SelectionCancelProbe(cancelled=False)
+    refresh = _RefreshCancelProbe(cancelled=True)
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/cancel-selection-progress",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(
+                    ui_services=SimpleNamespace(
+                        selection_controller=selection,
+                        selection_refresh_service=refresh,
+                    )
+                )
+            ),
+        }
+    )
+
+    response = cancel_selection_progress(
+        CancelSelectionProgressRequest(requestId="req-cancel-select", workflowRunId="sel-refresh-active-1"),
+        request,
+    )
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload == {
+        "cancelled": True,
+        "selectionProgress": None,
+        "message": "已停止选股任务。",
+    }
+    assert selection.workflow_run_ids == ["sel-refresh-active-1"]
+    assert refresh.selection_run_ids == ["sel-refresh-active-1"]
+
+
 def test_module_entrypoint_help_for_claw_trade_web_app() -> None:
     completed = subprocess.run(
         [sys.executable, "-m", "claw_trade.web.app", "--help"],
@@ -229,9 +301,60 @@ class _RefreshServiceProbe:
         self.stopped += 1
 
 
+class _SavedReportQueueProbe:
+    def get_report_queue_snapshot_for_user(self) -> dict[str, object]:
+        return {}
+
+
+class _SavedReportRepositoryProbe:
+    def list_saved_reports(self) -> list[dict[str, object]]:
+        return [
+            {
+                "id": "run-1",
+                "instrumentCode": "NEAR/USDT",
+                "instrumentName": "NEAR",
+                "market": "CRYPTO",
+                "title": "NEAR/USDT 报告",
+                "generatedAt": "2026-06-20T02:21:31Z",
+                "summarySnippet": "完整结论请查看报告正文。",
+                "canForwardToChannel": False,
+            },
+            {
+                "id": "run-2",
+                "instrumentCode": "601985.SH",
+                "instrumentName": "中国核电",
+                "market": "CN_A",
+                "title": "601985.SH 报告",
+                "generatedAt": "2026-06-19T21:10:38Z",
+                "summarySnippet": "完整结论请查看报告正文。",
+                "canForwardToChannel": False,
+            },
+        ]
+
+
+class _ConnectedChannelBridgeProbe:
+    def get_channel_status(self, *, probe: bool = False) -> dict[str, object]:
+        _ = probe
+        return {"state": "connected", "canSendFile": True}
+
+    def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str]:
+        assert channel_kind == "wechat_clawbot"
+        return ("sender-1@im.wechat", "account-1")
+
+
 class _SelectionControllerSnapshotProbe:
     def latest_progress_for_user(self) -> dict[str, object]:
         return {"selectionProgress": None}
+
+
+class _SelectionCancelProbe:
+    def __init__(self, *, cancelled: bool) -> None:
+        self.cancelled = cancelled
+        self.workflow_run_ids: list[str] = []
+
+    def cancel_progress(self, *, workflow_run_id: str) -> bool:
+        self.workflow_run_ids.append(workflow_run_id)
+        return self.cancelled
 
 
 class _RefreshSnapshotProbe:
@@ -255,6 +378,16 @@ class _RefreshSnapshotProbe:
                 }
             }
         return {"selectionProgress": None}
+
+
+class _RefreshCancelProbe:
+    def __init__(self, *, cancelled: bool) -> None:
+        self.cancelled = cancelled
+        self.selection_run_ids: list[str] = []
+
+    def cancel_refresh(self, *, selection_run_id: str) -> bool:
+        self.selection_run_ids.append(selection_run_id)
+        return self.cancelled
 
 
 class _ChatControllerProbe:

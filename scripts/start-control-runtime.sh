@@ -702,6 +702,7 @@ cleanup_started_services() {
   done
   if [[ ${#STARTED_NAMES[@]} -gt 0 ]]; then
     log_info "已停止服务：${STARTED_NAMES[*]}"
+    rm -f "${RUNTIME_ENV_PATH}"
   fi
 }
 
@@ -748,6 +749,88 @@ export_runtime_env_for_child_commands() {
   else
     unset OPENVIKING_MCP_URL
   fi
+}
+
+wait_report_runs_started_after() {
+  local since_epoch="$1"
+  if [[ "${CLAW_TRADE_WAIT_REPORT_RUNS_ON_COMMAND_EXIT:-1}" != "1" ]]; then
+    return 0
+  fi
+  local timeout_sec="${CLAW_TRADE_WAIT_REPORT_RUNS_TIMEOUT_SECONDS:-14400}"
+  local poll_sec="${CLAW_TRADE_WAIT_REPORT_RUNS_POLL_SECONDS:-5}"
+  local deadline_epoch=$(( $(date +%s) + timeout_sec ))
+  local wait_output
+  local wait_status
+  while true; do
+    set +e
+    wait_output="$(
+      python3 - "${ROOT_DIR}" "${since_epoch}" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+root = Path(sys.argv[1])
+since_epoch = float(sys.argv[2])
+terminal = {"completed", "failed", "cancelled"}
+runs = []
+
+def parse_epoch(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+for state_path in sorted((root / "runs").glob("run-*/state.json")):
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    request = state.get("request") if isinstance(state.get("request"), dict) else {}
+    if request.get("entry_point") != "report_command":
+        continue
+    if parse_epoch(state.get("created_at")) < since_epoch:
+        continue
+    status = str(state.get("status") or "")
+    runs.append((state.get("run_id") or state_path.parent.name, status, state.get("failure_reason") or ""))
+
+active = [item for item in runs if item[1] not in terminal]
+if active:
+    print(", ".join(f"{run_id}:{status}" for run_id, status, _ in active))
+    raise SystemExit(10)
+
+failed = [item for item in runs if item[1] in {"failed", "cancelled"}]
+if failed:
+    print("; ".join(f"{run_id}:{status}:{reason[:200]}" for run_id, status, reason in failed))
+    raise SystemExit(11)
+
+if runs:
+    print(", ".join(f"{run_id}:{status}" for run_id, status, _ in runs))
+PY
+    )"
+    wait_status=$?
+    set -e
+    if [[ "${wait_status}" == "0" ]]; then
+      if [[ -n "${wait_output}" ]]; then
+        log_info "后台报告已结束：${wait_output}"
+      fi
+      return 0
+    fi
+    if [[ "${wait_status}" == "11" ]]; then
+      log_error "后台报告失败：${wait_output}"
+      return 1
+    fi
+    if [[ "${wait_status}" != "10" ]]; then
+      log_error "后台报告状态检查失败：${wait_output}"
+      return 1
+    fi
+    if (( $(date +%s) >= deadline_epoch )); then
+      log_error "等待后台报告超时：${wait_output}"
+      return 1
+    fi
+    log_info "等待后台报告完成：${wait_output}"
+    sleep "${poll_sec}"
+  done
 }
 
 on_script_exit() {
@@ -1769,6 +1852,7 @@ log_info "运行时环境文件：${RUNTIME_ENV_PATH}"
 export_runtime_env_for_child_commands
 if [[ ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then
   log_info "运行测试命令：${RUNTIME_COMMAND[*]}"
+  command_started_epoch="$(date +%s)"
   set +e
   "${RUNTIME_COMMAND[@]}"
   command_status=$?
@@ -1777,6 +1861,9 @@ if [[ ${#RUNTIME_COMMAND[@]} -gt 0 ]]; then
     log_info "测试命令完成：退出码 0"
   else
     log_error "测试命令失败：退出码 ${command_status}"
+  fi
+  if ! wait_report_runs_started_after "${command_started_epoch}"; then
+    exit 1
   fi
   exit "${command_status}"
 fi

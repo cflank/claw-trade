@@ -986,6 +986,50 @@ def test_crypto_coingecko_market_rows_preserve_quote_and_supply_units() -> None:
     assert row["max_supply"] == 21000000.0
 
 
+def test_crypto_coingecko_market_rejects_symbol_identity_mismatch() -> None:
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=json.dumps(
+                [
+                    {
+                        "id": "allo",
+                        "name": "Allo",
+                        "symbol": "rwa",
+                        "current_price": 0.00129075,
+                        "market_cap": 2323352,
+                        "fully_diluted_valuation": 12907509,
+                        "circulating_supply": 1800000000,
+                        "total_supply": 10000000000,
+                        "max_supply": 10000000000,
+                        "total_volume": 445681,
+                        "last_updated": "2026-06-20T13:42:59Z",
+                    }
+                ]
+            ),
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:coingecko",
+        provider_id="crypto_coingecko_market",
+        endpoint_id="coins_markets",
+        market="CRYPTO",
+        data_type="valuation_metric",
+        granularity="realtime",
+        symbol_ids=("ALLOUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("price", "market_cap", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = CoinGeckoCryptoPlugin().fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "empty"
+
+
 def test_crypto_coingecko_public_profile_rows_parse_coin_metadata() -> None:
     endpoints = {endpoint.endpoint_id: endpoint for endpoint in CoinGeckoCryptoPlugin().capabilities().endpoints}
     assert endpoints["coins_id"].data_type == "company_profile"
@@ -1039,6 +1083,46 @@ def test_crypto_coingecko_public_profile_rows_parse_coin_metadata() -> None:
     assert row["total_supply"] == 20043234.849
     assert row["max_supply"] == 21000000.0
     assert row["supply_unit"] == "BTC"
+
+
+def test_crypto_coingecko_profile_rejects_symbol_identity_mismatch() -> None:
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text=json.dumps(
+                {
+                    "name": "Allo",
+                    "symbol": "rwa",
+                    "links": {"homepage": ["https://allo.xyz/"]},
+                    "market_cap_rank": 2133,
+                    "market_data": {
+                        "circulating_supply": 1800000000,
+                        "total_supply": 10000000000,
+                        "max_supply": 10000000000,
+                    },
+                }
+            ),
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:coingecko-profile",
+        provider_id="crypto_coingecko_market",
+        endpoint_id="coins_id",
+        market="CRYPTO",
+        data_type="company_profile",
+        granularity="event",
+        symbol_ids=("ALLOUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("name", "symbol", "circulating_supply", "symbol_id"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = CoinGeckoCryptoPlugin().fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "empty"
 
 
 def test_crypto_coinglass_valuation_market_rows_are_paid_source() -> None:

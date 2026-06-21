@@ -17,6 +17,24 @@ def test_save_succeeded_report_only_then_visible_in_history() -> None:
     items = repo.list_saved_reports()
     assert len(items) == 1
     assert items[0]["id"] == "r-1"
+    assert items[0]["canForwardToChannel"] is False
+
+
+def test_saved_report_exposes_channel_forward_availability_from_origin_context() -> None:
+    repo = ReportRepository()
+    repo.save_succeeded_report(
+        report_id="r-wechat",
+        instrument_code="TSLA",
+        instrument_name="Tesla",
+        market="US",
+        title="TSLA 报告",
+        markdown="# 标题\n结论段落",
+        origin_context_id="wechat_clawbot:account-1:sender-1",
+    )
+
+    items = repo.list_saved_reports()
+
+    assert items[0]["canForwardToChannel"] is True
 
 
 def test_failed_or_running_report_cannot_enter_history() -> None:

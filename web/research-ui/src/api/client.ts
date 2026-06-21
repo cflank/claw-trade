@@ -9,6 +9,8 @@ import type {
   ChannelStatusForUser,
   CancelReportTaskInput,
   CancelReportTaskOutput,
+  CancelSelectionProgressInput,
+  CancelSelectionProgressOutput,
   ConfirmSelectionReportInput,
   ConfirmSelectionReportOutput,
   ConfirmIntentDraftInput,
@@ -39,6 +41,8 @@ import type {
   ScheduledReportForUser,
   ScheduledReportInput,
   SelectionRefreshSnapshotForUser,
+  SendReportFileViaChannelInput,
+  SendReportFileViaChannelOutput,
   SendChatMessageInput,
   SendChatMessageOutput,
   SendWorkerChatInput,
@@ -163,6 +167,13 @@ export function cancelReportTask(input: CancelReportTaskInput) {
   });
 }
 
+export function cancelSelectionProgress(input: CancelSelectionProgressInput) {
+  return requestJson<CancelSelectionProgressOutput>('/api/ui/cancel-selection-progress', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export function getChatSession(contextId: string) {
   return requestJson<SendChatMessageOutput>(`/api/ui/get-chat-session?contextId=${encodeURIComponent(contextId)}`);
 }
@@ -207,6 +218,13 @@ export function deleteSavedReport(requestId: string, reportId: string) {
   return requestJson<DeleteSavedReportOutput>('/api/ui/delete-saved-report', {
     method: 'POST',
     body: JSON.stringify({ requestId, reportId }),
+  });
+}
+
+export function sendReportFileViaChannel(input: SendReportFileViaChannelInput) {
+  return requestJson<SendReportFileViaChannelOutput>('/api/ui/send-report-file-via-channel', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 

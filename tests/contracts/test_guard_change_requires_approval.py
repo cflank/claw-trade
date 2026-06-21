@@ -47,9 +47,9 @@ APPROVED_RUNTIME_GUARD_FILE_SHA256 = {
     "openviking_access.py": "4248c2f0be83ffdaccdcb5ee7fe1cc7ab2c5f259331382d15b5ea34996551d3c",
     "openviking_receipt.py": "50cb4f10d40fd9a387073f44bcaf09d915937adb469f4636d00e0bcc3e9ec634",
     "provider_request.py": "cce82afc14107ea55a344c5677a5efb3d15bfd2c20db29a0c0856f5f9a028ab4",
-    # Guard source: human-approved 2026-06-16 removal of frontline data-tool
-    # error-as-hard-stop behavior; tool-call provenance and required-call checks remain.
-    "tool_calls.py": "ecb326a15127d0fb83e00c16bd4f274105ec40a8c282c14078c9a1d733850d16",
+    # Guard source: human-approved 2026-06-20 fix for BTC empty-data report;
+    # required CRYPTO frontline data-tool error must fail visibly.
+    "tool_calls.py": "5255cffad17abc8e2964e18b2b772c504cc4b8aff504adff9f3018f295fc0a58",
     "visible_tools.py": "0b18078feda9cb416e05ad4d6bbf8dacbc3118c895cf8947c84a5f7dc61695a5",
     "workspace_evidence.py": "332420a1ebac0af35fac0101a0c8d5814e57888a39dd84440e80f75f409319ab",
 }

@@ -11,16 +11,24 @@ export function HistoryRail({
   selectionItems = [],
   activeReportId,
   activeSelectionReportId,
+  forwardingReportId = null,
+  forwardStatusByReportId = {},
   onOpenReport,
+  onForwardReport,
   onDeleteReport,
+  onDeleteReports,
   onOpenSelectionReport,
 }: {
   items: SavedReportForUser[];
   selectionItems?: SelectionReportForUser[];
   activeReportId?: string | null;
   activeSelectionReportId?: string | null;
+  forwardingReportId?: string | null;
+  forwardStatusByReportId?: Record<string, { kind: 'success' | 'error'; message: string } | undefined>;
   onOpenReport: (report: SavedReportForUser) => void;
+  onForwardReport?: (report: SavedReportForUser) => void;
   onDeleteReport: (report: SavedReportForUser) => void;
+  onDeleteReports: (reports: SavedReportForUser[], scope: 'search' | 'all') => void;
   onOpenSelectionReport?: (report: SelectionReportForUser) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -66,6 +74,14 @@ export function HistoryRail({
           onChange={(event) => setQuery(event.target.value)}
           placeholder="按标的或标题搜索"
         />
+        <button
+          type="button"
+          className="ct-history-bulk-delete"
+          disabled={!visible.length}
+          onClick={() => onDeleteReports(visible, normalized ? 'search' : 'all')}
+        >
+          {normalized ? '删除搜索结果' : '清空'}
+        </button>
       </div>
       {visible.length ? (
         <ul className="ct-history-list">
@@ -81,16 +97,34 @@ export function HistoryRail({
                   <div className="ct-history-title">{item.title}</div>
                   <div className="ct-history-time">{formatDate(item.generatedAt)}</div>
                   <div className="ct-history-summary">{item.summarySnippet}</div>
+                  {forwardStatusByReportId[item.id] ? (
+                    <div className={`ct-history-forward-status is-${forwardStatusByReportId[item.id]?.kind}`}>
+                      {forwardStatusByReportId[item.id]?.message}
+                    </div>
+                  ) : null}
                 </button>
-                <button
-                  type="button"
-                  className="ct-history-delete"
-                  aria-label={`删除 ${item.title}`}
-                  title="从历史中移除"
-                  onClick={() => onDeleteReport(item)}
-                >
-                  删除
-                </button>
+                <div className="ct-history-actions">
+                  {item.canForwardToChannel && onForwardReport ? (
+                    <button
+                      type="button"
+                      className="ct-history-forward"
+                      aria-label={`转发 ${item.title}`}
+                      disabled={forwardingReportId === item.id}
+                      onClick={() => onForwardReport(item)}
+                    >
+                      {forwardingReportId === item.id ? '发送中' : '转发'}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="ct-history-delete"
+                    aria-label={`删除 ${item.title}`}
+                    title="从历史中移除"
+                    onClick={() => onDeleteReport(item)}
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
             </li>
           ))}

@@ -60,7 +60,15 @@ function selectionProgressTitle(progress: SelectionProgressForUser) {
   return '选股任务进度';
 }
 
-function SelectionTaskBlock({ progress }: { progress?: SelectionProgressForUser | null }) {
+function SelectionTaskBlock({
+  progress,
+  onCancelSelection,
+  cancellingSelectionId,
+}: {
+  progress?: SelectionProgressForUser | null;
+  onCancelSelection?: (progress: SelectionProgressForUser) => void;
+  cancellingSelectionId?: string | null;
+}) {
   if (!progress) {
     return null;
   }
@@ -89,6 +97,16 @@ function SelectionTaskBlock({ progress }: { progress?: SelectionProgressForUser 
           ))}
         </ul>
         {progress.workflowRunId ? <div className="ct-small">工作流：{progress.workflowRunId}</div> : null}
+        {progress.status === 'running' && onCancelSelection ? (
+          <button
+            type="button"
+            className="ct-text-button ct-task-stop-button"
+            onClick={() => onCancelSelection(progress)}
+            disabled={Boolean(progress.workflowRunId && cancellingSelectionId === progress.workflowRunId)}
+          >
+            {progress.workflowRunId && cancellingSelectionId === progress.workflowRunId ? '处理中' : '停止选股'}
+          </button>
+        ) : null}
       </article>
     </section>
   );
@@ -263,6 +281,8 @@ export function RightRail({
   onPrintReport,
   onCancelTask,
   cancellingTaskId,
+  onCancelSelection,
+  cancellingSelectionId,
 }: {
   queue: ReportQueueSnapshotForUser;
   detail: ReportDetailForUser | null;
@@ -272,6 +292,8 @@ export function RightRail({
   onPrintReport?: () => void;
   onCancelTask?: (task: ReportTaskForUser) => void;
   cancellingTaskId?: string | null;
+  onCancelSelection?: (progress: SelectionProgressForUser) => void;
+  cancellingSelectionId?: string | null;
 }) {
   return (
     <aside className="ct-panel ct-right" data-testid="right-rail">
@@ -281,7 +303,11 @@ export function RightRail({
       ) : (
         <>
           <TaskBlock queue={queue} onCancelTask={onCancelTask} cancellingTaskId={cancellingTaskId} />
-          <SelectionTaskBlock progress={selectionProgress} />
+          <SelectionTaskBlock
+            progress={selectionProgress}
+            onCancelSelection={onCancelSelection}
+            cancellingSelectionId={cancellingSelectionId}
+          />
         </>
       )}
       {!detail ? <ChatSummaryBlock channel={channel} latestReport={latestReport} /> : null}

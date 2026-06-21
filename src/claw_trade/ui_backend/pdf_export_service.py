@@ -77,6 +77,11 @@ class PdfExportService:
             raise UiProductError("REPORT_NOT_READY", "报告尚未准备好，请稍后再试。")
 
         source_hash_before = sha256(markdown.encode("utf-8")).hexdigest()
+        if not force:
+            restored = self._record_existing_pdf_artifact(report_id, source_hash_before)
+            if restored is not None:
+                self._request_cache[request_id] = restored
+                return restored
         record_id = f"pdf_export_{uuid4().hex}"
         try:
             capabilities = self._runtime_capabilities_provider()
@@ -127,7 +132,29 @@ class PdfExportService:
         return to_pdf_export_for_user(internal)
 
     def get_latest_record(self, report_id: str) -> PdfExportRecord | None:
-        return self._records.get(report_id)
+        existing = self._records.get(report_id)
+        if existing is not None:
+            return existing
+        report = self._repository.get_report(report_id)
+        if report is None:
+            return None
+        return self._record_existing_pdf_artifact(report_id, report.markdown_hash)
+
+    def _record_existing_pdf_artifact(self, report_id: str, source_markdown_hash: str) -> PdfExportRecord | None:
+        artifact = self._repository.latest_pdf_artifact(report_id)
+        if artifact is None:
+            return None
+        record = PdfExportRecord(
+            id=f"pdf_export_{artifact.id}",
+            report_id=report_id,
+            source_markdown_hash=source_markdown_hash,
+            state="ready",
+            pdf_artifact_id=artifact.id,
+            user_message=None,
+            updated_at=artifact.created_at,
+        )
+        self._records[report_id] = record
+        return record
 
     def _ensure_persisted_artifact_matches(self, artifact: PdfArtifactRecord, pdf_bytes: bytes) -> None:
         stored_bytes = self._repository.read_pdf_bytes(artifact.report_id, artifact.id)

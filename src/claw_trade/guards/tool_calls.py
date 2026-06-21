@@ -75,6 +75,7 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
         return guard_passed(category="tool_calls")
 
     seen_tools: set[str] = set()
+    required_tool_error = False
     for index, item in enumerate(calls):
         if not isinstance(item, dict):
             return guard_failed(
@@ -96,12 +97,23 @@ def validate_tool_calls(call: WorkerCall, evidence: ProviderEvidence) -> GuardRe
                 reason=f"tool-calls calls[{index}].status 非法: {item.get('status')!r}",
                 paths=(evidence.tool_calls_path,),
             )
-        seen_tools.add(item["tool_name"].strip())
+        tool_name = item["tool_name"].strip()
+        seen_tools.add(tool_name)
+        if tool_name == _required_crypto_frontline_data_tool(call) and item.get("status") == "error":
+            required_tool_error = True
     required_tool = _required_crypto_frontline_data_tool(call)
     if required_tool is not None and required_tool not in seen_tools:
         return guard_failed(
             category="tool_calls",
             reason=f"CRYPTO frontline worker 未调用必需数据工具: {required_tool}",
+            paths=(evidence.tool_calls_path,),
+        )
+    if required_tool is not None and required_tool_error:
+        # Guard source: 2026-06-20 user request after BTC report produced empty evidence
+        # from data_need_runtime_blocked; required data-tool errors must fail visibly.
+        return guard_failed(
+            category="tool_calls",
+            reason=f"CRYPTO frontline worker 必需数据工具调用失败: {required_tool}",
             paths=(evidence.tool_calls_path,),
         )
     return guard_passed(category="tool_calls")

@@ -432,7 +432,7 @@ def _cached_data_need_payload_is_terminal(payload: Mapping[str, Any]) -> bool:
         return False
     if str(payload.get("status") or "") not in {"ready", "partial", "missing"}:
         return False
-    return bool(payload.get("model_visible_text") or payload.get("readable_summary"))
+    return True
 
 
 def _prior_data_need_result_paths(runtime_context: Mapping[str, Any]) -> tuple[Path, ...]:
@@ -556,6 +556,9 @@ def _data_need_model_visible_text(
     has_body_usable_result = _has_body_usable_result(data_results)
     market = _market_from_request_payload(request)
     instrument = str(request.get("instrument") or "标的")
+    has_visible_material = _has_model_visible_rows(data_results) or bool(chart_payload) or bool(crypto_lens_payload)
+    if not has_visible_material:
+        return ""
     lines = [
         f"数据结果：{market.value} {instrument} 的{_business_data_label_from_request(request)}。",
     ]
@@ -628,6 +631,14 @@ def _has_body_usable_result(data_results: Sequence[DataResult]) -> bool:
     return any(
         result.rows
         and not _data_result_has_material_gap(result)
+        and any(isinstance(row, Mapping) and not _row_is_discovery_only(row) for row in result.rows)
+        for result in data_results
+    )
+
+
+def _has_model_visible_rows(data_results: Sequence[DataResult]) -> bool:
+    return any(
+        result.rows
         and any(isinstance(row, Mapping) and not _row_is_discovery_only(row) for row in result.rows)
         for result in data_results
     )
@@ -856,7 +867,7 @@ def _social_signal_source_summary(rows: Sequence[Mapping[str, Any]]) -> str:
     if platform_rows:
         base = f"舆情来源分布：{top}；其中 {len(platform_rows)} 条含可引用文本/话题样本。"
         return f"{base}{scale_note}"
-    base = f"舆情来源分布：{top}；本次返回的是市场级情绪/热度指标，不是社交平台原文样本。"
+    base = f"舆情来源分布：{top}。"
     return f"{base}{scale_note}"
 
 
@@ -869,7 +880,7 @@ def _social_score_scale_note(rows: Sequence[Mapping[str, Any]]) -> str:
         if explicit_min is not None and explicit_max is not None:
             return f"；分数范围 {_compact_number(explicit_min)}-{_compact_number(explicit_max)}，分数越高代表越贪婪/乐观。"
         if has_score and ("fear" in source or "greed" in source or "coinglass" in source or "alternative.me" in source):
-            return "；分数范围 0-100，分数越高代表越贪婪/乐观；这是市场级情绪刻度，不是社交平台原文样本。"
+            return "；分数范围 0-100，分数越高代表越贪婪/乐观。"
     return ""
 
 

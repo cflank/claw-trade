@@ -25,8 +25,10 @@ const TOOL_ERROR_CODES = Object.freeze({
 });
 const DEFAULT_PROVIDER_TOTAL_TIMEOUT_MS = 30000;
 const DEFAULT_DATA_NEED_TOOL_BUDGET_MS = 180000;
-const DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS = 25000;
-const SUBPROCESS_TIMEOUT_BUFFER_MS = 30000;
+const DEFAULT_MIN_SUBPROCESS_TIMEOUT_MS = 5000;
+const SUBPROCESS_TIMEOUT_BUFFER_MS = 5000;
+const SUBPROCESS_FORCE_KILL_GRACE_MS = 2000;
+const SUBPROCESS_TIMEOUT_CLOSE_GRACE_MS = 1000;
 const STDERR_SUMMARY_MAX_CHARS = 2000;
 const STDOUT_SUMMARY_MAX_CHARS = 2000;
 const WECHAT_CHANNEL_ID = "openclaw-weixin";
@@ -108,6 +110,14 @@ function nonNegativeIntegerValue(value) {
     return undefined;
   }
   return parsed;
+}
+
+function normalizeMarketValue(value) {
+  const raw = textValue(value);
+  if (!raw) {
+    return undefined;
+  }
+  return raw.toUpperCase();
 }
 
 function forbiddenDataRequestKeys(value, found = new Set()) {
@@ -388,7 +398,7 @@ function buildDataRequestToolInput(runtimeVars, params, toolName) {
   if (!purpose) {
     throw new FrontlineToolError(TOOL_ERROR_CODES.paramsInvalid, "data request purpose is required");
   }
-  const market = readOptionalString(params, "market") ?? runtimeOnlyText(runtime, "market", true);
+  const market = normalizeMarketValue(readOptionalString(params, "market") ?? runtimeOnlyText(runtime, "market", true));
   const timeRange = normalizeDataNeedTimeRange(params.time_range);
   const input = {
     item,
@@ -468,7 +478,7 @@ function buildRuntimeContext(runtime, toolName, toolCallId) {
 }
 
 function assertExpectedMarket(toolName, toolInput, expectedMarket) {
-  const market = readOptionalString(toolInput, "market");
+  const market = normalizeMarketValue(toolInput.market);
   if (!market) {
     throw new FrontlineToolError(
       TOOL_ERROR_CODES.paramsInvalid,
@@ -553,11 +563,23 @@ function parseJsonFromStdout(stdout) {
 function runPythonJson(args, payload, options = {}) {
   return new Promise((resolve) => {
     let completed = false;
+    let timeoutTimer;
+    let forceKillTimer;
+    let timeoutFallbackTimer;
     function complete(result) {
       if (completed) {
         return;
       }
       completed = true;
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+      if (forceKillTimer) {
+        clearTimeout(forceKillTimer);
+      }
+      if (timeoutFallbackTimer) {
+        clearTimeout(timeoutFallbackTimer);
+      }
       resolve(result);
     }
     function appendStderr(message) {
@@ -590,6 +612,7 @@ function runPythonJson(args, payload, options = {}) {
       .join(path.delimiter);
     const child = spawn(pythonExecutable(), args, {
       cwd: REPO_ROOT,
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         PYTHONPATH: pythonPath,
@@ -623,25 +646,30 @@ function runPythonJson(args, payload, options = {}) {
       appendStderr(`stdin write failed: ${error.message}`);
     });
     let timedOut = false;
-    let forceKillTimer;
-    const timeoutTimer = setTimeout(() => {
+    function timeoutResult() {
+      return {
+        exitCode: 124,
+        stdout,
+        stderr: `${stderr}\nprocess timed out after ${timeoutMs}ms`.trim(),
+        parsed: undefined,
+      };
+    }
+    timeoutTimer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 2000);
+      terminateSpawnedProcess(child, "SIGTERM");
+      forceKillTimer = setTimeout(() => {
+        terminateSpawnedProcess(child, "SIGKILL");
+        timeoutFallbackTimer = setTimeout(() => complete(timeoutResult()), SUBPROCESS_TIMEOUT_CLOSE_GRACE_MS);
+        timeoutFallbackTimer.unref?.();
+      }, SUBPROCESS_FORCE_KILL_GRACE_MS);
       forceKillTimer.unref?.();
     }, timeoutMs);
     timeoutTimer?.unref?.();
     child.on("close", (exitCode) => {
-      if (timeoutTimer) {
-        clearTimeout(timeoutTimer);
-      }
-      if (forceKillTimer) {
-        clearTimeout(forceKillTimer);
-      }
       complete({
         exitCode: timedOut ? 124 : exitCode ?? 1,
         stdout,
-        stderr: timedOut ? `${stderr}\nprocess timed out after ${timeoutMs}ms`.trim() : stderr,
+        stderr: timedOut ? timeoutResult().stderr : stderr,
         parsed: timedOut ? undefined : parseJsonFromStdout(stdout),
       });
     });
@@ -658,6 +686,22 @@ function runPythonJson(args, payload, options = {}) {
       appendStderr(`stdin close failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
+}
+
+function terminateSpawnedProcess(child, signal) {
+  if (child?.pid && process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to killing the direct child below.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The child may already have exited.
+  }
 }
 
 function toolResult(payload, isError = false) {
@@ -695,15 +739,15 @@ function modelFacingToolText(payload, isError = false) {
     }
     const error = isRecord(payload.error) ? payload.error : undefined;
     if (error) {
-      return "本次数据需求已经有工具结果，不要再次调用同一数据需求；报告只引用已返回的可引用材料，不描述数据请求过程。";
+      return `${safeModelErrorMessage(textValue(error.code))}；不要补写不存在的数据结果。`;
     }
     if (!isError && payload.ok === true) {
-      return "报告只引用已返回的可引用材料，不描述数据请求过程。";
+      return "";
     }
   }
   return isError
-    ? "本次数据需求已经有工具结果，不要再次调用同一数据需求；报告只引用已返回的可引用材料，不描述数据请求过程。"
-    : "报告只引用已返回的可引用材料，不描述数据请求过程。";
+    ? "数据工具未能完成本次数据请求；不要补写不存在的数据结果。"
+    : "";
 }
 
 function safeModelErrorMessage(code) {
@@ -861,7 +905,7 @@ function dataNeedScriptConfig() {
         "    runtime_context = dict(payload.get('runtime_context') or {})",
         "    result = run_claw_request_data(tool_input, runtime_context)",
         "except Exception as exc:",
-        "    print(json.dumps({'ok': False, 'error': {'code': 'data_need_runtime_blocked', 'message': '数据层运行时未能完成本次数据请求', 'audit_message': str(exc)}, 'model_visible_text': '本次数据需求已经有工具结果，不要再次调用同一数据需求；报告只引用已返回的可引用材料，不描述数据请求过程。'}, ensure_ascii=False, default=str))",
+        "    print(json.dumps({'ok': False, 'error': {'code': 'data_need_runtime_blocked', 'message': '数据层运行时未能完成本次数据请求', 'audit_message': str(exc)}, 'model_visible_text': '数据层运行时未能完成本次数据请求；不要补写不存在的数据结果。'}, ensure_ascii=False, default=str))",
         "    raise SystemExit(0)",
         "print(json.dumps(result, ensure_ascii=False, default=str))",
       ].join("\n"),

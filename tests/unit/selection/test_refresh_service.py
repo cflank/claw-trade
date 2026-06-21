@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
@@ -107,6 +108,66 @@ def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> N
     assert progress["percent"] == 38
     assert progress["workerStatusLabels"] == ["拉取/补齐行情数据：补数据中（128/512）"]
     assert progress["workflowRunId"] == "sel-refresh-active-1"
+
+
+def test_selection_refresh_service_cancel_hides_active_refresh_and_blocks_stale_updates() -> None:
+    store = SelectionRunStore()
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+    )
+    active_record = SelectionDataRunRecord(
+        run_plan=SelectionRunPlan(
+            selection_run_id="sel-refresh-active-1",
+            market=SelectionMarket.CN_A,
+            profile=SelectionProfile.CN_A,
+            trade_date="2026-06-04",
+            lookback_trading_days=260,
+            universe_scope="all_a_shares",
+            data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+            approved_strategy_config_ref="config://cn-a-selection-v1",
+            trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+        ),
+        data_run=SelectionDataRun(
+            selection_run_id="sel-refresh-active-1",
+            status=SelectionDataRunStatus.FETCHING_DATA,
+            lease_id="lease://sel-refresh-active-1",
+            started_at="2026-06-04T10:00:00+00:00",
+            progress_label="补齐全市场日线数据",
+        ),
+        manifest=None,
+    )
+    store.save_data_run_record(active_record)
+
+    assert service.cancel_refresh(selection_run_id="sel-refresh-active-1") is True
+
+    cancelled_record = store.load_data_run_record("sel-refresh-active-1")
+    assert cancelled_record is not None
+    assert cancelled_record.data_run.status == SelectionDataRunStatus.FAILED
+    assert cancelled_record.data_run.failure_code == "selection_refresh_cancelled"
+    assert service.latest_progress_for_user(include_terminal=False) == {"selectionProgress": None}
+
+    store.save_data_run_record(
+        replace(
+            cancelled_record,
+            data_run=replace(
+                cancelled_record.data_run,
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                failed_at=None,
+                failure_code=None,
+                failure_reason=None,
+            ),
+        )
+    )
+
+    persisted_record = store.load_data_run_record("sel-refresh-active-1")
+    assert persisted_record is not None
+    assert persisted_record.data_run.status == SelectionDataRunStatus.FAILED
+    assert persisted_record.data_run.failure_code == "selection_refresh_cancelled"
 
 
 def test_selection_refresh_service_right_rail_prefers_latest_active_task_across_dates() -> None:

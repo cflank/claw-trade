@@ -404,6 +404,7 @@ class SelectionController:
         self._default_trade_date_resolver = default_trade_date_resolver
         self._progress_lock = Lock()
         self._active_progress: dict[str, object] | None = None
+        self._cancelled_progress_ids: set[str] = set()
 
     def load_latest_completed_for_select(self, request: SelectRequest) -> SelectReadGateResult:
         resolved = resolve_latest_terminal_selection_run(
@@ -656,6 +657,14 @@ class SelectionController:
         completed_workers: set[SelectionWorkerId] = set()
 
         for worker_id in selection_dispatch_worker_order():
+            if self._is_workflow_cancelled(workflow_run_id):
+                return _failed_result(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    evidence_dir=evidence_dir,
+                    selection_run_id=latest.run_plan.selection_run_id,
+                    reason="selection_workflow_cancelled:user_cancelled",
+                )
             self._publish_workflow_progress(
                 command=raw_text.strip(),
                 workflow_run_id=workflow_run_id,
@@ -678,6 +687,14 @@ class SelectionController:
                 candidate_cache_ref=candidate_cache_ref,
                 profile=request.profile.value,
             )
+            if self._is_workflow_cancelled(workflow_run_id):
+                return _failed_result(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    evidence_dir=evidence_dir,
+                    selection_run_id=latest.run_plan.selection_run_id,
+                    reason="selection_workflow_cancelled:user_cancelled",
+                )
             if not executions:
                 return _failed_result(
                     request=request,
@@ -723,6 +740,15 @@ class SelectionController:
                 running_worker=None,
                 completed_workers=frozenset(completed_workers),
                 started_at=request.created_at,
+            )
+
+        if self._is_workflow_cancelled(workflow_run_id):
+            return _failed_result(
+                request=request,
+                workflow_run_id=workflow_run_id,
+                evidence_dir=evidence_dir,
+                selection_run_id=latest.run_plan.selection_run_id,
+                reason="selection_workflow_cancelled:user_cancelled",
             )
 
         if pm_raw_text is None:
@@ -824,6 +850,18 @@ class SelectionController:
             progress = dict(self._active_progress) if self._active_progress is not None else None
         return {"selectionProgress": progress}
 
+    def cancel_progress(self, *, workflow_run_id: str) -> bool:
+        with self._progress_lock:
+            if self._active_progress and self._active_progress.get("workflowRunId") == workflow_run_id:
+                self._cancelled_progress_ids.add(workflow_run_id)
+                self._active_progress = None
+                return True
+        return False
+
+    def _is_workflow_cancelled(self, workflow_run_id: str) -> bool:
+        with self._progress_lock:
+            return workflow_run_id in self._cancelled_progress_ids
+
     def _publish_workflow_progress(
         self,
         *,
@@ -872,12 +910,15 @@ class SelectionController:
             "workflowRunId": workflow_run_id,
         }
         with self._progress_lock:
+            if workflow_run_id in self._cancelled_progress_ids:
+                return
             self._active_progress = progress
 
     def _clear_workflow_progress(self, workflow_run_id: str) -> None:
         with self._progress_lock:
             if self._active_progress and self._active_progress.get("workflowRunId") == workflow_run_id:
                 self._active_progress = None
+            self._cancelled_progress_ids.discard(workflow_run_id)
 
     def _request_data_refresh_if_needed(
         self,

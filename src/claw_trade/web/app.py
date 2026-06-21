@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -106,7 +107,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gateway-call-bin", default=os.environ.get("OPENCLAW_GATEWAY_CALL_BIN", "openclaw"))
     parser.add_argument("--gateway-ws-url", default=os.environ.get("OPENCLAW_GATEWAY_URL", "ws://127.0.0.1:18789"))
     parser.add_argument("--gateway-timeout-ms", type=int, default=int(os.environ.get("OPENCLAW_GATEWAY_TIMEOUT_MS", "10000")))
-    parser.add_argument("--gateway-token", default=os.environ.get("OPENCLAW_GATEWAY_TOKEN") or None)
+    parser.add_argument(
+        "--gateway-token",
+        default=os.environ.get("OPENCLAW_GATEWAY_TOKEN") or _runtime_env_value("OPENCLAW_GATEWAY_TOKEN"),
+    )
     parser.add_argument("--gateway-password", default=os.environ.get("OPENCLAW_GATEWAY_PASSWORD") or None)
     return parser.parse_args(argv)
 
@@ -126,6 +130,25 @@ def main(argv: list[str] | None = None) -> int:
     app = build_research_ui_app(settings=settings)
     uvicorn.run(app, host=settings.host, port=settings.port)
     return 0
+
+
+def _runtime_env_value(key: str) -> str | None:
+    path = Path(".runtime/dev-services/runtime.env")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    prefix = f"{key}="
+    for line in lines:
+        if not line.startswith(prefix):
+            continue
+        raw = line[len(prefix):].strip()
+        try:
+            parts = shlex.split(raw)
+        except ValueError:
+            return raw or None
+        return parts[0] if parts else None
+    return None
 
 
 if __name__ == "__main__":

@@ -450,6 +450,7 @@ def _save_completed_workflow_report(
         summary_snippet=_report_summary_snippet(original_markdown),
         generated_at=generated_at or None,
         asset_dir=run_dir / "reports" / "assets",
+        origin_context_id=getattr(task, "origin_context_id", None),
     )
     return report_id
 
@@ -632,6 +633,10 @@ def restore_completed_workflow_reports(repository: ReportRepository, run_root: P
             generated_at=_optional_text(state.get("updated_at") or state.get("created_at")),
             asset_dir=run_dir / "reports" / "assets",
         )
+        pdf_dir = run_dir / "reports" / "pdf"
+        if pdf_dir.is_dir():
+            for pdf_path in sorted(pdf_dir.glob("pdf_*.pdf"), key=lambda item: item.stat().st_mtime):
+                repository.restore_pdf_artifact(report_id, pdf_path)
         restored += 1
     return restored
 

@@ -78,7 +78,7 @@ def test_crypto_frontline_tool_calls_rejects_recorded_without_required_data_tool
     assert guard.reason is not None and "claw_request_data" in guard.reason
 
 
-def test_crypto_frontline_tool_calls_accepts_recorded_failed_data_tool_call() -> None:
+def test_crypto_frontline_tool_calls_rejects_recorded_failed_data_tool_call() -> None:
     call = _crypto_social_call()
     evidence = _provider_evidence(call, tool_calls_status="recorded")
     _write_tool_calls(
@@ -102,7 +102,8 @@ def test_crypto_frontline_tool_calls_accepts_recorded_failed_data_tool_call() ->
         },
     )
     guard = validate_tool_calls(call, evidence)
-    assert guard.ok
+    assert not guard.ok
+    assert guard.reason is not None and "必需数据工具调用失败" in guard.reason
 
 
 def test_crypto_frontline_tool_calls_accepts_successful_required_data_tool_call() -> None:
