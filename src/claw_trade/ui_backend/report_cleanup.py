@@ -355,49 +355,57 @@ def _delete_openclaw_session_files_for_runs(openclaw_state_root: Path, run_ids: 
 
 
 def _clean_delivery_queue(openclaw_state_root: Path, run_id: str) -> tuple[int, list[str]]:
-    queue_dir = openclaw_state_root / "delivery-queue"
-    if queue_dir.is_symlink() or not queue_dir.is_dir():
-        return 0, []
     deleted_bytes = 0
     warnings: list[str] = []
-    for path in sorted(queue_dir.glob("*.json")):
-        if path.is_symlink():
-            continue
-        text = _read_text(path)
-        if text is None or run_id not in text:
-            continue
-        payload = _loads_json(text)
-        if isinstance(payload, list):
-            kept: list[Any] = []
-            changed = False
-            for item in payload:
-                item_text = json.dumps(item, ensure_ascii=False, sort_keys=True)
-                if run_id in item_text and _text_uniquely_matches_run(item_text, run_id):
-                    changed = True
-                    continue
-                kept.append(item)
-            if not changed:
-                warnings.append(f"跳过无法精确清理的发送队列文件：{path.name}")
+    for queue_dir in _iter_delivery_queue_dirs(openclaw_state_root):
+        for path in sorted(queue_dir.glob("*.json*")):
+            if path.is_symlink():
                 continue
-            old_size = _file_size(path)
-            if kept:
-                new_text = json.dumps(kept, ensure_ascii=False, indent=2)
-                path.write_text(new_text, encoding="utf-8")
-                deleted_bytes += max(old_size - len(new_text.encode("utf-8")), 0)
-            else:
-                deleted_bytes += old_size
+            text = _read_text(path)
+            if text is None or run_id not in text:
+                continue
+            payload = _loads_json(text)
+            if isinstance(payload, list):
+                kept: list[Any] = []
+                changed = False
+                for item in payload:
+                    item_text = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                    if run_id in item_text and _text_uniquely_matches_run(item_text, run_id):
+                        changed = True
+                        continue
+                    kept.append(item)
+                if not changed:
+                    warnings.append(f"跳过无法精确清理的发送队列文件：{path.name}")
+                    continue
+                old_size = _file_size(path)
+                if kept:
+                    new_text = json.dumps(kept, ensure_ascii=False, indent=2)
+                    path.write_text(new_text, encoding="utf-8")
+                    deleted_bytes += max(old_size - len(new_text.encode("utf-8")), 0)
+                else:
+                    deleted_bytes += old_size
+                    path.unlink()
+                continue
+            run_ids = set(_RUN_ID_RE.findall(text))
+            if run_ids and not _run_tokens_belong_to_run(run_ids, run_id):
+                warnings.append(f"跳过共享发送队列文件：{path.name}")
+                continue
+            if _text_uniquely_matches_run(text, run_id):
+                deleted_bytes += _file_size(path)
                 path.unlink()
-            continue
-        run_ids = set(_RUN_ID_RE.findall(text))
-        if run_ids and not _run_tokens_belong_to_run(run_ids, run_id):
-            warnings.append(f"跳过共享发送队列文件：{path.name}")
-            continue
-        if _text_uniquely_matches_run(text, run_id):
-            deleted_bytes += _file_size(path)
-            path.unlink()
-        else:
-            warnings.append(f"跳过无法精确清理的发送队列文件：{path.name}")
+            else:
+                warnings.append(f"跳过无法精确清理的发送队列文件：{path.name}")
     return deleted_bytes, warnings
+
+
+def _iter_delivery_queue_dirs(openclaw_state_root: Path) -> list[Path]:
+    if openclaw_state_root.is_symlink() or not openclaw_state_root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in openclaw_state_root.glob("delivery-queue*")
+        if path.is_dir() and not path.is_symlink()
+    )
 
 
 def _delete_openviking_workflow_dir(workflow_root: Path, run_id: str) -> int:

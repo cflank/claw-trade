@@ -594,6 +594,32 @@ def test_shared_delivery_queue_list_removed_after_batch_delete(tmp_path: Path) -
     assert not queue_path.exists()
 
 
+def test_delivery_queue_superseded_file_removed(tmp_path: Path) -> None:
+    service, run_root, _, openclaw_root, _ = _service(tmp_path)
+    _write_run(run_root, "run-old", updated_at="2026-05-01T00:00:00Z")
+    queue_path = openclaw_root / "delivery-queue" / "old.json.superseded-1"
+    queue_path.parent.mkdir(parents=True)
+    queue_path.write_text(json.dumps({"mediaUrl": "runs/run-old/reports/pdf/a.pdf"}), encoding="utf-8")
+
+    result = service.cleanup_expired_reports(retention_days=30)
+
+    assert result.deletedRunIds == ["run-old"]
+    assert not queue_path.exists()
+
+
+def test_disabled_delivery_queue_file_removed(tmp_path: Path) -> None:
+    service, run_root, _, openclaw_root, _ = _service(tmp_path)
+    _write_run(run_root, "run-old", updated_at="2026-05-01T00:00:00Z")
+    queue_path = openclaw_root / "delivery-queue.disabled-test" / "old.json"
+    queue_path.parent.mkdir(parents=True)
+    queue_path.write_text(json.dumps({"mediaUrl": "runs/run-old/reports/pdf/a.pdf"}), encoding="utf-8")
+
+    result = service.cleanup_expired_reports(retention_days=30)
+
+    assert result.deletedRunIds == ["run-old"]
+    assert not queue_path.exists()
+
+
 def test_delivery_queue_symlink_dir_is_not_traversed(tmp_path: Path) -> None:
     service, run_root, _, openclaw_root, _ = _service(tmp_path)
     _write_run(run_root, "run-old", updated_at="2026-05-01T00:00:00Z")
