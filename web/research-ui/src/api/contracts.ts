@@ -410,6 +410,13 @@ export interface SendChatMessageOutput {
   selection?: SelectionMessageMetadata;
 }
 
+export interface ClearChatSessionInput {
+  requestId: string;
+  contextId: string;
+}
+
+export type ClearChatSessionOutput = SendChatMessageOutput;
+
 export interface ConfirmSelectionReportInput {
   requestId: string;
   selectWorkflowRunId: string;

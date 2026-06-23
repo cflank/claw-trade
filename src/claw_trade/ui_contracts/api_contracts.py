@@ -14,6 +14,7 @@ class UiApiContract:
 
 UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
     UiApiContract("sendChatMessage", "ChatContextForUser + ChatMessageForUser[]", ("lockedWorkflowRunId", "workflowRunning")),
+    UiApiContract("clearChatSession", "ChatContextForUser + empty ChatMessageForUser[]", ("lockedWorkflowRunId", "workflowRunning")),
     UiApiContract("createIntentDraft", "IntentDraftForUser + ConfirmationCard", ("sourceMessageId", "workflowSettings", "dedupeKey")),
     UiApiContract("confirmIntentDraft", "ReportTaskForUser | ScheduledReportForUser | PriceAlertForUser", ("runId", "dedupeKey")),
     UiApiContract("enqueueReportTask", "ReportTaskForUser + ReportQueueSnapshotForUser", ("runId", "profile", "priority", "dedupeKey")),

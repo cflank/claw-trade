@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -14,6 +15,7 @@ USER_CHANNEL_KIND = "wechat_clawbot"
 _PROVIDER_CHANNEL_ID = "openclaw-weixin"
 _DISPLAY_NAME = "微信 ClawBot"
 _QR_LOGIN_BACKGROUND_WAIT_TIMEOUT_MS = 480_000
+_LIGHT_STATUS_CACHE_TTL_SECONDS = 30.0
 _CONFIG_PATCH_STATUS_SETTLE_TIMEOUT_SECONDS = 18.0
 _CONFIG_PATCH_STATUS_SETTLE_INTERVAL_SECONDS = 0.5
 _FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS = 2
@@ -44,6 +46,8 @@ class ChannelBridge:
         self._qr_wait_inflight_generation: int | None = None
         self._qr_wait_result: dict[str, Any] | None = None
         self._qr_wait_lock = threading.Lock()
+        self._light_status_cache: tuple[float, dict[str, Any]] | None = None
+        self._light_status_cache_lock = threading.Lock()
         self._channel_capabilities_supported = bool(
             getattr(openclaw_gateway_client, "supports_channel_capabilities", True)
         )
@@ -61,6 +65,17 @@ class ChannelBridge:
         refresh_qr: bool = False,
         poll_login: bool = False,
     ) -> dict[str, Any]:
+        cache_light_status = not (probe or include_qr or refresh_qr or poll_login)
+        if cache_light_status:
+            cached = self._cached_light_channel_status()
+            if cached is not None:
+                return cached
+
+        def finish(status: dict[str, Any]) -> dict[str, Any]:
+            if cache_light_status:
+                self._store_light_channel_status(status)
+            return status
+
         if include_qr and poll_login and self._active_qr_data_url and self._active_qr_session_key:
             qr_state = self._request_qr_login(refresh=False, poll_login=True)
             if qr_state.get("connected") is True:
@@ -73,61 +88,65 @@ class ChannelBridge:
                     provider_state = _extract_provider_status(latest_status, _PROVIDER_CHANNEL_ID)
                 except Exception:
                     pass
-                return self._connected_channel_status(provider_state)
-            return _channel_status_for_user(
-                state="disconnected",
-                message=(
-                    "请用微信扫描二维码完成登录。"
-                    if qr_state.get("qrCodeImageDataUrl")
-                    else str(
-                        qr_state.get("message")
-                        if qr_state.get("sessionClosed")
-                        else "当前通道未返回二维码，请打开设备界面查看。"
-                    )
+                return finish(self._connected_channel_status(provider_state))
+            return finish(
+                _channel_status_for_user(
+                    state="disconnected",
+                    message=(
+                        "请用微信扫描二维码完成登录。"
+                        if qr_state.get("qrCodeImageDataUrl")
+                        else str(
+                            qr_state.get("message")
+                            if qr_state.get("sessionClosed")
+                            else "当前通道未返回二维码，请打开设备界面查看。"
+                        )
+                    ),
+                    can_send_text=False,
+                    can_send_file=False,
+                    qr_code_image_data_url=qr_state.get("qrCodeImageDataUrl"),
+                    qr_code_refresh_required=not bool(qr_state.get("qrCodeImageDataUrl")),
                 ),
-                can_send_text=False,
-                can_send_file=False,
-                qr_code_image_data_url=qr_state.get("qrCodeImageDataUrl"),
-                qr_code_refresh_required=not bool(qr_state.get("qrCodeImageDataUrl")),
             )
         try:
             raw_status = self._client.channels_status(probe=probe)
         except Exception:
-            return _channel_status_for_user(state="error", message="微信通知暂不可用，请在设备界面查看。")
+            return finish(_channel_status_for_user(state="error", message="微信通知暂不可用，请在设备界面查看。"))
         has_provider_channel = _has_provider_channel(raw_status, _PROVIDER_CHANNEL_ID)
         if not has_provider_channel:
             try:
                 plugins = self._client.plugins_list()
             except Exception:
-                return _channel_status_for_user(state="error", message="微信通知暂不可用，请在设备界面查看。")
+                return finish(_channel_status_for_user(state="error", message="微信通知暂不可用，请在设备界面查看。"))
             plugin = _find_channel_plugin(plugins, _PROVIDER_CHANNEL_ID)
             if plugin is None:
                 self._active_qr_data_url = None
                 self._active_qr_session_key = None
                 self._invalidate_qr_wait_state()
-                return _channel_status_for_user(state="disconnected", message="请先安装微信 ClawBot 插件。")
+                return finish(_channel_status_for_user(state="disconnected", message="请先安装微信 ClawBot 插件。"))
             if not bool(plugin.get("enabled", False)):
                 self._active_qr_data_url = None
                 self._active_qr_session_key = None
                 self._invalidate_qr_wait_state()
-                return _channel_status_for_user(state="disconnected", message="请先启用微信 ClawBot 插件。")
+                return finish(_channel_status_for_user(state="disconnected", message="请先启用微信 ClawBot 插件。"))
             if self._channel_disabled_by_config():
                 self._active_qr_data_url = None
                 self._active_qr_session_key = None
                 self._invalidate_qr_wait_state()
-                return _channel_status_for_user(
-                    state="disconnected",
-                    message="微信已解除连接，请点击刷新二维码重新扫码。",
-                    qr_code_refresh_required=True,
+                return finish(
+                    _channel_status_for_user(
+                        state="disconnected",
+                        message="微信已解除连接，请点击刷新二维码重新扫码。",
+                        qr_code_refresh_required=True,
+                    )
                 )
             self._active_qr_data_url = None
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
-            return _channel_status_for_user(state="disconnected", message="微信登录服务启动中，请稍后重试。")
+            return finish(_channel_status_for_user(state="disconnected", message="微信登录服务启动中，请稍后重试。"))
         if include_qr:
             unavailable_status = self._login_provider_unavailable_status(raw_status)
             if unavailable_status is not None:
-                return unavailable_status
+                return finish(unavailable_status)
         provider_state = _extract_provider_status(raw_status, _PROVIDER_CHANNEL_ID)
         if provider_state.get("state") == "connected":
             if include_qr and refresh_qr:
@@ -141,26 +160,28 @@ class ChannelBridge:
                         provider_state = _extract_provider_status(latest_status, _PROVIDER_CHANNEL_ID)
                     except Exception:
                         pass
-                    return self._connected_channel_status(provider_state)
+                    return finish(self._connected_channel_status(provider_state))
                 if qr_state.get("qrCodeImageDataUrl") or qr_state.get("sessionClosed"):
-                    return _channel_status_for_user(
-                        state="disconnected",
-                        message=(
-                            "请用微信扫描二维码完成登录。"
-                            if qr_state.get("qrCodeImageDataUrl")
-                            else str(qr_state.get("message") or "当前通道未返回二维码，请打开设备界面查看。")
+                    return finish(
+                        _channel_status_for_user(
+                            state="disconnected",
+                            message=(
+                                "请用微信扫描二维码完成登录。"
+                                if qr_state.get("qrCodeImageDataUrl")
+                                else str(qr_state.get("message") or "当前通道未返回二维码，请打开设备界面查看。")
+                            ),
+                            account_label=provider_state.get("accountLabel"),
+                            last_connected_at=provider_state.get("lastConnectedAt"),
+                            can_send_text=False,
+                            can_send_file=False,
+                            qr_code_image_data_url=qr_state.get("qrCodeImageDataUrl"),
+                            qr_code_refresh_required=not bool(qr_state.get("qrCodeImageDataUrl")),
                         ),
-                        account_label=provider_state.get("accountLabel"),
-                        last_connected_at=provider_state.get("lastConnectedAt"),
-                        can_send_text=False,
-                        can_send_file=False,
-                        qr_code_image_data_url=qr_state.get("qrCodeImageDataUrl"),
-                        qr_code_refresh_required=not bool(qr_state.get("qrCodeImageDataUrl")),
                     )
             self._active_qr_data_url = None
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
-            return self._connected_channel_status(provider_state)
+            return finish(self._connected_channel_status(provider_state))
 
         if provider_state.get("state") != "connected":
             qr_state: dict[str, Any] = {"qrCodeImageDataUrl": None, "connected": False}
@@ -175,29 +196,50 @@ class ChannelBridge:
                         provider_state = _extract_provider_status(latest_status, _PROVIDER_CHANNEL_ID)
                     except Exception:
                         pass
-                    return self._connected_channel_status(provider_state)
-            return _channel_status_for_user(
-                state="disconnected",
-                message=(
-                    "请用微信扫描二维码完成登录。"
-                    if qr_state.get("qrCodeImageDataUrl")
-                    else str(
-                        qr_state.get("message")
-                        if qr_state.get("sessionClosed")
-                        else "当前通道未返回二维码，请打开设备界面查看。"
-                    )
+                    return finish(self._connected_channel_status(provider_state))
+            return finish(
+                _channel_status_for_user(
+                    state="disconnected",
+                    message=(
+                        "请用微信扫描二维码完成登录。"
+                        if qr_state.get("qrCodeImageDataUrl")
+                        else str(
+                            qr_state.get("message")
+                            if qr_state.get("sessionClosed")
+                            else "当前通道未返回二维码，请打开设备界面查看。"
+                        )
+                    ),
+                    account_label=provider_state.get("accountLabel"),
+                    last_connected_at=provider_state.get("lastConnectedAt"),
+                    can_send_text=False,
+                    can_send_file=False,
+                    qr_code_image_data_url=qr_state.get("qrCodeImageDataUrl"),
+                    qr_code_refresh_required=not bool(qr_state.get("qrCodeImageDataUrl")),
                 ),
-                account_label=provider_state.get("accountLabel"),
-                last_connected_at=provider_state.get("lastConnectedAt"),
-                can_send_text=False,
-                can_send_file=False,
-                qr_code_image_data_url=qr_state.get("qrCodeImageDataUrl"),
-                qr_code_refresh_required=not bool(qr_state.get("qrCodeImageDataUrl")),
             )
         self._active_qr_data_url = None
         self._active_qr_session_key = None
         self._invalidate_qr_wait_state()
-        return self._connected_channel_status(provider_state)
+        return finish(self._connected_channel_status(provider_state))
+
+    def _cached_light_channel_status(self) -> dict[str, Any] | None:
+        with self._light_status_cache_lock:
+            cached = self._light_status_cache
+            if cached is None:
+                return None
+            cached_at, status = cached
+            if time.monotonic() - cached_at > _LIGHT_STATUS_CACHE_TTL_SECONDS:
+                self._light_status_cache = None
+                return None
+            return copy.deepcopy(status)
+
+    def _store_light_channel_status(self, status: Mapping[str, Any]) -> None:
+        with self._light_status_cache_lock:
+            self._light_status_cache = (time.monotonic(), copy.deepcopy(dict(status)))
+
+    def _clear_light_channel_status_cache(self) -> None:
+        with self._light_status_cache_lock:
+            self._light_status_cache = None
 
     def _connected_channel_status(self, provider_state: Mapping[str, Any]) -> dict[str, Any]:
         can_send_file = False
@@ -453,6 +495,7 @@ class ChannelBridge:
         if request_id in self._idempotency:
             return self._idempotency[request_id]
         provider_channel = self.resolve_clawbot_channel_id(channel_kind)
+        self._clear_light_channel_status_cache()
         provider_patch = dict(config_patch)
         if provider_patch.get("enabled") is True:
             provider_patch.setdefault("channelConfigUpdatedAt", _now_iso())

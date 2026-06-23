@@ -1064,6 +1064,13 @@ const configuredProvider = String(process.env.CLAW_TRADE_LLM_PROVIDER_VALUE || "
 const configuredPrimaryModel = String(process.env.CLAW_TRADE_LLM_MODEL_VALUE || "").trim();
 const deepseekBaseUrl = String(process.env.DEEPSEEK_BASE_URL_VALUE || "https://api.deepseek.com").trim();
 const qwenBaseUrl = String(process.env.QWEN_BASE_URL_VALUE || "https://dashscope.aliyuncs.com/compatible-mode/v1").trim();
+const uiChatAgentId = "ui_chat";
+const uiWorkerChatAgentId = "ui_worker_chat";
+const contextFreeScheduledWorkerIds = new Set([
+  "price_alert_scan_worker",
+  "scheduled_report_runner",
+  "market_data_maintenance_worker",
+]);
 const workers = [
   "market_analyst",
   "fundamental_analyst",
@@ -1280,6 +1287,9 @@ const existingAgentsConfig = isPlainObject(existingConfig.agents) ? existingConf
 const existingDefaults = isPlainObject(existingAgentsConfig.defaults) ? existingAgentsConfig.defaults : {};
 const existingPluginsConfig = isPlainObject(existingConfig.plugins) ? existingConfig.plugins : {};
 const existingPluginEntries = isPlainObject(existingPluginsConfig.entries) ? existingPluginsConfig.entries : {};
+const existingPluginAllow = Array.isArray(existingPluginsConfig.allow)
+  ? existingPluginsConfig.allow.map((item) => String(item || "").trim()).filter(Boolean)
+  : [];
 const hasSavedLlmConfig = Object.keys(existingProviders).length > 0 || Boolean(existingDefaults.model);
 if (!llm && !hasSavedLlmConfig) {
   console.error("[WARN] OpenClaw LLM 未配置：仅启动设置/诊断 UI；报告执行会继续由报告模型 gate 阻断。");
@@ -1324,11 +1334,47 @@ function readWorkerMountedSkills(workerId) {
   return skills;
 }
 
+const uiChatAgent = {
+  id: uiChatAgentId,
+  default: true,
+  workspace: `${rootDir}/agents/${uiChatAgentId}`,
+  contextInjection: "never",
+  systemPromptOverride: [
+    "你是 claw-trade UI 的普通聊天助手。",
+    "用中文直接回答用户普通消息。",
+    "回答要短；普通寒暄、身份说明、界面解释不超过两句话。",
+    "只输出纯文本，不使用 Markdown、加粗星号、标题、表格或代码块。",
+    "不要进入报告工作流，不要调度或模拟 worker。",
+    "用户明确使用 /report、/select 或 @worker 时，由 UI 路由处理。",
+  ].join("\n"),
+  skills: [],
+  tools: { allow: [] },
+};
+
+const uiWorkerChatAgent = {
+  id: uiWorkerChatAgentId,
+  default: false,
+  workspace: `${rootDir}/agents/${uiWorkerChatAgentId}`,
+  contextInjection: "never",
+  systemPromptOverride: [
+    "你是 claw-trade UI 的普通 worker 聊天助手。",
+    "用中文直接回答，回答要短；普通寒暄不超过两句话。",
+    "只输出纯文本，不使用 Markdown、加粗星号、标题、表格或代码块。",
+    "只回答普通聊天，不进入 /report 投资报告工作流。",
+    "不要生成正式报告，不输出 Run ID、Profile、Status、artifact 或报告执行摘要。",
+    "不要调用数据、搜索、交易、消息或报告工具。",
+    "用户消息会提供 worker_id 和 worker_display_name；按该 worker 的视角、职责边界和口吻回答。",
+  ].join("\n"),
+  skills: [],
+  tools: { allow: [] },
+};
+
 const mergedWorkers = workers.map((workerId) => {
   return {
     id: workerId,
-    default: workerId === "market_analyst",
+    default: false,
     workspace: `${rootDir}/agents/${workerId}`,
+    ...(contextFreeScheduledWorkerIds.has(workerId) ? { contextInjection: "never" } : {}),
     skills: readWorkerMountedSkills(workerId),
   };
 });
@@ -1418,8 +1464,25 @@ if (llm) {
     enabled: true,
   };
 }
+const requiredPluginAllow = [
+  "acpx",
+  "bonjour",
+  "browser",
+  "device-pair",
+  "file-transfer",
+  "memory-core",
+  "phone-control",
+  "talk-voice",
+  "claw-trade-frontline-tools",
+  "claw-trade-selection-tools",
+  "claw-trade-scheduled-work-tools",
+  "openclaw-weixin",
+  ...(llm ? [llm.providerId] : []),
+];
+const mergedPluginAllow = [...new Set([...existingPluginAllow, ...requiredPluginAllow])];
 const mergedPlugins = {
   enabled: true,
+  allow: mergedPluginAllow,
   load: {
     paths: [clawTradeFrontlinePluginPath, clawTradeSelectionPluginPath, clawTradeScheduledWorkPluginPath],
   },
@@ -1441,6 +1504,21 @@ const mergedChannels = {
     replyProgressMessages: true,
   },
 };
+const existingMessages = isPlainObject(existingConfig.messages) ? existingConfig.messages : {};
+const existingInboundMessages = isPlainObject(existingMessages.inbound) ? existingMessages.inbound : {};
+const existingInboundByChannel = isPlainObject(existingInboundMessages.byChannel)
+  ? existingInboundMessages.byChannel
+  : {};
+const mergedMessages = {
+  ...existingMessages,
+  inbound: {
+    ...existingInboundMessages,
+    byChannel: {
+      ...existingInboundByChannel,
+      webchat: 0,
+    },
+  },
+};
 
 const mergedConfig = {
   gateway: {
@@ -1450,11 +1528,12 @@ const mergedConfig = {
   },
   agents: {
     defaults: mergedDefaults,
-    list: mergedWorkers,
+    list: [uiChatAgent, uiWorkerChatAgent, ...mergedWorkers],
   },
   models: mergedModels,
   plugins: mergedPlugins,
   channels: mergedChannels,
+  messages: mergedMessages,
   mcp: mergedMcp,
   ...(isPlainObject(existingConfig.meta) ? { meta: existingConfig.meta } : {}),
 };

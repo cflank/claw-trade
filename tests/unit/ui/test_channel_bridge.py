@@ -252,6 +252,20 @@ def test_get_channel_status_treats_running_configured_account_as_connected() -> 
     assert payload["canSendText"] is True
 
 
+def test_get_channel_status_caches_light_homepage_status_without_caching_probe() -> None:
+    client = _FakeChannelClient()
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=False)
+    first["state"] = "mutated"
+    second = bridge.get_channel_status(probe=False)
+    third = bridge.get_channel_status(probe=True)
+
+    assert second["state"] == "connected"
+    assert third["state"] == "connected"
+    assert client.channels_status_calls == [{"probe": False}, {"probe": True}]
+
+
 def test_get_channel_status_allows_tentative_file_send_when_probe_unavailable() -> None:
     bridge = ChannelBridge(_FakeChannelClient(caps_error=True))
     payload = bridge.get_channel_status(probe=True)

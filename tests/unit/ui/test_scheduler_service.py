@@ -231,6 +231,40 @@ def test_run_scheduled_report_now_rejects_already_triggered_cron_window_without_
     assert [call["method"] for call in fake_gateway.calls] == ["cron.add"]
 
 
+def test_cron_wake_enqueues_report_with_default_report_lookback() -> None:
+    queue_calls: list[tuple[str, dict[str, object]]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, object], request_id: str) -> dict[str, object]:
+        queue_calls.append((request_id, task))
+        return {"taskId": "task-1", "instrumentCode": task["instrumentCode"], "market": task["market"], "status": "queued"}
+
+    service = SchedulerService(enqueue_report_task=enqueue, store=store, now_provider=_fixed_now)
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="SOL/USDT",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    service.handle_scheduled_report_cron_wake(
+        request_id="req-cron-wake",
+        scheduled_report_id=created.scheduledReportId,
+        cron_run_id="cron-run-1",
+    )
+
+    assert len(queue_calls) == 1
+    request_id, queued_task = queue_calls[0]
+    assert request_id == "scheduled-report:schedule-1:2025-05-19:2026-05-19:2026-05-19"
+    assert queued_task["instrumentCode"] == "SOL/USDT"
+    assert queued_task["market"] == "CRYPTO"
+    assert queued_task["startDate"] == "2025-05-19"
+    assert queued_task["endDate"] == "2026-05-19"
+    assert queued_task["currentDate"] == "2026-05-19"
+    assert queued_task["currencySymbol"] == "USDT"
+
+
 def test_cron_provision_failure_state_stays_internal() -> None:
     class FailingCronGateway(_FakeCronGateway):
         def cron_add(self, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -421,7 +455,7 @@ def test_tick_scheduled_reports_skips_paused_and_deleted_items() -> None:
 
     assert len(queue_calls) == 1
     _, queued_task = queue_calls[0]
-    assert queued_task["startDate"] == "2026-05-19"
+    assert queued_task["startDate"] == "2025-05-19"
     assert queued_task["endDate"] == "2026-05-19"
     assert queued_task["currentDate"] == "2026-05-19"
     assert queued_task["workflowSettings"]["defaultProfile"] == "US"

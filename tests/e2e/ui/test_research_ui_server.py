@@ -59,6 +59,31 @@ def test_spa_fallback_is_last_and_api_prefix_keeps_json(tmp_path: Path) -> None:
     assert missing_api.headers["content-type"].startswith("application/json")
 
 
+def test_open_device_interface_redirects_with_fragment_token(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    app = build_research_ui_app(
+        settings=ResearchUiServerSettings(
+            frontend_dist=dist,
+            gateway_ws_url="ws://127.0.0.1:18789",
+            gateway_token="runtime-token",
+        ),
+        services=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+
+    response = TestClient(app).get("/api/ui/open-device-interface", follow_redirects=False)
+
+    assert response.status_code == 307
+    location = response.headers["location"]
+    assert location == (
+        "http://127.0.0.1:18789/chat?"
+        "session=agent%3Aui_chat%3Av2%3Aui%3Anormal-chat#token=runtime-token"
+    )
+    assert "?token=" not in location
+
+
 def test_list_saved_reports_enables_forward_when_wechat_has_default_target(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     assets = dist / "assets"
@@ -123,7 +148,7 @@ def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
     assert cleanup.load_settings() == {"reportRetentionDays": 7}
 
 
-def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
+def test_app_startup_does_not_start_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
@@ -131,6 +156,26 @@ def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Pa
     cleanup = _CleanupSchedulerProbe()
     services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
     monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert refresh.started == 0
+        assert cleanup.started == 1
+
+    assert refresh.stopped == 0
+    assert cleanup.stopped == 1
+
+
+def test_app_startup_starts_owned_selection_auto_refresh_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", "1")
     monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
 
@@ -150,7 +195,7 @@ def test_app_startup_stops_selection_when_cleanup_scheduler_start_fails(tmp_path
     refresh = _RefreshServiceProbe()
     cleanup = _CleanupSchedulerProbe(fail_start=True)
     services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
-    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", "1")
     monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
     app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
 

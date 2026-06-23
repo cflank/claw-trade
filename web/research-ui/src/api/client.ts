@@ -7,6 +7,8 @@ import type {
   AdvancedDiagnosticsRuntimeServiceStatusOutput,
   ChannelChatSnapshotForUser,
   ChannelStatusForUser,
+  ClearChatSessionInput,
+  ClearChatSessionOutput,
   CancelReportTaskInput,
   CancelReportTaskOutput,
   CancelSelectionProgressInput,
@@ -144,6 +146,13 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function sendChatMessage(input: SendChatMessageInput) {
   return requestJson<SendChatMessageOutput>('/api/ui/send-chat-message', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function clearChatSession(input: ClearChatSessionInput) {
+  return requestJson<ClearChatSessionOutput>('/api/ui/clear-chat-session', {
     method: 'POST',
     body: JSON.stringify(input),
   });

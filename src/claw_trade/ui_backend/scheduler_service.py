@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
+from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.instruments.resolver import resolve_instrument_identity
 from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
 from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, ScheduledReport, ScheduledWorkStore
@@ -21,7 +22,7 @@ from claw_trade.ui_contracts.user_dto import (
     to_report_task_for_user,
     to_scheduled_report_for_user,
 )
-from claw_trade.workflow.report_request_factory import report_display_name
+from claw_trade.workflow.report_request_factory import build_report_run_request, report_display_name
 
 _SCHEDULED_REPORT_AGENT_ID = "scheduled_report_runner"
 
@@ -392,17 +393,24 @@ class SchedulerService:
 
     def _build_task_input(self, item: ScheduledReport) -> dict[str, Any]:
         now_date = self._now_iso()[:10]
+        request = build_report_run_request(
+            ticker=item.instrument_code,
+            company_name=item.instrument_name,
+            market=item.market.value,
+            current_date=now_date,
+            settings=_report_settings_from_payload(item.workflow_settings),
+        )
         return {
             "source": "scheduled",
-            "instrumentCode": item.instrument_code,
-            "instrumentName": item.instrument_name,
-            "market": item.market.value,
-            "companyName": item.instrument_name or item.instrument_code,
-            "currencySymbol": str(item.workflow_settings.get("defaultCurrencySymbol") or ""),
-            "startDate": item.start_date or now_date,
-            "endDate": item.end_date or now_date,
-            "currentDate": now_date,
-            "workflowSettings": dict(item.workflow_settings),
+            "instrumentCode": request.ticker,
+            "instrumentName": request.company_name,
+            "market": request.market,
+            "companyName": request.company_name,
+            "currencySymbol": request.currency_symbol,
+            "startDate": request.start_date,
+            "endDate": request.end_date,
+            "currentDate": request.current_date,
+            "workflowSettings": _workflow_settings_from_request(request),
         }
 
     def _task_for_user_payload(self, *, task: dict[str, Any], schedule: ScheduledReport) -> dict[str, Any]:
@@ -691,3 +699,27 @@ class SchedulerService:
         if text.endswith("Z"):
             text = text[:-1] + "+00:00"
         return datetime.fromisoformat(text).astimezone(UTC)
+
+
+def _report_settings_from_payload(payload: Mapping[str, Any]) -> ReportWorkflowSettings:
+    return ReportWorkflowSettings(
+        max_debate_rounds=int(payload.get("maxDebateRounds", 1)),
+        max_risk_discuss_rounds=int(payload.get("maxRiskDiscussRounds", 1)),
+        frontline_execution_mode=str(payload.get("frontlineExecutionMode", "parallel")),
+        default_profile=str(payload.get("defaultProfile", "CN_A")),
+        default_market=str(payload.get("defaultMarket", "CN_A")),
+        default_currency=str(payload.get("defaultCurrency", "CNY")),
+        default_currency_symbol=str(payload.get("defaultCurrencySymbol", "\u00a5")),
+    )
+
+
+def _workflow_settings_from_request(request: Any) -> dict[str, Any]:
+    return {
+        "maxDebateRounds": request.max_debate_rounds,
+        "maxRiskDiscussRounds": request.max_risk_discuss_rounds,
+        "frontlineExecutionMode": request.frontline_execution_mode,
+        "defaultProfile": request.profile,
+        "defaultMarket": request.market,
+        "defaultCurrency": request.currency,
+        "defaultCurrencySymbol": request.currency_symbol,
+    }

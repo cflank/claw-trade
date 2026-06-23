@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanService
+from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanScheduler, PriceAlertScanService
 from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, PriceAlert, PriceAlertScanBucket
 from claw_trade.ui_contracts.enums import MarketProfile
 
@@ -188,3 +188,29 @@ def test_crypto_scan_does_not_market_skip() -> None:
 
     assert quote_calls == ["BTC/USDT"]
     assert summary.skipped_alert_count == 0
+
+
+def test_scan_scheduler_runs_enabled_buckets_without_openclaw_agent() -> None:
+    store = InMemoryScheduledWorkStore()
+    store.save_scan_bucket(_bucket("CRYPTO:3m", market=MarketProfile.CRYPTO, enabled=True))
+    store.save_scan_bucket(_bucket("US:3m", market=MarketProfile.US, enabled=False))
+    store.save_price_alert(_alert("alert-1", instrument_code="BTC/USDT", market=MarketProfile.CRYPTO, bucket_key="CRYPTO:3m"))
+    quote_calls: list[str] = []
+    scan_service = PriceAlertScanService(
+        store=store,
+        quote_provider=lambda instrument, _market: quote_calls.append(instrument)
+        or {"current_price": 100.0, "percent_change": 1.0, "evidence_ref": "quote://btc"},
+        now_provider=_utc_now,
+    )
+    scheduler = PriceAlertScanScheduler(
+        store=store,
+        scan_service=scan_service,
+        interval_seconds=999,
+        now_provider=_utc_now,
+    )
+
+    summaries = scheduler.run_once(reason="test")
+
+    assert quote_calls == ["BTC/USDT"]
+    assert [summary.bucket_key for summary in summaries] == ["CRYPTO:3m"]
+    assert summaries[0].cron_run_id.startswith("price-alert-local:test:")

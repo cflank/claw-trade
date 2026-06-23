@@ -112,6 +112,7 @@ describe('legacy report route', () => {
     expect(within(reportBody).getByText(/建议继续跟踪渠道修复/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '报告 worker 聊天' })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('和组合经理聊这份报告')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '组合经理' })).not.toBeInTheDocument();
     expect(screen.queryByText(/追问/)).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '核心结论是什么？' } });
@@ -128,5 +129,23 @@ describe('legacy report route', () => {
     });
     expect(askReportQuestionBodies).toHaveLength(0);
     expect(within(reportBody).queryByText('收到，正在分析。')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '@' } });
+    const input = screen.getByLabelText('输入消息');
+    const marketOption = await screen.findByRole('option', { name: '@市场分析师' });
+    marketOption.focus();
+    fireEvent.click(marketOption);
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: `${(input as HTMLInputElement).value}市场怎么看？` } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(workerChatBodies).toHaveLength(2));
+    expect(workerChatBodies.at(1)).toMatchObject({
+      mode: 'report_worker_chat',
+      workerId: 'market_analyst',
+      reportId: 'report-1',
+      text: '市场怎么看？',
+      conversationId: 'report-report-1',
+    });
   });
 });

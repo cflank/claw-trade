@@ -4,7 +4,7 @@ from claw_trade.ui_backend.worker_chat import WorkerChatController
 from claw_trade.ui_backend.worker_chat_openclaw import OpenClawWorkerChatClient
 
 
-def test_generic_worker_chat_sends_raw_user_text_without_report_envelope() -> None:
+def test_generic_worker_chat_sends_generic_worker_prompt_without_report_envelope() -> None:
     gateway = _RecordingWorkerChatGateway()
     repository = _RecordingReportRepository()
     controller = WorkerChatController(repository, OpenClawWorkerChatClient(gateway))
@@ -20,12 +20,14 @@ def test_generic_worker_chat_sends_raw_user_text_without_report_envelope() -> No
 
     assert repository.calls == []
     message = str(gateway.chat_calls[0]["message"])
-    assert message == "请直接判断今天市场结构。"
+    assert "【claw-trade generic_worker_chat】" in message
+    assert "worker_id: market_analyst" in message
+    assert "worker_display_name: 市场分析师" in message
+    assert "【UserMessage】\n请直接判断今天市场结构。" in message
     for forbidden in (
         "【claw-trade report_worker_chat】",
         "【SavedReport】",
         "【UserQuestion】",
-        "worker_display_name:",
         "PM 最终结论：",
         "报告正文：",
     ):
@@ -47,9 +49,9 @@ def test_generic_worker_chat_mentions_are_not_worker_identity_inputs() -> None:
     )
 
     assert gateway.session_metadata[0]["workerId"] == "risk_moderator"
-    assert gateway.session_metadata[0]["agentId"] == "risk_moderator"
-    assert gateway.session_metadata[0]["sessionKey"] == "agent:risk_moderator:generic:main"
-    assert gateway.chat_calls[0]["message"] == text
+    assert gateway.session_metadata[0]["agentId"] == "ui_worker_chat"
+    assert gateway.session_metadata[0]["sessionKey"] == "agent:ui_worker_chat:generic:risk_moderator:main"
+    assert f"【UserMessage】\n{text}" in str(gateway.chat_calls[0]["message"])
 
 
 def test_generic_worker_chat_uses_native_chat_not_report_qa_or_worker_run() -> None:

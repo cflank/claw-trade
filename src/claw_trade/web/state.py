@@ -67,7 +67,7 @@ from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_ex
 from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
 from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_capabilities
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
-from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanService
+from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanScheduler, PriceAlertScanService
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
 from claw_trade.ui_backend.report_cleanup import ReportCleanupScheduler, ReportCleanupService, ReportFileSendTracker
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
@@ -283,6 +283,7 @@ class UiHttpServices:
     scheduler_service: SchedulerService
     price_alert_service: PriceAlertService
     price_alert_scan_service: PriceAlertScanService
+    price_alert_scan_scheduler: PriceAlertScanScheduler
     scheduled_work_runner: ScheduledWorkRunner
     settings_service: SettingsService
     report_cleanup_settings: ReportCleanupSettingsService
@@ -299,6 +300,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         token=settings.gateway_token,
         password=settings.gateway_password,
     )
+    rpc_client.prewarm_ui_chat()
     report_settings = _load_report_settings()
     ui_settings_db = open_ui_settings_database_from_env()
     data_source_settings_stores = build_data_source_settings_stores(ui_settings_db)
@@ -356,6 +358,11 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     price_alert_scan_service = PriceAlertScanService(
         store=scheduled_work_store,
         quote_provider=price_alert_quote_provider,
+    )
+    price_alert_scan_scheduler = PriceAlertScanScheduler(
+        store=scheduled_work_store,
+        scan_service=price_alert_scan_service,
+        legacy_cron_disabler=price_alert_service.disable_openclaw_scan_crons,
     )
     confirmation = ConfirmationController(
         queue,
@@ -493,6 +500,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         scheduler_service=scheduler_service,
         price_alert_service=price_alert_service,
         price_alert_scan_service=price_alert_scan_service,
+        price_alert_scan_scheduler=price_alert_scan_scheduler,
         scheduled_work_runner=scheduled_work_runner,
         settings_service=settings_service,
         report_cleanup_settings=report_cleanup_settings,

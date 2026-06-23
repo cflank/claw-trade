@@ -80,18 +80,18 @@ def test_generic_worker_chat_uses_payload_worker_id_and_keeps_typed_mentions_in_
         {
             "scope": "generic_worker_chat",
             "workerId": "portfolio_manager",
-            "agentId": "portfolio_manager",
-            "sessionKey": "agent:portfolio_manager:generic:main",
-            "label": "agent:portfolio_manager:generic:main",
+            "agentId": "ui_worker_chat",
+            "sessionKey": "agent:ui_worker_chat:generic:portfolio_manager:main",
+            "label": "agent:ui_worker_chat:generic:portfolio_manager:main",
         }
     ]
-    assert gateway.chat_calls == [
-        {
-            "session_key": "agent:portfolio_manager:generic:main",
-            "message": user_text,
-            "idempotency_key": "req-mentions",
-        }
-    ]
+    assert gateway.chat_calls[0]["session_key"] == "agent:ui_worker_chat:generic:portfolio_manager:main"
+    assert gateway.chat_calls[0]["idempotency_key"] == "req-mentions"
+    message = str(gateway.chat_calls[0]["message"])
+    assert message.startswith("你现在以「组合经理」的视角进行普通聊天。")
+    assert "generic_worker_chat" not in message
+    assert "worker_id:" not in message
+    assert user_text in message
 
 
 def test_generic_worker_chat_does_not_read_report_repository_or_fallback_to_legacy_report_qa() -> None:
@@ -110,7 +110,10 @@ def test_generic_worker_chat_does_not_read_report_repository_or_fallback_to_lega
 
     assert repository.calls == []
     assert gateway.report_qa_calls == 0
-    assert [call["message"] for call in gateway.chat_calls] == ["只聊新闻，不读取报告。"]
+    assert len(gateway.chat_calls) == 1
+    message = str(gateway.chat_calls[0]["message"])
+    assert "你现在以「新闻分析师」的视角进行普通聊天。" in message
+    assert "只聊新闻，不读取报告。" in message
 
 
 def _request(*, worker_chat_controller: object) -> object:

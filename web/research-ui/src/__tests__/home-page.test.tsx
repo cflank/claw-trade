@@ -54,6 +54,7 @@ function mockWorkspaceFetch(
     chatSessionSnapshot?: unknown | (() => unknown);
     selectionRefreshSnapshot?: unknown | (() => unknown);
     selectSendResponse?: Promise<Response>;
+    chatMessageResponse?: Promise<Response>;
     workerChatResponse?: Promise<Response>;
     workerChatListFails?: boolean;
     workerChatWorkers?: typeof WORKERS;
@@ -70,6 +71,7 @@ function mockWorkspaceFetch(
   const cancelBodies: Array<Record<string, unknown>> = [];
   const cancelSelectionBodies: Array<Record<string, unknown>> = [];
   const deleteBodies: Array<Record<string, unknown>> = [];
+  const clearChatBodies: Array<Record<string, unknown>> = [];
   const chatBodies: Array<Record<string, unknown>> = [];
   const workerChatBodies: Array<Record<string, unknown>> = [];
   const askReportQuestionBodies: Array<Record<string, unknown>> = [];
@@ -380,17 +382,36 @@ function mockWorkspaceFetch(
       if (options.workerChatResponse) {
         return options.workerChatResponse;
       }
+      const worker = WORKERS.find((item) => item.workerId === body.workerId);
       return json({
         kind: 'worker_chat_reply',
-        workerDisplayName: '组合经理',
+        workerDisplayName: worker?.displayName ?? 'worker',
         text: '收到，正在分析。',
         mode: body.mode,
+      });
+    }
+
+    if (url.includes('/api/ui/clear-chat-session') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      clearChatBodies.push(body);
+      return json({
+        context: {
+          contextId: body.contextId ?? 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [],
       });
     }
 
     if (url.includes('/api/ui/send-chat-message') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as { contextId: string; text: string };
       chatBodies.push(body);
+      if (options.chatMessageResponse) {
+        return options.chatMessageResponse;
+      }
       if (body.text.trim().toLowerCase().startsWith('/select') && options.selectSendResponse) {
         return options.selectSendResponse;
       }
@@ -612,6 +633,7 @@ function mockWorkspaceFetch(
     getCancelBodies: () => cancelBodies,
     getCancelSelectionBodies: () => cancelSelectionBodies,
     getDeleteBodies: () => deleteBodies,
+    getClearChatBodies: () => clearChatBodies,
     getChatBodies: () => chatBodies,
     getWorkerChatBodies: () => workerChatBodies,
     getAskReportQuestionBodies: () => askReportQuestionBodies,
@@ -627,6 +649,7 @@ describe('home page', () => {
       const restore = restoreList.pop();
       restore?.();
     }
+    window.sessionStorage.clear();
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -648,6 +671,119 @@ describe('home page', () => {
     expect(screen.getByText(/投资辩论中/)).toBeInTheDocument();
     expect(screen.getByText('多头研究员')).toBeInTheDocument();
     expect(screen.getByText('多头研究员：执行中')).toBeInTheDocument();
+  });
+
+  it('restores normal chat messages when the workspace remounts', async () => {
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: {
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'normal-user-1',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '刚才的问题',
+            createdAt: '2026-05-19T10:08:00.000Z',
+          },
+          {
+            messageId: 'normal-assistant-1',
+            contextKind: 'normal_chat',
+            actor: 'assistant',
+            kind: 'plain',
+            text: '刚才的回答',
+            createdAt: '2026-05-19T10:08:01.000Z',
+          },
+        ],
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('刚才的问题')).toBeInTheDocument();
+    expect(screen.getByText('刚才的回答')).toBeInTheDocument();
+  });
+
+  it('keeps local worker chat messages after leaving and returning to the page', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+    const firstRender = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('workspace-layout');
+    fireEvent.change(screen.getByLabelText('输入消息'), {
+      target: { value: '@市场分析师 看一下盘面' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(1));
+    expect(await screen.findByText('@市场分析师 看一下盘面')).toBeInTheDocument();
+    expect(screen.getByText('市场分析师：收到，正在分析。')).toBeInTheDocument();
+
+    firstRender.unmount();
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('@市场分析师 看一下盘面')).toBeInTheDocument();
+    expect(screen.getByText('市场分析师：收到，正在分析。')).toBeInTheDocument();
+  });
+
+  it('clears the current chat through the backend and removes local cached chat', async () => {
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: {
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'normal-user-clear',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '需要清掉的问题',
+            createdAt: '2026-05-19T10:08:00.000Z',
+          },
+        ],
+      },
+    });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('需要清掉的问题')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清除聊天' }));
+
+    await waitFor(() => expect(mocked.getClearChatBodies()).toHaveLength(1));
+    expect(mocked.getClearChatBodies()[0]).toMatchObject({ contextId: 'normal-chat' });
+    expect(screen.queryByText('需要清掉的问题')).not.toBeInTheDocument();
+    expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
+    expect(window.sessionStorage.getItem('claw-trade:home-chat-state:v1') ?? '').not.toContain('需要清掉的问题');
   });
 
   it('stops the running report task from the right rail', async () => {
@@ -1389,7 +1525,7 @@ describe('home page', () => {
     expect(screen.queryByText('加载中...')).not.toBeInTheDocument();
   });
 
-  it('sends ordinary main composer messages through worker chat with the default worker', async () => {
+  it('sends ordinary main composer messages through normal chat', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -1405,23 +1541,20 @@ describe('home page', () => {
 
     expect(await screen.findByText('收到，正在分析。')).toBeInTheDocument();
     expect(screen.getByText('帮我看下茅台')).toBeInTheDocument();
-    await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(1));
-    expect(mocked.getWorkerChatBodies().at(0)).toMatchObject({
-      mode: 'generic_worker_chat',
-      workerId: 'portfolio_manager',
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({
       text: '帮我看下茅台',
-      conversationId: 'normal-chat',
+      contextId: 'normal-chat',
     });
-    expect(mocked.getWorkerChatBodies().at(0)).not.toHaveProperty('reportId');
-    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
-  it('shows a local worker chat pending reply before the slow worker response returns', async () => {
-    let resolveWorkerChat: (response: Response) => void = () => undefined;
-    const workerChatResponse = new Promise<Response>((resolve) => {
-      resolveWorkerChat = resolve;
+  it('shows a local normal chat pending reply before the slow response returns', async () => {
+    let resolveChat: (response: Response) => void = () => undefined;
+    const chatMessageResponse = new Promise<Response>((resolve) => {
+      resolveChat = resolve;
     });
-    const mocked = mockWorkspaceFetch({ workerChatResponse });
+    const mocked = mockWorkspaceFetch({ chatMessageResponse });
     restoreList.push(mocked.restore);
 
     render(
@@ -1435,22 +1568,112 @@ describe('home page', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('帮我看下茅台')).toBeInTheDocument();
-    expect(screen.getByText('worker 正在分析...')).toBeInTheDocument();
+    expect(screen.getByText('正在回复...')).toBeInTheDocument();
     expect(screen.queryByText('收到，正在分析。')).not.toBeInTheDocument();
 
     await act(async () => {
-      resolveWorkerChat(
+      resolveChat(
         json({
-          kind: 'worker_chat_reply',
-          workerDisplayName: '组合经理',
-          text: '收到，正在分析。',
-          mode: 'generic_worker_chat',
+          context: {
+            contextId: 'normal-chat',
+            kind: 'normal_chat',
+            title: '普通聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: [
+            {
+              messageId: 'msg-u1',
+              contextKind: 'normal_chat',
+              actor: 'user',
+              kind: 'plain',
+              text: '帮我看下茅台',
+              createdAt: '2026-05-19T10:08:00.000Z',
+            },
+            {
+              messageId: 'msg-a1',
+              contextKind: 'normal_chat',
+              actor: 'assistant',
+              kind: 'plain',
+              text: '收到，正在分析。',
+              createdAt: '2026-05-19T10:08:01.000Z',
+            },
+          ],
         }),
       );
     });
 
     expect(await screen.findByText('收到，正在分析。')).toBeInTheDocument();
-    expect(screen.queryByText('worker 正在分析...')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在回复...')).not.toBeInTheDocument();
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('renders normal chat replies from the send response without polling while sending', async () => {
+    const intervalDelays: number[] = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0], timeout?: number) => {
+      intervalDelays.push(Number(timeout));
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+
+    let resolveChat: (response: Response) => void = () => undefined;
+    const chatMessageResponse = new Promise<Response>((resolve) => {
+      resolveChat = resolve;
+    });
+    const finalPayload = {
+      context: {
+        contextId: 'normal-chat',
+        kind: 'normal_chat',
+        title: '普通聊天',
+        activeTaskId: null,
+        activeReportId: null,
+      },
+      messages: [
+        {
+          messageId: 'msg-u-pending',
+          contextKind: 'normal_chat',
+          actor: 'user',
+          kind: 'plain',
+          text: '帮我看下茅台',
+          createdAt: '2026-05-19T10:08:00.000Z',
+        },
+        {
+          messageId: 'msg-a-pending',
+          contextKind: 'normal_chat',
+          actor: 'assistant',
+          kind: 'plain',
+          text: '最终回答',
+          createdAt: '2026-05-19T10:08:05.000Z',
+        },
+      ],
+    };
+    const mocked = mockWorkspaceFetch({
+      chatMessageResponse,
+      chatSessionSnapshot: () => ({ ...finalPayload, messages: [] }),
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '帮我看下茅台' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('正在回复...')).toBeInTheDocument();
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(intervalDelays).not.toContain(500);
+
+    await act(async () => {
+      resolveChat(json(finalPayload));
+    });
+
+    expect(await screen.findByText('最终回答')).toBeInTheDocument();
+    expect(screen.queryByText('正在回复...')).not.toBeInTheDocument();
+    expect(mocked.getChatBodies()).toHaveLength(1);
   });
 
   it('keeps local worker chat messages when later channel polling returns messages', async () => {
@@ -1498,11 +1721,11 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '帮我看下茅台' } });
+    fireEvent.change(input, { target: { value: '@组合经理 帮我看下茅台' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('收到，正在分析。')).toBeInTheDocument();
-    expect(screen.getByText('帮我看下茅台')).toBeInTheDocument();
+    expect(await screen.findByText('组合经理：收到，正在分析。')).toBeInTheDocument();
+    expect(screen.getByText('@组合经理 帮我看下茅台')).toBeInTheDocument();
     const queueCountBeforeRefresh = mocked.getQueueCount();
     channelHasMessages = true;
 
@@ -1511,9 +1734,40 @@ describe('home page', () => {
     });
     await waitFor(() => expect(mocked.getQueueCount()).toBeGreaterThan(queueCountBeforeRefresh));
 
-    expect(screen.getByText('收到，正在分析。')).toBeInTheDocument();
-    expect(screen.getByText('帮我看下茅台')).toBeInTheDocument();
+    expect(screen.getByText('组合经理：收到，正在分析。')).toBeInTheDocument();
+    expect(screen.getByText('@组合经理 帮我看下茅台')).toBeInTheDocument();
     expect(screen.queryByText('微信里发来的问题')).not.toBeInTheDocument();
+  });
+
+  it('keeps local worker chat messages after a later normal chat response', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@市场分析师 看一下市场结构' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('@市场分析师 看一下市场结构')).toBeInTheDocument();
+    expect(await screen.findByText('市场分析师：收到，正在分析。')).toBeInTheDocument();
+    const nextInput = screen.getByLabelText('输入消息');
+    await waitFor(() => expect(nextInput).not.toBeDisabled());
+
+    fireEvent.change(nextInput, { target: { value: '普通消息' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送' })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(await screen.findByText('普通消息')).toBeInTheDocument();
+    expect(screen.getByText('@市场分析师 看一下市场结构')).toBeInTheDocument();
+    expect(screen.getByText('市场分析师：收到，正在分析。')).toBeInTheDocument();
+    expect(mocked.getWorkerChatBodies()).toHaveLength(1);
+    expect(mocked.getChatBodies()).toHaveLength(1);
   });
 
   it('keeps slash commands available when no worker chat workers are available', async () => {
@@ -1534,13 +1788,34 @@ describe('home page', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
-    expect(mocked.getChatBodies()).toHaveLength(0);
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: '帮我看下茅台' });
 
     fireEvent.change(input, { target: { value: '/select' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
-    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: '/select' });
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(2));
+    expect(mocked.getChatBodies().at(1)).toMatchObject({ text: '/select' });
+  });
+
+  it('does not send an unfinished worker mention when no workers are available', async () => {
+    const mocked = mockWorkspaceFetch({ workerChatWorkers: [] });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Worker chat 暂无可用 worker，请刷新页面后重试。')).toBeInTheDocument();
+    const input = screen.getByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(input).toHaveValue('@');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
   it('keeps slash commands available when the worker chat menu fails to load', async () => {
@@ -1561,13 +1836,14 @@ describe('home page', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
-    expect(mocked.getChatBodies()).toHaveLength(0);
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: '帮我看下茅台' });
 
     fireEvent.change(input, { target: { value: '/select' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
-    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: '/select' });
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(2));
+    expect(mocked.getChatBodies().at(1)).toMatchObject({ text: '/select' });
   });
 
   it('keeps select commands on the original chat message flow', async () => {
@@ -1592,28 +1868,7 @@ describe('home page', () => {
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
-  it('sends ordinary main composer messages to the worker chosen from the selector', async () => {
-    const mocked = mockWorkspaceFetch();
-    restoreList.push(mocked.restore);
-
-    render(
-      <MemoryRouter>
-        <HomePage />
-      </MemoryRouter>,
-    );
-
-    fireEvent.click(await screen.findByRole('button', { name: '组合经理' }));
-    fireEvent.click(screen.getByRole('option', { name: '市场分析师' }));
-
-    const input = screen.getByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '看一下市场结构' } });
-    fireEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(1));
-    expect(mocked.getWorkerChatBodies().at(0)?.workerId).toBe('market_analyst');
-  });
-
-  it('keeps the selected worker when a worker mention is typed without selecting from the list', async () => {
+  it('sends leading worker mentions to that worker', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -1627,8 +1882,184 @@ describe('home page', () => {
     fireEvent.change(input, { target: { value: '@市场分析师 看一下市场结构' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
+    expect(await screen.findByText('@市场分析师 看一下市场结构')).toBeInTheDocument();
+    expect(input).toHaveValue('@市场分析师 ');
+    expect(await screen.findByText('市场分析师：收到，正在分析。')).toBeInTheDocument();
     await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(1));
-    expect(mocked.getWorkerChatBodies().at(0)?.workerId).toBe('portfolio_manager');
+    expect(mocked.getWorkerChatBodies().at(0)).toMatchObject({
+      mode: 'generic_worker_chat',
+      workerId: 'market_analyst',
+      text: '看一下市场结构',
+      conversationId: 'normal-chat',
+    });
+    expect(mocked.getChatBodies()).toHaveLength(0);
+
+    fireEvent.change(input, { target: { value: '@市场分析师 继续看成交量' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(2));
+    expect(mocked.getWorkerChatBodies().at(1)).toMatchObject({
+      mode: 'generic_worker_chat',
+      workerId: 'market_analyst',
+      text: '继续看成交量',
+      conversationId: 'normal-chat',
+    });
+  });
+
+  it('inserts a worker mention from the normal chat composer @ picker', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    await waitFor(() => expect(screen.queryByRole('button', { name: '组合经理' })).not.toBeInTheDocument());
+
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.click(await screen.findByRole('option', { name: '@市场分析师' }));
+
+    expect(input).toHaveValue('@市场分析师 ');
+  });
+
+  it('supports keyboard selection in the normal chat @ picker', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(input).toHaveValue('@市场分析师 ');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('supports tab selection in the normal chat @ picker', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Tab' });
+
+    expect(input).toHaveValue('@研究经理 ');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('wraps upward keyboard selection in the normal chat @ picker', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(input).toHaveValue('@风险经理 ');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('does not send an unfinished worker mention while workers are available', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(input).toHaveValue('@组合经理 ');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('does not send an unmatched worker mention while workers are available', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@不存在' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(input).toHaveValue('@不存在');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('keeps non-leading worker mentions on normal chat', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: 'abc @市场分析师 看一下市场结构' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: 'abc @市场分析师 看一下市场结构' });
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('rejects unknown leading worker mentions without fallback', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@不存在 看一下市场结构' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('没有找到这个 worker。')).toBeInTheDocument();
+    expect(mocked.getChatBodies()).toHaveLength(0);
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
   it('shows local progress while a select command is still running', async () => {
@@ -2053,6 +2484,7 @@ describe('home page', () => {
     expect(Boolean(reportBody.compareDocumentPosition(qaList) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(screen.getByRole('region', { name: '报告 worker 聊天' })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('和组合经理聊这份报告')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '组合经理' })).not.toBeInTheDocument();
     expect(screen.queryByText(/追问/)).not.toBeInTheDocument();
 
     const askInput = screen.getByLabelText('输入消息');
@@ -2082,7 +2514,7 @@ describe('home page', () => {
     expect(screen.getByPlaceholderText('输入问题，或提交报告任务需求')).toBeInTheDocument();
   });
 
-  it('sends report worker chat to the worker chosen in the reading selector', async () => {
+  it('sends report worker chat to the worker chosen from the reading @ picker', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -2095,10 +2527,15 @@ describe('home page', () => {
     fireEvent.click(await screen.findByRole('button', { name: /600519\.SH/ }));
     expect(await screen.findByTestId('reading-report-body')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '组合经理' }));
-    fireEvent.click(screen.getByRole('option', { name: '市场分析师' }));
+    const input = screen.getByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '@' } });
+    const marketOption = await screen.findByRole('option', { name: '@市场分析师' });
+    marketOption.focus();
+    fireEvent.click(marketOption);
 
-    fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '市场怎么看？' } });
+    expect(input).toHaveValue('@市场分析师 ');
+    expect(input).toHaveFocus();
+    fireEvent.change(input, { target: { value: `${(input as HTMLInputElement).value}市场怎么看？` } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(1));
@@ -2106,11 +2543,12 @@ describe('home page', () => {
       mode: 'report_worker_chat',
       workerId: 'market_analyst',
       reportId: 'report-1',
+      text: '市场怎么看？',
     });
     expect(mocked.getAskReportQuestionBodies()).toHaveLength(0);
   });
 
-  it('resets report worker to the default when opening a report after changing the main worker', async () => {
+  it('uses the default report worker when opening a report', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -2120,12 +2558,10 @@ describe('home page', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: '组合经理' }));
-    fireEvent.click(screen.getByRole('option', { name: '市场分析师' }));
-
     fireEvent.click(await screen.findByRole('button', { name: /600519\.SH/ }));
     expect(await screen.findByTestId('reading-report-body')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '组合经理' })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('和组合经理聊这份报告')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '组合经理' })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '核心结论是什么？' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
@@ -2138,7 +2574,7 @@ describe('home page', () => {
     });
   });
 
-  it('keeps the default report worker when a worker mention is typed without choosing from the list', async () => {
+  it('lets a leading worker mention override the report worker for one question', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -2157,8 +2593,9 @@ describe('home page', () => {
     await waitFor(() => expect(mocked.getWorkerChatBodies()).toHaveLength(1));
     expect(mocked.getWorkerChatBodies().at(0)).toMatchObject({
       mode: 'report_worker_chat',
-      workerId: 'portfolio_manager',
-      text: '@市场分析师 市场怎么看？',
+      workerId: 'market_analyst',
+      text: '市场怎么看？',
+      reportId: 'report-1',
     });
     expect(mocked.getAskReportQuestionBodies()).toHaveLength(0);
   });

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,6 +21,8 @@ from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
 from claw_trade.ui_contracts.enums import ChatContextKind
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -199,6 +202,15 @@ class ChatController:
         context = self._get_or_create_context(context_id)
         return self._chat_result(context)
 
+    def clear_chat_session(self, *, context_id: str) -> dict[str, Any]:
+        context = create_normal_chat_context(context_id=context_id)
+        if context_id.startswith("wechat_clawbot:"):
+            context = switch_chat_context(context, kind=ChatContextKind.NORMAL_CHAT, title="微信聊天")
+        self._contexts[context_id] = context
+        self._messages[context_id] = []
+        self._confirmation_cards[context_id] = {}
+        return self._chat_result(context)
+
     def append_report_completed_message(
         self,
         *,
@@ -366,39 +378,44 @@ class ChatController:
                     return self._chat_result(context, queue_snapshot=snapshot)
         if self._is_explicit_select_command(content):
             return self._handle_explicit_select_command(context=context, request_id=request_id, content=content)
-        if self._recognizer.looks_like_report_intent(content):
-            try:
-                draft = self._recognizer.classify_user_intent(
-                    text=content,
-                    source_message_id=f"msg-{request_id}",
-                    settings=self._settings,
-                )
-            except Exception:
-                draft = None
-            if draft is not None:
-                self._assert_report_model_ready_for_draft(draft)
-                self._confirmation.register_draft(draft)
-                card = self._confirmation.build_confirmation_card(draft)
-                context = switch_chat_context(context, kind=ChatContextKind.INTENT_CONFIRMING)
-                self._contexts[context_id] = context
-                self._append_message(
-                    context_id=context.id,
-                    context_kind=context.kind,
-                    actor="system",
-                    kind="confirmation_card",
-                    text=card["title"],
-                    card_id=card["id"],
-                )
-                return self._chat_result(context, confirmation_card=card)
-        reply = self._openclaw.chat_send(context_id=context.id, text=content, request_id=request_id)
+        try:
+            draft = self._recognizer.classify_user_intent(
+                text=content,
+                source_message_id=f"msg-{request_id}",
+                settings=self._settings,
+            )
+        except Exception:
+            draft = None
+        if draft is not None:
+            self._assert_report_model_ready_for_draft(draft)
+            self._confirmation.register_draft(draft)
+            card = self._confirmation.build_confirmation_card(draft)
+            context = switch_chat_context(context, kind=ChatContextKind.INTENT_CONFIRMING)
+            self._contexts[context_id] = context
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="confirmation_card",
+                text=card["title"],
+                card_id=card["id"],
+            )
+            return self._chat_result(context, confirmation_card=card)
+        try:
+            reply = self._openclaw.chat_send(context_id=context.id, text=content, request_id=request_id)
+            assistant_text = reply.text
+        except Exception as exc:
+            _LOGGER.exception("normal chat OpenClaw reply failed context_id=%s request_id=%s", context.id, request_id)
+            failure = translate_internal_error_for_user(exc)
+            assistant_text = failure.user_message
         self._append_message(
             context_id=context.id,
             context_kind=context.kind,
             actor="assistant",
             kind="plain",
-            text=reply.text,
+            text=assistant_text,
         )
-        return self._chat_result(context, assistant_reply=reply.text)
+        return self._chat_result(context, assistant_reply=assistant_text)
 
     def _handle_explicit_select_command(
         self,
@@ -534,7 +551,7 @@ class ChatController:
         report_id: str | None = None,
         task_id: str | None = None,
         selection: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> str:
         self._message_seq += 1
         item = ChatMessage(
             message_id=f"m-{self._message_seq}",
@@ -549,6 +566,7 @@ class ChatController:
             selection=selection,
         )
         self._messages.setdefault(context_id, []).append(item)
+        return item.message_id
 
     @staticmethod
     def _message_to_payload(message: ChatMessage) -> dict[str, Any]:

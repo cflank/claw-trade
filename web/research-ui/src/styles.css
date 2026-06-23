@@ -513,6 +513,15 @@ body {
   overflow-wrap: anywhere;
 }
 
+.ct-composer-field {
+  position: relative;
+  min-width: 0;
+}
+
+.ct-composer-field input {
+  width: 100%;
+}
+
 .ct-composer > button {
   height: 36px;
   border: 1px solid var(--ct-primary);
@@ -603,6 +612,16 @@ body {
   padding: 8px;
   color: var(--ct-text-muted);
   font-size: 13px;
+}
+
+.ct-worker-mention-menu {
+  left: 0;
+  right: 0;
+  width: auto;
+}
+
+.ct-worker-mention-menu .ct-worker-selector-list {
+  margin-top: 0;
 }
 
 .ct-right-rail {
@@ -1373,6 +1392,11 @@ body {
   padding: 0 9px;
   font: inherit;
   font-size: 12px;
+}
+
+.ct-text-button:disabled {
+  color: var(--ct-muted);
+  cursor: not-allowed;
 }
 
 .ct-right-section .ct-text-button {

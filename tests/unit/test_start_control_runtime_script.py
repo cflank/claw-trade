@@ -52,6 +52,9 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "OPENCLAW_WEIXIN_PLUGIN_ID" in text
     assert "OPENCLAW_WEIXIN_PLUGIN_SPEC" in text
     assert "ensure_openclaw_weixin_plugin_ready" in text
+    assert "existingPluginAllow" in text
+    assert "requiredPluginAllow" in text
+    assert "allow: mergedPluginAllow" in text
     assert "@tencent-weixin/openclaw-weixin@2.4.4" in text
     assert 'plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}"' in text
     assert "OPENCLAW_STATE_DIR" in text
@@ -325,7 +328,20 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "const llmIdleTimeoutSeconds = Number.parseInt(String(rawLlmIdleTimeoutSeconds ?? \"\"), 10);" in text
     assert "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS 必须是正整数" in text
     assert "const workers = [" in text
-    assert 'default: workerId === "market_analyst"' in text
+    assert 'const uiChatAgentId = "ui_chat";' in text
+    assert "const uiChatAgent = {" in text
+    assert "workspace: `${rootDir}/agents/${uiChatAgentId}`" in text
+    assert 'contextInjection: "never"' in text
+    assert "systemPromptOverride: [" in text
+    assert "用中文直接回答用户普通消息。" in text
+    assert "回答要短；普通寒暄、身份说明、界面解释不超过两句话。" in text
+    assert "只输出纯文本，不使用 Markdown、加粗星号、标题、表格或代码块。" in text
+    assert "tools: { allow: [] }" in text
+    assert "const existingInboundMessages = isPlainObject(existingMessages.inbound) ? existingMessages.inbound : {};" in text
+    assert "webchat: 0" in text
+    assert "messages: mergedMessages" in text
+    assert "default: false" in text
+    assert 'default: workerId === "market_analyst"' not in text
     assert 'workspace: `${rootDir}/agents/${workerId}`' in text
     assert "function readWorkerMountedSkills(workerId) {" in text
     assert "skills/manifest.yaml" in text
@@ -334,6 +350,14 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert "worker skill manifest 没有可挂载 skill" in text
     assert "skills: readWorkerMountedSkills(workerId)" in text
     assert "const mergedDefaults = {" in text
+    assert 'const uiWorkerChatAgentId = "ui_worker_chat";' in text
+    assert "const uiWorkerChatAgent = {" in text
+    assert "workspace: `${rootDir}/agents/${uiWorkerChatAgentId}`" in text
+    assert text.count("tools: { allow: [] }") == 2
+    assert "const contextFreeScheduledWorkerIds = new Set([" in text
+    assert '...(contextFreeScheduledWorkerIds.has(workerId) ? { contextInjection: "never" } : {})' in text
+    assert text.count('contextInjection: "never"') == 3
+    assert "list: [uiChatAgent, uiWorkerChatAgent, ...mergedWorkers]" in text
     assert "OpenClaw LLM 未配置：仅启动设置/诊断 UI" in text
     assert "OpenClaw LLM 使用已保存配置；.env.local 未覆盖。" in text
     assert ".env.local LLM provider 暂未接入 OpenClaw runtime 配置生成" in text

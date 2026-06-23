@@ -25,14 +25,14 @@ def test_generic_worker_chat_creates_agent_scoped_session_and_sends_native_chat_
         {
             "scope": "generic_worker_chat",
             "workerId": "market_analyst",
-            "agentId": "market_analyst",
-            "sessionKey": "agent:market_analyst:generic:conversation-1",
-            "label": "agent:market_analyst:generic:conversation-1",
+            "agentId": "ui_worker_chat",
+            "sessionKey": "agent:ui_worker_chat:generic:market_analyst:conversation-1",
+            "label": "agent:ui_worker_chat:generic:market_analyst:conversation-1",
         }
     ]
-    assert gateway.chat_calls[0]["session_key"].startswith("agent:market_analyst:")
+    assert gateway.chat_calls[0]["session_key"].startswith("agent:ui_worker_chat:generic:market_analyst:")
     assert gateway.chat_calls[0] == {
-        "session_key": "agent:market_analyst:generic:conversation-1",
+        "session_key": "agent:ui_worker_chat:generic:market_analyst:conversation-1",
         "message": "怎么看今天盘面？",
         "idempotency_key": "req-1",
     }
@@ -62,6 +62,23 @@ def test_report_worker_chat_uses_report_scoped_agent_session() -> None:
     ]
 
 
+def test_worker_chat_reuses_created_session_for_followup() -> None:
+    gateway = _FakeWorkerChatGateway()
+    client = OpenClawWorkerChatClient(gateway)
+
+    for request_id, message in (("req-1", "第一句"), ("req-2", "第二句")):
+        client.send_worker_chat(
+            mode="generic_worker_chat",
+            worker_id="market_analyst",
+            user_message=message,
+            conversation_id="conversation 1",
+            idempotency_key=request_id,
+        )
+
+    assert len(gateway.session_metadata) == 1
+    assert [call["idempotency_key"] for call in gateway.chat_calls] == ["req-1", "req-2"]
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (
@@ -77,7 +94,7 @@ def test_agent_chat_request_fails_fast_for_required_structured_fields(field: str
     kwargs = {
         "mode": "generic_worker_chat",
         "worker_id": "market_analyst",
-        "session_key": "agent:market_analyst:generic:conversation-1",
+        "session_key": "agent:ui_worker_chat:generic:market_analyst:conversation-1",
         "user_message": "hello",
         "idempotency_key": "req-1",
     }

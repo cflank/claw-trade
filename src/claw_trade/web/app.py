@@ -26,11 +26,13 @@ def build_research_ui_app(
     owns_services = services is None
     selection_auto_refresh_enabled = owns_services and _selection_auto_refresh_enabled()
     report_cleanup_scheduler_enabled = owns_services
+    price_alert_scan_scheduler_enabled = owns_services
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         selection_started = False
         cleanup_started = False
+        price_alert_scan_started = False
         try:
             if app.state.selection_auto_refresh_enabled:
                 app.state.ui_services.selection_refresh_service.start_automatic_refresh_scheduler()
@@ -38,8 +40,14 @@ def build_research_ui_app(
             if app.state.report_cleanup_scheduler_enabled:
                 app.state.ui_services.report_cleanup_scheduler.start()
                 cleanup_started = True
+            price_alert_scan_scheduler = getattr(app.state.ui_services, "price_alert_scan_scheduler", None)
+            if app.state.price_alert_scan_scheduler_enabled and price_alert_scan_scheduler is not None:
+                price_alert_scan_scheduler.start()
+                price_alert_scan_started = True
             yield
         finally:
+            if price_alert_scan_started:
+                app.state.ui_services.price_alert_scan_scheduler.stop()
             if cleanup_started:
                 app.state.ui_services.report_cleanup_scheduler.stop()
             if selection_started:
@@ -51,6 +59,7 @@ def build_research_ui_app(
     app.state.owns_ui_services = owns_services
     app.state.selection_auto_refresh_enabled = selection_auto_refresh_enabled
     app.state.report_cleanup_scheduler_enabled = report_cleanup_scheduler_enabled
+    app.state.price_alert_scan_scheduler_enabled = price_alert_scan_scheduler_enabled
 
     @app.exception_handler(RequestValidationError)
     async def ui_validation_error_handler(request: Request, exc: RequestValidationError):
@@ -105,7 +114,7 @@ def build_research_ui_app(
 def _selection_auto_refresh_enabled() -> bool:
     value = os.environ.get("CLAW_TRADE_SELECTION_AUTO_REFRESH")
     if value is None:
-        return True
+        return False
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 

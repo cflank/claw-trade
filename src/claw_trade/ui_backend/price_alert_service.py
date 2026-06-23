@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any, Callable
@@ -145,6 +146,50 @@ class PriceAlertService:
 
     def run_price_alert_now(self, *, request_id: str, price_alert_id: str) -> dict[str, Any]:
         return self.evaluate_price_alert(price_alert_id=price_alert_id, request_id=request_id)
+
+    def disable_openclaw_scan_crons(self) -> dict[str, Any]:
+        if self._cron_adapter is None:
+            return {"disabledJobIds": [], "clearedBucketKeys": [], "errors": []}
+
+        disabled_job_ids: list[str] = []
+        cleared_bucket_keys: list[str] = []
+        errors: list[str] = []
+        seen_job_ids: set[str] = set()
+
+        try:
+            jobs = _cron_jobs_from_payload(self._cron_adapter.list_jobs({"namePrefix": "price-alert-scan"}))
+        except Exception as exc:  # noqa: BLE001
+            jobs = []
+            errors.append(str(exc) or type(exc).__name__)
+
+        for job in jobs:
+            job_id = _cron_job_id(job)
+            if not job_id or job_id in seen_job_ids:
+                continue
+            seen_job_ids.add(job_id)
+            try:
+                self._cron_adapter.update_job(job_id=job_id, patch={"enabled": False})
+                disabled_job_ids.append(job_id)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(str(exc) or type(exc).__name__)
+
+        for bucket in self._store.list_scan_buckets():
+            job_id = bucket.openclaw_cron_job_id
+            if job_id and job_id not in seen_job_ids:
+                seen_job_ids.add(job_id)
+                try:
+                    self._cron_adapter.update_job(job_id=job_id, patch={"enabled": False})
+                    disabled_job_ids.append(job_id)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(str(exc) or type(exc).__name__)
+                    continue
+            if job_id:
+                bucket.openclaw_cron_job_id = None
+                bucket.updated_at = self._now_iso()
+                self._store.save_scan_bucket(bucket)
+                cleared_bucket_keys.append(bucket.bucket_key)
+
+        return {"disabledJobIds": disabled_job_ids, "clearedBucketKeys": cleared_bucket_keys, "errors": errors}
 
     def evaluate_price_alert(self, *, price_alert_id: str, request_id: str | None = None) -> dict[str, Any]:
         if request_id:
@@ -350,24 +395,6 @@ class PriceAlertService:
                 created_at=now_iso,
                 updated_at=now_iso,
             )
-        if bucket.enabled and bucket.openclaw_cron_job_id is None and self._cron_adapter is not None:
-            job = self._cron_adapter.add_job(
-                name=f"price-alert-scan:{bucket.market.value}:{bucket.frequency}",
-                schedule={"kind": "every", "everyMs": _PRICE_ALERT_SCAN_INTERVAL_MS},
-                agent_id=_PRICE_ALERT_SCAN_AGENT_ID,
-                payload={
-                    "kind": "agentTurn",
-                    "message": self._scan_cron_message(bucket.bucket_key),
-                    "toolsAllow": ["claw-trade-scheduled-work-wake"],
-                    "timeoutSeconds": 60,
-                },
-                session_target="isolated",
-                wake_mode="now",
-                delivery={"mode": "none"},
-                enabled=True,
-            )
-            bucket.openclaw_cron_job_id = job.openclaw_cron_job_id
-            bucket.updated_at = now_iso
         self._store.save_scan_bucket(bucket)
 
     def _highest_alert_seq(self) -> int:
@@ -397,3 +424,27 @@ class PriceAlertService:
     def _now_iso(self) -> str:
         value = self._now_provider().astimezone(UTC).replace(microsecond=0)
         return value.isoformat().replace("+00:00", "Z")
+
+
+def _cron_jobs_from_payload(payload: Any) -> list[Mapping[str, Any] | str]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, Mapping) or isinstance(item, str)]
+    if isinstance(payload, Mapping):
+        for key in ("items", "jobs", "data"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, Mapping) or isinstance(item, str)]
+        nested = payload.get("result")
+        if isinstance(nested, Mapping) or isinstance(nested, list):
+            return _cron_jobs_from_payload(nested)
+    return []
+
+
+def _cron_job_id(job: Mapping[str, Any] | str) -> str | None:
+    if isinstance(job, str):
+        return job.strip() or None
+    for key in ("jobId", "id", "openclawCronJobId", "name"):
+        value = job.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None

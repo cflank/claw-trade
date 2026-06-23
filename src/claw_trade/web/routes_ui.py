@@ -4,7 +4,7 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import is_dataclass
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -33,6 +33,11 @@ class SendChatMessageRequest(BaseModel):
     requestId: str
     contextId: str
     text: str
+
+
+class ClearChatSessionRequest(BaseModel):
+    requestId: str
+    contextId: str
 
 
 class AskReportQuestionRequest(BaseModel):
@@ -360,6 +365,16 @@ def get_chat_session(request: Request, contextId: str = Query(...)) -> JSONRespo
     services = _services(request)
     try:
         return _success_response(services.chat_controller.get_chat_session(context_id=resolve_context_id(contextId)))
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/clear-chat-session")
+def clear_chat_session(payload: ClearChatSessionRequest, request: Request) -> JSONResponse:
+    _ = payload.requestId
+    services = _services(request)
+    try:
+        return _success_response(services.chat_controller.clear_chat_session(context_id=resolve_context_id(payload.contextId)))
     except Exception as exc:
         return _exception_response(exc)
 
@@ -828,7 +843,10 @@ def save_channel_config_via_openclaw(payload: SaveChannelConfigRequest, request:
 @router.get("/open-device-interface")
 def open_device_interface(request: Request) -> RedirectResponse:
     settings = request.app.state.research_ui_settings
-    return RedirectResponse(url=_device_interface_url(settings.gateway_ws_url), status_code=307)
+    return RedirectResponse(
+        url=_device_interface_url(settings.gateway_ws_url, token=settings.gateway_token),
+        status_code=307,
+    )
 
 
 @router.get("/load-llm-settings")
@@ -1041,14 +1059,16 @@ def _valid_internal_cron_token(request: Request) -> bool:
     return bool(expected) and provided == expected
 
 
-def _device_interface_url(gateway_ws_url: str) -> str:
+def _device_interface_url(gateway_ws_url: str, *, token: str | None = None) -> str:
     parsed = urlsplit(gateway_ws_url)
     scheme = {"ws": "http", "wss": "https"}.get(parsed.scheme, parsed.scheme or "http")
     netloc = parsed.netloc
-    path = "/"
+    path = "/chat"
     if not netloc and parsed.path:
         netloc = parsed.path
-    return urlunsplit((scheme, netloc, path, "", ""))
+    query = urlencode({"session": "agent:ui_chat:v2:ui:normal-chat"})
+    fragment = urlencode({"token": token.strip()}) if token and token.strip() else ""
+    return urlunsplit((scheme, netloc, path, query, fragment))
 
 
 def _service_error(result: dict[str, Any]) -> dict[str, str] | None:

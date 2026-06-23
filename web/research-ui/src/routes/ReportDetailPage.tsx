@@ -27,6 +27,40 @@ function defaultWorkerId(workers: WorkerChatWorkerForUser[]) {
   return workers.find((worker) => worker.default)?.workerId ?? workers[0]?.workerId ?? null;
 }
 
+function parseLeadingWorkerMention(text: string, workers: WorkerChatWorkerForUser[]) {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('@')) {
+    return { kind: 'none' as const, workerId: null, body: text };
+  }
+  const afterAt = trimmed.slice(1);
+  const normalizedInput = afterAt.trim().replace(/^@+/, '').toLowerCase();
+  const candidates = workers
+    .flatMap((worker) =>
+      [worker.displayName, worker.workerId, ...worker.aliases].map((raw) => ({
+        worker,
+        raw: raw.trim(),
+        normalized: raw.trim().replace(/^@+/, '').toLowerCase(),
+      })),
+    )
+    .filter((candidate) => candidate.normalized)
+    .sort((left, right) => right.normalized.length - left.normalized.length);
+  for (const candidate of candidates) {
+    if (!normalizedInput.startsWith(candidate.normalized)) {
+      continue;
+    }
+    const rest = afterAt.slice(candidate.raw.length);
+    if (rest && !/^\s/.test(rest)) {
+      continue;
+    }
+    const body = rest.trimStart();
+    if (!body) {
+      return { kind: 'invalid' as const, workerId: null, body: '', message: '请输入要发送给 worker 的内容。' };
+    }
+    return { kind: 'worker' as const, workerId: candidate.worker.workerId, body };
+  }
+  return { kind: 'invalid' as const, workerId: null, body: '', message: '没有找到这个 worker。' };
+}
+
 export function ReportDetailPage() {
   const { reportId = '' } = useParams<{ reportId: string }>();
   const [detail, setDetail] = useState<ReportDetailForUser | null>(null);
@@ -82,7 +116,14 @@ export function ReportDetailPage() {
     if (!detail) {
       return;
     }
-    if (!selectedWorkerId) {
+    const workerMention = parseLeadingWorkerMention(text, workerChatWorkers);
+    if (workerMention.kind === 'invalid') {
+      setError(workerMention.message);
+      return;
+    }
+    const targetWorkerId = workerMention.workerId ?? selectedWorkerId;
+    const questionText = workerMention.workerId ? workerMention.body : text;
+    if (!targetWorkerId) {
       setError(workerChatUnavailableMessage || WORKER_CHAT_UNAVAILABLE_MESSAGE);
       return;
     }
@@ -92,9 +133,9 @@ export function ReportDetailPage() {
       const reply = await sendWorkerChat({
         requestId: nextRequestId(),
         mode: 'report_worker_chat',
-        workerId: selectedWorkerId,
+        workerId: targetWorkerId,
         reportId: detail.report.id,
-        text,
+        text: questionText,
         conversationId: `report-${detail.report.id}`,
       });
       setAnswer(reply.text);
@@ -138,8 +179,6 @@ export function ReportDetailPage() {
                 buttonLabel={sending ? '发送中' : '发送'}
                 workerChatEnabled
                 workers={workerChatWorkers}
-                selectedWorkerId={selectedWorkerId ?? undefined}
-                onWorkerChange={(workerId) => setSelectedWorkerId(workerId)}
               />
               {answer ? (
                 <div className="ct-report-answer">

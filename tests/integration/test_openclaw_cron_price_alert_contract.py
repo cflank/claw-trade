@@ -12,7 +12,7 @@ from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
 from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanSummary
 from claw_trade.ui_backend.price_alert_service import PriceAlertService, UiServiceError
 from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner
-from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore
+from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, PriceAlertScanBucket
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.web.routes_ui import router
 
@@ -70,7 +70,7 @@ def _service(store: InMemoryScheduledWorkStore, gateway: _FakeCronGateway) -> Pr
     )
 
 
-def test_crypto_alert_creates_scan_bucket_and_one_cron_job_for_bucket() -> None:
+def test_crypto_alert_creates_scan_bucket_without_openclaw_cron_job() -> None:
     store = InMemoryScheduledWorkStore()
     gateway = _FakeCronGateway()
     service = _service(store, gateway)
@@ -91,32 +91,13 @@ def test_crypto_alert_creates_scan_bucket_and_one_cron_job_for_bucket() -> None:
     bucket = store.get_scan_bucket("CRYPTO:3m")
     assert bucket is not None
     assert bucket.enabled is True
-    assert bucket.openclaw_cron_job_id == "price-alert-scan:CRYPTO:3m"
+    assert bucket.openclaw_cron_job_id is None
     assert first.priceAlertId == "alert-1"
     assert second.priceAlertId == "alert-2"
-    assert [call["method"] for call in gateway.calls] == ["cron.add"]
-    assert gateway.calls[0]["params"] == {
-        "name": "price-alert-scan:CRYPTO:3m",
-        "schedule": {"kind": "every", "everyMs": 180_000},
-        "enabled": True,
-        "agentId": "price_alert_scan_worker",
-        "sessionTarget": "isolated",
-        "wakeMode": "now",
-        "payload": {
-            "kind": "agentTurn",
-            "message": (
-                "Call `claw-trade-scheduled-work-wake` exactly once with this JSON payload and no other tool calls:\n"
-                '{"kind":"price_alert_scan","bucketKey":"CRYPTO:3m","cronRunId":"auto"}\n'
-                "Do not compare prices, write investment commentary, or fabricate quote results."
-            ),
-            "toolsAllow": ["claw-trade-scheduled-work-wake"],
-            "timeoutSeconds": 60,
-        },
-        "delivery": {"mode": "none"},
-    }
+    assert gateway.calls == []
 
 
-def test_cn_a_alert_creates_cn_a_scan_bucket() -> None:
+def test_cn_a_alert_creates_cn_a_scan_bucket_without_openclaw_cron_job() -> None:
     store = InMemoryScheduledWorkStore()
     gateway = _FakeCronGateway()
     service = _service(store, gateway)
@@ -131,9 +112,45 @@ def test_cn_a_alert_creates_cn_a_scan_bucket() -> None:
     bucket = store.get_scan_bucket("CN_A:3m")
     assert bucket is not None
     assert bucket.enabled is True
-    assert bucket.openclaw_cron_job_id == "price-alert-scan:CN_A:3m"
-    assert gateway.calls[0]["params"]["payload"]["kind"] == "agentTurn"
-    assert '"bucketKey":"CN_A:3m"' in gateway.calls[0]["params"]["payload"]["message"]
+    assert bucket.openclaw_cron_job_id is None
+    assert gateway.calls == []
+
+
+def test_price_alert_service_disables_legacy_openclaw_scan_crons() -> None:
+    class Gateway(_FakeCronGateway):
+        def cron_list(self, params: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+            self.calls.append({"method": "cron.list", "params": dict(params or {})})
+            return [{"id": "legacy-job-1", "name": "price-alert-scan:CRYPTO:3m"}]
+
+    store = InMemoryScheduledWorkStore()
+    store.save_scan_bucket(
+        PriceAlertScanBucket(
+            bucket_key="CRYPTO:3m",
+            market=MarketProfile.CRYPTO,
+            frequency="3m",
+            enabled=True,
+            openclaw_cron_job_id="legacy-job-1",
+            last_scan_run_id=None,
+            last_scan_summary=None,
+            last_error_message=None,
+            skipped_reason=None,
+            created_at="2026-05-19T12:00:00Z",
+            updated_at="2026-05-19T12:00:00Z",
+        )
+    )
+    gateway = Gateway()
+    service = _service(store, gateway)
+
+    result = service.disable_openclaw_scan_crons()
+
+    assert result["disabledJobIds"] == ["legacy-job-1"]
+    assert result["clearedBucketKeys"] == ["CRYPTO:3m"]
+    assert result["errors"] == []
+    assert store.get_scan_bucket("CRYPTO:3m").openclaw_cron_job_id is None  # type: ignore[union-attr]
+    assert gateway.calls == [
+        {"method": "cron.list", "params": {"query": "price-alert-scan", "includeDisabled": True}},
+        {"method": "cron.update", "params": {"jobId": "legacy-job-1", "enabled": False}},
+    ]
 
 
 def test_us_alert_creates_disabled_skipped_bucket_without_cron_job() -> None:
@@ -191,7 +208,7 @@ def test_cron_adapter_maps_basic_job_operations() -> None:
         {"method": "cron.update", "params": {"jobId": "job-1", "enabled": False}},
         {"method": "cron.remove", "params": {"jobId": "job-1"}},
         {"method": "cron.run", "params": {"jobId": "job-1", "idempotencyKey": "req-run"}},
-        {"method": "cron.list", "params": {"namePrefix": "price-alert-scan"}},
+        {"method": "cron.list", "params": {"query": "price-alert-scan", "includeDisabled": True}},
         {"method": "cron.status", "params": {"jobId": "job-1"}},
         {"method": "cron.runs", "params": {"jobId": "job-1", "limit": 3}},
     ]

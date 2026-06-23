@@ -112,7 +112,7 @@ describe('worker chat frontend', () => {
     await waitFor(() => expect(bodies[0]?.workerId).toBe('market_analyst'));
   });
 
-  it('keeps the current selected worker when @市场分析师 is typed without choosing from the list', async () => {
+  it('leaves typed worker mentions to the caller routing logic', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const onWorkerChange = vi.fn();
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {

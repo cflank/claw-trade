@@ -67,7 +67,7 @@ class OpenClawCronAdapter:
         return self._gateway.cron_run(job_id=job_id, idempotency_key=idempotency_key)
 
     def list_jobs(self, params: Mapping[str, Any] | None = None) -> Any:
-        return self._gateway.cron_list(params)
+        return self._gateway.cron_list(_normalize_list_params(params))
 
     def status(self, *, job_id: str) -> Any:
         return self._gateway.cron_status(job_id=job_id)
@@ -99,4 +99,17 @@ def _normalize_schedule(schedule: Mapping[str, Any]) -> dict[str, Any]:
         return payload
     if payload.get("type") == "every" and "intervalMs" in payload:
         return {"kind": "every", "everyMs": payload["intervalMs"]}
+    return payload
+
+
+def _normalize_list_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload = dict(params or {})
+    name_prefix = payload.pop("namePrefix", None)
+    exact_name = payload.pop("name", None)
+    if "query" not in payload:
+        query = name_prefix if isinstance(name_prefix, str) and name_prefix.strip() else exact_name
+        if isinstance(query, str) and query.strip():
+            payload["query"] = query.strip()
+    if name_prefix is not None or exact_name is not None:
+        payload.setdefault("includeDisabled", True)
     return payload

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,8 +34,11 @@ class _FakeWorkflowRunner:
 class _FakeChatTransport:
     def __init__(self) -> None:
         self.calls = 0
+        self.delay_seconds = 0.0
 
     def chat_send(self, *, context_id: str, text: str, request_id: str) -> dict[str, str]:
+        if self.delay_seconds:
+            time.sleep(self.delay_seconds)
         self.calls += 1
         return {"text": f"echo:{text}"}
 
@@ -71,15 +75,41 @@ def _build_controller(
     return controller, transport, workflow_runner
 
 
+def _wait_for_latest_assistant_text(controller: ChatController, context_id: str, expected: str) -> None:
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        messages = controller.get_chat_session(context_id=context_id)["messages"]
+        if messages and messages[-1]["actor"] == "assistant" and messages[-1]["text"] == expected:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"latest assistant text did not become {expected!r}")
+
+
 def test_normal_chat_passthrough_openclaw() -> None:
     controller, transport, workflow_runner = _build_controller()
+    transport.delay_seconds = 0.05
     result = controller.send_chat_message(request_id="req-1", context_id="ctx-1", text="你好")
     assert "error" not in result
     assert result["assistantReply"] == "echo:你好"
-    assert transport.calls == 1
     assert workflow_runner.calls == 0
     assert result["messages"][-1]["actor"] == "assistant"
+    assert result["messages"][-1]["text"] == "echo:你好"
     assert "messageId" in result["messages"][-1]
+    assert transport.calls == 1
+
+
+def test_clear_chat_session_removes_messages_without_calling_runtime() -> None:
+    controller, transport, workflow_runner = _build_controller()
+    controller.send_chat_message(request_id="req-clear-seed", context_id="ctx-clear", text="你好")
+    _wait_for_latest_assistant_text(controller, "ctx-clear", "echo:你好")
+
+    result = controller.clear_chat_session(context_id="ctx-clear")
+
+    assert result["context"]["contextId"] == "ctx-clear"
+    assert result["context"]["kind"] == "normal_chat"
+    assert result["messages"] == []
+    assert transport.calls == 1
+    assert workflow_runner.calls == 0
 
 
 def test_report_intent_only_builds_confirmation_card() -> None:
@@ -87,6 +117,18 @@ def test_report_intent_only_builds_confirmation_card() -> None:
     result = controller.send_chat_message(request_id="req-2", context_id="ctx-2", text="/report BTC")
     assert "error" not in result
     assert "confirmationCard" in result
+    assert result["context"]["kind"] == "intent_confirming"
+    assert transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+def test_price_alert_intent_builds_confirmation_card_from_chat() -> None:
+    controller, transport, workflow_runner = _build_controller()
+
+    result = controller.send_chat_message(request_id="req-alert", context_id="ctx-alert", text="BTC 高于 70000 提醒我")
+
+    assert "error" not in result
+    assert result["confirmationCard"]["title"] == "请确认是否创建价格提醒"
     assert result["context"]["kind"] == "intent_confirming"
     assert transport.calls == 0
     assert workflow_runner.calls == 0
@@ -119,8 +161,8 @@ def test_natural_language_report_intent_stays_normal_chat_without_report_command
     assert "confirmationCard" not in result
     assert result["assistantReply"] == "echo:请给我 BTC 报告"
     assert result["context"]["kind"] == "normal_chat"
-    assert transport.calls == 1
     assert workflow_runner.calls == 0
+    assert transport.calls == 1
 
 
 def test_select_command_is_routed_to_selection_before_report_intent() -> None:

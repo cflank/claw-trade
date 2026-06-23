@@ -169,10 +169,10 @@ def test_concurrent_price_alert_creation_provisions_one_scan_bucket_cron() -> No
         thread.join(timeout=2)
 
     assert sorted(created) == ["alert-1", "alert-2"]
-    assert cron_adapter.calls == ["price-alert-scan:CRYPTO:3m"]
+    assert cron_adapter.calls == []
     bucket = store.get_scan_bucket("CRYPTO:3m")
     assert bucket is not None
-    assert bucket.openclaw_cron_job_id == "job-1"
+    assert bucket.openclaw_cron_job_id is None
 
 
 def test_runtime_quote_provider_fails_closed_without_evidence_chain() -> None:

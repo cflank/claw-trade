@@ -88,6 +88,8 @@ class ScheduledWorkStore(Protocol):
 
     def get_scan_bucket(self, bucket_key: str) -> PriceAlertScanBucket | None: ...
 
+    def list_scan_buckets(self) -> list[PriceAlertScanBucket]: ...
+
 
 class InMemoryScheduledWorkStore:
     def __init__(self) -> None:
@@ -129,6 +131,9 @@ class InMemoryScheduledWorkStore:
     def get_scan_bucket(self, bucket_key: str) -> PriceAlertScanBucket | None:
         bucket = self._scan_buckets.get(bucket_key)
         return replace(bucket) if bucket is not None else None
+
+    def list_scan_buckets(self) -> list[PriceAlertScanBucket]:
+        return [replace(bucket) for bucket in self._scan_buckets.values()]
 
 
 class JsonScheduledWorkStore:
@@ -190,6 +195,10 @@ class JsonScheduledWorkStore:
         if raw is None:
             return None
         return _scan_bucket_from_payload(raw)
+
+    def list_scan_buckets(self) -> list[PriceAlertScanBucket]:
+        payload = self._load()
+        return [_scan_bucket_from_payload(raw) for raw in payload["scan_buckets"].values()]
 
     def _load(self) -> dict[str, dict[str, Any]]:
         if not self._path.exists():

@@ -54,6 +54,32 @@ def test_gateway_worker_chat_send_uses_only_native_chat_send_fields() -> None:
     ]
 
 
+def test_gateway_generic_worker_chat_send_uses_direct_agent_turn() -> None:
+    client = _RecordingGateway()
+
+    reply = client.worker_chat_send(
+        session_key="agent:ui_worker_chat:generic:market_analyst:conversation-1",
+        message="你好",
+        idempotency_key="req-generic-1",
+    )
+
+    assert reply == {"text": "generic worker answer"}
+    assert client.calls == [
+        (
+            "agent",
+            {
+                "sessionKey": "agent:ui_worker_chat:generic:market_analyst:conversation-1",
+                "agentId": "ui_worker_chat",
+                "message": "你好",
+                "deliver": False,
+                "idempotencyKey": "req-generic-1",
+                "lane": "ui-interactive",
+                "waitForCompletion": True,
+            },
+        )
+    ]
+
+
 def test_gateway_worker_chat_send_does_not_send_unsupported_control_fields() -> None:
     client = _RecordingGateway()
 
@@ -107,6 +133,12 @@ class _RecordingGateway(OpenClawGatewayRpcClient):
         self.calls.append((method, dict(params or {})))
         if method == "sessions.create":
             return {"key": params["key"] if params else ""}
+        if method == "agent":
+            return {
+                "runId": params["idempotencyKey"] if params else "run-1",
+                "status": "ok",
+                "text": "generic worker answer",
+            }
         if method == "chat.send":
             return {"text": "worker answer"}
         raise AssertionError(f"unexpected method: {method}")

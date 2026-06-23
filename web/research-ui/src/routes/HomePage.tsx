@@ -12,6 +12,7 @@ import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   cancelReportTask,
   cancelSelectionProgress,
+  clearChatSession,
   confirmIntentDraft,
   confirmSelectionReport,
   createIntentDraft,
@@ -59,6 +60,9 @@ const DEVICE_UI_HREF = '/api/ui/open-device-interface';
 const WORKER_CHAT_UNAVAILABLE_MESSAGE = 'Worker chat 暂无可用 worker，请刷新页面后重试。';
 const WORKER_CHAT_LOAD_FAILED_MESSAGE = 'Worker chat 菜单加载失败，请刷新页面后重试。';
 const REPORT_DELETE_SCOPE_COPY = '将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。';
+const HOME_CHAT_STATE_STORAGE_KEY = 'claw-trade:home-chat-state:v1';
+const WORKSPACE_REFRESH_INTERVAL_MS = 4000;
+const PENDING_CHAT_REFRESH_INTERVAL_MS = 500;
 
 const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
   runningTask: null,
@@ -103,6 +107,12 @@ type ReportQaEntry = {
 };
 
 type ReportForwardState = Record<string, { kind: 'success' | 'error'; message: string } | undefined>;
+
+type PersistedHomeChatState = {
+  context: ChatContextForUser;
+  messages: ChatMessageForUser[];
+  confirmationCards: Record<string, ConfirmationCard>;
+};
 
 function nextRequestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -194,7 +204,50 @@ function defaultWorkerId(workers: WorkerChatWorkerForUser[]) {
   return workers.find((worker) => worker.default)?.workerId ?? workers[0]?.workerId ?? null;
 }
 
-function localWorkerChatMessages(
+type WorkerMention =
+  | { kind: 'none' }
+  | { kind: 'worker'; workerId: string; body: string }
+  | { kind: 'invalid'; message: string };
+
+function normalizeMentionValue(value: string) {
+  return value.trim().replace(/^@+/, '').toLowerCase();
+}
+
+function parseLeadingWorkerMention(text: string, workers: WorkerChatWorkerForUser[]): WorkerMention {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('@')) {
+    return { kind: 'none' };
+  }
+  const afterAt = trimmed.slice(1);
+  const candidates = workers
+    .flatMap((worker) =>
+      [worker.displayName, worker.workerId, ...worker.aliases].map((value) => ({
+        workerId: worker.workerId,
+        raw: value.trim(),
+        normalized: normalizeMentionValue(value),
+      })),
+    )
+    .filter((candidate) => candidate.normalized)
+    .sort((left, right) => right.normalized.length - left.normalized.length);
+  const normalizedInput = normalizeMentionValue(afterAt);
+  for (const candidate of candidates) {
+    if (!normalizedInput.startsWith(candidate.normalized)) {
+      continue;
+    }
+    const rest = afterAt.slice(candidate.raw.length);
+    if (rest && !/^\s/.test(rest)) {
+      continue;
+    }
+    const body = rest.trimStart();
+    if (!body) {
+      return { kind: 'invalid', message: '请输入要发送给 worker 的内容。' };
+    }
+    return { kind: 'worker', workerId: candidate.workerId, body };
+  }
+  return { kind: 'invalid', message: '没有找到这个 worker。' };
+}
+
+function localPendingChatMessages(
   requestId: string,
   text: string,
   assistantText: string,
@@ -221,11 +274,86 @@ function localWorkerChatMessages(
   ];
 }
 
-function replaceLocalWorkerChatAssistantMessage(messages: ChatMessageForUser[], requestId: string, text: string) {
+function replaceLocalPendingAssistantMessage(messages: ChatMessageForUser[], requestId: string, text: string) {
   const assistantMessageId = `local-worker-assistant-${requestId}`;
   return messages.map((message) =>
     message.messageId === assistantMessageId ? { ...message, text, createdAt: new Date().toISOString() } : message,
   );
+}
+
+function localWorkerChatMessageIds(requestId: string) {
+  return [`local-worker-user-${requestId}`, `local-worker-assistant-${requestId}`];
+}
+
+function mergeLocalWorkerChatMessages(
+  currentMessages: ChatMessageForUser[],
+  nextMessages: ChatMessageForUser[],
+  localWorkerMessageIds: ReadonlySet<string>,
+) {
+  const nextIds = new Set(nextMessages.map((message) => message.messageId));
+  const preserved = currentMessages.filter(
+    (message) => localWorkerMessageIds.has(message.messageId) && !nextIds.has(message.messageId),
+  );
+  if (preserved.length === 0) {
+    return nextMessages;
+  }
+  return [...nextMessages, ...preserved]
+    .map((message, index) => ({ message, index, time: Date.parse(message.createdAt) }))
+    .sort((left, right) => {
+      const leftTime = Number.isFinite(left.time) ? left.time : 0;
+      const rightTime = Number.isFinite(right.time) ? right.time : 0;
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .map(({ message }) => message);
+}
+
+function loadPersistedHomeChatState(): PersistedHomeChatState | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.sessionStorage.getItem(HOME_CHAT_STATE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PersistedHomeChatState>;
+    if (!parsed.context || !Array.isArray(parsed.messages)) {
+      return null;
+    }
+    return {
+      context: parsed.context,
+      messages: parsed.messages,
+      confirmationCards: parsed.confirmationCards ?? {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+function savePersistedHomeChatState(state: PersistedHomeChatState) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.setItem(HOME_CHAT_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // 浏览器拒绝 sessionStorage 时不影响聊天主流程。
+  }
+}
+
+function clearPersistedHomeChatState() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.sessionStorage.removeItem(HOME_CHAT_STATE_STORAGE_KEY);
+  } catch {
+    // 浏览器拒绝 sessionStorage 时不影响聊天主流程。
+  }
+}
+
+function localWorkerMessageIdsFromMessages(messages: ChatMessageForUser[]) {
+  return new Set(messages.filter((message) => message.messageId.startsWith('local-worker-')).map((message) => message.messageId));
 }
 
 function localSelectPendingMessages(text: string): ChatMessageForUser[] {
@@ -286,6 +414,10 @@ function attachSelectionMetadata(
 
 function hasReportCompletedMessage(messages: ChatMessageForUser[]) {
   return messages.some((message) => message.kind === 'report_completed' && Boolean(message.reportId));
+}
+
+function hasPendingAssistantReply(messages: ChatMessageForUser[]) {
+  return messages.some((message) => message.actor === 'assistant' && message.text.includes('正在回复'));
 }
 
 function selectionReportFromMessage(message: ChatMessageForUser): SelectionReportForUser | null {
@@ -363,9 +495,12 @@ function normalizeConfirmationCard(card: ConfirmationCard): ConfirmationCard {
 
 export function HomePage() {
   const [searchParams] = useSearchParams();
-  const [context, setContext] = useState<ChatContextForUser>(DEFAULT_CONTEXT);
-  const [messages, setMessages] = useState<ChatMessageForUser[]>([]);
-  const [confirmationCards, setConfirmationCards] = useState<Record<string, ConfirmationCard>>({});
+  const [persistedInitialChatState] = useState(loadPersistedHomeChatState);
+  const [context, setContext] = useState<ChatContextForUser>(() => persistedInitialChatState?.context ?? DEFAULT_CONTEXT);
+  const [messages, setMessages] = useState<ChatMessageForUser[]>(() => persistedInitialChatState?.messages ?? []);
+  const [confirmationCards, setConfirmationCards] = useState<Record<string, ConfirmationCard>>(
+    () => persistedInitialChatState?.confirmationCards ?? {},
+  );
   const [queueSnapshot, setQueueSnapshot] = useState<ReportQueueSnapshotForUser>(DEFAULT_QUEUE);
   const [savedReports, setSavedReports] = useState<SavedReportForUser[]>([]);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusForUser | null>(null);
@@ -374,7 +509,6 @@ export function HomePage() {
   const [selectionProgress, setSelectionProgress] = useState<SelectionProgressForUser | null>(null);
   const [qaEntries, setQaEntries] = useState<ReportQaEntry[]>([]);
   const [workerChatWorkers, setWorkerChatWorkers] = useState<WorkerChatWorkerForUser[]>([]);
-  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [selectedReportWorkerId, setSelectedReportWorkerId] = useState<string | null>(null);
   const [workerChatUnavailableMessage, setWorkerChatUnavailableMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -393,7 +527,10 @@ export function HomePage() {
   const channelRefreshInFlightRef = useRef(false);
   const selectionRequestInFlightRef = useRef(false);
   const selectionCancelTokenRef = useRef(0);
-  const localWorkerChatMessagesRef = useRef(false);
+  const localWorkerChatMessageIdsRef = useRef<Set<string>>(
+    localWorkerMessageIdsFromMessages(persistedInitialChatState?.messages ?? []),
+  );
+  const localWorkerChatMessagesRef = useRef(localWorkerChatMessageIdsRef.current.size > 0);
   const activeDetailRef = useRef<ReportDetailForUser | null>(null);
   const activeSelectionDetailRef = useRef<SelectionReportForUser | null>(null);
 
@@ -404,6 +541,13 @@ export function HomePage() {
   useEffect(() => {
     activeSelectionDetailRef.current = activeSelectionDetail;
   }, [activeSelectionDetail]);
+
+  useEffect(() => {
+    if (activeDetail || activeSelectionDetail) {
+      return;
+    }
+    savePersistedHomeChatState({ context, messages, confirmationCards });
+  }, [activeDetail, activeSelectionDetail, confirmationCards, context, messages]);
 
   const mergeConfirmationCard = useCallback((card: ConfirmationCard | undefined) => {
     if (!card) {
@@ -453,7 +597,7 @@ export function HomePage() {
       return;
     }
     setContext(snapshot.context);
-    setMessages(snapshot.messages);
+    setMessages((current) => mergeLocalWorkerChatMessages(current, snapshot.messages, localWorkerChatMessageIdsRef.current));
     if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
@@ -472,7 +616,7 @@ export function HomePage() {
       return;
     }
     setContext(snapshot.context);
-    setMessages(snapshot.messages);
+    setMessages((current) => mergeLocalWorkerChatMessages(current, snapshot.messages, localWorkerChatMessageIdsRef.current));
     if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
@@ -483,10 +627,19 @@ export function HomePage() {
   const loadWorkspace = useCallback(async () => {
     setError('');
     try {
-      const [historyResult, queueResult, llmResult, channelChatResult, selectionRefreshResult, workerChatResult] = await Promise.all([
+      const [
+        historyResult,
+        queueResult,
+        llmResult,
+        normalChatResult,
+        channelChatResult,
+        selectionRefreshResult,
+        workerChatResult,
+      ] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
         loadLlmSettings().catch(() => null),
+        getChatSession(DEFAULT_CONTEXT.contextId).catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
         listWorkerChatWorkers()
@@ -499,14 +652,15 @@ export function HomePage() {
       setWorkerChatUnavailableMessage(
         workers.length > 0 ? '' : workerChatResult.failed ? WORKER_CHAT_LOAD_FAILED_MESSAGE : WORKER_CHAT_UNAVAILABLE_MESSAGE,
       );
-      setSelectedWorkerId((current) =>
-        current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
-      );
       setSelectedReportWorkerId((current) =>
         current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
       );
       applyQueueSnapshot(queueResult);
-      applyChannelChatSnapshot(channelChatResult);
+      if (normalChatResult?.messages?.length) {
+        applyChatSessionSnapshot(normalChatResult);
+      } else {
+        applyChannelChatSnapshot(channelChatResult);
+      }
       applySelectionRefreshSnapshot(selectionRefreshResult);
       if (llmResult) {
         setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
@@ -527,13 +681,28 @@ export function HomePage() {
           channelRefreshInFlightRef.current = false;
         });
     }
-  }, [applyChannelChatSnapshot, applyQueueSnapshot, applySelectionRefreshSnapshot]);
+  }, [applyChannelChatSnapshot, applyChatSessionSnapshot, applyQueueSnapshot, applySelectionRefreshSnapshot]);
 
   useEffect(() => {
     void loadWorkspace();
   }, [loadWorkspace]);
 
   const refreshWorkspace = useCallback(async () => {
+    const pendingAssistantReply = hasPendingAssistantReply(messages);
+    if (document.hidden && !pendingAssistantReply) {
+      return;
+    }
+    if (pendingAssistantReply) {
+      try {
+        const currentChatResult = await getChatSession(context.contextId).catch(() => null);
+        if (currentChatResult?.messages?.length) {
+          applyChatSessionSnapshot(currentChatResult);
+        }
+      } catch {
+        // 保留当前 UI 状态，轮询失败不打断用户操作。
+      }
+      return;
+    }
     try {
       const shouldLoadCurrentChat = context.kind !== 'normal_chat';
       const [historyResult, queueResult, channelChatResult, selectionRefreshResult, currentChatResult] = await Promise.all([
@@ -574,14 +743,19 @@ export function HomePage() {
     channelStatus?.qrCodeImageDataUrl,
     context.contextId,
     context.kind,
+    messages,
   ]);
 
   useEffect(() => {
+    if (sending) {
+      return;
+    }
+    const refreshIntervalMs = hasPendingAssistantReply(messages) ? PENDING_CHAT_REFRESH_INTERVAL_MS : WORKSPACE_REFRESH_INTERVAL_MS;
     const timer = window.setInterval(() => {
       void refreshWorkspace();
-    }, 4000);
+    }, refreshIntervalMs);
     return () => window.clearInterval(timer);
-  }, [refreshWorkspace]);
+  }, [messages, refreshWorkspace, sending]);
 
   const openReport = useCallback(async (report: SavedReportForUser) => {
     setError('');
@@ -623,6 +797,29 @@ export function HomePage() {
     setQaEntries([]);
     setContext(DEFAULT_CONTEXT);
   }, []);
+
+  const clearCurrentChat = useCallback(async () => {
+    if (!window.confirm('清除当前聊天记录？不会删除已保存报告。')) {
+      return;
+    }
+    setError('');
+    try {
+      const result = await clearChatSession({
+        requestId: nextRequestId(),
+        contextId: context.contextId,
+      });
+      localWorkerChatMessageIdsRef.current.clear();
+      localWorkerChatMessagesRef.current = false;
+      clearPersistedHomeChatState();
+      setContext(result.context);
+      setMessages(result.messages);
+      setConfirmationCards({});
+      setActiveDetail(null);
+      setActiveSelectionDetail(null);
+    } catch (clearError) {
+      setError((clearError as Error).message);
+    }
+  }, [context.contextId]);
 
   const activeReportId = context.activeReportId ?? activeDetail?.report.id ?? null;
   const activeSelectionReportId = activeSelectionDetail?.id ?? null;
@@ -836,10 +1033,17 @@ export function HomePage() {
     async (text: string) => {
       const isSelectCommand = isExplicitSelectCommand(text);
       const useCommandChat = isWorkspaceCommand(text);
-      let pendingWorkerRequestId: string | null = null;
+      const workerMention = useCommandChat ? ({ kind: 'none' } as WorkerMention) : parseLeadingWorkerMention(text, workerChatWorkers);
+      let pendingLocalRequestId: string | null = null;
+      let pendingLocalFailureText = '回复失败，请稍后重试。';
+      let pendingLocalIsWorker = false;
       const selectToken = isSelectCommand ? selectionCancelTokenRef.current + 1 : selectionCancelTokenRef.current;
       if (isSelectCommand) {
         selectionCancelTokenRef.current = selectToken;
+      }
+      if (workerMention.kind === 'invalid') {
+        setError(workerChatUnavailableMessage || workerMention.message);
+        return;
       }
       setSending(true);
       setPendingChatCommand(isSelectCommand ? 'select' : 'chat');
@@ -850,22 +1054,67 @@ export function HomePage() {
         setSelectionProgress(runningSelectionProgress(text));
       }
       try {
-        if (!useCommandChat) {
-          if (!selectedWorkerId) {
-            throw new Error(workerChatUnavailableMessage || '请先选择一个 worker。');
-          }
+        if (workerMention.kind === 'worker') {
           const requestId = nextRequestId();
-          pendingWorkerRequestId = requestId;
+          const workerDisplayName =
+            workerChatWorkers.find((worker) => worker.workerId === workerMention.workerId)?.displayName ??
+            workerMention.workerId;
+          pendingLocalRequestId = requestId;
+          pendingLocalFailureText = 'worker 回复失败，请稍后重试。';
+          pendingLocalIsWorker = true;
           localWorkerChatMessagesRef.current = true;
-          setMessages((current) => [...current, ...localWorkerChatMessages(requestId, text, 'worker 正在分析...', context.kind)]);
+          for (const messageId of localWorkerChatMessageIds(requestId)) {
+            localWorkerChatMessageIdsRef.current.add(messageId);
+          }
+          setMessages((current) => [
+            ...current,
+            ...localPendingChatMessages(
+              requestId,
+              `@${workerDisplayName} ${workerMention.body}`,
+              `${workerDisplayName} 正在回复...`,
+              context.kind,
+            ),
+          ]);
           const reply = await sendWorkerChat({
             requestId,
             mode: 'generic_worker_chat',
-            workerId: selectedWorkerId,
-            text,
+            workerId: workerMention.workerId,
+            text: workerMention.body,
             conversationId: context.contextId,
           });
-          setMessages((current) => replaceLocalWorkerChatAssistantMessage(current, requestId, reply.text));
+          setMessages((current) =>
+            replaceLocalPendingAssistantMessage(current, requestId, `${reply.workerDisplayName}：${reply.text}`),
+          );
+          setActiveDetail(null);
+          setActiveSelectionDetail(null);
+          return;
+        }
+        if (!isSelectCommand) {
+          const requestId = nextRequestId();
+          pendingLocalRequestId = requestId;
+          localWorkerChatMessagesRef.current = true;
+          setMessages((current) => [...current, ...localPendingChatMessages(requestId, text, '正在回复...', context.kind)]);
+          const result = await sendChatMessage({
+            requestId,
+            contextId: context.contextId,
+            text,
+          });
+          localWorkerChatMessagesRef.current = false;
+          setContext(result.context);
+          setMessages((current) =>
+            mergeLocalWorkerChatMessages(
+              current,
+              attachSelectionMetadata(result.messages, result.selection),
+              localWorkerChatMessageIdsRef.current,
+            ),
+          );
+          mergeConfirmationCard(result.confirmationCard);
+          if (result.confirmationCards) {
+            setConfirmationCards((current) => ({ ...current, ...result.confirmationCards }));
+          }
+          if (result.queueSnapshot) {
+            applyQueueSnapshot(result.queueSnapshot);
+          }
           setActiveDetail(null);
           setActiveSelectionDetail(null);
           return;
@@ -880,7 +1129,13 @@ export function HomePage() {
         }
         localWorkerChatMessagesRef.current = false;
         setContext(result.context);
-        setMessages(attachSelectionMetadata(result.messages, result.selection));
+        setMessages((current) =>
+          mergeLocalWorkerChatMessages(
+            current,
+            attachSelectionMetadata(result.messages, result.selection),
+            localWorkerChatMessageIdsRef.current,
+          ),
+        );
         mergeConfirmationCard(result.confirmationCard);
         if (result.confirmationCards) {
           setConfirmationCards((current) => ({ ...current, ...result.confirmationCards }));
@@ -907,11 +1162,14 @@ export function HomePage() {
           selectionRequestInFlightRef.current = false;
           setSelectionProgress(null);
         }
-        const failedWorkerRequestId = pendingWorkerRequestId;
-        if (failedWorkerRequestId) {
+        const failedLocalRequestId = pendingLocalRequestId;
+        if (failedLocalRequestId) {
           setMessages((current) =>
-            replaceLocalWorkerChatAssistantMessage(current, failedWorkerRequestId, 'worker 回复失败，请稍后重试。'),
+            replaceLocalPendingAssistantMessage(current, failedLocalRequestId, pendingLocalFailureText),
           );
+        }
+        if (!pendingLocalIsWorker) {
+          localWorkerChatMessagesRef.current = false;
         }
         setError((sendError as Error).message);
       } finally {
@@ -925,7 +1183,7 @@ export function HomePage() {
       context.contextId,
       context.kind,
       mergeConfirmationCard,
-      selectedWorkerId,
+      workerChatWorkers,
       workerChatUnavailableMessage,
     ],
   );
@@ -935,7 +1193,14 @@ export function HomePage() {
       if (!activeDetail) {
         return;
       }
-      if (!selectedReportWorkerId) {
+      const workerMention = parseLeadingWorkerMention(text, workerChatWorkers);
+      if (workerMention.kind === 'invalid') {
+        setError(workerChatUnavailableMessage || workerMention.message);
+        return;
+      }
+      const targetWorkerId = workerMention.kind === 'worker' ? workerMention.workerId : selectedReportWorkerId;
+      const questionText = workerMention.kind === 'worker' ? workerMention.body : text;
+      if (!targetWorkerId) {
         setError(workerChatUnavailableMessage || WORKER_CHAT_UNAVAILABLE_MESSAGE);
         return;
       }
@@ -944,12 +1209,12 @@ export function HomePage() {
       const requestId = nextRequestId();
       const entryId = `qa-${requestId}`;
       const workerDisplayName =
-        workerChatWorkers.find((worker) => worker.workerId === selectedReportWorkerId)?.displayName ?? 'worker';
+        workerChatWorkers.find((worker) => worker.workerId === targetWorkerId)?.displayName ?? 'worker';
       setQaEntries((current) => [
         ...current,
         {
           id: entryId,
-          question: text,
+          question: questionText,
           answer: '',
           workerDisplayName,
           status: 'pending',
@@ -959,9 +1224,9 @@ export function HomePage() {
         const reply = await sendWorkerChat({
           requestId,
           mode: 'report_worker_chat',
-          workerId: selectedReportWorkerId,
+          workerId: targetWorkerId,
           reportId: activeDetail.report.id,
-          text,
+          text: questionText,
           conversationId: `report-${activeDetail.report.id}`,
         });
         setQaEntries((current) =>
@@ -1057,7 +1322,9 @@ export function HomePage() {
           [card.id]: { ...card, status: decision === 'confirm' ? 'confirmed' : 'cancelled' },
         }));
         if (result.messages) {
-          setMessages(result.messages);
+          setMessages((current) =>
+            mergeLocalWorkerChatMessages(current, result.messages!, localWorkerChatMessageIdsRef.current),
+          );
         } else if (decision === 'cancel') {
           setMessages((current) => [...current, cancelledDraftMessage(card)]);
         } else if (result.task && result.task.status !== 'failed') {
@@ -1281,6 +1548,16 @@ export function HomePage() {
                   打开设备界面
                 </a>
               ) : null}
+              {!isReading ? (
+                <button
+                  type="button"
+                  className="ct-text-button"
+                  disabled={sending || (!messages.length && Object.keys(confirmationCards).length === 0)}
+                  onClick={() => void clearCurrentChat()}
+                >
+                  清除聊天
+                </button>
+              ) : null}
               {isReading ? (
                 <button type="button" className="ct-text-button ct-report-back-button" onClick={returnToChat}>
                   返回聊天
@@ -1359,8 +1636,6 @@ export function HomePage() {
                   buttonLabel={sending ? '发送中' : '发送'}
                   workerChatEnabled
                   workers={workerChatWorkers}
-                  selectedWorkerId={selectedReportWorkerId ?? undefined}
-                  onWorkerChange={(workerId) => setSelectedReportWorkerId(workerId)}
                 />
               </section>
             </>
@@ -1397,8 +1672,6 @@ export function HomePage() {
                 hint={REPORT_INPUT_FORMAT_HINT}
                 workerChatEnabled
                 workers={workerChatWorkers}
-                selectedWorkerId={selectedWorkerId ?? undefined}
-                onWorkerChange={(workerId) => setSelectedWorkerId(workerId)}
               />
             </>
           )}

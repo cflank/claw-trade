@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from threading import Event, Lock, Thread
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -11,6 +14,7 @@ from claw_trade.ui_backend.scheduled_work_store import PriceAlert, ScheduledWork
 from claw_trade.ui_contracts.enums import MarketProfile
 
 _CN_A_TIMEZONE = ZoneInfo("Asia/Shanghai")
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -175,6 +179,75 @@ class PriceAlertScanService:
     def _quote_evidence_ref(quote: dict[str, Any]) -> str | None:
         value = quote.get("evidence_ref")
         return None if value is None else str(value)
+
+
+class PriceAlertScanScheduler:
+    def __init__(
+        self,
+        *,
+        store: ScheduledWorkStore,
+        scan_service: PriceAlertScanService,
+        legacy_cron_disabler: Callable[[], dict[str, Any]] | None = None,
+        interval_seconds: float = 180.0,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._store = store
+        self._scan_service = scan_service
+        self._legacy_cron_disabler = legacy_cron_disabler
+        self._interval_seconds = interval_seconds
+        self._now_provider = now_provider or (lambda: datetime.now(UTC))
+        self._stop = Event()
+        self._lock = Lock()
+        self._thread: Thread | None = None
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._run_startup_maintenance()
+            self._stop.clear()
+            self._thread = Thread(target=self._loop, daemon=True, name="price-alert-scan-scheduler")
+            self._thread.start()
+
+    def stop(self, *, timeout_seconds: float = 1.0) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout_seconds)
+
+    def run_once(self, *, reason: str = "scheduled") -> list[PriceAlertScanSummary]:
+        summaries: list[PriceAlertScanSummary] = []
+        for bucket in self._store.list_scan_buckets():
+            if not bucket.enabled:
+                continue
+            summaries.append(self._scan_service.scan_bucket(bucket.bucket_key, cron_run_id=self._cron_run_id(reason)))
+        return summaries
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self._interval_seconds):
+            try:
+                self.run_once(reason="local")
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("price alert scan scheduler failed: %s", str(exc) or type(exc).__name__)
+
+    def _run_startup_maintenance(self) -> None:
+        if self._legacy_cron_disabler is None:
+            return
+        try:
+            result = self._legacy_cron_disabler()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("price alert legacy OpenClaw cron disable failed: %s", str(exc) or type(exc).__name__)
+            return
+        errors = result.get("errors") if isinstance(result, dict) else None
+        if errors:
+            _LOGGER.warning("price alert legacy OpenClaw cron disable errors: %s", errors)
+
+    def _cron_run_id(self, reason: str) -> str:
+        now = self._now_provider()
+        if now.tzinfo is None or now.utcoffset() is None:
+            now = now.replace(tzinfo=UTC)
+        timestamp_ms = int(now.timestamp() * 1000)
+        return f"price-alert-local:{reason}:{timestamp_ms}:{uuid.uuid4().hex}"
 
 
 def _is_cn_a_trading_time(now_utc: datetime) -> bool:
