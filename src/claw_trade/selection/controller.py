@@ -27,6 +27,7 @@ from claw_trade.selection.models import (
     SelectionDecision,
     SelectionMarket,
     SelectionProfile,
+    SelectionStage,
     SelectionSystemContextPolicy,
     SelectionWorkerDispatch,
     SelectionWorkerId,
@@ -100,6 +101,12 @@ class _DecisionParseResult:
 
 _PM_DECISION_MATERIAL_TARGET = "selection_portfolio_decision"
 _PM_DECISION_MATERIAL_TYPE = "pm_decision"
+_PM_RETRYABLE_INVALID_REASON_PREFIXES = (
+    "ticker_duplicated_across_sections",
+    "candidate_classification_incomplete",
+    "ticker_not_in_allowed_set:",
+    "ticker_company_mismatch:",
+)
 _EXPLICIT_TICKER_CORRECTION_RE = re.compile(
     r"(?:股票代码|代码|ticker)?\s*(?:应为|正确为|正确代码为|更正为)\s*[:：]?\s*"
     r"(?P<ticker>\d{6}\.(?:SH|SZ|BJ)|[A-Z0-9]{1,30}USDT)",
@@ -359,9 +366,7 @@ _SELECTION_WORKER_LABELS: dict[SelectionWorkerId, str] = {
 }
 
 _SELECTION_WORKER_ORDER = tuple(_SELECTION_WORKER_LABELS)
-_SELECTION_CHAT_BOUNDARY_NOTICE = (
-    "`/select` 是候选研究池，不是买入建议；最终买入、持有或卖出，以完整 `/report` 的组合经理结论为准。"
-)
+_SELECTION_CHAT_BOUNDARY_NOTICE = "`/select` 是候选研究池，不是买入建议；最终买入、持有或卖出，以完整 `/report` 的组合经理结论为准。"
 _SELECTION_REPORT_BOUNDARY_NOTICE = (
     "本次 select 结果是候选研究池，不是买入建议。select 主要根据当前可用数据筛出值得进一步研究的股票，"
     "代表这些股票存在量价、资金、事件或策略特征上的研究价值，不等同于最终投资结论。最终是否买入、"
@@ -446,7 +451,9 @@ class SelectionController:
         request_id: str,
         user_id: str | None = None,
     ) -> SelectCommandResult:
-        request = _parse_select_request(raw_text=raw_text, request_id=request_id, user_id=user_id, now_fn=self._now_fn)
+        request = _parse_select_request(
+            raw_text=raw_text, request_id=request_id, user_id=user_id, now_fn=self._now_fn
+        )
         if (
             request.market == SelectionMarket.CN_A
             and request.trade_date is None
@@ -455,7 +462,9 @@ class SelectionController:
             resolved_trade_date = self._default_trade_date_resolver(None).strip()
             date.fromisoformat(resolved_trade_date)
             request = replace(request, trade_date=resolved_trade_date)
-        workflow_run_id = _build_select_workflow_run_id(request_id=request.request_id, now_fn=self._now_fn)
+        workflow_run_id = _build_select_workflow_run_id(
+            request_id=request.request_id, now_fn=self._now_fn
+        )
         evidence_dir = self._workflow_evidence_root / workflow_run_id
         evidence_dir.mkdir(parents=True, exist_ok=True)
         self._publish_workflow_progress(
@@ -483,7 +492,9 @@ class SelectionController:
                 )
                 if refresh_result is not None:
                     payload["data_refresh"] = _data_refresh_payload(refresh_result)
-                    evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                    evidence_path = _write_selection_workflow_evidence(
+                        evidence_dir=evidence_dir, payload=payload
+                    )
                     if refresh_result.status in {"started", "already_running"}:
                         return SelectCommandResult(
                             code=SelectCommandCode.DATA_REFRESH_REQUESTED,
@@ -523,7 +534,9 @@ class SelectionController:
                 )
                 if refresh_result is not None:
                     payload["data_refresh"] = _data_refresh_payload(refresh_result)
-                    evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                    evidence_path = _write_selection_workflow_evidence(
+                        evidence_dir=evidence_dir, payload=payload
+                    )
                     if refresh_result.status in {"started", "already_running"}:
                         return SelectCommandResult(
                             code=SelectCommandCode.DATA_REFRESH_REQUESTED,
@@ -535,14 +548,18 @@ class SelectionController:
                         )
                     return SelectCommandResult(
                         code=SelectCommandCode.UNAVAILABLE,
-                        chat_text=_data_refresh_unavailable_chat_text(gate.unavailable_code, refresh_result),
+                        chat_text=_data_refresh_unavailable_chat_text(
+                            gate.unavailable_code, refresh_result
+                        ),
                         select_workflow_run_id=workflow_run_id,
                         evidence_path=evidence_path,
                         unavailable_code=gate.unavailable_code,
                         failure_reason=refresh_result.error_code or refresh_result.reason,
                         data_refresh=refresh_result,
                     )
-                evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+                evidence_path = _write_selection_workflow_evidence(
+                    evidence_dir=evidence_dir, payload=payload
+                )
                 return SelectCommandResult(
                     code=SelectCommandCode.UNAVAILABLE,
                     chat_text=_unavailable_chat_text(gate.unavailable_code),
@@ -569,7 +586,6 @@ class SelectionController:
         evidence_dir: Path,
         gate: SelectReadGateResult,
     ) -> SelectCommandResult:
-
         latest = gate.latest_completed_run
         assert latest is not None
         if request.trade_date is None:
@@ -583,16 +599,22 @@ class SelectionController:
                 selection_run_id=latest.run_plan.selection_run_id,
                 reason=SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED.value,
             )
-            evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+            evidence_path = _write_selection_workflow_evidence(
+                evidence_dir=evidence_dir, payload=payload
+            )
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED),
+                chat_text=_unavailable_chat_text(
+                    SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED
+                ),
                 select_workflow_run_id=workflow_run_id,
                 evidence_path=evidence_path,
                 unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED,
             )
 
-        candidate_cache_strategy_error = _candidate_cache_strategy_completeness_error(candidate_cache_ref)
+        candidate_cache_strategy_error = _candidate_cache_strategy_completeness_error(
+            candidate_cache_ref
+        )
         if candidate_cache_strategy_error is not None:
             payload = _base_workflow_evidence_payload(
                 request=request,
@@ -601,10 +623,14 @@ class SelectionController:
                 selection_run_id=latest.run_plan.selection_run_id,
                 reason=candidate_cache_strategy_error,
             )
-            evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+            evidence_path = _write_selection_workflow_evidence(
+                evidence_dir=evidence_dir, payload=payload
+            )
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED),
+                chat_text=_unavailable_chat_text(
+                    SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
+                ),
                 select_workflow_run_id=workflow_run_id,
                 evidence_path=evidence_path,
                 unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
@@ -618,7 +644,9 @@ class SelectionController:
                 selection_run_id=latest.run_plan.selection_run_id,
                 reason="selection_openclaw_not_configured",
             )
-            evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+            evidence_path = _write_selection_workflow_evidence(
+                evidence_dir=evidence_dir, payload=payload
+            )
             return SelectCommandResult(
                 code=SelectCommandCode.BLOCKED_ASK_HUMAN,
                 chat_text="`/select` 当前不可用：选股执行通道未配置，请联系维护者确认。",
@@ -638,10 +666,14 @@ class SelectionController:
                 selection_run_id=latest.run_plan.selection_run_id,
                 reason="candidate_cache_summary_missing_allowed_tickers",
             )
-            evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+            evidence_path = _write_selection_workflow_evidence(
+                evidence_dir=evidence_dir, payload=payload
+            )
             return SelectCommandResult(
                 code=SelectCommandCode.UNAVAILABLE,
-                chat_text=_unavailable_chat_text(SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED),
+                chat_text=_unavailable_chat_text(
+                    SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED
+                ),
                 select_workflow_run_id=workflow_run_id,
                 evidence_path=evidence_path,
                 unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
@@ -710,7 +742,8 @@ class SelectionController:
                     workflow_run_id=workflow_run_id,
                     evidence_dir=evidence_dir,
                     selection_run_id=latest.run_plan.selection_run_id,
-                    reason=execution.openclaw_result.failure_reason or f"worker_runtime_failed:{worker_id.value}",
+                    reason=execution.openclaw_result.failure_reason
+                    or f"worker_runtime_failed:{worker_id.value}",
                 )
             worker_output = _read_worker_output_text(execution.openclaw_result)
             if not worker_output:
@@ -761,9 +794,9 @@ class SelectionController:
             )
 
         pm_decision_material_id = _build_pm_decision_material_id(workflow_run_id=workflow_run_id)
+        pm_retry_payload: dict[str, object] | None = None
         decision_parse = _parse_and_validate_selection_decision(
             pm_raw_text=pm_raw_text,
-            supplemental_decision_texts=(approved_l1.get(SelectionWorkerId.MANAGER, ""),),
             workflow_run_id=workflow_run_id,
             allowed_tickers=allowed_tickers,
             allowed_ticker_companies=allowed_ticker_companies,
@@ -780,7 +813,9 @@ class SelectionController:
             payload["dispatches"] = dispatch_results
             payload["pm_output_path"] = str(evidence_dir / "pm-selection-decision.md")
             (evidence_dir / "pm-selection-decision.md").write_text(pm_raw_text, encoding="utf-8")
-            evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+            evidence_path = _write_selection_workflow_evidence(
+                evidence_dir=evidence_dir, payload=payload
+            )
             return SelectCommandResult(
                 code=SelectCommandCode.BLOCKED_ASK_HUMAN,
                 chat_text="`/select` 结果无法机械解析，已阻断自动处理，请人工复核 PM 决策文本。",
@@ -791,6 +826,138 @@ class SelectionController:
 
         if decision_parse.decision is None:
             assert decision_parse.invalid_reason is not None
+            first_invalid_reason = decision_parse.invalid_reason
+            if _is_retryable_pm_decision_invalid_reason(first_invalid_reason):
+                first_pm_output_path = evidence_dir / "pm-selection-decision-first-invalid.md"
+                first_pm_output_path.write_text(pm_raw_text, encoding="utf-8")
+                retry_instruction = _build_pm_retry_instruction(
+                    invalid_reason=first_invalid_reason,
+                    previous_pm_output=pm_raw_text,
+                    allowed_ticker_companies=allowed_ticker_companies,
+                )
+                retry_dispatch = _build_pm_retry_dispatch(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    selection_run_id=latest.run_plan.selection_run_id,
+                    evidence_dir=evidence_dir,
+                    summary_md=summary_md,
+                    approved_l1=approved_l1,
+                    retry_instruction=retry_instruction,
+                )
+                retry_executions = execute_selection_dispatches(
+                    openclaw=self._openclaw,
+                    dispatches=(retry_dispatch,),
+                    candidate_cache_ref=candidate_cache_ref,
+                    profile=request.profile.value,
+                )
+                dispatch_results.append(
+                    {
+                        "worker_id": SelectionWorkerId.PORTFOLIO_MANAGER.value,
+                        "dispatch_id": retry_dispatch.dispatch_id,
+                        "evidence_dir": str(retry_dispatch.evidence_dir),
+                        "command_snapshot_path": str(
+                            retry_executions[0].command_snapshot_path
+                            if retry_executions
+                            else retry_dispatch.evidence_dir / "selection-dispatch-command.json"
+                        ),
+                    }
+                )
+                pm_retry_payload = {
+                    "attempted": True,
+                    "first_invalid_reason": first_invalid_reason,
+                    "first_pm_output_path": str(first_pm_output_path),
+                    "retry_dispatch_id": retry_dispatch.dispatch_id,
+                    "retry_evidence_dir": str(retry_dispatch.evidence_dir),
+                }
+                if not retry_executions:
+                    return _failed_result(
+                        request=request,
+                        workflow_run_id=workflow_run_id,
+                        evidence_dir=evidence_dir,
+                        selection_run_id=latest.run_plan.selection_run_id,
+                        reason="worker_runtime_failed:no_execution:selection_portfolio_manager_retry",
+                    )
+                retry_execution = retry_executions[0]
+                if retry_execution.openclaw_result.status != "succeeded":
+                    return _failed_result(
+                        request=request,
+                        workflow_run_id=workflow_run_id,
+                        evidence_dir=evidence_dir,
+                        selection_run_id=latest.run_plan.selection_run_id,
+                        reason=retry_execution.openclaw_result.failure_reason
+                        or "worker_runtime_failed:selection_portfolio_manager_retry",
+                    )
+                retry_pm_raw_text = _read_worker_output_text(retry_execution.openclaw_result)
+                if not retry_pm_raw_text:
+                    return _failed_result(
+                        request=request,
+                        workflow_run_id=workflow_run_id,
+                        evidence_dir=evidence_dir,
+                        selection_run_id=latest.run_plan.selection_run_id,
+                        reason="artifact_approval_failed:selection_portfolio_manager_retry:empty_output",
+                    )
+                pm_raw_text = retry_pm_raw_text
+                decision_parse = _parse_and_validate_selection_decision(
+                    pm_raw_text=pm_raw_text,
+                    workflow_run_id=workflow_run_id,
+                    allowed_tickers=allowed_tickers,
+                    allowed_ticker_companies=allowed_ticker_companies,
+                    approved_material_id=pm_decision_material_id,
+                )
+                if decision_parse.blocked_reason is not None:
+                    payload = _base_workflow_evidence_payload(
+                        request=request,
+                        workflow_run_id=workflow_run_id,
+                        status=SelectCommandCode.BLOCKED_ASK_HUMAN.value,
+                        selection_run_id=latest.run_plan.selection_run_id,
+                        reason=decision_parse.blocked_reason,
+                    )
+                    payload["dispatches"] = dispatch_results
+                    payload["pm_retry"] = pm_retry_payload
+                    payload["pm_output_path"] = str(evidence_dir / "pm-selection-decision.md")
+                    (evidence_dir / "pm-selection-decision.md").write_text(
+                        pm_raw_text, encoding="utf-8"
+                    )
+                    evidence_path = _write_selection_workflow_evidence(
+                        evidence_dir=evidence_dir, payload=payload
+                    )
+                    return SelectCommandResult(
+                        code=SelectCommandCode.BLOCKED_ASK_HUMAN,
+                        chat_text="`/select` 结果无法机械解析，已阻断自动处理，请人工复核 PM 决策文本。",
+                        select_workflow_run_id=workflow_run_id,
+                        evidence_path=evidence_path,
+                        failure_reason=decision_parse.blocked_reason,
+                    )
+                if decision_parse.decision is not None:
+                    pm_retry_payload["resolved"] = True
+
+        if decision_parse.decision is None:
+            assert decision_parse.invalid_reason is not None
+            if pm_retry_payload is not None:
+                reason = f"selection_result_invalid:{decision_parse.invalid_reason}"
+                payload = _base_workflow_evidence_payload(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    status=SelectCommandCode.FAILED.value,
+                    selection_run_id=latest.run_plan.selection_run_id,
+                    reason=reason,
+                )
+                payload["dispatches"] = dispatch_results
+                payload["pm_retry"] = pm_retry_payload
+                payload["pm_output_path"] = str(evidence_dir / "pm-selection-decision.md")
+                (evidence_dir / "pm-selection-decision.md").write_text(
+                    pm_raw_text, encoding="utf-8"
+                )
+                evidence_path = _write_selection_workflow_evidence(
+                    evidence_dir=evidence_dir, payload=payload
+                )
+                return SelectCommandResult(
+                    code=SelectCommandCode.FAILED,
+                    chat_text="`/select` 执行失败，本轮结果未生效，请稍后重试。",
+                    select_workflow_run_id=workflow_run_id,
+                    evidence_path=evidence_path,
+                    failure_reason=reason,
+                )
             return _failed_result(
                 request=request,
                 workflow_run_id=workflow_run_id,
@@ -831,10 +998,14 @@ class SelectionController:
             "material_target": _PM_DECISION_MATERIAL_TARGET,
             "material_type": _PM_DECISION_MATERIAL_TYPE,
         }
+        if pm_retry_payload is not None:
+            payload["pm_retry"] = pm_retry_payload
         payload["pm_output_path"] = str(evidence_dir / "pm-selection-decision.md")
         payload["reader_report_path"] = str(reader_report_path)
         (evidence_dir / "pm-selection-decision.md").write_text(pm_raw_text, encoding="utf-8")
-        evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+        evidence_path = _write_selection_workflow_evidence(
+            evidence_dir=evidence_dir, payload=payload
+        )
         return SelectCommandResult(
             code=SelectCommandCode.COMPLETED,
             chat_text=reader_text,
@@ -852,7 +1023,10 @@ class SelectionController:
 
     def cancel_progress(self, *, workflow_run_id: str) -> bool:
         with self._progress_lock:
-            if self._active_progress and self._active_progress.get("workflowRunId") == workflow_run_id:
+            if (
+                self._active_progress
+                and self._active_progress.get("workflowRunId") == workflow_run_id
+            ):
                 self._cancelled_progress_ids.add(workflow_run_id)
                 self._active_progress = None
                 return True
@@ -875,7 +1049,9 @@ class SelectionController:
         running_offset = 1 if running_worker is not None else 0
         percent = min(95, 15 + completed_count * 20 + running_offset * 10)
         if running_worker is None:
-            current_action = "正在准备选股评审。" if completed_count == 0 else "正在整理上一位选股评审的结果。"
+            current_action = (
+                "正在准备选股评审。" if completed_count == 0 else "正在整理上一位选股评审的结果。"
+            )
         else:
             current_action = f"正在运行{_SELECTION_WORKER_LABELS[running_worker]}。"
         worker_status_labels = []
@@ -888,7 +1064,11 @@ class SelectionController:
             else:
                 status = "等待启动"
             worker_status_labels.append(f"{label}：{status}")
-        completed_labels = [_SELECTION_WORKER_LABELS[worker_id] for worker_id in _SELECTION_WORKER_ORDER if worker_id in completed_workers]
+        completed_labels = [
+            _SELECTION_WORKER_LABELS[worker_id]
+            for worker_id in _SELECTION_WORKER_ORDER
+            if worker_id in completed_workers
+        ]
         waiting_labels = [
             _SELECTION_WORKER_LABELS[worker_id]
             for worker_id in _SELECTION_WORKER_ORDER
@@ -916,7 +1096,10 @@ class SelectionController:
 
     def _clear_workflow_progress(self, workflow_run_id: str) -> None:
         with self._progress_lock:
-            if self._active_progress and self._active_progress.get("workflowRunId") == workflow_run_id:
+            if (
+                self._active_progress
+                and self._active_progress.get("workflowRunId") == workflow_run_id
+            ):
                 self._active_progress = None
             self._cancelled_progress_ids.discard(workflow_run_id)
 
@@ -1059,7 +1242,9 @@ def _load_candidate_cache_summary(candidate_cache_ref: CandidateCacheRef) -> str
         return rebuilt
     raw_field = _reader_visible_raw_field_name(text)
     if raw_field is not None:
-        raise ValueError(f"candidate cache summary contains reader-visible raw field name: {raw_field}")
+        raise ValueError(
+            f"candidate cache summary contains reader-visible raw field name: {raw_field}"
+        )
     return text
 
 
@@ -1078,7 +1263,9 @@ def _reader_visible_raw_field_name(summary_md: str) -> str | None:
     return None
 
 
-def _rebuild_candidate_cache_summary_from_json(candidate_cache_ref: CandidateCacheRef) -> str | None:
+def _rebuild_candidate_cache_summary_from_json(
+    candidate_cache_ref: CandidateCacheRef,
+) -> str | None:
     json_path = _candidate_cache_json_path(candidate_cache_ref)
     if json_path is None:
         return None
@@ -1107,7 +1294,9 @@ def _rebuild_candidate_cache_summary_from_json(candidate_cache_ref: CandidateCac
     )
     trade_date = _first_text(payload.get("trade_date"), sidecar.get("trade_date"), "-")
     market = _first_text(payload.get("market"), sidecar.get("market"), "-")
-    candidate_count = _first_text(payload.get("candidate_count"), sidecar.get("candidate_count"), str(len(candidates)))
+    candidate_count = _first_text(
+        payload.get("candidate_count"), sidecar.get("candidate_count"), str(len(candidates))
+    )
 
     lines = [
         f"# {_selection_market_label(market)}候选缓存",
@@ -1178,7 +1367,9 @@ def _candidate_cache_json_path(candidate_cache_ref: CandidateCacheRef) -> Path |
     return alt_path if alt_path.is_file() else None
 
 
-def _candidate_cache_strategy_completeness_error(candidate_cache_ref: CandidateCacheRef) -> str | None:
+def _candidate_cache_strategy_completeness_error(
+    candidate_cache_ref: CandidateCacheRef,
+) -> str | None:
     json_path = _candidate_cache_json_path(candidate_cache_ref)
     if json_path is None:
         return "candidate_cache_strategy_fields_missing: candidate-cache.json missing"
@@ -1216,15 +1407,27 @@ def _candidate_row_summary(candidate: Mapping[str, object]) -> dict[str, str]:
         "ticker": _first_text(candidate.get("ticker"), "-"),
         "company_name": _first_text(candidate.get("company_name"), "-"),
         "industry": _first_text(candidate.get("industry"), "-"),
-        "total_score": _format_candidate_number(_first_value(candidate.get("total_score"), features.get("score"))),
+        "total_score": _format_candidate_number(
+            _first_value(candidate.get("total_score"), features.get("score"))
+        ),
         "component_scores": _format_visible_mapping(component_scores),
         "strategy_sources": _join_or_dash(_strategy_sources_from_hits(strategy_hits)),
         "strategy_variants": _join_or_dash(_strategy_variants_from_hits(strategy_hits)),
         "hit_fields": _format_visible_mapping(hit_fields),
         "actual_metric_values": _format_visible_mapping(actual_metric_values),
-        "risk_penalty": _format_candidate_number(_first_value(candidate.get("risk_penalty"), features.get("risk_penalty_score"), features.get("risk_penalty"))),
+        "risk_penalty": _format_candidate_number(
+            _first_value(
+                candidate.get("risk_penalty"),
+                features.get("risk_penalty_score"),
+                features.get("risk_penalty"),
+            )
+        ),
         "data_gap_penalty": _format_candidate_number(
-            _first_value(candidate.get("data_gap_penalty"), features.get("data_gap_penalty_score"), features.get("data_gap_penalty"))
+            _first_value(
+                candidate.get("data_gap_penalty"),
+                features.get("data_gap_penalty_score"),
+                features.get("data_gap_penalty"),
+            )
         ),
         "tie_break_fields": _format_visible_mapping(tie_break_fields),
         "data_quality": _first_text(candidate.get("data_quality"), "-"),
@@ -1249,11 +1452,21 @@ def _strategy_hit_lines(candidates: list[object]) -> tuple[str, ...]:
 
 
 def _strategy_sources_from_hits(hits: tuple[str, ...]) -> tuple[str, ...]:
-    return _dedupe(tuple(source for source, _variant in (_split_strategy_hit_text(hit) for hit in hits) if source))
+    return _dedupe(
+        tuple(
+            source for source, _variant in (_split_strategy_hit_text(hit) for hit in hits) if source
+        )
+    )
 
 
 def _strategy_variants_from_hits(hits: tuple[str, ...]) -> tuple[str, ...]:
-    return _dedupe(tuple(variant for _source, variant in (_split_strategy_hit_text(hit) for hit in hits) if variant))
+    return _dedupe(
+        tuple(
+            variant
+            for _source, variant in (_split_strategy_hit_text(hit) for hit in hits)
+            if variant
+        )
+    )
 
 
 def _split_strategy_hit_text(value: str) -> tuple[str, str]:
@@ -1300,7 +1513,10 @@ def _first_text(*values: object) -> str:
 def _format_visible_mapping(values: Mapping[str, object]) -> str:
     if not values:
         return "-"
-    payload = {_reader_visible_label(str(key)): _model_visible_value(value) for key, value in sorted(values.items())}
+    payload = {
+        _reader_visible_label(str(key)): _model_visible_value(value)
+        for key, value in sorted(values.items())
+    }
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
@@ -1402,10 +1618,83 @@ def _read_worker_output_text(result: Any) -> str:
     return ""
 
 
+def _is_retryable_pm_decision_invalid_reason(reason: str) -> bool:
+    return any(reason.startswith(prefix) for prefix in _PM_RETRYABLE_INVALID_REASON_PREFIXES)
+
+
+def _build_pm_retry_instruction(
+    *,
+    invalid_reason: str,
+    previous_pm_output: str,
+    allowed_ticker_companies: Mapping[str, str],
+) -> str:
+    candidate_lines = [
+        f"- {index} | {ticker} | {company_name}"
+        for index, (ticker, company_name) in enumerate(allowed_ticker_companies.items(), start=1)
+    ]
+    return "\n".join(
+        [
+            "上一次组合经理三分类输出未通过机械校验，需要你重新输出最终三分类。",
+            "",
+            f"错误原因：selection_result_invalid:{invalid_reason}",
+            "",
+            "候选池完整清单如下；每只只能进入一个分组，必须全部覆盖，不能新增池外标的：",
+            *candidate_lines,
+            "",
+            "上一次 PM 原文如下，仅用于纠错，不代表有效最终结论：",
+            previous_pm_output.strip(),
+            "",
+            "请重新输出三段，且只使用以下标题：",
+            "进入 /report:",
+            "观察:",
+            "放弃:",
+            "每行格式：- 股票代码 | 股票名称 | 一句话理由",
+        ]
+    ).strip()
+
+
+def _build_pm_retry_dispatch(
+    *,
+    request: SelectRequest,
+    workflow_run_id: str,
+    selection_run_id: str,
+    evidence_dir: Path,
+    summary_md: str,
+    approved_l1: Mapping[SelectionWorkerId, str],
+    retry_instruction: str,
+) -> SelectionWorkerDispatch:
+    trade_date = request.trade_date
+    if trade_date is None or not trade_date.strip():
+        raise ValueError("request.trade_date is required for selection PM retry dispatch")
+    dispatch_id = f"{workflow_run_id}-dispatch-05-{SelectionWorkerId.PORTFOLIO_MANAGER.value}-retry"
+    return SelectionWorkerDispatch(
+        dispatch_id=dispatch_id,
+        select_workflow_run_id=workflow_run_id,
+        worker_id=SelectionWorkerId.PORTFOLIO_MANAGER,
+        stage=SelectionStage.SELECTION_PORTFOLIO_DECISION,
+        allowed_tools=(),
+        prompt_runtime_vars={
+            "market": request.market.value,
+            "profile": request.profile.value,
+            "trade_date": trade_date,
+            "selection_run_id": selection_run_id,
+            "select_workflow_run_id": workflow_run_id,
+        },
+        model_visible_materials=(
+            approved_l1[SelectionWorkerId.MANAGER],
+            approved_l1[SelectionWorkerId.STRATEGIST],
+            approved_l1[SelectionWorkerId.SKEPTIC],
+            summary_md,
+            retry_instruction,
+        ),
+        evidence_dir=evidence_dir / "dispatches" / dispatch_id,
+        provider_payload_ref=None,
+    )
+
+
 def _parse_and_validate_selection_decision(
     *,
     pm_raw_text: str,
-    supplemental_decision_texts: tuple[str, ...] = (),
     workflow_run_id: str,
     allowed_tickers: frozenset[str],
     allowed_ticker_companies: Mapping[str, str] | None = None,
@@ -1432,12 +1721,18 @@ def _parse_and_validate_selection_decision(
             allowed_ticker_companies=allowed_ticker_companies,
         )
 
-    all_tickers = [item.ticker for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])]
+    all_tickers = [
+        item.ticker for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])
+    ]
     if len(all_tickers) != len(set(all_tickers)):
-        return _DecisionParseResult(decision=None, invalid_reason="ticker_duplicated_across_sections")
+        return _DecisionParseResult(
+            decision=None, invalid_reason="ticker_duplicated_across_sections"
+        )
     for ticker in all_tickers:
         if ticker.upper() not in allowed_tickers:
-            return _DecisionParseResult(decision=None, invalid_reason=f"ticker_not_in_allowed_set:{ticker}")
+            return _DecisionParseResult(
+                decision=None, invalid_reason=f"ticker_not_in_allowed_set:{ticker}"
+            )
     if allowed_ticker_companies:
         for row in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"]):
             expected_company = allowed_ticker_companies.get(row.ticker.upper())
@@ -1447,15 +1742,6 @@ def _parse_and_validate_selection_decision(
                     invalid_reason=f"ticker_company_mismatch:{row.ticker}:expected={expected_company}:actual={row.company_name}",
                 )
     missing_tickers = sorted(allowed_tickers.difference(ticker.upper() for ticker in all_tickers))
-    if missing_tickers:
-        parsed = _supplement_missing_decision_rows_from_group_table(
-            text="\n".join((text, *supplemental_decision_texts)),
-            parsed=parsed,
-            missing_tickers=tuple(missing_tickers),
-            allowed_ticker_companies=allowed_ticker_companies or {},
-        )
-        all_tickers = [item.ticker for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])]
-        missing_tickers = sorted(allowed_tickers.difference(ticker.upper() for ticker in all_tickers))
     if missing_tickers:
         return _DecisionParseResult(
             decision=None,
@@ -1476,81 +1762,10 @@ def _parse_and_validate_selection_decision(
     return _DecisionParseResult(decision=decision)
 
 
-def _supplement_missing_decision_rows_from_group_table(
-    *,
-    text: str,
-    parsed: Mapping[str, tuple[DecisionTicker, ...]],
-    missing_tickers: tuple[str, ...],
-    allowed_ticker_companies: Mapping[str, str],
-) -> dict[str, tuple[DecisionTicker, ...]]:
-    table_rows = _extract_group_table_decision_rows(text)
-    if not table_rows:
-        return {key: tuple(value) for key, value in parsed.items()}
-
-    existing = {item.ticker.upper() for item in (*parsed["enter_report"], *parsed["watch"], *parsed["reject"])}
-    additions: dict[str, list[DecisionTicker]] = {"enter_report": [], "watch": [], "reject": []}
-    for ticker in missing_tickers:
-        normalized = ticker.upper()
-        if normalized in existing:
-            continue
-        candidates = table_rows.get(normalized, ())
-        if len(candidates) != 1:
-            continue
-        section, row = candidates[0]
-        expected_company = allowed_ticker_companies.get(normalized)
-        if expected_company is not None and row.company_name != expected_company:
-            continue
-        additions[section].append(row)
-
-    return {
-        key: (*tuple(parsed.get(key, ())), *tuple(additions[key]))
-        for key in ("enter_report", "watch", "reject")
-    }
-
-
-def _extract_group_table_decision_rows(text: str) -> dict[str, tuple[tuple[str, DecisionTicker], ...]]:
-    section_by_label = {
-        "优先进入组合评审": "enter_report",
-        "进入组合评审": "enter_report",
-        "进入/report": "enter_report",
-        "继续观察": "watch",
-        "观察": "watch",
-        "暂不继续": "reject",
-        "放弃": "reject",
-    }
-    current_section: str | None = None
-    rows_by_ticker: dict[str, list[tuple[str, DecisionTicker]]] = {}
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line.startswith("|") or "---" in line:
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) < 4:
-            continue
-        section_cell = _strip_markdown_inline(cells[0])
-        if section_cell:
-            normalized_label = _normalize_heading(section_cell)
-            current_section = section_by_label.get(normalized_label)
-        if current_section is None:
-            continue
-        ticker = _strip_markdown_inline(cells[1]).upper()
-        if not _is_supported_selection_ticker(ticker):
-            continue
-        company_name = _strip_markdown_inline(cells[2])
-        reason = _strip_markdown_inline(cells[3])
-        if not company_name or company_name in {"名称", "股票名称", "公司"}:
-            continue
-        rows_by_ticker.setdefault(ticker, []).append(
-            (
-                current_section,
-                DecisionTicker(ticker=ticker, company_name=company_name, rationale_excerpt=reason),
-            )
-        )
-    return {ticker: tuple(rows) for ticker, rows in rows_by_ticker.items()}
-
-
 def _is_supported_selection_ticker(ticker: str) -> bool:
-    return re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)|[A-Z0-9]{1,30}USDT", ticker, re.IGNORECASE) is not None
+    return (
+        re.fullmatch(r"\d{6}\.(?:SH|SZ|BJ)|[A-Z0-9]{1,30}USDT", ticker, re.IGNORECASE) is not None
+    )
 
 
 def _strip_markdown_inline(value: str) -> str:
@@ -1587,7 +1802,9 @@ def _canonicalize_explicit_ticker_correction(
 ) -> DecisionTicker:
     if row.ticker.upper() in allowed_tickers:
         return row
-    corrected_ticker = _extract_explicit_corrected_ticker(row.rationale_excerpt, allowed_tickers=allowed_tickers)
+    corrected_ticker = _extract_explicit_corrected_ticker(
+        row.rationale_excerpt, allowed_tickers=allowed_tickers
+    )
     if corrected_ticker is None:
         return row
     expected_company = allowed_ticker_companies.get(corrected_ticker)
@@ -1653,7 +1870,10 @@ def _parse_decision_rows(lines: tuple[str, ...]) -> tuple[DecisionTicker, ...] |
         if normalized in {"无", "暂无", "空"}:
             continue
         has_parseable_content = True
-        pipe_match = re.match(r"^(?P<ticker>\S+)\s*[|｜]\s*(?P<company>[^|｜:：]+)\s*[|｜]\s*(?P<reason>.+)$", normalized)
+        pipe_match = re.match(
+            r"^(?P<ticker>\S+)\s*[|｜]\s*(?P<company>[^|｜:：]+)\s*[|｜]\s*(?P<reason>.+)$",
+            normalized,
+        )
         if pipe_match:
             rows.append(
                 DecisionTicker(
@@ -1748,7 +1968,13 @@ def _render_selection_reader_report(
     summary = _reader_selection_summary(candidate_cache_summary_md)
     if summary:
         lines.extend(("", "## 七、数据范围与质量", summary))
-    lines.extend(("", "## 八、进入 `/report` 的验证重点", *_render_validation_focus_rows(decision.enter_report)))
+    lines.extend(
+        (
+            "",
+            "## 八、进入 `/report` 的验证重点",
+            *_render_validation_focus_rows(decision.enter_report),
+        )
+    )
     return "\n".join(lines).strip()
 
 
@@ -1772,7 +1998,9 @@ def _render_rows(rows: tuple[DecisionTicker, ...]) -> list[str]:
         return ["- 无"]
     rendered: list[str] = []
     for row in rows:
-        rendered.append(f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}")
+        rendered.append(
+            f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}"
+        )
     return rendered
 
 
@@ -1786,10 +2014,15 @@ def _selection_worker_report_text(
 def _render_validation_focus_rows(rows: tuple[DecisionTicker, ...]) -> list[str]:
     if not rows:
         return ["- 无"]
-    return [f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}" for row in rows]
+    return [
+        f"- {row.ticker} {row.company_name}：{_reader_friendly_selection_text(row.rationale_excerpt)}"
+        for row in rows
+    ]
 
 
-def _reader_strategy_analysis(candidate_cache_summary_md: str | None, *, market: SelectionMarket = SelectionMarket.CN_A) -> str:
+def _reader_strategy_analysis(
+    candidate_cache_summary_md: str | None, *, market: SelectionMarket = SelectionMarket.CN_A
+) -> str:
     summary = (candidate_cache_summary_md or "").strip()
     if not summary:
         return ""
@@ -1798,7 +2031,9 @@ def _reader_strategy_analysis(candidate_cache_summary_md: str | None, *, market:
     lines: list[str] = ["### 命中的策略条件"]
     if strategy_names:
         for name in strategy_names:
-            explanation = _READER_STRATEGY_EXPLANATIONS.get(name, _reader_strategy_fallback_explanation(market))
+            explanation = _READER_STRATEGY_EXPLANATIONS.get(
+                name, _reader_strategy_fallback_explanation(market)
+            )
             lines.append(f"- {name}：{explanation}")
     else:
         lines.append("- 候选缓存没有提供可读的策略条件明细；本报告不补造策略名称。")
@@ -1813,7 +2048,9 @@ def _reader_strategy_analysis(candidate_cache_summary_md: str | None, *, market:
             )
         )
         for candidate, strategy_text in candidate_rows:
-            lines.append(f"| {_markdown_table_cell(candidate)} | {_markdown_table_cell(strategy_text)} |")
+            lines.append(
+                f"| {_markdown_table_cell(candidate)} | {_markdown_table_cell(strategy_text)} |"
+            )
 
     lines.extend(
         (
@@ -1873,7 +2110,9 @@ def _reader_candidate_strategy_rows(summary_md: str) -> tuple[tuple[str, str], .
     return tuple(rows)
 
 
-def _reader_strategy_names(summary_md: str, candidate_rows: tuple[tuple[str, str], ...]) -> tuple[str, ...]:
+def _reader_strategy_names(
+    summary_md: str, candidate_rows: tuple[tuple[str, str], ...]
+) -> tuple[str, ...]:
     names: list[str] = []
     for _candidate, strategy_text in candidate_rows:
         names.extend(strategy_text.split("、"))
@@ -1999,9 +2238,13 @@ def _reader_friendly_selection_text(text: str) -> str:
     out = text.strip()
     if not out:
         return ""
-    for source, target in sorted(_READER_TEXT_REPLACEMENTS, key=lambda item: len(item[0]), reverse=True):
+    for source, target in sorted(
+        _READER_TEXT_REPLACEMENTS, key=lambda item: len(item[0]), reverse=True
+    ):
         out = out.replace(source, target)
-    for source, target in sorted(_READER_VISIBLE_FIELD_LABELS.items(), key=lambda item: len(item[0]), reverse=True):
+    for source, target in sorted(
+        _READER_VISIBLE_FIELD_LABELS.items(), key=lambda item: len(item[0]), reverse=True
+    ):
         out = re.sub(rf"(?<![A-Za-z0-9_]){re.escape(source)}(?![A-Za-z0-9_])", target, out)
     out = re.sub(r"approved_[^\s，。；,;)）]+_l1", "已批准的正向策略评审", out)
     out = re.sub(r"[（(]\s*U\d+\s*[）)]", "", out)
@@ -2062,7 +2305,9 @@ def _write_selection_workflow_evidence(*, evidence_dir: Path, payload: dict[str,
     return path
 
 
-def _coerce_data_refresh_result(raw_result: object, *, default_reason: str) -> SelectionDataRefreshResult:
+def _coerce_data_refresh_result(
+    raw_result: object, *, default_reason: str
+) -> SelectionDataRefreshResult:
     if isinstance(raw_result, SelectionDataRefreshResult):
         return raw_result
     if isinstance(raw_result, Mapping):

@@ -58,6 +58,10 @@ _PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS = (
     "approved_skeptic_l1",
     "candidate_cache_summary",
 )
+_PORTFOLIO_MANAGER_RETRY_PROMPT_MATERIAL_MARKERS = (
+    *_PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS,
+    "pm_retry_instruction",
+)
 
 
 @dataclass(frozen=True)
@@ -163,8 +167,12 @@ def build_openclaw_command_for_selection_dispatch(
 ) -> OpenClawCommand:
     runtime_vars: dict[str, object] = dict(dispatch.prompt_runtime_vars)
     runtime_vars["select_workflow_run_id"] = dispatch.select_workflow_run_id
-    runtime_vars["selection_prompt_context"] = _prompt_context_with_model_visible_materials(dispatch)
-    runtime_vars["candidate_cache_ref"] = _serialize_candidate_cache_ref_runtime_var(candidate_cache_ref)
+    runtime_vars["selection_prompt_context"] = _prompt_context_with_model_visible_materials(
+        dispatch
+    )
+    runtime_vars["candidate_cache_ref"] = _serialize_candidate_cache_ref_runtime_var(
+        candidate_cache_ref
+    )
     if selection_artifact_root is not None:
         runtime_vars["selection_artifact_root"] = str(selection_artifact_root)
     upstream_materials = _build_upstream_material_refs(
@@ -276,7 +284,9 @@ def _model_visible_materials_for_worker(
     raise ValueError(f"unsupported selection worker: {worker_id}")
 
 
-def _required_upstream_l1(materials: Mapping[SelectionWorkerId, str], worker_id: SelectionWorkerId) -> str:
+def _required_upstream_l1(
+    materials: Mapping[SelectionWorkerId, str], worker_id: SelectionWorkerId
+) -> str:
     value = materials.get(worker_id)
     if value is None or not value.strip():
         raise ValueError(f"approved_l1_materials missing required worker output: {worker_id.value}")
@@ -359,7 +369,12 @@ def _prompt_material_sections(dispatch: SelectionWorkerDispatch) -> tuple[tuple[
     if dispatch.worker_id == SelectionWorkerId.MANAGER:
         return tuple(zip(_MANAGER_PROMPT_MATERIAL_MARKERS, materials, strict=True))
     if dispatch.worker_id == SelectionWorkerId.PORTFOLIO_MANAGER:
-        return tuple(zip(_PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS, materials, strict=True))
+        markers = (
+            _PORTFOLIO_MANAGER_RETRY_PROMPT_MATERIAL_MARKERS
+            if len(materials) == len(_PORTFOLIO_MANAGER_RETRY_PROMPT_MATERIAL_MARKERS)
+            else _PORTFOLIO_MANAGER_PROMPT_MATERIAL_MARKERS
+        )
+        return tuple(zip(markers, materials, strict=True))
     return ()
 
 
@@ -383,7 +398,9 @@ def _candidate_checklist_from_summary(candidate_cache_summary_md: str) -> str:
         normalized = [_normalize_header_cell(cell) for cell in cells]
         if ticker_index is None:
             ticker_index = _index_of_any(normalized, {"股票代码", "代码", "ticker"})
-            company_index = _index_of_any(normalized, {"股票名称", "公司", "名称", "company", "companyname"})
+            company_index = _index_of_any(
+                normalized, {"股票名称", "公司", "名称", "company", "companyname"}
+            )
             rank_index = _index_of_any(normalized, {"排名", "rank"})
             if ticker_index is not None and company_index is not None:
                 continue
@@ -397,13 +414,19 @@ def _candidate_checklist_from_summary(candidate_cache_summary_md: str) -> str:
         if not _looks_like_ticker(ticker):
             continue
         company = _clean_markdown_table_value(cells[company_index])
-        rank = _clean_markdown_table_value(cells[rank_index]) if rank_index is not None and len(cells) > rank_index else ""
+        rank = (
+            _clean_markdown_table_value(cells[rank_index])
+            if rank_index is not None and len(cells) > rank_index
+            else ""
+        )
         rows.append((rank or str(len(rows) + 1), ticker, company or "-"))
 
     if not rows:
         return ""
 
-    lines = [f"本轮候选池共 {len(rows)} 只；后续分组或三分类必须覆盖下面每一只，不能只沿用上游分组："]
+    lines = [
+        f"本轮候选池共 {len(rows)} 只；后续分组或三分类必须覆盖下面每一只，不能只沿用上游分组："
+    ]
     lines.extend(f"- {rank} | {ticker} | {company}" for rank, ticker, company in rows)
     return "\n".join(lines)
 
@@ -436,7 +459,9 @@ def _clean_markdown_table_value(value: str) -> str:
 def _looks_like_ticker(value: str) -> bool:
     if re.match(r"^[A-Z0-9]{1,30}USDT$", value):
         return True
-    return bool(re.match(r"^[A-Z0-9][A-Z0-9._/-]*$", value)) and any(char.isdigit() for char in value)
+    return bool(re.match(r"^[A-Z0-9][A-Z0-9._/-]*$", value)) and any(
+        char.isdigit() for char in value
+    )
 
 
 def _build_upstream_material_refs(
@@ -444,12 +469,20 @@ def _build_upstream_material_refs(
     dispatch: SelectionWorkerDispatch,
     candidate_cache_ref: CandidateCacheRef,
 ) -> tuple[dict[str, str | None], ...]:
-    upstream_sources = _upstream_material_sources(dispatch=dispatch, candidate_cache_ref=candidate_cache_ref)
+    upstream_sources = _upstream_material_sources(
+        dispatch=dispatch, candidate_cache_ref=candidate_cache_ref
+    )
     if not upstream_sources:
         return ()
 
     refs: list[dict[str, str | None]] = []
-    for index, (material_body, source_worker_id, source_stage, source_call_id, source_l1_uri) in enumerate(
+    for index, (
+        material_body,
+        source_worker_id,
+        source_stage,
+        source_call_id,
+        source_l1_uri,
+    ) in enumerate(
         upstream_sources,
         start=1,
     ):
@@ -478,7 +511,9 @@ def _upstream_material_sources(
     if dispatch.worker_id == SelectionWorkerId.STRATEGIST:
         return ()
     if dispatch.worker_id == SelectionWorkerId.SKEPTIC:
-        strategist_dispatch_id = _dispatch_id_for_worker(dispatch.select_workflow_run_id, SelectionWorkerId.STRATEGIST)
+        strategist_dispatch_id = _dispatch_id_for_worker(
+            dispatch.select_workflow_run_id, SelectionWorkerId.STRATEGIST
+        )
         return (
             (
                 materials[0],
@@ -493,8 +528,12 @@ def _upstream_material_sources(
             ),
         )
     if dispatch.worker_id == SelectionWorkerId.MANAGER:
-        strategist_dispatch_id = _dispatch_id_for_worker(dispatch.select_workflow_run_id, SelectionWorkerId.STRATEGIST)
-        skeptic_dispatch_id = _dispatch_id_for_worker(dispatch.select_workflow_run_id, SelectionWorkerId.SKEPTIC)
+        strategist_dispatch_id = _dispatch_id_for_worker(
+            dispatch.select_workflow_run_id, SelectionWorkerId.STRATEGIST
+        )
+        skeptic_dispatch_id = _dispatch_id_for_worker(
+            dispatch.select_workflow_run_id, SelectionWorkerId.SKEPTIC
+        )
         return (
             (
                 materials[0],
@@ -527,9 +566,15 @@ def _upstream_material_sources(
             ),
         )
     if dispatch.worker_id == SelectionWorkerId.PORTFOLIO_MANAGER:
-        manager_dispatch_id = _dispatch_id_for_worker(dispatch.select_workflow_run_id, SelectionWorkerId.MANAGER)
-        strategist_dispatch_id = _dispatch_id_for_worker(dispatch.select_workflow_run_id, SelectionWorkerId.STRATEGIST)
-        skeptic_dispatch_id = _dispatch_id_for_worker(dispatch.select_workflow_run_id, SelectionWorkerId.SKEPTIC)
+        manager_dispatch_id = _dispatch_id_for_worker(
+            dispatch.select_workflow_run_id, SelectionWorkerId.MANAGER
+        )
+        strategist_dispatch_id = _dispatch_id_for_worker(
+            dispatch.select_workflow_run_id, SelectionWorkerId.STRATEGIST
+        )
+        skeptic_dispatch_id = _dispatch_id_for_worker(
+            dispatch.select_workflow_run_id, SelectionWorkerId.SKEPTIC
+        )
         return (
             (
                 materials[0],

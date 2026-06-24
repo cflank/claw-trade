@@ -25,9 +25,9 @@ from claw_trade.selection.models import (
     CandidateCacheReadbackStatus,
     CandidateCacheRef,
     DecisionTicker,
-    SelectionDecision,
     SelectionDataRun,
     SelectionDataRunStatus,
+    SelectionDecision,
     SelectionMarket,
     SelectionProfile,
     SelectionRunPlan,
@@ -125,7 +125,8 @@ def _add_candidate_cache_summary_fields(payload_path: Path) -> None:
         candidate["component_scores"] = {
             key: value
             for key, value in values.items()
-            if key.endswith("_score") and key not in {"risk_penalty_score", "data_gap_penalty_score"}
+            if key.endswith("_score")
+            and key not in {"risk_penalty_score", "data_gap_penalty_score"}
         }
         candidate["actual_metric_values"] = dict(values)
         candidate["hit_fields"] = {
@@ -134,7 +135,9 @@ def _add_candidate_cache_summary_fields(payload_path: Path) -> None:
             if key.startswith("hit_") or key.startswith("strategy_hit_") or key.endswith("_hit")
         }
         candidate["tie_break_fields"] = {"amount": values["amount"]}
-    payload_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    payload_path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
 
 
 class _FakeSelectionOpenClawRunner:
@@ -144,11 +147,13 @@ class _FakeSelectionOpenClawRunner:
         self,
         *,
         pm_output: str | None = None,
+        pm_outputs: tuple[str, ...] = (),
         fail_worker_id: str | None = None,
         empty_output_worker_id: str | None = None,
     ) -> None:
         self.payloads: list[dict[str, object]] = []
         self._pm_output = pm_output
+        self._pm_outputs = list(pm_outputs)
         self._fail_worker_id = fail_worker_id
         self._empty_output_worker_id = empty_output_worker_id
 
@@ -217,11 +222,18 @@ class _FakeSelectionOpenClawRunner:
         workspace_evidence_path.write_text(json.dumps(workspace_evidence), encoding="utf-8")
         first_response_text = (
             ""
-            if self._empty_output_worker_id is not None and worker_id == self._empty_output_worker_id
+            if self._empty_output_worker_id is not None
+            and worker_id == self._empty_output_worker_id
             else "ok"
         )
         first_response_path.write_text(
-            json.dumps({"source": "openclaw_first_model_event", "runtime_markers": runtime_markers, "text": first_response_text}),
+            json.dumps(
+                {
+                    "source": "openclaw_first_model_event",
+                    "runtime_markers": runtime_markers,
+                    "text": first_response_text,
+                }
+            ),
             encoding="utf-8",
         )
         tool_calls_path.write_text(
@@ -230,12 +242,16 @@ class _FakeSelectionOpenClawRunner:
         )
         if self._empty_output_worker_id is not None and worker_id == self._empty_output_worker_id:
             raw_output = ""
+        elif worker_id == "selection_portfolio_manager" and self._pm_outputs:
+            raw_output = self._pm_outputs.pop(0)
         elif worker_id == "selection_portfolio_manager" and self._pm_output is not None:
             raw_output = self._pm_output
         else:
             raw_output = _worker_output(worker_id)
         raw_output_path.write_text(raw_output, encoding="utf-8")
-        receipt_path.write_text(json.dumps({"receipt_id": f"receipt-{payload['call_id']}"}), encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps({"receipt_id": f"receipt-{payload['call_id']}"}), encoding="utf-8"
+        )
         return {
             "status": "failed" if should_fail else "succeeded",
             "openclaw_run_id": runtime_markers["openclaw_run_id"],
@@ -319,7 +335,9 @@ def _build_controller(
     transport = _FakeChatTransport()
     workflow_runner = _FakeWorkflowRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(workflow_runner))
-    resolved_selection_controller = selection_controller or SelectionController(store=SelectionRunStore())
+    resolved_selection_controller = selection_controller or SelectionController(
+        store=SelectionRunStore()
+    )
     controller = ChatController(
         openclaw_client=OpenClawGatewayClient(transport),
         recognizer=IntentRecognizer(),
@@ -345,7 +363,11 @@ def _candidate_cache_manifest_payload(*, run_id: str, body_sha: str) -> dict[str
         "strategy_config_version": "cn_a.selection_strategy.v1",
         "weight_version": "cn_a.selection_weights.v1",
         "candidate_scores_ref": "scores://sel-run-08",
-        "stable_top20_rule": {"score_field": "score", "tie_break_fields": ["amount"], "missing_policy": "fail"},
+        "stable_top20_rule": {
+            "score_field": "score",
+            "tie_break_fields": ["amount"],
+            "missing_policy": "fail",
+        },
         "readback_status": "verified",
         "stage": "approving_candidate_cache",
         "target": "candidate_cache",
@@ -381,7 +403,9 @@ def test_crypto_reader_report_title_uses_crypto_market_label() -> None:
     markdown = _render_selection_reader_report(
         SelectionDecision(
             select_workflow_run_id="select-crypto-title",
-            enter_report=(DecisionTicker(ticker="BTCUSDT", company_name="BTC", rationale_excerpt="动量强"),),
+            enter_report=(
+                DecisionTicker(ticker="BTCUSDT", company_name="BTC", rationale_excerpt="动量强"),
+            ),
             watch=(),
             reject=(),
             report_questions=None,
@@ -517,7 +541,11 @@ def _write_columnar_manifest(plan: SelectionRunPlan):
 
 def _write_readback_log(path: Path, *, expected_sha256: str) -> None:
     suffix = path.suffix
-    verify_path = path.with_suffix(f"{suffix}.readback-verify.json") if suffix else path.with_name(f"{path.name}.readback-verify.json")
+    verify_path = (
+        path.with_suffix(f"{suffix}.readback-verify.json")
+        if suffix
+        else path.with_name(f"{path.name}.readback-verify.json")
+    )
     verify_path.write_text(
         json.dumps(
             {
@@ -536,6 +564,7 @@ def _selection_controller_with_completed_run(
     tmp_path: Path,
     *,
     pm_output: str | None = None,
+    pm_outputs: tuple[str, ...] = (),
     fail_worker_id: str | None = None,
     empty_output_worker_id: str | None = None,
     legacy_summary: bool = False,
@@ -805,9 +834,13 @@ def _selection_controller_with_completed_run(
     body_sha = sha256(body_text.encode("utf-8")).hexdigest()
     manifest_path = tmp_path / "candidate-cache-manifest.json"
     manifest_payload = _candidate_cache_manifest_payload(run_id=run_id, body_sha=body_sha)
-    manifest_path.write_text(json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
     _write_readback_log(body_path, expected_sha256=body_sha)
-    _write_readback_log(manifest_path, expected_sha256=sha256(manifest_path.read_bytes()).hexdigest())
+    _write_readback_log(
+        manifest_path, expected_sha256=sha256(manifest_path.read_bytes()).hexdigest()
+    )
     columnar_manifest = _write_columnar_manifest(plan)
     candidate_cache_ref = CandidateCacheRef(
         selection_run_id=run_id,
@@ -854,6 +887,7 @@ def _selection_controller_with_completed_run(
     )
     resolved_selection_runner = selection_runner or _FakeSelectionOpenClawRunner(
         pm_output=pm_output,
+        pm_outputs=pm_outputs,
         fail_worker_id=fail_worker_id,
         empty_output_worker_id=empty_output_worker_id,
     )
@@ -867,10 +901,14 @@ def _selection_controller_with_completed_run(
 
 
 @pytest.mark.integration
-def test_select_command_no_completed_run_returns_unavailable_and_does_not_touch_report_queue() -> None:
+def test_select_command_no_completed_run_returns_unavailable_and_does_not_touch_report_queue() -> (
+    None
+):
     controller, chat_transport, workflow_runner = _build_controller()
 
-    result = controller.send_chat_message(request_id="sel-08-no-run", context_id="ctx-no-run", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-no-run", context_id="ctx-no-run", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "unavailable"
@@ -901,9 +939,13 @@ def test_select_command_no_completed_run_requests_background_data_refresh(tmp_pa
         scheduler_enqueue=_refresh,
         workflow_evidence_root=tmp_path / "selection-workflows",
     )
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-refresh", context_id="ctx-refresh", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-refresh", context_id="ctx-refresh", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "data_refresh_requested"
@@ -917,7 +959,9 @@ def test_select_command_no_completed_run_requests_background_data_refresh(tmp_pa
     }
     assert len(refresh_calls) == 1
     assert refresh_calls[0]["select_workflow_run_id"] == result["selection"]["workflowRunId"]
-    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
+    evidence_payload = json.loads(
+        Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
+    )
     assert evidence_payload["data_refresh"]["status"] == "started"
     assert evidence_payload["data_refresh"]["selection_run_id"] == "sel-refresh-1"
     assert chat_transport.calls == 0
@@ -925,7 +969,9 @@ def test_select_command_no_completed_run_requests_background_data_refresh(tmp_pa
 
 
 @pytest.mark.integration
-def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_completed_run(tmp_path: Path) -> None:
+def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_completed_run(
+    tmp_path: Path,
+) -> None:
     refresh_calls: list[dict[str, object]] = []
 
     def _refresh(**kwargs: object) -> SelectionDataRefreshResult:
@@ -949,9 +995,13 @@ def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_co
         default_trade_date_resolver=lambda value: value or "2026-06-04",
         workflow_evidence_root=tmp_path / "selection-workflows-current-date",
     )
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-current-date-refresh", context_id="ctx-refresh-current", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-current-date-refresh", context_id="ctx-refresh-current", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "data_refresh_requested"
@@ -961,18 +1011,26 @@ def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_co
     request = refresh_calls[0]["request"]
     assert isinstance(request, object)
     assert getattr(request, "trade_date") == "2026-06-04"
-    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
+    evidence_payload = json.loads(
+        Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
+    )
     assert evidence_payload["trade_date"] == "2026-06-04"
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 
 
 @pytest.mark.integration
-def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categories(tmp_path: Path) -> None:
+def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categories(
+    tmp_path: Path,
+) -> None:
     selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-ok", context_id="ctx-ok", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-ok", context_id="ctx-ok", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "completed"
@@ -985,7 +1043,10 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     reader_report_path = Path(evidence_payload["reader_report_path"])
     assert reader_report_path.is_file()
     decision_payload = evidence_payload["decision"]
-    assert decision_payload["approved_material_id"] == f"selection-pm-decision-{result['selection']['workflowRunId']}"
+    assert (
+        decision_payload["approved_material_id"]
+        == f"selection-pm-decision-{result['selection']['workflowRunId']}"
+    )
     assert decision_payload["approval_status"] == "approved"
     assert decision_payload["select_workflow_run_id"] == result["selection"]["workflowRunId"]
     assert decision_payload["material_target"] == "selection_portfolio_decision"
@@ -1044,9 +1105,7 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     assert "## 八、进入 `/report` 的验证重点" in report_markdown
     _assert_candidate_fact_body_is_reader_chinese(report_markdown)
     message_without_boundary_notice = "\n".join(
-        line
-        for line in message.splitlines()
-        if "`/select` 是候选研究池" not in line
+        line for line in message.splitlines() if "`/select` 是候选研究池" not in line
     )
     assert "买入" not in message_without_boundary_notice
     assert "卖出" not in message_without_boundary_notice
@@ -1062,7 +1121,9 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
 @pytest.mark.integration
 def test_select_command_exposes_current_worker_progress_while_running(tmp_path: Path) -> None:
     blocking_runner = _BlockingSelectionOpenClawRunner()
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, selection_runner=blocking_runner)
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, selection_runner=blocking_runner
+    )
     result_holder: dict[str, object] = {}
     errors: list[BaseException] = []
 
@@ -1104,7 +1165,9 @@ def test_select_command_exposes_current_worker_progress_while_running(tmp_path: 
 @pytest.mark.integration
 def test_select_command_cancel_stops_after_current_worker_returns(tmp_path: Path) -> None:
     blocking_runner = _BlockingSelectionOpenClawRunner()
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, selection_runner=blocking_runner)
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, selection_runner=blocking_runner
+    )
     result_holder: dict[str, object] = {}
     errors: list[BaseException] = []
 
@@ -1123,7 +1186,9 @@ def test_select_command_cancel_stops_after_current_worker_returns(tmp_path: Path
     assert blocking_runner.worker_started.wait(timeout=2)
     progress = selection_controller.latest_progress_for_user()["selectionProgress"]
     assert isinstance(progress, dict)
-    assert selection_controller.cancel_progress(workflow_run_id=str(progress["workflowRunId"])) is True
+    assert (
+        selection_controller.cancel_progress(workflow_run_id=str(progress["workflowRunId"])) is True
+    )
     assert selection_controller.latest_progress_for_user() == {"selectionProgress": None}
 
     blocking_runner.release_worker.set()
@@ -1134,20 +1199,30 @@ def test_select_command_cancel_stops_after_current_worker_returns(tmp_path: Path
     result = result_holder["result"]
     assert getattr(result, "code").value == "failed"
     assert getattr(result, "failure_reason") == "selection_workflow_cancelled:user_cancelled"
-    assert [payload["worker_id"] for payload in blocking_runner.payloads] == ["selection_strategist"]
+    assert [payload["worker_id"] for payload in blocking_runner.payloads] == [
+        "selection_strategist"
+    ]
     assert selection_controller.latest_progress_for_user() == {"selectionProgress": None}
 
 
 @pytest.mark.integration
-def test_select_command_accepts_approved_candidate_cache_with_missing_strategy_fields(tmp_path: Path) -> None:
+def test_select_command_accepts_approved_candidate_cache_with_missing_strategy_fields(
+    tmp_path: Path,
+) -> None:
     selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
     payload_path = tmp_path / "candidate-cache.json"
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     payload["candidates"][0]["feature_values"]["strategy_missing_field_count"] = 56
-    payload_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    payload_path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-missing-strategy-fields", context_id="ctx-missing", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-missing-strategy-fields", context_id="ctx-missing", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "completed"
@@ -1159,26 +1234,45 @@ def test_select_command_accepts_approved_candidate_cache_with_missing_strategy_f
 
 @pytest.mark.integration
 def test_select_command_rejects_legacy_candidate_cache_summary_fields(tmp_path: Path) -> None:
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, legacy_summary=True)
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, legacy_summary=True
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-legacy-summary", context_id="ctx-legacy", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-legacy-summary", context_id="ctx-legacy", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "unavailable"
     assert result["selection"]["unavailableCode"] == "candidate_cache_integrity_failed"
-    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
-    assert evidence_payload["reason"] == "candidate_cache_summary_fields_missing: ticker=600519.SH missing component_scores"
+    evidence_payload = json.loads(
+        Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
+    )
+    assert (
+        evidence_payload["reason"]
+        == "candidate_cache_summary_fields_missing: ticker=600519.SH missing component_scores"
+    )
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 
 
 @pytest.mark.integration
-def test_select_command_rebuilds_candidate_cache_summary_with_raw_reader_field_names(tmp_path: Path) -> None:
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, raw_complete_summary=True)
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+def test_select_command_rebuilds_candidate_cache_summary_with_raw_reader_field_names(
+    tmp_path: Path,
+) -> None:
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, raw_complete_summary=True
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-raw-summary", context_id="ctx-raw", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-raw-summary", context_id="ctx-raw", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "completed"
@@ -1201,7 +1295,9 @@ def test_select_command_rebuilds_candidate_cache_summary_with_raw_reader_field_n
 def test_real_select_evidence_passes_confirmation_pm_decision_material_gate(tmp_path: Path) -> None:
     selection_controller, _ = _selection_controller_with_completed_run(tmp_path)
     controller, _, _ = _build_controller(selection_controller=selection_controller)
-    result = controller.send_chat_message(request_id="sel-08-confirm", context_id="ctx-confirm", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-confirm", context_id="ctx-confirm", text="/select"
+    )
 
     workflow_run_id = result["selection"]["workflowRunId"]
     evidence_path = Path(result["selection"]["evidencePath"])
@@ -1228,17 +1324,27 @@ def test_real_select_evidence_passes_confirmation_pm_decision_material_gate(tmp_
     )
 
     assert confirm_result.code == "report_handoff_started"
-    assert confirm_result.handoff_request["selectionContextRef"] == decision_payload["approved_material_id"]
+    assert (
+        confirm_result.handoff_request["selectionContextRef"]
+        == decision_payload["approved_material_id"]
+    )
     assert confirm_result.handoff_request["selectionContextRef"] != "mat-sel-run-08"
     assert confirm_result.handoff_request["companyName"] == "贵州茅台"
     assert confirm_result.queue_payload["task"]["companyName"] == "贵州茅台"
-    assert confirm_result.queue_payload["task"]["selectionContextRef"] == decision_payload["approved_material_id"]
-    assert confirm_result.queue_payload["task"]["selectionStageMarker"] == "selection_report_handoff"
+    assert (
+        confirm_result.queue_payload["task"]["selectionContextRef"]
+        == decision_payload["approved_material_id"]
+    )
+    assert (
+        confirm_result.queue_payload["task"]["selectionStageMarker"] == "selection_report_handoff"
+    )
     assert confirm_runner.calls == 1
 
 
 @pytest.mark.integration
-def test_select_command_missing_watch_section_fails_with_selection_result_invalid(tmp_path: Path) -> None:
+def test_select_command_missing_watch_section_fails_with_selection_result_invalid(
+    tmp_path: Path,
+) -> None:
     pm_output = "\n".join(
         [
             "进入 /report:",
@@ -1247,14 +1353,22 @@ def test_select_command_missing_watch_section_fails_with_selection_result_invali
             "- 300750.SZ | 宁德时代 | 当前证据链分歧较大。",
         ]
     )
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, pm_output=pm_output)
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, pm_output=pm_output
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-missing-watch", context_id="ctx-missing-watch", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-missing-watch", context_id="ctx-missing-watch", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "failed"
-    assert result["selection"]["failureReason"] == "selection_result_invalid:missing_required_sections"
+    assert (
+        result["selection"]["failureReason"] == "selection_result_invalid:missing_required_sections"
+    )
     evidence_path = Path(result["selection"]["evidencePath"])
     assert evidence_path.is_file()
     evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -1276,10 +1390,16 @@ def test_select_command_missing_candidate_classification_fails_closed(tmp_path: 
             "- 无",
         ]
     )
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, pm_output=pm_output)
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, pm_output=pm_output
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
-    result = controller.send_chat_message(request_id="sel-08-missing-candidate", context_id="ctx-missing-candidate", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-08-missing-candidate", context_id="ctx-missing-candidate", text="/select"
+    )
 
     assert "error" not in result
     assert result["selection"]["code"] == "failed"
@@ -1291,7 +1411,80 @@ def test_select_command_missing_candidate_classification_fails_closed(tmp_path: 
     assert evidence_path.is_file()
     evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert evidence_payload["status"] == "failed"
-    assert evidence_payload["reason"] == "selection_result_invalid:candidate_classification_incomplete:missing=300750.SZ"
+    assert (
+        evidence_payload["reason"]
+        == "selection_result_invalid:candidate_classification_incomplete:missing=300750.SZ"
+    )
+    assert chat_transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+@pytest.mark.integration
+def test_select_command_retries_pm_once_when_decision_groups_duplicate_ticker(
+    tmp_path: Path,
+) -> None:
+    bad_pm_output = "\n".join(
+        [
+            "进入 /report:",
+            "- 600519.SH | 贵州茅台 | 经营质量与现金流稳定。",
+            "观察:",
+            "- 000858.SZ | 五粮液 | 还需后续财报与景气数据确认。",
+            "- 300750.SZ | 宁德时代 | 仍需观察。",
+            "放弃:",
+            "- 300750.SZ | 宁德时代 | 当前证据链分歧较大。",
+        ]
+    )
+    fixed_pm_output = "\n".join(
+        [
+            "进入 /report:",
+            "- 600519.SH | 贵州茅台 | 经营质量与现金流稳定。",
+            "观察:",
+            "- 000858.SZ | 五粮液 | 还需后续财报与景气数据确认。",
+            "放弃:",
+            "- 300750.SZ | 宁德时代 | 当前证据链分歧较大。",
+        ]
+    )
+    selection_controller, selection_runner = _selection_controller_with_completed_run(
+        tmp_path,
+        pm_outputs=(bad_pm_output, fixed_pm_output),
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
+
+    result = controller.send_chat_message(
+        request_id="sel-08-pm-retry-duplicate", context_id="ctx-pm-retry", text="/select"
+    )
+
+    assert "error" not in result
+    assert result["selection"]["code"] == "completed"
+    assert [payload["worker_id"] for payload in selection_runner.payloads] == [
+        "selection_strategist",
+        "selection_skeptic",
+        "selection_manager",
+        "selection_portfolio_manager",
+        "selection_portfolio_manager",
+    ]
+    retry_payload = selection_runner.payloads[-1]
+    runtime_vars = retry_payload["runtime_vars"]
+    assert isinstance(runtime_vars, dict)
+    assert "selection_result_invalid:ticker_duplicated_across_sections" in str(
+        runtime_vars["selection_prompt_context"]
+    )
+    evidence_payload = json.loads(
+        Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
+    )
+    assert evidence_payload["status"] == "completed"
+    assert evidence_payload["pm_retry"]["attempted"] is True
+    assert (
+        evidence_payload["pm_retry"]["first_invalid_reason"] == "ticker_duplicated_across_sections"
+    )
+    decision_payload = evidence_payload["decision"]
+    all_tickers = (
+        decision_payload["enter_report"] + decision_payload["watch"] + decision_payload["reject"]
+    )
+    assert sorted(all_tickers) == ["000858.SZ", "300750.SZ", "600519.SH"]
+    assert len(all_tickers) == len(set(all_tickers))
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 
@@ -1308,8 +1501,12 @@ def test_select_command_ticker_company_mismatch_fails_closed(tmp_path: Path) -> 
             "- 300750.SZ | 宁德时代 | 当前证据链分歧较大且不够完整。",
         ]
     )
-    selection_controller, _ = _selection_controller_with_completed_run(tmp_path, pm_output=pm_output)
-    controller, chat_transport, workflow_runner = _build_controller(selection_controller=selection_controller)
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path, pm_output=pm_output
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
 
     result = controller.send_chat_message(
         request_id="sel-08-company-mismatch",
@@ -1343,11 +1540,15 @@ def test_select_command_worker_runtime_failure_stops_downstream_dispatches(tmp_p
     )
     controller, _, _ = _build_controller(selection_controller=selection_controller)
 
-    result = controller.send_chat_message(request_id="sel-10-worker-failed", context_id="ctx-worker-failed", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-10-worker-failed", context_id="ctx-worker-failed", text="/select"
+    )
 
     assert result["selection"]["code"] == "failed"
     assert result["selection"]["failureReason"] == "worker_runtime_failed:selection_strategist"
-    assert [payload["worker_id"] for payload in selection_runner.payloads] == ["selection_strategist"]
+    assert [payload["worker_id"] for payload in selection_runner.payloads] == [
+        "selection_strategist"
+    ]
 
 
 @pytest.mark.integration
@@ -1358,10 +1559,15 @@ def test_select_command_empty_worker_output_stops_before_manager(tmp_path: Path)
     )
     controller, _, _ = _build_controller(selection_controller=selection_controller)
 
-    result = controller.send_chat_message(request_id="sel-10-empty-output", context_id="ctx-empty-output", text="/select")
+    result = controller.send_chat_message(
+        request_id="sel-10-empty-output", context_id="ctx-empty-output", text="/select"
+    )
 
     assert result["selection"]["code"] == "failed"
-    assert result["selection"]["failureReason"] == "artifact_approval_failed:selection_skeptic:empty_output"
+    assert (
+        result["selection"]["failureReason"]
+        == "artifact_approval_failed:selection_skeptic:empty_output"
+    )
     assert [payload["worker_id"] for payload in selection_runner.payloads] == [
         "selection_strategist",
         "selection_skeptic",
