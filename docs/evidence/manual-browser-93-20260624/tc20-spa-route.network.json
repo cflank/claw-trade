@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "### Result\n\n### Open tabs\n- 0: (current) [claw-trade 投研工作台](http://172.27.36.34:5175/?reportId=not-real-client-route)\n- 1: [New Tab](chrome://new-tab-page/)\n### Page\n- Page URL: http://172.27.36.34:5175/?reportId=not-real-client-route\n- Page Title: claw-trade 投研工作台\n- Console: 2 errors, 0 warnings\n### Events\n- New console entries: ..\\..\\Users\\cpfla\\AppData\\Local\\Temp\\.playwright-mcp\\console-2026-06-24T07-03-09-616Z.log#L1-L2"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+date=2026-06-24
+ui_url=http://172.27.36.34:5175/
+runtime_env_exists=0
+OpenViking=200
+OpenClaw=200
+UI=200
+runtime env
+CLAW_TRADE_OPENVIKING_MCP_STARTED=0
+OPENVIKING_CONFIG_FILE=/home/frank/src/claw-trade/.runtime/dev-services/openviking/ov.conf
+OPENVIKING_DATA_DIR=/home/frank/src/claw-trade/.runtime/dev-services/openviking/data
+channel
+{"channelKind":"wechat_clawbot","onboardingState":"completed","state":"connected","displayName":"微信 ClawBot","accountLabel":null,"lastConnectedAt":null,"lastErrorMessage":"微信文件发送能力未验证，收到请求时会尝试发送完整 PDF。","canSendText":true,"canSendFile":true,"qrCodeImageDataUrl":null,"qrCodeExpiresAt":null,"qrCodeRefreshRequired":false,"updatedAt":"2026-06-24T06:38:55Z"}

@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "### Result\n\n### Open tabs\n- 0: (current) [](http://172.27.36.34:5175/api/ui/not-real-api)\n- 1: [New Tab](chrome://new-tab-page/)\n### Page\n- Page URL: http://172.27.36.34:5175/api/ui/not-real-api"
+    }
+  ]
+}
