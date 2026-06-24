@@ -75,10 +75,15 @@ def test_create_scheduled_report_registers_openclaw_cron_job() -> None:
     params = fake_gateway.calls[0]["params"]
     assert params["agentId"] == "scheduled_report_runner"
     assert params["schedule"] == {"kind": "cron", "expr": "30 9 * * *", "tz": "UTC", "staggerMs": 0}
-    assert params["payload"]["kind"] == "agentTurn"
-    assert '"kind":"scheduled_report"' in params["payload"]["message"]
-    assert '"scheduledReportId":"schedule-1"' in params["payload"]["message"]
-    assert params["payload"]["toolsAllow"] == ["claw-trade-scheduled-work-wake"]
+    assert params["payload"] == {
+        "kind": "toolCall",
+        "toolName": "claw-trade-scheduled-work-wake",
+        "input": {
+            "kind": "scheduled_report",
+            "scheduledReportId": "schedule-1",
+            "cronRunId": "auto",
+        },
+    }
     saved = store.get_scheduled_report("schedule-1")
     assert saved is not None
     assert saved.openclaw_cron_job_id == "scheduled-report:schedule-1"

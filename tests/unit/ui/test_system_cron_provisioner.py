@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any, Mapping
 
 import pytest
@@ -29,12 +28,6 @@ class FakeCronGateway:
         return self.list_payload
 
 
-def _embedded_payload(params: Mapping[str, Any]) -> dict[str, Any]:
-    message = str(params["payload"]["message"])
-    line = message.splitlines()[1]
-    return dict(json.loads(line))
-
-
 def test_selection_data_refresh_cron_calls_scheduled_work_wake_only() -> None:
     gateway = FakeCronGateway()
     provisioner = SystemCronProvisioner(OpenClawCronAdapter(gateway))
@@ -46,8 +39,9 @@ def test_selection_data_refresh_cron_calls_scheduled_work_wake_only() -> None:
     params = gateway.calls[0]
     assert params["name"] == "selection-data-refresh:CN_A:daily"
     assert params["agentId"] == "market_data_maintenance_worker"
-    assert params["payload"]["toolsAllow"] == ["claw-trade-scheduled-work-wake"]
-    assert _embedded_payload(params)["kind"] == "selection_data_refresh"
+    assert params["payload"]["kind"] == "toolCall"
+    assert params["payload"]["toolName"] == "claw-trade-scheduled-work-wake"
+    assert params["payload"]["input"]["kind"] == "selection_data_refresh"
 
 
 @pytest.mark.parametrize(
@@ -77,7 +71,9 @@ def test_selection_data_refresh_ensure_updates_existing_job_instead_of_adding(
     assert update["schedule"] == {"kind": "cron", "expr": "0 21 * * *", "tz": "UTC", "staggerMs": 0}
     assert update["enabled"] is True
     assert update["agentId"] == "market_data_maintenance_worker"
-    assert _embedded_payload(update)["kind"] == "selection_data_refresh"
+    assert update["payload"]["kind"] == "toolCall"
+    assert update["payload"]["toolName"] == "claw-trade-scheduled-work-wake"
+    assert update["payload"]["input"]["kind"] == "selection_data_refresh"
 
 
 def test_data_maintenance_crons_call_scheduled_work_wake_only() -> None:
@@ -101,8 +97,9 @@ def test_data_maintenance_crons_call_scheduled_work_wake_only() -> None:
     assert [call["name"] for call in gateway.calls] == [result.key for result in results]
     for call in gateway.calls:
         assert call["agentId"] == "market_data_maintenance_worker"
-        assert call["payload"]["toolsAllow"] == ["claw-trade-scheduled-work-wake"]
-        assert _embedded_payload(call)["kind"] == "data_maintenance"
+        assert call["payload"]["kind"] == "toolCall"
+        assert call["payload"]["toolName"] == "claw-trade-scheduled-work-wake"
+        assert call["payload"]["input"]["kind"] == "data_maintenance"
 
 
 def test_data_maintenance_ensure_updates_existing_job_instead_of_adding() -> None:
@@ -121,7 +118,7 @@ def test_data_maintenance_ensure_updates_existing_job_instead_of_adding() -> Non
     assert update["name"] == "data-maintenance:CN_A:eod"
     assert update["schedule"] == schedule
     assert update["enabled"] is True
-    assert _embedded_payload(update) == {
+    assert update["payload"]["input"] == {
         "kind": "data_maintenance",
         "market": "CN_A",
         "jobKind": "eod",

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -60,7 +59,7 @@ class SystemCronProvisioner:
         schedule: Mapping[str, Any],
         wake_payload: Mapping[str, Any],
     ) -> SystemCronJobRef:
-        payload = _agent_turn_payload(wake_payload)
+        payload = _tool_call_payload(wake_payload)
         existing = _find_existing_job(self._cron_adapter.list_jobs({"name": key, "namePrefix": key}), key)
         if existing is not None:
             job_id = _job_id(existing)
@@ -92,17 +91,11 @@ class SystemCronProvisioner:
         return SystemCronJobRef(key=key, openclaw_cron_job_id=job.openclaw_cron_job_id)
 
 
-def _agent_turn_payload(wake_payload: Mapping[str, Any]) -> dict[str, Any]:
-    wake_json = json.dumps(dict(wake_payload), ensure_ascii=False, separators=(",", ":"))
+def _tool_call_payload(wake_payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "kind": "agentTurn",
-        "message": (
-            "Call `claw-trade-scheduled-work-wake` exactly once with this JSON payload and no other tool calls:\n"
-            f"{wake_json}\n"
-            "Do not generate reports, analyze markets, or rewrite the payload."
-        ),
-        "toolsAllow": [_SCHEDULED_WORK_TOOL],
-        "timeoutSeconds": 60,
+        "kind": "toolCall",
+        "toolName": _SCHEDULED_WORK_TOOL,
+        "input": dict(wake_payload),
     }
 
 

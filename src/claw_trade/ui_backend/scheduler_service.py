@@ -25,6 +25,7 @@ from claw_trade.ui_contracts.user_dto import (
 from claw_trade.workflow.report_request_factory import build_report_run_request, report_display_name
 
 _SCHEDULED_REPORT_AGENT_ID = "scheduled_report_runner"
+_SCHEDULED_WORK_TOOL = "claw-trade-scheduled-work-wake"
 
 
 class UiServiceError(RuntimeError):
@@ -127,11 +128,7 @@ class SchedulerService:
                     name=self._cron_job_name(item),
                     schedule=self._cron_schedule(item),
                     agent_id=_SCHEDULED_REPORT_AGENT_ID,
-                    payload={
-                        "kind": "agentTurn",
-                        "message": self._scheduled_report_cron_message(item.id),
-                        "toolsAllow": ["claw-trade-scheduled-work-wake"],
-                    },
+                    payload=self._scheduled_report_cron_payload(item.id),
                     session_target="isolated",
                     wake_mode="now",
                     delivery={"mode": "none"},
@@ -359,6 +356,9 @@ class SchedulerService:
     def get_scheduled_report(self, scheduled_report_id: str) -> ScheduledReportForUser:
         return to_scheduled_report_for_user(self._get_schedule_or_raise(scheduled_report_id))
 
+    def list_scheduled_reports_for_user(self) -> dict[str, Any]:
+        return {"items": [self._scheduled_report_detail_for_user(item) for item in self._store.list_scheduled_reports()]}
+
     @staticmethod
     def compute_next_run_at(
         *,
@@ -390,6 +390,26 @@ class SchedulerService:
         if item is None or item.state in {"deleted", "sync_failed"}:
             raise UiServiceError("SCHEDULE_NOT_FOUND", "定时报告不存在。")
         return item
+
+    def _scheduled_report_detail_for_user(self, item: ScheduledReport) -> dict[str, Any]:
+        dto = to_scheduled_report_for_user(item)
+        return {
+            "scheduledReportId": dto.scheduledReportId,
+            "instrumentCode": dto.instrumentCode,
+            "instrumentName": dto.instrumentName,
+            "market": dto.market.value,
+            "frequency": dto.frequency,
+            "timeOfDay": dto.timeOfDay,
+            "weekday": dto.weekday,
+            "notification": {"channel": dto.notification.channel, "enabled": dto.notification.enabled},
+            "state": dto.state,
+            "nextRunAt": dto.nextRunAt,
+            "lastRunTaskId": item.last_run_task_id,
+            "cronJobId": item.openclaw_cron_job_id,
+            "lastCronRunId": item.last_cron_run_id,
+            "syncErrorMessage": item.sync_error_message,
+            "updatedAt": item.updated_at,
+        }
 
     def _build_task_input(self, item: ScheduledReport) -> dict[str, Any]:
         now_date = self._now_iso()[:10]
@@ -587,12 +607,16 @@ class SchedulerService:
         return {"kind": "cron", "expr": expr, "tz": "UTC", "staggerMs": 0}
 
     @staticmethod
-    def _scheduled_report_cron_message(scheduled_report_id: str) -> str:
-        return (
-            "Call `claw-trade-scheduled-work-wake` exactly once with this JSON payload and no other tool calls:\n"
-            f'{{"kind":"scheduled_report","scheduledReportId":"{scheduled_report_id}","cronRunId":"auto"}}\n'
-            "Do not generate reports, analyze markets, or rewrite the payload."
-        )
+    def _scheduled_report_cron_payload(scheduled_report_id: str) -> dict[str, Any]:
+        return {
+            "kind": "toolCall",
+            "toolName": _SCHEDULED_WORK_TOOL,
+            "input": {
+                "kind": "scheduled_report",
+                "scheduledReportId": scheduled_report_id,
+                "cronRunId": "auto",
+            },
+        }
 
     def _normalize_notification(self, notification: dict[str, Any] | None) -> dict[str, Any]:
         source = notification or {}
