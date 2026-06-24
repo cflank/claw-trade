@@ -13,7 +13,9 @@ from claw_trade.data_gateway._selection_batch import (
     _selection_data_requests,
     _selection_feature_projection_columns,
     _selection_feature_rows_from_repository,
+    _selection_history_start_date,
     _selection_missing_strategy_required_fields,
+    _selection_universe_refresh_needs,
     _ticker_from_row,
     _selection_strategy_required_source_fields,
 )
@@ -156,6 +158,118 @@ def test_selection_universe_refresh_dates_skip_cn_a_exchange_holidays() -> None:
         date(2025, 1, 27),
         date(2025, 2, 5),
     )
+
+
+def test_selection_history_start_date_covers_260_a_share_trading_days() -> None:
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-history-window",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-06-24",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-06-24/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+
+    assert _selection_history_start_date(plan=plan) == date(2025, 1, 20)
+
+
+def test_select_command_universe_refresh_only_fetches_trade_date() -> None:
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-select-command-refresh",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-06-24",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-06-24/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+    )
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    result = DataResult(
+        request_id=main_request_id,
+        status=DataResultStatus.PARTIAL,
+        rows=(
+            {
+                "ticker": "600204.SH",
+                "history": (
+                    {"date": "2026-05-27", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},
+                ),
+            },
+        ),
+        gaps=(
+            DataGap.by_reason(
+                "date_range_missing",
+                request_id=main_request_id,
+                market=Market.CN_A,
+                data_type="daily_bar",
+                granularity="daily",
+                message="date_range_missing",
+                as_of=datetime(2026, 6, 24, tzinfo=UTC),
+            ),
+        ),
+        as_of=datetime(2026, 6, 24, tzinfo=UTC),
+    )
+
+    needs = _selection_universe_refresh_needs(plan=plan, results=(result,))
+
+    assert len(needs) == 1
+    assert needs[0].instrument == "all_a_shares"
+    assert needs[0].time_range_start == date(2026, 6, 24)
+    assert needs[0].time_range_end == date(2026, 6, 24)
+    assert needs[0].deadline_at is not None
+    assert (needs[0].deadline_at - datetime.now(tz=UTC)).total_seconds() <= 120
+
+
+def test_scheduled_universe_refresh_retries_when_full_market_latest_count_collapses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 5)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-scheduled-low-full-market-count",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-06-24",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-06-24/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    result = DataResult(
+        request_id=main_request_id,
+        status=DataResultStatus.READY,
+        rows=(),
+        dataset_refs=("dataset://normalized/CN_A/daily_bar/daily/only-three",),
+        gaps=(),
+        freshness={
+            "coverage_by_request": (
+                {
+                    "request_id": main_request_id,
+                    "record_count": 3,
+                    "actual_start": "2026-06-24",
+                    "actual_end": "2026-06-24",
+                    "expected_start": "2026-06-24",
+                    "expected_end": "2026-06-24",
+                    "missing_ranges": (),
+                },
+            )
+        },
+        as_of=datetime(2026, 6, 24, tzinfo=UTC),
+    )
+
+    needs = _selection_universe_refresh_needs(plan=plan, results=(result,))
+
+    assert len(needs) == 1
+    assert needs[0].instrument == "all_a_shares"
+    assert needs[0].time_range_start == date(2026, 6, 24)
+    assert needs[0].time_range_end == date(2026, 6, 24)
+    assert needs[0].deadline_at is not None
+    assert (needs[0].deadline_at - datetime.now(tz=UTC)).total_seconds() > 3_000
 
 
 def test_selection_refresh_chunks_split_across_weekends() -> None:
@@ -1160,6 +1274,8 @@ def test_selection_gateway_expands_stale_all_share_batch_to_trade_date_universe_
     assert fake_gateway.data_need_calls[0][0].time_range_start == date(2026, 6, 4)
     assert fake_gateway.data_need_calls[0][0].time_range_end == date(2026, 6, 4)
     assert fake_gateway.data_need_calls[0][0].consumer == "select"
+    assert fake_gateway.data_need_calls[0][0].deadline_at is not None
+    assert (fake_gateway.data_need_calls[0][0].deadline_at - datetime.now(tz=UTC)).total_seconds() > 3_000
     assert [request.freshness_policy for request in fake_api.calls[1]] == ["warehouse_only"]
     assert fake_api.calls[1][0].consumer_id == f"{plan.selection_run_id}:coverage_check"
     assert {row["ticker"] for row in result.rows} == {"600204.SH", "688981.SH"}
@@ -1387,7 +1503,8 @@ def test_selection_gateway_refreshes_only_metadata_integrity_mismatch_dates(
     assert fake_api.calls[-1][0].freshness_policy == "warehouse_only"
 
 
-def test_selection_local_feature_rows_use_company_name_identity_index() -> None:
+def test_selection_local_feature_rows_use_company_name_identity_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 1)
     plan = SelectionRunPlan(
         selection_run_id="sel-unit-local-feature-identity",
         market=SelectionMarket.CN_A,
@@ -1432,7 +1549,8 @@ def test_selection_local_feature_rows_use_company_name_identity_index() -> None:
     assert progress_events[-1].total == 1
 
 
-def test_selection_local_feature_rows_normalize_legacy_mongo_source_refs() -> None:
+def test_selection_local_feature_rows_normalize_legacy_mongo_source_refs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 1)
     plan = SelectionRunPlan(
         selection_run_id="sel-unit-local-feature-legacy-ref",
         market=SelectionMarket.CN_A,
@@ -1511,6 +1629,81 @@ def test_selection_local_feature_rows_use_history_company_names_before_repositor
 
     assert len(result.rows) == 1
     assert result.rows[0]["company_name"] == "上海电力"
+
+
+def test_selection_local_feature_rows_keeps_short_history_rows_as_missing_indicators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 3)
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_FEATURE_COVERAGE_RATIO", 0.8)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-collapsed-coverage",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+    )
+    repository = DatasetRepository(collections={name: {} for name in DatasetRepository.collection_names()})
+    trade_day = date.fromisoformat(plan.trade_date)
+    for row in _history_rows_from(start=trade_day - timedelta(days=259), count=260, ticker="600204.SH"):
+        row["company_name"] = "上海电力"
+        repository.insert_normalized(_selection_daily_dataset_record(ticker="600204.SH", row=row))
+    for ticker, company_name in (("600205.SH", "山东铝业"), ("600206.SH", "有研新材")):
+        row = _daily_bar_row(ticker=ticker, trade_date=plan.trade_date, close=10.0)
+        row["company_name"] = company_name
+        repository.insert_normalized(_selection_daily_dataset_record(ticker=ticker, row=row))
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 3
+    short_history = next(row for row in result.rows if row["ticker"] == "600205.SH")
+    assert short_history["history_days"] == 1.0
+    assert "ma250" not in short_history
+    assert not any(gap.gap_code == "selection_batch_universe_coverage_insufficient" for gap in result.data_gaps)
+    assert result.columnar_manifest_ref is not None
+    assert SelectionColumnarWarehouse.default().load_valid_manifest(plan=plan) is not None
+
+
+def test_selection_local_feature_rows_blocks_full_market_latest_count_below_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 5)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-latest-count-below-floor",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    repository = DatasetRepository(collections={name: {} for name in DatasetRepository.collection_names()})
+    trade_day = date.fromisoformat(plan.trade_date)
+    for ticker, company_name in (
+        ("600204.SH", "上海电力"),
+        ("600205.SH", "山东铝业"),
+        ("600206.SH", "有研新材"),
+    ):
+        for row in _history_rows_from(start=trade_day - timedelta(days=259), count=260, ticker=ticker):
+            row["company_name"] = company_name
+            repository.insert_normalized(_selection_daily_dataset_record(ticker=ticker, row=row))
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 3
+    blocker = next(gap for gap in result.data_gaps if gap.gap_code == "selection_batch_universe_coverage_insufficient")
+    assert blocker.severity == DataGapSeverity.BLOCKER
+    assert blocker.source_metadata is not None
+    assert blocker.source_metadata["ticker_count"] == 3
+    assert blocker.source_metadata["minimum_ticker_count"] == 5
+    assert blocker.source_metadata["rows_returned"] == 3
+    assert SelectionColumnarWarehouse.default().load_valid_manifest(plan=plan) is None
 
 
 def test_selection_local_feature_rows_stop_at_explicit_row_limit(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -561,11 +561,6 @@ def _validate_strategy_field_counts(*, ticker: str, feature_values: Mapping[str,
             "candidate_cache_strategy_fields_missing",
             f"ticker={ticker} missing strategy_missing_field_count",
         )
-    if missing_count > 0:
-        raise CandidateCacheError(
-            "candidate_cache_strategy_fields_missing",
-            f"ticker={ticker} missing {missing_count:g}/{required_count:g} approved strategy fields",
-        )
 
 
 def _component_scores(values: Mapping[str, object]) -> dict[str, float | int | str | None]:

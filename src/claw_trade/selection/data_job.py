@@ -488,7 +488,7 @@ class SelectionDataJob:
                 "data need audit trade_date 不匹配",
             )
         blocker_gaps = tuple(gap for gap in provider_result.data_gaps if gap.severity == DataGapSeverity.BLOCKER)
-        if not provider_result.attempt_refs and blocker_gaps:
+        if blocker_gaps:
             first_gap = blocker_gaps[0]
             raise SelectionDataJobStepError(
                 first_gap.gap_code,
@@ -1057,7 +1057,6 @@ def _strategy_with_available_optional_variants(
     if not missing_by_rule:
         return strategy, ()
 
-    blocker_missing: dict[str, tuple[str, ...]] = {}
     disabled_rules: list[StrategyRule] = []
     warning_gaps: list[DataGapRef] = []
     for rule in strategy.strategy_set:
@@ -1075,20 +1074,6 @@ def _strategy_with_available_optional_variants(
                 )
             )
             continue
-        for field, tickers in missing.items():
-            blocker_missing[field] = _dedup_tickers((*blocker_missing.get(field, ()), *tickers))
-
-    if blocker_missing:
-        raise SelectionDataJobStepError(
-            "selection_strategy_fields_missing",
-            "approved strategy 必需字段未闭合",
-            data_gaps=_strategy_field_blocker_gaps(
-                plan=plan,
-                snapshot=snapshot,
-                strategy=strategy,
-                missing=blocker_missing,
-            ),
-        )
 
     if not disabled_rules:
         return strategy, ()

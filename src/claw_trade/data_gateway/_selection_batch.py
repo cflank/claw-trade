@@ -81,6 +81,10 @@ _MIN_HISTORY_DAYS = 250
 _UNIVERSE_REFRESH_CHUNK_SIZE = 5
 _LOCAL_FEATURE_REF_SAMPLE_LIMIT = 200
 _SELECTION_FEATURE_ROW_LIMIT = 12_000
+_FULL_MARKET_MIN_TICKERS = 5_000
+_FULL_MARKET_MIN_FEATURE_COVERAGE_RATIO = 0.8
+_SELECT_COMMAND_REFRESH_DEADLINE_SECONDS = 60
+_BACKGROUND_REFRESH_DEADLINE_SECONDS = 60 * 60
 
 _SELECTION_DAILY_REQUEST: tuple[str, str, tuple[str, ...]] = (
     "daily_bar",
@@ -276,6 +280,11 @@ def fetch_selection_batch_from_data_gateway(
     )
     columnar_warehouse = SelectionColumnarWarehouse.default()
     columnar_manifest = columnar_warehouse.load_valid_manifest(plan=plan)
+    if columnar_manifest is not None and not _columnar_manifest_has_sufficient_full_market_coverage(
+        plan=plan,
+        manifest=columnar_manifest,
+    ):
+        columnar_manifest = None
     if columnar_manifest is not None:
         _notify_fetch_progress(
             progress_callback,
@@ -1455,6 +1464,8 @@ def _selection_feature_rows_from_repository(
 
     rows: list[Mapping[str, object]] = []
     dropped: list[str] = []
+    drop_reason_counts: dict[str, int] = {}
+    drop_samples: dict[str, list[Mapping[str, object]]] = {}
     feature_errors: list[str] = []
     lineage_dataset_refs: list[str] = []
     row_limit_exceeded = False
@@ -1475,16 +1486,37 @@ def _selection_feature_rows_from_repository(
             for mapped in (_history_row(row) for row in history_source)
             if mapped is not None and (_parse_date(mapped.get("date")) or trade_day) <= trade_day
         )
-        if len(history) < required_history_days:
+        if not history:
             dropped.append(ticker)
+            _record_drop_reason(
+                reason_counts=drop_reason_counts,
+                samples=drop_samples,
+                reason="history_empty",
+                ticker=ticker,
+                metadata={},
+            )
             continue
         latest_history_date = _parse_date(history[-1].get("date"))
         if latest_history_date is None or latest_history_date < trade_day:
             dropped.append(ticker)
+            _record_drop_reason(
+                reason_counts=drop_reason_counts,
+                samples=drop_samples,
+                reason="latest_history_before_trade_day",
+                ticker=ticker,
+                metadata={"latest_history_date": latest_history_date.isoformat() if latest_history_date else None},
+            )
             continue
         company_name = company_names_by_ticker.get(ticker)
         if company_name is None:
             dropped.append(ticker)
+            _record_drop_reason(
+                reason_counts=drop_reason_counts,
+                samples=drop_samples,
+                reason="company_name_missing",
+                ticker=ticker,
+                metadata={},
+            )
             continue
         source_ref = _row_source_ref(
             history_source[-1] if history_source else latest_rows_by_ticker[ticker],
@@ -1501,6 +1533,13 @@ def _selection_feature_rows_from_repository(
             feature_row = _materialized_feature_row(plan=plan, raw_row=raw_row, source_ref=source_ref)
         except SelectionFeatureError:
             feature_errors.append(ticker)
+            _record_drop_reason(
+                reason_counts=drop_reason_counts,
+                samples=drop_samples,
+                reason="feature_materialization_error",
+                ticker=ticker,
+                metadata={},
+            )
             continue
         rows.append(feature_row)
         columnar_writer.add_feature_rows((feature_row,))
@@ -1532,13 +1571,39 @@ def _selection_feature_rows_from_repository(
                 gap_code="selection_batch_rows_dropped",
                 attempt_refs=attempt_refs or (f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",),
                 reader_message=(
-                    "selection batch 流式计算中部分股票缺少公司名、交易日日线或足够历史日线，已剔除。"
+                    "selection batch 流式计算中部分股票缺少公司名或交易日日线，已剔除。"
                     f" count={len(dropped)}。"
                 ),
                 source_metadata={
                     "read_mode": "stream_by_symbol",
                     "tickers_sample": tuple(dropped[:20]),
                     "required_history_days": required_history_days,
+                    "drop_reason_counts": dict(drop_reason_counts),
+                    "drop_samples": {key: tuple(value) for key, value in drop_samples.items()},
+                },
+            )
+        )
+    if _full_market_feature_coverage_insufficient(plan=plan, ticker_count=len(tickers), row_count=len(rows)):
+        gaps.append(
+            _blocker_gap(
+                gap_id=f"{plan.selection_run_id}-selection-batch-universe-coverage-insufficient",
+                gap_code="selection_batch_universe_coverage_insufficient",
+                attempt_refs=attempt_refs or (f"select-data-plan://selection/{plan.selection_run_id}/{plan.trade_date}",),
+                reader_message=(
+                    "CN_A 全市场选股特征覆盖不足，不能生成候选缓存："
+                    f"当天股票 {len(tickers)} 只，最低要求 {_full_market_expected_min_tickers(plan)} 只，"
+                    f"可物化特征 {len(rows)} 只。"
+                ),
+                source_metadata={
+                    "read_mode": "stream_by_symbol",
+                    "ticker_count": len(tickers),
+                    "minimum_ticker_count": _full_market_expected_min_tickers(plan),
+                    "rows_returned": len(rows),
+                    "dropped_count": len(dropped),
+                    "required_history_days": required_history_days,
+                    "minimum_feature_coverage_ratio": _FULL_MARKET_MIN_FEATURE_COVERAGE_RATIO,
+                    "drop_reason_counts": dict(drop_reason_counts),
+                    "drop_samples": {key: tuple(value) for key, value in drop_samples.items()},
                 },
             )
         )
@@ -1614,10 +1679,56 @@ def _selection_feature_rows_from_repository(
     )
 
 
+def _record_drop_reason(
+    *,
+    reason_counts: dict[str, int],
+    samples: dict[str, list[Mapping[str, object]]],
+    reason: str,
+    ticker: str,
+    metadata: Mapping[str, object],
+) -> None:
+    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    bucket = samples.setdefault(reason, [])
+    if len(bucket) < 20:
+        bucket.append({"ticker": ticker, **dict(metadata)})
+
+
+def _full_market_feature_coverage_insufficient(
+    *,
+    plan: SelectionRunPlan,
+    ticker_count: int,
+    row_count: int,
+) -> bool:
+    expected_tickers = _full_market_expected_min_tickers(plan)
+    if expected_tickers <= 0:
+        return False
+    if ticker_count < expected_tickers:
+        return True
+    return row_count / ticker_count < _FULL_MARKET_MIN_FEATURE_COVERAGE_RATIO
+
+
+def _full_market_expected_min_tickers(plan: SelectionRunPlan) -> int:
+    if plan.market != SelectionMarket.CN_A or plan.universe_scope != _CN_A_DEFAULT_UNIVERSE_SCOPE:
+        return 0
+    return _FULL_MARKET_MIN_TICKERS
+
+
+def _columnar_manifest_has_sufficient_full_market_coverage(
+    *,
+    plan: SelectionRunPlan,
+    manifest: SelectionColumnarManifest,
+) -> bool:
+    expected_tickers = _full_market_expected_min_tickers(plan)
+    if expected_tickers <= 0:
+        return True
+    minimum_feature_rows = int(expected_tickers * _FULL_MARKET_MIN_FEATURE_COVERAGE_RATIO)
+    return manifest.feature_row_count >= minimum_feature_rows
+
+
 def _selection_history_start_date(*, plan: SelectionRunPlan) -> date:
     trade_day = date.fromisoformat(plan.trade_date)
     lookback_days = max(_DEFAULT_LOOKBACK_TRADING_DAYS, int(plan.lookback_trading_days or 0))
-    calendar_days = (lookback_days * 3 + 1) // 2 + 20
+    calendar_days = lookback_days * 2
     return trade_day - timedelta(days=calendar_days)
 
 
@@ -1777,11 +1888,17 @@ def _selection_data_requests(
 
 
 def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[PublicDataRequest, ...]:
-    if not _main_daily_result_needs_universe_refresh(plan=plan, results=results):
+    has_low_full_market_coverage = _main_daily_result_has_insufficient_full_market_latest_coverage(
+        plan=plan,
+        results=results,
+    )
+    if not _main_daily_result_needs_universe_refresh(plan=plan, results=results) and not has_low_full_market_coverage:
         return ()
     trade_date = date.fromisoformat(plan.trade_date)
     start_fallback = trade_date - timedelta(days=max(plan.lookback_trading_days, _DEFAULT_LOOKBACK_TRADING_DAYS) * 2)
     refresh_dates = _selection_universe_refresh_dates(plan=plan, results=results)
+    if has_low_full_market_coverage:
+        refresh_dates = tuple(dict.fromkeys((*refresh_dates, trade_date)))
     if not refresh_dates and _main_daily_result_has_integrity_gap_without_usable_rows(plan=plan, results=results):
         refresh_dates = (trade_date,)
     if not refresh_dates and _main_daily_result_needs_universe_refresh(plan=plan, results=results):
@@ -1789,6 +1906,7 @@ def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[
     if refresh_dates:
         return tuple(
             _selection_data_need(
+                plan=plan,
                 market=plan.market,
                 need_id=f"{plan.selection_run_id}:selection:universe_refresh:{index}:{plan.universe_scope}:daily_bar",
                 instrument=plan.universe_scope,
@@ -1812,6 +1930,7 @@ def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[
         start = start_fallback if latest is None else min(latest + timedelta(days=1), trade_date)
         needs.append(
             _selection_data_need(
+                plan=plan,
                 market=plan.market,
                 need_id=f"{plan.selection_run_id}:selection:universe_refresh:{len(needs) + 1}:{ticker}:daily_bar",
                 instrument=ticker,
@@ -1825,6 +1944,7 @@ def _selection_universe_refresh_needs(*, plan: SelectionRunPlan, results: tuple[
 
 def _selection_data_need(
     *,
+    plan: SelectionRunPlan,
     market: SelectionMarket,
     need_id: str,
     instrument: str,
@@ -1844,9 +1964,15 @@ def _selection_data_need(
         requested_by_worker="selection_data_job",
         purpose="selection_candidate_cache",
         freshness_policy="trading_day",
-        deadline_at=datetime.now(tz=UTC) + timedelta(seconds=60),
+        deadline_at=datetime.now(tz=UTC) + timedelta(seconds=_selection_refresh_deadline_seconds(plan)),
         consumer="select",
     )
+
+
+def _selection_refresh_deadline_seconds(plan: SelectionRunPlan) -> int:
+    if _is_select_command_refresh(plan):
+        return _SELECT_COMMAND_REFRESH_DEADLINE_SECONDS
+    return _BACKGROUND_REFRESH_DEADLINE_SECONDS
 
 
 def _selection_universe_refresh_dates(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> tuple[date, ...]:
@@ -1869,7 +1995,7 @@ def _selection_universe_refresh_dates(*, plan: SelectionRunPlan, results: tuple[
     while current <= trade_date:
         refresh_dates.append(current)
         current += timedelta(days=1)
-    return tuple(refresh_dates)
+    return _runtime_universe_refresh_dates(plan=plan, refresh_dates=refresh_dates)
 
 
 def _main_daily_result_needs_universe_refresh(*, plan: SelectionRunPlan, results: tuple[DataResult, ...]) -> bool:
@@ -1878,6 +2004,26 @@ def _main_daily_result_needs_universe_refresh(*, plan: SelectionRunPlan, results
         if result.request_id != main_request_id:
             continue
         return any(_is_universe_refresh_trigger_gap(gap) for gap in result.gaps)
+    return False
+
+
+def _main_daily_result_has_insufficient_full_market_latest_coverage(
+    *,
+    plan: SelectionRunPlan,
+    results: tuple[DataResult, ...],
+) -> bool:
+    expected_tickers = _full_market_expected_min_tickers(plan)
+    if expected_tickers <= 0:
+        return False
+    main_request_id = f"{plan.selection_run_id}:selection:1:daily_bar"
+    for result in results:
+        if result.request_id != main_request_id:
+            continue
+        coverage = _freshness_coverage_for_request(result.freshness, request_id=main_request_id)
+        if coverage is None:
+            return False
+        record_count = _int_metadata_value(coverage.get("record_count"))
+        return record_count is not None and record_count < expected_tickers
     return False
 
 
@@ -1914,16 +2060,28 @@ def _selection_universe_refresh_dates_from_metadata(*, plan: SelectionRunPlan, r
                 for day in _daily_dates_between(start, min(end, trade_date), market=plan.market)
                 if day <= trade_date
             )
-            return _prioritize_universe_refresh_dates(refresh_dates)
+            return _runtime_universe_refresh_dates(plan=plan, refresh_dates=refresh_dates)
         actual_end = _parse_date(coverage.get("actual_end"))
         expected_end = _parse_date(coverage.get("expected_end")) or trade_date
         expected_end = min(expected_end, trade_date)
         if actual_end is None or actual_end >= expected_end:
             return ()
-        return _prioritize_universe_refresh_dates(
-            _daily_dates_between(actual_end + timedelta(days=1), expected_end, market=plan.market)
+        return _runtime_universe_refresh_dates(
+            plan=plan,
+            refresh_dates=_daily_dates_between(actual_end + timedelta(days=1), expected_end, market=plan.market),
         )
     return ()
+
+
+def _runtime_universe_refresh_dates(*, plan: SelectionRunPlan, refresh_dates: Sequence[date]) -> tuple[date, ...]:
+    if _is_select_command_refresh(plan):
+        trade_day = date.fromisoformat(plan.trade_date)
+        return (trade_day,) if trade_day in set(refresh_dates) else ()
+    return _prioritize_universe_refresh_dates(refresh_dates)
+
+
+def _is_select_command_refresh(plan: SelectionRunPlan) -> bool:
+    return str(getattr(plan.trigger_source, "value", plan.trigger_source)) == "select_command_refresh"
 
 
 def _prioritize_universe_refresh_dates(refresh_dates: Sequence[date]) -> tuple[date, ...]:
@@ -1940,6 +2098,17 @@ def _freshness_coverage_for_request(freshness: Mapping[str, Any], *, request_id:
         if isinstance(item, Mapping) and str(item.get("request_id") or "") == request_id:
             return item
     return None
+
+
+def _int_metadata_value(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _metadata_missing_ranges(coverage: Mapping[str, Any]) -> tuple[tuple[date, date], ...]:
@@ -2129,7 +2298,7 @@ def _selection_rows_from_results(
             for mapped in (_history_row(row) for row in sorted(history_source, key=lambda item: str(_row_date(item) or "")))
             if mapped is not None
         )
-        if len(history) < required_history_days:
+        if not history:
             dropped.append(ticker)
             continue
         latest = history[-1]

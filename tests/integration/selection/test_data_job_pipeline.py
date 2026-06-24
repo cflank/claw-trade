@@ -970,7 +970,7 @@ def test_data_job_pipeline_fails_when_stable_top20_tie_break_missing(tmp_path: P
 
 
 @pytest.mark.integration
-def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path) -> None:
+def test_data_job_pipeline_allows_missing_strategy_fields_as_score_penalty(tmp_path: Path) -> None:
     plan = _plan()
     store = SelectionRunStore()
 
@@ -1010,19 +1010,14 @@ def test_data_job_pipeline_fails_when_strategy_fields_are_missing(tmp_path: Path
 
     result = job.run(plan)
 
-    assert result.record.data_run.status == SelectionDataRunStatus.FAILED
-    assert result.record.data_run.failure_code == "selection_strategy_fields_missing"
-    assert result.record.manifest is None
-    assert result.top20_tickers == ()
+    assert result.record.data_run.status == SelectionDataRunStatus.COMPLETED
+    assert result.record.data_run.failure_code is None
+    assert result.record.manifest is not None
+    assert result.top20_tickers == ("600999.SH",)
     payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
-    assert payload["candidate_cache_stage"] == "draft_only"
-    assert payload["top20"] == []
-    missing_fields = {gap["source_metadata"]["field"] for gap in payload["data_gaps"]}
-    assert "ma30" in missing_fields
-    assert "rps120" in missing_fields
-    assert "private_placement_event_date" not in missing_fields
-    assert "private_placement_days_since" not in missing_fields
-    assert all(gap["gap_code"] == "selection_strategy_field_missing" for gap in payload["data_gaps"])
+    assert payload["candidate_cache_stage"] == "approved"
+    assert payload["top20"][0]["ticker"] == "600999.SH"
+    assert payload["top20"][0]["strategy_missing_field_count"] > 0.0
 
 
 @pytest.mark.integration

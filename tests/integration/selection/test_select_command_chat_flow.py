@@ -1139,7 +1139,7 @@ def test_select_command_cancel_stops_after_current_worker_returns(tmp_path: Path
 
 
 @pytest.mark.integration
-def test_select_command_rejects_approved_candidate_cache_with_missing_strategy_fields(tmp_path: Path) -> None:
+def test_select_command_accepts_approved_candidate_cache_with_missing_strategy_fields(tmp_path: Path) -> None:
     selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
     payload_path = tmp_path / "candidate-cache.json"
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
@@ -1150,11 +1150,9 @@ def test_select_command_rejects_approved_candidate_cache_with_missing_strategy_f
     result = controller.send_chat_message(request_id="sel-08-missing-strategy-fields", context_id="ctx-missing", text="/select")
 
     assert "error" not in result
-    assert result["selection"]["code"] == "unavailable"
-    assert result["selection"]["unavailableCode"] == "candidate_cache_integrity_failed"
-    evidence_payload = json.loads(Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8"))
-    assert evidence_payload["reason"] == "candidate_cache_strategy_fields_missing: ticker=600519.SH missing 56/64 approved strategy fields"
-    assert selection_runner.payloads == []
+    assert result["selection"]["code"] == "completed"
+    assert "进入 `/report`" in result["messages"][-1]["text"]
+    assert selection_runner.payloads != []
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 

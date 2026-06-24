@@ -57,6 +57,9 @@ def test_selection_refresh_service_starts_background_job_and_dedupes_active_run(
     assert first.selection_run_id == "sel-refresh-1"
     assert second.status == "already_running"
     assert second.selection_run_id == "sel-refresh-1"
+    record = store.load_data_run_record("sel-refresh-1")
+    assert record is not None
+    assert record.run_plan.trigger_source == SelectionTriggerSource.SCHEDULED
 
 
 def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> None:

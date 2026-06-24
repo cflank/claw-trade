@@ -116,7 +116,7 @@ class SelectionDataRefreshService:
                         market=request.market,
                         profile=request.profile,
                         trade_date=trade_date,
-                        trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+                        trigger_source=SelectionTriggerSource.SCHEDULED,
                     ),
                     resolve_closed_trade_date=self._resolver_for_market(request.market),
                     has_active_job=lambda market, profile, date_value: self._store.has_active_data_run(
