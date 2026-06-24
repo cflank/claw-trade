@@ -105,7 +105,7 @@ class ChannelTextInboundController:
                 text=text,
             )
 
-        if not IntentRecognizer.looks_like_report_intent(text):
+        if not _looks_like_supported_chat_intent(text):
             return self._handle_normal_chat(message=message, conversation_key=conversation_key, text=text)
 
         result = self._chat_controller.send_chat_message(
@@ -121,10 +121,7 @@ class ChannelTextInboundController:
             )
         card = result.get("confirmationCard")
         if not isinstance(card, dict):
-            return self._remember(
-                message.request_id,
-                {"handled": True, "replyText": "请提供完整的报告指令，例如：/report TSLA。", "state": "rejected"},
-            )
+            return self._remember(message.request_id, _reply_from_chat_result(result))
         draft_id = str(card.get("draftId") or "").strip()
         if draft_id:
             with self._lock:
@@ -449,6 +446,13 @@ def _looks_like_select_command(text: str) -> bool:
     )
 
 
+def _looks_like_supported_chat_intent(text: str) -> bool:
+    lowered = text.strip().lower()
+    return IntentRecognizer.looks_like_supported_intent(text) or lowered.startswith("/maint") or (
+        "维护" in lowered and ("状态" in lowered or "情况" in lowered or "摘要" in lowered)
+    )
+
+
 def _extract_error(result: dict[str, Any]) -> str | None:
     error = result.get("error")
     if not isinstance(error, dict):
@@ -464,7 +468,12 @@ def _latest_selection_reply_text(result: dict[str, Any]) -> str | None:
     for item in reversed(messages):
         if not isinstance(item, dict):
             continue
-        if str(item.get("kind") or "") not in {"selection_result", "selection_refreshing", "selection_unavailable"}:
+        if str(item.get("kind") or "") not in {
+            "selection_result",
+            "selection_refreshing",
+            "selection_failed",
+            "selection_unavailable",
+        }:
             continue
         text = str(item.get("text") or "").strip()
         if text:
@@ -481,6 +490,29 @@ def _selection_reply_state(selection: dict[str, Any]) -> str:
     if code == "failed":
         return "selection_failed"
     return "selection_unavailable"
+
+
+def _latest_message_text(result: dict[str, Any]) -> str | None:
+    messages = result.get("messages")
+    if not isinstance(messages, list):
+        return None
+    for item in reversed(messages):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            return text
+    return None
+
+
+def _reply_from_chat_result(result: dict[str, Any]) -> dict[str, Any]:
+    error = _extract_error(result)
+    if error is not None:
+        return {"handled": True, "replyText": error, "state": "rejected"}
+    reply_text = str(result.get("assistantReply") or "").strip() or (_latest_message_text(result) or "")
+    if not reply_text:
+        return {"handled": True, "replyText": "已收到，但助手暂时没有返回内容。", "state": "empty_reply"}
+    return {"handled": True, "replyText": reply_text, "state": "replied"}
 
 
 def _format_select_completion_reply(text: str) -> str:

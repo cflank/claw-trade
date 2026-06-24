@@ -628,6 +628,8 @@ class ChannelBridge:
             except Exception as exc:
                 if attempt + 1 < _FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS and _is_cdn_upload_server_error(exc):
                     continue
+                if _is_cdn_upload_server_error(exc):
+                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
                 raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
         result = _to_send_result(
             raw,

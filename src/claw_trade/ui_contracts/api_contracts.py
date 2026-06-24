@@ -35,6 +35,7 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
     ),
     UiApiContract("askReportQuestion", "{ text: string }", ("runId", "lockedWorkflowRunId")),
     UiApiContract("createScheduledReport", "ScheduledReportForUser", ("lastRunTaskId",)),
+    UiApiContract("listScheduledReports", "{ items: ScheduledReportForUser[] + cron evidence }", ("runId",)),
     UiApiContract("pauseScheduledReport", "ScheduledReportForUser", ("runId",)),
     UiApiContract("resumeScheduledReport", "ScheduledReportForUser", ("runId",)),
     UiApiContract("deleteScheduledReport", "{ deleted: true, scheduledReportId }", ("runId",)),
@@ -46,6 +47,7 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
         ("runId",),
     ),
     UiApiContract("createPriceAlert", "PriceAlertForUser", ("runId",)),
+    UiApiContract("listPriceAlerts", "{ items: PriceAlertForUser[] + scan evidence }", ("runId",)),
     UiApiContract("pausePriceAlert", "PriceAlertForUser", ("runId",)),
     UiApiContract("resumePriceAlert", "PriceAlertForUser", ("runId",)),
     UiApiContract("deletePriceAlert", "{ deleted: true, priceAlertId }", ("runId",)),
@@ -63,6 +65,7 @@ UI_API_CONTRACTS: tuple[UiApiContract, ...] = (
     UiApiContract("resetSettingsToDefaults", "{ status: reset, userMessage, llm, dataSources, channel }", ("realKey", "rawPatchResult", "providerChannelId")),
     UiApiContract("sendReportFileViaChannel", "{ sent: boolean, messageId?, userMessage }", ("localPath", "providerChannelId")),
     UiApiContract("exportReportPdf", "PdfExportForUser", ("artifact", "path", "hash")),
+    UiApiContract("getMaintenanceTaskDiagnostics", "{ selectionRefresh, priceAlertScanBuckets, dataMaintenance, reportCleanup }", ()),
 )
 
 _CONTRACT_MAP = {contract.name: contract for contract in UI_API_CONTRACTS}

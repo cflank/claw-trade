@@ -18,6 +18,18 @@ _CRYPTO_DISPLAY_NAMES = {
     "SOL": "Solana",
     "DOGE": "Dogecoin",
 }
+_KNOWN_DISPLAY_NAMES = {
+    "CN_A": {
+        "600519.SH": "贵州茅台",
+    },
+    "HK": {
+        "00700.HK": "腾讯控股",
+    },
+    "US": {
+        "AAPL": "Apple Inc.",
+        "TSLA": "Tesla, Inc.",
+    },
+}
 
 
 def build_report_run_request(
@@ -79,6 +91,9 @@ def resolve_report_dates(
 
 
 def report_display_name(ticker: str, profile: str) -> str:
+    known_name = _KNOWN_DISPLAY_NAMES.get(profile, {}).get(ticker)
+    if known_name:
+        return known_name
     if profile == "CRYPTO":
         return crypto_display_name(ticker) or _CRYPTO_DISPLAY_NAMES.get(ticker, ticker)
     return ticker

@@ -31,10 +31,12 @@ from claw_trade.data_gateway.settings_store import (
     UI_REPORT_CLEANUP_SETTINGS_COLLECTION,
     UI_REPORT_MODEL_CONFIG_COLLECTION,
     UI_REPORT_MODEL_STATUS_COLLECTION,
+    UI_SELECTION_AUTO_REFRESH_SETTINGS_COLLECTION,
     MongoEmbeddingConfigStore,
     MongoReportCleanupSettingsStore,
     MongoReportModelConfigStore,
     MongoReportModelStatusStore,
+    MongoSelectionAutoRefreshSettingsStore,
     build_data_source_settings_stores,
     open_ui_settings_database_from_env,
 )
@@ -71,6 +73,7 @@ from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanSchedul
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
 from claw_trade.ui_backend.report_cleanup import ReportCleanupScheduler, ReportCleanupService, ReportFileSendTracker
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
+from claw_trade.ui_backend.selection_auto_refresh_settings import SelectionAutoRefreshSettingsService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestionService
@@ -287,6 +290,7 @@ class UiHttpServices:
     scheduled_work_runner: ScheduledWorkRunner
     settings_service: SettingsService
     report_cleanup_settings: ReportCleanupSettingsService
+    selection_auto_refresh_settings: SelectionAutoRefreshSettingsService
     selection_confirmation: SelectionConfirmationController
     selection_controller: SelectionController
     selection_refresh_service: SelectionDataRefreshService
@@ -405,6 +409,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         settings=report_settings,
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
         selection_controller=selection_controller,
+        maintenance_status_provider=lambda: _format_maintenance_status_for_chat(llm_bridge),
     )
     selection_confirmation = SelectionConfirmationController(
         store=selection_store,
@@ -434,6 +439,12 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         if ui_settings_db is not None
         else None,
         json_path=run_root / ".ui-report-cleanup-settings.json",
+    )
+    selection_auto_refresh_settings = SelectionAutoRefreshSettingsService(
+        store=MongoSelectionAutoRefreshSettingsStore(ui_settings_db[UI_SELECTION_AUTO_REFRESH_SETTINGS_COLLECTION])
+        if ui_settings_db is not None
+        else None,
+        json_path=run_root / ".ui-selection-auto-refresh-settings.json",
     )
     channel_bridge = ChannelBridge(rpc_client)
     file_send_tracker = ReportFileSendTracker()
@@ -504,6 +515,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         scheduled_work_runner=scheduled_work_runner,
         settings_service=settings_service,
         report_cleanup_settings=report_cleanup_settings,
+        selection_auto_refresh_settings=selection_auto_refresh_settings,
         selection_confirmation=selection_confirmation,
         selection_controller=selection_controller,
         selection_refresh_service=selection_refresh_service,
@@ -773,6 +785,22 @@ def build_report_detail_payload(services: UiHttpServices, *, report_id: str) -> 
         data_source_events=[],
         pdf_export=pdf_payload,
     )
+
+
+def _format_maintenance_status_for_chat(llm_bridge: LlmSettingsBridge) -> str:
+    provider = llm_bridge.get_provider_health_summary()
+    runtime = llm_bridge.get_runtime_service_status_summary()
+    gaps = llm_bridge.get_live_run_gap_summary()
+    evidence = llm_bridge.get_evidence_failure_reason_summary()
+    lines = [
+        "维护状态摘要",
+        f"- provider：{str(provider.get('summary') or provider.get('userMessage') or '').strip()}",
+        f"- 运行服务：{str(runtime.get('summary') or runtime.get('userMessage') or '').strip()}",
+        f"- 最近运行缺口：{str(gaps.get('summary') or gaps.get('userMessage') or '').strip()}",
+        f"- 证据链：{str(evidence.get('summary') or evidence.get('userMessage') or '').strip()}",
+        "- 需要更多细节请打开“高级诊断”。",
+    ]
+    return "\n".join(lines)
 
 
 def default_frontend_dist(project_root: Path | None = None) -> Path:

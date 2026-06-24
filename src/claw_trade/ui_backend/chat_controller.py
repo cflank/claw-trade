@@ -50,6 +50,7 @@ class ChatController:
         settings: ReportWorkflowSettings,
         report_model_ready_checker: Callable[[], None] | None = None,
         selection_controller: SelectionController | None = None,
+        maintenance_status_provider: Callable[[], str] | None = None,
     ) -> None:
         self._openclaw = openclaw_client
         self._recognizer = recognizer
@@ -58,6 +59,7 @@ class ChatController:
         self._settings = settings
         self._report_model_ready_checker = report_model_ready_checker
         self._selection_controller = selection_controller or SelectionController(store=SelectionRunStore())
+        self._maintenance_status_provider = maintenance_status_provider
         self._contexts: dict[str, ChatContext] = {}
         self._messages: dict[str, list[ChatMessage]] = {}
         self._confirmation_cards: dict[str, dict[str, dict[str, Any]]] = {}
@@ -89,6 +91,7 @@ class ChatController:
             if draft is None:
                 raise QueueError("CONFIRMATION_REQUIRED", "invalid_input", "请先提供完整的报告/定时/提醒信息。")
             self._assert_report_model_ready_for_draft(draft)
+            self._confirmation.assert_confirmation_card_available(draft)
             self._confirmation.register_draft(draft)
             result = {"draft": _draft_for_user(draft), "confirmationCard": self._confirmation.build_confirmation_card(draft)}
         except Exception as exc:
@@ -167,6 +170,11 @@ class ChatController:
             payload = {**result, **self._chat_result(context)}
             self._idempotency[request_id] = payload
             return payload
+        self._update_confirmation_card_status(
+            context.id,
+            draft_id,
+            "cancelled" if decision == "cancel" else "confirmed",
+        )
         if decision == "cancel":
             context = switch_chat_context(context, kind=ChatContextKind.NORMAL_CHAT)
             self._contexts[context_id] = context
@@ -378,6 +386,16 @@ class ChatController:
                     return self._chat_result(context, queue_snapshot=snapshot)
         if self._is_explicit_select_command(content):
             return self._handle_explicit_select_command(context=context, request_id=request_id, content=content)
+        if self._is_maintenance_status_request(content):
+            status_text = self._read_maintenance_status()
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="plain",
+                text=status_text,
+            )
+            return self._chat_result(context)
         try:
             draft = self._recognizer.classify_user_intent(
                 text=content,
@@ -387,9 +405,20 @@ class ChatController:
         except Exception:
             draft = None
         if draft is not None:
-            self._assert_report_model_ready_for_draft(draft)
+            try:
+                self._assert_report_model_ready_for_draft(draft)
+                self._confirmation.assert_confirmation_card_available(draft)
+                card = self._confirmation.build_confirmation_card(draft)
+            except QueueError as exc:
+                self._append_message(
+                    context_id=context.id,
+                    context_kind=context.kind,
+                    actor="system",
+                    kind="plain",
+                    text=exc.user_message,
+                )
+                return {"error": {"code": exc.code, "message": exc.user_message}, **self._chat_result(context)}
             self._confirmation.register_draft(draft)
-            card = self._confirmation.build_confirmation_card(draft)
             context = switch_chat_context(context, kind=ChatContextKind.INTENT_CONFIRMING)
             self._contexts[context_id] = context
             self._append_message(
@@ -401,6 +430,16 @@ class ChatController:
                 card_id=card["id"],
             )
             return self._chat_result(context, confirmation_card=card)
+        explicit_help = self._explicit_intent_help_message(content)
+        if explicit_help is not None:
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="plain",
+                text=explicit_help,
+            )
+            return self._chat_result(context)
         try:
             reply = self._openclaw.chat_send(context_id=context.id, text=content, request_id=request_id)
             assistant_text = reply.text
@@ -438,6 +477,8 @@ class ChatController:
             message_kind = "selection_result"
         elif select_result.code == SelectCommandCode.DATA_REFRESH_REQUESTED:
             message_kind = "selection_refreshing"
+        elif select_result.code == SelectCommandCode.FAILED:
+            message_kind = "selection_failed"
         else:
             message_kind = "selection_unavailable"
         selection_payload = {
@@ -510,6 +551,19 @@ class ChatController:
         if not card_id:
             return
         self._confirmation_cards.setdefault(context_id, {})[card_id] = card
+
+    def _update_confirmation_card_status(self, context_id: str, draft_id: str, status: str) -> None:
+        cards = self._confirmation_cards.get(context_id)
+        if not cards:
+            return
+        card_id = f"card-{draft_id}"
+        current = cards.get(card_id)
+        if not isinstance(current, dict):
+            return
+        updated = dict(current)
+        updated["status"] = status
+        updated["actions"] = []
+        cards[card_id] = updated
 
     def _has_completed_message(self, context_id: str, task_id: str | None, *, report_id: str | None = None) -> bool:
         for message in reversed(self._messages.get(context_id, [])):
@@ -603,6 +657,39 @@ class ChatController:
             )
             is not None
         )
+
+    @staticmethod
+    def _is_maintenance_status_request(text: str) -> bool:
+        lowered = text.strip().lower()
+        return lowered.startswith("/maint") or (
+            "维护" in lowered and ("状态" in lowered or "情况" in lowered or "摘要" in lowered)
+        )
+
+    @staticmethod
+    def _explicit_intent_help_message(text: str) -> str | None:
+        lowered = text.strip().lower()
+        if re.match(r"^/report(?:\s+.*)?$", lowered) is not None:
+            matched = re.search(r"^/report\s+([A-Za-z0-9._/-]+)\s*$", text.strip(), re.IGNORECASE)
+            if matched is None:
+                return "请输入完整的 /report 指令，例如：/report TSLA。"
+            return None
+        if re.match(r"^/sched(?:\s+.*)?$", lowered) is not None:
+            if re.search(r"^/sched\s+[A-Za-z0-9._/-]+", text.strip(), re.IGNORECASE) is None:
+                return "请输入完整的 /sched 指令，例如：/sched TSLA 每天 08:00。"
+            return "请输入完整的 /sched 指令，例如：/sched TSLA 每天 08:00。"
+        if re.match(r"^/alert(?:\s+.*)?$", lowered) is not None:
+            if re.search(r"^/alert\s+[A-Za-z0-9._/-]+", text.strip(), re.IGNORECASE) is None:
+                return "请输入完整的 /alert 指令，例如：/alert BTC 高于 70000 提醒我。"
+            return "请输入完整的 /alert 指令，例如：/alert BTC 高于 70000 提醒我。"
+        return None
+
+    def _read_maintenance_status(self) -> str:
+        if self._maintenance_status_provider is None:
+            return "维护状态请查看“高级诊断”。"
+        try:
+            return self._maintenance_status_provider().strip() or "维护状态暂时不可读，请稍后重试。"
+        except Exception:
+            return "维护状态暂时不可读，请稍后重试。"
 
     def _assert_report_model_ready_for_draft(self, draft: Any) -> None:
         if self._report_model_ready_checker is None:

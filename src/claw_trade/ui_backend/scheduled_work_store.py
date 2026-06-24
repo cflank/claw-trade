@@ -54,6 +54,7 @@ class PriceAlert:
     last_notification_result: dict[str, Any] | None
     created_at: str
     updated_at: str
+    last_quote: dict[str, Any] | None = None
 
 
 @dataclass
@@ -304,6 +305,7 @@ def _price_alert_to_payload(alert: PriceAlert) -> dict[str, Any]:
         "last_notification_result": alert.last_notification_result,
         "created_at": alert.created_at,
         "updated_at": alert.updated_at,
+        "last_quote": alert.last_quote,
     }
 
 
@@ -327,6 +329,7 @@ def _price_alert_from_payload(raw: dict[str, Any]) -> PriceAlert:
         last_notification_result=None if raw.get("last_notification_result") is None else dict(raw["last_notification_result"]),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
+        last_quote=None if raw.get("last_quote") is None else dict(raw["last_quote"]),
     )
 
 

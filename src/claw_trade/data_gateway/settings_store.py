@@ -12,6 +12,7 @@ UI_EMBEDDING_SETTINGS_COLLECTION = "ui_embedding_settings"
 UI_REPORT_CLEANUP_SETTINGS_COLLECTION = "ui_report_cleanup_settings"
 UI_REPORT_MODEL_CONFIG_COLLECTION = "ui_report_model_config"
 UI_REPORT_MODEL_STATUS_COLLECTION = "ui_report_model_status"
+UI_SELECTION_AUTO_REFRESH_SETTINGS_COLLECTION = "ui_selection_auto_refresh_settings"
 UI_SECRET_SETTINGS_COLLECTION = "ui_secret_settings"
 
 
@@ -175,6 +176,35 @@ class MongoReportCleanupSettingsStore:
 
     def clear(self) -> None:
         self._collection.delete_one({"_id": "report_cleanup_settings"})
+
+
+class MongoSelectionAutoRefreshSettingsStore:
+    def __init__(self, collection: Any) -> None:
+        self._collection = collection
+
+    def read(self) -> dict[str, Any]:
+        doc = self._collection.find_one({"_id": "selection_auto_refresh_settings"})
+        if not isinstance(doc, Mapping):
+            return {}
+        payload = doc.get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("selection auto refresh settings payload must be an object")
+        return dict(payload)
+
+    def write(self, payload: Mapping[str, Any]) -> None:
+        self._collection.replace_one(
+            {"_id": "selection_auto_refresh_settings"},
+            {
+                "_id": "selection_auto_refresh_settings",
+                "payload": dict(payload),
+                "schemaVersion": "ui-selection-auto-refresh-settings-v1",
+                "updatedAt": _now_iso(),
+            },
+            upsert=True,
+        )
+
+    def clear(self) -> None:
+        self._collection.delete_one({"_id": "selection_auto_refresh_settings"})
 
 
 class MongoReportModelConfigStore:

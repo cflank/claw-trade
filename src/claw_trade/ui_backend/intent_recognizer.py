@@ -49,6 +49,16 @@ class IntentRecognizer:
     def looks_like_report_intent(text: str) -> bool:
         return _looks_like_report_intent(text.strip().lower())
 
+    @staticmethod
+    def looks_like_supported_intent(text: str) -> bool:
+        lowered = text.strip().lower()
+        return (
+            _looks_like_report_intent(lowered)
+            or _looks_like_schedule_command(lowered)
+            or _looks_like_alert_command(lowered)
+            or _parse_price_condition(lowered) is not None
+        )
+
     def classify_user_intent(
         self,
         *,
@@ -62,6 +72,36 @@ class IntentRecognizer:
         lowered = normalized.lower()
         instrument = _resolve_instrument(normalized)
         snapshot = _snapshot_from_settings(settings)
+        if _looks_like_schedule_command(lowered):
+            if _looks_like_hourly(lowered):
+                assert_schedule_frequency_supported("hourly")
+            if instrument is None:
+                return None
+            schedule = _parse_schedule(lowered)
+            if schedule is None:
+                return None
+            return self._build_draft(
+                kind=IntentKind.SCHEDULED_REPORT,
+                summary=f"定时报告：{instrument['instrumentCode']} {schedule['frequency']}",
+                source_message_id=source_message_id,
+                instrument=instrument,
+                snapshot=snapshot,
+                schedule=schedule,
+            )
+        if _looks_like_alert_command(lowered):
+            if instrument is None:
+                return None
+            price_condition = _parse_price_condition(lowered)
+            if price_condition is None:
+                return None
+            return self._build_draft(
+                kind=IntentKind.PRICE_ALERT,
+                summary=f"价格提醒：{instrument['instrumentCode']}",
+                source_message_id=source_message_id,
+                instrument=instrument,
+                snapshot=snapshot,
+                price_condition=price_condition,
+            )
         if _looks_like_report_intent(lowered):
             if _looks_like_hourly(lowered):
                 assert_schedule_frequency_supported("hourly")
@@ -172,6 +212,14 @@ def _looks_like_report_intent(lowered: str) -> bool:
     return lowered.startswith("/report") or (_looks_like_schedule_marker(lowered) and ("报告" in lowered or "report" in lowered))
 
 
+def _looks_like_schedule_command(lowered: str) -> bool:
+    return lowered.startswith("/sched")
+
+
+def _looks_like_alert_command(lowered: str) -> bool:
+    return lowered.startswith("/alert")
+
+
 def _looks_like_schedule_marker(lowered: str) -> bool:
     return (
         "每天" in lowered
@@ -229,13 +277,21 @@ def _parse_price_condition(lowered: str) -> dict[str, object] | None:
 
 
 def _resolve_instrument(text: str) -> dict[str, object] | None:
-    matched_report = re.search(r"/report\s+([A-Za-z0-9._/-]+)", text, re.IGNORECASE)
+    matched_report = re.search(r"/(?:report|sched|alert)\s+([A-Za-z0-9._/-]+)", text, re.IGNORECASE)
     if matched_report:
         code = matched_report.group(1).upper()
         return _instrument_from_code(code)
     matched_cn = re.search(r"报告\s*([A-Za-z0-9._/-]+)", text, re.IGNORECASE)
     if matched_cn:
         code = matched_cn.group(1).upper()
+        return _instrument_from_code(code)
+    matched_report_suffix = re.search(r"([A-Za-z0-9._/-]+)\s*报告", text, re.IGNORECASE)
+    if matched_report_suffix:
+        code = matched_report_suffix.group(1).upper()
+        return _instrument_from_code(code)
+    matched_alert = re.search(r"([A-Za-z0-9._/-]+)\s*(?:高于|低于|above|below|涨|跌).*(?:提醒我|提醒|alert)", text, re.IGNORECASE)
+    if matched_alert:
+        code = matched_alert.group(1).upper()
         return _instrument_from_code(code)
     explicit = {
         "比特币": ("BTC", "Bitcoin", MarketProfile.CRYPTO),

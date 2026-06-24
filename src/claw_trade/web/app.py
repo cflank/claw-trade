@@ -24,7 +24,10 @@ def build_research_ui_app(
     services: UiHttpServices | None = None,
 ) -> FastAPI:
     owns_services = services is None
-    selection_auto_refresh_enabled = owns_services and _selection_auto_refresh_enabled()
+    ui_services = services or build_ui_http_services(settings)
+    selection_auto_refresh_enabled = owns_services and _selection_auto_refresh_enabled(
+        getattr(ui_services, "selection_auto_refresh_settings", None)
+    )
     report_cleanup_scheduler_enabled = owns_services
     price_alert_scan_scheduler_enabled = owns_services
 
@@ -55,7 +58,7 @@ def build_research_ui_app(
 
     app = FastAPI(title="claw-trade research ui", lifespan=lifespan)
     app.state.research_ui_settings = settings
-    app.state.ui_services = services or build_ui_http_services(settings)
+    app.state.ui_services = ui_services
     app.state.owns_ui_services = owns_services
     app.state.selection_auto_refresh_enabled = selection_auto_refresh_enabled
     app.state.report_cleanup_scheduler_enabled = report_cleanup_scheduler_enabled
@@ -92,6 +95,17 @@ def build_research_ui_app(
             content={"code": "INVALID_INPUT", "message": "接口不存在。"},
         )
 
+    @app.api_route(
+        "/api/{missing_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
+    def missing_api_route(missing_path: str) -> JSONResponse:
+        _ = missing_path
+        return JSONResponse(
+            status_code=404,
+            content={"code": "INVALID_INPUT", "message": "接口不存在。"},
+        )
+
     app.mount(
         "/assets",
         StaticFiles(directory=frontend_dist / "assets", check_dir=False),
@@ -111,11 +125,14 @@ def build_research_ui_app(
     return app
 
 
-def _selection_auto_refresh_enabled() -> bool:
+def _selection_auto_refresh_enabled(settings_service: object | None = None) -> bool:
     value = os.environ.get("CLAW_TRADE_SELECTION_AUTO_REFRESH")
-    if value is None:
-        return False
-    return value.strip().lower() not in {"0", "false", "no", "off"}
+    if value is not None:
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    if settings_service is None:
+        return True
+    settings = settings_service.load_settings()  # type: ignore[attr-defined]
+    return bool(settings.get("enabled", True))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -59,7 +60,7 @@ def test_scheduled_report_wake_dispatches_to_scheduler_queue() -> None:
     )
 
     assert len(queue_calls) == 1
-    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"
+    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2025-05-19:2026-05-19:2026-05-19"
     assert queue_calls[0][0]["source"] == "scheduled"
     assert response["status"] == "ok"
     assert response["task"].source == "scheduled"
@@ -120,7 +121,7 @@ def test_scheduled_report_wake_dedupes_different_cron_run_ids_for_same_window() 
     )
 
     assert len(queue_calls) == 1
-    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"
+    assert queue_calls[0][1] == f"scheduled-report:{schedule.scheduledReportId}:2025-05-19:2026-05-19:2026-05-19"
     assert first["task"].task_id == "task-1"
     assert second["task"].task_id == "task-1"
     assert second["cronRunId"] == "cron-run-2"
@@ -171,6 +172,31 @@ def test_scheduled_report_duplicate_wake_without_live_task_does_not_fabricate_ta
     assert response["skipped"] is True
     assert response["lastRunTaskId"] == "task-1"
     assert "task" not in response
+
+
+def test_scheduled_work_runner_keeps_latest_data_maintenance_evidence() -> None:
+    class Runner:
+        def run(self, *, market: str, job_kind: str, cron_run_id: str | None, maintenance_job_id: str | None) -> object:
+            assert market == "CN_A"
+            assert job_kind == "eod"
+            assert cron_run_id == "cron-run-1"
+            return SimpleNamespace(job_id=maintenance_job_id or "job-1", status="succeeded")
+
+    runner = ScheduledWorkRunner(data_maintenance_runner=Runner())
+
+    response = runner.handle_wake(
+        {
+            "kind": "data_maintenance",
+            "market": "CN_A",
+            "jobKind": "eod",
+            "cronRunId": "cron-run-1",
+            "maintenanceJobId": "job-cn-a-eod",
+        }
+    )
+
+    latest = runner.latest_results_for_user()["items"]
+    assert response["maintenanceJobId"] == "job-cn-a-eod"
+    assert latest == [response]
 
 
 def test_scheduled_report_same_cron_run_id_dedupes_after_next_slot_boundary() -> None:
@@ -355,7 +381,7 @@ def test_scheduled_report_wake_uses_stable_schedule_window_request_id_when_missi
         {"kind": "scheduled_report", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-run-1"}
     )
 
-    assert request_ids == [f"scheduled-report:{schedule.scheduledReportId}:2026-05-19:2026-05-19:2026-05-19"]
+    assert request_ids == [f"scheduled-report:{schedule.scheduledReportId}:2025-05-19:2026-05-19:2026-05-19"]
 
 
 def test_selection_and_maintenance_wakes_fail_closed_without_runner() -> None:

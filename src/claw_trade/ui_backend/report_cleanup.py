@@ -84,6 +84,7 @@ class ReportCleanupScheduler:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._last_status: dict[str, Any] | None = None
 
     def start(self) -> None:
         with self._lock:
@@ -114,13 +115,37 @@ class ReportCleanupScheduler:
                 return
 
     def _run_cleanup_once(self) -> None:
+        started_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         try:
-            self._cleanup_service.cleanup_deleted_report_tombstones()
+            tombstones = self._cleanup_service.cleanup_deleted_report_tombstones()
             settings = self._settings_service.load_settings()
             retention_days = settings["reportRetentionDays"]
-            self._cleanup_service.cleanup_expired_reports(retention_days=retention_days)
-        except Exception:
+            expired = self._cleanup_service.cleanup_expired_reports(retention_days=retention_days)
+            self._last_status = {
+                "kind": "report_cleanup",
+                "status": "ok",
+                "runId": f"report-cleanup:{started_at}",
+                "startedAt": started_at,
+                "retentionDays": retention_days,
+                "deletedRunIds": [*tombstones.deletedRunIds, *expired.deletedRunIds],
+                "skippedRunIds": [*tombstones.skippedRunIds, *expired.skippedRunIds],
+                "failedRunIds": [*tombstones.failedRunIds, *expired.failedRunIds],
+                "warnings": [*tombstones.warnings, *expired.warnings],
+            }
+        except Exception as exc:
+            self._last_status = {
+                "kind": "report_cleanup",
+                "status": "error",
+                "runId": f"report-cleanup:{started_at}",
+                "startedAt": started_at,
+                "error": {"message": str(exc) or type(exc).__name__},
+            }
             _LOGGER.exception("Report cleanup scheduler run failed.")
+
+    def latest_status_for_user(self) -> dict[str, Any]:
+        if self._last_status is None:
+            return {"kind": "report_cleanup", "status": "not_run", "runId": None, "error": None}
+        return dict(self._last_status)
 
 
 class ReportCleanupService:

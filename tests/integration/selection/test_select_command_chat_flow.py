@@ -1366,6 +1366,7 @@ def test_select_command_missing_watch_section_fails_with_selection_result_invali
 
     assert "error" not in result
     assert result["selection"]["code"] == "failed"
+    assert result["messages"][-1]["kind"] == "selection_failed"
     assert (
         result["selection"]["failureReason"] == "selection_result_invalid:missing_required_sections"
     )

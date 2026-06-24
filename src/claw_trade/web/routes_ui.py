@@ -163,8 +163,16 @@ class ReportCleanupSettingsForUser(BaseModel):
     reportRetentionDays: int
 
 
+class SelectionAutoRefreshSettingsForUser(BaseModel):
+    enabled: bool
+
+
 class GetReportCleanupSettingsResponse(BaseModel):
     reportCleanup: ReportCleanupSettingsForUser
+
+
+class GetSelectionAutoRefreshSettingsResponse(BaseModel):
+    selectionAutoRefresh: SelectionAutoRefreshSettingsForUser
 
 
 class SaveReportCleanupSettingsRequest(BaseModel):
@@ -172,8 +180,17 @@ class SaveReportCleanupSettingsRequest(BaseModel):
     reportRetentionDays: int
 
 
+class SaveSelectionAutoRefreshSettingsRequest(BaseModel):
+    requestId: str
+    enabled: bool
+
+
 class SaveReportCleanupSettingsResponse(BaseModel):
     reportCleanup: ReportCleanupSettingsForUser
+
+
+class SaveSelectionAutoRefreshSettingsResponse(BaseModel):
+    selectionAutoRefresh: SelectionAutoRefreshSettingsForUser
 
 
 class ResetSettingsToDefaultsRequest(BaseModel):
@@ -469,6 +486,15 @@ def create_scheduled_report(payload: CreateScheduledReportRequest, request: Requ
         return _exception_response(exc)
 
 
+@router.get("/list-scheduled-reports")
+def list_scheduled_reports(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.scheduler_service.list_scheduled_reports_for_user())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/pause-scheduled-report")
 def pause_scheduled_report(payload: ScheduledReportActionRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -534,6 +560,15 @@ def create_price_alert(payload: CreatePriceAlertRequest, request: Request) -> JS
             notification=payload.notification,
         )
         return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/list-price-alerts")
+def list_price_alerts(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.price_alert_service.list_price_alerts_for_user())
     except Exception as exc:
         return _exception_response(exc)
 
@@ -894,6 +929,15 @@ def get_advanced_diagnostics_evidence_failure_reason_summary(request: Request) -
         return _exception_response(exc)
 
 
+@router.get("/get-maintenance-task-diagnostics")
+def get_maintenance_task_diagnostics(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(_maintenance_task_diagnostics(services))
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/save-llm-config-via-openclaw")
 def save_llm_config_via_openclaw(payload: SaveLlmConfigRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -975,6 +1019,41 @@ def save_report_cleanup_settings(payload: SaveReportCleanupSettingsRequest, requ
         return _exception_response(exc)
 
 
+@router.get("/get-selection-auto-refresh-settings")
+def get_selection_auto_refresh_settings(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        response = GetSelectionAutoRefreshSettingsResponse(
+            selectionAutoRefresh=SelectionAutoRefreshSettingsForUser(
+                **services.selection_auto_refresh_settings.load_settings()
+            )
+        )
+        return _success_response(response.model_dump())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/save-selection-auto-refresh-settings")
+def save_selection_auto_refresh_settings(
+    payload: SaveSelectionAutoRefreshSettingsRequest,
+    request: Request,
+) -> JSONResponse:
+    services = _services(request)
+    try:
+        response = SaveSelectionAutoRefreshSettingsResponse(
+            selectionAutoRefresh=SelectionAutoRefreshSettingsForUser(
+                **services.selection_auto_refresh_settings.save_settings(payload.enabled)
+            )
+        )
+        if payload.enabled:
+            services.selection_refresh_service.start_automatic_refresh_scheduler()
+        else:
+            services.selection_refresh_service.stop_automatic_refresh_scheduler()
+        return _success_response(response.model_dump())
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/reset-settings-to-defaults")
 def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request: Request) -> JSONResponse:
     services = _services(request)
@@ -991,6 +1070,7 @@ def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request:
             config_patch={"enabled": False},
         )
         report_cleanup_result = services.report_cleanup_settings.reset_to_defaults()
+        selection_auto_refresh_result = services.selection_auto_refresh_settings.reset_to_defaults()
         return _success_response(
             {
                 "status": "reset",
@@ -999,6 +1079,7 @@ def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request:
                 "dataSources": data_sources_result,
                 "channel": channel_result.get("status"),
                 "reportCleanup": report_cleanup_result,
+                "selectionAutoRefresh": selection_auto_refresh_result,
             }
         )
     except Exception as exc:
@@ -1047,6 +1128,56 @@ def _services(request: Request) -> UiHttpServices:
 def _report_cleanup_settings_response(settings: dict[str, int]) -> dict[str, Any]:
     response = GetReportCleanupSettingsResponse(reportCleanup=ReportCleanupSettingsForUser(**settings))
     return response.model_dump()
+
+
+def _maintenance_task_diagnostics(services: UiHttpServices) -> dict[str, Any]:
+    cn_a_refresh = services.selection_refresh_service.latest_progress_for_user()
+    crypto_refresh = services.selection_refresh_service.latest_progress_for_user(
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+    )
+    runner_results = services.scheduled_work_runner.latest_results_for_user().get("items", [])
+    data_maintenance_items = [
+        item for item in runner_results if isinstance(item, Mapping) and item.get("kind") == "data_maintenance"
+    ]
+    scheduled_report_wakes = [
+        item for item in runner_results if isinstance(item, Mapping) and item.get("kind") == "scheduled_report"
+    ]
+    return {
+        "checkedAt": _utc_now_iso(),
+        "selectionRefresh": [
+            {"kind": "selection_data_refresh", "market": "CN_A", **_selection_refresh_diag(cn_a_refresh)},
+            {"kind": "selection_data_refresh", "market": "CRYPTO", **_selection_refresh_diag(crypto_refresh)},
+        ],
+        "scheduledReportWakes": scheduled_report_wakes,
+        "priceAlertScanBuckets": services.price_alert_service.list_price_alert_scan_buckets_for_user()["items"],
+        "dataMaintenance": data_maintenance_items,
+        "reportCleanup": services.report_cleanup_scheduler.latest_status_for_user(),
+    }
+
+
+def _selection_refresh_diag(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    progress = snapshot.get("selectionProgress")
+    if not isinstance(progress, Mapping):
+        return {"status": "not_run", "runId": None, "lastResult": None, "failureReason": None}
+    labels = progress.get("workerStatusLabels")
+    failure_reason = None
+    if isinstance(labels, Sequence) and labels and not isinstance(labels, (str, bytes, bytearray)):
+        failure_reason = str(labels[0]) if str(progress.get("status") or "") == "failed" else None
+    return {
+        "status": str(progress.get("status") or "unknown"),
+        "runId": progress.get("workflowRunId"),
+        "lastResult": progress.get("currentAction"),
+        "failureReason": failure_reason,
+        "startedAt": progress.get("startedAt"),
+        "finishedAt": progress.get("finishedAt"),
+    }
+
+
+def _utc_now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _valid_internal_cron_token(request: Request) -> bool:

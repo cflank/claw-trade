@@ -223,6 +223,39 @@ def test_parse_selection_decision_supplements_from_approved_manager_material() -
     assert [item.ticker for item in result.decision.watch] == ["000858.SZ", "301458.SZ"]
 
 
+def test_parse_selection_decision_supplements_missing_row_from_grouped_narrative() -> None:
+    pm_output = "\n".join(
+        [
+            "## 综合判断",
+            "### 继续观察",
+            "**4. 长川科技 (300604.SZ)** - RPS趋势强度与流动性表现良好，短线爆发力偏弱，先继续观察。",
+            "",
+            "进入 /report:",
+            "- 600519.SH | 贵州茅台 | 经营质量与现金流稳定。",
+            "观察:",
+            "- 000858.SZ | 五粮液 | 还需后续财报确认。",
+            "放弃:",
+            "- 300750.SZ | 宁德时代 | 当前证据链分歧较大。",
+        ]
+    )
+    result = _parse_and_validate_selection_decision(
+        pm_raw_text=pm_output,
+        workflow_run_id="wf-narrative-supplement",
+        allowed_tickers=frozenset({"600519.SH", "000858.SZ", "300604.SZ", "300750.SZ"}),
+        allowed_ticker_companies={
+            "600519.SH": "贵州茅台",
+            "000858.SZ": "五粮液",
+            "300604.SZ": "长川科技",
+            "300750.SZ": "宁德时代",
+        },
+        approved_material_id="selection-pm-decision-wf-narrative-supplement",
+    )
+
+    assert result.invalid_reason is None
+    assert result.decision is not None
+    assert [item.ticker for item in result.decision.watch] == ["000858.SZ", "300604.SZ"]
+
+
 def test_candidate_summary_allowed_tickers_include_bj_market() -> None:
     summary_md = "\n".join(
         [

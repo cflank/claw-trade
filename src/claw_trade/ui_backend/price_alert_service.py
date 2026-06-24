@@ -88,6 +88,7 @@ class PriceAlertService:
                 last_notification_result=None,
                 created_at=now_iso,
                 updated_at=now_iso,
+                last_quote=None,
             )
             self._store.save_price_alert(item)
             dto = to_price_alert_for_user(item)
@@ -213,6 +214,7 @@ class PriceAlertService:
             triggered = self._is_triggered(condition=item.condition, quote=quote)
             now_iso = self._now_iso()
             item.last_quote_evidence_ref = self._quote_evidence_ref(quote)
+            item.last_quote = self._quote_for_user(quote)
             if not triggered:
                 item.state = "active"
                 item.last_checked_at = now_iso
@@ -249,11 +251,59 @@ class PriceAlertService:
     def get_price_alert(self, price_alert_id: str) -> PriceAlertForUser:
         return to_price_alert_for_user(self._get_alert_or_raise(price_alert_id))
 
+    def list_price_alerts_for_user(self) -> dict[str, Any]:
+        return {"items": [self._price_alert_detail_for_user(item) for item in self._store.list_price_alerts()]}
+
+    def list_price_alert_scan_buckets_for_user(self) -> dict[str, Any]:
+        return {"items": [self._scan_bucket_for_user(bucket) for bucket in self._store.list_scan_buckets()]}
+
     def _get_alert_or_raise(self, price_alert_id: str) -> PriceAlert:
         item = self._store.get_price_alert(price_alert_id)
         if item is None or item.state in {"deleted", "closed"}:
             raise UiServiceError("ALERT_NOT_FOUND", "价格提醒不存在。")
         return item
+
+    def _price_alert_detail_for_user(self, item: PriceAlert) -> dict[str, Any]:
+        dto = to_price_alert_for_user(item)
+        return {
+            "priceAlertId": dto.priceAlertId,
+            "instrumentCode": dto.instrumentCode,
+            "instrumentName": dto.instrumentName,
+            "market": dto.market.value,
+            "condition": {
+                "type": dto.condition.type,
+                "operator": dto.condition.operator,
+                "value": dto.condition.value,
+                "window": dto.condition.window,
+            },
+            "notification": {"channel": dto.notification.channel, "enabled": dto.notification.enabled},
+            "state": dto.state,
+            "scanBucket": item.scan_bucket,
+            "lastCheckedAt": dto.lastCheckedAt,
+            "triggeredAt": dto.triggeredAt,
+            "lastErrorMessage": dto.lastErrorMessage,
+            "lastQuote": item.last_quote,
+            "lastQuoteEvidenceRef": item.last_quote_evidence_ref,
+            "lastScanRunId": item.last_scan_run_id,
+            "notificationDedupeKey": item.notification_dedupe_key,
+            "lastNotificationResult": item.last_notification_result,
+            "updatedAt": item.updated_at,
+        }
+
+    @staticmethod
+    def _scan_bucket_for_user(bucket: PriceAlertScanBucket) -> dict[str, Any]:
+        return {
+            "bucketKey": bucket.bucket_key,
+            "market": bucket.market.value,
+            "frequency": bucket.frequency,
+            "enabled": bucket.enabled,
+            "cronJobId": bucket.openclaw_cron_job_id,
+            "lastScanRunId": bucket.last_scan_run_id,
+            "lastScanSummary": bucket.last_scan_summary,
+            "lastErrorMessage": bucket.last_error_message,
+            "skippedReason": bucket.skipped_reason,
+            "updatedAt": bucket.updated_at,
+        }
 
     @staticmethod
     def _normalize_condition(condition: dict[str, Any]) -> dict[str, Any]:
@@ -337,6 +387,17 @@ class PriceAlertService:
     def _quote_evidence_ref(quote: dict[str, Any]) -> str | None:
         value = quote.get("evidence_ref")
         return None if value is None else str(value)
+
+    @staticmethod
+    def _quote_for_user(quote: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "currentPrice": quote.get("current_price"),
+            "percentChange": quote.get("percent_change"),
+            "percentChange24h": quote.get("percent_change_24h"),
+            "percentChangeIntraday": quote.get("percent_change_intraday"),
+            "quoteTimestamp": quote.get("quote_timestamp"),
+            "evidenceRef": PriceAlertService._quote_evidence_ref(quote),
+        }
 
     def _deliver_notification(self, item: PriceAlert, *, message: str, quote: dict[str, Any]) -> dict[str, Any]:
         dedupe_key = self._notification_dedupe_key(item, quote=quote)

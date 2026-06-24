@@ -129,6 +129,26 @@ def test_scheduled_report_api_contracts_return_user_dto_and_safe_payload() -> No
     validate_ui_api_response("deleteScheduledReport", deleted_payload)
 
 
+def test_scheduled_report_list_exposes_cron_and_wake_evidence_without_run_id() -> None:
+    gateway = _FakeCronGateway()
+    service = _cron_scheduler(gateway)
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    service.run_scheduled_report_now(request_id="req-run-now", scheduled_report_id=created.scheduledReportId)
+
+    payload = service.list_scheduled_reports_for_user()
+
+    validate_ui_api_response("listScheduledReports", payload)
+    assert payload["items"][0]["cronJobId"] == "scheduled-report:schedule-1"
+    assert payload["items"][0]["lastCronRunId"] == "cron-run-1"
+    assert payload["items"][0]["lastRunTaskId"] is None
+
+
 def test_cron_scheduled_report_run_now_contract_returns_trigger_without_fake_task() -> None:
     gateway = _FakeCronGateway()
     service = _cron_scheduler(gateway)
@@ -206,3 +226,23 @@ def test_price_alert_api_contracts_return_user_dto_and_safe_payload() -> None:
 
     deleted_payload = service.delete_price_alert(request_id="req-delete", price_alert_id=created.priceAlertId)
     validate_ui_api_response("deletePriceAlert", deleted_payload)
+
+
+def test_price_alert_list_exposes_scan_bucket_and_real_quote_snapshot() -> None:
+    service = _alert_service()
+    created = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 90000},
+    )
+
+    service.run_price_alert_now(request_id="req-check", price_alert_id=created.priceAlertId)
+    payload = service.list_price_alerts_for_user()
+    buckets = service.list_price_alert_scan_buckets_for_user()
+
+    validate_ui_api_response("listPriceAlerts", payload)
+    assert payload["items"][0]["scanBucket"] == "CRYPTO:3m"
+    assert payload["items"][0]["lastQuote"]["currentPrice"] == 71000
+    assert payload["items"][0]["lastCheckedAt"] == "2026-05-19T12:00:00Z"
+    assert buckets["items"][0]["bucketKey"] == "CRYPTO:3m"

@@ -82,7 +82,7 @@ class _SelectionWorkflowContext:
     selection_run_id: str
     market: SelectionMarket | None
     profile: SelectionProfile | None
-    enter_report_tickers: frozenset[str]
+    confirmable_tickers: frozenset[str]
     decision_approved_material_id: str
     company_name_by_ticker: dict[str, str]
 
@@ -114,8 +114,8 @@ class SelectionConfirmationController:
 
         normalized_ticker = request.ticker.strip().upper()
         context = self._load_workflow_context(request.select_workflow_run_id)
-        if normalized_ticker not in context.enter_report_tickers:
-            raise SelectionConfirmationError("ticker_not_allowed", "该标的不在可确认进入 /report 列表。")
+        if normalized_ticker not in context.confirmable_tickers:
+            raise SelectionConfirmationError("ticker_not_allowed", "该标的不在可确认生成 /report 的候选列表。")
 
         record = self._load_and_validate_record(context)
         if context.market is None or context.profile is None:
@@ -219,7 +219,8 @@ class SelectionConfirmationController:
                 "选股决策缺失或未通过批准，无法确认。",
             )
         raw_enter = decision_payload.get("enter_report")
-        if not isinstance(raw_enter, list):
+        raw_watch = decision_payload.get("watch")
+        if not isinstance(raw_enter, list) or not isinstance(raw_watch, list):
             raise SelectionConfirmationError(
                 "selection_decision_missing_or_unapproved",
                 "选股决策缺失或未通过批准，无法确认。",
@@ -247,7 +248,11 @@ class SelectionConfirmationController:
             selection_run_id=selection_run_id,
             market=_selection_market_from_evidence(payload.get("market")),
             profile=_selection_profile_from_evidence(payload.get("profile")),
-            enter_report_tickers=frozenset(str(item).strip().upper() for item in raw_enter if str(item).strip()),
+            confirmable_tickers=frozenset(
+                str(item).strip().upper()
+                for item in [*raw_enter, *raw_watch]
+                if str(item).strip()
+            ),
             decision_approved_material_id=approved_material_id,
             company_name_by_ticker=company_name_by_ticker,
         )

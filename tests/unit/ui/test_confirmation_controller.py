@@ -113,7 +113,7 @@ def test_confirmation_card_and_task_use_data_layer_company_name() -> None:
     assert queued.instrument_name == "绿的谐波"
 
 
-def test_confirmation_card_and_task_show_unresolved_name_when_data_layer_has_no_name() -> None:
+def test_confirmation_card_fails_when_name_lookup_has_no_name() -> None:
     runner = _FakeRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(runner))
 
@@ -132,15 +132,12 @@ def test_confirmation_card_and_task_show_unresolved_name_when_data_layer_has_no_
     assert draft is not None
     controller.register_draft(draft)
 
-    card = controller.build_confirmation_card(draft)
-    result = controller.confirm_intent_draft(request_id="c-name-missing", draft_id=draft.draft_id, decision="confirm")
-    queued = queue.get_task_for_testing(result["task"]["taskId"])
+    with pytest.raises(QueueError) as exc:
+        controller.build_confirmation_card(draft)
 
-    assert card["instrumentName"] == "名称未查到"
-    assert "名称：名称未查到" in card["summaryLines"]
-    assert queued is not None
-    assert queued.company_name == "名称未查到"
-    assert queued.instrument_name == "名称未查到"
+    assert exc.value.code == "INVALID_INPUT"
+    assert "名称解析失败" in exc.value.user_message
+    assert runner.calls == 0
 
 
 def test_confirm_scheduled_and_price_alert_return_for_user_dto() -> None:
@@ -288,6 +285,8 @@ def test_unapproved_profile_strategy_blocks_report_confirmation(profile: str) ->
     with pytest.raises(QueueError) as exc:
         controller.confirm_intent_draft(request_id=f"profile-{profile}", draft_id=draft.draft_id, decision="confirm")
     assert exc.value.code == "PROFILE_STRATEGY_UNAPPROVED"
+    if profile == "HK":
+        assert exc.value.user_message == "港股报告暂未启用，请先配置 HK 报告策略。"
     assert runner.calls == 0
     snapshot = queue.get_report_queue_snapshot_for_user()
     assert snapshot["runningTask"] is None

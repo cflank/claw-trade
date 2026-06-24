@@ -63,6 +63,32 @@ def test_daily_schedule_intent_supported() -> None:
     assert draft.schedule["frequency"] == "daily"
 
 
+def test_natural_language_schedule_with_symbol_before_report_supported() -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="每天 08:00 给我 TSLA 报告",
+        source_message_id="m-2b",
+        settings=_settings(),
+    )
+    assert draft is not None
+    assert draft.kind.value == "scheduled_report"
+    assert draft.instrument_code == "TSLA"
+    assert draft.schedule == {"frequency": "daily", "timeOfDay": "08:00", "weekday": None}
+
+
+def test_sched_alias_supported() -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="/sched TSLA 每天 08:00",
+        source_message_id="m-sched",
+        settings=_settings(),
+    )
+    assert draft is not None
+    assert draft.kind.value == "scheduled_report"
+    assert draft.instrument_code == "TSLA"
+    assert draft.schedule == {"frequency": "daily", "timeOfDay": "08:00", "weekday": None}
+
+
 def test_hourly_schedule_rejected() -> None:
     recognizer = IntentRecognizer()
     with pytest.raises(FirstVersionScopeError) as exc:
@@ -83,6 +109,34 @@ def test_price_alert_intent_supported() -> None:
     )
     assert draft is not None
     assert draft.kind.value == "price_alert"
+    assert draft.price_condition is not None
+    assert draft.price_condition["operator"] == "above"
+
+
+def test_alert_alias_supported() -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="/alert BTC 高于 70000 提醒我",
+        source_message_id="m-alert",
+        settings=_settings(),
+    )
+    assert draft is not None
+    assert draft.kind.value == "price_alert"
+    assert draft.instrument_code == "BTC"
+    assert draft.price_condition is not None
+    assert draft.price_condition["operator"] == "above"
+
+
+def test_natural_language_alert_with_symbol_supported() -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="TSLA 高于 200 提醒我",
+        source_message_id="m-alert-tsla",
+        settings=_settings(),
+    )
+    assert draft is not None
+    assert draft.kind.value == "price_alert"
+    assert draft.instrument_code == "TSLA"
     assert draft.price_condition is not None
     assert draft.price_condition["operator"] == "above"
 

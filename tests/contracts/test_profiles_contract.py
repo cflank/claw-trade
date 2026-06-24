@@ -1,7 +1,7 @@
 from claw_trade.config.profiles import is_profile_approved, require_profile
 
 
-def test_us_and_cn_a_profiles_are_approved():
+def test_us_cn_a_hk_and_crypto_profiles_are_approved():
     us = require_profile("US")
     cn_a = require_profile("CN_A")
     hk = require_profile("HK")

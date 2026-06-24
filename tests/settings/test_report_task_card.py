@@ -43,16 +43,17 @@ def _controller() -> ChatController:
         confirmation=ConfirmationController(queue),
         queue=queue,
         settings=ReportWorkflowSettings(),
+        maintenance_status_provider=lambda: "维护状态摘要\n- 运行服务：健康",
     )
 
 
-def test_report_command_builds_three_field_confirmation_card() -> None:
+def test_report_command_builds_three_field_confirmation_card_for_us_name() -> None:
     controller = _controller()
-    result = controller.send_chat_message(request_id="s06-card-1", context_id="ctx-1", text="/report TSLA")
+    result = controller.send_chat_message(request_id="s06-card-1", context_id="ctx-1", text="/report AAPL")
     card = result["confirmationCard"]
-    assert card["summaryLines"] == ["标的：TSLA", "名称：TSLA", "市场：US"]
-    assert card["instrumentCode"] == "TSLA"
-    assert card["instrumentName"] == "TSLA"
+    assert card["summaryLines"] == ["标的：AAPL", "名称：Apple Inc.", "市场：US"]
+    assert card["instrumentCode"] == "AAPL"
+    assert card["instrumentName"] == "Apple Inc."
     assert card["market"] == "US"
     card_text = "\n".join(card["summaryLines"])
     for forbidden in ("报告方案", "计价单位", "profile", "默认币种", "worker", "debate", "risk"):
@@ -67,6 +68,42 @@ def test_non_report_chat_does_not_enter_report_workflow() -> None:
     assert result["context"]["kind"] == "normal_chat"
 
 
+def test_bare_report_command_returns_help_instead_of_falling_through_to_normal_chat() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-help-1", context_id="ctx-1", text="/report")
+    assert "assistantReply" not in result
+    assert result["messages"][-1]["actor"] == "system"
+    assert result["messages"][-1]["text"] == "请输入完整的 /report 指令，例如：/report TSLA。"
+
+
+def test_sched_alias_builds_scheduled_report_confirmation_card() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-sched-1", context_id="ctx-1", text="/sched AAPL 每天 08:00")
+    card = result["confirmationCard"]
+    assert card["title"] == "请确认是否创建定时报告"
+    assert card["summaryLines"] == ["标的：AAPL", "名称：Apple Inc.", "市场：US"]
+
+
+def test_alert_alias_builds_price_alert_confirmation_card() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(
+        request_id="s06-alert-1",
+        context_id="ctx-1",
+        text="/alert BTC 高于 70000 提醒我",
+    )
+    card = result["confirmationCard"]
+    assert card["title"] == "请确认是否创建价格提醒"
+    assert card["summaryLines"] == ["标的：BTC", "名称：Bitcoin", "市场：CRYPTO"]
+
+
+def test_maint_command_returns_maintenance_summary() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-maint-1", context_id="ctx-1", text="/maint")
+    assert "assistantReply" not in result
+    assert result["messages"][-1]["actor"] == "system"
+    assert "维护状态摘要" in result["messages"][-1]["text"]
+
+
 def test_confirm_with_symbol_override_reidentifies_name_and_market() -> None:
     controller = _controller()
     send = controller.send_chat_message(request_id="s06-card-2", context_id="ctx-1", text="/report BTC")
@@ -75,17 +112,17 @@ def test_confirm_with_symbol_override_reidentifies_name_and_market() -> None:
         request_id="s06-confirm-1",
         draft_id=card["draftId"],
         decision="confirm",
-        overrides={"instrumentCode": "TSLA"},
+        overrides={"instrumentCode": "AAPL"},
     )
     task = confirmed["task"]
-    assert task["instrumentCode"] == "TSLA"
+    assert task["instrumentCode"] == "AAPL"
     assert task["market"] == "US"
-    assert task["companyName"] == "TSLA"
+    assert task["companyName"] == "Apple Inc."
 
 
 def test_confirm_rejects_symbol_market_mismatch() -> None:
     controller = _controller()
-    send = controller.send_chat_message(request_id="s06-card-3", context_id="ctx-1", text="/report TSLA")
+    send = controller.send_chat_message(request_id="s06-card-3", context_id="ctx-1", text="/report AAPL")
     card = send["confirmationCard"]
     rejected = controller.confirm_intent_draft(
         request_id="s06-confirm-2",
@@ -95,3 +132,24 @@ def test_confirm_rejects_symbol_market_mismatch() -> None:
     )
     assert rejected["error"]["code"] == "INVALID_INPUT"
     assert "不匹配" in rejected["error"]["message"]
+
+
+def test_report_command_builds_confirmation_card_for_cn_a_name() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-cn-a", context_id="ctx-cn-a", text="/report 600519.SH")
+    card = result["confirmationCard"]
+    assert card["summaryLines"] == ["标的：600519.SH", "名称：贵州茅台", "市场：CN_A"]
+
+
+def test_report_command_builds_confirmation_card_for_crypto_pair_name() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-crypto", context_id="ctx-crypto", text="/report BTC/USDT")
+    card = result["confirmationCard"]
+    assert card["summaryLines"] == ["标的：BTC/USDT", "名称：Bitcoin", "市场：CRYPTO"]
+
+
+def test_report_command_builds_confirmation_card_for_hk_name() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-hk", context_id="ctx-hk", text="/report 00700.HK")
+    card = result["confirmationCard"]
+    assert card["summaryLines"] == ["标的：00700.HK", "名称：腾讯控股", "市场：HK"]

@@ -46,14 +46,17 @@ class _FakeChatTransport:
 @dataclass
 class _FakeSelectionController:
     calls: int = 0
+    code: SelectCommandCode = SelectCommandCode.COMPLETED
+    chat_text: str = "`/select` 测试结果"
 
     def handle_select_command(self, *, raw_text: str, request_id: str, user_id: str | None = None) -> SelectCommandResult:
         self.calls += 1
         return SelectCommandResult(
-            code=SelectCommandCode.COMPLETED,
-            chat_text="`/select` 测试结果",
+            code=self.code,
+            chat_text=self.chat_text,
             select_workflow_run_id="select-test-run",
             evidence_path=Path("runs/selection/workflows/select-test-run/evidence.json"),
+            failure_reason="selection_result_invalid:test" if self.code == SelectCommandCode.FAILED else None,
         )
 
 
@@ -176,6 +179,33 @@ def test_select_command_is_routed_to_selection_before_report_intent() -> None:
     assert workflow_runner.calls == 0
 
 
+def test_select_command_failed_result_uses_failed_message_kind() -> None:
+    selection = _FakeSelectionController(
+        code=SelectCommandCode.FAILED,
+        chat_text="`/select` 执行失败，本轮结果未生效，请稍后重试。",
+    )
+    controller, transport, workflow_runner = _build_controller(selection_controller=selection)
+
+    result = controller.send_chat_message(request_id="req-select-failed", context_id="ctx-select-failed", text="/select")
+
+    assert "error" not in result
+    assert result["selection"]["code"] == "failed"
+    assert result["messages"][-1]["kind"] == "selection_failed"
+    assert result["messages"][-1]["text"] == "`/select` 执行失败，本轮结果未生效，请稍后重试。"
+    assert transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+def test_invalid_select_command_returns_readable_input_error_without_chat_fallback() -> None:
+    controller, transport, workflow_runner = _build_controller()
+
+    result = controller.send_chat_message(request_id="req-select-us", context_id="ctx-select-us", text="/select US")
+
+    assert result["error"] == {"code": "INVALID_INPUT", "message": "请输入完整的 /select 指令。"}
+    assert transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
 def test_create_intent_draft_hourly_rejected() -> None:
     controller, _, _ = _build_controller()
     result = controller.create_intent_draft(
@@ -220,3 +250,29 @@ def test_confirm_scheduled_report_and_price_alert_use_real_services() -> None:
     assert alert.priceAlertId.startswith("alert-")
     assert alert.condition.operator == "above"
     assert not isinstance(alert, dict)
+
+
+def test_confirmed_or_cancelled_chat_card_does_not_return_as_active_after_reload() -> None:
+    controller, _, _ = _build_controller()
+
+    first = controller.send_chat_message(request_id="req-card-1", context_id="ctx-card", text="/report TSLA")
+    confirmed = controller.confirm_intent_draft_from_chat(
+        request_id="req-card-2",
+        context_id="ctx-card",
+        draft_id=first["confirmationCard"]["draftId"],
+        decision="confirm",
+        text="确认",
+    )
+    assert confirmed["confirmationCards"]["card-draft-1"]["status"] == "confirmed"
+    assert confirmed["confirmationCards"]["card-draft-1"]["actions"] == []
+
+    second = controller.send_chat_message(request_id="req-card-3", context_id="ctx-card-2", text="/report BTC")
+    cancelled = controller.confirm_intent_draft_from_chat(
+        request_id="req-card-4",
+        context_id="ctx-card-2",
+        draft_id=second["confirmationCard"]["draftId"],
+        decision="cancel",
+        text="取消",
+    )
+    assert cancelled["confirmationCards"]["card-draft-2"]["status"] == "cancelled"
+    assert cancelled["confirmationCards"]["card-draft-2"]["actions"] == []

@@ -11,6 +11,7 @@ from claw_trade.ui_backend.pdf_runtime_capabilities import (
 from claw_trade.ui_backend.report_cleanup import ReportFileSendTracker
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
+from claw_trade.ui_backend.settings_service import UiBoundaryError
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 
 
@@ -21,11 +22,13 @@ class _FileChannelBridge:
         state: str,
         can_send_file: bool,
         send_result: dict[str, object] | None = None,
+        send_error: Exception | None = None,
         default_report_file_target: tuple[str, str | None] | None = None,
     ) -> None:
         self.state = state
         self.can_send_file = can_send_file
         self.send_result = send_result if send_result is not None else {"sent": True, "messageId": "msg-1"}
+        self.send_error = send_error
         self.default_report_file_target = default_report_file_target
         self.last_payload: bytes | None = None
         self.last_file_path: Path | None = None
@@ -68,6 +71,8 @@ class _FileChannelBridge:
         self.last_file_path = file_path
         self.last_target = target
         self.last_account_id = account_id
+        if self.send_error is not None:
+            raise self.send_error
         return dict(self.send_result)
 
 
@@ -294,6 +299,20 @@ def test_request_full_report_file_does_not_claim_success_when_channel_send_retur
     result = service.request_full_report_file("r-file", "req-file-sent-false", target="sender-1")
     assert result["sent"] is False
     assert result["code"] == "FILE_SEND_UNSUPPORTED"
+
+
+def test_request_full_report_file_preserves_notification_unavailable(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(
+        state="connected",
+        can_send_file=True,
+        send_error=UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。"),
+    )
+    service = _make_service(channel)
+    result = service.request_full_report_file("r-file", "req-file-notification-fail", target="sender-1")
+    assert result["sent"] is False
+    assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+    assert result["userMessage"] == "微信通知暂不可用，请在设备界面查看。"
 
 
 def test_request_full_report_file_does_not_claim_success_when_channel_send_returns_ok_false(monkeypatch) -> None:  # type: ignore[no-untyped-def]

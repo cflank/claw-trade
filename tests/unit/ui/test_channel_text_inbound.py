@@ -223,6 +223,16 @@ def test_report_message_returns_confirmation_without_starting_workflow() -> None
     assert runner.calls == 0
 
 
+def test_sched_alias_returns_confirmation_without_starting_workflow() -> None:
+    controller, runner, _ = _controller()
+    result = controller.handle_message(_message("r-sched-1", "/sched TSLA 每天 08:00"))
+    assert result["handled"] is True
+    assert result["state"] == "awaiting_confirmation"
+    assert "请确认是否创建定时报告" in result["replyText"]
+    assert "标的：TSLA" in result["replyText"]
+    assert runner.calls == 0
+
+
 def test_confirm_reply_starts_existing_report_workflow() -> None:
     controller, runner, _ = _controller()
     controller.handle_message(_message("r-3", "/report TSLA"))

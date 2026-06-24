@@ -230,15 +230,32 @@ def _assert_queue_has_no_enqueued_or_started_report_task(queue: ReportTaskQueue)
     assert queue.list_saved_reports_for_user() == []
 
 
-def test_watch_or_reject_ticker_cannot_trigger_report(tmp_path: Path) -> None:
+def test_watch_ticker_can_trigger_report(tmp_path: Path) -> None:
+    controller, runner, queue = _controller_with_queue(tmp_path, store=_build_store())
+    result = controller.confirm(
+        SelectionConfirmRequest(
+            confirmation_id="cfm-watch",
+            idempotency_key="select-20260526T130000-req-gate:000858.SZ:cfm-watch",
+            select_workflow_run_id="select-20260526T130000-req-gate",
+            ticker="000858.SZ",
+        )
+    )
+
+    assert result.code == "report_handoff_started"
+    assert result.handoff_request["ticker"] == "000858.SZ"
+    assert result.queue_payload["task"]["instrumentCode"] == "000858.SZ"
+    assert runner.create_calls == 1
+
+
+def test_reject_ticker_cannot_trigger_report(tmp_path: Path) -> None:
     controller, runner, queue = _controller_with_queue(tmp_path, store=_build_store())
     with pytest.raises(SelectionConfirmationError) as exc:
         controller.confirm(
             SelectionConfirmRequest(
-                confirmation_id="cfm-watch",
-                idempotency_key="select-20260526T130000-req-gate:000858.SZ:cfm-watch",
+                confirmation_id="cfm-reject",
+                idempotency_key="select-20260526T130000-req-gate:300750.SZ:cfm-reject",
                 select_workflow_run_id="select-20260526T130000-req-gate",
-                ticker="000858.SZ",
+                ticker="300750.SZ",
             )
         )
     assert exc.value.code == "ticker_not_allowed"

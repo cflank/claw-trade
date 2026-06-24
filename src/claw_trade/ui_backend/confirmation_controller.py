@@ -55,6 +55,7 @@ class ConfirmationController:
         return self._drafts.get(draft_id)
 
     def build_confirmation_card(self, draft: IntentDraft) -> dict[str, Any]:
+        self.assert_confirmation_card_available(draft)
         instrument_name = self._display_company_name_for_draft(draft)
         lines = [f"标的：{draft.instrument_code}", f"名称：{instrument_name}", f"市场：{draft.market.value}"]
         return {
@@ -70,6 +71,11 @@ class ConfirmationController:
             "status": "active",
             "createdAt": draft.expires_at,
         }
+
+    def assert_confirmation_card_available(self, draft: IntentDraft) -> None:
+        self._assert_profile_strategy_approved(draft)
+        if draft.kind in {IntentKind.REPORT, IntentKind.SCHEDULED_REPORT}:
+            self._assert_company_name_available(draft)
 
     def confirm_intent_draft(
         self,
@@ -90,7 +96,7 @@ class ConfirmationController:
             self._idempotency[request_id] = result
             return result
         frozen = self._apply_overrides(draft, overrides or {})
-        self._assert_profile_strategy_approved(frozen)
+        self.assert_confirmation_card_available(frozen)
         self._assert_instrument_market_match(frozen)
         if frozen.kind == IntentKind.REPORT:
             self._assert_report_model_ready()
@@ -190,13 +196,31 @@ class ConfirmationController:
             return name
         return None
 
+    def _assert_company_name_available(self, draft: IntentDraft) -> None:
+        if self._company_name_for_draft(draft):
+            return
+        existing = (draft.instrument_name or "").strip()
+        if existing and existing.upper() != draft.instrument_code.upper():
+            return
+        raise QueueError(
+            "INVALID_INPUT",
+            "invalid_input",
+            f"标的 {draft.instrument_code} 名称解析失败，不能创建确认卡。请先检查标的或配置名称解析数据源。",
+        )
+
     def _assert_profile_strategy_approved(self, draft: IntentDraft) -> None:
         profile = draft.workflow_settings.defaultProfile or draft.market.value
         if profile not in {"HK", "CRYPTO"}:
             return
         approved = profile in self._approved_profiles if self._approved_profiles is not None else is_profile_approved(profile)
         if not approved:
-            raise QueueError("PROFILE_STRATEGY_UNAPPROVED", "profile_strategy_unapproved", "当前市场策略尚未批准。")
+            if profile == "HK":
+                message = "港股报告暂未启用，请先配置 HK 报告策略。"
+            elif profile == "CRYPTO":
+                message = "加密报告暂未启用，请先配置 CRYPTO 报告策略。"
+            else:
+                message = "当前市场策略尚未批准。"
+            raise QueueError("PROFILE_STRATEGY_UNAPPROVED", "profile_strategy_unapproved", message)
 
     def _enqueue_scheduled_task(self, task_input: dict[str, Any], request_id: str) -> dict[str, Any]:
         result = self._queue.enqueue_report_task(

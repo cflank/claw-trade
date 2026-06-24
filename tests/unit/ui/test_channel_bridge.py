@@ -224,6 +224,12 @@ class _OneTimeCdnFailureFileClient(_FakeChannelClient):
         return {"sent": True, "messageId": "msg-after-cdn-retry"}
 
 
+class _AlwaysCdnFailureFileClient(_FakeChannelClient):
+    def channels_send_file(self, *, channel, file_name, dedupe_key, to, payload=None, file_path=None, account_id=None):
+        _ = (channel, file_name, dedupe_key, to, payload, file_path, account_id)
+        raise RuntimeError("CDN upload server error: status 500")
+
+
 def test_get_channel_status_hides_provider_channel_id() -> None:
     bridge = ChannelBridge(_FakeChannelClient())
     payload = bridge.get_channel_status(probe=True)
@@ -980,6 +986,21 @@ def test_send_report_file_retries_once_after_cdn_server_error() -> None:
     assert result["sent"] is True
     assert result["messageId"] == "msg-after-cdn-retry"
     assert client.dedupe_keys == ["r-cdn", "r-cdn:cdn-retry-1"]
+
+
+def test_send_report_file_returns_notification_unavailable_after_cdn_retry_failure() -> None:
+    bridge = ChannelBridge(_AlwaysCdnFailureFileClient())
+    with pytest.raises(UiBoundaryError) as exc:
+        bridge.send_report_file_via_channel(
+            request_id="r-cdn-fail",
+            report_id="rp-cdn-fail",
+            channel_kind="wechat_clawbot",
+            file_name="report.pdf",
+            payload=b"pdf",
+            target="sender-1",
+        )
+    assert exc.value.code == "NOTIFICATION_UNAVAILABLE"
+    assert exc.value.user_message == "微信通知暂不可用，请在设备界面查看。"
 
 
 def test_send_report_file_cleans_superseded_cdn_retry_queue_entry(tmp_path: Path, monkeypatch) -> None:

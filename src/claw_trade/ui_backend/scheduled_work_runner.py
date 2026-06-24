@@ -24,6 +24,7 @@ class ScheduledWorkRunner:
         self._scheduler_service = scheduler_service
         self._selection_data_refresh_runner = selection_data_refresh_runner
         self._data_maintenance_runner = data_maintenance_runner
+        self._latest_results: dict[str, dict[str, Any]] = {}
 
     def handle_wake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         kind = str(payload.get("kind") or "").strip()
@@ -37,6 +38,9 @@ class ScheduledWorkRunner:
             return self._handle_data_maintenance(payload, kind=kind)
         raise ScheduledWorkRunnerError("INVALID_INPUT", "不支持的定时任务唤醒类型。")
 
+    def latest_results_for_user(self) -> dict[str, Any]:
+        return {"items": list(self._latest_results.values())}
+
     def _handle_price_alert_scan(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._price_alert_scan_service is None:
             raise ScheduledWorkRunnerError("INVALID_INPUT", "价格提醒扫描执行器未配置。")
@@ -47,20 +51,24 @@ class ScheduledWorkRunner:
         try:
             summary = self._price_alert_scan_service.scan_bucket(bucket_key, cron_run_id=cron_run_id)
         except Exception as exc:
-            return {
+            result = {
                 "kind": kind,
                 "bucketKey": bucket_key,
                 "cronRunId": cron_run_id,
                 "status": "error",
                 "error": {"message": str(exc) or type(exc).__name__},
             }
-        return {
+            self._latest_results[kind] = result
+            return result
+        result = {
             "kind": kind,
             "bucketKey": bucket_key,
             "cronRunId": cron_run_id,
             "status": "ok",
             "summary": asdict(summary) if is_dataclass(summary) else dict(summary),
         }
+        self._latest_results[kind] = result
+        return result
 
     def _handle_scheduled_report(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._scheduler_service is None:
@@ -77,7 +85,9 @@ class ScheduledWorkRunner:
             scheduled_report_id=scheduled_report_id,
             cron_run_id=cron_run_id,
         )
-        return {"kind": kind, "scheduledReportId": scheduled_report_id, "cronRunId": cron_run_id, "status": "ok", **result}
+        payload_out = {"kind": kind, "scheduledReportId": scheduled_report_id, "cronRunId": cron_run_id, "status": "ok", **result}
+        self._latest_results[f"{kind}:{scheduled_report_id}"] = _scrub_runtime_objects(payload_out)
+        return payload_out
 
     def _handle_selection_data_refresh(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._selection_data_refresh_runner is None:
@@ -86,15 +96,17 @@ class ScheduledWorkRunner:
         result = self._selection_data_refresh_runner.run_automatic_refresh_once(reason=reason)
         result_payload = _plain_mapping(result)
         result_status = str(result_payload.get("status") or "").strip() or "unknown"
-        if result_status == "failed":
-            raise ScheduledWorkRunnerError("SELECTION_DATA_REFRESH_FAILED", _selection_refresh_failure_message(result_payload))
-        return {
+        result_out = {
             "kind": kind,
             "reason": reason,
             "cronRunId": str(payload.get("cronRunId") or ""),
             "status": result_status,
             "result": result_payload,
         }
+        self._latest_results[kind] = result_out
+        if result_status == "failed":
+            raise ScheduledWorkRunnerError("SELECTION_DATA_REFRESH_FAILED", _selection_refresh_failure_message(result_payload))
+        return result_out
 
     def _handle_data_maintenance(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._data_maintenance_runner is None:
@@ -113,12 +125,30 @@ class ScheduledWorkRunner:
                 maintenance_job_id=maintenance_job_id,
             )
         except Exception as exc:
+            self._latest_results[f"{kind}:{market}:{job_kind}"] = {
+                "kind": kind,
+                "market": market,
+                "jobKind": job_kind,
+                "cronRunId": cron_run_id or "",
+                "maintenanceJobId": maintenance_job_id or "",
+                "status": "error",
+                "error": {"message": str(exc) or type(exc).__name__},
+            }
             raise ScheduledWorkRunnerError("DATA_MAINTENANCE_FAILED", str(exc) or type(exc).__name__) from exc
         status = str(getattr(job, "status", "") or "")
         if status and status != "succeeded":
             message = str(getattr(job, "error", "") or f"data maintenance ended with status {status}")
+            self._latest_results[f"{kind}:{market}:{job_kind}"] = {
+                "kind": kind,
+                "market": market,
+                "jobKind": job_kind,
+                "cronRunId": cron_run_id or "",
+                "maintenanceJobId": str(getattr(job, "job_id", maintenance_job_id or "")),
+                "status": status,
+                "error": {"message": message},
+            }
             raise ScheduledWorkRunnerError("DATA_MAINTENANCE_FAILED", message)
-        return {
+        result_out = {
             "kind": kind,
             "market": market,
             "jobKind": job_kind,
@@ -127,6 +157,8 @@ class ScheduledWorkRunner:
             "status": "ok",
             "maintenanceStatus": status or "succeeded",
         }
+        self._latest_results[f"{kind}:{market}:{job_kind}"] = result_out
+        return result_out
 
 
 def _plain_mapping(value: Any) -> dict[str, Any]:
@@ -135,6 +167,18 @@ def _plain_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
     return {"status": str(getattr(value, "status", "") or "")}
+
+
+def _scrub_runtime_objects(payload: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in payload.items():
+        if is_dataclass(value):
+            out[str(key)] = asdict(value)
+        elif isinstance(value, Mapping):
+            out[str(key)] = dict(value)
+        else:
+            out[str(key)] = value
+    return out
 
 
 def _selection_refresh_failure_message(result: Mapping[str, Any]) -> str:

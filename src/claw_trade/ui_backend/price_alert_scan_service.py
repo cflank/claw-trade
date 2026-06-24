@@ -131,6 +131,14 @@ class PriceAlertScanService:
         triggered = PriceAlertService.condition_is_triggered(condition=alert.condition, quote=quote)
         alert.last_checked_at = now_iso
         alert.last_quote_evidence_ref = evidence_ref
+        alert.last_quote = {
+            "currentPrice": quote.get("current_price"),
+            "percentChange": quote.get("percent_change"),
+            "percentChange24h": quote.get("percent_change_24h"),
+            "percentChangeIntraday": quote.get("percent_change_intraday"),
+            "quoteTimestamp": quote.get("quote_timestamp"),
+            "evidenceRef": evidence_ref,
+        }
         alert.last_scan_run_id = scan_run_id
         alert.last_error_message = None
         alert.updated_at = now_iso

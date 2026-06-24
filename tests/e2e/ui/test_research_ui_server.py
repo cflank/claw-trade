@@ -10,6 +10,7 @@ import pytest
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.ui_backend.report_cleanup import ReportCleanupResult, ReportCleanupRunResult
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
+from claw_trade.ui_backend.selection_auto_refresh_settings import SelectionAutoRefreshSettingsService
 from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
     CancelReportTaskRequest,
@@ -57,6 +58,10 @@ def test_spa_fallback_is_last_and_api_prefix_keeps_json(tmp_path: Path) -> None:
     missing_api = client.get("/api/ui/not-exists")
     assert missing_api.status_code == 404
     assert missing_api.headers["content-type"].startswith("application/json")
+
+    missing_other_api = client.get("/api/other")
+    assert missing_other_api.status_code == 404
+    assert missing_other_api.headers["content-type"].startswith("application/json")
 
 
 def test_open_device_interface_redirects_with_fragment_token(tmp_path: Path) -> None:
@@ -112,8 +117,13 @@ def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
     assets.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     cleanup = ReportCleanupSettingsService(json_path=tmp_path / "runs" / ".ui-report-cleanup-settings.json")
+    selection_auto_refresh = SelectionAutoRefreshSettingsService(
+        json_path=tmp_path / "runs" / ".ui-selection-auto-refresh-settings.json"
+    )
     services = SimpleNamespace(
         report_cleanup_settings=cleanup,
+        selection_auto_refresh_settings=selection_auto_refresh,
+        selection_refresh_service=_RefreshServiceProbe(),
         llm_bridge=_ResetLlmProbe(),
         data_source_settings=_ResetDataSourcesProbe(),
         channel_bridge=_ResetChannelProbe(),
@@ -142,13 +152,27 @@ def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
     assert rejected.status_code == 400
     assert rejected.json()["code"] == "INVALID_INPUT"
 
+    selection_loaded = client.get("/api/ui/get-selection-auto-refresh-settings")
+    assert selection_loaded.status_code == 200
+    assert selection_loaded.json()["selectionAutoRefresh"] == {"enabled": True}
+
+    selection_saved = client.post(
+        "/api/ui/save-selection-auto-refresh-settings",
+        json={"requestId": "req-save-selection-refresh", "enabled": False},
+    )
+    assert selection_saved.status_code == 200
+    assert selection_saved.json()["selectionAutoRefresh"] == {"enabled": False}
+    assert services.selection_refresh_service.stopped == 1
+
     reset = client.post("/api/ui/reset-settings-to-defaults", json={"requestId": "req-reset"})
     assert reset.status_code == 200
     assert reset.json()["reportCleanup"] == {"reportRetentionDays": 7}
+    assert reset.json()["selectionAutoRefresh"] == {"enabled": True}
     assert cleanup.load_settings() == {"reportRetentionDays": 7}
+    assert selection_auto_refresh.load_settings() == {"enabled": True}
 
 
-def test_app_startup_does_not_start_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
+def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
@@ -161,10 +185,10 @@ def test_app_startup_does_not_start_owned_selection_auto_refresh_by_default(tmp_
 
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
-        assert refresh.started == 0
+        assert refresh.started == 1
         assert cleanup.started == 1
 
-    assert refresh.stopped == 0
+    assert refresh.stopped == 1
     assert cleanup.stopped == 1
 
 
@@ -185,6 +209,30 @@ def test_app_startup_starts_owned_selection_auto_refresh_when_enabled(tmp_path: 
         assert cleanup.started == 1
 
     assert refresh.stopped == 1
+    assert cleanup.stopped == 1
+
+
+def test_app_startup_does_not_start_selection_auto_refresh_when_setting_is_disabled(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    services = SimpleNamespace(
+        selection_refresh_service=refresh,
+        selection_auto_refresh_settings=_SelectionAutoRefreshSettingsProbe(enabled=False),
+        report_cleanup_scheduler=cleanup,
+    )
+    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert refresh.started == 0
+        assert cleanup.started == 1
+
+    assert refresh.stopped == 0
     assert cleanup.stopped == 1
 
 
@@ -627,6 +675,14 @@ class _RefreshServiceProbe:
 
     def stop_automatic_refresh_scheduler(self) -> None:
         self.stopped += 1
+
+
+class _SelectionAutoRefreshSettingsProbe:
+    def __init__(self, *, enabled: bool) -> None:
+        self._enabled = enabled
+
+    def load_settings(self) -> dict[str, bool]:
+        return {"enabled": self._enabled}
 
 
 class _CleanupSchedulerProbe:
