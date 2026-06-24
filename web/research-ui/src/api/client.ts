@@ -23,10 +23,14 @@ import type {
   DeleteSavedReportsOutput,
   GetReportChartEvidenceOutput,
   GetReportCleanupSettingsOutput,
+  GetSelectionAutoRefreshSettingsOutput,
   ListDataSourcesOutput,
+  ListPriceAlertsOutput,
+  ListScheduledReportsOutput,
   ListWorkerChatWorkersOutput,
   ListSavedReportsOutput,
   LoadLlmSettingsOutput,
+  MaintenanceTaskDiagnosticsOutput,
   PriceAlertForUser,
   PriceAlertInput,
   ReportDetailForUser,
@@ -39,6 +43,8 @@ import type {
   SaveChannelConfigViaOpenClawOutput,
   SaveReportCleanupSettingsInput,
   SaveReportCleanupSettingsOutput,
+  SaveSelectionAutoRefreshSettingsInput,
+  SaveSelectionAutoRefreshSettingsOutput,
   SaveEmbeddingConfigViaOpenVikingInput,
   SaveEmbeddingConfigViaOpenVikingOutput,
   SaveDataSourceInstanceInput,
@@ -296,8 +302,19 @@ export function getReportCleanupSettings() {
   return requestJson<GetReportCleanupSettingsOutput>('/api/ui/get-report-cleanup-settings');
 }
 
+export function getSelectionAutoRefreshSettings() {
+  return requestJson<GetSelectionAutoRefreshSettingsOutput>('/api/ui/get-selection-auto-refresh-settings');
+}
+
 export function saveReportCleanupSettings(input: SaveReportCleanupSettingsInput) {
   return requestJson<SaveReportCleanupSettingsOutput>('/api/ui/save-report-cleanup-settings', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function saveSelectionAutoRefreshSettings(input: SaveSelectionAutoRefreshSettingsInput) {
+  return requestJson<SaveSelectionAutoRefreshSettingsOutput>('/api/ui/save-selection-auto-refresh-settings', {
     method: 'POST',
     body: JSON.stringify(input),
   });
@@ -400,6 +417,10 @@ export function createScheduledReport(input: ScheduledReportInput) {
   });
 }
 
+export function listScheduledReports() {
+  return requestJson<ListScheduledReportsOutput>('/api/ui/list-scheduled-reports');
+}
+
 export function pauseScheduledReport(requestId: string, scheduledReportId: string) {
   return requestJson<ScheduledReportForUser>('/api/ui/pause-scheduled-report', {
     method: 'POST',
@@ -435,6 +456,10 @@ export function createPriceAlert(input: PriceAlertInput) {
   });
 }
 
+export function listPriceAlerts() {
+  return requestJson<ListPriceAlertsOutput>('/api/ui/list-price-alerts');
+}
+
 export function pausePriceAlert(requestId: string, priceAlertId: string) {
   return requestJson<PriceAlertForUser>('/api/ui/pause-price-alert', {
     method: 'POST',
@@ -461,4 +486,8 @@ export function runPriceAlertNow(requestId: string, priceAlertId: string) {
     method: 'POST',
     body: JSON.stringify({ requestId, priceAlertId }),
   });
+}
+
+export function getMaintenanceTaskDiagnostics() {
+  return requestJson<MaintenanceTaskDiagnosticsOutput>('/api/ui/get-maintenance-task-diagnostics');
 }

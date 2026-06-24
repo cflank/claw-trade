@@ -23,6 +23,10 @@ function reportCleanupJson(reportRetentionDays: 7 | 14 | 30 = 7) {
   return json({ reportCleanup: { reportRetentionDays } });
 }
 
+function selectionAutoRefreshJson(enabled = true) {
+  return json({ selectionAutoRefresh: { enabled } });
+}
+
 describe('settings-wechat settings page', () => {
   const originalFetch = globalThis.fetch;
   const originalConfirm = window.confirm;
@@ -66,8 +70,12 @@ describe('settings-wechat settings page', () => {
   it('renders separate report model and embedding sections', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson(14);
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -211,8 +219,12 @@ describe('settings-wechat settings page', () => {
   it('shows report model defaults before slow saved settings load finishes', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/load-llm-settings')) {
         return new Promise<Response>(() => undefined);
@@ -263,8 +275,12 @@ describe('settings-wechat settings page', () => {
   it('does not invent data source defaults before slow saved settings load finishes', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/list-data-sources')) {
         return new Promise<Response>(() => undefined);
@@ -316,8 +332,12 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
-        return reportCleanupJson(30);
+        return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -411,6 +431,7 @@ describe('settings-wechat settings page', () => {
             qrCodeRefreshRequired: true,
           },
           reportCleanup: { reportRetentionDays: 7 },
+          selectionAutoRefresh: { enabled: true },
         });
       }
       return json({});
@@ -432,6 +453,8 @@ describe('settings-wechat settings page', () => {
     expect(window.confirm).toHaveBeenCalledTimes(1);
     const cleanupSection = screen.getByTestId('settings-section-report-cleanup');
     expect(within(cleanupSection).getByLabelText('报告保留时间')).toHaveValue('7');
+    const selectionAutoRefreshSection = screen.getByTestId('settings-section-selection-auto-refresh');
+    expect(within(selectionAutoRefreshSection).getByRole('checkbox', { name: /自动刷新选股数据/ })).toBeChecked();
     fireEvent.click(screen.getByRole('tab', { name: '模型' }));
     const modelSection = screen.getByRole('heading', { name: '报告模型' }).closest('section') as HTMLElement;
     expect(within(modelSection).getAllByText('未配置').length).toBeGreaterThanOrEqual(1);
@@ -444,8 +467,12 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         const refreshed = url.includes('refreshQr=true');
@@ -516,8 +543,12 @@ describe('settings-wechat settings page', () => {
     let testCalls = 0;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -607,8 +638,12 @@ describe('settings-wechat settings page', () => {
   it('keeps model surfaces free of forbidden setting terms in visible UI text', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -665,8 +700,12 @@ describe('settings-wechat settings page', () => {
     vi.useFakeTimers();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         if (!url.includes('refreshQr=true')) {
@@ -750,8 +789,12 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       seenUrls.push(url);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         channelStatusCalls += 1;
@@ -840,8 +883,12 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -918,11 +965,18 @@ describe('settings-wechat settings page', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       calls.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
       }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
+      }
       if (url.includes('/api/ui/save-report-cleanup-settings')) {
         return json({ reportCleanup: { reportRetentionDays: 30 } });
+      }
+      if (url.includes('/api/ui/save-selection-auto-refresh-settings')) {
+        return json({ selectionAutoRefresh: { enabled: false } });
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -1106,13 +1160,26 @@ describe('settings-wechat settings page', () => {
     expect(await screen.findByText('报告保留时间已保存。')).toBeInTheDocument();
     const cleanupSave = calls.find((call) => call.url.includes('/api/ui/save-report-cleanup-settings'));
     expect(cleanupSave?.body).toContain('"reportRetentionDays":30');
+
+    const selectionAutoRefreshSection = screen.getByTestId('settings-section-selection-auto-refresh');
+    fireEvent.click(within(selectionAutoRefreshSection).getByRole('checkbox', { name: /自动刷新选股数据/ }));
+    fireEvent.click(within(selectionAutoRefreshSection).getByRole('button', { name: '保存选股刷新设置' }));
+    expect(await screen.findByText('选股刷新设置已保存。')).toBeInTheDocument();
+    const selectionAutoRefreshSave = calls.find((call) =>
+      call.url.includes('/api/ui/save-selection-auto-refresh-settings'),
+    );
+    expect(selectionAutoRefreshSave?.body).toContain('"enabled":false');
   });
 
   it('settings-embedding shows optional embedding guidance without runtime internals', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -1187,8 +1254,12 @@ describe('settings-wechat settings page', () => {
   it('keeps channel and data source settings visible when model loading fails', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
@@ -1239,8 +1310,12 @@ describe('settings-wechat settings page', () => {
     vi.useFakeTimers();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
       }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({

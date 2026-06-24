@@ -122,4 +122,111 @@ describe('RightRail channel state text', () => {
 
     expect(onCancelSelection).toHaveBeenCalledWith(expect.objectContaining({ workflowRunId: 'select-run-1' }));
   });
+
+  it('shows scheduled report management controls and cron evidence', () => {
+    const onScheduledReportAction = vi.fn();
+
+    render(
+      <RightRail
+        queue={EMPTY_QUEUE}
+        detail={null}
+        channel={null}
+        latestReport={null}
+        scheduledReports={[
+          {
+            scheduledReportId: 'schedule-1',
+            instrumentCode: '600519.SH',
+            instrumentName: '贵州茅台',
+            market: 'CN_A',
+            frequency: 'daily',
+            timeOfDay: '08:00',
+            weekday: null,
+            notification: { channel: 'in_app', enabled: true },
+            state: 'active',
+            nextRunAt: '2026-06-25T00:00:00Z',
+            cronJobId: 'cron-job-1',
+            lastCronRunId: 'cron-run-1',
+            lastRunTaskId: 'task-1',
+          },
+        ]}
+        onScheduledReportAction={onScheduledReportAction}
+      />,
+    );
+
+    expect(screen.getByText('定时报表管理')).toBeInTheDocument();
+    expect(screen.getByText('600519.SH')).toBeInTheDocument();
+    expect(screen.getByText('最近运行：task-1')).toBeInTheDocument();
+    expect(screen.getByText('cron：cron-job-1 / cron-run-1')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '暂停' }));
+    fireEvent.click(screen.getByRole('button', { name: '手动运行' }));
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+
+    expect(onScheduledReportAction).toHaveBeenNthCalledWith(1, 'pause', 'schedule-1');
+    expect(onScheduledReportAction).toHaveBeenNthCalledWith(2, 'run', 'schedule-1');
+    expect(onScheduledReportAction).toHaveBeenNthCalledWith(3, 'delete', 'schedule-1');
+  });
+
+  it('shows price alert management controls and scan evidence', () => {
+    const onPriceAlertAction = vi.fn();
+
+    render(
+      <RightRail
+        queue={EMPTY_QUEUE}
+        detail={null}
+        channel={null}
+        latestReport={null}
+        priceAlerts={[
+          {
+            priceAlertId: 'alert-1',
+            instrumentCode: 'BTC/USDT',
+            instrumentName: 'Bitcoin',
+            market: 'CRYPTO',
+            condition: { type: 'price_threshold', operator: 'above', value: 70000, window: null },
+            notification: { channel: 'in_app', enabled: true },
+            state: 'active',
+            lastCheckedAt: '2026-06-24T12:00:00Z',
+            triggeredAt: null,
+            lastErrorMessage: null,
+            scanBucket: 'CRYPTO:3m',
+            lastScanRunId: 'scan-1',
+            lastQuote: { currentPrice: 71000 },
+            notificationDedupeKey: 'dedupe-1',
+          },
+          {
+            priceAlertId: 'alert-2',
+            instrumentCode: 'ETH/USDT',
+            instrumentName: 'Ethereum',
+            market: 'CRYPTO',
+            condition: { type: 'price_threshold', operator: 'below', value: 2500, window: null },
+            notification: { channel: 'in_app', enabled: true },
+            state: 'paused',
+            lastCheckedAt: null,
+            triggeredAt: null,
+            lastErrorMessage: null,
+            scanBucket: 'CRYPTO:3m',
+            lastScanRunId: null,
+            lastQuote: null,
+            notificationDedupeKey: null,
+          },
+        ]}
+        onPriceAlertAction={onPriceAlertAction}
+      />,
+    );
+
+    expect(screen.getByText('价格提醒管理')).toBeInTheDocument();
+    expect(screen.getByText('BTC/USDT')).toBeInTheDocument();
+    expect(screen.getByText('最近报价：71000')).toBeInTheDocument();
+    expect(screen.getByText('扫描：CRYPTO:3m / scan-1')).toBeInTheDocument();
+    expect(screen.getByText('扫描结果：已扫描')).toBeInTheDocument();
+    expect(screen.getByText('扫描结果：已跳过：paused')).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: '暂停' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: '立即检查' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0]);
+
+    expect(onPriceAlertAction).toHaveBeenNthCalledWith(1, 'pause', 'alert-1');
+    expect(onPriceAlertAction).toHaveBeenNthCalledWith(2, 'check', 'alert-1');
+    expect(onPriceAlertAction).toHaveBeenNthCalledWith(3, 'delete', 'alert-1');
+  });
 });

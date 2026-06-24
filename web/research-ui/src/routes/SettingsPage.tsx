@@ -6,6 +6,7 @@ import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   getChannelStatus,
   getReportCleanupSettings,
+  getSelectionAutoRefreshSettings,
   listDataSources,
   loadLlmSettings,
   resetSettingsToDefaults,
@@ -13,6 +14,7 @@ import {
   saveDataSourceInstance,
   saveEmbeddingConfig,
   saveReportCleanupSettings,
+  saveSelectionAutoRefreshSettings,
   saveReportModelConfig,
   testDataSource,
   testEmbeddingConnection,
@@ -23,6 +25,7 @@ import {
   type LlmConfigDraft,
   type ReportCleanupSettingsForUser,
   type ReportRetentionDays,
+  type SelectionAutoRefreshSettingsForUser,
 } from '../api/workspace';
 
 type SectionErrors = {
@@ -31,6 +34,7 @@ type SectionErrors = {
   embedding?: string;
   dataSources?: string;
   reportCleanup?: string;
+  selectionAutoRefresh?: string;
   reset?: string;
 };
 
@@ -64,6 +68,7 @@ const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
   },
 });
 const DEFAULT_REPORT_CLEANUP: ReportCleanupSettingsForUser = { reportRetentionDays: 7 };
+const DEFAULT_SELECTION_AUTO_REFRESH: SelectionAutoRefreshSettingsForUser = { enabled: true };
 
 function currentEmbeddingDraft(draft: LlmConfigDraft): NonNullable<LlmConfigDraft['embedding']> {
   return (
@@ -184,6 +189,9 @@ export function SettingsPage() {
   const [reportCleanup, setReportCleanup] = useState<ReportCleanupSettingsForUser>(
     DEFAULT_REPORT_CLEANUP,
   );
+  const [selectionAutoRefresh, setSelectionAutoRefresh] = useState<SelectionAutoRefreshSettingsForUser>(
+    DEFAULT_SELECTION_AUTO_REFRESH,
+  );
   const [loading, setLoading] = useState(true);
   const [sectionErrors, setSectionErrors] = useState<SectionErrors>({});
   const [channelActionBusy, setChannelActionBusy] = useState(false);
@@ -197,6 +205,8 @@ export function SettingsPage() {
   const [dataSourceActionMessage, setDataSourceActionMessage] = useState('');
   const [cleanupActionBusy, setCleanupActionBusy] = useState(false);
   const [cleanupActionMessage, setCleanupActionMessage] = useState('');
+  const [selectionAutoRefreshActionBusy, setSelectionAutoRefreshActionBusy] = useState(false);
+  const [selectionAutoRefreshActionMessage, setSelectionAutoRefreshActionMessage] = useState('');
   const [resetActionBusy, setResetActionBusy] = useState(false);
   const [resetActionMessage, setResetActionMessage] = useState('');
   const autoQrRequestedRef = useRef(false);
@@ -211,7 +221,7 @@ export function SettingsPage() {
       setDataSourceActionMessage('');
       setCleanupActionMessage('');
       setResetActionMessage('');
-      let pending = 4;
+      let pending = 5;
       const finishOne = () => {
         pending -= 1;
         if (active && pending <= 0) {
@@ -280,6 +290,24 @@ export function SettingsPage() {
             setSectionErrors((current) => ({
               ...current,
               reportCleanup: (loadError as Error).message,
+            }));
+          }
+        })
+        .finally(finishOne);
+      void withSettingsTimeout(
+        getSelectionAutoRefreshSettings(),
+        '选股刷新设置暂不可用，请稍后重试。',
+      )
+        .then((result) => {
+          if (active) {
+            setSelectionAutoRefresh(result.selectionAutoRefresh ?? DEFAULT_SELECTION_AUTO_REFRESH);
+          }
+        })
+        .catch((loadError) => {
+          if (active) {
+            setSectionErrors((current) => ({
+              ...current,
+              selectionAutoRefresh: (loadError as Error).message,
             }));
           }
         })
@@ -628,9 +656,33 @@ export function SettingsPage() {
     }
   }
 
+  async function saveSelectionAutoRefresh() {
+    setSelectionAutoRefreshActionBusy(true);
+    setSelectionAutoRefreshActionMessage('');
+    setSectionErrors((current) => ({ ...current, selectionAutoRefresh: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        saveSelectionAutoRefreshSettings({
+          requestId: `selection-auto-refresh-save-${Date.now()}`,
+          enabled: selectionAutoRefresh.enabled,
+        }),
+        '选股刷新设置暂不可保存，请稍后重试。',
+      );
+      setSelectionAutoRefresh(result.selectionAutoRefresh ?? DEFAULT_SELECTION_AUTO_REFRESH);
+      setSelectionAutoRefreshActionMessage('选股刷新设置已保存。');
+    } catch (saveError) {
+      setSectionErrors((current) => ({
+        ...current,
+        selectionAutoRefresh: (saveError as Error).message,
+      }));
+    } finally {
+      setSelectionAutoRefreshActionBusy(false);
+    }
+  }
+
   async function resetSettings() {
     const confirmed = window.confirm(
-      '恢复默认设置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间和微信通知连接设置，但不会删除历史报告。确定继续吗？',
+      '恢复默认设置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间、选股刷新和微信通知连接设置，但不会删除历史报告。确定继续吗？',
     );
     if (!confirmed) {
       return;
@@ -650,12 +702,14 @@ export function SettingsPage() {
       setDataSources(result.dataSources.instances);
       setDataSourceDraft(createDataSourceDraft(result.dataSources.instances[0]));
       setReportCleanup(result.reportCleanup);
+      setSelectionAutoRefresh(result.selectionAutoRefresh ?? DEFAULT_SELECTION_AUTO_REFRESH);
       setEmbeddingActionMessage('');
       setEmbeddingActionOk(false);
       setLlmActionMessage('');
       setDataSourceActionMessage('');
       setChannelActionMessage('');
       setCleanupActionMessage('');
+      setSelectionAutoRefreshActionMessage('');
       setResetActionMessage(result.userMessage);
     } catch (resetError) {
       setSectionErrors((current) => ({ ...current, reset: (resetError as Error).message }));
@@ -680,6 +734,7 @@ export function SettingsPage() {
           dataSources={dataSources}
           dataSourceDraft={dataSourceDraft}
           reportCleanup={reportCleanup}
+          selectionAutoRefreshEnabled={selectionAutoRefresh.enabled ?? true}
           sectionErrors={sectionErrors}
           channelActionBusy={channelActionBusy}
           channelActionMessage={channelActionMessage}
@@ -692,6 +747,8 @@ export function SettingsPage() {
           dataSourceActionMessage={dataSourceActionMessage}
           cleanupActionBusy={cleanupActionBusy}
           cleanupActionMessage={cleanupActionMessage}
+          selectionAutoRefreshActionBusy={selectionAutoRefreshActionBusy}
+          selectionAutoRefreshActionMessage={selectionAutoRefreshActionMessage}
           resetActionBusy={resetActionBusy}
           resetActionMessage={resetActionMessage}
           onReconnectChannel={reconnectChannel}
@@ -718,6 +775,8 @@ export function SettingsPage() {
             setReportCleanup({ reportRetentionDays })
           }
           onSaveReportCleanup={saveReportCleanup}
+          onSelectionAutoRefreshChange={(enabled: boolean) => setSelectionAutoRefresh({ enabled })}
+          onSaveSelectionAutoRefresh={saveSelectionAutoRefresh}
           onResetSettings={resetSettings}
         />
       </div>

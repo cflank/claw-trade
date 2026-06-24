@@ -219,6 +219,7 @@ export function SettingsSections({
   dataSources,
   dataSourceDraft,
   reportCleanup,
+  selectionAutoRefreshEnabled,
   sectionErrors,
   channelActionBusy,
   channelActionMessage,
@@ -231,6 +232,8 @@ export function SettingsSections({
   dataSourceActionMessage,
   cleanupActionBusy,
   cleanupActionMessage,
+  selectionAutoRefreshActionBusy,
+  selectionAutoRefreshActionMessage,
   resetActionBusy,
   resetActionMessage,
   onReconnectChannel,
@@ -249,6 +252,8 @@ export function SettingsSections({
   onTestDataSource,
   onReportCleanupChange,
   onSaveReportCleanup,
+  onSelectionAutoRefreshChange,
+  onSaveSelectionAutoRefresh,
   onResetSettings,
 }: {
   channel: ChannelStatusForUser | null;
@@ -256,12 +261,14 @@ export function SettingsSections({
   dataSources: DataSourceInstanceForUser[];
   dataSourceDraft: DataSourceInstanceDraftInput;
   reportCleanup: ReportCleanupSettingsForUser;
+  selectionAutoRefreshEnabled: boolean;
   sectionErrors: {
     channel?: string;
     llm?: string;
     embedding?: string;
     dataSources?: string;
     reportCleanup?: string;
+    selectionAutoRefresh?: string;
     reset?: string;
   };
   channelActionBusy: boolean;
@@ -275,6 +282,8 @@ export function SettingsSections({
   dataSourceActionMessage: string;
   cleanupActionBusy: boolean;
   cleanupActionMessage: string;
+  selectionAutoRefreshActionBusy: boolean;
+  selectionAutoRefreshActionMessage: string;
   resetActionBusy: boolean;
   resetActionMessage: string;
   onReconnectChannel: () => void;
@@ -293,6 +302,8 @@ export function SettingsSections({
   onTestDataSource: () => void;
   onReportCleanupChange: (reportRetentionDays: ReportRetentionDays) => void;
   onSaveReportCleanup: () => void;
+  onSelectionAutoRefreshChange: (enabled: boolean) => void;
+  onSaveSelectionAutoRefresh: () => void;
   onResetSettings: () => void;
 }) {
   const embedding = embeddingDraft(llm);
@@ -691,6 +702,38 @@ export function SettingsSections({
         </div>
         {cleanupActionMessage ? <div className="ct-inline-alert is-success">{cleanupActionMessage}</div> : null}
         {sectionErrors.reportCleanup ? <div className="ct-inline-alert is-error">{sectionErrors.reportCleanup}</div> : null}
+      </section>
+
+      <section className="ct-settings-section" data-testid="settings-section-selection-auto-refresh">
+        <div className="ct-section-head">
+          <h2>选股数据自动刷新</h2>
+        </div>
+        <p className="ct-section-desc">开启后启动时检查一次，服务持续运行时每天检查；关闭后只在 /select 缺数据时补。</p>
+        <label className="ct-check-row">
+          <span>启用开关</span>
+          <input
+            type="checkbox"
+            checked={selectionAutoRefreshEnabled}
+            onChange={(event) => onSelectionAutoRefreshChange(event.target.checked)}
+          />
+          <span>自动刷新选股数据</span>
+        </label>
+        <div className="ct-button-row ct-settings-actions">
+          <button
+            type="button"
+            className="ct-button ct-button-secondary"
+            onClick={onSaveSelectionAutoRefresh}
+            disabled={selectionAutoRefreshActionBusy}
+          >
+            {selectionAutoRefreshActionBusy ? '保存中...' : '保存选股刷新设置'}
+          </button>
+        </div>
+        {selectionAutoRefreshActionMessage ? (
+          <div className="ct-inline-alert is-success">{selectionAutoRefreshActionMessage}</div>
+        ) : null}
+        {sectionErrors.selectionAutoRefresh ? (
+          <div className="ct-inline-alert is-error">{sectionErrors.selectionAutoRefresh}</div>
+        ) : null}
       </section>
 
       <section className="ct-settings-section" data-testid="settings-section-wechat">

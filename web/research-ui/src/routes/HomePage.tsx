@@ -25,9 +25,19 @@ import {
   getReportDetail,
   getReportQueueSnapshot,
   getSelectionRefreshSnapshot,
+  listPriceAlerts,
   listSavedReports,
+  listScheduledReports,
   listWorkerChatWorkers,
   loadLlmSettings,
+  pausePriceAlert,
+  pauseScheduledReport,
+  resumePriceAlert,
+  resumeScheduledReport,
+  deletePriceAlert,
+  deleteScheduledReport,
+  runPriceAlertNow,
+  runScheduledReportNow,
   sendChatMessage,
   sendReportFileViaChannel,
   sendWorkerChat,
@@ -42,9 +52,11 @@ import {
   type ReportQueueSnapshotForUser,
   type ReportTaskForUser,
   type SavedReportForUser,
+  type ScheduledReportForUser,
   type SelectionProgressForUser,
   type SelectionReportForUser,
   type SendChatMessageOutput,
+  type PriceAlertForUser,
   type WorkerChatWorkerForUser,
 } from '../api/workspace';
 
@@ -193,7 +205,7 @@ function selectionReportStartedMessage(ticker: string, reportTaskId?: string | n
 }
 
 function isExplicitSelectCommand(text: string) {
-  return /^\s*\/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
+  return /^\s*\/select(?:\s+(?:refresh|刷新))?(?:\s+(?:1|2|cn_a|a|a股|crypto|加密))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
 }
 
 function isWorkspaceCommand(text: string) {
@@ -404,7 +416,7 @@ function attachSelectionMetadata(
   }
   let attached = false;
   return [...messages].reverse().map((message) => {
-    if (!attached && (message.kind === 'selection_result' || message.kind === 'selection_unavailable')) {
+    if (!attached && (message.kind === 'selection_result' || message.kind === 'selection_failed' || message.kind === 'selection_unavailable')) {
       attached = true;
       return { ...message, selection };
     }
@@ -503,6 +515,8 @@ export function HomePage() {
   );
   const [queueSnapshot, setQueueSnapshot] = useState<ReportQueueSnapshotForUser>(DEFAULT_QUEUE);
   const [savedReports, setSavedReports] = useState<SavedReportForUser[]>([]);
+  const [scheduledReports, setScheduledReports] = useState<ScheduledReportForUser[]>([]);
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlertForUser[]>([]);
   const [channelStatus, setChannelStatus] = useState<ChannelStatusForUser | null>(null);
   const [activeDetail, setActiveDetail] = useState<ReportDetailForUser | null>(null);
   const [activeSelectionDetail, setActiveSelectionDetail] = useState<SelectionReportForUser | null>(null);
@@ -596,8 +610,9 @@ export function HomePage() {
     if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
       return;
     }
+    const snapshotMessages = snapshot.messages;
     setContext(snapshot.context);
-    setMessages((current) => mergeLocalWorkerChatMessages(current, snapshot.messages, localWorkerChatMessageIdsRef.current));
+    setMessages((current) => mergeLocalWorkerChatMessages(current, snapshotMessages, localWorkerChatMessageIdsRef.current));
     if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
@@ -635,6 +650,8 @@ export function HomePage() {
         channelChatResult,
         selectionRefreshResult,
         workerChatResult,
+        scheduledReportsResult,
+        priceAlertsResult,
       ] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
@@ -645,9 +662,13 @@ export function HomePage() {
         listWorkerChatWorkers()
           .then((result) => ({ workers: result.workers, failed: false }))
           .catch(() => ({ workers: [], failed: true })),
+        listScheduledReports().catch(() => ({ items: [] })),
+        listPriceAlerts().catch(() => ({ items: [] })),
       ]);
       const workers = Array.isArray(workerChatResult.workers) ? workerChatResult.workers : [];
       setSavedReports(historyResult.items);
+      setScheduledReports(scheduledReportsResult.items);
+      setPriceAlerts(priceAlertsResult.items);
       setWorkerChatWorkers(workers);
       setWorkerChatUnavailableMessage(
         workers.length > 0 ? '' : workerChatResult.failed ? WORKER_CHAT_LOAD_FAILED_MESSAGE : WORKER_CHAT_UNAVAILABLE_MESSAGE,
@@ -705,14 +726,26 @@ export function HomePage() {
     }
     try {
       const shouldLoadCurrentChat = context.kind !== 'normal_chat';
-      const [historyResult, queueResult, channelChatResult, selectionRefreshResult, currentChatResult] = await Promise.all([
+      const [
+        historyResult,
+        queueResult,
+        channelChatResult,
+        selectionRefreshResult,
+        currentChatResult,
+        scheduledReportsResult,
+        priceAlertsResult,
+      ] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
         shouldLoadCurrentChat ? getChatSession(context.contextId).catch(() => null) : Promise.resolve(null),
+        listScheduledReports().catch(() => ({ items: [] })),
+        listPriceAlerts().catch(() => ({ items: [] })),
       ]);
       setSavedReports(historyResult.items);
+      setScheduledReports(scheduledReportsResult.items);
+      setPriceAlerts(priceAlertsResult.items);
       applyQueueSnapshot(queueResult);
       if (currentChatResult?.messages?.length) {
         applyChatSessionSnapshot(currentChatResult);
@@ -756,6 +789,53 @@ export function HomePage() {
     }, refreshIntervalMs);
     return () => window.clearInterval(timer);
   }, [messages, refreshWorkspace, sending]);
+
+  const handleScheduledReportAction = useCallback(
+    async (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => {
+      setError('');
+      try {
+        const requestId = nextRequestId();
+        if (action === 'pause') {
+          await pauseScheduledReport(requestId, scheduledReportId);
+        } else if (action === 'resume') {
+          await resumeScheduledReport(requestId, scheduledReportId);
+        } else if (action === 'delete') {
+          await deleteScheduledReport(requestId, scheduledReportId);
+        } else {
+          const result = await runScheduledReportNow(requestId, scheduledReportId);
+          if (result.queueSnapshot) {
+            applyQueueSnapshot(result.queueSnapshot);
+          }
+        }
+        await refreshWorkspace();
+      } catch (actionError) {
+        setError((actionError as Error).message);
+      }
+    },
+    [applyQueueSnapshot, refreshWorkspace],
+  );
+
+  const handlePriceAlertAction = useCallback(
+    async (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => {
+      setError('');
+      try {
+        const requestId = nextRequestId();
+        if (action === 'pause') {
+          await pausePriceAlert(requestId, priceAlertId);
+        } else if (action === 'resume') {
+          await resumePriceAlert(requestId, priceAlertId);
+        } else if (action === 'delete') {
+          await deletePriceAlert(requestId, priceAlertId);
+        } else {
+          await runPriceAlertNow(requestId, priceAlertId);
+        }
+        await refreshWorkspace();
+      } catch (actionError) {
+        setError((actionError as Error).message);
+      }
+    },
+    [refreshWorkspace],
+  );
 
   const openReport = useCallback(async (report: SavedReportForUser) => {
     setError('');
@@ -1162,16 +1242,17 @@ export function HomePage() {
           selectionRequestInFlightRef.current = false;
           setSelectionProgress(null);
         }
+        const failureMessage = (sendError as Error).message?.trim() || pendingLocalFailureText;
         const failedLocalRequestId = pendingLocalRequestId;
         if (failedLocalRequestId) {
           setMessages((current) =>
-            replaceLocalPendingAssistantMessage(current, failedLocalRequestId, pendingLocalFailureText),
+            replaceLocalPendingAssistantMessage(current, failedLocalRequestId, failureMessage),
           );
         }
         if (!pendingLocalIsWorker) {
           localWorkerChatMessagesRef.current = false;
         }
-        setError((sendError as Error).message);
+        setError(failureMessage);
       } finally {
         setSending(false);
         setPendingChatCommand(null);
@@ -1681,6 +1762,8 @@ export function HomePage() {
           queue={queueSnapshot}
           detail={activeDetail}
           selectionProgress={selectionProgress}
+          scheduledReports={scheduledReports}
+          priceAlerts={priceAlerts}
           channel={channelStatus}
           latestReport={savedReports[0] ?? null}
           onPrintReport={activeDetail ? printReportAsPdf : undefined}
@@ -1688,6 +1771,8 @@ export function HomePage() {
           cancellingTaskId={cancellingTaskId}
           onCancelSelection={cancelSelection}
           cancellingSelectionId={cancellingSelectionId}
+          onScheduledReportAction={handleScheduledReportAction}
+          onPriceAlertAction={handlePriceAlertAction}
         />
       </main>
     </AppShell>

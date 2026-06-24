@@ -18,6 +18,7 @@ const KIND_LABEL: Record<ChatMessageForUser['kind'], string> = {
   report_failed: '报告失败',
   selection_result: '选股结果',
   selection_refreshing: '选股刷新',
+  selection_failed: '选股失败',
   selection_unavailable: '选股不可用',
   price_alert: '价格提醒',
   file_send_failed: '发送失败',
@@ -74,29 +75,42 @@ function isSelectionCandidateLine(line: string) {
 }
 
 function parseConfirmableSelectionTickers(text: string) {
-  const tickers: Array<{ ticker: string; label: string }> = [];
-  let inEnterReport = false;
+  const tickers: Array<{ ticker: string; label: string; source: 'enter_report' | 'watch' }> = [];
+  const seen = new Set<string>();
+  let activeSection: 'enter_report' | 'watch' | null = null;
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     const heading = line.replace(/^[#>*\-\s]+/, '').replace(/[：:]/g, '').replace(/\s+/g, '').toLowerCase();
     if (heading === '进入`/report`' || heading === '进入/report' || heading === '进入报告') {
-      inEnterReport = true;
+      activeSection = 'enter_report';
       continue;
     }
-    if (heading === '观察' || heading === '放弃') {
-      inEnterReport = false;
+    if (heading === '观察') {
+      activeSection = 'watch';
       continue;
     }
-    if (!inEnterReport) {
+    if (heading === '放弃') {
+      activeSection = null;
+      continue;
+    }
+    if (!activeSection) {
       continue;
     }
     const cleaned = line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
-    const match = cleaned.match(/^([A-Za-z0-9./_-]+)\s+([^：:|｜]+)?/);
+    const match = cleaned.match(/^([A-Za-z0-9./_-]+)\s+([^：:|｜、，,;；]+)?/);
     if (!match || match[1] === '无') {
       continue;
     }
     const ticker = match[1].toUpperCase();
-    tickers.push({ ticker, label: match[2]?.trim() ? `${ticker} ${match[2].trim()}` : ticker });
+    if (seen.has(ticker)) {
+      continue;
+    }
+    seen.add(ticker);
+    tickers.push({
+      ticker,
+      label: match[2]?.trim() ? `${ticker} ${match[2].trim()}` : ticker,
+      source: activeSection,
+    });
   }
   return tickers;
 }
@@ -117,7 +131,7 @@ function SelectionResultCard({
   const hasReport = Boolean(item.selection?.readerReportMarkdown?.trim());
   const confirmable = item.kind === 'selection_result' && workflowRunId ? parseConfirmableSelectionTickers(safeText) : [];
   return (
-    <section className={`ct-selection-card ${item.kind === 'selection_unavailable' ? 'is-unavailable' : ''}`}>
+    <section className={`ct-selection-card ${item.kind !== 'selection_result' ? 'is-unavailable' : ''}`}>
       <div className="ct-selection-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{safeText}</ReactMarkdown>
       </div>
@@ -144,7 +158,11 @@ function SelectionResultCard({
                 disabled={busy}
                 onClick={() => onConfirmSelectionCandidate?.(item, candidate.ticker)}
               >
-                {busy ? '确认中' : `确认进入 /report：${candidate.label}`}
+                {busy
+                  ? '确认中'
+                  : candidate.source === 'watch'
+                    ? `从观察组生成 /report：${candidate.label}`
+                    : `确认进入 /report：${candidate.label}`}
               </button>
             );
           })}
@@ -266,7 +284,7 @@ function MessageBody({
   if (item.kind === 'report_completed' && item.reportId) {
     return <ReportSummaryCard summary={item.text} reportId={item.reportId} onOpenReport={onOpenReport} />;
   }
-  if (item.kind === 'selection_result' || item.kind === 'selection_unavailable') {
+  if (item.kind === 'selection_result' || item.kind === 'selection_failed' || item.kind === 'selection_unavailable') {
     return (
       <SelectionResultCard
         item={item}

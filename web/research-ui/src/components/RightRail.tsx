@@ -1,10 +1,12 @@
 import type {
   ChannelStatusForUser,
+  PriceAlertForUser,
   PdfExportForUser,
   ReportDetailForUser,
   ReportQueueSnapshotForUser,
   ReportTaskForUser,
   SavedReportForUser,
+  ScheduledReportForUser,
   SelectionProgressForUser,
 } from '../api/contracts';
 
@@ -23,6 +25,39 @@ function formatDate(value?: string | null) {
     return '—';
   }
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
+}
+
+function frequencyLabel(item: ScheduledReportForUser) {
+  if (item.frequency === 'weekly') {
+    return `每周 ${item.weekday ?? '—'} ${item.timeOfDay}`;
+  }
+  return `每天 ${item.timeOfDay}`;
+}
+
+function conditionLabel(alert: PriceAlertForUser) {
+  const operator = {
+    above: '高于',
+    below: '低于',
+    up_by: '上涨超过',
+    down_by: '下跌超过',
+  }[alert.condition.operator];
+  const suffix = alert.condition.type === 'percent_change' ? '%' : '';
+  return `${operator} ${alert.condition.value}${suffix}`;
+}
+
+function quoteLabel(alert: PriceAlertForUser) {
+  const price = alert.lastQuote?.currentPrice;
+  if (price === undefined || price === null || price === '') {
+    return '暂无报价';
+  }
+  return `${price}`;
+}
+
+function scanResultLabel(alert: PriceAlertForUser) {
+  if (alert.state === 'paused' || alert.state === 'closed' || alert.state === 'deleted') {
+    return `已跳过：${alert.state}`;
+  }
+  return alert.lastScanRunId ? '已扫描' : '等待扫描';
 }
 
 function inferPdf(detail: ReportDetailForUser): PdfExportForUser {
@@ -177,6 +212,118 @@ function TaskBlock({
   );
 }
 
+function ScheduledReportsBlock({
+  items,
+  onAction,
+}: {
+  items: ScheduledReportForUser[];
+  onAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
+}) {
+  return (
+    <section className="ct-right-section" data-testid="right-rail-scheduled-reports-section">
+      <h2>定时报表管理</h2>
+      {items.map((item) => (
+        <article key={item.scheduledReportId} className="ct-task-item">
+          <div className="ct-task-head">
+            <strong>{item.instrumentCode}</strong>
+            <span>{item.state}</span>
+          </div>
+          <div className="ct-task-meta">
+            <span>{item.market}</span>
+            <span>{frequencyLabel(item)}</span>
+          </div>
+          <div className="ct-task-list-line">
+            <span>最近运行：{item.lastRunTaskId ?? '暂无'}</span>
+          </div>
+          <div className="ct-task-list-line">
+            <span>cron：{item.cronJobId ?? '未同步'} / {item.lastCronRunId ?? '暂无 wake'}</span>
+          </div>
+          <div className="ct-small">{item.syncErrorMessage ?? `下次运行：${formatDate(item.nextRunAt)}`}</div>
+          {onAction && item.state !== 'deleted' ? (
+            <div className="ct-inline-actions">
+              {item.state === 'paused' ? (
+                <button type="button" className="ct-text-button" onClick={() => onAction('resume', item.scheduledReportId)}>
+                  恢复
+                </button>
+              ) : (
+                <button type="button" className="ct-text-button" onClick={() => onAction('pause', item.scheduledReportId)}>
+                  暂停
+                </button>
+              )}
+              <button type="button" className="ct-text-button" onClick={() => onAction('run', item.scheduledReportId)}>
+                手动运行
+              </button>
+              <button type="button" className="ct-text-button" onClick={() => onAction('delete', item.scheduledReportId)}>
+                删除
+              </button>
+            </div>
+          ) : null}
+        </article>
+      ))}
+      {items.length === 0 ? <p className="ct-empty">暂无定时报表</p> : null}
+    </section>
+  );
+}
+
+function PriceAlertsBlock({
+  items,
+  onAction,
+}: {
+  items: PriceAlertForUser[];
+  onAction?: (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => void;
+}) {
+  return (
+    <section className="ct-right-section" data-testid="right-rail-price-alerts-section">
+      <h2>价格提醒管理</h2>
+      {items.map((alert) => (
+        <article key={alert.priceAlertId} className="ct-task-item">
+          <div className="ct-task-head">
+            <strong>{alert.instrumentCode}</strong>
+            <span>{alert.state}</span>
+          </div>
+          <div className="ct-task-meta">
+            <span>{alert.market}</span>
+            <span>{conditionLabel(alert)}</span>
+          </div>
+          <div className="ct-task-list-line">
+            <span>最近报价：{quoteLabel(alert)}</span>
+          </div>
+          <div className="ct-task-list-line">
+            <span>最近检查：{formatDate(alert.lastCheckedAt)}</span>
+          </div>
+          <div className="ct-task-list-line">
+            <span>扫描：{alert.scanBucket ?? '未分桶'} / {alert.lastScanRunId ?? '暂无'}</span>
+          </div>
+          <div className="ct-task-list-line">
+            <span>扫描结果：{scanResultLabel(alert)}</span>
+          </div>
+          <div className="ct-small">{alert.lastErrorMessage ?? `通知：${alert.notificationDedupeKey ?? '暂无结果'}`}</div>
+          {onAction && alert.state !== 'deleted' && alert.state !== 'closed' ? (
+            <div className="ct-inline-actions">
+              {alert.state === 'paused' ? (
+                <button type="button" className="ct-text-button" onClick={() => onAction('resume', alert.priceAlertId)}>
+                  恢复
+                </button>
+              ) : (
+                <button type="button" className="ct-text-button" onClick={() => onAction('pause', alert.priceAlertId)}>
+                  暂停
+                </button>
+              )}
+              <button type="button" className="ct-text-button" onClick={() => onAction('check', alert.priceAlertId)}>
+                立即检查
+              </button>
+              <button type="button" className="ct-text-button" onClick={() => onAction('delete', alert.priceAlertId)}>
+                删除
+              </button>
+            </div>
+          ) : null}
+        </article>
+      ))}
+      {items.length === 0 ? <p className="ct-empty">暂无价格提醒</p> : null}
+    </section>
+  );
+}
+
 function ReportBlock({ detail, onPrintReport }: { detail: ReportDetailForUser; onPrintReport?: () => void }) {
   const pdf = inferPdf(detail);
 
@@ -276,6 +423,8 @@ export function RightRail({
   queue,
   detail,
   selectionProgress,
+  scheduledReports,
+  priceAlerts,
   channel,
   latestReport,
   onPrintReport,
@@ -283,10 +432,14 @@ export function RightRail({
   cancellingTaskId,
   onCancelSelection,
   cancellingSelectionId,
+  onScheduledReportAction,
+  onPriceAlertAction,
 }: {
   queue: ReportQueueSnapshotForUser;
   detail: ReportDetailForUser | null;
   selectionProgress?: SelectionProgressForUser | null;
+  scheduledReports?: ScheduledReportForUser[];
+  priceAlerts?: PriceAlertForUser[];
   channel: ChannelStatusForUser | null;
   latestReport: SavedReportForUser | null;
   onPrintReport?: () => void;
@@ -294,6 +447,8 @@ export function RightRail({
   cancellingTaskId?: string | null;
   onCancelSelection?: (progress: SelectionProgressForUser) => void;
   cancellingSelectionId?: string | null;
+  onScheduledReportAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
+  onPriceAlertAction?: (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => void;
 }) {
   return (
     <aside className="ct-panel ct-right" data-testid="right-rail">
@@ -308,6 +463,8 @@ export function RightRail({
             onCancelSelection={onCancelSelection}
             cancellingSelectionId={cancellingSelectionId}
           />
+          <ScheduledReportsBlock items={scheduledReports ?? []} onAction={onScheduledReportAction} />
+          <PriceAlertsBlock items={priceAlerts ?? []} onAction={onPriceAlertAction} />
         </>
       )}
       {!detail ? <ChatSummaryBlock channel={channel} latestReport={latestReport} /> : null}

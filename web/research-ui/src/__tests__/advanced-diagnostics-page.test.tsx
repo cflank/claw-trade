@@ -82,6 +82,45 @@ describe('advanced diagnostics page', () => {
           recommendedAction: '保持当前配置；后续若出现失败再回到高级诊断复查。',
         });
       }
+      if (url.includes('/api/ui/get-maintenance-task-diagnostics')) {
+        return json({
+          checkedAt: '2026-06-24T12:00:00Z',
+          selectionRefresh: [
+            {
+              kind: 'selection_data_refresh',
+              market: 'CN_A',
+              status: 'completed',
+              runId: 'select-run-1',
+              lastResult: '数据已准备',
+              failureReason: null,
+            },
+          ],
+          scheduledReportWakes: [
+            {
+              kind: 'scheduled_report',
+              scheduledReportId: 'schedule-1',
+              cronRunId: 'cron-run-2',
+              status: 'ok',
+              deduped: true,
+              skipped: true,
+              lastRunTaskId: 'task-1',
+            },
+          ],
+          priceAlertScanBuckets: [
+            {
+              bucketKey: 'CRYPTO:3m',
+              market: 'CRYPTO',
+              frequency: '3m',
+              enabled: true,
+              lastScanRunId: 'scan-1',
+              lastErrorMessage: null,
+              skippedReason: null,
+            },
+          ],
+          dataMaintenance: [{ kind: 'data_maintenance', market: 'CN_A', jobKind: 'eod', status: 'ok', maintenanceJobId: 'job-1' }],
+          reportCleanup: { kind: 'report_cleanup', status: 'ok', runId: 'cleanup-1' },
+        });
+      }
       return json({});
     }) as typeof fetch;
 
@@ -104,6 +143,13 @@ describe('advanced diagnostics page', () => {
     expect(screen.getByTestId('live-run-gap-status-label')).toHaveTextContent('健康');
     expect(screen.getByTestId('evidence-failure-message')).toHaveTextContent('最近 live run 未发现证据链失败。');
     expect(screen.getByTestId('evidence-failure-status-label')).toHaveTextContent('健康');
+    expect(screen.getByTestId('maintenance-selection-refresh')).toHaveTextContent('CN_A: completed / select-run-1');
+    expect(screen.getByTestId('maintenance-scheduled-report-wake')).toHaveTextContent(
+      'schedule-1: ok / cron-run-2 / 已去重 / 已跳过 / task-1',
+    );
+    expect(screen.getByTestId('maintenance-price-scan')).toHaveTextContent('CRYPTO:3m: 启用 / scan-1');
+    expect(screen.getByTestId('maintenance-data-jobs')).toHaveTextContent('CN_A:eod / ok / job-1');
+    expect(screen.getByTestId('maintenance-report-cleanup')).toHaveTextContent('ok / cleanup-1');
   });
 
   it('does not show provider attempt or raw request details even if endpoint returns them', async () => {
@@ -161,6 +207,15 @@ describe('advanced diagnostics page', () => {
             entryPoint: 'report_command',
           },
           recommendedAction: 'check URI/hash/L1/L2 raw payload receipt before rerun',
+        });
+      }
+      if (url.includes('/api/ui/get-maintenance-task-diagnostics')) {
+        return json({
+          checkedAt: '2026-06-24T12:00:00Z',
+          selectionRefresh: [],
+          priceAlertScanBuckets: [],
+          dataMaintenance: [],
+          reportCleanup: { kind: 'report_cleanup', status: 'not_run', runId: null },
         });
       }
       return json({

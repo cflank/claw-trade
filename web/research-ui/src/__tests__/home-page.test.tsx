@@ -1610,7 +1610,7 @@ describe('home page', () => {
 
   it('renders normal chat replies from the send response without polling while sending', async () => {
     const intervalDelays: number[] = [];
-    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0], timeout?: number) => {
+    vi.spyOn(window, 'setInterval').mockImplementation(((_handler: Parameters<typeof window.setInterval>[0], timeout?: number) => {
       intervalDelays.push(Number(timeout));
       return 1;
     }) as typeof window.setInterval);
@@ -1866,6 +1866,33 @@ describe('home page', () => {
       text: '/select',
     });
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('shows backend input errors in the chat bubble for invalid select commands', async () => {
+    const mocked = mockWorkspaceFetch({
+      selectSendResponse: Promise.resolve(
+        new Response(JSON.stringify({ code: 'INVALID_INPUT', message: '请输入完整的 /select 指令。' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/select US' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: '/select US' });
+    expect(await screen.findAllByText('请输入完整的 /select 指令。')).not.toHaveLength(0);
+    expect(screen.queryByText('回复失败，请稍后重试。')).not.toBeInTheDocument();
   });
 
   it('sends leading worker mentions to that worker', async () => {
@@ -2830,6 +2857,7 @@ describe('home page', () => {
       expect(screen.getAllByText(message).length).toBeGreaterThan(0);
     });
     expect(mocked.getSendReportFileBodies()).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '转发 茅台投研报告' })).toBeEnabled();
   });
 
   it('deletes only searched reports from history', async () => {

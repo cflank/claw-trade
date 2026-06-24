@@ -3,22 +3,25 @@ import { AppShell } from '../components/AppShell';
 import {
   getAdvancedDiagnosticsEvidenceFailureReasonSummary,
   getAdvancedDiagnosticsLiveRunGapSummary,
+  getMaintenanceTaskDiagnostics,
   getAdvancedDiagnosticsProviderHealth,
   getAdvancedDiagnosticsRuntimeServiceStatus,
   type AdvancedDiagnosticsEvidenceFailureReasonSummaryOutput,
   type AdvancedDiagnosticsLiveRunGapSummaryOutput,
+  type MaintenanceTaskDiagnosticsOutput,
   type AdvancedDiagnosticsProviderHealthOutput,
   type AdvancedDiagnosticsRuntimeServiceStatusOutput,
 } from '../api/workspace';
 
 type DiagnosticsState =
-  | { loading: true; provider: null; runtime: null; liveRun: null; evidence: null; error: '' }
+  | { loading: true; provider: null; runtime: null; liveRun: null; evidence: null; maintenance: null; error: '' }
   | {
       loading: false;
       provider: AdvancedDiagnosticsProviderHealthOutput | null;
       runtime: AdvancedDiagnosticsRuntimeServiceStatusOutput | null;
       liveRun: AdvancedDiagnosticsLiveRunGapSummaryOutput | null;
       evidence: AdvancedDiagnosticsEvidenceFailureReasonSummaryOutput | null;
+      maintenance: MaintenanceTaskDiagnosticsOutput | null;
       error: string;
     };
 
@@ -143,6 +146,7 @@ export function AdvancedDiagnosticsPage() {
     runtime: null,
     liveRun: null,
     evidence: null,
+    maintenance: null,
     error: '',
   });
 
@@ -153,8 +157,9 @@ export function AdvancedDiagnosticsPage() {
       getAdvancedDiagnosticsRuntimeServiceStatus(),
       getAdvancedDiagnosticsLiveRunGapSummary(),
       getAdvancedDiagnosticsEvidenceFailureReasonSummary(),
+      getMaintenanceTaskDiagnostics(),
     ])
-      .then(([providerData, runtimeData, liveRunData, evidenceData]) => {
+      .then(([providerData, runtimeData, liveRunData, evidenceData, maintenanceData]) => {
         if (!active) {
           return;
         }
@@ -174,6 +179,7 @@ export function AdvancedDiagnosticsPage() {
             userMessage: sanitizeEvidenceFailureMessage(evidenceData.userMessage),
             recommendedAction: sanitizeEvidenceFailureAction(evidenceData.recommendedAction),
           },
+          maintenance: maintenanceData,
           error: '',
         });
       })
@@ -187,6 +193,7 @@ export function AdvancedDiagnosticsPage() {
           runtime: null,
           liveRun: null,
           evidence: null,
+          maintenance: null,
           error: (error as Error).message || FALLBACK_MESSAGE,
         });
       });
@@ -345,6 +352,77 @@ export function AdvancedDiagnosticsPage() {
           <div className="ct-kv">
             <span>检查时间</span>
             <span>{state.evidence?.checkedAt ?? '—'}</span>
+          </div>
+          <div className="ct-kv">
+            <span>诊断项</span>
+            <span>维护任务明细</span>
+          </div>
+          <div className="ct-kv">
+            <span>selection 刷新</span>
+            <span data-testid="maintenance-selection-refresh">
+              {(state.maintenance?.selectionRefresh ?? [])
+                .map((item) => `${item.market}: ${item.status} / ${item.runId ?? '暂无 run'}${item.failureReason ? ` / ${item.failureReason}` : ''}`)
+                .join('；') || '—'}
+            </span>
+          </div>
+          <div className="ct-kv">
+            <span>定时报表 wake</span>
+            <span data-testid="maintenance-scheduled-report-wake">
+              {(state.maintenance?.scheduledReportWakes ?? []).length
+                ? (state.maintenance?.scheduledReportWakes ?? [])
+                    .map(
+                      (item) =>
+                        `${String(item.scheduledReportId ?? '未知计划')}: ${String(item.status ?? 'unknown')} / ${String(
+                          item.cronRunId ?? '暂无 cron',
+                        )}${item.deduped ? ' / 已去重' : ''}${item.skipped ? ' / 已跳过' : ''}${
+                          item.lastRunTaskId ? ` / ${String(item.lastRunTaskId)}` : ''
+                        }`,
+                    )
+                    .join('；')
+                : '暂无定时报表 wake'}
+            </span>
+          </div>
+          <div className="ct-kv">
+            <span>价格扫描 bucket</span>
+            <span data-testid="maintenance-price-scan">
+              {(state.maintenance?.priceAlertScanBuckets ?? []).length
+                ? (state.maintenance?.priceAlertScanBuckets ?? [])
+                    .map(
+                      (bucket) =>
+                        `${bucket.bucketKey}: ${bucket.enabled ? '启用' : '跳过'} / ${bucket.lastScanRunId ?? '暂无扫描'}${
+                          bucket.lastErrorMessage ? ` / ${bucket.lastErrorMessage}` : ''
+                        }${bucket.skippedReason ? ` / ${bucket.skippedReason}` : ''}`,
+                    )
+                    .join('；')
+                : '暂无扫描 bucket'}
+            </span>
+          </div>
+          <div className="ct-kv">
+            <span>数据维护</span>
+            <span data-testid="maintenance-data-jobs">
+              {(state.maintenance?.dataMaintenance ?? []).length
+                ? (state.maintenance?.dataMaintenance ?? [])
+                    .map(
+                      (item) =>
+                        `${String(item.market ?? '未知市场')}:${String(item.jobKind ?? '未知作业')} / ${String(item.status ?? 'unknown')} / ${String(
+                          item.maintenanceJobId ?? item.cronRunId ?? '暂无 run',
+                        )}`,
+                    )
+                    .join('；')
+                : '暂无数据维护运行记录'}
+            </span>
+          </div>
+          <div className="ct-kv">
+            <span>报告清理</span>
+            <span data-testid="maintenance-report-cleanup">
+              {state.maintenance?.reportCleanup
+                ? `${String(state.maintenance.reportCleanup.status ?? 'unknown')} / ${String(state.maintenance.reportCleanup.runId ?? '暂无 run')}${
+                    state.maintenance.reportCleanup.error
+                      ? ` / ${String((state.maintenance.reportCleanup.error as { message?: unknown }).message ?? '')}`
+                      : ''
+                  }`
+                : '—'}
+            </span>
           </div>
           {state.error ? <div className="ct-notice ct-notice-error">{state.error}</div> : null}
         </section>

@@ -99,6 +99,7 @@ describe('settings-css-sections', () => {
           }))}
         dataSourceDraft={dataSourceDraft}
         reportCleanup={reportCleanup}
+        selectionAutoRefreshEnabled
         sectionErrors={{}}
         channelActionBusy={false}
         channelActionMessage=""
@@ -111,6 +112,8 @@ describe('settings-css-sections', () => {
         dataSourceActionMessage=""
         cleanupActionBusy={false}
         cleanupActionMessage=""
+        selectionAutoRefreshActionBusy={false}
+        selectionAutoRefreshActionMessage=""
         resetActionBusy={false}
         resetActionMessage=""
         onReconnectChannel={noop}
@@ -128,6 +131,8 @@ describe('settings-css-sections', () => {
         onTestDataSource={noop}
         onReportCleanupChange={noop}
         onSaveReportCleanup={noop}
+        onSelectionAutoRefreshChange={noop}
+        onSaveSelectionAutoRefresh={noop}
         onResetSettings={noop}
       />,
     );

@@ -26,6 +26,7 @@ export type ChatMessageKind =
   | 'report_failed'
   | 'selection_result'
   | 'selection_refreshing'
+  | 'selection_failed'
   | 'selection_unavailable'
   | 'price_alert'
   | 'file_send_failed';
@@ -258,6 +259,11 @@ export interface ScheduledReportForUser {
   notification: { channel: 'wechat_clawbot' | 'in_app'; enabled: boolean };
   state: 'draft' | 'active' | 'due' | 'enqueued' | 'paused' | 'deleted';
   nextRunAt?: string | null;
+  lastRunTaskId?: string | null;
+  cronJobId?: string | null;
+  lastCronRunId?: string | null;
+  syncErrorMessage?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface PriceAlertForUser {
@@ -276,6 +282,57 @@ export interface PriceAlertForUser {
   lastCheckedAt?: string | null;
   triggeredAt?: string | null;
   lastErrorMessage?: string | null;
+  scanBucket?: string | null;
+  lastQuote?: {
+    currentPrice?: number | string | null;
+    percentChange?: number | string | null;
+    percentChange24h?: number | string | null;
+    percentChangeIntraday?: number | string | null;
+    quoteTimestamp?: string | null;
+    evidenceRef?: string | null;
+  } | null;
+  lastQuoteEvidenceRef?: string | null;
+  lastScanRunId?: string | null;
+  notificationDedupeKey?: string | null;
+  lastNotificationResult?: Record<string, unknown> | null;
+  updatedAt?: string | null;
+}
+
+export interface ListScheduledReportsOutput {
+  items: ScheduledReportForUser[];
+}
+
+export interface ListPriceAlertsOutput {
+  items: PriceAlertForUser[];
+}
+
+export interface MaintenanceTaskDiagnosticsOutput {
+  checkedAt: string;
+  selectionRefresh: Array<{
+    kind: 'selection_data_refresh';
+    market: MarketProfile;
+    status: string;
+    runId?: string | null;
+    lastResult?: string | null;
+    failureReason?: string | null;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+  }>;
+  scheduledReportWakes?: Array<Record<string, unknown>>;
+  priceAlertScanBuckets: Array<{
+    bucketKey: string;
+    market: MarketProfile;
+    frequency: string;
+    enabled: boolean;
+    cronJobId?: string | null;
+    lastScanRunId?: string | null;
+    lastScanSummary?: Record<string, unknown> | null;
+    lastErrorMessage?: string | null;
+    skippedReason?: string | null;
+    updatedAt?: string | null;
+  }>;
+  dataMaintenance: Array<Record<string, unknown>>;
+  reportCleanup: Record<string, unknown>;
 }
 
 export interface DataSourceInstanceForUser {
@@ -588,8 +645,16 @@ export interface ReportCleanupSettingsForUser {
   reportRetentionDays: ReportRetentionDays;
 }
 
+export interface SelectionAutoRefreshSettingsForUser {
+  enabled: boolean;
+}
+
 export interface GetReportCleanupSettingsOutput {
   reportCleanup: ReportCleanupSettingsForUser;
+}
+
+export interface GetSelectionAutoRefreshSettingsOutput {
+  selectionAutoRefresh: SelectionAutoRefreshSettingsForUser;
 }
 
 export interface SaveReportCleanupSettingsInput {
@@ -597,8 +662,17 @@ export interface SaveReportCleanupSettingsInput {
   reportRetentionDays: ReportRetentionDays;
 }
 
+export interface SaveSelectionAutoRefreshSettingsInput {
+  requestId: string;
+  enabled: boolean;
+}
+
 export interface SaveReportCleanupSettingsOutput {
   reportCleanup: ReportCleanupSettingsForUser;
+}
+
+export interface SaveSelectionAutoRefreshSettingsOutput {
+  selectionAutoRefresh: SelectionAutoRefreshSettingsForUser;
 }
 
 export interface GetReportChartEvidenceOutput {
@@ -700,6 +774,7 @@ export interface ResetSettingsToDefaultsOutput {
   };
   channel: ChannelStatusForUser;
   reportCleanup: ReportCleanupSettingsForUser;
+  selectionAutoRefresh: SelectionAutoRefreshSettingsForUser;
 }
 
 export interface AdvancedDiagnosticsProviderHealthOutput {

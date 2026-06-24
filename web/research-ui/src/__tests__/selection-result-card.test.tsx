@@ -3,15 +3,15 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { MessageStream } from '../components/MessageStream';
 import type { ChatMessageForUser } from '../api/contracts';
 
-function selectionMessage(text: string): ChatMessageForUser {
+function selectionMessage(text: string, kind: ChatMessageForUser['kind'] = 'selection_result'): ChatMessageForUser {
   return {
     messageId: 'selection-message-1',
     contextKind: 'normal_chat',
     actor: 'system',
-    kind: 'selection_result',
+    kind,
     text,
     selection: {
-      code: 'completed',
+      code: kind === 'selection_failed' ? 'failed' : 'completed',
       workflowRunId: 'select-workflow-1',
       evidencePath: 'runs/selection/workflows/select-workflow-1/selection-workflow-evidence.json',
       readerReportMarkdown: '# 选股结果报告\n\n## 候选事实表\n\n| 排名 | 股票代码 | 股票名称 | 总分 |\n| --- | --- | --- | ---: |\n| 1 | 600519.SH | 贵州茅台 | 91 |',
@@ -89,6 +89,18 @@ raw payload: hidden`),
     expect(bodyText).not.toContain('raw payload');
   });
 
+  it('labels failed select results as failed instead of unavailable', () => {
+    render(
+      <MessageStream
+        items={[selectionMessage('`/select` 执行失败，本轮结果未生效，请稍后重试。', 'selection_failed')]}
+      />,
+    );
+
+    expect(screen.getByText((content) => content.includes('选股失败'))).toBeInTheDocument();
+    expect(screen.queryByText((content) => content.includes('选股不可用'))).not.toBeInTheDocument();
+    expect(document.body).toHaveTextContent('/select 执行失败，本轮结果未生效，请稍后重试。');
+  });
+
   it('calls confirmation only from an explicit candidate button click', () => {
     const onConfirmSelectionCandidate = vi.fn();
     const item = selectionMessage(`进入 \`/report\`：
@@ -106,5 +118,23 @@ raw payload: hidden`),
     fireEvent.click(screen.getByRole('button', { name: '确认进入 /report：600519.SH 贵州茅台' }));
 
     expect(onConfirmSelectionCandidate).toHaveBeenCalledWith(item, '600519.SH');
+  });
+
+  it('allows generating report from watch candidates when enter-report list is empty', () => {
+    const onConfirmSelectionCandidate = vi.fn();
+    const item = selectionMessage(`进入 \`/report\`：
+- 无
+
+观察：
+- 000001.SZ 平安银行：继续观察，允许手动发起正式报告。
+
+放弃：
+- 无`);
+
+    render(<MessageStream items={[item]} onConfirmSelectionCandidate={onConfirmSelectionCandidate} />);
+
+    fireEvent.click(screen.getByRole('button', { name: '从观察组生成 /report：000001.SZ 平安银行' }));
+
+    expect(onConfirmSelectionCandidate).toHaveBeenCalledWith(item, '000001.SZ');
   });
 });

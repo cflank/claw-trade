@@ -28,6 +28,9 @@ describe('settings forbidden surface', () => {
       if (url.includes('/api/ui/get-report-cleanup-settings')) {
         return json({ reportCleanup: { reportRetentionDays: 7 } });
       }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return json({ selectionAutoRefresh: { enabled: true } });
+      }
       if (url.includes('/api/ui/get-channel-status')) {
         return json({
           channelKind: 'wechat_clawbot',

@@ -1403,6 +1403,12 @@ body {
   margin-top: 8px;
 }
 
+.ct-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .ct-task-stop-button {
   border-color: var(--ct-danger-border);
   color: var(--ct-danger);
