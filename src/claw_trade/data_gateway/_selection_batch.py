@@ -839,7 +839,6 @@ def _crypto_seed_feature_rows(
         )
     trade_day = date.fromisoformat(plan.trade_date)
     history_start = _selection_history_start_date(plan=plan)
-    required_history_days = max(121 if plan.market == SelectionMarket.CRYPTO else _MIN_HISTORY_DAYS, int(plan.lookback_trading_days or 0))
     documents = _read_crypto_seed_daily_documents(root=root, start=history_start, end=trade_day)
     if not documents:
         latest = _latest_crypto_seed_trade_date(root=root)
@@ -880,7 +879,7 @@ def _crypto_seed_feature_rows(
             for mapped in (_history_row(row) for row in history_source)
             if mapped is not None and (_parse_date(mapped.get("date")) or trade_day) <= trade_day
         )
-        if len(history) < required_history_days:
+        if not history:
             dropped.append(ticker)
             continue
         latest_history_date = _parse_date(history[-1].get("date"))
@@ -914,8 +913,8 @@ def _crypto_seed_feature_rows(
                 gap_id=f"{plan.selection_run_id}-crypto-seed-rows-dropped",
                 gap_code="crypto_seed_rows_dropped",
                 attempt_refs=attempt_refs,
-                reader_message=f"CRYPTO seed 读取中部分交易对历史不足或特征不可用，已剔除。count={len(dropped)}。",
-                source_metadata={"tickers_sample": tuple(dropped[:20]), "required_history_days": required_history_days},
+                reader_message=f"CRYPTO seed 读取中部分交易对没有可用最新日线或特征不可用，已剔除。count={len(dropped)}。",
+                source_metadata={"tickers_sample": tuple(dropped[:20])},
             )
         )
     manifest_ref: str | None = None

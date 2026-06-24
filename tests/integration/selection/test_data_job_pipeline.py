@@ -240,7 +240,7 @@ def test_data_job_crypto_reads_seed_columnar_history(
         market=SelectionMarket.CRYPTO,
         profile=SelectionProfile.CRYPTO,
         trade_date="2026-06-06",
-        lookback_trading_days=121,
+        lookback_trading_days=260,
         universe_scope="spot_usdt",
         data_need_audit_ref="plan://crypto-seed-columnar-2026-06-06",
         approved_strategy_config_ref=CRYPTO_SELECTION_STRATEGY_CONFIG_REF,
@@ -261,6 +261,7 @@ def test_data_job_crypto_reads_seed_columnar_history(
     assert payload["market"] == "CRYPTO"
     assert payload["candidate_cache_manifest"]["candidate_count"] == 20
     assert payload["candidate_cache_manifest"]["strategy_config_version"] == CRYPTO_SELECTION_V1_STRATEGY_CONFIG_VERSION
+    assert "crypto_seed_rows_dropped" not in {gap["gap_code"] for gap in payload["data_gaps"]}
     assert payload["provider_attempt_refs"][0].startswith(
         "attempt:local_crypto_prepackaged:binance_public_data_import:"
     )
