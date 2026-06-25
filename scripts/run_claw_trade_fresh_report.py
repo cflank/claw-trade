@@ -17,25 +17,11 @@ from claw_trade.cli.run_control import _build_runner, _data_gateway_mode_from_en
 from claw_trade.config.report_workflow_settings import load_report_workflow_settings
 from claw_trade.workflow.models import RunStatus
 from claw_trade.workflow.report_request_factory import build_report_run_request
+from claw_trade.workflow.workers import worker_ids
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "docs" / "evidence"
-
-WORKER_ORDER = (
-    "market_analyst",
-    "fundamental_analyst",
-    "news_analyst",
-    "social_analyst",
-    "bull_researcher",
-    "bear_researcher",
-    "research_manager",
-    "trader",
-    "risk_challenger",
-    "risk_guardian",
-    "risk_moderator",
-    "portfolio_manager",
-    "report_polisher",
-)
+WORKER_ORDER = tuple(worker_ids())
 
 
 @dataclass(frozen=True)

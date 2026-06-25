@@ -361,14 +361,15 @@ def approved_stage_turn_count(manifest: ApprovedManifest, stage: Stage, run_id: 
 
 def next_investment_debate_worker(state: WorkflowState, manifest: ApprovedManifest) -> str | None:
     turn_index = approved_stage_turn_count(manifest=manifest, stage=Stage.INVESTMENT_DEBATE, run_id=state.run_id)
-    if turn_index >= 2 * state.request.max_debate_rounds:
+    workers = _plan_for_state(state=state, stage=Stage.INVESTMENT_DEBATE).workers
+    if turn_index >= len(workers) * state.request.max_debate_rounds:
         return None
-    return ("bull_researcher", "bear_researcher")[turn_index % 2]
+    return workers[turn_index % len(workers)]
 
 
 def wake_investment_debate_worker(state: WorkflowState, worker_id: str, turn_index: int) -> Decision:
     plan = stage_plan(Stage.INVESTMENT_DEBATE)
-    round_index = (turn_index // 2) + 1
+    round_index = (turn_index // len(plan.workers)) + 1
     return Decision(
         kind=DecisionKind.WAKE_STAGE,
         stage=Stage.INVESTMENT_DEBATE,
@@ -389,14 +390,15 @@ def wake_investment_debate_worker(state: WorkflowState, worker_id: str, turn_ind
 
 def next_risk_debate_worker(state: WorkflowState, manifest: ApprovedManifest) -> str | None:
     turn_index = approved_stage_turn_count(manifest=manifest, stage=Stage.RISK_DEBATE, run_id=state.run_id)
-    if turn_index >= 3 * state.request.max_risk_discuss_rounds:
+    workers = _plan_for_state(state=state, stage=Stage.RISK_DEBATE).workers
+    if turn_index >= len(workers) * state.request.max_risk_discuss_rounds:
         return None
-    return ("risk_challenger", "risk_guardian", "risk_moderator")[turn_index % 3]
+    return workers[turn_index % len(workers)]
 
 
 def wake_risk_debate_worker(state: WorkflowState, worker_id: str, turn_index: int) -> Decision:
     plan = stage_plan(Stage.RISK_DEBATE)
-    round_index = (turn_index // 3) + 1
+    round_index = (turn_index // len(plan.workers)) + 1
     return Decision(
         kind=DecisionKind.WAKE_STAGE,
         stage=Stage.RISK_DEBATE,
@@ -425,7 +427,8 @@ def decide_running_investment_debate(
     if succeeded_count > approved_count:
         return Decision(DecisionKind.WAIT, reason="等待 investment_debate current turn approved material")
 
-    total_turns = 2 * state.request.max_debate_rounds
+    workers = _plan_for_state(state=state, stage=Stage.INVESTMENT_DEBATE).workers
+    total_turns = len(workers) * state.request.max_debate_rounds
     if approved_count >= total_turns:
         return Decision(
             kind=DecisionKind.ADVANCE,
@@ -434,7 +437,7 @@ def decide_running_investment_debate(
         )
     if not results and approved_count == 0:
         return Decision(DecisionKind.WAIT, reason="等待 investment_debate turn 0 worker result")
-    worker_id = ("bull_researcher", "bear_researcher")[approved_count % 2]
+    worker_id = workers[approved_count % len(workers)]
     return wake_investment_debate_worker(state=state, worker_id=worker_id, turn_index=approved_count)
 
 
@@ -448,7 +451,8 @@ def decide_running_risk_debate(
     if succeeded_count > approved_count:
         return Decision(DecisionKind.WAIT, reason="等待 risk_debate current turn approved material")
 
-    total_turns = 3 * state.request.max_risk_discuss_rounds
+    workers = _plan_for_state(state=state, stage=Stage.RISK_DEBATE).workers
+    total_turns = len(workers) * state.request.max_risk_discuss_rounds
     if approved_count >= total_turns:
         return Decision(
             kind=DecisionKind.ADVANCE,
@@ -457,7 +461,7 @@ def decide_running_risk_debate(
         )
     if not results and approved_count == 0:
         return Decision(DecisionKind.WAIT, reason="等待 risk_debate turn 0 worker result")
-    worker_id = ("risk_challenger", "risk_guardian", "risk_moderator")[approved_count % 3]
+    worker_id = workers[approved_count % len(workers)]
     return wake_risk_debate_worker(state=state, worker_id=worker_id, turn_index=approved_count)
 
 

@@ -8,6 +8,7 @@ from claw_trade.artifacts.refs import MaterialReadRef, MaterialTarget, OpenVikin
 from claw_trade.guards.common import GuardResult
 from claw_trade.runtime.evidence_reader import OpenClawResult
 from claw_trade.workflow.models import OpenClawCommand, ReadPolicy, Stage, WorkerCall
+from claw_trade.workflow.workers import frontline_workers_for_market
 
 _FRONTLINE_DATA_TOOL = "claw_request_data"
 
@@ -163,15 +164,7 @@ def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, ob
 def _initial_tool_choice_for_call(call: WorkerCall) -> str | None:
     if call.stage != Stage.FRONTLINE:
         return None
-    if call.worker_id not in {
-        "market_analyst",
-        "fundamental_analyst",
-        "news_analyst",
-        "social_analyst",
-        "policy_analyst",
-        "hot_money_tracker",
-        "lockup_watcher",
-    }:
+    if call.worker_id not in frontline_workers_for_market(call.market):
         return None
     if _FRONTLINE_DATA_TOOL not in call.allowed_tools:
         return None

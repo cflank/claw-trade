@@ -62,7 +62,7 @@ from claw_trade.workflow.models import (
     export_result_allows_workflow_completion,
 )
 from claw_trade.workflow.store import WorkflowStore
-from claw_trade.workflow.workers import frontline_workers_for_market
+from claw_trade.workflow.workers import STAGE_PLANS, frontline_workers_for_market
 
 
 class OpenClawClientLike(Protocol):
@@ -1568,17 +1568,10 @@ def _with_prompt_runtime_var(call: WorkerCall, key: str, value: str) -> WorkerCa
 
 
 _REPORT_DATA_EVIDENCE_WORKERS = frozenset(
-    {
-        "bull_researcher",
-        "bear_researcher",
-        "research_manager",
-        "trader",
-        "risk_challenger",
-        "risk_guardian",
-        "risk_moderator",
-        "portfolio_manager",
-        "report_polisher",
-    }
+    worker_id
+    for plan in STAGE_PLANS
+    if plan.stage != Stage.FRONTLINE
+    for worker_id in plan.workers
 )
 
 

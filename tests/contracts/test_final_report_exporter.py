@@ -253,6 +253,20 @@ def test_export_final_report_cn_a_missing_new_frontline_fails(tmp_path: Path) ->
     assert "policy_analyst" in (result.failure.reason or "")
 
 
+def test_cn_a_frontline_extension_appendices_use_reader_titles(tmp_path: Path) -> None:
+    state = _sample_state(tmp_path, run_id="run-cn-a-extension-appendix-title", market="CN_A", profile="CN_A")
+    manifest, reader = _build_manifest_and_reader(state)
+
+    loaded = load_report_materials(state=state, manifest=manifest, openviking=reader)
+    assert loaded.ok
+    appendices = build_worker_appendices(loaded.materials, report_materials=loaded.report_materials)
+
+    titles = {appendix.material.worker_id: appendix.title for appendix in appendices}
+    assert titles["policy_analyst"] == "政策分析"
+    assert titles["hot_money_tracker"] == "游资资金跟踪"
+    assert titles["lockup_watcher"] == "限售筹码观察"
+
+
 def test_export_final_report_records_diagnostic_when_report_polisher_missing_required_sections(tmp_path: Path) -> None:
     state = _sample_state(tmp_path, run_id="run-missing-final-report-sections")
     manifest, reader = _build_manifest_and_reader(state)

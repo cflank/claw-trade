@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from claw_trade.workflow.workers import all_worker_ids
+
 _STAGE_MAP: dict[str, tuple[str, int]] = {
     "frontline_running": ("前线信息采集中", 18),
     "investment_debate_running": ("投资辩论中", 38),
@@ -33,7 +35,9 @@ _ROLE_LABELS = {
     "report_polisher": "报告整理员",
 }
 
-_PRIMARY_WORKER_IDS = tuple(worker_id for worker_id in _ROLE_LABELS if worker_id != "report_polisher")
+_PRIMARY_WORKER_IDS = tuple(
+    worker_id for worker_id in all_worker_ids() if worker_id in _ROLE_LABELS and worker_id != "report_polisher"
+)
 
 _WORKER_STATUS_LABELS = {
     "pending": "等待启动",

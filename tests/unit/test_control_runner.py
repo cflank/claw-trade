@@ -1005,7 +1005,7 @@ def test_risk_workers_receive_report_data_evidence_summary(tmp_path: Path) -> No
         assert "财务指标最新记录" in summary
         assert "EPS 21.76" in summary
         assert "EPS/PE口径" in summary
-        assert "不得直接用季度EPS计算全年、TTM或静态PE" in summary
+        assert "不能冒充静态PE、TTM PE或已确认全年EPS" in summary
         assert "本次调用未注入数据层证据摘要" not in summary
 
 

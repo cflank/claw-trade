@@ -18,41 +18,25 @@ from claw_trade.artifacts.refs import (
     VikingUri,
     validate_viking_uri_shape,
 )
-from claw_trade.workflow.models import Stage, WorkerCall
-from claw_trade.workflow.workers import frontline_workers_for_market
-
-_STAGE_WORKERS: dict[Stage, tuple[str, ...]] = {
-    Stage.FRONTLINE: (
-        "market_analyst",
-        "fundamental_analyst",
-        "news_analyst",
-        "social_analyst",
-    ),
-    Stage.INVESTMENT_DEBATE: ("bull_researcher", "bear_researcher"),
-    Stage.INVESTMENT_DECISION: ("research_manager",),
-    Stage.TRADE_DECISION: ("trader",),
-    Stage.RISK_DEBATE: ("risk_challenger", "risk_guardian", "risk_moderator"),
-    Stage.PORTFOLIO_DECISION: ("portfolio_manager",),
-    Stage.FINAL_REPORT: ("report_polisher",),
-}
+from claw_trade.workflow.models import Stage, StagePlan, WorkerCall
+from claw_trade.workflow.workers import stage_plan_for_market
 
 _DEFAULT_MARKET = "US"
 
 
-def _stage_workers(stage: Stage, market: str | None = None) -> tuple[str, ...]:
-    if stage == Stage.FRONTLINE:
-        return frontline_workers_for_market((market or _DEFAULT_MARKET).upper())
-    return _STAGE_WORKERS[stage]
+def _stage_plan(stage: Stage, market: str | None = None) -> StagePlan:
+    try:
+        return stage_plan_for_market(stage, (market or _DEFAULT_MARKET).upper())
+    except KeyError as exc:
+        raise ArtifactFlowError(f"unknown stage: {stage.value}") from exc
 
-_UPSTREAM_STAGE: dict[Stage, Stage | None] = {
-    Stage.FRONTLINE: None,
-    Stage.INVESTMENT_DEBATE: Stage.FRONTLINE,
-    Stage.INVESTMENT_DECISION: Stage.INVESTMENT_DEBATE,
-    Stage.TRADE_DECISION: Stage.INVESTMENT_DECISION,
-    Stage.RISK_DEBATE: Stage.TRADE_DECISION,
-    Stage.PORTFOLIO_DECISION: Stage.RISK_DEBATE,
-    Stage.FINAL_REPORT: Stage.PORTFOLIO_DECISION,
-}
+
+def _stage_workers(stage: Stage, market: str | None = None) -> tuple[str, ...]:
+    return _stage_plan(stage, market=market).workers
+
+
+def _upstream_stage(stage: Stage, market: str | None = None) -> Stage | None:
+    return _stage_plan(stage, market=market).required_upstream_stage
 
 _ALLOWED_HARD_GATE_CATEGORIES: frozenset[str] = frozenset(
     {
@@ -229,9 +213,7 @@ class ApprovedManifest:
         return len(self.materials_for_stage(stage=stage, run_id=run_id))
 
     def required_workers_for(self, stage: Stage, market: str | None = None) -> tuple[str, ...]:
-        if stage not in _UPSTREAM_STAGE:
-            raise ArtifactFlowError(f"unknown stage: {stage.value}")
-        upstream = _UPSTREAM_STAGE[stage]
+        upstream = _upstream_stage(stage, market=market)
         if upstream is None:
             return ()
         return _stage_workers(upstream, market=market)
@@ -239,8 +221,6 @@ class ApprovedManifest:
     def required_sources_for_worker_call(
         self, stage: Stage, worker_id: str, market: str | None = None
     ) -> tuple[tuple[str, Stage], ...]:
-        if stage not in _STAGE_WORKERS:
-            raise ArtifactFlowError(f"unknown stage: {stage.value}")
         stage_workers = _stage_workers(stage, market=market)
         if worker_id not in stage_workers:
             raise ArtifactFlowError(f"worker 不属于阶段: stage={stage.value} worker={worker_id}")
@@ -281,7 +261,7 @@ class ApprovedManifest:
                 *tuple((item, Stage.RISK_DEBATE) for item in _stage_workers(Stage.RISK_DEBATE)),
                 ("portfolio_manager", Stage.PORTFOLIO_DECISION),
             )
-        upstream = _UPSTREAM_STAGE[stage]
+        upstream = _upstream_stage(stage, market=market)
         if upstream is None:
             return ()
         return tuple((item, upstream) for item in _stage_workers(upstream, market=market))
@@ -304,7 +284,7 @@ class ApprovedManifest:
         required = self.required_workers_for(stage, market=market)
         if not required:
             return ()
-        upstream_stage = _UPSTREAM_STAGE[stage]
+        upstream_stage = _upstream_stage(stage, market=market)
         selected = self._selected_materials_for_workers(
             workers=required,
             upstream_stage=upstream_stage,
@@ -402,8 +382,6 @@ class ApprovedManifest:
         turn_index: int,
         market: str | None,
     ) -> tuple[tuple[ApprovedMaterial, ...], list[str]]:
-        if stage not in _STAGE_WORKERS:
-            raise ArtifactFlowError(f"unknown stage: {stage.value}")
         stage_workers = _stage_workers(stage, market=market)
         if worker_id not in stage_workers:
             raise ArtifactFlowError(f"worker 不属于阶段: stage={stage.value} worker={worker_id}")
@@ -511,7 +489,7 @@ class ApprovedManifest:
                     missing.append(f"{required_worker}@{Stage.RISK_DEBATE.value}")
             return frontline + debate + manager + trader + risk + portfolio, missing
 
-        upstream = _UPSTREAM_STAGE[stage]
+        upstream = _upstream_stage(stage, market=market)
         if upstream is None:
             return (), []
         required = _stage_workers(upstream, market=market)
