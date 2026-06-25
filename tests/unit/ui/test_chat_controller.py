@@ -196,12 +196,28 @@ def test_select_command_failed_result_uses_failed_message_kind() -> None:
     assert workflow_runner.calls == 0
 
 
-def test_invalid_select_command_returns_readable_input_error_without_chat_fallback() -> None:
+def test_unsupported_select_market_returns_visible_message_without_chat_fallback() -> None:
     controller, transport, workflow_runner = _build_controller()
 
     result = controller.send_chat_message(request_id="req-select-us", context_id="ctx-select-us", text="/select US")
 
-    assert result["error"] == {"code": "INVALID_INPUT", "message": "请输入完整的 /select 指令。"}
+    assert "error" not in result
+    assert result["selection"]["code"] == "unavailable"
+    assert result["selection"]["unavailableCode"] == "select_market_unsupported"
+    assert result["messages"][-1]["kind"] == "selection_unavailable"
+    assert result["messages"][-1]["text"] == "`/select` 当前暂不支持该市场。"
+    assert transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+def test_unsupported_select_number_returns_visible_message_without_chat_fallback() -> None:
+    controller, transport, workflow_runner = _build_controller()
+
+    result = controller.send_chat_message(request_id="req-select-3", context_id="ctx-select-3", text="/select 3")
+
+    assert "error" not in result
+    assert result["selection"]["unavailableCode"] == "select_market_unsupported"
+    assert result["messages"][-1]["text"] == "`/select` 当前暂不支持该市场。"
     assert transport.calls == 0
     assert workflow_runner.calls == 0
 

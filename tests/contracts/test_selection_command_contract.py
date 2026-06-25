@@ -68,6 +68,8 @@ def _controller() -> ChatController:
         ("/select CRYPTO", SelectionMarket.CRYPTO, False),
         ("/select crypto", SelectionMarket.CRYPTO, False),
         ("/select 加密", SelectionMarket.CRYPTO, False),
+        ("/select US", SelectionMarket.US, False),
+        ("/select 3", SelectionMarket.US, False),
         ("/select refresh", SelectionMarket.CN_A, True),
         ("/select 1 refresh", SelectionMarket.CN_A, True),
         ("/select 2 refresh", SelectionMarket.CRYPTO, True),
@@ -101,8 +103,8 @@ def test_select_command_parser_keeps_legacy_date_form() -> None:
     assert request.trade_date == "2026-05-26"
 
 
-@pytest.mark.parametrize("text", ("/select US", "/select 3", "/select refresh 2", "/select refresh CRYPTO"))
-def test_select_command_rejects_unsupported_market_tokens(text: str) -> None:
+@pytest.mark.parametrize("text", ("/select refresh 2", "/select refresh CRYPTO"))
+def test_select_command_rejects_invalid_refresh_order(text: str) -> None:
     with pytest.raises(ValueError, match="invalid_select_command"):
         _parse_select_request(
             raw_text=text,

@@ -476,6 +476,24 @@ class SelectionController:
         )
 
         try:
+            if request.market not in {SelectionMarket.CN_A, SelectionMarket.CRYPTO}:
+                payload = _base_workflow_evidence_payload(
+                    request=request,
+                    workflow_run_id=workflow_run_id,
+                    status=SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED.value,
+                    selection_run_id=None,
+                    reason=SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED.value,
+                )
+                evidence_path = _write_selection_workflow_evidence(
+                    evidence_dir=evidence_dir, payload=payload
+                )
+                return SelectCommandResult(
+                    code=SelectCommandCode.UNAVAILABLE,
+                    chat_text=_unavailable_chat_text(SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED),
+                    select_workflow_run_id=workflow_run_id,
+                    evidence_path=evidence_path,
+                    unavailable_code=SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED,
+                )
             if request.force_refresh:
                 payload = _base_workflow_evidence_payload(
                     request=request,
@@ -1201,6 +1219,10 @@ def _select_market_from_token(token: str) -> SelectionMarket | None:
         return SelectionMarket.CN_A
     if normalized in {"2", "crypto"} or token == "加密":
         return SelectionMarket.CRYPTO
+    if normalized in {"3", "us"}:
+        return SelectionMarket.US
+    if normalized == "hk" or token == "港股":
+        return SelectionMarket.HK
     return None
 
 
