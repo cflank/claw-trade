@@ -28,6 +28,13 @@ describe('theme and layout contract', () => {
     expect(css).toMatch(/\.ct-composer\s*{[^}]*flex:\s*0 0 auto;/s);
   });
 
+  it('preserves line breaks in plain chat messages', () => {
+    const file = path.resolve(process.cwd(), 'src/styles.css');
+    const css = fs.readFileSync(file, 'utf8');
+
+    expect(css).toMatch(/\.ct-message-text\s*{[^}]*white-space:\s*pre-wrap;/s);
+  });
+
   it('keeps core workspace labels free of internal forbidden terms', () => {
     const files = [
       'src/routes/HomePage.tsx',

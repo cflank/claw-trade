@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
@@ -74,7 +75,7 @@ def test_create_scheduled_report_registers_openclaw_cron_job() -> None:
     assert fake_gateway.calls[0]["method"] == "cron.add"
     params = fake_gateway.calls[0]["params"]
     assert params["agentId"] == "scheduled_report_runner"
-    assert params["schedule"] == {"kind": "cron", "expr": "30 9 * * *", "tz": "UTC", "staggerMs": 0}
+    assert params["schedule"] == {"kind": "cron", "expr": "30 9 * * *", "tz": "America/New_York", "staggerMs": 0}
     assert params["payload"] == {
         "kind": "toolCall",
         "toolName": "claw-trade-scheduled-work-wake",
@@ -110,7 +111,7 @@ def test_create_weekly_scheduled_report_maps_python_weekday_to_cron_weekday() ->
     assert fake_gateway.calls[0]["params"]["schedule"] == {
         "kind": "cron",
         "expr": "30 9 * * 1",
-        "tz": "UTC",
+        "tz": "America/New_York",
         "staggerMs": 0,
     }
 
@@ -344,6 +345,99 @@ def test_create_scheduled_report_supports_daily_and_weekly_with_request_id_idemp
     )
     assert weekly.scheduledReportId == "schedule-2"
     assert weekly.weekday == 2
+
+
+def test_daily_scheduled_report_within_four_hours_replaces_existing_and_updates_cron() -> None:
+    store = InMemoryScheduledWorkStore()
+    fake_gateway = _FakeCronGateway()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=store,
+        now_provider=_fixed_now,
+    )
+    first = service.create_scheduled_report(
+        request_id="req-first",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="23:59",
+    )
+
+    replaced = service.create_scheduled_report_for_user(
+        request_id="req-replace",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="23:58",
+    )
+
+    assert replaced["scheduledReport"].scheduledReportId == first.scheduledReportId
+    assert replaced["scheduledReport"].timeOfDay == "23:58"
+    assert replaced["replacedScheduledReportId"] == first.scheduledReportId
+    assert "已替换" in replaced["message"]
+    assert [item["scheduledReportId"] for item in service.list_scheduled_reports_for_user()["items"]] == [
+        first.scheduledReportId
+    ]
+    assert fake_gateway.calls[-1]["method"] == "cron.update"
+    assert fake_gateway.calls[-1]["params"]["schedule"] == {
+        "kind": "cron",
+        "expr": "58 23 * * *",
+        "tz": "America/New_York",
+        "staggerMs": 0,
+    }
+
+
+def test_daily_scheduled_report_more_than_four_hours_apart_stays_separate() -> None:
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, now_provider=_fixed_now)
+    first = service.create_scheduled_report(
+        request_id="req-first",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:00",
+    )
+
+    second = service.create_scheduled_report(
+        request_id="req-second",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="13:01",
+    )
+
+    assert second.scheduledReportId != first.scheduledReportId
+    assert [item["scheduledReportId"] for item in service.list_scheduled_reports_for_user()["items"]] == [
+        first.scheduledReportId,
+        second.scheduledReportId,
+    ]
+
+
+def test_scheduled_report_list_collapses_nearby_daily_duplicates_to_latest() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    first = service.create_scheduled_report(
+        request_id="req-first",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="23:59",
+    )
+    original = store.get_scheduled_report(first.scheduledReportId)
+    assert original is not None
+    store.save_scheduled_report(
+        replace(
+            original,
+            id="schedule-99",
+            time_of_day="23:58",
+            created_at="2026-05-20T12:00:00Z",
+            updated_at="2026-05-20T12:00:00Z",
+        )
+    )
+
+    payload = service.list_scheduled_reports_for_user()
+
+    assert [(item["scheduledReportId"], item["timeOfDay"]) for item in payload["items"]] == [("schedule-99", "23:58")]
 
 
 def test_create_scheduled_report_rejects_hourly() -> None:

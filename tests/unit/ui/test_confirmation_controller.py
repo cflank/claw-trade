@@ -174,6 +174,71 @@ def test_confirm_scheduled_and_price_alert_return_for_user_dto() -> None:
     assert isinstance(alert_result["priceAlert"], PriceAlertForUser)
 
 
+def test_confirm_price_alert_from_wechat_context_targets_wechat_sender() -> None:
+    controller, _queue, _runner, recognizer = _build_controller()
+    draft = recognizer.classify_user_intent(
+        text="BTC 低于 61250 提醒我",
+        source_message_id="m-wechat-alert",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    result = controller.confirm_intent_draft(
+        request_id="c-wechat-alert",
+        draft_id=draft.draft_id,
+        decision="confirm",
+        origin_context_id="wechat_clawbot:account-1:sender-1",
+    )
+
+    assert result["priceAlert"].notification.channel == "wechat_clawbot"
+    stored = controller._price_alert_service._store.get_price_alert(result["priceAlert"].priceAlertId)  # noqa: SLF001
+    assert stored is not None
+    assert stored.notification == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "target": "sender-1",
+        "accountId": "account-1",
+    }
+
+
+def test_confirm_price_alert_uses_default_wechat_target_when_ui_chat_has_one() -> None:
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+    controller = ConfirmationController(
+        queue,
+        default_price_alert_notification=lambda: {
+            "channel": "wechat_clawbot",
+            "enabled": True,
+            "target": "sender-default",
+            "accountId": "account-default",
+        },
+    )
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="BTC 高于 70000 提醒我",
+        source_message_id="m-ui-alert",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    result = controller.confirm_intent_draft(
+        request_id="c-ui-alert",
+        draft_id=draft.draft_id,
+        decision="confirm",
+    )
+
+    stored = controller._price_alert_service._store.get_price_alert(result["priceAlert"].priceAlertId)  # noqa: SLF001
+    assert stored is not None
+    assert stored.notification == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "target": "sender-default",
+        "accountId": "account-default",
+    }
+
+
 def test_default_price_alert_provider_fails_instead_of_returning_zero_quote() -> None:
     controller, _queue, _runner, recognizer = _build_controller()
     draft = recognizer.classify_user_intent(

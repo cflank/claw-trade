@@ -54,10 +54,35 @@ function quoteLabel(alert: PriceAlertForUser) {
 }
 
 function scanResultLabel(alert: PriceAlertForUser) {
+  if (alert.state === 'closed') {
+    return alert.triggeredAt ? '已触发' : '已关闭';
+  }
   if (alert.state === 'paused' || alert.state === 'closed' || alert.state === 'deleted') {
     return `已跳过：${alert.state}`;
   }
   return alert.lastScanRunId ? '已扫描' : '等待扫描';
+}
+
+function notificationLabel(alert: PriceAlertForUser) {
+  if (alert.lastErrorMessage) {
+    return alert.lastErrorMessage;
+  }
+  const result = alert.lastNotificationResult ?? {};
+  const channel = String(result.channel ?? '');
+  const fallbackFrom = String(result.fallback_from ?? '');
+  if (alert.state === 'closed') {
+    if (fallbackFrom === 'wechat_clawbot') {
+      return '通知：微信发送失败，已在页面显示';
+    }
+    if (channel === 'wechat_clawbot') {
+      return '通知：已发送微信';
+    }
+    if (channel === 'in_app') {
+      return '通知：已触发，已在页面显示';
+    }
+    return '通知：已触发';
+  }
+  return `通知：${alert.notificationDedupeKey ?? '暂无结果'}`;
 }
 
 function inferPdf(detail: ReportDetailForUser): PdfExportForUser {
@@ -219,10 +244,12 @@ function ScheduledReportsBlock({
   items: ScheduledReportForUser[];
   onAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
 }) {
+  const rows = items.filter((item) => item.state !== 'closed' && item.state !== 'deleted');
+
   return (
     <section className="ct-right-section" data-testid="right-rail-scheduled-reports-section">
       <h2>定时报表管理</h2>
-      {items.map((item) => (
+      {rows.map((item) => (
         <article key={item.scheduledReportId} className="ct-task-item">
           <div className="ct-task-head">
             <strong>{item.instrumentCode}</strong>
@@ -260,7 +287,7 @@ function ScheduledReportsBlock({
           ) : null}
         </article>
       ))}
-      {items.length === 0 ? <p className="ct-empty">暂无定时报表</p> : null}
+      {rows.length === 0 ? <p className="ct-empty">暂无定时报表</p> : null}
     </section>
   );
 }
@@ -272,10 +299,12 @@ function PriceAlertsBlock({
   items: PriceAlertForUser[];
   onAction?: (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => void;
 }) {
+  const rows = items.filter((alert) => alert.state !== 'closed' && alert.state !== 'deleted');
+
   return (
     <section className="ct-right-section" data-testid="right-rail-price-alerts-section">
       <h2>价格提醒管理</h2>
-      {items.map((alert) => (
+      {rows.map((alert) => (
         <article key={alert.priceAlertId} className="ct-task-item">
           <div className="ct-task-head">
             <strong>{alert.instrumentCode}</strong>
@@ -297,7 +326,7 @@ function PriceAlertsBlock({
           <div className="ct-task-list-line">
             <span>扫描结果：{scanResultLabel(alert)}</span>
           </div>
-          <div className="ct-small">{alert.lastErrorMessage ?? `通知：${alert.notificationDedupeKey ?? '暂无结果'}`}</div>
+          <div className="ct-small">{notificationLabel(alert)}</div>
           {onAction && alert.state !== 'deleted' && alert.state !== 'closed' ? (
             <div className="ct-inline-actions">
               {alert.state === 'paused' ? (
@@ -319,7 +348,7 @@ function PriceAlertsBlock({
           ) : null}
         </article>
       ))}
-      {items.length === 0 ? <p className="ct-empty">暂无价格提醒</p> : null}
+      {rows.length === 0 ? <p className="ct-empty">暂无价格提醒</p> : null}
     </section>
   );
 }

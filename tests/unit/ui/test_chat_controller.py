@@ -6,7 +6,7 @@ from pathlib import Path
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.selection.controller import SelectCommandCode, SelectCommandResult
-from claw_trade.ui_backend.chat_controller import ChatController
+from claw_trade.ui_backend.chat_controller import ChatController, _format_confirmed_message
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
@@ -266,6 +266,13 @@ def test_confirm_scheduled_report_and_price_alert_use_real_services() -> None:
     assert alert.priceAlertId.startswith("alert-")
     assert alert.condition.operator == "above"
     assert not isinstance(alert, dict)
+
+
+def test_scheduled_report_replacement_message_is_shown_as_confirmation_text() -> None:
+    assert (
+        _format_confirmed_message({"scheduledReport": object(), "message": "已替换相近的定时报告：原时间 23:59，新时间 23:58。"})
+        == "已替换相近的定时报告：原时间 23:59，新时间 23:58。"
+    )
 
 
 def test_confirmed_or_cancelled_chat_card_does_not_return_as_active_after_reload() -> None:

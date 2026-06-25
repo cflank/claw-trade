@@ -415,6 +415,49 @@ function mockWorkspaceFetch(
       if (body.text.trim().toLowerCase().startsWith('/select') && options.selectSendResponse) {
         return options.selectSendResponse;
       }
+      if (body.text.trim().toLowerCase() === '/help') {
+        return json({
+          context: {
+            contextId: body.contextId,
+            kind: 'normal_chat',
+            title: '普通聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: [
+            {
+              messageId: 'msg-help-u1',
+              contextKind: 'normal_chat',
+              actor: 'user',
+              kind: 'plain',
+              text: body.text,
+              createdAt: '2026-05-19T10:08:00.000Z',
+            },
+            {
+              messageId: 'msg-help-s1',
+              contextKind: 'normal_chat',
+              actor: 'system',
+              kind: 'plain',
+              text: [
+                '可用命令：',
+                '',
+                '/report <标的>',
+                '  生成完整投资报告。',
+                '  示例：/report TSLA',
+                '',
+                '/select [市场] [refresh|刷新] [YYYY-MM-DD]',
+                '  查看或刷新选股结果；不写市场时默认 A股。',
+                '  市场：1/cn_a/A股 = A股；2/crypto/加密 = 加密。',
+                '  示例：/select、/select 1、/select 2、/select crypto、/select 2 refresh',
+                '',
+                '/help',
+                '  查看命令详细用法。',
+              ].join('\n'),
+              createdAt: '2026-05-19T10:08:01.000Z',
+            },
+          ],
+        });
+      }
       if (body.text.includes('/report BTC')) {
         return json({
           context: {
@@ -1868,6 +1911,51 @@ describe('home page', () => {
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
+  it('keeps select market shortcuts on the original chat message flow', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/select 2 refresh' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({
+      contextId: 'normal-chat',
+      text: '/select 2 refresh',
+    });
+    expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('renders help command output as readable multi-line text', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/help' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    const help = await screen.findByText(/可用命令：/);
+    expect(help).toHaveClass('ct-message-text');
+    expect(help.textContent).toContain('/report <标的>\n  生成完整投资报告。');
+    expect(help.textContent).toContain('/select [市场] [refresh|刷新] [YYYY-MM-DD]');
+    expect(help.textContent).toContain('/select 1、/select 2、/select crypto、/select 2 refresh');
+    expect(help.textContent).toContain('/help\n  查看命令详细用法。');
+  });
+
   it('shows backend input errors in the chat bubble for invalid select commands', async () => {
     const mocked = mockWorkspaceFetch({
       selectSendResponse: Promise.resolve(
@@ -1950,6 +2038,65 @@ describe('home page', () => {
     fireEvent.click(await screen.findByRole('option', { name: '@市场分析师' }));
 
     expect(input).toHaveValue('@市场分析师 ');
+  });
+
+  it('inserts a slash command from the normal chat composer command picker', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/' } });
+    const selectOption = await screen.findByRole('option', { name: /\/select/ });
+    expect(selectOption.textContent).toContain('/select 1、/select 2、/select crypto');
+    fireEvent.click(await screen.findByRole('option', { name: /\/report/ }));
+
+    expect(input).toHaveValue('/report ');
+    expect(screen.queryByRole('listbox', { name: '命令列表' })).not.toBeInTheDocument();
+    expect(mocked.getChatBodies()).toHaveLength(0);
+  });
+
+  it('supports keyboard selection in the normal chat slash command picker', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(input).toHaveValue('/alert ');
+    expect(mocked.getChatBodies()).toHaveLength(0);
+  });
+
+  it('filters the normal chat slash command picker by typed query', async () => {
+    const mocked = mockWorkspaceFetch();
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/he' } });
+
+    expect(await screen.findByRole('option', { name: /\/help/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /\/report/ })).not.toBeInTheDocument();
+    expect(mocked.getChatBodies()).toHaveLength(0);
   });
 
   it('supports keyboard selection in the normal chat @ picker', async () => {

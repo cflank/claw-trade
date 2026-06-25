@@ -209,6 +209,52 @@ describe('RightRail channel state text', () => {
             lastQuote: null,
             notificationDedupeKey: null,
           },
+          {
+            priceAlertId: 'alert-3',
+            instrumentCode: 'SOL/USDT',
+            instrumentName: 'Solana',
+            market: 'CRYPTO',
+            condition: { type: 'price_threshold', operator: 'above', value: 100, window: null },
+            notification: { channel: 'wechat_clawbot', enabled: true },
+            state: 'closed',
+            lastCheckedAt: '2026-06-24T12:01:00Z',
+            triggeredAt: '2026-06-24T12:01:00Z',
+            lastErrorMessage: null,
+            scanBucket: 'CRYPTO:3m',
+            lastScanRunId: 'scan-2',
+            lastQuote: { currentPrice: 110 },
+            notificationDedupeKey: 'dedupe-2',
+            lastNotificationResult: {
+              channel: 'in_app',
+              delivered: true,
+              fallback_from: 'wechat_clawbot',
+              channel_delivered: false,
+              channel_error: 'missing_wechat_target',
+            },
+          },
+          {
+            priceAlertId: 'alert-4',
+            instrumentCode: 'ADA/USDT',
+            instrumentName: 'Cardano',
+            market: 'CRYPTO',
+            condition: { type: 'price_threshold', operator: 'above', value: 1, window: null },
+            notification: { channel: 'wechat_clawbot', enabled: true },
+            state: 'closed',
+            lastCheckedAt: '2026-06-24T12:02:00Z',
+            triggeredAt: '2026-06-24T12:02:00Z',
+            lastErrorMessage: null,
+            scanBucket: 'CRYPTO:3m',
+            lastScanRunId: 'scan-3',
+            lastQuote: { currentPrice: 1.1 },
+            notificationDedupeKey: 'dedupe-3',
+            lastNotificationResult: {
+              channel: 'in_app',
+              delivered: true,
+              fallback_from: 'wechat_clawbot',
+              channel_delivered: false,
+              channel_error: 'wechat_send_failed',
+            },
+          },
         ]}
         onPriceAlertAction={onPriceAlertAction}
       />,
@@ -220,6 +266,10 @@ describe('RightRail channel state text', () => {
     expect(screen.getByText('扫描：CRYPTO:3m / scan-1')).toBeInTheDocument();
     expect(screen.getByText('扫描结果：已扫描')).toBeInTheDocument();
     expect(screen.getByText('扫描结果：已跳过：paused')).toBeInTheDocument();
+    expect(screen.queryByText('SOL/USDT')).not.toBeInTheDocument();
+    expect(screen.queryByText('ADA/USDT')).not.toBeInTheDocument();
+    expect(screen.queryByText('扫描结果：已触发')).not.toBeInTheDocument();
+    expect(screen.queryByText('通知：微信发送失败，已在页面显示')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: '暂停' })[0]);
     fireEvent.click(screen.getAllByRole('button', { name: '立即检查' })[0]);

@@ -16,6 +16,7 @@ from claw_trade.config.report_workflow_settings import (
     load_report_workflow_settings,
 )
 from claw_trade.data_gateway.maintenance import CollectionMaintenanceJobRepository, ScheduledDataMaintenanceRunner
+from claw_trade.data_gateway.price_quote_provider import PriceAlertQuoteProvider
 from claw_trade.data_gateway.runtime import build_data_api_from_env, build_data_gateway_runtime_from_env
 from claw_trade.data_gateway.selection_api import (
     build_selection_data_need_audit,
@@ -42,7 +43,6 @@ from claw_trade.data_gateway.settings_store import (
 )
 from claw_trade.data_gateway.source_probe import (
     build_data_source_health_tester,
-    build_price_alert_quote_provider,
 )
 from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
 from claw_trade.selection.confirmation import SelectionConfirmationController
@@ -266,6 +266,24 @@ class _LazyDataMaintenanceRunner:
         return self._runner
 
 
+class _LazyPriceAlertQuoteProvider:
+    def __init__(self) -> None:
+        self._provider: PriceAlertQuoteProvider | None = None
+        self._lock = Lock()
+
+    def __call__(self, instrument_code: str, market_profile) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+        return self._require_provider()(instrument_code, market_profile)
+
+    def _require_provider(self) -> PriceAlertQuoteProvider:
+        if self._provider is not None:
+            return self._provider
+        with self._lock:
+            if self._provider is None:
+                runtime = build_data_gateway_runtime_from_env()
+                self._provider = PriceAlertQuoteProvider(data_api=runtime.data_api)
+        return self._provider
+
+
 @dataclass(frozen=True)
 class UiHttpServices:
     report_settings: ReportWorkflowSettings
@@ -353,15 +371,23 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         store=scheduled_work_store,
         cron_adapter=cron_adapter,
     )
-    price_alert_quote_provider = build_price_alert_quote_provider()
+    price_alert_quote_provider = _LazyPriceAlertQuoteProvider()
+    chat_controller_ref: dict[str, ChatController] = {}
     price_alert_service = PriceAlertService(
         quote_provider=price_alert_quote_provider,
         store=scheduled_work_store,
         cron_adapter=cron_adapter,
+        notifier=lambda text, notification: _send_price_alert_channel_text(
+            channel_bridge,
+            text,
+            notification,
+        ),
+        in_app_notifier=lambda alert_id, text: _append_price_alert_in_app(chat_controller_ref, alert_id, text),
     )
     price_alert_scan_service = PriceAlertScanService(
         store=scheduled_work_store,
         quote_provider=price_alert_quote_provider,
+        trigger_notifier=lambda alert, quote: price_alert_service.deliver_triggered_notification(alert, quote=quote),
     )
     price_alert_scan_scheduler = PriceAlertScanScheduler(
         store=scheduled_work_store,
@@ -374,6 +400,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         price_alert_service=price_alert_service,
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
         company_name_resolver=_resolve_company_names_from_data_layer,
+        default_price_alert_notification=lambda: _default_price_alert_wechat_notification(channel_bridge),
     )
     selection_store = restore_selection_run_store(fail_interrupted_active=True)
     selection_data_job = SelectionDataJob(
@@ -411,6 +438,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         selection_controller=selection_controller,
         maintenance_status_provider=lambda: _format_maintenance_status_for_chat(llm_bridge),
     )
+    chat_controller_ref["controller"] = chat_controller
     selection_confirmation = SelectionConfirmationController(
         store=selection_store,
         queue=queue,
@@ -644,6 +672,55 @@ def _reply_target_from_origin_context(origin_context_id: object) -> ChannelReply
         account_id=account_id or None,
         sender_id=sender_id,
     )
+
+
+def _send_price_alert_channel_text(
+    channel_bridge: ChannelBridge,
+    text: str,
+    notification: Mapping[str, Any],
+) -> dict[str, object]:
+    channel_kind = str(notification.get("channel") or "wechat_clawbot")
+    target = str(notification.get("target") or "").strip()
+    account_id = notification.get("accountId", notification.get("account_id"))
+    account_id_text = None if account_id is None else str(account_id).strip() or None
+    if not target:
+        default_target = channel_bridge.resolve_default_report_file_target(channel_kind=channel_kind)
+        if default_target is not None:
+            target, account_id_text = default_target
+    if not target:
+        return {"sent": False, "reason": "missing_wechat_target"}
+    return channel_bridge.send_text(
+        channel_kind=channel_kind,
+        text=text,
+        dedupe_key=str(notification.get("dedupeKey") or ""),
+        target=target,
+        account_id=account_id_text,
+    )
+
+
+def _default_price_alert_wechat_notification(channel_bridge: ChannelBridge) -> dict[str, object] | None:
+    default_target = channel_bridge.resolve_default_report_file_target(channel_kind="wechat_clawbot")
+    if default_target is None:
+        return None
+    target, account_id = default_target
+    return {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "target": target,
+        "accountId": account_id,
+    }
+
+
+def _append_price_alert_in_app(
+    chat_controller_ref: Mapping[str, ChatController],
+    alert_id: str,
+    text: str,
+) -> None:
+    _ = alert_id
+    chat_controller = chat_controller_ref.get("controller")
+    if chat_controller is None:
+        return
+    chat_controller.append_channel_plain_message(context_id="normal-chat", actor="system", text=text)
 
 
 def _send_selection_report_file(

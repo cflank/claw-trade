@@ -396,6 +396,41 @@ def test_channel_file_send_uses_supplied_file_path_without_temp_copy(monkeypatch
     ]
 
 
+def test_channel_send_caps_long_gateway_timeout_by_media_type(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    timeouts: list[str] = []
+
+    def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
+        _ = (capture_output, text, check, env, timeout)
+        assert command[3] == "send"
+        timeouts.append(command[command.index("--timeout") + 1])
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"result": {"sent": True}}), stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=600_000,
+        token=None,
+        password=None,
+    )
+
+    client.channels_send_text(
+        channel="openclaw-weixin",
+        to="sender-1",
+        text="报告完成",
+        dedupe_key="text:r-1",
+    )
+    client.channels_send_file(
+        channel="openclaw-weixin",
+        to="sender-1",
+        file_name="完整报告.pdf",
+        payload=b"%PDF-1.4 test payload",
+        dedupe_key="file:r-1",
+    )
+
+    assert timeouts == ["15000", "75000"]
+
+
 def test_gateway_call_has_subprocess_timeout(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
         _ = (capture_output, text, check, env)

@@ -30,15 +30,22 @@ class _FakeWorkflowRunner:
 
 
 class _FakeChatTransport:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def chat_send(self, *, context_id: str, text: str, request_id: str) -> dict[str, str]:
+        self.calls += 1
+        if text.strip().lower() in {"/help", "help", "帮助"}:
+            raise AssertionError("help command must not call normal chat")
         _ = (context_id, request_id)
         return {"text": f"chat:{text}"}
 
 
 def _controller() -> ChatController:
     queue = ReportTaskQueue(ReportWorkflowBridge(_FakeWorkflowRunner()))
+    transport = _FakeChatTransport()
     return ChatController(
-        openclaw_client=OpenClawGatewayClient(_FakeChatTransport()),
+        openclaw_client=OpenClawGatewayClient(transport),
         recognizer=IntentRecognizer(),
         confirmation=ConfirmationController(queue),
         queue=queue,
@@ -74,6 +81,28 @@ def test_bare_report_command_returns_help_instead_of_falling_through_to_normal_c
     assert "assistantReply" not in result
     assert result["messages"][-1]["actor"] == "system"
     assert result["messages"][-1]["text"] == "请输入完整的 /report 指令，例如：/report TSLA。"
+
+
+def test_help_command_returns_command_usage_without_normal_chat() -> None:
+    controller = _controller()
+    replies = []
+    for index, text in enumerate(("/help", "help", "帮助"), start=1):
+        result = controller.send_chat_message(
+            request_id=f"s06-help-command-{index}",
+            context_id=f"ctx-help-{index}",
+            text=text,
+        )
+        replies.append(result["messages"][-1]["text"])
+        assert "assistantReply" not in result
+        assert result["messages"][-1]["actor"] == "system"
+        assert "/report <标的>" in result["messages"][-1]["text"]
+        assert "/sched <标的> 每天 HH:MM" in result["messages"][-1]["text"]
+        assert "/alert <标的> 高于/低于 <价格> 提醒我" in result["messages"][-1]["text"]
+        assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["messages"][-1]["text"]
+        assert "1/cn_a/A股 = A股；2/crypto/加密 = 加密" in result["messages"][-1]["text"]
+        assert "/select 1、/select 2、/select crypto、/select 2 refresh" in result["messages"][-1]["text"]
+        assert "/maint" in result["messages"][-1]["text"]
+    assert replies[0] == replies[1] == replies[2]
 
 
 def test_sched_alias_builds_scheduled_report_confirmation_card() -> None:

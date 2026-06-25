@@ -59,7 +59,7 @@ def test_run_scheduled_report_now_goes_through_queue_and_is_idempotent() -> None
 
     assert len(queue_calls) == 1
     assert queue_calls[0][0]["source"] == "scheduled"
-    assert queue_calls[0][0]["startDate"] == "2026-05-19"
+    assert queue_calls[0][0]["startDate"] == "2025-05-19"
     assert queue_calls[0][0]["endDate"] == "2026-05-19"
     assert queue_calls[0][0]["currentDate"] == "2026-05-19"
     assert queue_calls[0][0]["workflowSettings"]["defaultProfile"] == "US"

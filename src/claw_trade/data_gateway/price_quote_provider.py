@@ -48,9 +48,10 @@ class PriceAlertQuoteProvider:
             "consumer": "price_alert",
         }
         result = self._single_result(self._data_api.request_data([request]))
-        if getattr(result, "status", None) != DataResultStatus.READY:
-            raise RuntimeError("datasource_test_failed: price_alert_quote_unavailable")
         rows = tuple(getattr(result, "rows", ()) or ())
+        status = getattr(result, "status", None)
+        if status != DataResultStatus.READY and not (status == DataResultStatus.PARTIAL and rows):
+            raise RuntimeError("datasource_test_failed: price_alert_quote_unavailable")
         if not rows:
             raise RuntimeError("datasource_test_failed: price_alert_quote_unavailable")
         row = dict(rows[0])
@@ -123,7 +124,7 @@ def _copy_optional_float(payload: dict[str, Any], target_key: str, row: Mapping[
             raise RuntimeError("datasource_test_failed: invalid_quote_payload") from exc
 
 
-def _evidence_ref(*, row: Mapping[str, Any], result: Any) -> str:
+def _evidence_ref(*, row: Mapping[str, Any], result: Any) -> str | None:
     raw = row.get("evidence_ref") or row.get("dataset_ref")
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
@@ -132,7 +133,7 @@ def _evidence_ref(*, row: Mapping[str, Any], result: Any) -> str:
         value = str(dataset_refs[0]).strip()
         if value:
             return value
-    raise RuntimeError("datasource_test_failed: invalid_quote_payload")
+    return None
 
 
 def market_profile_to_data_market(market_profile: MarketProfile) -> Market:

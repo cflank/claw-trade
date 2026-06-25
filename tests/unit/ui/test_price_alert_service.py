@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from threading import Barrier, Lock, Thread
 from time import sleep
+from types import SimpleNamespace
 
 import pytest
-from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
 from claw_trade.ui_backend.price_alert_service import PriceAlertService, UiServiceError
-from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, JsonScheduledWorkStore
+from claw_trade.ui_backend.scheduled_work_store import (
+    InMemoryScheduledWorkStore,
+    JsonScheduledWorkStore,
+)
 from claw_trade.ui_contracts.enums import MarketProfile
+
+from claw_trade.ui_backend import data_source_runtime_checks as ui_runtime_checks
 
 
 def _fixed_now() -> datetime:
@@ -96,6 +100,38 @@ def test_create_price_alert_rejects_hk_until_strategy_approved() -> None:
     assert "暂不支持港股价格提醒" in exc.value.message
 
 
+def test_create_price_alert_preserves_wechat_reply_target_from_notification() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {"current_price": 1, "percent_change": 0},
+        store=store,
+        now_provider=_fixed_now,
+    )
+
+    created = service.create_price_alert(
+        request_id="req-wechat-target",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 1},
+        notification={
+            "channel": "wechat_clawbot",
+            "enabled": True,
+            "target": "sender-codex",
+            "accountId": "account-codex",
+        },
+    )
+
+    stored = store.get_price_alert(created.priceAlertId)
+
+    assert stored is not None
+    assert stored.notification == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "target": "sender-codex",
+        "accountId": "account-codex",
+    }
+
+
 def test_price_alerts_persist_across_service_reconstruction(tmp_path) -> None:
     store_path = tmp_path / ".ui-scheduled-work.json"
     first_service = PriceAlertService(
@@ -128,7 +164,7 @@ def test_price_alerts_persist_across_service_reconstruction(tmp_path) -> None:
     assert next_alert.priceAlertId == "alert-2"
 
 
-def test_concurrent_price_alert_creation_provisions_one_scan_bucket_cron() -> None:
+def test_concurrent_price_alert_creation_reuses_matching_alert_and_provisions_one_scan_bucket_cron() -> None:
     class SlowCronAdapter:
         def __init__(self) -> None:
             self.calls: list[str] = []
@@ -168,7 +204,7 @@ def test_concurrent_price_alert_creation_provisions_one_scan_bucket_cron() -> No
     for thread in threads:
         thread.join(timeout=2)
 
-    assert sorted(created) == ["alert-1", "alert-2"]
+    assert sorted(created) == ["alert-1", "alert-1"]
     assert cron_adapter.calls == []
     bucket = store.get_scan_bucket("CRYPTO:3m")
     assert bucket is not None
@@ -216,6 +252,7 @@ def test_run_price_alert_now_triggers_and_closes_by_default() -> None:
 
     assert first["triggered"] is True
     assert first["alert"].state == "closed"
+    assert service.list_price_alerts_for_user()["items"] == []
     assert len(sent) == 1
     assert second["triggered"] is True
     assert len(sent) == 1
@@ -224,6 +261,7 @@ def test_run_price_alert_now_triggers_and_closes_by_default() -> None:
 def test_triggered_price_alert_records_channel_notification_success() -> None:
     store = InMemoryScheduledWorkStore()
     sent: list[dict[str, object]] = []
+    in_app: list[tuple[str, str]] = []
     service = PriceAlertService(
         quote_provider=lambda _instrument, _market: {
             "current_price": 71000,
@@ -233,6 +271,7 @@ def test_triggered_price_alert_records_channel_notification_success() -> None:
         store=store,
         notifier=lambda text, notification: sent.append({"text": text, "notification": notification})
         or {"sent": True, "messageId": "m-1"},
+        in_app_notifier=lambda alert_id, text: in_app.append((alert_id, text)),
         now_provider=_fixed_now,
     )
     alert = service.create_price_alert(
@@ -248,6 +287,7 @@ def test_triggered_price_alert_records_channel_notification_success() -> None:
 
     assert payload["triggered"] is True
     assert sent[0]["notification"]["dedupeKey"] == "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above"
+    assert in_app == [("alert-1", "BTC 已触发价格提醒，当前价格 71000.00。")]
     assert stored is not None
     assert stored.last_notification_result == {
         "channel": "wechat_clawbot",
@@ -268,7 +308,7 @@ def test_triggered_price_alert_falls_back_to_in_app_when_channel_unavailable() -
             "quote_timestamp": "2026-05-19T12:00:00Z",
         },
         store=store,
-        notifier=lambda _text, _notification: {"sent": False},
+        notifier=lambda _text, _notification: {"sent": False, "reason": "missing_wechat_target"},
         in_app_notifier=lambda alert_id, text: in_app.append((alert_id, text)),
         now_provider=_fixed_now,
     )
@@ -291,6 +331,79 @@ def test_triggered_price_alert_falls_back_to_in_app_when_channel_unavailable() -
         "delivered": True,
         "fallback_from": "wechat_clawbot",
         "channel_delivered": False,
+        "channel_error": "missing_wechat_target",
+        "dedupe_key": "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above",
+    }
+
+
+def test_triggered_price_alert_records_default_channel_error_when_channel_returns_false() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.2,
+            "quote_timestamp": "2026-05-19T12:00:00Z",
+        },
+        store=store,
+        notifier=lambda _text, _notification: {"sent": False},
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+
+    service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
+    stored = store.get_price_alert(alert.priceAlertId)
+
+    assert stored is not None
+    assert stored.last_notification_result == {
+        "channel": "in_app",
+        "delivered": True,
+        "fallback_from": "wechat_clawbot",
+        "channel_delivered": False,
+        "channel_error": "wechat_send_failed",
+        "dedupe_key": "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above",
+    }
+
+
+def test_triggered_price_alert_records_channel_error_when_channel_notifier_raises() -> None:
+    store = InMemoryScheduledWorkStore()
+
+    def _raise_notifier(_text: str, _notification: dict[str, object]) -> dict[str, object]:
+        raise RuntimeError("send failed")
+
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.2,
+            "quote_timestamp": "2026-05-19T12:00:00Z",
+        },
+        store=store,
+        notifier=_raise_notifier,
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+
+    service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
+    stored = store.get_price_alert(alert.priceAlertId)
+
+    assert stored is not None
+    assert stored.last_notification_result == {
+        "channel": "in_app",
+        "delivered": True,
+        "fallback_from": "wechat_clawbot",
+        "channel_delivered": False,
+        "channel_error": "wechat_send_failed",
         "dedupe_key": "alert-1:1:2026-05-19T12:00:00Z:price_threshold:above",
     }
 
@@ -365,6 +478,24 @@ def test_paused_alert_skip_checking() -> None:
     assert payload["triggered"] is False
     assert payload["message"] == "提醒已暂停，暂不检查。"
     assert payload["alert"].state == "paused"
+
+
+def test_run_price_alert_now_returns_message_when_not_triggered() -> None:
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {"current_price": 100, "percent_change": 1},
+        now_provider=_fixed_now,
+    )
+    alert = service.create_price_alert(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        condition={"type": "price_threshold", "operator": "above", "value": 120},
+    )
+
+    payload = service.run_price_alert_now(request_id="req-run", price_alert_id=alert.priceAlertId)
+
+    assert payload["triggered"] is False
+    assert payload["message"] == "已检查 AAPL，当前价格 100.00，未触发提醒。"
 
 
 def test_quote_provider_failure_sets_error_state() -> None:

@@ -1,0 +1,84 @@
+{
+  "bucket_scan": {
+    "alert_last_quote": {
+      "currentPrice": 71000.0,
+      "evidenceRef": "mock-price-alert://CRYPTO/ETH/USDT",
+      "percentChange": 6.2,
+      "percentChange24h": 6.2,
+      "percentChangeIntraday": null,
+      "quoteTimestamp": "2026-06-25T12:00:00Z"
+    },
+    "alert_last_scan_run_id": "price-alert-scan:CRYPTO:3m:mock-cron-run-1",
+    "alert_state_after": "closed",
+    "bucket_last_scan_run_id": "price-alert-scan:CRYPTO:3m:mock-cron-run-1",
+    "bucket_last_scan_summary": {
+      "active_alert_count": 1,
+      "bucket_key": "CRYPTO:3m",
+      "cron_run_id": "mock-cron-run-1",
+      "failed_alert_count": 0,
+      "finished_at": "2026-06-25T12:00:00Z",
+      "grouped_quote_count": 1,
+      "last_error_message": null,
+      "quote_evidence_refs": [
+        "mock-price-alert://CRYPTO/ETH/USDT"
+      ],
+      "scan_run_id": "price-alert-scan:CRYPTO:3m:mock-cron-run-1",
+      "skipped_alert_count": 0,
+      "started_at": "2026-06-25T12:00:00Z",
+      "triggered_alert_count": 1
+    },
+    "created_alert_id": "alert-2",
+    "failed_alert_count": 0,
+    "last_notification_result": null,
+    "note": "scan_bucket records scan_run_id and quote; current implementation does not deliver notification from scan service.",
+    "quote_evidence_refs": [
+      "mock-price-alert://CRYPTO/ETH/USDT"
+    ],
+    "scan_run_id": "price-alert-scan:CRYPTO:3m:mock-cron-run-1",
+    "triggered_alert_count": 1
+  },
+  "immediate_check": {
+    "api_message": "BTC/USDT 已触发价格提醒，当前价格 71000.00。",
+    "api_triggered": true,
+    "created_alert_id": "alert-1",
+    "last_notification_result": {
+      "channel": "wechat_clawbot",
+      "dedupe_key": "alert-1:1:2026-06-25T12:00:00Z:price_threshold:above",
+      "delivered": true,
+      "messageId": "mock-message-1",
+      "sent": true
+    },
+    "last_quote": {
+      "currentPrice": 71000.0,
+      "evidenceRef": "mock-price-alert://CRYPTO/BTC/USDT",
+      "percentChange": 6.2,
+      "percentChange24h": 6.2,
+      "percentChangeIntraday": null,
+      "quoteTimestamp": "2026-06-25T12:00:00Z"
+    },
+    "last_scan_run_id": null,
+    "note": "run_price_alert_now records notification result but does not create scan_run_id; scan_run_id belongs to bucket scan.",
+    "notification_dedupe_key": "alert-1:1:2026-06-25T12:00:00Z:price_threshold:above",
+    "second_same_request_triggered": true,
+    "sent_count_after_second_same_request": 1,
+    "sent_notifications": [
+      {
+        "notification": {
+          "channel": "wechat_clawbot",
+          "dedupeKey": "alert-1:1:2026-06-25T12:00:00Z:price_threshold:above",
+          "enabled": true
+        },
+        "text": "BTC/USDT 已触发价格提醒，当前价格 71000.00。"
+      }
+    ],
+    "state_after": "closed"
+  },
+  "mode": "simulated_quote_no_product_code_change",
+  "quote": {
+    "current_price": 71000.0,
+    "evidence_ref": "mock-price-alert://CRYPTO/BTC/USDT",
+    "percent_change": 6.2,
+    "percent_change_24h": 6.2,
+    "quote_timestamp": "2026-06-25T12:00:00Z"
+  }
+}

@@ -27,7 +27,8 @@ from claw_trade.data_gateway.models import (
 from claw_trade.data_gateway.needs import DataNeed, DataNeedGap, NeedPriority, ProviderCallSpec
 from claw_trade.data_gateway.official_catalog import iter_official_catalog_endpoints
 from claw_trade.data_gateway.planner import plan_public_data_requests
-from claw_trade.data_gateway.public_api import PublicDataRequest
+from claw_trade.data_gateway.public_api import PublicDataRequest, public_output_contract_for_api
+from claw_trade.instruments.resolver import InstrumentResolveError, resolve_crypto_provider_symbols
 
 _LOGGER = logging.getLogger("uvicorn.error")
 _DATA_NEED_LEASE_TTL_SECONDS = 30
@@ -425,6 +426,10 @@ class DataService:
         return self._normalize_data_need_result(need=need, result=result)
 
     def _data_result_from_ingest(self, *, need: DataNeed, ingest: IngestResult) -> DataResult:
+        if ingest.dataset_refs:
+            warehouse_result = self._warehouse_result_for_ingest_need(need)
+            if warehouse_result.rows or warehouse_result.gaps:
+                return self._compose_result(need.need_id, warehouse_result, (ingest,))
         gaps = tuple(
             self._coerce_gap(gap, request_id=need.need_id)
             for gap in (ingest.gaps or self._fallback_no_refs_gap(need=need, ingest=ingest))
@@ -444,6 +449,13 @@ class DataService:
             gaps=gaps,
             as_of=datetime.now(tz=UTC),
         )
+
+    def _warehouse_result_for_ingest_need(self, need: DataNeed) -> WarehouseResult:
+        request = _data_request_from_need(need)
+        query_plan = self.query_planner.validate_and_normalize(request)
+        warehouse_result = self._check_warehouse(query_plan)
+        normalized_request = query_plan.normalized_requests[0] if query_plan.normalized_requests else request
+        return self._slice_warehouse_result(warehouse_result, normalized_request)
 
     def _normalize_data_need_result(self, *, need: DataNeed, result: DataResult) -> DataResult:
         return result.model_copy(
@@ -1024,7 +1036,7 @@ class DataService:
         request_market = getattr(request.market, "value", request.market)
         if row_market and str(row_market) != str(request_market):
             return False
-        if request.symbol_id and row.get("symbol_id") and str(row.get("symbol_id")) != request.symbol_id:
+        if request.symbol_id and row.get("symbol_id") and not _symbol_matches_request(str(row.get("symbol_id")), request):
             return False
         if request.universe_ref and row.get("universe_ref") and str(row.get("universe_ref")) != request.universe_ref:
             return False
@@ -1077,6 +1089,74 @@ class DataService:
         payload = ingest_result.model_dump()
         payload["remote_success"] = False
         return IngestResult.model_validate(payload)
+
+
+def _symbol_matches_request(row_symbol: str, request: DataRequest) -> bool:
+    request_symbol = str(request.symbol_id or "")
+    if row_symbol == request_symbol:
+        return True
+    if request.market != Market.CRYPTO:
+        return False
+    return _crypto_provider_symbol(row_symbol) == _crypto_provider_symbol(request_symbol)
+
+
+def _crypto_provider_symbol(value: str) -> str | None:
+    try:
+        return resolve_crypto_provider_symbols(value).crypto_provider_symbol
+    except InstrumentResolveError:
+        return None
+
+
+def _data_request_from_need(need: DataNeed) -> DataRequest:
+    contract = public_output_contract_for_api(str(need.api_id))
+    data_type = str(contract.get("dataset") or _need_api_suffix(need))
+    granularity = str(need.granularity or contract.get("granularity") or "unknown")
+    fields = tuple(str(item) for item in tuple(contract.get("required_fields", ())) if str(item).strip()) or ("symbol_id",)
+    market_defaults = _market_defaults(need.market)
+    base_asset, quote_asset = _crypto_assets(need.instrument) if need.market == Market.CRYPTO else (None, None)
+    return DataRequest(
+        request_id=need.need_id,
+        market=need.market,
+        symbol_id=_warehouse_symbol_id(need),
+        universe_ref=None,
+        exchange=market_defaults["exchange"],
+        currency=quote_asset or market_defaults["currency"],
+        timezone=str(market_defaults["timezone"]),
+        calendar=str(market_defaults["calendar"]),
+        base_asset=base_asset,
+        quote_asset=quote_asset,
+        data_type=data_type,
+        granularity=granularity,
+        fields=fields,
+        date_range_start=need.time_range_start,
+        date_range_end=need.time_range_end,
+        freshness_policy=need.freshness_policy,
+        consumer=need.consumer,  # type: ignore[arg-type]
+        consumer_id=need.consumer,
+        as_of=datetime.now(tz=UTC),
+        deadline_at=need.deadline_at,
+    )
+
+
+def _market_defaults(market: Market) -> dict[str, str | None]:
+    if market == Market.CRYPTO:
+        return {"exchange": "BINANCE", "currency": "USDT", "timezone": "UTC", "calendar": "CRYPTO_24_7"}
+    if market == Market.US:
+        return {"exchange": "NASDAQ", "currency": "USD", "timezone": "America/New_York", "calendar": "US_NYSE_NASDAQ"}
+    if market == Market.HK:
+        return {"exchange": "XHKG", "currency": "HKD", "timezone": "Asia/Hong_Kong", "calendar": "HK_XHKG"}
+    return dict(_CN_A_MARKET_DEFAULTS)
+
+
+def _crypto_assets(instrument: str) -> tuple[str | None, str | None]:
+    symbols = resolve_crypto_provider_symbols(instrument)
+    return symbols.crypto_base_symbol, symbols.crypto_quote_symbol
+
+
+def _warehouse_symbol_id(need: DataNeed) -> str:
+    if need.market == Market.CRYPTO:
+        return resolve_crypto_provider_symbols(need.instrument).crypto_provider_symbol or need.instrument
+    return need.instrument
 
 
 def _adapter_endpoint_id(call: ProviderCallSpec) -> str:

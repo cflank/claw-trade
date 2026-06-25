@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.instruments.resolver import resolve_instrument_identity
@@ -26,6 +27,9 @@ from claw_trade.workflow.report_request_factory import build_report_run_request,
 
 _SCHEDULED_REPORT_AGENT_ID = "scheduled_report_runner"
 _SCHEDULED_WORK_TOOL = "claw-trade-scheduled-work-wake"
+_SCHEDULE_TIMEZONE = "America/New_York"
+_VISIBLE_SCHEDULE_STATES = {"active", "paused", "due", "enqueued"}
+_DAILY_DUPLICATE_WINDOW_MINUTES = 4 * 60
 
 
 class UiServiceError(RuntimeError):
@@ -78,9 +82,40 @@ class SchedulerService:
         instrument_name: str | None = None,
         workflow_settings: dict[str, Any] | None = None,
     ) -> ScheduledReportForUser:
+        payload = self.create_scheduled_report_for_user(
+            request_id=request_id,
+            instrument_code=instrument_code,
+            market=market,
+            frequency=frequency,
+            time_of_day=time_of_day,
+            weekday=weekday,
+            notification=notification,
+            instrument_name=instrument_name,
+            workflow_settings=workflow_settings,
+        )
+        report = payload["scheduledReport"]
+        if isinstance(report, ScheduledReportForUser):
+            return report
+        return to_scheduled_report_for_user(report)
+
+    def create_scheduled_report_for_user(
+        self,
+        *,
+        request_id: str,
+        instrument_code: str,
+        market: MarketProfile | str,
+        frequency: str,
+        time_of_day: str,
+        weekday: int | None = None,
+        notification: dict[str, Any] | None = None,
+        instrument_name: str | None = None,
+        workflow_settings: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         cached = self._idempotency.get(request_id)
         if cached is not None:
-            return cached
+            if isinstance(cached, Mapping) and "scheduledReport" in cached:
+                return dict(cached)
+            return {"scheduledReport": cached}
         try:
             assert_schedule_frequency_supported(frequency)
         except FirstVersionScopeError as exc:
@@ -92,11 +127,76 @@ class SchedulerService:
                 raise UiServiceError("INVALID_INPUT", "每周计划需要 weekday(0-6)。")
         identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
         market_value = MarketProfile(identity.profile)
+        normalized_notification = self._normalize_notification(notification)
+        normalized_workflow_settings = self._normalize_workflow_settings(workflow_settings, market_value)
+        existing = self._find_matching_scheduled_report(
+            instrument_code=identity.ticker,
+            market=market_value,
+            frequency=frequency,
+            time_of_day=time_text,
+            weekday=weekday,
+            notification=normalized_notification,
+            workflow_settings=normalized_workflow_settings,
+        )
+        if existing is not None:
+            dto = to_scheduled_report_for_user(existing)
+            payload = {"scheduledReport": dto}
+            self._idempotency[request_id] = payload
+            return payload
+        nearby = self._find_nearby_daily_scheduled_report(
+            instrument_code=identity.ticker,
+            market=market_value,
+            frequency=frequency,
+            time_of_day=time_text,
+            weekday=weekday,
+            notification=normalized_notification,
+            workflow_settings=normalized_workflow_settings,
+        )
+        if nearby is not None:
+            previous_time = nearby.time_of_day
+            nearby.time_of_day = time_text
+            nearby.weekday = weekday
+            nearby.notification = normalized_notification
+            nearby.workflow_settings = normalized_workflow_settings
+            nearby.instrument_name = instrument_name or nearby.instrument_name or report_display_name(identity.ticker, identity.profile)
+            nearby.next_run_at = self.compute_next_run_at(
+                frequency=frequency,
+                time_of_day=time_text,
+                weekday=weekday,
+                after=self._now_provider(),
+                timezone_name=_SCHEDULE_TIMEZONE,
+            )
+            nearby.state = "active"
+            nearby.sync_error_message = None
+            nearby.updated_at = self._now_iso()
+            if self._cron_adapter is not None and nearby.openclaw_cron_job_id:
+                try:
+                    self._cron_adapter.update_job(
+                        job_id=nearby.openclaw_cron_job_id,
+                        patch={
+                            "name": self._cron_job_name(nearby),
+                            "schedule": self._cron_schedule(nearby),
+                            "payload": self._scheduled_report_cron_payload(nearby.id),
+                            "enabled": True,
+                        },
+                    )
+                except Exception as exc:
+                    raise UiServiceError("CRON_PROVISION_FAILED", "定时报告更新失败，OpenClaw cron 未配置成功。") from exc
+            self._store.save_scheduled_report(nearby)
+            dto = to_scheduled_report_for_user(nearby)
+            payload = {
+                "scheduledReport": dto,
+                "message": f"已替换相近的定时报告：原时间 {previous_time}，新时间 {time_text}。",
+                "replacedScheduledReportId": nearby.id,
+            }
+            self._idempotency[request_id] = payload
+            return payload
         next_run_at = self.compute_next_run_at(
             frequency=frequency,
             time_of_day=time_text,
             weekday=weekday,
             after=self._now_provider(),
+            timezone_name=_SCHEDULE_TIMEZONE,
         )
         now_iso = self._now_iso()
         item = ScheduledReport(
@@ -107,8 +207,8 @@ class SchedulerService:
             frequency=frequency,
             time_of_day=time_text,
             weekday=weekday,
-            notification=self._normalize_notification(notification),
-            workflow_settings=self._normalize_workflow_settings(workflow_settings, market_value),
+            notification=normalized_notification,
+            workflow_settings=normalized_workflow_settings,
             start_date=now_iso[:10],
             end_date=now_iso[:10],
             current_date=now_iso[:10],
@@ -145,8 +245,9 @@ class SchedulerService:
             item.updated_at = self._now_iso()
             self._store.save_scheduled_report(item)
         dto = to_scheduled_report_for_user(item)
-        self._idempotency[request_id] = dto
-        return dto
+        payload = {"scheduledReport": dto}
+        self._idempotency[request_id] = payload
+        return payload
 
     def pause_scheduled_report(self, *, request_id: str, scheduled_report_id: str) -> ScheduledReportForUser:
         cached = self._idempotency.get(request_id)
@@ -186,6 +287,7 @@ class SchedulerService:
             time_of_day=item.time_of_day,
             weekday=item.weekday,
             after=self._now_provider(),
+            timezone_name=_SCHEDULE_TIMEZONE,
         )
         item.updated_at = self._now_iso()
         item.sync_error_message = None
@@ -274,6 +376,18 @@ class SchedulerService:
         if item.state == "paused":
             raise UiServiceError("INVALID_INPUT", "定时报告已暂停。")
 
+        canonical = self._canonical_visible_schedule(item)
+        if canonical is not None and canonical.id != item.id:
+            snapshot = self._queue_snapshot_provider()
+            payload = {
+                "queueSnapshot": self._queue_snapshot_for_user(snapshot),
+                "deduped": True,
+                "skipped": True,
+                "canonicalScheduledReportId": canonical.id,
+            }
+            self._idempotency[request_id] = payload
+            return payload
+
         if item.last_run_task_id and self._is_duplicate_scheduled_report_wake(item, cron_run_id=cron_run_id):
             snapshot = self._queue_snapshot_provider()
             payload: dict[str, Any] = {
@@ -308,6 +422,7 @@ class SchedulerService:
             time_of_day=item.time_of_day,
             weekday=item.weekday,
             after=self._now_provider(),
+            timezone_name=_SCHEDULE_TIMEZONE,
         )
         item.state = "active"
         item.updated_at = self._now_iso()
@@ -342,6 +457,7 @@ class SchedulerService:
                     time_of_day=item.time_of_day,
                     weekday=item.weekday,
                     after=now_dt,
+                    timezone_name=_SCHEDULE_TIMEZONE,
                 )
                 item.updated_at = self._now_iso()
                 self._store.save_scheduled_report(item)
@@ -357,7 +473,7 @@ class SchedulerService:
         return to_scheduled_report_for_user(self._get_schedule_or_raise(scheduled_report_id))
 
     def list_scheduled_reports_for_user(self) -> dict[str, Any]:
-        return {"items": [self._scheduled_report_detail_for_user(item) for item in self._store.list_scheduled_reports()]}
+        return {"items": [self._scheduled_report_detail_for_user(item) for item in self._deduped_visible_schedules()]}
 
     @staticmethod
     def compute_next_run_at(
@@ -366,14 +482,16 @@ class SchedulerService:
         time_of_day: str,
         weekday: int | None,
         after: datetime,
+        timezone_name: str = _SCHEDULE_TIMEZONE,
     ) -> str:
-        base = after.astimezone(UTC).replace(second=0, microsecond=0)
+        zone = ZoneInfo(timezone_name)
+        base = after.astimezone(zone).replace(second=0, microsecond=0)
         hour, minute = SchedulerService._split_time_of_day(time_of_day)
         if frequency == "daily":
             candidate = base.replace(hour=hour, minute=minute)
             if candidate <= base:
                 candidate += timedelta(days=1)
-            return SchedulerService._to_iso_z(candidate)
+            return SchedulerService._to_iso_z(candidate.astimezone(UTC))
         if frequency == "weekly":
             if weekday is None:
                 raise UiServiceError("INVALID_INPUT", "每周计划需要 weekday(0-6)。")
@@ -382,8 +500,188 @@ class SchedulerService:
             candidate = candidate.replace(hour=hour, minute=minute)
             if candidate <= base:
                 candidate += timedelta(days=7)
-            return SchedulerService._to_iso_z(candidate)
+            return SchedulerService._to_iso_z(candidate.astimezone(UTC))
         raise UiServiceError("INVALID_INPUT", "当前只支持每天或每周生成完整报告。")
+
+    def _find_matching_scheduled_report(
+        self,
+        *,
+        instrument_code: str,
+        market: MarketProfile,
+        frequency: str,
+        time_of_day: str,
+        weekday: int | None,
+        notification: dict[str, Any],
+        workflow_settings: dict[str, Any],
+    ) -> ScheduledReport | None:
+        candidate: ScheduledReport | None = None
+        for item in self._ordered_visible_schedules():
+            if self._schedule_matches(
+                item,
+                instrument_code=instrument_code,
+                market=market,
+                frequency=frequency,
+                time_of_day=time_of_day,
+                weekday=weekday,
+                notification=notification,
+                workflow_settings=workflow_settings,
+            ) and (candidate is None or self._schedule_is_newer(item, candidate)):
+                candidate = item
+        return candidate
+
+    def _find_nearby_daily_scheduled_report(
+        self,
+        *,
+        instrument_code: str,
+        market: MarketProfile,
+        frequency: str,
+        time_of_day: str,
+        weekday: int | None,
+        notification: dict[str, Any],
+        workflow_settings: dict[str, Any],
+    ) -> ScheduledReport | None:
+        candidate: ScheduledReport | None = None
+        for item in self._ordered_visible_schedules():
+            if self._schedule_matches_daily_duplicate_window(
+                item,
+                instrument_code=instrument_code,
+                market=market,
+                frequency=frequency,
+                time_of_day=time_of_day,
+                weekday=weekday,
+                notification=notification,
+                workflow_settings=workflow_settings,
+            ) and (candidate is None or self._schedule_is_newer(item, candidate)):
+                candidate = item
+        return candidate
+
+    def _deduped_visible_schedules(self) -> list[ScheduledReport]:
+        out: list[ScheduledReport] = []
+        for item in self._ordered_visible_schedules():
+            duplicate_index = next((idx for idx, kept in enumerate(out) if self._schedules_collapse(kept, item)), None)
+            if duplicate_index is None:
+                out.append(item)
+            elif self._schedule_is_newer(item, out[duplicate_index]):
+                out[duplicate_index] = item
+        return out
+
+    def _canonical_visible_schedule(self, item: ScheduledReport) -> ScheduledReport | None:
+        candidate: ScheduledReport | None = None
+        for other in self._ordered_visible_schedules():
+            if self._schedules_collapse(item, other) and (candidate is None or self._schedule_is_newer(other, candidate)):
+                candidate = other
+        return candidate
+
+    def _ordered_visible_schedules(self) -> list[ScheduledReport]:
+        priority = {"active": 0, "due": 0, "enqueued": 0, "paused": 1}
+        return sorted(
+            self._store.list_scheduled_reports(states=_VISIBLE_SCHEDULE_STATES),
+            key=lambda item: (priority.get(item.state, 9), item.created_at, item.id),
+        )
+
+    @staticmethod
+    def _schedule_matches(
+        item: ScheduledReport,
+        *,
+        instrument_code: str,
+        market: MarketProfile,
+        frequency: str,
+        time_of_day: str,
+        weekday: int | None,
+        notification: dict[str, Any],
+        workflow_settings: dict[str, Any],
+    ) -> bool:
+        return (
+            item.instrument_code == instrument_code
+            and item.market == market
+            and item.frequency == frequency
+            and item.time_of_day == time_of_day
+            and item.weekday == weekday
+            and item.notification == notification
+            and item.workflow_settings == workflow_settings
+        )
+
+    def _schedule_matches_daily_duplicate_window(
+        self,
+        item: ScheduledReport,
+        *,
+        instrument_code: str,
+        market: MarketProfile,
+        frequency: str,
+        time_of_day: str,
+        weekday: int | None,
+        notification: dict[str, Any],
+        workflow_settings: dict[str, Any],
+    ) -> bool:
+        if not self._schedule_matches_identity_except_time(
+            item,
+            instrument_code=instrument_code,
+            market=market,
+            frequency=frequency,
+            weekday=weekday,
+            notification=notification,
+            workflow_settings=workflow_settings,
+        ):
+            return False
+        return self._time_of_day_distance_minutes(item.time_of_day, time_of_day) <= _DAILY_DUPLICATE_WINDOW_MINUTES
+
+    def _schedules_collapse(self, left: ScheduledReport, right: ScheduledReport) -> bool:
+        if self._schedule_matches(
+            left,
+            instrument_code=right.instrument_code,
+            market=right.market,
+            frequency=right.frequency,
+            time_of_day=right.time_of_day,
+            weekday=right.weekday,
+            notification=right.notification,
+            workflow_settings=right.workflow_settings,
+        ):
+            return True
+        if not self._schedule_matches_identity_except_time(
+            left,
+            instrument_code=right.instrument_code,
+            market=right.market,
+            frequency=right.frequency,
+            weekday=right.weekday,
+            notification=right.notification,
+            workflow_settings=right.workflow_settings,
+        ):
+            return False
+        if left.time_of_day == right.time_of_day:
+            return True
+        return self._time_of_day_distance_minutes(left.time_of_day, right.time_of_day) <= _DAILY_DUPLICATE_WINDOW_MINUTES
+
+    @staticmethod
+    def _schedule_matches_identity_except_time(
+        item: ScheduledReport,
+        *,
+        instrument_code: str,
+        market: MarketProfile,
+        frequency: str,
+        weekday: int | None,
+        notification: dict[str, Any],
+        workflow_settings: dict[str, Any],
+    ) -> bool:
+        if item.frequency != "daily" or frequency != "daily":
+            return False
+        return (
+            item.instrument_code == instrument_code
+            and item.market == market
+            and item.weekday == weekday
+            and item.notification == notification
+            and item.workflow_settings == workflow_settings
+        )
+
+    @staticmethod
+    def _schedule_is_newer(left: ScheduledReport, right: ScheduledReport) -> bool:
+        return (left.updated_at, left.created_at, left.id) > (right.updated_at, right.created_at, right.id)
+
+    @staticmethod
+    def _time_of_day_distance_minutes(left: str, right: str) -> int:
+        left_hour, left_minute = SchedulerService._split_time_of_day(left)
+        right_hour, right_minute = SchedulerService._split_time_of_day(right)
+        diff = abs((left_hour * 60 + left_minute) - (right_hour * 60 + right_minute))
+        return min(diff, 24 * 60 - diff)
 
     def _get_schedule_or_raise(self, scheduled_report_id: str) -> ScheduledReport:
         item = self._store.get_scheduled_report(scheduled_report_id)
@@ -604,7 +902,7 @@ class SchedulerService:
             expr = f"{minute} {hour} * * {cron_weekday}"
         else:
             raise UiServiceError("INVALID_INPUT", "当前只支持每天或每周生成完整报告。")
-        return {"kind": "cron", "expr": expr, "tz": "UTC", "staggerMs": 0}
+        return {"kind": "cron", "expr": expr, "tz": _SCHEDULE_TIMEZONE, "staggerMs": 0}
 
     @staticmethod
     def _scheduled_report_cron_payload(scheduled_report_id: str) -> dict[str, Any]:

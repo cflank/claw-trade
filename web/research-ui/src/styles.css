@@ -421,6 +421,10 @@ body {
   margin: 0;
 }
 
+.ct-message-text {
+  white-space: pre-wrap;
+}
+
 .ct-selection-card {
   border: 1px solid var(--ct-border);
   border-radius: 8px;
@@ -618,6 +622,28 @@ body {
   left: 0;
   right: 0;
   width: auto;
+}
+
+.ct-command-menu {
+  left: 0;
+  right: 0;
+  width: auto;
+}
+
+.ct-command-option {
+  display: grid;
+  gap: 2px;
+}
+
+.ct-command-name {
+  font-weight: 700;
+}
+
+.ct-command-description,
+.ct-command-usage {
+  color: var(--ct-text-muted);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .ct-worker-mention-menu .ct-worker-selector-list {

@@ -97,6 +97,42 @@ def test_scan_bucket_groups_same_instrument_and_updates_triggered_alerts() -> No
     assert store.get_scan_bucket("CRYPTO:3m").last_scan_run_id == summary.scan_run_id  # type: ignore[union-attr]
 
 
+def test_scan_bucket_delivers_notification_when_alert_triggers() -> None:
+    store = InMemoryScheduledWorkStore()
+    store.save_scan_bucket(_bucket())
+    store.save_price_alert(
+        _alert(
+            "alert-1",
+            condition={"type": "price_threshold", "operator": "above", "value": 90.0, "window": None},
+        )
+    )
+    delivered: list[tuple[str, dict[str, Any]]] = []
+
+    def quote_provider(_instrument_code: str, _market: MarketProfile) -> dict[str, Any]:
+        return {
+            "current_price": 100.0,
+            "percent_change": 1.0,
+            "quote_timestamp": "2026-06-17T12:00:00Z",
+            "evidence_ref": "quote://btc",
+        }
+
+    service = PriceAlertScanService(
+        store=store,
+        quote_provider=quote_provider,
+        trigger_notifier=lambda alert, quote: delivered.append((alert.id, quote))
+        or {"channel": "wechat_clawbot", "delivered": True, "dedupe_key": "dedupe-1"},
+        now_provider=_utc_now,
+    )
+
+    service.scan_bucket("CRYPTO:3m", cron_run_id="cron-run-1")
+
+    alert = store.get_price_alert("alert-1")
+    assert delivered == [("alert-1", {"current_price": 100.0, "percent_change": 1.0, "quote_timestamp": "2026-06-17T12:00:00Z", "evidence_ref": "quote://btc"})]
+    assert alert is not None
+    assert alert.notification_dedupe_key == "dedupe-1"
+    assert alert.last_notification_result == {"channel": "wechat_clawbot", "delivered": True, "dedupe_key": "dedupe-1"}
+
+
 def test_scan_bucket_records_quote_failure_on_alert() -> None:
     store = InMemoryScheduledWorkStore()
     store.save_scan_bucket(_bucket())

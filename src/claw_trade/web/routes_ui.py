@@ -470,7 +470,7 @@ def cancel_selection_progress(payload: CancelSelectionProgressRequest, request: 
 def create_scheduled_report(payload: CreateScheduledReportRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
-        result = services.scheduler_service.create_scheduled_report(
+        result = services.scheduler_service.create_scheduled_report_for_user(
             request_id=payload.requestId,
             instrument_code=payload.instrumentCode,
             instrument_name=payload.instrumentName,
@@ -654,22 +654,15 @@ def list_saved_reports(
 
 def _apply_report_forward_capability(items: list[dict[str, Any]], services: UiHttpServices) -> list[dict[str, Any]]:
     can_forward_current_channel = False
-    has_default_target = False
     try:
         status = services.channel_bridge.get_channel_status(probe=True)
         can_forward_current_channel = str(status.get("state")) == "connected" and bool(status.get("canSendFile"))
-        if can_forward_current_channel:
-            has_default_target = services.channel_bridge.resolve_default_report_file_target(
-                channel_kind="wechat_clawbot"
-            ) is not None
     except Exception:
         can_forward_current_channel = False
     forwarded_items: list[dict[str, Any]] = []
     for item in items:
         next_item = dict(item)
-        next_item["canForwardToChannel"] = bool(
-            can_forward_current_channel and (item.get("canForwardToChannel") or has_default_target)
-        )
+        next_item["canForwardToChannel"] = bool(can_forward_current_channel)
         forwarded_items.append(next_item)
     return forwarded_items
 

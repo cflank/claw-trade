@@ -34,6 +34,20 @@ def _ready_result(row: Mapping[str, Any], *, dataset_refs: tuple[str, ...] = ("d
     )
 
 
+def _partial_result(row: Mapping[str, Any], *, dataset_refs: tuple[str, ...] = ("dataset://quote/BTC",)) -> Any:
+    return SimpleNamespace(
+        status=DataResultStatus.PARTIAL,
+        rows=(dict(row),),
+        dataset_refs=dataset_refs,
+        gaps=(
+            SimpleNamespace(
+                gap_type="warehouse_stale",
+                message="cached quote is older than the realtime freshness target",
+            ),
+        ),
+    )
+
+
 def test_source_probe_quote_provider_fails_closed_without_evidence_chain() -> None:
     provider = build_price_alert_quote_provider(now_provider=_fixed_now)
 
@@ -97,12 +111,31 @@ def test_price_alert_quote_provider_requests_realtime_quote_and_returns_valid_pa
     ]
 
 
+def test_price_alert_quote_provider_accepts_partial_result_with_valid_quote_row() -> None:
+    api = _FakeDataAPI(
+        _partial_result(
+            {
+                "symbol_id": "BTCUSDT",
+                "price": 71000.0,
+                "timestamp": "2026-06-17T11:59:30Z",
+            },
+            dataset_refs=("dataset://quote/BTC",),
+        )
+    )
+    provider = PriceAlertQuoteProvider(data_api=api, now_provider=_fixed_now)
+
+    quote = provider("BTC", MarketProfile.CRYPTO)
+
+    assert quote["current_price"] == 71000.0
+    assert quote["quote_timestamp"] == "2026-06-17T11:59:30Z"
+    assert quote["evidence_ref"] == "dataset://quote/BTC"
+
+
 @pytest.mark.parametrize(
     "row",
     (
         {"timestamp": "2026-06-17T11:59:30Z", "evidence_ref": "dataset://quote/BTC"},
         {"price": 71000.0, "evidence_ref": "dataset://quote/BTC"},
-        {"price": 71000.0, "timestamp": "2026-06-17T11:59:30Z"},
     ),
 )
 def test_price_alert_quote_provider_rejects_invalid_quote_payload(row: Mapping[str, Any]) -> None:
@@ -111,6 +144,24 @@ def test_price_alert_quote_provider_rejects_invalid_quote_payload(row: Mapping[s
 
     with pytest.raises(RuntimeError, match="invalid_quote_payload"):
         provider("BTC/USDT", MarketProfile.CRYPTO)
+
+
+def test_price_alert_quote_provider_accepts_quote_without_evidence_ref() -> None:
+    api = _FakeDataAPI(
+        _ready_result(
+            {
+                "price": 71000.0,
+                "timestamp": "2026-06-17T11:59:30Z",
+            },
+            dataset_refs=(),
+        )
+    )
+    provider = PriceAlertQuoteProvider(data_api=api, now_provider=_fixed_now)
+
+    quote = provider("BTC/USDT", MarketProfile.CRYPTO)
+
+    assert quote["current_price"] == 71000.0
+    assert quote["evidence_ref"] is None
 
 
 def test_price_alert_quote_provider_rejects_stale_quote() -> None:

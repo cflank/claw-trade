@@ -39,10 +39,12 @@ class PriceAlertScanService:
         *,
         store: ScheduledWorkStore,
         quote_provider: Callable[[str, MarketProfile], dict[str, Any]],
+        trigger_notifier: Callable[[PriceAlert, dict[str, Any]], dict[str, Any]] | None = None,
         now_provider: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         self._quote_provider = quote_provider
+        self._trigger_notifier = trigger_notifier
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
 
     def scan_bucket(self, bucket_key: str, *, cron_run_id: str) -> PriceAlertScanSummary:
@@ -143,8 +145,12 @@ class PriceAlertScanService:
         alert.last_error_message = None
         alert.updated_at = now_iso
         if triggered:
+            notification_result = self._trigger_notifier(alert, quote) if self._trigger_notifier is not None else None
             alert.state = "closed"
             alert.triggered_at = now_iso
+            if notification_result is not None:
+                alert.notification_dedupe_key = str(notification_result["dedupe_key"])
+                alert.last_notification_result = notification_result
         else:
             alert.state = "active"
         self._store.save_price_alert(alert)

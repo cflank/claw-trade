@@ -7,8 +7,12 @@ from typing import Any, Callable
 
 from claw_trade.instruments.resolver import resolve_instrument_identity
 from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
-from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore, PriceAlert, ScheduledWorkStore
-from claw_trade.ui_backend.scheduled_work_store import PriceAlertScanBucket
+from claw_trade.ui_backend.scheduled_work_store import (
+    InMemoryScheduledWorkStore,
+    PriceAlert,
+    PriceAlertScanBucket,
+    ScheduledWorkStore,
+)
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.user_dto import PriceAlertForUser, to_price_alert_for_user
 from claw_trade.workflow.report_request_factory import report_display_name
@@ -16,6 +20,7 @@ from claw_trade.workflow.report_request_factory import report_display_name
 _PRICE_ALERT_SCAN_INTERVAL_MS = 180_000
 _PRICE_ALERT_SCAN_FREQUENCY = "3m"
 _PRICE_ALERT_SCAN_AGENT_ID = "price_alert_scan_worker"
+_VISIBLE_PRICE_ALERT_STATES = {"active", "checking", "error", "paused"}
 
 
 class UiServiceError(RuntimeError):
@@ -66,6 +71,17 @@ class PriceAlertService:
             if market_value == MarketProfile.HK:
                 raise UiServiceError("INVALID_INPUT", "第一版暂不支持港股价格提醒。")
             normalized_condition = self._normalize_condition(condition)
+            normalized_notification = self._normalize_notification(notification)
+            existing = self._find_matching_price_alert(
+                instrument_code=identity.ticker,
+                market=market_value,
+                condition=normalized_condition,
+                notification=normalized_notification,
+            )
+            if existing is not None:
+                dto = to_price_alert_for_user(existing)
+                self._idempotency[request_id] = dto
+                return dto
             now_iso = self._now_iso()
             scan_bucket = f"{market_value.value}:{_PRICE_ALERT_SCAN_FREQUENCY}"
             self._ensure_scan_bucket(scan_bucket, market=market_value, now_iso=now_iso)
@@ -76,7 +92,7 @@ class PriceAlertService:
                 market=market_value,
                 condition=normalized_condition,
                 condition_version=1,
-                notification=self._normalize_notification(notification),
+                notification=normalized_notification,
                 state="active",
                 scan_bucket=scan_bucket,
                 last_checked_at=None,
@@ -221,7 +237,7 @@ class PriceAlertService:
                 item.last_error_message = None
                 item.updated_at = now_iso
                 self._store.save_price_alert(item)
-                payload = {"alert": to_price_alert_for_user(item), "triggered": False}
+                payload = {"alert": to_price_alert_for_user(item), "triggered": False, "message": self._render_not_triggered_message(item, quote)}
             else:
                 message = self._render_triggered_message(item, quote)
                 notification_result = self._deliver_notification(item, message=message, quote=quote)
@@ -252,7 +268,7 @@ class PriceAlertService:
         return to_price_alert_for_user(self._get_alert_or_raise(price_alert_id))
 
     def list_price_alerts_for_user(self) -> dict[str, Any]:
-        return {"items": [self._price_alert_detail_for_user(item) for item in self._store.list_price_alerts()]}
+        return {"items": [self._price_alert_detail_for_user(item) for item in self._deduped_visible_alerts()]}
 
     def list_price_alert_scan_buckets_for_user(self) -> dict[str, Any]:
         return {"items": [self._scan_bucket_for_user(bucket) for bucket in self._store.list_scan_buckets()]}
@@ -289,6 +305,53 @@ class PriceAlertService:
             "lastNotificationResult": item.last_notification_result,
             "updatedAt": item.updated_at,
         }
+
+    def _find_matching_price_alert(
+        self,
+        *,
+        instrument_code: str,
+        market: MarketProfile,
+        condition: dict[str, Any],
+        notification: dict[str, Any],
+    ) -> PriceAlert | None:
+        for item in self._ordered_visible_alerts(market=market):
+            if (
+                item.instrument_code == instrument_code
+                and self._same_alert_condition(item.condition, condition)
+                and item.notification == notification
+            ):
+                return item
+        return None
+
+    def _deduped_visible_alerts(self) -> list[PriceAlert]:
+        out: list[PriceAlert] = []
+        for item in self._ordered_visible_alerts():
+            if not any(
+                kept.instrument_code == item.instrument_code
+                and kept.market == item.market
+                and self._same_alert_condition(kept.condition, item.condition)
+                and kept.notification == item.notification
+                for kept in out
+            ):
+                out.append(item)
+        return out
+
+    def _ordered_visible_alerts(self, *, market: MarketProfile | None = None) -> list[PriceAlert]:
+        priority = {"active": 0, "checking": 0, "error": 1, "paused": 2, "closed": 3}
+        return sorted(
+            self._store.list_price_alerts(market=market, states=_VISIBLE_PRICE_ALERT_STATES),
+            key=lambda item: (priority.get(item.state, 9), item.created_at, item.id),
+        )
+
+    @staticmethod
+    def _same_alert_condition(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        if left.get("type") != right.get("type") or left.get("operator") != right.get("operator"):
+            return False
+        if float(left.get("value", 0)) != float(right.get("value", 0)):
+            return False
+        if left.get("type") == "price_threshold":
+            return True
+        return left.get("window") == right.get("window")
 
     @staticmethod
     def _scan_bucket_for_user(bucket: PriceAlertScanBucket) -> dict[str, Any]:
@@ -330,7 +393,14 @@ class PriceAlertService:
         source = notification or {}
         channel = str(source.get("channel", "in_app")).strip() or "in_app"
         enabled = bool(source.get("enabled", True))
-        return {"channel": channel, "enabled": enabled}
+        payload: dict[str, Any] = {"channel": channel, "enabled": enabled}
+        target = str(source.get("target") or "").strip()
+        if target:
+            payload["target"] = target
+        account_id = source.get("accountId", source.get("account_id"))
+        if account_id is not None and str(account_id).strip():
+            payload["accountId"] = str(account_id).strip()
+        return payload
 
     def _as_market_profile(self, market: MarketProfile | str) -> MarketProfile:
         if isinstance(market, MarketProfile):
@@ -384,6 +454,12 @@ class PriceAlertService:
         return f"{code} 已触发涨跌幅提醒，当前变动 {percent_change:.2f}%。"
 
     @staticmethod
+    def _render_not_triggered_message(item: PriceAlert, quote: dict[str, Any]) -> str:
+        if item.condition["type"] == "price_threshold":
+            return f"已检查 {item.instrument_code}，当前价格 {float(quote['current_price']):.2f}，未触发提醒。"
+        return f"已检查 {item.instrument_code}，未触发提醒。"
+
+    @staticmethod
     def _quote_evidence_ref(quote: dict[str, Any]) -> str | None:
         value = quote.get("evidence_ref")
         return None if value is None else str(value)
@@ -403,35 +479,50 @@ class PriceAlertService:
         dedupe_key = self._notification_dedupe_key(item, quote=quote)
         if item.notification_dedupe_key == dedupe_key and item.last_notification_result is not None:
             return dict(item.last_notification_result)
+        notified_in_app = False
+
+        def notify_in_app_once() -> None:
+            nonlocal notified_in_app
+            if notified_in_app:
+                return
+            self._in_app_notifier(item.id, message)
+            notified_in_app = True
+
         channel = str(item.notification.get("channel") or "in_app")
         enabled = bool(item.notification.get("enabled", True))
         if not enabled or channel == "in_app":
-            self._in_app_notifier(item.id, message)
+            notify_in_app_once()
             return {"channel": "in_app", "delivered": True, "dedupe_key": dedupe_key}
+        notify_in_app_once()
         try:
             result = self._notifier(message, {**item.notification, "dedupeKey": dedupe_key})
         except Exception:
-            self._in_app_notifier(item.id, message)
             return {
                 "channel": "in_app",
                 "delivered": True,
                 "fallback_from": channel,
                 "channel_delivered": False,
+                "channel_error": "wechat_send_failed",
                 "dedupe_key": dedupe_key,
             }
         if isinstance(result, dict):
             sent = bool(result.get("sent", result.get("ok", True)))
             if not sent:
-                self._in_app_notifier(item.id, message)
-                return {
+                payload = {
                     "channel": "in_app",
                     "delivered": True,
                     "fallback_from": channel,
                     "channel_delivered": False,
                     "dedupe_key": dedupe_key,
                 }
+                reason = str(result.get("reason") or result.get("message") or result.get("code") or "").strip()
+                payload["channel_error"] = reason or "wechat_send_failed"
+                return payload
             return {"channel": channel, "delivered": True, "dedupe_key": dedupe_key, **result}
         return {"channel": channel, "delivered": True, "dedupe_key": dedupe_key}
+
+    def deliver_triggered_notification(self, item: PriceAlert, *, quote: dict[str, Any]) -> dict[str, Any]:
+        return self._deliver_notification(item, message=self._render_triggered_message(item, quote), quote=quote)
 
     @staticmethod
     def _notification_dedupe_key(item: PriceAlert, *, quote: dict[str, Any]) -> str:

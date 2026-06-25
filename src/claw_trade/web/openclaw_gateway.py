@@ -24,6 +24,8 @@ _UI_CHAT_LANE = "ui-interactive"
 _UI_CHAT_START_TIMEOUT_MS = 60_000
 _UI_CHAT_WAIT_TIMEOUT_MS = 60_000
 _UI_CHAT_HISTORY_TIMEOUT_MS = 15_000
+_CHANNEL_TEXT_SEND_TIMEOUT_MS = 15_000
+_CHANNEL_FILE_SEND_TIMEOUT_MS = 75_000
 _CHANNEL_STATUS_LIGHT_CACHE_TTL_SECONDS = 30.0
 _CHANNEL_STATUS_PROBE_CACHE_TTL_SECONDS = 15.0
 _CHAT_GATEWAY_METHODS = frozenset({"sessions.create", "agent", "chat.send", "agent.wait", "chat.history"})
@@ -589,7 +591,7 @@ class OpenClawGatewayRpcClient:
         }
         if account_id:
             params["accountId"] = account_id
-        return self._call("send", params)
+        return self._call("send", params, timeout_ms=self._channel_text_send_timeout_ms())
 
     def channels_send_file(
         self,
@@ -623,7 +625,7 @@ class OpenClawGatewayRpcClient:
         if account_id:
             params["accountId"] = account_id
         try:
-            return self._call("send", params)
+            return self._call("send", params, timeout_ms=self._channel_file_send_timeout_ms())
         finally:
             if temp_media_path is not None:
                 temp_media_path.unlink(missing_ok=True)
@@ -693,6 +695,12 @@ class OpenClawGatewayRpcClient:
 
     def _ui_chat_history_timeout_ms(self) -> int:
         return min(self._timeout_ms, _UI_CHAT_HISTORY_TIMEOUT_MS)
+
+    def _channel_text_send_timeout_ms(self) -> int:
+        return min(self._timeout_ms, _CHANNEL_TEXT_SEND_TIMEOUT_MS)
+
+    def _channel_file_send_timeout_ms(self) -> int:
+        return min(self._timeout_ms, _CHANNEL_FILE_SEND_TIMEOUT_MS)
 
     def _call(
         self,

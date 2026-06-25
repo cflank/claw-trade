@@ -294,7 +294,7 @@ function MessageBody({
       />
     );
   }
-  return <p>{item.text}</p>;
+  return <p className="ct-message-text">{item.text}</p>;
 }
 
 export function MessageStream({

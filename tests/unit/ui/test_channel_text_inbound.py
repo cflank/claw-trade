@@ -4,12 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
 from claw_trade.selection.controller import SelectCommandCode, SelectCommandResult
 from claw_trade.ui_backend.channel_text_inbound import (
     ChannelReplyTarget,
     ChannelTextInboundController,
     ChannelTextMessage,
+    _looks_like_select_command,
 )
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
@@ -120,6 +122,30 @@ def test_ordinary_wechat_text_uses_normal_chat_without_report_workflow() -> None
             "requestId": "r-1",
         }
     ]
+
+
+def test_help_command_returns_usage_without_openclaw_chat() -> None:
+    controller, runner, chat_transport = _controller()
+    result = controller.handle_message(_message("r-help", "帮助"))
+    assert result["handled"] is True
+    assert result["state"] == "replied"
+    assert "/report <标的>" in result["replyText"]
+    assert "/sched <标的> 每天 HH:MM" in result["replyText"]
+    assert "/alert <标的> 高于/低于 <价格> 提醒我" in result["replyText"]
+    assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["replyText"]
+    assert "1/cn_a/A股 = A股；2/crypto/加密 = 加密" in result["replyText"]
+    assert runner.calls == 0
+    assert chat_transport.calls == []
+
+
+@pytest.mark.parametrize("text", ("/select 1", "/select 2", "/select crypto", "/select 2 refresh"))
+def test_channel_select_detector_accepts_market_tokens(text: str) -> None:
+    assert _looks_like_select_command(text)
+
+
+@pytest.mark.parametrize("text", ("/select refresh 2", "/select refresh crypto"))
+def test_channel_select_detector_keeps_refresh_before_market_invalid(text: str) -> None:
+    assert not _looks_like_select_command(text)
 
 
 def test_select_command_runs_in_background_and_updates_ui_snapshot_without_openclaw_chat() -> None:

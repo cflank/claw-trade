@@ -33,6 +33,7 @@ class ConfirmationController:
         price_alert_service: PriceAlertService | None = None,
         report_model_ready_checker: Callable[[], None] | None = None,
         company_name_resolver: CompanyNameResolver | None = None,
+        default_price_alert_notification: Callable[[], dict[str, Any] | None] | None = None,
     ) -> None:
         self._queue = queue
         self._approved_profiles = approved_profiles
@@ -45,6 +46,7 @@ class ConfirmationController:
         )
         self._report_model_ready_checker = report_model_ready_checker
         self._company_name_resolver = company_name_resolver
+        self._default_price_alert_notification = default_price_alert_notification
         self._drafts: dict[str, IntentDraft] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
 
@@ -114,7 +116,7 @@ class ConfirmationController:
             schedule = frozen.schedule or {}
             payload = {
                 "status": "confirmed",
-                "scheduledReport": self._scheduler_service.create_scheduled_report(
+                **self._scheduler_service.create_scheduled_report_for_user(
                     request_id=request_id,
                     instrument_code=frozen.instrument_code,
                     instrument_name=frozen.instrument_name,
@@ -131,6 +133,7 @@ class ConfirmationController:
         if frozen.kind == IntentKind.PRICE_ALERT:
             if not frozen.price_condition:
                 raise QueueError("INVALID_INPUT", "invalid_input", "价格提醒条件缺失，请重新输入。")
+            notification = self._price_alert_notification(dict(frozen.notification), origin_context_id)
             payload = {
                 "status": "confirmed",
                 "priceAlert": self._price_alert_service.create_price_alert(
@@ -139,7 +142,7 @@ class ConfirmationController:
                     instrument_name=frozen.instrument_name,
                     market=frozen.market,
                     condition=dict(frozen.price_condition),
-                    notification=dict(frozen.notification),
+                    notification=notification,
                 ),
             }
             self._idempotency[request_id] = payload
@@ -175,6 +178,31 @@ class ConfirmationController:
         if existing and existing.upper() != draft.instrument_code.upper():
             return existing
         return _UNRESOLVED_COMPANY_NAME
+
+    @staticmethod
+    def _notification_for_origin_context(notification: dict[str, Any], origin_context_id: str | None) -> dict[str, Any]:
+        parts = str(origin_context_id or "").strip().split(":", 2)
+        if len(parts) != 3:
+            return notification
+        channel_kind, account_id, sender_id = (part.strip() for part in parts)
+        if not channel_kind or not sender_id:
+            return notification
+        return {
+            **notification,
+            "channel": channel_kind,
+            "enabled": True,
+            "target": sender_id,
+            "accountId": account_id or None,
+        }
+
+    def _price_alert_notification(self, notification: dict[str, Any], origin_context_id: str | None) -> dict[str, Any]:
+        routed = self._notification_for_origin_context(notification, origin_context_id)
+        if str(routed.get("channel") or "") != "in_app" or routed.get("target"):
+            return routed
+        if self._default_price_alert_notification is None:
+            return routed
+        default = self._default_price_alert_notification()
+        return routed if default is None else {**routed, **default, "enabled": True}
 
     def _company_name_for_draft(self, draft: IntentDraft) -> str | None:
         resolver = self._company_name_resolver

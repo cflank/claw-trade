@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "### Result\n{\n  \"status\": 404,\n  \"payload\": {\n    \"code\": \"ALERT_NOT_FOUND\",\n    \"message\": \"价格提醒不存在。\"\n  }\n}\n### Ran Playwright code\n```js\nawait page.evaluate('async () => { const res = await fetch(\\'/api/ui/pause-price-alert\\', { method: \\'POST\\', headers: { \\'Content-Type\\': \\'application/json\\' }, body: JSON.stringify({ requestId: \\'pause-alert-16-for-safe-ui-test\\', priceAlertId: \\'alert-16\\' }) }); const payload = await res.json(); return { status: res.status, payload }; }');\n```\n### Page\n- Page URL: http://127.0.0.1:5175/\n- Page Title: claw-trade 投研工作台\n- Console: 1 errors, 0 warnings\n### Events\n- New console entries: ..\\..\\Users\\cpfla\\AppData\\Local\\Temp\\.playwright-mcp\\console-2026-06-25T08-37-36-247Z.log#L1"
+    }
+  ]
+}

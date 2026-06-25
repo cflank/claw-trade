@@ -228,8 +228,10 @@ def test_request_full_report_file_without_target_or_saved_origin_returns_clear_m
     service = _make_service(channel, asset_dir=tmp_path / "reports" / "assets")
     result = service.request_full_report_file("r-file", "req-file-no-wechat-origin")
     assert result["sent"] is False
-    assert result["code"] == "FILE_SEND_UNSUPPORTED"
-    assert result["userMessage"] == "完整报告文件暂不可发送，请在设备界面查看。"
+    assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+    assert result["userMessage"] == (
+        "微信已连接，但没有可投递的微信聊天。请先在要接收报告的聊天里给 ClawBot 发一条消息，再点转发。"
+    )
     assert channel.send_calls == 0
 
 
@@ -306,13 +308,13 @@ def test_request_full_report_file_preserves_notification_unavailable(monkeypatch
     channel = _FileChannelBridge(
         state="connected",
         can_send_file=True,
-        send_error=UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。"),
+        send_error=UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送超时，报告没有发出。请稍后重试。"),
     )
     service = _make_service(channel)
     result = service.request_full_report_file("r-file", "req-file-notification-fail", target="sender-1")
     assert result["sent"] is False
     assert result["code"] == "NOTIFICATION_UNAVAILABLE"
-    assert result["userMessage"] == "微信通知暂不可用，请在设备界面查看。"
+    assert result["userMessage"] == "微信文件发送超时，报告没有发出。请稍后重试。"
 
 
 def test_request_full_report_file_does_not_claim_success_when_channel_send_returns_ok_false(monkeypatch) -> None:  # type: ignore[no-untyped-def]

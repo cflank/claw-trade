@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
@@ -28,6 +29,10 @@ class _FakeCronGateway:
     def cron_run(self, *, job_id: str, idempotency_key: str | None = None) -> dict[str, Any]:
         self.calls.append({"method": "cron.run", "params": {"jobId": job_id, "idempotencyKey": idempotency_key}})
         return {"runId": "cron-run-1"}
+
+    def cron_remove(self, *, job_id: str) -> dict[str, Any]:
+        self.calls.append({"method": "cron.remove", "params": {"jobId": job_id}})
+        return {"removed": True}
 
 
 def _scheduler() -> SchedulerService:
@@ -149,6 +154,87 @@ def test_scheduled_report_list_exposes_cron_and_wake_evidence_without_run_id() -
     assert payload["items"][0]["lastRunTaskId"] is None
 
 
+def test_scheduled_report_create_reuses_matching_existing_schedule() -> None:
+    service = _scheduler()
+
+    first = service.create_scheduled_report(
+        request_id="req-create-1",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="08:00",
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+    second = service.create_scheduled_report(
+        request_id="req-create-2",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="08:00",
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+
+    payload = service.list_scheduled_reports_for_user()
+
+    assert second.scheduledReportId == first.scheduledReportId
+    assert [item["scheduledReportId"] for item in payload["items"]] == [first.scheduledReportId]
+
+
+def test_scheduled_report_list_dedupes_existing_matching_rows() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request_id: {},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    created = service.create_scheduled_report(
+        request_id="req-create-1",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="08:00",
+    )
+    original = store.get_scheduled_report(created.scheduledReportId)
+    assert original is not None
+    store.save_scheduled_report(
+        replace(
+            original,
+            id="schedule-99",
+            state="active",
+            created_at="2026-05-20T12:00:00Z",
+            updated_at="2026-05-20T12:00:00Z",
+        )
+    )
+
+    payload = service.list_scheduled_reports_for_user()
+
+    assert [item["scheduledReportId"] for item in payload["items"]] == ["schedule-99"]
+
+
+def test_scheduled_report_list_hides_deleted_and_sync_failed_rows() -> None:
+    gateway = _FakeCronGateway()
+    service = _cron_scheduler(gateway)
+    active = service.create_scheduled_report(
+        request_id="req-active",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    deleted = service.create_scheduled_report(
+        request_id="req-deleted",
+        instrument_code="TSLA",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    service.delete_scheduled_report(request_id="req-delete", scheduled_report_id=deleted.scheduledReportId)
+
+    payload = service.list_scheduled_reports_for_user()
+
+    assert [item["scheduledReportId"] for item in payload["items"]] == [active.scheduledReportId]
+
+
 def test_cron_scheduled_report_run_now_contract_returns_trigger_without_fake_task() -> None:
     gateway = _FakeCronGateway()
     service = _cron_scheduler(gateway)
@@ -187,6 +273,26 @@ def test_cron_scheduled_report_run_now_contract_returns_trigger_without_fake_tas
         },
     }
     assert [call["method"] for call in gateway.calls] == ["cron.add", "cron.run"]
+
+
+def test_scheduled_report_cron_uses_user_local_timezone() -> None:
+    gateway = _FakeCronGateway()
+    service = _cron_scheduler(gateway)
+
+    service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="08:00",
+    )
+
+    assert gateway.calls[0]["params"]["schedule"] == {
+        "kind": "cron",
+        "expr": "0 8 * * *",
+        "tz": "America/New_York",
+        "staggerMs": 0,
+    }
 
 
 def test_price_alert_api_contracts_return_user_dto_and_safe_payload() -> None:
@@ -246,3 +352,90 @@ def test_price_alert_list_exposes_scan_bucket_and_real_quote_snapshot() -> None:
     assert payload["items"][0]["lastQuote"]["currentPrice"] == 71000
     assert payload["items"][0]["lastCheckedAt"] == "2026-05-19T12:00:00Z"
     assert buckets["items"][0]["bucketKey"] == "CRYPTO:3m"
+
+
+def test_price_alert_create_reuses_matching_existing_alert() -> None:
+    service = _alert_service()
+
+    first = service.create_price_alert(
+        request_id="req-create-1",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+    second = service.create_price_alert(
+        request_id="req-create-2",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+
+    payload = service.list_price_alerts_for_user()
+
+    assert second.priceAlertId == first.priceAlertId
+    assert [item["priceAlertId"] for item in payload["items"]] == [first.priceAlertId]
+
+
+def test_price_alert_list_dedupes_existing_matching_rows() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = PriceAlertService(
+        quote_provider=lambda _instrument, _market: {
+            "current_price": 71000,
+            "percent_change": 6.3,
+            "percent_change_24h": 6.3,
+        },
+        store=store,
+        now_provider=_fixed_now,
+    )
+    created = service.create_price_alert(
+        request_id="req-create-1",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+    )
+    original = store.get_price_alert(created.priceAlertId)
+    assert original is not None
+    store.save_price_alert(
+        replace(
+            original,
+            id="alert-99",
+            state="error",
+            created_at="2026-05-20T12:00:00Z",
+            updated_at="2026-05-20T12:00:00Z",
+        )
+    )
+
+    payload = service.list_price_alerts_for_user()
+
+    assert [item["priceAlertId"] for item in payload["items"]] == [created.priceAlertId]
+
+
+def test_price_alert_list_hides_closed_and_deleted_rows() -> None:
+    service = _alert_service()
+    closed = service.create_price_alert(
+        request_id="req-closed",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+    )
+    active = service.create_price_alert(
+        request_id="req-active",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 90000},
+    )
+    deleted = service.create_price_alert(
+        request_id="req-deleted",
+        instrument_code="ETH",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 90000},
+    )
+
+    service.run_price_alert_now(request_id="req-check", price_alert_id=closed.priceAlertId)
+    service.delete_price_alert(request_id="req-delete", price_alert_id=deleted.priceAlertId)
+
+    payload = service.list_price_alerts_for_user()
+
+    assert [item["priceAlertId"] for item in payload["items"]] == [active.priceAlertId]

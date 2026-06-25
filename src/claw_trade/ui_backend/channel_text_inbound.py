@@ -180,20 +180,28 @@ class ChannelTextInboundController:
             context_id=conversation_key,
             text=text,
         )
-        result = self._chat_controller.finish_channel_select_command(
-            request_id=message.request_id,
-            context_id=conversation_key,
-            text=text,
+
+        def _finish() -> None:
+            result = self._chat_controller.finish_channel_select_command(
+                request_id=message.request_id,
+                context_id=conversation_key,
+                text=text,
+            )
+            self._push_select_result_to_channel(
+                message=message,
+                conversation_key=conversation_key,
+                result=result,
+            )
+
+        self._background_submitter(_finish)
+        return self._remember(
+            message.request_id,
+            {
+                "handled": True,
+                "replyText": "收到，正在执行 /select 选股；完成后会显示在工作台。",
+                "state": "selection_processing",
+            },
         )
-        self._push_select_result_to_channel(
-            message=message,
-            conversation_key=conversation_key,
-            result=result,
-        )
-        selection = result.get("selection")
-        reply_text = _latest_selection_reply_text(result) or _extract_error(result) or "已收到 /select，但暂时没有返回选股结果。"
-        state = _selection_reply_state(selection) if isinstance(selection, dict) else "selection_unavailable"
-        return self._remember(message.request_id, {"handled": True, "replyText": reply_text, "state": state})
 
     def _handle_full_report_request(
         self,
@@ -439,17 +447,41 @@ def _looks_like_full_report_request(text: str) -> bool:
 
 
 def _looks_like_select_command(text: str) -> bool:
-    normalized = text.strip().lower()
-    return (
-        re.match(r"^/select(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?$", normalized)
-        is not None
-    )
+    tokens = text.strip().split()
+    if not tokens or tokens[0].lower() != "/select":
+        return False
+    rest = tokens[1:]
+    if not rest:
+        return True
+    first = rest.pop(0)
+    if _is_select_market_token(first):
+        if rest and rest[0].lower() in {"refresh", "刷新"}:
+            rest.pop(0)
+    elif first.lower() in {"refresh", "刷新"}:
+        pass
+    elif _is_date_token(first):
+        pass
+    else:
+        return False
+    return not rest or (len(rest) == 1 and _is_date_token(rest[0]))
+
+
+def _is_select_market_token(text: str) -> bool:
+    lowered = text.lower()
+    return lowered in {"1", "cn_a", "a", "2", "crypto", "3", "us", "hk"} or text in {"A股", "加密", "港股"}
+
+
+def _is_date_token(text: str) -> bool:
+    return re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) is not None
 
 
 def _looks_like_supported_chat_intent(text: str) -> bool:
     lowered = text.strip().lower()
-    return IntentRecognizer.looks_like_supported_intent(text) or lowered.startswith("/maint") or (
-        "维护" in lowered and ("状态" in lowered or "情况" in lowered or "摘要" in lowered)
+    return (
+        lowered in {"/help", "help", "帮助"}
+        or IntentRecognizer.looks_like_supported_intent(text)
+        or lowered.startswith("/maint")
+        or ("维护" in lowered and ("状态" in lowered or "情况" in lowered or "摘要" in lowered))
     )
 
 

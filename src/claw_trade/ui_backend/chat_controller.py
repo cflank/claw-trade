@@ -346,6 +346,15 @@ class ChatController:
             context = switch_chat_context(context, kind=ChatContextKind.NORMAL_CHAT)
             self._contexts[context_id] = context
             return self._chat_result(context)
+        if self._is_help_command(content):
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="plain",
+                text=self._command_help_message(),
+            )
+            return self._chat_result(context)
         if context.kind == ChatContextKind.TASK_FOLLOWING and context.active_task_id:
             task = self._queue.get_task_for_testing(context.active_task_id)
             if task is not None and task.status.value == "running":
@@ -648,6 +657,41 @@ class ChatController:
         return lowered in {"回到普通聊天", "退出这个报告", "聊别的", "normal chat"}
 
     @staticmethod
+    def _is_help_command(text: str) -> bool:
+        return text.strip().lower() in {"/help", "help", "帮助"}
+
+    @staticmethod
+    def _command_help_message() -> str:
+        return "\n".join(
+            [
+                "可用命令：",
+                "",
+                "/report <标的>",
+                "  生成完整投资报告。",
+                "  示例：/report TSLA、/report 600519.SH、/report BTC/USDT",
+                "",
+                "/sched <标的> 每天 HH:MM",
+                "  创建定时报告。",
+                "  示例：/sched TSLA 每天 08:00",
+                "",
+                "/alert <标的> 高于/低于 <价格> 提醒我",
+                "  创建价格提醒。",
+                "  示例：/alert BTC 高于 70000 提醒我",
+                "",
+                "/select [市场] [refresh|刷新] [YYYY-MM-DD]",
+                "  查看或刷新选股结果；不写市场时默认 A股。",
+                "  市场：1/cn_a/A股 = A股；2/crypto/加密 = 加密。",
+                "  示例：/select、/select 1、/select 2、/select crypto、/select 2 refresh",
+                "",
+                "/maint",
+                "  查看维护状态摘要。",
+                "",
+                "回到普通聊天",
+                "  退出当前报告上下文。",
+            ]
+        )
+
+    @staticmethod
     def _is_explicit_select_command(text: str) -> bool:
         return (
             re.match(
@@ -731,6 +775,9 @@ def _format_confirmed_message(result: dict[str, Any]) -> str:
             return "报告任务已启动，正在生成。"
         return "已确认，报告任务已提交。"
     if "scheduledReport" in result:
+        message = str(result.get("message") or "").strip()
+        if message:
+            return message
         return "已确认，定时报告已创建。"
     if "priceAlert" in result:
         return "已确认，价格提醒已创建。"

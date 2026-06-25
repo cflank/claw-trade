@@ -36,6 +36,22 @@ def _is_cdn_upload_server_error(exc: BaseException) -> bool:
     return False
 
 
+def _is_gateway_send_timeout(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    for _ in range(6):
+        if current is None:
+            return False
+        message = str(current).lower()
+        if (
+            "gateway cli timeout" in message
+            or "gateway helper timeout" in message
+            or "gateway timeout after" in message
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class ChannelBridge:
     def __init__(self, openclaw_gateway_client: Any) -> None:
         self._client = openclaw_gateway_client
@@ -630,6 +646,8 @@ class ChannelBridge:
                     continue
                 if _is_cdn_upload_server_error(exc):
                     raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
+                if _is_gateway_send_timeout(exc):
+                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送超时，报告没有发出。请稍后重试。") from exc
                 raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
         result = _to_send_result(
             raw,

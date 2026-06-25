@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "### Ran Playwright code\n```js\nawait page.goto('http://127.0.0.1:5175/');\n```\n### Page\n- Page URL: http://127.0.0.1:5175/\n- Page Title: claw-trade 投研工作台\n### Snapshot\n- [Snapshot](..\\..\\Users\\cpfla\\AppData\\Local\\Temp\\.playwright-mcp\\page-2026-06-25T08-37-53-627Z.yml)"
+    }
+  ]
+}

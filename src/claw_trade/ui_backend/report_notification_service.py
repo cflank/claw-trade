@@ -161,8 +161,8 @@ class ReportNotificationService:
         if not resolved_target:
             return {
                 "sent": False,
-                "code": "FILE_SEND_UNSUPPORTED",
-                "userMessage": "完整报告文件暂不可发送，请在设备界面查看。",
+                "code": "NOTIFICATION_UNAVAILABLE",
+                "userMessage": "微信已连接，但没有可投递的微信聊天。请先在要接收报告的聊天里给 ClawBot 发一条消息，再点转发。",
             }
 
         latest_pdf = self._pdf_export_service.get_latest_record(report_id)
@@ -220,12 +220,16 @@ class ReportNotificationService:
             code = str(getattr(exc, "code", "FILE_SEND_UNSUPPORTED"))
             if code not in {"NOTIFICATION_UNAVAILABLE", "FILE_SEND_UNSUPPORTED"}:
                 code = "FILE_SEND_UNSUPPORTED"
+            user_message = str(getattr(exc, "user_message", "") or "").strip()
             return {
                 "sent": False,
                 "code": code,
-                "userMessage": "完整报告文件暂不可发送，请在设备界面查看。"
-                if code == "FILE_SEND_UNSUPPORTED"
-                else "微信通知暂不可用，请在设备界面查看。",
+                "userMessage": user_message
+                or (
+                    "完整报告文件暂不可发送，请在设备界面查看。"
+                    if code == "FILE_SEND_UNSUPPORTED"
+                    else "微信通知暂不可用，请在设备界面查看。"
+                ),
             }
         if not isinstance(result, Mapping):
             return {

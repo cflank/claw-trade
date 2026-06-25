@@ -89,7 +89,7 @@ def test_open_device_interface_redirects_with_fragment_token(tmp_path: Path) -> 
     assert "?token=" not in location
 
 
-def test_list_saved_reports_enables_forward_when_wechat_has_default_target(tmp_path: Path) -> None:
+def test_list_saved_reports_enables_forward_when_wechat_can_send_files(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     assets = dist / "assets"
     assets.mkdir(parents=True)
@@ -737,8 +737,7 @@ class _ConnectedChannelBridgeProbe:
         return {"state": "connected", "canSendFile": True}
 
     def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str]:
-        assert channel_kind == "wechat_clawbot"
-        return ("sender-1@im.wechat", "account-1")
+        raise AssertionError("list-saved-reports must not infer a send target")
 
 
 class _ResetLlmProbe:

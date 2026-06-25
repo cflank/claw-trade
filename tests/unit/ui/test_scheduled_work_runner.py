@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -70,7 +71,7 @@ def test_scheduled_report_wake_dispatches_to_scheduler_queue() -> None:
     assert saved.state == "active"
     assert saved.last_run_task_id == "task-1"
     assert saved.last_cron_run_id == "cron-run-1"
-    assert saved.next_run_at == "2026-05-20T09:30:00Z"
+    assert saved.next_run_at == "2026-05-19T13:30:00Z"
 
 
 def test_scheduled_report_wake_dedupes_different_cron_run_ids_for_same_window() -> None:
@@ -172,6 +173,55 @@ def test_scheduled_report_duplicate_wake_without_live_task_does_not_fabricate_ta
     assert response["skipped"] is True
     assert response["lastRunTaskId"] == "task-1"
     assert "task" not in response
+
+
+def test_scheduled_report_wake_skips_existing_duplicate_schedule_row() -> None:
+    queue_calls: list[tuple[dict[str, Any], str]] = []
+    store = InMemoryScheduledWorkStore()
+
+    def enqueue(task: dict[str, Any], request_id: str) -> dict[str, Any]:
+        queue_calls.append((task, request_id))
+        return {
+            "taskId": "task-1",
+            "instrumentCode": task["instrumentCode"],
+            "instrumentName": task["instrumentName"],
+            "market": task["market"],
+            "status": "queued",
+        }
+
+    service = SchedulerService(
+        enqueue_report_task=enqueue,
+        queue_snapshot_provider=lambda: {"runningTask": None, "queuedTasks": [], "queuedCount": 0, "maxQueueSize": 10},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    original_dto = service.create_scheduled_report(
+        request_id="create-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    original = store.get_scheduled_report(original_dto.scheduledReportId)
+    assert original is not None
+    store.save_scheduled_report(
+        replace(
+            original,
+            id="schedule-99",
+            time_of_day="09:31",
+            created_at="2026-05-20T12:00:00Z",
+            updated_at="2026-05-20T12:00:00Z",
+        )
+    )
+
+    response = ScheduledWorkRunner(scheduler_service=service).handle_wake(
+        {"kind": "scheduled_report", "scheduledReportId": original_dto.scheduledReportId, "cronRunId": "cron-run-99"}
+    )
+
+    assert queue_calls == []
+    assert response["deduped"] is True
+    assert response["skipped"] is True
+    assert response["canonicalScheduledReportId"] == "schedule-99"
 
 
 def test_scheduled_work_runner_keeps_latest_data_maintenance_evidence() -> None:

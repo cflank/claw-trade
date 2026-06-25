@@ -205,7 +205,7 @@ function selectionReportStartedMessage(ticker: string, reportTaskId?: string | n
 }
 
 function isExplicitSelectCommand(text: string) {
-  return /^\s*\/select(?:\s+(?:refresh|刷新))?(?:\s+(?:1|2|cn_a|a|a股|crypto|加密))?(?:\s+\d{4}-\d{2}-\d{2})?\s*$/i.test(text);
+  return /^\s*\/select(?:\s+(?:(?:1|cn_a|a|a股|2|crypto|加密|3|us|hk|港股)(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?|(?:refresh|刷新)(?:\s+\d{4}-\d{2}-\d{2})?|\d{4}-\d{2}-\d{2}))?\s*$/i.test(text);
 }
 
 function isWorkspaceCommand(text: string) {
@@ -535,6 +535,7 @@ export function HomePage() {
   const [forwardingReportId, setForwardingReportId] = useState<string | null>(null);
   const [reportForwardState, setReportForwardState] = useState<ReportForwardState>({});
   const [error, setError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
   const [modelDraft, setModelDraft] = useState<LlmConfigDraft>(DEFAULT_LLM_DRAFT);
   const consumedReportIdRef = useRef<string | null>(null);
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
@@ -818,6 +819,7 @@ export function HomePage() {
   const handlePriceAlertAction = useCallback(
     async (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => {
       setError('');
+      setActionMessage('');
       try {
         const requestId = nextRequestId();
         if (action === 'pause') {
@@ -827,7 +829,8 @@ export function HomePage() {
         } else if (action === 'delete') {
           await deletePriceAlert(requestId, priceAlertId);
         } else {
-          await runPriceAlertNow(requestId, priceAlertId);
+          const result = await runPriceAlertNow(requestId, priceAlertId);
+          setActionMessage(result.message ?? '已检查价格提醒。');
         }
         await refreshWorkspace();
       } catch (actionError) {
@@ -1662,6 +1665,7 @@ export function HomePage() {
           </section>
           {loading ? <div className="ct-notice">加载中...</div> : null}
           {error ? <InlineErrorState message={error} /> : null}
+          {actionMessage ? <div className="ct-notice" role="status">{actionMessage}</div> : null}
           {showModelWarning ? (
             <section
               className={`ct-model-warning${modelWarningIsError ? ' is-error' : ''}`}
@@ -1751,6 +1755,7 @@ export function HomePage() {
                 placeholder="输入问题，或提交报告任务需求"
                 buttonLabel={pendingChatCommand === 'select' ? '选股中' : sending ? '发送中' : '发送'}
                 hint={REPORT_INPUT_FORMAT_HINT}
+                commandMenuEnabled
                 workerChatEnabled
                 workers={workerChatWorkers}
               />
