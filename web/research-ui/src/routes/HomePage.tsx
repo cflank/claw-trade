@@ -730,6 +730,7 @@ export function HomePage() {
       const [
         historyResult,
         queueResult,
+        llmResult,
         channelChatResult,
         selectionRefreshResult,
         currentChatResult,
@@ -738,6 +739,7 @@ export function HomePage() {
       ] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
+        loadLlmSettings().catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
         shouldLoadCurrentChat ? getChatSession(context.contextId).catch(() => null) : Promise.resolve(null),
@@ -747,6 +749,9 @@ export function HomePage() {
       setSavedReports(historyResult.items);
       setScheduledReports(scheduledReportsResult.items);
       setPriceAlerts(priceAlertsResult.items);
+      if (llmResult) {
+        setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
+      }
       applyQueueSnapshot(queueResult);
       if (currentChatResult?.messages?.length) {
         applyChatSessionSnapshot(currentChatResult);

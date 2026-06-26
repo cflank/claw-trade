@@ -1021,6 +1021,101 @@ describe('home page', () => {
     expect(pageText).not.toContain('/runs/');
   });
 
+  it('refreshes report model status after the startup settings load fails', async () => {
+    const originalFetch = globalThis.fetch;
+    const intervalCallbacks: Array<() => void> = [];
+    let llmCalls = 0;
+    restoreList.push(() => {
+      globalThis.fetch = originalFetch;
+    });
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/load-llm-settings')) {
+        llmCalls += 1;
+        if (llmCalls === 1) {
+          return new Response(JSON.stringify({ message: 'gateway warming up' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-20T10:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      if (url.includes('/api/ui/list-saved-reports')) {
+        return json({ items: [] });
+      }
+      if (url.includes('/api/ui/get-report-queue-snapshot')) {
+        return json({ runningTask: null, queuedTasks: [], queueLimit: 10, queuedCount: 0, isFull: false });
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: null,
+          canSendText: false,
+          canSendFile: false,
+        });
+      }
+      if (url.includes('/api/ui/get-chat-session')) {
+        return json({ context: { contextId: 'normal-chat', kind: 'normal_chat', title: '普通聊天' }, messages: [] });
+      }
+      if (url.includes('/api/ui/get-channel-chat-snapshot')) {
+        return json({ channelKind: 'wechat_clawbot', messages: [], confirmationCards: {} });
+      }
+      if (url.includes('/api/ui/get-selection-refresh-snapshot')) {
+        return json({ selectionProgress: null });
+      }
+      if (url.includes('/api/ui/list-worker-chat-workers')) {
+        return json({ workers: [] });
+      }
+      if (url.includes('/api/ui/list-scheduled-reports') || url.includes('/api/ui/list-price-alerts')) {
+        return json({ items: [] });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('llm-config-warning')).toBeInTheDocument();
+    expect(llmCalls).toBe(1);
+
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    await waitFor(() => expect(screen.queryByTestId('llm-config-warning')).not.toBeInTheDocument());
+    expect(llmCalls).toBeGreaterThan(1);
+  });
+
   it('refreshes wechat status from the workspace timer without requesting qr login', async () => {
     const originalFetch = globalThis.fetch;
     const channelUrls: string[] = [];
