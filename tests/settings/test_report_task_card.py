@@ -97,7 +97,7 @@ def test_help_command_returns_command_usage_without_normal_chat() -> None:
         assert result["messages"][-1]["actor"] == "system"
         assert "/report <标的>" in result["messages"][-1]["text"]
         assert "/sched <标的> 每天 HH:MM" in result["messages"][-1]["text"]
-        assert "/alert <标的> 高于/低于 <价格> 提醒我" in result["messages"][-1]["text"]
+        assert "/alert <标的> 高于/低于 <价格>" in result["messages"][-1]["text"]
         assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["messages"][-1]["text"]
         assert "1/cn_a/A股 = A股；2/crypto/加密 = 加密" in result["messages"][-1]["text"]
         assert "/select 1、/select 2、/select crypto、/select 2 refresh" in result["messages"][-1]["text"]
@@ -118,7 +118,7 @@ def test_alert_alias_builds_price_alert_confirmation_card() -> None:
     result = controller.send_chat_message(
         request_id="s06-alert-1",
         context_id="ctx-1",
-        text="/alert BTC 高于 70000 提醒我",
+        text="/alert BTC 高于 70000",
     )
     card = result["confirmationCard"]
     assert card["title"] == "请确认是否创建价格提醒"

@@ -91,7 +91,7 @@ class IntentRecognizer:
         if _looks_like_alert_command(lowered):
             if instrument is None:
                 return None
-            price_condition = _parse_price_condition(lowered)
+            price_condition = _parse_price_condition(lowered, require_reminder=False)
             if price_condition is None:
                 return None
             return self._build_draft(
@@ -258,8 +258,8 @@ def _parse_time_of_day(lowered: str) -> str | None:
     return f"{hour:02d}:{minute:02d}"
 
 
-def _parse_price_condition(lowered: str) -> dict[str, object] | None:
-    if "提醒" not in lowered:
+def _parse_price_condition(lowered: str, *, require_reminder: bool = True) -> dict[str, object] | None:
+    if require_reminder and "提醒" not in lowered:
         return None
     matched = re.search(r"(\d+(?:\.\d+)?)", lowered)
     if not matched:

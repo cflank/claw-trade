@@ -1,4 +1,5 @@
 import type { ChatMessageForUser, ConfirmationCard } from '../api/contracts';
+import { useLayoutEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { EmptyMessageState } from './EmptyStates';
@@ -324,16 +325,26 @@ export function MessageStream({
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
   onOpenSelectionReport?: (item: ChatMessageForUser) => void;
 }) {
+  const streamRef = useRef<HTMLElement | null>(null);
+  const lastMessageId = items.at(-1)?.messageId ?? '';
+
+  useLayoutEffect(() => {
+    const stream = streamRef.current;
+    if (stream) {
+      stream.scrollTop = stream.scrollHeight;
+    }
+  }, [lastMessageId]);
+
   if (!items.length) {
     return (
-      <section className="ct-message-stream" data-testid="message-stream">
+      <section ref={streamRef} className="ct-message-stream" data-testid="message-stream">
         <EmptyMessageState />
       </section>
     );
   }
 
   return (
-    <section className="ct-message-stream" data-testid="message-stream">
+    <section ref={streamRef} className="ct-message-stream" data-testid="message-stream">
       {items.map((item) => (
         <article
           key={item.messageId}

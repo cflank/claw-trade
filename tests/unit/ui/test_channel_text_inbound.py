@@ -131,7 +131,7 @@ def test_help_command_returns_usage_without_openclaw_chat() -> None:
     assert result["state"] == "replied"
     assert "/report <标的>" in result["replyText"]
     assert "/sched <标的> 每天 HH:MM" in result["replyText"]
-    assert "/alert <标的> 高于/低于 <价格> 提醒我" in result["replyText"]
+    assert "/alert <标的> 高于/低于 <价格>" in result["replyText"]
     assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["replyText"]
     assert "1/cn_a/A股 = A股；2/crypto/加密 = 加密" in result["replyText"]
     assert runner.calls == 0

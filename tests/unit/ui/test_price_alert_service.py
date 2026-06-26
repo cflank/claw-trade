@@ -258,6 +258,17 @@ def test_run_price_alert_now_triggers_and_closes_by_default() -> None:
     assert len(sent) == 1
 
 
+def test_price_threshold_uses_window_extrema_when_available() -> None:
+    assert PriceAlertService.condition_is_triggered(
+        condition={"type": "price_threshold", "operator": "below", "value": 59770},
+        quote={"current_price": 59828.99, "window_low": 59769.0, "percent_change": 0},
+    )
+    assert PriceAlertService.condition_is_triggered(
+        condition={"type": "price_threshold", "operator": "above", "value": 60360},
+        quote={"current_price": 59828.99, "window_high": 60361.0, "percent_change": 0},
+    )
+
+
 def test_triggered_price_alert_records_channel_notification_success() -> None:
     store = InMemoryScheduledWorkStore()
     sent: list[dict[str, object]] = []

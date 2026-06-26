@@ -138,6 +138,11 @@ class PriceAlertScanService:
             "percentChange": quote.get("percent_change"),
             "percentChange24h": quote.get("percent_change_24h"),
             "percentChangeIntraday": quote.get("percent_change_intraday"),
+            "windowHigh": quote.get("window_high"),
+            "windowLow": quote.get("window_low"),
+            "windowStart": quote.get("window_start"),
+            "windowEnd": quote.get("window_end"),
+            "windowGranularity": quote.get("window_granularity"),
             "quoteTimestamp": quote.get("quote_timestamp"),
             "evidenceRef": evidence_ref,
         }

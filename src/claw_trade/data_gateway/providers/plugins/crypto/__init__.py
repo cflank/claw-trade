@@ -405,6 +405,7 @@ class BinanceSpotMarketPlugin:
         if not base_asset or not quote_asset:
             return FetchResult.from_error(task, status="error", error=RuntimeError(f"unsupported_crypto_symbol:{symbol}"))
         host, prefix = _endpoint_from_settings(ctx, default_host=BinanceSpotDailyBarPlugin._host)
+        granularity = _binance_period(getattr(task, "granularity", None))
         payload, observations, error = send_json_request(
             task,
             ctx,
@@ -412,7 +413,7 @@ class BinanceSpotMarketPlugin:
                 method="GET",
                 host=host,
                 path=f"{prefix}/api/v3/klines",
-                query={"symbol": symbol, "interval": "1h", "limit": 1000},
+                query={"symbol": symbol, "interval": granularity, "limit": 1000},
                 headers={"accept": "application/json"},
                 provider_config_version=getattr(task, "provider_config_version", None),
             ),
@@ -430,14 +431,14 @@ class BinanceSpotMarketPlugin:
                     symbol=symbol,
                     base_asset=base_asset,
                     quote_asset=quote_asset,
-                    granularity="1h",
+                    granularity=granularity,
                 )
             )
             is not None
         ]
         for row in rows:
             row["dataset"] = "intraday_bar"
-            row["granularity"] = "1h"
+            row["granularity"] = granularity
             row["provider_lineage"] = {"provider_id": self.plugin_id, "endpoint_id": "spot_intraday_bar"}
             row["schema_id"] = "intraday_bar.v1"
         if not rows:
@@ -2921,7 +2922,7 @@ def _binance_recent_period_query(task: Any, *, symbol: str, max_days: int) -> di
 
 def _binance_period(granularity: Any) -> str:
     value = str(granularity or "").strip().lower()
-    if value in {"5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"}:
+    if value in {"1m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d"}:
         return value
     if value in {"daily", "day"}:
         return "1d"

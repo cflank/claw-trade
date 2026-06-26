@@ -413,6 +413,37 @@ def test_crypto_spot_intraday_preserves_hour_timestamp_through_managed_http() ->
     assert row["amount_unit"] == "USDT"
 
 
+def test_crypto_spot_intraday_respects_requested_one_minute_granularity() -> None:
+    plugin = BinanceSpotMarketPlugin()
+    client = _RecordingHttpClient(
+        _HttpResponse(
+            status_code=200,
+            headers={},
+            text='[[1772236800000,"84000.0","85000.0","83000.0","84500.0","123.4",1772236859999,"10432100.0"]]',
+        )
+    )
+    task = FetchTask(
+        batch_id="batch:crypto",
+        provider_id="crypto_binance_spot_market",
+        endpoint_id="spot_intraday_bar",
+        market="CRYPTO",
+        data_type="intraday_bar",
+        granularity="1m",
+        symbol_ids=("BTCUSDT",),
+        date_range_start=None,
+        date_range_end=None,
+        fields=("open", "high", "low", "close", "volume"),
+        provider_config_version="1.0.0",
+        params={},
+    )
+
+    result = plugin.fetch(task, ctx=SimpleNamespace(managed_http=ManagedHttp(client)))
+
+    assert result.status.value == "success"
+    assert client.requests[0].query["interval"] == "1m"
+    assert result.payload["rows"][0]["granularity"] == "1m"
+
+
 def test_crypto_binance_public_futures_endpoints_parse_derivative_rows() -> None:
     plugin = BinanceSpotMarketPlugin()
     cases = (

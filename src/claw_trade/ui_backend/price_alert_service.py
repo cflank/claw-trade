@@ -423,8 +423,8 @@ class PriceAlertService:
         if condition_type == "price_threshold":
             current_price = float(quote["current_price"])
             if operator == "above":
-                return current_price >= value
-            return current_price <= value
+                return max(current_price, _optional_quote_float(quote, "window_high") or current_price) >= value
+            return min(current_price, _optional_quote_float(quote, "window_low") or current_price) <= value
 
         percent_change = PriceAlertService._quote_percent_change(condition=condition, quote=quote)
         if operator == "up_by":
@@ -471,6 +471,11 @@ class PriceAlertService:
             "percentChange": quote.get("percent_change"),
             "percentChange24h": quote.get("percent_change_24h"),
             "percentChangeIntraday": quote.get("percent_change_intraday"),
+            "windowHigh": quote.get("window_high"),
+            "windowLow": quote.get("window_low"),
+            "windowStart": quote.get("window_start"),
+            "windowEnd": quote.get("window_end"),
+            "windowGranularity": quote.get("window_granularity"),
             "quoteTimestamp": quote.get("quote_timestamp"),
             "evidenceRef": PriceAlertService._quote_evidence_ref(quote),
         }
@@ -600,3 +605,10 @@ def _cron_job_id(job: Mapping[str, Any] | str) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _optional_quote_float(quote: dict[str, Any], key: str) -> float | None:
+    value = quote.get(key)
+    if value is None:
+        return None
+    return float(value)

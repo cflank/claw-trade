@@ -116,7 +116,7 @@ def test_price_alert_intent_supported() -> None:
 def test_alert_alias_supported() -> None:
     recognizer = IntentRecognizer()
     draft = recognizer.classify_user_intent(
-        text="/alert BTC 高于 70000 提醒我",
+        text="/alert BTC 高于 70000",
         source_message_id="m-alert",
         settings=_settings(),
     )
@@ -125,6 +125,16 @@ def test_alert_alias_supported() -> None:
     assert draft.instrument_code == "BTC"
     assert draft.price_condition is not None
     assert draft.price_condition["operator"] == "above"
+
+
+def test_natural_language_price_condition_without_reminder_stays_normal_chat() -> None:
+    recognizer = IntentRecognizer()
+    draft = recognizer.classify_user_intent(
+        text="BTC 高于 70000",
+        source_message_id="m-alert-missing-reminder",
+        settings=_settings(),
+    )
+    assert draft is None
 
 
 def test_natural_language_alert_with_symbol_supported() -> None:

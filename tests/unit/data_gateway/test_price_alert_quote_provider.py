@@ -18,18 +18,19 @@ def _fixed_now() -> datetime:
 
 class _FakeDataAPI:
     def __init__(self, result: Any) -> None:
-        self.result = result
+        self.results = tuple(result) if isinstance(result, (list, tuple)) else (result,)
         self.requests: list[Mapping[str, Any]] = []
 
     def request_data(self, requests: Sequence[Mapping[str, Any]]) -> Sequence[Any]:
         self.requests.extend(requests)
-        return [self.result]
+        return list(self.results)
 
 
-def _ready_result(row: Mapping[str, Any], *, dataset_refs: tuple[str, ...] = ("dataset://quote/BTC",)) -> Any:
+def _ready_result(row: Mapping[str, Any] | Sequence[Mapping[str, Any]], *, dataset_refs: tuple[str, ...] = ("dataset://quote/BTC",)) -> Any:
+    rows = tuple(dict(item) for item in row) if isinstance(row, list | tuple) else (dict(row),)
     return SimpleNamespace(
         status=DataResultStatus.READY,
-        rows=(dict(row),),
+        rows=rows,
         dataset_refs=dataset_refs,
     )
 
@@ -70,16 +71,35 @@ def test_source_probe_quote_provider_fails_closed_without_data_api() -> None:
 
 
 def test_price_alert_quote_provider_requests_realtime_quote_and_returns_valid_payload() -> None:
-    result = _ready_result(
-        {
-            "symbol_id": "BTC/USDT",
-            "price": 71000.0,
-            "timestamp": "2026-06-17T11:59:30Z",
-            "percent_change_24h": 2.5,
-            "percent_change_intraday": 1.2,
-            "evidence_ref": "dataset://normalized/quote_snapshot/BTC",
-            "source_market_session": "continuous",
-        }
+    result = (
+        _ready_result(
+            {
+                "symbol_id": "BTC/USDT",
+                "price": 71000.0,
+                "timestamp": "2026-06-17T11:59:30Z",
+                "percent_change_24h": 2.5,
+                "percent_change_intraday": 1.2,
+                "evidence_ref": "dataset://normalized/quote_snapshot/BTC",
+                "source_market_session": "continuous",
+            }
+        ),
+        _ready_result(
+            [
+                {
+                    "symbol_id": "BTC/USDT",
+                    "period_end": datetime(2026, 6, 17, 11, 59, tzinfo=UTC),
+                    "high": 71200.0,
+                    "low": 70850.0,
+                },
+                {
+                    "symbol_id": "BTC/USDT",
+                    "period_start": datetime(2026, 6, 17, 11, 59, 30, tzinfo=UTC),
+                    "period_end": datetime(2026, 6, 17, 12, 0, 29, tzinfo=UTC),
+                    "high": 71300.0,
+                    "low": 70700.0,
+                },
+            ]
+        ),
     )
     api = _FakeDataAPI(result)
     provider = PriceAlertQuoteProvider(data_api=api, now_provider=_fixed_now)
@@ -93,22 +113,16 @@ def test_price_alert_quote_provider_requests_realtime_quote_and_returns_valid_pa
         "source_market_session": "continuous",
         "percent_change_24h": 2.5,
         "percent_change_intraday": 1.2,
+        "window_low": 70700.0,
+        "window_high": 71300.0,
+        "window_start": "2026-06-17T11:57:00Z",
+        "window_end": "2026-06-17T12:00:00Z",
+        "window_granularity": "1m",
     }
-    assert api.requests == [
-        {
-            "request_id": "price-alert:CRYPTO:BTC/USDT:20260617120000",
-            "item": "realtime_quote",
-            "market": "CRYPTO",
-            "instrument": "BTC/USDT",
-            "granularity": "realtime",
-            "priority": "required",
-            "requested_by_worker": "price_alert_quote_provider",
-            "purpose": "price_alert_quote",
-            "freshness_policy": "realtime",
-            "deadline_at": "2026-06-17T12:00:10+00:00",
-            "consumer": "price_alert",
-        }
-    ]
+    assert [request["item"] for request in api.requests] == ["realtime_quote", "intraday_bar"]
+    assert api.requests[1]["granularity"] == "1m"
+    assert api.requests[1]["time_range_start"] == datetime(2026, 6, 17, 11, 57, tzinfo=UTC)
+    assert api.requests[1]["time_range_end"] == _fixed_now()
 
 
 def test_price_alert_quote_provider_accepts_partial_result_with_valid_quote_row() -> None:

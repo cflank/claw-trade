@@ -674,9 +674,9 @@ class ChatController:
                 "  创建定时报告。",
                 "  示例：/sched TSLA 每天 08:00",
                 "",
-                "/alert <标的> 高于/低于 <价格> 提醒我",
+                "/alert <标的> 高于/低于 <价格>",
                 "  创建价格提醒。",
-                "  示例：/alert BTC 高于 70000 提醒我",
+                "  示例：/alert BTC 高于 70000",
                 "",
                 "/select [市场] [refresh|刷新] [YYYY-MM-DD]",
                 "  查看或刷新选股结果；不写市场时默认 A股。",
@@ -723,8 +723,8 @@ class ChatController:
             return "请输入完整的 /sched 指令，例如：/sched TSLA 每天 08:00。"
         if re.match(r"^/alert(?:\s+.*)?$", lowered) is not None:
             if re.search(r"^/alert\s+[A-Za-z0-9._/-]+", text.strip(), re.IGNORECASE) is None:
-                return "请输入完整的 /alert 指令，例如：/alert BTC 高于 70000 提醒我。"
-            return "请输入完整的 /alert 指令，例如：/alert BTC 高于 70000 提醒我。"
+                return "请输入完整的 /alert 指令，例如：/alert BTC 高于 70000。"
+            return "请输入完整的 /alert 指令，例如：/alert BTC 高于 70000。"
         return None
 
     def _read_maintenance_status(self) -> str:
