@@ -62,6 +62,50 @@ def test_selection_refresh_service_starts_background_job_and_dedupes_active_run(
     assert record.run_plan.trigger_source == SelectionTriggerSource.SCHEDULED
 
 
+def test_selection_refresh_service_blocks_when_license_denied() -> None:
+    def deny() -> None:
+        raise PermissionError("设备授权已失效，请在授权页修复后重试。")
+
+    service = SelectionDataRefreshService(
+        store=SelectionRunStore(),
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-05-26",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        data_refresh_permission_checker=deny,
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup")
+
+    assert result.status == "failed"
+    assert result.error_code == "license_blocked"
+    assert result.reason == "设备授权已失效，请在授权页修复后重试。"
+
+
+def test_selection_refresh_request_blocks_when_license_denied() -> None:
+    def deny() -> None:
+        raise PermissionError("设备授权已失效，请在授权页修复后重试。")
+
+    service = SelectionDataRefreshService(
+        store=SelectionRunStore(),
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-05-26",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        data_refresh_permission_checker=deny,
+    )
+
+    result = service.request_refresh(
+        request=_request(),
+        unavailable_code="no_completed_selection_run",
+        select_workflow_run_id="select-wf-1",
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "license_blocked"
+    assert result.selection_run_id is None
+
+
 def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> None:
     store = SelectionRunStore()
     service = SelectionDataRefreshService(

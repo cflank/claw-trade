@@ -419,12 +419,14 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         resolve_closed_trade_date=resolve_cn_a_closed_trade_date_for_scheduler,
         load_approved_strategy_config_ref=load_cn_a_selection_v1_strategy_config_ref,
         build_data_need_audit=build_selection_data_need_audit,
+        data_refresh_permission_checker=license_service.assert_data_refresh_allowed,
     )
     scheduled_work_runner = ScheduledWorkRunner(
         price_alert_scan_service=price_alert_scan_service,
         scheduler_service=scheduler_service,
         selection_data_refresh_runner=selection_refresh_service,
         data_maintenance_runner=_LazyDataMaintenanceRunner(),
+        data_refresh_permission_checker=license_service.assert_data_refresh_allowed,
     )
     selection_controller = SelectionController(
         store=selection_store,
