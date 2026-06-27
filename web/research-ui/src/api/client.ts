@@ -24,6 +24,7 @@ import type {
   GetReportChartEvidenceOutput,
   GetReportCleanupSettingsOutput,
   GetSelectionAutoRefreshSettingsOutput,
+  LicenseStatusForUser,
   ListDataSourcesOutput,
   ListPriceAlertsOutput,
   ListScheduledReportsOutput,
@@ -199,6 +200,10 @@ export function getChatSession(contextId: string) {
 
 export function getSelectionRefreshSnapshot() {
   return requestJson<SelectionRefreshSnapshotForUser>('/api/ui/get-selection-refresh-snapshot');
+}
+
+export function getLicenseStatus() {
+  return requestJson<LicenseStatusForUser>('/api/ui/get-license-status');
 }
 
 export function createIntentDraft(input: CreateIntentDraftInput) {

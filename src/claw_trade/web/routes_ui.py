@@ -449,6 +449,27 @@ def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
         return _exception_response(exc)
 
 
+@router.get("/get-license-status")
+def get_license_status(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        snapshot = services.license_service.current_snapshot()
+        return _success_response(
+            {
+                "status": snapshot.status.value,
+                "allowsReportGeneration": snapshot.allows_report_generation(),
+                "allowsDataRefresh": snapshot.allows_data_refresh(),
+                "expiresAt": snapshot.expires_at,
+                "graceUntil": snapshot.grace_until,
+                "deviceIdHash": snapshot.device_id_hash,
+                "licenseSuffix": snapshot.license_suffix,
+                "message": snapshot.user_message,
+            }
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
 @router.post("/cancel-selection-progress")
 def cancel_selection_progress(payload: CancelSelectionProgressRequest, request: Request) -> JSONResponse:
     services = _services(request)

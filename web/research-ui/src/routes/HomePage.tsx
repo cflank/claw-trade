@@ -21,6 +21,7 @@ import {
   getChannelChatSnapshot,
   getChannelStatus,
   getChatSession,
+  getLicenseStatus,
   getReportChartEvidence,
   getReportDetail,
   getReportQueueSnapshot,
@@ -47,6 +48,7 @@ import {
   type ConfirmationCard,
   type ChatMessageForUser,
   type ConfirmIntentDraftOutput,
+  type LicenseStatusForUser,
   type LlmConfigDraft,
   type ReportDetailForUser,
   type ReportQueueSnapshotForUser,
@@ -521,6 +523,7 @@ export function HomePage() {
   const [activeDetail, setActiveDetail] = useState<ReportDetailForUser | null>(null);
   const [activeSelectionDetail, setActiveSelectionDetail] = useState<SelectionReportForUser | null>(null);
   const [selectionProgress, setSelectionProgress] = useState<SelectionProgressForUser | null>(null);
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatusForUser | null>(null);
   const [qaEntries, setQaEntries] = useState<ReportQaEntry[]>([]);
   const [workerChatWorkers, setWorkerChatWorkers] = useState<WorkerChatWorkerForUser[]>([]);
   const [selectedReportWorkerId, setSelectedReportWorkerId] = useState<string | null>(null);
@@ -650,6 +653,7 @@ export function HomePage() {
         normalChatResult,
         channelChatResult,
         selectionRefreshResult,
+        licenseStatusResult,
         workerChatResult,
         scheduledReportsResult,
         priceAlertsResult,
@@ -660,6 +664,7 @@ export function HomePage() {
         getChatSession(DEFAULT_CONTEXT.contextId).catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
+        getLicenseStatus().catch(() => null),
         listWorkerChatWorkers()
           .then((result) => ({ workers: result.workers, failed: false }))
           .catch(() => ({ workers: [], failed: true })),
@@ -671,6 +676,9 @@ export function HomePage() {
       setScheduledReports(scheduledReportsResult.items);
       setPriceAlerts(priceAlertsResult.items);
       setWorkerChatWorkers(workers);
+      if (licenseStatusResult) {
+        setLicenseStatus(licenseStatusResult);
+      }
       setWorkerChatUnavailableMessage(
         workers.length > 0 ? '' : workerChatResult.failed ? WORKER_CHAT_LOAD_FAILED_MESSAGE : WORKER_CHAT_UNAVAILABLE_MESSAGE,
       );
@@ -733,6 +741,7 @@ export function HomePage() {
         llmResult,
         channelChatResult,
         selectionRefreshResult,
+        licenseStatusResult,
         currentChatResult,
         scheduledReportsResult,
         priceAlertsResult,
@@ -742,6 +751,7 @@ export function HomePage() {
         loadLlmSettings().catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
+        getLicenseStatus().catch(() => null),
         shouldLoadCurrentChat ? getChatSession(context.contextId).catch(() => null) : Promise.resolve(null),
         listScheduledReports().catch(() => ({ items: [] })),
         listPriceAlerts().catch(() => ({ items: [] })),
@@ -751,6 +761,9 @@ export function HomePage() {
       setPriceAlerts(priceAlertsResult.items);
       if (llmResult) {
         setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
+      }
+      if (licenseStatusResult) {
+        setLicenseStatus(licenseStatusResult);
       }
       applyQueueSnapshot(queueResult);
       if (currentChatResult?.messages?.length) {
@@ -1608,6 +1621,21 @@ export function HomePage() {
   const modelState = modelStatusState(modelDraft);
   const showModelWarning = !loading && !isReading && modelState !== 'ready';
   const modelWarningIsError = modelState === 'failed';
+  const licenseReportBlockReason =
+    licenseStatus?.allowsReportGeneration === false ? licenseStatus.message : undefined;
+  const licenseBannerTone = licenseStatus
+    ? !licenseStatus.allowsReportGeneration || !licenseStatus.allowsDataRefresh
+      ? 'is-error'
+      : licenseStatus.status !== 'activated'
+        ? 'is-warning'
+        : 'is-ok'
+    : '';
+  const licenseCapabilities = licenseStatus
+    ? [
+        licenseStatus.allowsReportGeneration ? '报告可用' : '报告不可用',
+        licenseStatus.allowsDataRefresh ? '数据刷新可用' : '数据刷新不可用',
+      ].join(' · ')
+    : '';
   const mainComposerDisabled = sending;
 
   return (
@@ -1671,6 +1699,23 @@ export function HomePage() {
           {loading ? <div className="ct-notice">加载中...</div> : null}
           {error ? <InlineErrorState message={error} /> : null}
           {actionMessage ? <div className="ct-notice" role="status">{actionMessage}</div> : null}
+          {licenseStatus ? (
+            <section
+              className={`ct-license-status ${licenseBannerTone}`}
+              data-testid="license-status-banner"
+              role="status"
+              aria-live="polite"
+            >
+              <div>
+                <strong>设备授权</strong>
+                <p>{licenseStatus.message}</p>
+              </div>
+              <span>
+                {licenseCapabilities}
+                {licenseStatus.licenseSuffix ? ` · 尾号 ${licenseStatus.licenseSuffix}` : ''}
+              </span>
+            </section>
+          ) : null}
           {showModelWarning ? (
             <section
               className={`ct-model-warning${modelWarningIsError ? ' is-error' : ''}`}
@@ -1748,6 +1793,7 @@ export function HomePage() {
                 selectionSubmittingKey={selectionSubmittingKey}
                 onConfirmSelectionCandidate={(item, ticker) => void confirmSelectionCandidate(item, ticker)}
                 onOpenSelectionReport={openSelectionReportFromMessage}
+                reportActionDisabledReason={licenseReportBlockReason}
               />
               {workerChatUnavailableMessage ? (
                 <div className="ct-notice" role="status">

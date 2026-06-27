@@ -368,6 +368,60 @@ body {
   flex: 0 0 auto;
 }
 
+.ct-license-status {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--ct-success-border);
+  border-left: 4px solid var(--ct-success);
+  border-radius: var(--ct-radius-md);
+  background: var(--ct-success-bg);
+  color: var(--ct-success);
+  padding: 9px 11px;
+}
+
+.ct-license-status.is-warning {
+  border-color: var(--ct-warning-border);
+  border-left-color: var(--ct-warning);
+  background: var(--ct-warning-bg);
+  color: var(--ct-warning);
+}
+
+.ct-license-status.is-error {
+  border-color: var(--ct-danger-border);
+  border-left-color: var(--ct-danger);
+  background: var(--ct-danger-bg);
+  color: var(--ct-danger);
+}
+
+.ct-license-status strong,
+.ct-license-status p,
+.ct-license-status span {
+  color: inherit;
+}
+
+.ct-license-status strong {
+  display: block;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.ct-license-status p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.ct-license-status span {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: right;
+}
+
 .ct-context-label {
   border: 1px solid var(--ct-border);
   border-radius: 999px;
