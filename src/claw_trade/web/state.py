@@ -44,6 +44,7 @@ from claw_trade.data_gateway.settings_store import (
 from claw_trade.data_gateway.source_probe import (
     build_data_source_health_tester,
 )
+from claw_trade.licensing.service import LicenseService, build_license_service
 from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
 from claw_trade.selection.confirmation import SelectionConfirmationController
 from claw_trade.selection.controller import SelectionController
@@ -312,6 +313,7 @@ class UiHttpServices:
     selection_confirmation: SelectionConfirmationController
     selection_controller: SelectionController
     selection_refresh_service: SelectionDataRefreshService
+    license_service: LicenseService
 
 
 def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices:
@@ -349,6 +351,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     repository = ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json")
     restore_completed_workflow_reports(repository, run_root)
     workflow_runner = _ControlWorkflowRunner(run_dir=run_root)
+    license_service = build_license_service(os.environ)
     queue = ReportTaskQueue(
         ReportWorkflowBridge(workflow_runner, company_name_resolver=_resolve_company_names_from_data_layer),
         completed_report_writer=lambda task, workflow_state: _handle_completed_workflow_report(
@@ -358,6 +361,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             task=task,
             workflow_state=workflow_state,
         ),
+        report_permission_checker=license_service.assert_report_generation_allowed,
     )
     scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
     cron_adapter = OpenClawCronAdapter(rpc_client)
@@ -547,6 +551,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         selection_confirmation=selection_confirmation,
         selection_controller=selection_controller,
         selection_refresh_service=selection_refresh_service,
+        license_service=license_service,
     )
 
 
