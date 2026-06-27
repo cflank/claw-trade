@@ -307,6 +307,19 @@ def test_parse_args_uses_runtime_gateway_token_when_env_is_missing(tmp_path: Pat
     assert args.gateway_token == "runtime-token"
 
 
+def test_parse_args_does_not_read_runtime_gateway_token_in_production(tmp_path: Path, monkeypatch) -> None:
+    runtime_env = tmp_path / ".runtime" / "dev-services" / "runtime.env"
+    runtime_env.parent.mkdir(parents=True)
+    runtime_env.write_text("OPENCLAW_GATEWAY_TOKEN=runtime-token\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("CLAW_TRADE_PRODUCTION", "1")
+
+    args = parse_args([])
+
+    assert args.gateway_token is None
+
+
 def test_selection_refresh_snapshot_falls_back_to_crypto_refresh_progress() -> None:
     refresh = _RefreshSnapshotProbe()
     services = SimpleNamespace(

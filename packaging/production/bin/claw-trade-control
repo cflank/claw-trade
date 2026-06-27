@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
+CURRENT="${ROOT}/current"
+SHARED="${ROOT}/shared"
+mkdir -p "${SHARED}/logs" "${SHARED}/data/openviking" "${SHARED}/data/openclaw-state"
+exec "${CURRENT}/runtime/bin/claw-trade-control-runtime" "$@"

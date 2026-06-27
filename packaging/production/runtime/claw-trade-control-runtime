@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
+CURRENT="${ROOT}/current"
+SHARED="${ROOT}/shared"
+PYTHON="${CURRENT}/runtime/python/bin/python"
+OPENCLAW="${CURRENT}/runtime/openclaw/openclaw.mjs"
+LOG_DIR="${SHARED}/logs"
+
+export OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
+export OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL:-${OPENVIKING_ENDPOINT}}"
+export OPENVIKING_CONFIG_FILE="${OPENVIKING_CONFIG_FILE:-${SHARED}/config/openviking/ov.conf}"
+export OPENVIKING_DATA_DIR="${OPENVIKING_DATA_DIR:-${SHARED}/data/openviking}"
+export OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH:-${OPENVIKING_DATA_DIR}/write.lock}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
+export OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-${PYTHON}}"
+export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
+export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}}"
+
+mkdir -p "${LOG_DIR}" "$(dirname "${OPENVIKING_CONFIG_FILE}")" "${OPENVIKING_DATA_DIR}" "${OPENCLAW_STATE_DIR}"
+
+cleanup() {
+  jobs -pr | xargs -r kill
+}
+trap cleanup EXIT INT TERM
+
+wait_http_any() {
+  local timeout="$1"
+  shift
+  for _ in $(seq 1 "${timeout}"); do
+    for url in "$@"; do
+      if curl -fsS "${url}" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    sleep 1
+  done
+  return 1
+}
+
+"${PYTHON}" -m claw_trade.runtime.openviking_report_server \
+  --config "${OPENVIKING_CONFIG_FILE}" \
+  --host 127.0.0.1 \
+  --port 1933 >"${LOG_DIR}/openviking.log" 2>&1 &
+
+wait_http_any 90 "${OPENVIKING_ENDPOINT}/health" "${OPENVIKING_ENDPOINT}/healthz" || {
+  echo "OpenViking health check failed" >&2
+  exit 1
+}
+
+gateway_cmd=("${OPENCLAW}" gateway run --port "${OPENCLAW_GATEWAY_PORT}" --force --bind loopback)
+if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+  gateway_cmd+=(--auth token --token "${OPENCLAW_GATEWAY_TOKEN}")
+else
+  gateway_cmd+=(--auth none)
+fi
+
+OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}" \
+OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT}" \
+OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL}" \
+OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH}" \
+  "${gateway_cmd[@]}" >"${LOG_DIR}/openclaw-gateway.log" 2>&1 &
+
+wait_http_any 90 "http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}/health" || {
+  echo "OpenClaw gateway health check failed" >&2
+  exit 1
+}
+
+wait -n

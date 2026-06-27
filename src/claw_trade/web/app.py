@@ -145,7 +145,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--gateway-timeout-ms", type=int, default=int(os.environ.get("OPENCLAW_GATEWAY_TIMEOUT_MS", "10000")))
     parser.add_argument(
         "--gateway-token",
-        default=os.environ.get("OPENCLAW_GATEWAY_TOKEN") or _runtime_env_value("OPENCLAW_GATEWAY_TOKEN"),
+        default=_default_gateway_token(),
     )
     parser.add_argument("--gateway-password", default=os.environ.get("OPENCLAW_GATEWAY_PASSWORD") or None)
     return parser.parse_args(argv)
@@ -166,6 +166,19 @@ def main(argv: list[str] | None = None) -> int:
     app = build_research_ui_app(settings=settings)
     uvicorn.run(app, host=settings.host, port=settings.port)
     return 0
+
+
+def _default_gateway_token() -> str | None:
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
+    if token:
+        return token
+    if _production_mode_enabled():
+        return None
+    return _runtime_env_value("OPENCLAW_GATEWAY_TOKEN")
+
+
+def _production_mode_enabled() -> bool:
+    return os.environ.get("CLAW_TRADE_PRODUCTION", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _runtime_env_value(key: str) -> str | None:

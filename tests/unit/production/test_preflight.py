@@ -15,3 +15,14 @@ def test_preflight_fails_when_frontend_dist_missing(tmp_path: Path) -> None:
 
     assert not result.ok
     assert any(item.code == "frontend_dist_missing" for item in result.failures)
+
+
+def test_production_entry_templates_exist_and_are_executable() -> None:
+    for path in [
+        Path("packaging/production/bin/claw-trade-control"),
+        Path("packaging/production/bin/claw-trade-ui"),
+        Path("packaging/production/bin/claw-trade-preflight"),
+        Path("packaging/production/runtime/claw-trade-control-runtime"),
+    ]:
+        assert path.is_file()
+        assert path.stat().st_mode & 0o111

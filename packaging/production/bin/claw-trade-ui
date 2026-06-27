@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
+CURRENT="${ROOT}/current"
+SHARED="${ROOT}/shared"
+export CLAW_TRADE_LICENSE_REQUIRED="${CLAW_TRADE_LICENSE_REQUIRED:-1}"
+export CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-${SHARED}/reports/runs}"
+exec "${CURRENT}/runtime/python/bin/python" -m claw_trade.web.app \
+  --host "${CLAW_TRADE_UI_HOST:-127.0.0.1}" \
+  --port "${CLAW_TRADE_UI_PORT:-5175}" \
+  --frontend-dist "${CURRENT}/web/dist" \
+  --gateway-call-bin "${CURRENT}/runtime/openclaw/openclaw.mjs" \
+  --gateway-ws-url "${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
