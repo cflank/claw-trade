@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
+import sys
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +36,17 @@ REQUIRED_PLUGIN_ASSET_PATHS = {
     "openclaw_plugins/claw-trade-scheduled-work-tools/index.js",
 }
 
+FORBIDDEN_TOP_LEVEL = {"tests", "docs", "memory"}
+FORBIDDEN_SUFFIXES = {
+    ".key",
+    ".p12",
+    ".pfx",
+}
+FORBIDDEN_EXACT = {
+    ".env.local",
+    "AGENTS.md",
+}
+
 
 @dataclass(frozen=True)
 class AuditResult:
@@ -48,8 +61,8 @@ def audit_archive(path: Path) -> AuditResult:
     missing: list[str] = []
     invalid_assets: list[str] = []
     release_paths: set[str] = set()
-    with tarfile.open(path) as tar:
-        for member in tar.getmembers():
+    with tarfile.open(path) as archive:
+        for member in archive.getmembers():
             name = member.name.strip("/")
             release_name = _release_relative_name(name)
             if release_name:
@@ -57,9 +70,9 @@ def audit_archive(path: Path) -> AuditResult:
             if _release_forbidden(name, release_name):
                 hits.append(name)
         missing.extend(sorted(REQUIRED_RELEASE_PATHS - release_paths))
-        invalid_assets.extend(_audit_nested_asset(tar, "runtime/assets/agents.tar", REQUIRED_AGENT_ASSET_PATHS))
+        invalid_assets.extend(_audit_nested_asset(archive, "runtime/assets/agents.tar", REQUIRED_AGENT_ASSET_PATHS))
         invalid_assets.extend(
-            _audit_nested_asset(tar, "runtime/assets/openclaw_plugins.tar", REQUIRED_PLUGIN_ASSET_PATHS)
+            _audit_nested_asset(archive, "runtime/assets/openclaw_plugins.tar", REQUIRED_PLUGIN_ASSET_PATHS)
         )
     return AuditResult(
         ok=not hits and not missing and not invalid_assets,
@@ -91,11 +104,11 @@ def _release_forbidden(member_name: str, release_name: str) -> bool:
     return False
 
 
-def _audit_nested_asset(tar: tarfile.TarFile, release_name: str, required: set[str]) -> list[str]:
-    outer_name = _find_release_member(tar, release_name)
+def _audit_nested_asset(archive: tarfile.TarFile, release_name: str, required: set[str]) -> list[str]:
+    outer_name = _find_release_member(archive, release_name)
     if outer_name is None:
         return []
-    extracted = tar.extractfile(outer_name)
+    extracted = archive.extractfile(outer_name)
     if extracted is None:
         return [f"{release_name}: not a readable tar file"]
     data = extracted.read()
@@ -112,9 +125,9 @@ def _audit_nested_asset(tar: tarfile.TarFile, release_name: str, required: set[s
     return errors
 
 
-def _find_release_member(tar: tarfile.TarFile, release_name: str) -> str | None:
+def _find_release_member(archive: tarfile.TarFile, release_name: str) -> str | None:
     suffix = f"/{release_name}"
-    for member in tar.getmembers():
+    for member in archive.getmembers():
         if member.name.strip("/").endswith(suffix):
             return member.name
     return None
@@ -132,17 +145,51 @@ def _nested_asset_forbidden(name: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("archive")
+    parser = argparse.ArgumentParser(description="Audit claw-trade factory-test package contents.")
+    parser.add_argument("path", type=Path)
     args = parser.parse_args(argv)
-    result = audit_archive(Path(args.archive))
-    for hit in result.forbidden_hits:
-        print(f"forbidden: {hit}")
-    for item in result.missing_required:
-        print(f"missing: {item}")
-    for item in result.invalid_assets:
-        print(f"invalid_asset: {item}")
-    return 0 if result.ok else 1
+
+    path = args.path
+    if path.is_dir():
+        names = [p.relative_to(path).as_posix() for p in path.rglob("*")]
+    elif tarfile.is_tarfile(path):
+        with tarfile.open(path) as archive:
+            names = [_release_relative_name(name.strip("/")) for name in archive.getnames()]
+    else:
+        print(f"unsupported package path: {path}", file=sys.stderr)
+        return 2
+
+    failures: list[str] = []
+    for raw_name in names:
+        name = raw_name.strip("/")
+        if not name:
+            continue
+        path_parts = Path(name).parts
+        parts = set(path_parts)
+        top_level = path_parts[0] if path_parts else ""
+        suffix = Path(name).suffix.lower()
+        if ".git" in parts or "__pycache__" in parts:
+            failures.append(f"forbidden path: {name}")
+        if top_level in FORBIDDEN_TOP_LEVEL:
+            failures.append(f"forbidden top-level path: {name}")
+        if name in FORBIDDEN_EXACT:
+            failures.append(f"forbidden file: {name}")
+        if suffix in FORBIDDEN_SUFFIXES:
+            failures.append(f"forbidden secret-like file: {name}")
+        if name.startswith("web/research-ui/src/"):
+            failures.append(f"forbidden frontend source: {name}")
+        if name.startswith("app/python/claw_trade/") and name.endswith(".py"):
+            failures.append(f"forbidden claw_trade source: {name}")
+
+    if failures:
+        for failure in failures[:100]:
+            print(failure, file=sys.stderr)
+        if len(failures) > 100:
+            print(f"... {len(failures) - 100} more failures", file=sys.stderr)
+        return 1
+
+    print(f"OK: audited {len(names)} entries")
+    return 0
 
 
 if __name__ == "__main__":

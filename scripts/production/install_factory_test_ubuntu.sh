@@ -1,258 +1,272 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-install_root="${INSTALL_ROOT:-/opt/claw-trade}"
+package="${1:-}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bundle_root="$(cd "${script_dir}/.." && pwd)"
-package="${1:-${CLAW_TRADE_FACTORY_PACKAGE:-}}"
-control_log="${CONTROL_LOG:-/tmp/claw-trade-control.log}"
-ui_log="${UI_LOG:-/tmp/claw-trade-ui.log}"
-control_pid_file="${CONTROL_PID_FILE:-/tmp/claw-trade-control.pid}"
-ui_pid_file="${UI_PID_FILE:-/tmp/claw-trade-ui.pid}"
-mongod_pid_file="${MONGOD_PID_FILE:-${install_root}/shared/run/mongod.pid}"
+install_root="${CLAW_TRADE_INSTALL_ROOT:-/opt/claw-trade}"
+runtime_owner="${CLAW_TRADE_RUNTIME_OWNER:-clawtrade}"
+runtime_group="${CLAW_TRADE_RUNTIME_GROUP:-clawtrade}"
+kiosk_owner="${CLAW_TRADE_KIOSK_OWNER:-clawkiosk}"
+kiosk_group="${CLAW_TRADE_KIOSK_GROUP:-clawkiosk}"
+kiosk_browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"
 virbox_status_sdk_archive="${VIRBOX_STATUS_SDK_ARCHIVE:-${bundle_root}/virbox/virbox-status-sdk-linux-x86_64.tgz}"
 virbox_status_dir="${install_root}/shared/license/virbox-status-sdk"
 virbox_status_command="${virbox_status_dir}/virbox_status_sdk"
 virbox_license_id="${VIRBOX_LICENSE_ID:-16427}"
-virbox_status_installed=0
+ui_pid_file="${CLAW_TRADE_UI_PID_FILE:-/tmp/claw-trade-ui.pid}"
+control_pid_file="${CLAW_TRADE_CONTROL_PID_FILE:-/tmp/claw-trade-control.pid}"
+control_log="${CLAW_TRADE_CONTROL_LOG:-/tmp/claw-trade-control.log}"
+ui_log="${CLAW_TRADE_UI_LOG:-/tmp/claw-trade-ui.log}"
 
-log() { printf '[INFO] %s\n' "$*"; }
-fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
-tail_log() { [[ -f "$1" ]] && tail -n 160 "$1" >&2 || true; }
+fail() {
+  printf '[ERROR] %s\n' "$*" >&2
+  exit 1
+}
 
-stop_pid_file() {
-  local file="$1" pid=""
-  [[ -f "$file" ]] && pid="$(cat "$file" 2>/dev/null || true)"
-  if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
-    kill "$pid" 2>/dev/null || sudo kill "$pid" 2>/dev/null || true
-    sleep 2
-    kill -9 "$pid" 2>/dev/null || sudo kill -9 "$pid" 2>/dev/null || true
-  fi
-  rm -f "$file"
+log() {
+  printf '[INFO] %s\n' "$*"
 }
 
 stop_ui() {
-  stop_pid_file "$ui_pid_file"
-  pkill -f -- "-m claw_trade.web.app" 2>/dev/null || sudo pkill -f -- "-m claw_trade.web.app" 2>/dev/null || true
+  if [[ -f "${ui_pid_file}" ]]; then
+    pid="$(cat "${ui_pid_file}" 2>/dev/null || true)"
+    if [[ "${pid}" =~ ^[0-9]+$ ]] && ps -p "${pid}" >/dev/null 2>&1; then
+      sudo kill "${pid}" 2>/dev/null || true
+      sleep 2
+    fi
+    rm -f "${ui_pid_file}"
+  fi
+  sudo pkill -f 'python3.12 -m claw_trade.web.app' 2>/dev/null || true
 }
 
 stop_control() {
-  stop_pid_file "$control_pid_file"
-  pkill -f "${install_root}/current/runtime/bin/claw-trade-control-runtime" 2>/dev/null || sudo pkill -f "${install_root}/current/runtime/bin/claw-trade-control-runtime" 2>/dev/null || true
-}
-
-port_free() {
-  local port="$1"
-  ! ss -ltn "sport = :${port}" 2>/dev/null | grep -q LISTEN
-}
-
-select_openclaw_gateway_port() {
-  for port in $(seq 18789 18809); do
-    port_free "$port" && { printf '%s\n' "$port"; return 0; }
-  done
-  fail "no free OpenClaw gateway port found in 18789-18809"
-}
-
-wait_http_any() {
-  local timeout="$1"
-  shift
-  for _ in $(seq 1 "$timeout"); do
-    for url in "$@"; do
-      curl -fsS "$url" >/dev/null 2>&1 && return 0
-    done
-    sleep 1
-  done
-  return 1
-}
-
-mongodb_ready() {
-  "${install_root}/current/runtime/python/bin/python" - <<'PY' >/dev/null 2>&1
-from pymongo import MongoClient
-
-client = MongoClient("mongodb://127.0.0.1:27017", serverSelectionTimeoutMS=1000)
-client.admin.command("ping")
-PY
-}
-
-ensure_mongodb() {
-  local archive="${install_root}/current/runtime/mongodb/mongodb-linux-x86_64-ubuntu2404-8.0.12-claw-test.tgz"
-  local mongo_root="${install_root}/shared/mongodb"
-  local mongo_data="${install_root}/shared/mongodb-data"
-  local mongo_run="${install_root}/shared/run"
-  local mongo_log="${install_root}/shared/logs/mongod.log"
-  local top_dir=""
-
-  if mongodb_ready; then
-    log "using existing MongoDB on 127.0.0.1:27017"
-    return 0
+  if [[ -f "${control_pid_file}" ]]; then
+    pid="$(cat "${control_pid_file}" 2>/dev/null || true)"
+    if [[ "${pid}" =~ ^[0-9]+$ ]] && ps -p "${pid}" >/dev/null 2>&1; then
+      sudo kill "${pid}" 2>/dev/null || true
+      sleep 2
+    fi
+    rm -f "${control_pid_file}"
   fi
-  if ss -ltn "sport = :27017" 2>/dev/null | grep -q LISTEN; then
-    fail "127.0.0.1:27017 is occupied but MongoDB ping failed"
-  fi
-  [[ -f "$archive" ]] || fail "bundled MongoDB runtime missing and no MongoDB is running: $archive"
-
-  log "starting bundled MongoDB"
-  sudo mkdir -p "$mongo_root" "$mongo_data" "$mongo_run" "${install_root}/shared/logs"
-  sudo chown -R "$(id -un):$(id -gn)" "$mongo_root" "$mongo_data" "$mongo_run" "${install_root}/shared/logs"
-  top_dir="$(tar -tzf "$archive" | awk -F/ 'NR == 1 { first=$1 } END { if (first != "") print first; else exit 1 }')" || fail "cannot read MongoDB archive top directory"
-  if [[ ! -x "${mongo_root}/${top_dir}/bin/mongod" ]]; then
-    tar -xzf "$archive" -C "$mongo_root"
-  fi
-  ln -sfn "${mongo_root}/${top_dir}" "${mongo_root}/current"
-  sudo rm -f /tmp/mongodb-27017.sock
-  "${mongo_root}/current/bin/mongod" \
-    --dbpath "$mongo_data" \
-    --logpath "$mongo_log" \
-    --pidfilepath "$mongod_pid_file" \
-    --bind_ip 127.0.0.1 \
-    --port 27017 \
-    --wiredTigerCacheSizeGB 1 \
-    --fork
-
-  for _ in $(seq 1 30); do
-    mongodb_ready && return 0
-    sleep 1
-  done
-  fail "bundled MongoDB did not become ready"
 }
 
-install_package() {
-  [[ -n "$package" ]] || return 0
-  [[ -f "$package" ]] || fail "package not found: $package"
+ensure_system_identity() {
+  local user="$1"
+  local group="$2"
+  if ! getent group "${group}" >/dev/null; then
+    sudo groupadd --system "${group}"
+  fi
+  if ! id -u "${user}" >/dev/null 2>&1; then
+    sudo useradd --system --no-create-home --gid "${group}" --shell /usr/sbin/nologin "${user}"
+  fi
+}
 
-  getent group clawtrade >/dev/null || sudo groupadd --system clawtrade
-  id -u clawtrade >/dev/null 2>&1 || sudo useradd --system --gid clawtrade --home "$install_root" --shell /usr/sbin/nologin clawtrade
-
-  log "installing package: $package"
-  sudo mkdir -p \
-    "${install_root}/releases" \
-    "${install_root}/shared/config" \
-    "${install_root}/shared/data" \
-    "${install_root}/shared/logs" \
-    "${install_root}/shared/license" \
-    "${install_root}/shared/reports" \
-    "${install_root}/shared/updates"
-
-  top_dir="$(tar -tf "$package" | awk -F/ 'NR == 1 { first=$1 } END { if (first != "") print first; else exit 1 }')" || fail "cannot read package top directory"
-  sudo tar --no-same-owner --no-same-permissions -xf "$package" -C "${install_root}/releases"
-  sudo ln -sfn "${install_root}/releases/${top_dir}" "${install_root}/current.next"
-  sudo mv -Tf "${install_root}/current.next" "${install_root}/current"
-  sudo chmod +x "${install_root}/current/bin/"*
-  sudo chown -R "$(id -un):$(id -gn)" "${install_root}/releases/${top_dir}" "${install_root}/shared"
-  sudo chown -h "$(id -un):$(id -gn)" "${install_root}/current"
+write_shared_env_var() {
+  local key="$1"
+  local value="$2"
+  local env_file="${install_root}/shared/config/claw-trade.env"
+  sudo install -d -m 0750 -o "${runtime_owner}" -g "${runtime_group}" "${install_root}/shared/config"
+  sudo touch "${env_file}"
+  sudo sed -i "/^${key}=/d" "${env_file}"
+  printf '%s=%s\n' "${key}" "${value}" | sudo tee -a "${env_file}" >/dev/null
+  sudo chown "${runtime_owner}:${runtime_group}" "${env_file}"
+  sudo chmod 0640 "${env_file}"
 }
 
 install_virbox_status_sdk() {
-  if [[ ! -f "$virbox_status_sdk_archive" ]]; then
-    log "Virbox status SDK archive not found; license gate will fail closed until configured: $virbox_status_sdk_archive"
+  write_shared_env_var "CLAW_TRADE_LICENSE_REQUIRED" "1"
+  if [[ ! -f "${virbox_status_sdk_archive}" ]]; then
+    log "Virbox status SDK archive not found; license gate will fail closed until configured: ${virbox_status_sdk_archive}"
     return 0
   fi
 
   log "installing Virbox status SDK"
-  sudo mkdir -p "$virbox_status_dir"
-  sudo tar -xzf "$virbox_status_sdk_archive" -C "$virbox_status_dir"
-  sudo chown -R root:clawtrade "$virbox_status_dir"
-  sudo chmod 0755 "$virbox_status_dir" "$virbox_status_command"
+  sudo install -d -m 0750 -o root -g "${runtime_group}" "${virbox_status_dir}"
+  sudo tar -xzf "${virbox_status_sdk_archive}" -C "${virbox_status_dir}"
+  sudo chown -R root:"${runtime_group}" "${virbox_status_dir}"
+  sudo chmod 0755 "${virbox_status_dir}" "${virbox_status_command}"
   [[ -f "${virbox_status_dir}/libslm_control.so" ]] && sudo chmod 0755 "${virbox_status_dir}/libslm_control.so"
-  virbox_status_installed=1
+  write_shared_env_var "CLAW_TRADE_VIRBOX_STATUS_COMMAND" "${virbox_status_command}"
+  write_shared_env_var "VIRBOX_LICENSE_ID" "${virbox_license_id}"
 }
 
-write_runtime_env() {
-  local gateway_port="$1"
-  local shared_env="${install_root}/shared/config/runtime.env"
-  local current_env="${install_root}/current/.runtime/dev-services/runtime.env"
-
-  sudo mkdir -p "$(dirname "$shared_env")" "$(dirname "$current_env")" "${install_root}/shared/data/runtime-overlay/normalized"
-  sudo tee "$shared_env" >/dev/null <<EOF
-DATA_GATEWAY_MONGODB_URI=${DATA_GATEWAY_MONGODB_URI:-mongodb://127.0.0.1:27017}
-DATA_GATEWAY_MONGODB_DATABASE=${DATA_GATEWAY_MONGODB_DATABASE:-claw_trade}
-DATA_GATEWAY_SEED_MONGODB_URI=${DATA_GATEWAY_SEED_MONGODB_URI:-mongodb://127.0.0.1:27017}
-DATA_GATEWAY_SEED_MONGODB_DATABASE=${DATA_GATEWAY_SEED_MONGODB_DATABASE:-claw_trade_factory_seed}
-DATA_GATEWAY_COLUMNAR_ROOT=${DATA_GATEWAY_COLUMNAR_ROOT:-${install_root}/shared/data/runtime-overlay/normalized}
-OPENCLAW_GATEWAY_PORT=${gateway_port}
-OPENCLAW_GATEWAY_URL=ws://127.0.0.1:${gateway_port}
-OPENVIKING_ENDPOINT=http://127.0.0.1:1933
-OPENVIKING_BASE_URL=http://127.0.0.1:1933
-CLAW_TRADE_LICENSE_REQUIRED=${CLAW_TRADE_LICENSE_REQUIRED:-1}
-EOF
-  if [[ "$virbox_status_installed" == 1 ]]; then
-    sudo tee -a "$shared_env" >/dev/null <<EOF
-CLAW_TRADE_VIRBOX_STATUS_COMMAND=${virbox_status_command}
-VIRBOX_LICENSE_ID=${virbox_license_id}
-EOF
+tail_log() {
+  local path="$1"
+  if [[ -f "${path}" ]]; then
+    tail -n 120 "${path}" >&2 || true
   fi
-  sudo cp "$shared_env" "$current_env"
-  sudo chown "$(id -un):$(id -gn)" "$shared_env" "$current_env"
-  sudo chmod 0644 "$shared_env" "$current_env"
 }
 
-start_control() {
-  local runtime_env="$1" control_pid gateway_port="$2"
-  log "starting runtime control"
-  stop_control
-  rm -f "$control_log"
-  setsid nohup bash -c 'set -euo pipefail; root="$1"; runtime_env="$2"; cd "${root}/current"; set -a; . "${runtime_env}"; set +a; export CLAW_TRADE_HOME="${root}"; exec "${root}/current/bin/claw-trade-control"' bash "$install_root" "$runtime_env" >"$control_log" 2>&1 < /dev/null &
-  echo "$!" >"$control_pid_file"
-  control_pid="$(cat "$control_pid_file")"
-
-  for _ in $(seq 1 120); do
-    if curl -fsS http://127.0.0.1:1933/health >/dev/null 2>&1 || curl -fsS http://127.0.0.1:1933/healthz >/dev/null 2>&1; then
-      break
+wait_for_file_from_process() {
+  local path="$1"
+  local pid="$2"
+  local timeout_sec="$3"
+  local waited=0
+  while (( waited < timeout_sec )); do
+    if [[ -s "${path}" ]]; then
+      return 0
     fi
-    ps -p "$control_pid" >/dev/null 2>&1 || { tail_log "$control_log"; fail "runtime control exited before OpenViking was ready"; }
-    sleep 1
-  done
-  wait_http_any 90 "http://127.0.0.1:${gateway_port}/health" || { tail_log "$control_log"; fail "OpenClaw gateway did not become ready"; }
-}
-
-start_ui() {
-  local runtime_env="$1" ui_pid ui_ready=0
-  log "starting UI"
-  stop_ui
-  rm -f "$ui_log"
-  setsid nohup bash -c 'set -euo pipefail; root="$1"; runtime_env="$2"; cd "${root}/current"; set -a; . "${runtime_env}"; set +a; export CLAW_TRADE_HOME="${root}"; exec "${root}/current/bin/claw-trade-ui"' bash "$install_root" "$runtime_env" >"$ui_log" 2>&1 < /dev/null &
-  echo "$!" >"$ui_pid_file"
-  ui_pid="$(cat "$ui_pid_file")"
-
-  for _ in $(seq 1 90); do
-    if curl -fsS http://127.0.0.1:5175/ >/dev/null; then
-      ui_ready=1
-      break
+    if ! ps -p "${pid}" >/dev/null 2>&1; then
+      return 1
     fi
-    ps -p "$ui_pid" >/dev/null 2>&1 || { tail_log "$ui_log"; fail "UI process exited before responding"; }
     sleep 1
+    waited=$(( waited + 1 ))
   done
-  [[ "$ui_ready" == 1 ]] || { tail_log "$ui_log"; fail "UI did not respond on 127.0.0.1:5175 within 90s"; }
+  return 1
 }
 
-if [[ -n "$package" ]]; then
-  install_package
-elif [[ -x "${install_root}/current/bin/claw-trade-control" ]]; then
-  log "package missing; using existing current release: ${install_root}/current"
-else
-  fail "no package supplied and ${install_root}/current is not installed"
+source_runtime_env() {
+  local runtime_env="$1"
+  [[ -f "${runtime_env}" ]] || fail "runtime env not found: ${runtime_env}"
+  set -a
+  # shellcheck disable=SC1090
+  . "${runtime_env}"
+  set +a
+}
+
+ensure_runtime_gateway_token() {
+  if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" && -n "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-}" ]]; then
+    export OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"
+  fi
+}
+
+port_listening() {
+  local port="$1"
+  ss -ltn 2>/dev/null | awk -v p=":${port}" '$4 ~ p"$" { found=1 } END { exit found ? 0 : 1 }'
+}
+
+select_openclaw_gateway_port() {
+  local port
+  if [[ -n "${OPENCLAW_GATEWAY_PORT:-}" ]]; then
+    if port_listening "${OPENCLAW_GATEWAY_PORT}"; then
+      fail "configured OPENCLAW_GATEWAY_PORT is already listening: ${OPENCLAW_GATEWAY_PORT}"
+    fi
+    printf '%s\n' "${OPENCLAW_GATEWAY_PORT}"
+    return 0
+  fi
+  for port in $(seq 18789 18809); do
+    if ! port_listening "${port}"; then
+      printf '%s\n' "${port}"
+      return 0
+    fi
+  done
+  fail "no free OpenClaw gateway port found in 18789-18809"
+}
+
+patch_runtime_control() {
+  local release_dir="${1:-${install_root}/current}"
+  local runtime_script="${release_dir}/runtime/claw-trade-control-runtime"
+  [[ -f "${runtime_script}" ]] || fail "runtime control script not found: ${runtime_script}"
+  sudo python3.12 - <<'INNER_PY' "${runtime_script}"
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+old = 'OPENCLAW_GATEWAY_PORT=18789\n'
+new = 'OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"\n'
+if old in text:
+    path.write_text(text.replace(old, new, 1))
+elif new not in text:
+    raise SystemExit('unexpected OPENCLAW_GATEWAY_PORT assignment')
+INNER_PY
+}
+
+if [[ -z "${package}" ]]; then
+  shopt -s nullglob
+  packages=(/tmp/claw-trade-production-*.tar.gz)
+  shopt -u nullglob
+  ((${#packages[@]} > 0)) || fail "missing package argument and no /tmp/claw-trade-production-*.tar.gz found"
+  package="${packages[$((${#packages[@]} - 1))]}"
 fi
+[[ -f "${package}" ]] || fail "package not found: ${package}"
+
+log "installing OS dependencies"
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl tar python3.12
+
+node_major="$(node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
+if [[ -z "${node_major}" || "${node_major}" -lt 22 ]]; then
+  log "installing Node.js 22 (requires internet access)"
+  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+fi
+node --version
+python3.12 --version
+ensure_system_identity "${runtime_owner}" "${runtime_group}"
+ensure_system_identity "${kiosk_owner}" "${kiosk_group}"
+sudo apt-get install -y chromium-browser
+[[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"
+
+log "installing package: ${package}"
+sudo install -d -m 0755 "${install_root}/releases"
+  sudo install -d -m 0750 \
+    "${install_root}/shared" \
+    "${install_root}/shared"/{cache,config,data,license,logs,openclaw,queues,reports,runs,sessions,tmp,updates} \
+  "${install_root}/shared/logs"/{diagnostics,factory-reset} \
+  "${install_root}/shared/updates"/{downloads,logs}
+top_dir="$(python3.12 "${script_dir}/validate_production_archive.py" "${package}")"
+sudo tar --no-same-owner --no-same-permissions -xzf "${package}" -C "${install_root}/releases"
+patch_runtime_control "${install_root}/releases/${top_dir}"
+sudo chmod 0755 "${install_root}/releases/${top_dir}"
+sudo chown root:root "${install_root}/releases"
+sudo chown -R root:root "${install_root}/releases/${top_dir}"
+sudo chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
 install_virbox_status_sdk
 
-if [[ "${RESTORE_HISTORY:-1}" == 1 ]]; then
-  ensure_mongodb
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -x "${script_dir}/restore-history-data.sh" ]]; then
-    bash "${script_dir}/restore-history-data.sh"
-  fi
+"${install_root}/releases/${top_dir}/bin/claw-trade-preflight"
+tmp_current="${install_root}/.current.${top_dir}.$$"
+sudo ln -sfn "${install_root}/releases/${top_dir}" "${tmp_current}"
+sudo mv -Tf "${tmp_current}" "${install_root}/current"
+sudo chown -h root:root "${install_root}/current"
+tmp_rescue_current="${install_root}/.rescue-current.${top_dir}.$$"
+sudo ln -sfn "${install_root}/releases/${top_dir}" "${tmp_rescue_current}"
+sudo mv -Tf "${tmp_rescue_current}" "${install_root}/rescue-current"
+sudo chown -h root:root "${install_root}/rescue-current"
+export PYTHONPATH="${install_root}/current/app/python:${install_root}/current/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
+
+runtime_env="${install_root}/current/.runtime/dev-services/runtime.env"
+
+log "starting runtime control"
+stop_ui
+stop_control
+openclaw_gateway_port="$(select_openclaw_gateway_port)"
+export OPENCLAW_GATEWAY_PORT="${openclaw_gateway_port}"
+export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${openclaw_gateway_port}}"
+log "using OpenClaw gateway: ${OPENCLAW_GATEWAY_URL}"
+rm -f "${control_log}" "${runtime_env}"
+nohup sudo -u "${runtime_owner}" -g "${runtime_group}" env \
+  OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT}" \
+  OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL}" \
+  "${install_root}/current/bin/claw-trade-control" >"${control_log}" 2>&1 &
+echo "$!" >"${control_pid_file}"
+control_pid="$(cat "${control_pid_file}")"
+if ! wait_for_file_from_process "${runtime_env}" "${control_pid}" 120; then
+  tail_log "${control_log}"
+  fail "runtime control did not become ready"
 fi
 
-"${install_root}/current/bin/claw-trade-preflight"
-gateway_port="$(select_openclaw_gateway_port)"
-runtime_env="${install_root}/shared/config/runtime.env"
-write_runtime_env "$gateway_port"
-start_control "$runtime_env" "$gateway_port"
-start_ui "$runtime_env"
+log "verifying factory seed restore"
+source_runtime_env "${runtime_env}"
+ensure_runtime_gateway_token
+python3.12 -c 'import os; from pymongo import MongoClient; db=os.environ["DATA_GATEWAY_SEED_MONGODB_DATABASE"]; c=MongoClient(os.environ["DATA_GATEWAY_SEED_MONGODB_URI"], serverSelectionTimeoutMS=5000)[db]; counts=(c.dataset_manifests.count_documents({}), c.provider_attempts.count_documents({}), c.raw_payloads.count_documents({})); print(db, *counts); raise SystemExit(0 if all(value > 0 for value in counts) else 1)'
+
+log "starting UI"
+stop_ui
+rm -f "${ui_log}"
+nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; runtime_env="$1"; ui_bin="$2"; set -a; . "${runtime_env}"; set +a; if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" && -n "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-}" ]]; then export OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"; fi; exec "${ui_bin}"' bash "${runtime_env}" "${install_root}/current/bin/claw-trade-ui" >"${ui_log}" 2>&1 &
+echo "$!" >"${ui_pid_file}"
+sleep 5
+if ! curl -fsS http://127.0.0.1:5175/ >/dev/null; then
+  tail_log "${ui_log}"
+  fail "UI did not respond on 127.0.0.1:5175"
+fi
 
 cat <<EOF
 [OK] claw-trade installed
+Package: ${package}
 Current: ${install_root}/current
-UI: http://$(hostname -I | awk '{print $1}'):5175/
-Log: ${ui_log}
-Control log: ${control_log}
+UI: http://127.0.0.1:5175/
+Log: /tmp/claw-trade-ui.log
+Control log: /tmp/claw-trade-control.log
 EOF

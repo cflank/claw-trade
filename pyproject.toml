@@ -1,11 +1,12 @@
 [project]
 name = "claw-trade"
-version = "0.1.0"
+version = "0.1.4"
 description = "claw-trade control migration workspace"
 requires-python = ">=3.12"
 dependencies = [
     "akshare>=1.17.50",
     "baostock>=0.9.1,<1",
+    "cryptography>=48.0.0",
     "fastapi>=0.128.0,<0.129.0",
     "loguru>=0.7.2",
     "matplotlib>=3.10.8",

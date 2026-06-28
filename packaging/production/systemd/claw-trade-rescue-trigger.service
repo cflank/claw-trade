@@ -1,0 +1,8 @@
+[Unit]
+Description=claw-trade rescue takeover trigger
+After=claw-trade-ui.service claw-trade-control.service
+
+[Service]
+Type=oneshot
+ExecStart=-/bin/systemctl stop claw-trade-ui.service
+ExecStart=/bin/systemctl start claw-trade-rescue.service

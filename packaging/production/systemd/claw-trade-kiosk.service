@@ -1,6 +1,7 @@
 [Unit]
 Description=claw-trade kiosk browser
 After=graphical.target claw-trade-ui.service
+Wants=graphical.target
 Requires=claw-trade-ui.service
 
 [Service]
@@ -8,9 +9,11 @@ Type=simple
 User=clawkiosk
 Group=clawkiosk
 Environment=DISPLAY=:0
-ExecStart=/usr/bin/chromium --kiosk --no-first-run --disable-extensions --disable-dev-tools --disable-file-system --user-data-dir=/home/clawkiosk/.config/claw-trade-browser http://127.0.0.1:5175/
-Restart=always
-RestartSec=3
+Environment=CLAW_TRADE_KIOSK_BROWSER_BIN=/usr/bin/chromium-browser
+EnvironmentFile=-/opt/claw-trade/shared/config/claw-trade.env
+ExecStart=/opt/claw-trade/current/bin/claw-trade-kiosk
+Restart=on-failure
+RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 

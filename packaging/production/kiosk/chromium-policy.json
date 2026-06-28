@@ -1,8 +1,11 @@
 {
   "DeveloperToolsAvailability": 2,
-  "DownloadRestrictions": 3,
   "ExtensionInstallBlocklist": ["*"],
+  "DefaultPopupsSetting": 2,
+  "DownloadRestrictions": 3,
   "HomepageLocation": "http://127.0.0.1:5175/",
   "RestoreOnStartup": 4,
-  "RestoreOnStartupURLs": ["http://127.0.0.1:5175/"]
+  "RestoreOnStartupURLs": ["http://127.0.0.1:5175/"],
+  "URLBlocklist": ["file://*", "http://localhost/*", "http://127.0.0.1:*/*"],
+  "URLAllowlist": ["http://127.0.0.1:5175/*"]
 }

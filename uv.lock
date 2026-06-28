@@ -425,11 +425,12 @@ wheels = [
 
 [[package]]
 name = "claw-trade"
-version = "0.1.0"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "akshare" },
     { name = "baostock" },
+    { name = "cryptography" },
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "loguru" },
@@ -455,6 +456,7 @@ dependencies = [
 requires-dist = [
     { name = "akshare", specifier = ">=1.17.50" },
     { name = "baostock", specifier = ">=0.9.1,<1" },
+    { name = "cryptography", specifier = ">=48.0.0" },
     { name = "duckdb", specifier = ">=1.2,<2" },
     { name = "fastapi", specifier = ">=0.128.0,<0.129.0" },
     { name = "loguru", specifier = ">=0.7.2" },

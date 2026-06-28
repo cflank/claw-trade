@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"
+url="${CLAW_TRADE_KIOSK_URL:-http://127.0.0.1:5175/}"
+
+exec "${browser}" --kiosk --no-first-run --disable-dev-shm-usage "${url}"

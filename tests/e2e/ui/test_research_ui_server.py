@@ -8,6 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
+from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
+from claw_trade.production.maintenance_lock import ProductionMaintenanceLock
+from claw_trade.production.remote_update import RemoteUpdateService
 from claw_trade.ui_backend.report_cleanup import ReportCleanupResult, ReportCleanupRunResult
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
 from claw_trade.ui_backend.selection_auto_refresh_settings import SelectionAutoRefreshSettingsService
@@ -172,6 +175,122 @@ def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
     assert selection_auto_refresh.load_settings() == {"enabled": True}
 
 
+def test_production_factory_reset_route_uses_fixed_allowlist(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    install_root = tmp_path / "opt" / "claw-trade"
+    dirty = install_root / "shared" / "reports" / "old-report.md"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_text("delete", encoding="utf-8")
+    license_file = install_root / "shared" / "license" / "virbox.dat"
+    license_file.parent.mkdir(parents=True)
+    license_file.write_text("keep", encoding="utf-8")
+    app.state.factory_reset_service = FactoryResetService(install_root=install_root)
+    client = TestClient(app)
+
+    status = client.get("/api/ui/get-production-maintenance-status")
+    assert status.status_code == 200
+    assert status.json()["factoryReset"]["confirmation"] == FACTORY_RESET_CONFIRMATION
+
+    rejected = client.post(
+        "/api/ui/factory-reset",
+        headers={"origin": "http://127.0.0.1:5175"},
+        json={"requestId": "reset-ui", "confirmation": "wrong"},
+    )
+    assert rejected.status_code == 400
+
+    external_origin = client.post(
+        "/api/ui/factory-reset",
+        headers={"origin": "https://example.com"},
+        json={"requestId": "reset-ui", "confirmation": FACTORY_RESET_CONFIRMATION},
+    )
+    assert external_origin.status_code == 401
+
+    reset = client.post(
+        "/api/ui/factory-reset",
+        headers={"origin": "http://127.0.0.1:5175"},
+        json={"requestId": "reset-ui", "confirmation": FACTORY_RESET_CONFIRMATION},
+    )
+    assert reset.status_code == 200
+    assert reset.json()["status"] == "completed"
+    assert not dirty.exists()
+    assert license_file.read_text(encoding="utf-8") == "keep"
+
+    app.state.remote_update_service = RemoteUpdateService(
+        install_root=install_root,
+        base_url=None,
+        current_version="0.1.0",
+    )
+    update = client.post(
+        "/api/ui/check-for-update",
+        headers={"origin": "http://127.0.0.1:5175"},
+        json={"requestId": "update-check"},
+    )
+    assert update.status_code == 200
+    assert update.json()["status"] == "not_configured"
+
+    install_update = client.post(
+        "/api/ui/install-update",
+        headers={"origin": "http://127.0.0.1:5175"},
+        json={"requestId": "install-update"},
+    )
+    assert install_update.status_code == 200
+    assert install_update.json()["status"] == "not_configured"
+
+
+def test_production_maintenance_lock_blocks_ui_state_changes(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    lock = ProductionMaintenanceLock(install_root=tmp_path / "opt" / "claw-trade")
+    app.state.production_maintenance_lock = lock
+    client = TestClient(app)
+
+    with lock.hold(reason="factory_reset", request_id="busy"):
+        response = client.post(
+            "/api/ui/send-chat-message",
+            json={"requestId": "req-1", "contextId": "normal-chat", "text": "hello"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "MAINTENANCE_LOCKED"
+
+
+def test_factory_reset_pauses_owned_background_schedulers(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    price_alert_scan = _CleanupSchedulerProbe()
+    services = SimpleNamespace(
+        selection_refresh_service=refresh,
+        report_cleanup_scheduler=cleanup,
+        price_alert_scan_scheduler=price_alert_scan,
+    )
+    app = build_research_ui_app(
+        settings=ResearchUiServerSettings(frontend_dist=dist),
+        services=services,  # type: ignore[arg-type]
+    )
+    app.state.selection_auto_refresh_enabled = True
+    app.state.report_cleanup_scheduler_enabled = True
+    app.state.price_alert_scan_scheduler_enabled = True
+    app.state.factory_reset_service = FactoryResetService(install_root=tmp_path / "opt" / "claw-trade")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/ui/factory-reset",
+        headers={"origin": "http://127.0.0.1:5175"},
+        json={"requestId": "reset-ui", "confirmation": FACTORY_RESET_CONFIRMATION},
+    )
+
+    assert response.status_code == 200
+    assert refresh.stopped == 1
+    assert refresh.started == 1
+    assert cleanup.stopped == 1
+    assert cleanup.started == 1
+    assert price_alert_scan.stopped == 1
+    assert price_alert_scan.started == 1
+
+
 def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
@@ -293,6 +412,47 @@ def test_app_startup_does_not_start_injected_selection_auto_refresh(tmp_path: Pa
     assert refresh.stopped == 0
     assert cleanup.started == 0
     assert cleanup.stopped == 0
+
+
+def test_app_startup_starts_owned_auto_update_scheduler_when_update_source_is_configured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    auto_update = _AutoUpdateSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=refresh, report_cleanup_scheduler=cleanup)
+    monkeypatch.setenv("CLAW_TRADE_UPDATE_BASE_URL", "https://updates.example.com/stable/")
+    monkeypatch.setattr("claw_trade.web.app.AutoUpdateScheduler", lambda: auto_update)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert auto_update.started == 1
+
+    assert auto_update.stopped == 1
+
+
+def test_app_startup_does_not_start_auto_update_scheduler_for_injected_services(
+    tmp_path: Path, monkeypatch
+) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    auto_update = _AutoUpdateSchedulerProbe()
+    services = SimpleNamespace(selection_refresh_service=_RefreshServiceProbe(), report_cleanup_scheduler=_CleanupSchedulerProbe())
+    monkeypatch.setenv("CLAW_TRADE_UPDATE_BASE_URL", "https://updates.example.com/stable/")
+    monkeypatch.setattr("claw_trade.web.app.AutoUpdateScheduler", lambda: auto_update)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist), services=services)  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+
+    assert auto_update.started == 0
+    assert auto_update.stopped == 0
 
 
 def test_parse_args_uses_runtime_gateway_token_when_env_is_missing(tmp_path: Path, monkeypatch) -> None:
@@ -708,6 +868,18 @@ class _CleanupSchedulerProbe:
         self.started += 1
         if self._fail_start:
             raise RuntimeError("cleanup scheduler failed")
+
+    def stop(self) -> None:
+        self.stopped += 1
+
+
+class _AutoUpdateSchedulerProbe:
+    def __init__(self) -> None:
+        self.started = 0
+        self.stopped = 0
+
+    def start(self) -> None:
+        self.started += 1
 
     def stop(self) -> None:
         self.stopped += 1

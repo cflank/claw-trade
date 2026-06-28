@@ -1,0 +1,16 @@
+[Unit]
+Description=claw-trade rescue UI placeholder
+After=network-online.target claw-trade-ui.service
+Wants=network-online.target
+Conflicts=claw-trade-ui.service
+
+[Service]
+Type=simple
+User=clawtrade
+Group=clawtrade
+WorkingDirectory=/opt/claw-trade/shared
+EnvironmentFile=-/opt/claw-trade/shared/config/claw-trade.env
+Environment=CLAW_TRADE_RESCUE_HOST=127.0.0.1
+Environment=CLAW_TRADE_RESCUE_PORT=5175
+ExecStart=/opt/claw-trade/rescue-current/bin/claw-trade-rescue
+Restart=no

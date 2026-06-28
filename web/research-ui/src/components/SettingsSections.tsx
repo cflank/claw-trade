@@ -4,6 +4,7 @@ import type {
   DataSourceInstanceDraftInput,
   DataSourceInstanceForUser,
   LlmConfigDraft,
+  ProductionMaintenanceStatusOutput,
   ReportCleanupSettingsForUser,
   ReportRetentionDays,
 } from '../api/contracts';
@@ -194,6 +195,16 @@ function dataSourceStatusTone(state: DataSourceInstanceForUser['state']) {
   }
 }
 
+function updateStatusTone(status?: string) {
+  if (status === 'installed' || status === 'update_available' || status === 'up_to_date') {
+    return 'is-success';
+  }
+  if (status === 'rollback_failed' || status === 'install_failed' || status === 'verify_failed' || status === 'check_failed') {
+    return 'is-error';
+  }
+  return 'is-warning';
+}
+
 type SettingsMainTab = 'model' | 'general' | 'data';
 
 const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
@@ -236,6 +247,13 @@ export function SettingsSections({
   selectionAutoRefreshActionMessage,
   resetActionBusy,
   resetActionMessage,
+  factoryResetActionBusy,
+  factoryResetActionMessage,
+  updateActionBusy,
+  updateActionMessage,
+  updateApplyBusy,
+  canInstallUpdate,
+  productionMaintenance,
   onReconnectChannel,
   onDisconnectChannel,
   onSkipWechatSetup,
@@ -255,6 +273,9 @@ export function SettingsSections({
   onSelectionAutoRefreshChange,
   onSaveSelectionAutoRefresh,
   onResetSettings,
+  onFactoryReset,
+  onCheckForUpdate,
+  onInstallUpdate,
 }: {
   channel: ChannelStatusForUser | null;
   llm: LlmConfigDraft;
@@ -270,6 +291,8 @@ export function SettingsSections({
     reportCleanup?: string;
     selectionAutoRefresh?: string;
     reset?: string;
+    update?: string;
+    factoryReset?: string;
   };
   channelActionBusy: boolean;
   channelActionMessage: string;
@@ -286,6 +309,13 @@ export function SettingsSections({
   selectionAutoRefreshActionMessage: string;
   resetActionBusy: boolean;
   resetActionMessage: string;
+  factoryResetActionBusy: boolean;
+  factoryResetActionMessage: string;
+  updateActionBusy: boolean;
+  updateActionMessage: string;
+  updateApplyBusy: boolean;
+  canInstallUpdate: boolean;
+  productionMaintenance: ProductionMaintenanceStatusOutput | null;
   onReconnectChannel: () => void;
   onDisconnectChannel: () => void;
   onSkipWechatSetup: () => void;
@@ -305,6 +335,9 @@ export function SettingsSections({
   onSelectionAutoRefreshChange: (enabled: boolean) => void;
   onSaveSelectionAutoRefresh: () => void;
   onResetSettings: () => void;
+  onFactoryReset: () => void;
+  onCheckForUpdate: () => void;
+  onInstallUpdate: () => void;
 }) {
   const embedding = embeddingDraft(llm);
   const modelFieldError = modelStatusState(llm) === 'failed';
@@ -816,6 +849,73 @@ export function SettingsSections({
         </div>
         {resetActionMessage ? <div className="ct-inline-alert is-success">{resetActionMessage}</div> : null}
         {sectionErrors.reset ? <div className="ct-inline-alert is-error">{sectionErrors.reset}</div> : null}
+      </section>
+
+      <section className="ct-settings-section" data-testid="settings-section-factory-reset">
+        <div className="ct-section-head">
+          <h2>恢复出厂设置</h2>
+        </div>
+        <p className="ct-section-desc">清空本机应用配置、报告、缓存、队列、会话和临时文件；保留授权、更新包、当前版本和上一可用版本。</p>
+        {productionMaintenance ? (
+          <div className="ct-settings-summary">
+            <div className="ct-settings-summary-row">
+              <span>清空范围</span>
+              <strong>{productionMaintenance.factoryReset.resetPaths.length} 项</strong>
+            </div>
+            <div className="ct-settings-summary-row">
+              <span>保留范围</span>
+              <strong>{productionMaintenance.factoryReset.preservedPaths.length} 项</strong>
+            </div>
+            <div className="ct-settings-summary-row">
+              <span>远程更新</span>
+              <strong>{productionMaintenance.update.userMessage}</strong>
+            </div>
+          </div>
+        ) : null}
+        <div className="ct-button-row ct-settings-actions">
+          <button
+            type="button"
+            className="ct-button ct-button-danger"
+            onClick={onFactoryReset}
+            disabled={factoryResetActionBusy}
+          >
+            {factoryResetActionBusy ? '恢复出厂中...' : '恢复出厂设置'}
+          </button>
+        </div>
+        {factoryResetActionMessage ? <div className="ct-inline-alert is-success">{factoryResetActionMessage}</div> : null}
+        {sectionErrors.factoryReset ? <div className="ct-inline-alert is-error">{sectionErrors.factoryReset}</div> : null}
+      </section>
+
+      <section className="ct-settings-section" data-testid="settings-section-update">
+        <div className="ct-section-head">
+          <h2>远程更新</h2>
+        </div>
+        <p className="ct-section-desc">从已配置对象存储检查 signed manifest；安装会校验 archive hash 和签名。</p>
+        {productionMaintenance ? (
+          <div className={`ct-inline-alert ${updateStatusTone(productionMaintenance.update.status)}`}>
+            {productionMaintenance.update.userMessage}
+          </div>
+        ) : null}
+        <div className="ct-button-row ct-settings-actions">
+          <button
+            type="button"
+            className="ct-button ct-button-secondary"
+            onClick={onCheckForUpdate}
+            disabled={updateActionBusy || updateApplyBusy}
+          >
+            {updateActionBusy ? '检查中...' : '检查更新'}
+          </button>
+          <button
+            type="button"
+            className="ct-button ct-button-primary"
+            onClick={onInstallUpdate}
+            disabled={updateActionBusy || updateApplyBusy || !canInstallUpdate}
+          >
+            安装更新
+          </button>
+        </div>
+        {updateActionMessage ? <div className="ct-inline-alert is-success">{updateActionMessage}</div> : null}
+        {sectionErrors.update ? <div className="ct-inline-alert is-error">{sectionErrors.update}</div> : null}
       </section>
           </>
         ) : null}

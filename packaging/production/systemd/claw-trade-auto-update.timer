@@ -1,0 +1,12 @@
+[Unit]
+Description=claw-trade automatic update timer
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=30min
+Persistent=true
+Unit=claw-trade-auto-update.service
+
+[Install]
+WantedBy=timers.target

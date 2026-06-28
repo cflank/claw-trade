@@ -7,6 +7,8 @@ import type {
   AdvancedDiagnosticsRuntimeServiceStatusOutput,
   ChannelChatSnapshotForUser,
   ChannelStatusForUser,
+  CheckForUpdateInput,
+  CheckForUpdateOutput,
   ClearChatSessionInput,
   ClearChatSessionOutput,
   CancelReportTaskInput,
@@ -25,6 +27,10 @@ import type {
   GetReportCleanupSettingsOutput,
   GetSelectionAutoRefreshSettingsOutput,
   LicenseStatusForUser,
+  InstallUpdateInput,
+  InstallUpdateOutput,
+  FactoryResetInput,
+  FactoryResetOutput,
   ListDataSourcesOutput,
   ListPriceAlertsOutput,
   ListScheduledReportsOutput,
@@ -32,6 +38,7 @@ import type {
   ListSavedReportsOutput,
   LoadLlmSettingsOutput,
   MaintenanceTaskDiagnosticsOutput,
+  ProductionMaintenanceStatusOutput,
   PriceAlertForUser,
   PriceAlertInput,
   ReportDetailForUser,
@@ -180,6 +187,10 @@ export function getReportQueueSnapshot() {
   return requestJson<ReportQueueSnapshotForUser>('/api/ui/get-report-queue-snapshot');
 }
 
+export function getLicenseStatus() {
+  return requestJson<LicenseStatusForUser>('/api/ui/get-license-status');
+}
+
 export function cancelReportTask(input: CancelReportTaskInput) {
   return requestJson<CancelReportTaskOutput>('/api/ui/cancel-report-task', {
     method: 'POST',
@@ -200,10 +211,6 @@ export function getChatSession(contextId: string) {
 
 export function getSelectionRefreshSnapshot() {
   return requestJson<SelectionRefreshSnapshotForUser>('/api/ui/get-selection-refresh-snapshot');
-}
-
-export function getLicenseStatus() {
-  return requestJson<LicenseStatusForUser>('/api/ui/get-license-status');
 }
 
 export function createIntentDraft(input: CreateIntentDraftInput) {
@@ -390,6 +397,31 @@ export function testEmbeddingViaOpenViking(input: TestEmbeddingViaOpenVikingInpu
 
 export function resetSettingsToDefaults(input: ResetSettingsToDefaultsInput) {
   return requestJson<ResetSettingsToDefaultsOutput>('/api/ui/reset-settings-to-defaults', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function getProductionMaintenanceStatus() {
+  return requestJson<ProductionMaintenanceStatusOutput>('/api/ui/get-production-maintenance-status');
+}
+
+export function checkForUpdate(input: CheckForUpdateInput) {
+  return requestJson<CheckForUpdateOutput>('/api/ui/check-for-update', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function installUpdate(input: InstallUpdateInput) {
+  return requestJson<InstallUpdateOutput>('/api/ui/install-update', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function factoryReset(input: FactoryResetInput) {
+  return requestJson<FactoryResetOutput>('/api/ui/factory-reset', {
     method: 'POST',
     body: JSON.stringify(input),
   });

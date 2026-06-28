@@ -2,14 +2,19 @@
 Description=claw-trade control runtime
 After=network-online.target mongod.service
 Wants=network-online.target
+OnFailure=claw-trade-rescue-trigger.service
+OnFailureJobMode=replace
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
 User=clawtrade
 Group=clawtrade
-WorkingDirectory=/opt/claw-trade/current
-EnvironmentFile=-/opt/claw-trade/shared/config/runtime.env
+WorkingDirectory=/opt/claw-trade/shared
+EnvironmentFile=-/opt/claw-trade/shared/config/claw-trade.env
 ExecStart=/opt/claw-trade/current/bin/claw-trade-control
+SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

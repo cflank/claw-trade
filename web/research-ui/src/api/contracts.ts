@@ -46,6 +46,8 @@ export interface UserFacingFailure {
     | 'NOTIFICATION_UNAVAILABLE'
     | 'FILE_SEND_UNSUPPORTED'
     | 'ASSISTANT_UNAVAILABLE'
+    | 'REPORT_MODEL_NOT_READY'
+    | 'MAINTENANCE_LOCKED'
     | 'REPORT_EXPORT_FAILED'
     | 'DATASOURCE_TEST_FAILED'
     | 'PDF_EXPORT_FAILED'
@@ -787,6 +789,79 @@ export interface ResetSettingsToDefaultsOutput {
   channel: ChannelStatusForUser;
   reportCleanup: ReportCleanupSettingsForUser;
   selectionAutoRefresh: SelectionAutoRefreshSettingsForUser;
+}
+
+export interface FactoryResetInput {
+  requestId: string;
+  confirmation: 'RESET_CLAW_TRADE';
+}
+
+export interface CheckForUpdateInput {
+  requestId: string;
+}
+
+export type UpdateActionStatus =
+  | 'idle'
+  | 'not_configured'
+  | 'checking_manifest'
+  | 'check_failed'
+  | 'update_available'
+  | 'up_to_date'
+  | 'downloading'
+  | 'verify_failed'
+  | 'install_failed'
+  | 'restart_scheduled'
+  | 'restarting'
+  | 'health_checking'
+  | 'installed'
+  | 'rollback_started'
+  | 'rollback_succeeded'
+  | 'rollback_failed'
+  | 'installed_needs_restart';
+
+export interface CheckForUpdateOutput {
+  status: UpdateActionStatus;
+  latestVersion: string | null;
+  archive: string | null;
+  userMessage: string;
+}
+
+export interface InstallUpdateInput {
+  requestId: string;
+}
+
+export interface InstallUpdateOutput {
+  status: UpdateActionStatus;
+  version: string | null;
+  userMessage: string;
+}
+
+export interface FactoryResetOutput {
+  status: 'completed';
+  resetPaths: string[];
+  preservedPaths: string[];
+  auditLog: string;
+  finishedAt: string;
+  userMessage: string;
+}
+
+export interface ProductionMaintenanceStatusOutput {
+  factoryReset: {
+    installRoot: string;
+    sharedRoot: string;
+    resetPaths: string[];
+    preservedPaths: string[];
+    confirmation: 'RESET_CLAW_TRADE';
+    maintenanceLocked?: boolean;
+  };
+  update: {
+    configured?: boolean;
+    publicKeyInstalled?: boolean;
+    status: UpdateActionStatus;
+    userMessage: string;
+    latestVersion?: string | null;
+    updatedAt?: string | null;
+  };
 }
 
 export interface AdvancedDiagnosticsProviderHealthOutput {

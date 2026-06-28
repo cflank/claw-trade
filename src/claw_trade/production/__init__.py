@@ -1,1 +1,1 @@
-"""Production deployment helpers."""
+"""Production deployment and packaging contracts."""

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import is_dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -10,6 +12,8 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
+from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
+from claw_trade.production.remote_update import RemoteUpdateService
 from claw_trade.selection.confirmation import SelectionConfirmationError, SelectionConfirmRequest
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.ui_backend.channel_text_inbound import ChannelTextMessage
@@ -194,6 +198,19 @@ class SaveSelectionAutoRefreshSettingsResponse(BaseModel):
 
 
 class ResetSettingsToDefaultsRequest(BaseModel):
+    requestId: str
+
+
+class FactoryResetRequest(BaseModel):
+    requestId: str
+    confirmation: str
+
+
+class CheckForUpdateRequest(BaseModel):
+    requestId: str
+
+
+class InstallUpdateRequest(BaseModel):
     requestId: str
 
 
@@ -1100,6 +1117,72 @@ def reset_settings_to_defaults(payload: ResetSettingsToDefaultsRequest, request:
         return _exception_response(exc)
 
 
+@router.get("/get-production-maintenance-status")
+def get_production_maintenance_status(request: Request) -> JSONResponse:
+    try:
+        return _success_response(
+            {
+                "factoryReset": _factory_reset_service(request).status_for_user(),
+                "update": _remote_update_service(request).status_for_user(),
+            }
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/check-for-update")
+def check_for_update(payload: CheckForUpdateRequest, request: Request) -> JSONResponse:
+    _ = payload
+    try:
+        _assert_local_request(request)
+        result = _remote_update_service(request).check_manifest()
+        return _success_response(result.to_user_dict())
+    except UiBoundaryError as exc:
+        return _error_response(exc.code, exc.user_message)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/install-update")
+def install_update(payload: InstallUpdateRequest, request: Request) -> JSONResponse:
+    _ = payload
+    resume_background = None
+    try:
+        _assert_local_request(request)
+        resume_background = _pause_owned_background_services(request)
+        result = _remote_update_service(request).install_checked_update()
+        return _success_response(result.to_user_dict())
+    except UiBoundaryError as exc:
+        return _error_response(exc.code, exc.user_message)
+    except Exception as exc:
+        return _exception_response(exc)
+    finally:
+        if resume_background is not None:
+            resume_background()
+
+
+@router.post("/factory-reset")
+def run_factory_reset(payload: FactoryResetRequest, request: Request) -> JSONResponse:
+    resume_background = None
+    try:
+        _assert_local_request(request)
+        resume_background = _pause_owned_background_services(request)
+        result = _factory_reset_service(request).run(
+            request_id=payload.requestId,
+            confirmation=payload.confirmation,
+        )
+        return _success_response(result.to_user_dict())
+    except UiBoundaryError as exc:
+        return _error_response(exc.code, exc.user_message)
+    except ValueError as exc:
+        return _error_response("INVALID_INPUT", str(exc))
+    except Exception as exc:
+        return _exception_response(exc)
+    finally:
+        if resume_background is not None:
+            resume_background()
+
+
 @router.get("/list-data-sources")
 def list_data_sources(request: Request) -> JSONResponse:
     services = _services(request)
@@ -1137,6 +1220,85 @@ def save_data_source_instance(payload: SaveDataSourceInstanceRequest, request: R
 
 def _services(request: Request) -> UiHttpServices:
     return request.app.state.ui_services
+
+
+def _factory_reset_service(request: Request) -> FactoryResetService:
+    service = getattr(request.app.state, "factory_reset_service", None)
+    if isinstance(service, FactoryResetService):
+        return service
+    return FactoryResetService()
+
+
+def _remote_update_service(request: Request) -> RemoteUpdateService:
+    service = getattr(request.app.state, "remote_update_service", None)
+    if isinstance(service, RemoteUpdateService):
+        return service
+    return RemoteUpdateService(
+        base_url=os.environ.get("CLAW_TRADE_UPDATE_BASE_URL"),
+        current_version=os.environ.get("CLAW_TRADE_VERSION") or _current_release_version(),
+    )
+
+
+def _current_release_version() -> str:
+    current = Path("/opt/claw-trade/current")
+    try:
+        release_name = current.resolve(strict=False).name
+    except OSError:
+        return "0.1.0"
+    match = re.match(r"^claw-trade-production-(\d+\.\d+\.\d+)-", release_name)
+    return match.group(1) if match else "0.1.0"
+
+
+def _pause_owned_background_services(request: Request):
+    services = _services(request)
+    resume: list[object] = []
+    if getattr(request.app.state, "selection_auto_refresh_enabled", False):
+        services.selection_refresh_service.stop_automatic_refresh_scheduler()
+        resume.append(services.selection_refresh_service.start_automatic_refresh_scheduler)
+    if getattr(request.app.state, "report_cleanup_scheduler_enabled", False):
+        services.report_cleanup_scheduler.stop()
+        resume.append(services.report_cleanup_scheduler.start)
+    auto_update_scheduler = getattr(request.app.state, "auto_update_scheduler", None)
+    if getattr(request.app.state, "auto_update_scheduler_enabled", False) and auto_update_scheduler is not None:
+        auto_update_scheduler.stop()
+        resume.append(auto_update_scheduler.start)
+    price_alert_scan_scheduler = getattr(services, "price_alert_scan_scheduler", None)
+    if getattr(request.app.state, "price_alert_scan_scheduler_enabled", False) and price_alert_scan_scheduler is not None:
+        price_alert_scan_scheduler.stop()
+        resume.append(price_alert_scan_scheduler.start)
+
+    def _resume() -> None:
+        for start in reversed(resume):
+            if callable(start):
+                start()
+
+    return _resume
+
+
+def _assert_local_request(request: Request) -> None:
+    host = getattr(request.client, "host", "") if request.client is not None else ""
+    if host not in {"127.0.0.1", "::1", "testclient"}:
+        raise UiBoundaryError("UNAUTHORIZED", "恢复出厂只能从本机界面执行。")
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    if origin:
+        if not _is_local_browser_url(origin):
+            raise UiBoundaryError("UNAUTHORIZED", "恢复出厂只能从本机界面执行。")
+        return
+    if referer and _is_local_browser_url(referer):
+        return
+    raise UiBoundaryError("UNAUTHORIZED", "恢复出厂只能从本机界面执行。")
+
+
+def _is_local_browser_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.hostname in {"127.0.0.1", "localhost", "::1"} and parsed.port in {
+        None,
+        5175,
+    }
 
 
 def _report_cleanup_settings_response(settings: dict[str, int]) -> dict[str, Any]:

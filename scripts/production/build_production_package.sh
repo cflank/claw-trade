@@ -1,188 +1,164 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="${CLAW_TRADE_VERSION:-$(date +%Y%m%d%H%M%S)}"
-BUILD_DIR="${ROOT}/.runtime/production-build/${VERSION}"
-RELEASE_DIR="${BUILD_DIR}/claw-trade-${VERSION}"
-ARCHIVE="${ROOT}/.runtime/production-build/claw-trade-${VERSION}.tar"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-OPENCLAW_NODE_MODULES_ROOT="${OPENCLAW_NODE_MODULES_ROOT:-${ROOT}/third_party/openclaw/node_modules}"
-OPENCLAW_NODE_MODULES_PARENT="$(cd "$(dirname "${OPENCLAW_NODE_MODULES_ROOT}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist/production}"
+WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.runtime/production-package}"
+PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
 
-require_file() {
-  local path="$1"
-  local message="$2"
-  if [[ ! -f "${path}" ]]; then
-    echo "${message}: ${path}" >&2
-    exit 1
-  fi
+version="$("${PYTHON_BIN}" - <<'PY' "${ROOT_DIR}/pyproject.toml"
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    print(tomllib.load(fh)["project"]["version"])
+PY
+)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+package_name="claw-trade-production-${version}-${stamp}"
+package_root="${WORK_DIR}/${package_name}"
+archive_path="${OUT_DIR}/${package_name}.tar.gz"
+
+log() {
+  printf '[INFO] %s\n' "$*"
 }
 
-require_dir() {
-  local path="$1"
-  local message="$2"
-  if [[ ! -d "${path}" ]]; then
-    echo "${message}: ${path}" >&2
-    exit 1
-  fi
+fail() {
+  printf '[ERROR] %s\n' "$*" >&2
+  exit 1
 }
 
-require_file "${ROOT}/third_party/openclaw/openclaw.mjs" "OpenClaw launcher missing; initialize the submodule first"
-require_dir "${ROOT}/third_party/openclaw/dist" "OpenClaw dist missing; build OpenClaw first"
-require_dir "${OPENCLAW_NODE_MODULES_ROOT}" "OpenClaw node_modules missing; install OpenClaw JavaScript dependencies first"
-require_dir "${ROOT}/packaging/production/systemd" "production systemd templates missing"
-require_dir "${ROOT}/packaging/production/kiosk" "production kiosk templates missing"
-require_dir "${ROOT}/agents" "agent runtime assets missing"
-require_dir "${ROOT}/openclaw_plugins" "OpenClaw plugin runtime assets missing"
+require_path() {
+  test -e "$1" || fail "missing required path: $1"
+}
 
-rm -rf "${BUILD_DIR}"
-mkdir -p "${RELEASE_DIR}/app" "${RELEASE_DIR}/web" "${RELEASE_DIR}/runtime/bin" "${RELEASE_DIR}/runtime/assets" "${RELEASE_DIR}/bin"
+cd "${ROOT_DIR}"
+command -v "${PYTHON_BIN}" >/dev/null 2>&1 || fail "missing ${PYTHON_BIN}"
+command -v tar >/dev/null 2>&1 || fail "missing tar"
 
-cd "${ROOT}/web/research-ui"
-if [[ -n "${VITE_BIN:-}" ]]; then
-  "${VITE_BIN}" build
-else
-  pnpm build
+if [[ "${BUILD_FRONTEND}" == "1" ]]; then
+  log "building web/research-ui dist"
+  pnpm --dir web/research-ui build
 fi
 
-cd "${ROOT}"
-"${PYTHON_BIN}" -m compileall -q src/claw_trade
-if command -v uv >/dev/null 2>&1; then
-  uv build --wheel --out-dir "${BUILD_DIR}/wheels" .
-else
-  "${PYTHON_BIN}" -m pip wheel . -w "${BUILD_DIR}/wheels"
+require_path "web/research-ui/dist/index.html"
+require_path "third_party/openclaw/dist"
+require_path "third_party/openclaw/openclaw.mjs"
+require_path "third_party/openclaw/node_modules"
+require_path ".venv/lib/python3.12/site-packages"
+
+rm -rf "${package_root}"
+mkdir -p \
+  "${package_root}/app/python" \
+  "${package_root}/runtime" \
+  "${package_root}/web" \
+  "${package_root}/third_party/openclaw" \
+  "${package_root}/data" \
+  "${package_root}/scripts/selection" \
+  "${OUT_DIR}"
+
+log "copying runtime assets"
+cp -a packaging/production/bin "${package_root}/bin"
+cp -a packaging/production/systemd "${package_root}/systemd"
+cp -a packaging/production/sudoers "${package_root}/sudoers"
+cp -a packaging/production/root-helper "${package_root}/root-helper"
+cp -a packaging/production/kiosk "${package_root}/kiosk"
+cp -a packaging/production/README_FACTORY_TEST.md "${package_root}/README_FACTORY_TEST.md"
+cp -a agents "${package_root}/agents"
+cp -a openclaw_plugins "${package_root}/openclaw_plugins"
+cp -a web/research-ui/dist "${package_root}/web/dist"
+cp -a third_party/openclaw/dist "${package_root}/third_party/openclaw/dist"
+cp -a third_party/openclaw/openclaw.mjs "${package_root}/third_party/openclaw/openclaw.mjs"
+cp -a third_party/openclaw/package.json "${package_root}/third_party/openclaw/package.json"
+cp -a third_party/openclaw/LICENSE "${package_root}/third_party/openclaw/LICENSE"
+cp -a third_party/openclaw/node_modules "${package_root}/third_party/openclaw/node_modules"
+cp -a scripts/selection/restore_a_share_factory_seed.py "${package_root}/scripts/selection/restore_a_share_factory_seed.py"
+
+shopt -s nullglob
+current_seed_packages=(data/current-seed-*.tar)
+shopt -u nullglob
+if (( ${#current_seed_packages[@]} > 0 )); then
+  current_seed="${current_seed_packages[$((${#current_seed_packages[@]} - 1))]}"
+  cp -a "${current_seed}" "${package_root}/data/"
+  cp -a "${current_seed}.sha256" "${package_root}/data/" 2>/dev/null || true
+elif [[ -f data/a-share-cn-required-300td-20260608.tar ]]; then
+  cp -a data/a-share-cn-required-300td-20260608.tar "${package_root}/data/"
+  cp -a data/a-share-cn-required-300td-20260608.tar.sha256 "${package_root}/data/" 2>/dev/null || true
 fi
 
-"${PYTHON_BIN}" -m venv "${RELEASE_DIR}/runtime/python"
-"${RELEASE_DIR}/runtime/python/bin/python" -m pip install --no-index --find-links "${BUILD_DIR}/wheels" claw-trade
-find "${RELEASE_DIR}/runtime/python" -type d \( -name tests -o -name docs \) -prune -exec rm -rf {} +
+if [[ -x .runtime/mongodb/current/bin/mongod ]]; then
+  log "copying local MongoDB runtime"
+  mkdir -p "${package_root}/.runtime/mongodb"
+  cp -aL .runtime/mongodb/current "${package_root}/.runtime/mongodb/current"
+fi
 
-cp -a web/research-ui/dist "${RELEASE_DIR}/web/dist"
-cp -a packaging/production/bin/. "${RELEASE_DIR}/bin/"
-cp -a packaging/production/runtime/claw-trade-control-runtime "${RELEASE_DIR}/runtime/bin/claw-trade-control-runtime"
-cp -a packaging/production/systemd "${RELEASE_DIR}/runtime/systemd"
-cp -a packaging/production/kiosk "${RELEASE_DIR}/runtime/kiosk"
-tar --exclude='*/prompt-review.yaml' --exclude='*/__pycache__' --exclude='*.pyc' \
-  -C "${ROOT}" -cf "${RELEASE_DIR}/runtime/assets/agents.tar" agents
-tar --exclude='*/node_modules' --exclude='*/__pycache__' --exclude='*.pyc' \
-  -C "${ROOT}" -cf "${RELEASE_DIR}/runtime/assets/openclaw_plugins.tar" openclaw_plugins
-mkdir -p "${RELEASE_DIR}/runtime/openclaw"
-cp -a third_party/openclaw/openclaw.mjs "${RELEASE_DIR}/runtime/openclaw/openclaw.mjs"
-cp -a third_party/openclaw/dist "${RELEASE_DIR}/runtime/openclaw/dist"
-node - "${ROOT}" "${OPENCLAW_NODE_MODULES_ROOT}" "${BUILD_DIR}/openclaw-runtime-node-deps.list" "${BUILD_DIR}/openclaw-runtime-node-deps-missing.txt" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
+log "copying Python site-packages"
+cp -a .venv/lib/python3.12/site-packages "${package_root}/runtime/python-site-packages"
+rm -f "${package_root}"/runtime/python-site-packages/*claw_trade*.pth
+rm -rf "${package_root}/runtime/python-site-packages/claw_trade-0.1.0.dist-info"
+find "${package_root}/runtime/python-site-packages" \
+  \( -type d \( -name tests -o -name test -o -name docs \) \) \
+  -prune -exec rm -rf {} +
+find "${package_root}/runtime/python-site-packages" \
+  -type d -name __pycache__ -prune -exec rm -rf {} +
 
-const root = process.argv[2];
-const nodeModulesRoot = process.argv[3];
-const listPath = process.argv[4];
-const missingPath = process.argv[5];
-const openclawRoot = path.join(root, "third_party", "openclaw");
-const base = path.resolve(nodeModulesRoot);
-const rootPkg = JSON.parse(fs.readFileSync(path.join(openclawRoot, "package.json"), "utf8"));
-const queue = [];
-const topLinks = new Set();
-const entries = new Set();
-const missing = new Set();
-const seenRealPkgDirs = new Set();
+log "building sourceless claw_trade app tree"
+"${PYTHON_BIN}" - <<'PY' "${ROOT_DIR}/src/claw_trade" "${package_root}/app/python/claw_trade"
+from __future__ import annotations
 
-function pkgRel(name) {
-  return name.startsWith("@") ? name.split("/").slice(0, 2).join("/") : name.split("/")[0];
-}
+import py_compile
+import shutil
+import sys
+from pathlib import Path
 
-function candidatePkgDir(fromDir, dep) {
-  const rel = pkgRel(dep);
-  const local = path.join(fromDir, "node_modules", rel);
-  if (fs.existsSync(path.join(local, "package.json")) || fs.existsSync(local)) return local;
-  const top = path.join(base, rel);
-  if (fs.existsSync(path.join(top, "package.json")) || fs.existsSync(top)) return top;
-  return null;
-}
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+if dst.exists():
+    shutil.rmtree(dst)
+dst.mkdir(parents=True)
 
-function pnpmEntry(realPkgDir) {
-  const marker = `${base}/.pnpm/`;
-  if (realPkgDir.startsWith(marker)) {
-    return path.join(base, ".pnpm", realPkgDir.slice(marker.length).split("/")[0]);
-  }
-  return realPkgDir;
-}
+for path in src.rglob("*"):
+    rel = path.relative_to(src)
+    if "__pycache__" in rel.parts:
+        continue
+    target = dst / rel
+    if path.is_dir():
+        target.mkdir(parents=True, exist_ok=True)
+        continue
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".py":
+        py_compile.compile(str(path), cfile=str(target.with_suffix(".pyc")), doraise=True, optimize=2)
+    else:
+        shutil.copy2(path, target)
+PY
 
-function addPkgDir(pkgDir, reason) {
-  const pkgJson = path.join(pkgDir, "package.json");
-  if (!fs.existsSync(pkgJson)) {
-    missing.add(`${reason}:${pkgDir}`);
-    return;
-  }
-  const realPkgDir = fs.realpathSync(path.dirname(pkgJson));
-  if (seenRealPkgDirs.has(realPkgDir)) return;
-  seenRealPkgDirs.add(realPkgDir);
-  const entry = pnpmEntry(realPkgDir);
-  if (entry.startsWith(base)) entries.add(entry);
-  queue.push({ pkgDir: path.dirname(pkgJson), realPkgDir, entry });
-}
+log "preparing runtime scripts"
+cp -a scripts/start-control-runtime.sh "${package_root}/runtime/claw-trade-control-runtime"
+cp -a scripts/start-local-mongodb.sh "${package_root}/runtime/start-local-mongodb"
+sed -i \
+  -e 's#LOCAL_MONGODB_START_SCRIPT="${ROOT_DIR}/scripts/start-local-mongodb.sh"#LOCAL_MONGODB_START_SCRIPT="${ROOT_DIR}/runtime/start-local-mongodb"#' \
+  -e 's#RUNTIME_DIR="${ROOT_DIR}/.runtime/dev-services"#RUNTIME_DIR="${CLAW_TRADE_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/dev-services}"#' \
+  -e 's#RUNS_PROBE_DIR="${ROOT_DIR}/runs/probe"#RUNS_PROBE_DIR="${CLAW_TRADE_RUNS_PROBE_DIR:-/opt/claw-trade/shared/runs/probe}"#' \
+  -e 's#LOCAL_MONGODB_PID_FILE="${ROOT_DIR}/.runtime/mongodb/run/mongod.pid"#LOCAL_MONGODB_PID_FILE="${CLAW_TRADE_LOCAL_MONGODB_PID_FILE:-/opt/claw-trade/shared/tmp/mongodb/run/mongod.pid}"#' \
+  -e 's#A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-${ROOT_DIR}/.runtime/factory-seeds/a-share-cn-required-300td-20260608/normalized}"#A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-/opt/claw-trade/shared/cache/factory-seeds/a-share-cn-required-300td-20260608/normalized}"#' \
+  -e 's#uv run python#python3.12#g' \
+  "${package_root}/runtime/claw-trade-control-runtime"
+chmod +x "${package_root}/bin/"* "${package_root}/runtime/"*
+find "${package_root}" -type d -name __pycache__ -prune -exec rm -rf {} +
 
-for (const dep of Object.keys(rootPkg.dependencies || {}).sort()) {
-  const rel = pkgRel(dep);
-  topLinks.add(`node_modules/${rel}`);
-  const pkgDir = path.join(base, rel);
-  if (fs.existsSync(pkgDir)) addPkgDir(pkgDir, "root");
-  else missing.add(`root:${rel}`);
-}
+log "running production preflight"
+"${package_root}/bin/claw-trade-preflight"
 
-while (queue.length) {
-  const item = queue.shift();
-  const pkgJson = path.join(item.realPkgDir, "package.json");
-  let pkg = {};
-  try {
-    pkg = JSON.parse(fs.readFileSync(pkgJson, "utf8"));
-  } catch {}
-  for (const section of ["dependencies", "optionalDependencies"]) {
-    for (const dep of Object.keys(pkg[section] || {})) {
-      const pkgDir = candidatePkgDir(item.realPkgDir, dep) || candidatePkgDir(item.pkgDir, dep);
-      if (pkgDir) addPkgDir(pkgDir, pkg.name || item.realPkgDir);
-      else missing.add(`${pkg.name || item.realPkgDir}:${dep}`);
-    }
-  }
-  const nested = path.join(item.realPkgDir, "node_modules");
-  if (!fs.existsSync(nested)) continue;
-  for (const scopeOrName of fs.readdirSync(nested)) {
-    if (scopeOrName === ".bin") continue;
-    const first = path.join(nested, scopeOrName);
-    let stat;
-    try {
-      stat = fs.lstatSync(first);
-    } catch {
-      continue;
-    }
-    if (scopeOrName.startsWith("@") && stat.isDirectory() && !stat.isSymbolicLink()) {
-      for (const name of fs.readdirSync(first)) {
-        const candidate = path.join(first, name);
-        if (fs.existsSync(path.join(candidate, "package.json")) || fs.existsSync(candidate)) {
-          addPkgDir(candidate, "nested");
-        }
-      }
-    } else if (stat.isSymbolicLink() || fs.existsSync(path.join(first, "package.json"))) {
-      addPkgDir(first, "nested");
-    }
-  }
-}
+log "auditing package root"
+"${PYTHON_BIN}" scripts/production/audit_production_package.py "${package_root}"
 
-const include = new Set(topLinks);
-for (const entry of entries) {
-  include.add(`node_modules/${path.relative(base, entry)}`);
-}
+log "creating archive ${archive_path}"
+tar --dereference --hard-dereference -C "${WORK_DIR}" -czf "${archive_path}" "${package_name}"
+"${PYTHON_BIN}" scripts/production/validate_production_archive.py "${archive_path}"
+"${PYTHON_BIN}" scripts/production/audit_production_package.py "${archive_path}"
+(
+  cd "${OUT_DIR}"
+  sha256sum "$(basename "${archive_path}")" > "$(basename "${archive_path}").sha256"
+)
 
-fs.writeFileSync(listPath, `${[...include].sort().join("\n")}\n`);
-fs.writeFileSync(missingPath, `${[...missing].sort().join("\n")}\n`);
-console.log(`OpenClaw runtime node deps: ${seenRealPkgDirs.size} packages, ${include.size} archive paths`);
-if (missing.size) {
-  console.log(`OpenClaw optional/platform deps not present: ${missing.size}; see ${missingPath}`);
-}
-NODE
-tar -C "${OPENCLAW_NODE_MODULES_PARENT}" -cf "${BUILD_DIR}/openclaw-runtime-node-deps.tar" -T "${BUILD_DIR}/openclaw-runtime-node-deps.list"
-tar -C "${RELEASE_DIR}/runtime/openclaw" -xf "${BUILD_DIR}/openclaw-runtime-node-deps.tar"
-
-tar -C "${BUILD_DIR}" -cf "${ARCHIVE}" "claw-trade-${VERSION}"
-uv run python scripts/production/audit_production_package.py "${ARCHIVE}"
-echo "${ARCHIVE}"
+log "done"
+printf '%s\n' "${archive_path}"

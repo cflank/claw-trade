@@ -1,0 +1,12 @@
+[Unit]
+Description=claw-trade automatic update check
+After=network-online.target claw-trade-ui.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clawtrade
+Group=clawtrade
+WorkingDirectory=/opt/claw-trade/shared
+EnvironmentFile=-/opt/claw-trade/shared/config/claw-trade.env
+ExecStart=/opt/claw-trade/current/bin/claw-trade-auto-update

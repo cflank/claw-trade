@@ -27,6 +27,45 @@ function selectionAutoRefreshJson(enabled = true) {
   return json({ selectionAutoRefresh: { enabled } });
 }
 
+function baseSettingsResponse(url: string): Response | null {
+  if (url.includes('/api/ui/get-report-cleanup-settings')) {
+    return reportCleanupJson();
+  }
+  if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+    return selectionAutoRefreshJson();
+  }
+  if (url.includes('/api/ui/get-channel-status')) {
+    return json({
+      channelKind: 'wechat_clawbot',
+      onboardingState: 'completed',
+      state: 'connected',
+      displayName: '微信 ClawBot',
+      accountLabel: '测试号',
+      canSendText: true,
+      canSendFile: true,
+      qrCodeImageDataUrl: null,
+      qrCodeRefreshRequired: false,
+    });
+  }
+  if (url.includes('/api/ui/load-llm-settings')) {
+    return json({
+      draft: {
+        provider: 'deepseek',
+        apiKeyMasked: 'sk-****',
+        endpointUrl: 'https://api.example.com',
+        defaultModel: 'deepseek-chat',
+        status: 'idle',
+      },
+      schemaVersion: 'v1',
+      settingsVersion: 's1',
+    });
+  }
+  if (url.includes('/api/ui/list-data-sources')) {
+    return json({ supportedTypes: [], instances: [] });
+  }
+  return null;
+}
+
 describe('settings-wechat settings page', () => {
   const originalFetch = globalThis.fetch;
   const originalConfirm = window.confirm;
@@ -461,6 +500,315 @@ describe('settings-wechat settings page', () => {
     const embeddingSection = screen.getByRole('heading', { name: 'Embedding' }).closest('section') as HTMLElement;
     expect(within(embeddingSection).getByText('未启用')).toBeInTheDocument();
   });
+
+  it('runs factory reset after explicit confirmation', async () => {
+    const seenRequests: Array<{ url: string; init?: RequestInit }> = [];
+    window.confirm = vi.fn(() => true);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      seenRequests.push({ url, init });
+
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        return json({
+          factoryReset: {
+            installRoot: '/opt/claw-trade',
+            sharedRoot: '/opt/claw-trade/shared',
+            resetPaths: ['/opt/claw-trade/shared/reports'],
+            preservedPaths: ['/opt/claw-trade/shared/license'],
+            confirmation: 'RESET_CLAW_TRADE',
+          },
+          update: {
+            status: 'not_configured',
+            userMessage: '远程更新源未配置。',
+          },
+        });
+      }
+      if (url.includes('/api/ui/get-report-cleanup-settings')) {
+        return reportCleanupJson();
+      }
+      if (url.includes('/api/ui/get-selection-auto-refresh-settings')) {
+        return selectionAutoRefreshJson();
+      }
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'connected',
+          displayName: '微信 ClawBot',
+          accountLabel: '测试号',
+          canSendText: true,
+          canSendFile: true,
+          qrCodeImageDataUrl: null,
+          qrCodeRefreshRequired: false,
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      if (url.includes('/api/ui/list-data-sources')) {
+        return json({ supportedTypes: ['tushare'], instances: [] });
+      }
+      if (url.includes('/api/ui/factory-reset')) {
+        return json({
+          status: 'completed',
+          resetPaths: ['/opt/claw-trade/shared/reports'],
+          preservedPaths: ['/opt/claw-trade/shared/license'],
+          auditLog: '/opt/claw-trade/shared/logs/factory-reset/factory-reset-ui.json',
+          finishedAt: '2026-06-26T00:00:00Z',
+          userMessage: '应用状态已按第一版基线清空；授权和更新文件已保留。',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = await screen.findByTestId('settings-section-update');
+    await within(updateSection).findByText('远程更新源未配置。');
+    fireEvent.click(screen.getByRole('button', { name: '恢复出厂设置' }));
+
+    expect(await screen.findByText('应用状态已按第一版基线清空；授权和更新文件已保留。')).toBeInTheDocument();
+    const resetRequest = seenRequests.find((request) => request.url.includes('/api/ui/factory-reset'));
+    expect(resetRequest).toBeDefined();
+    expect(JSON.parse(String(resetRequest?.init?.body))).toMatchObject({ confirmation: 'RESET_CLAW_TRADE' });
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows failed remote update checks as errors instead of success messages', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        return json({});
+      }
+      if (url.includes('/api/ui/check-for-update')) {
+        return json({
+          status: 'verify_failed',
+          latestVersion: '1.2.3',
+          archive: 'claw-trade-production-1.2.3.tar.zst',
+          userMessage: '远程更新清单签名校验失败。',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = await screen.findByTestId('settings-section-update');
+    fireEvent.click(within(updateSection).getByRole('button', { name: '检查更新' }));
+
+    const errorMessage = await within(updateSection).findByText('远程更新清单签名校验失败。');
+    expect(errorMessage).toHaveClass('is-error');
+    expect(updateSection.querySelector('.ct-inline-alert.is-success')).toBeNull();
+  });
+
+  it('enables update install after a successful check even without initial maintenance status', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        return json({});
+      }
+      if (url.includes('/api/ui/check-for-update')) {
+        return json({
+          status: 'update_available',
+          latestVersion: '1.2.3',
+          archive: 'claw-trade-production-1.2.3.tar.zst',
+          userMessage: '发现新版本 1.2.3。',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = await screen.findByTestId('settings-section-update');
+    const installButton = within(updateSection).getByRole('button', { name: '安装更新' });
+    expect(installButton).toBeDisabled();
+
+    fireEvent.click(within(updateSection).getByRole('button', { name: '检查更新' }));
+
+    expect(await within(updateSection).findByText('发现新版本 1.2.3。')).toHaveClass('is-success');
+    await waitFor(() => expect(installButton).toBeEnabled());
+  });
+
+  it('shows production update status in the remote update section after page load', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        return json({
+          factoryReset: {
+            installRoot: '/opt/claw-trade',
+            sharedRoot: '/opt/claw-trade/shared',
+            resetPaths: [],
+            preservedPaths: [],
+            confirmation: 'RESET_CLAW_TRADE',
+          },
+          update: {
+            status: 'health_checking',
+            userMessage: '正在检查更新后服务健康状态。',
+          },
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = await screen.findByTestId('settings-section-update');
+    const status = await within(updateSection).findByText('正在检查更新后服务健康状态。');
+    expect(status).toHaveClass('is-warning');
+    expect(within(updateSection).getByRole('button', { name: '检查更新' })).toBeDisabled();
+    expect(within(updateSection).getByRole('button', { name: '安装更新' })).toBeDisabled();
+  });
+
+  it('polls install status without rendering in-progress update as success', async () => {
+    vi.useFakeTimers();
+    window.confirm = vi.fn(() => true);
+    let maintenanceCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        maintenanceCalls += 1;
+        if (maintenanceCalls === 1) {
+          return json({
+            factoryReset: {
+              installRoot: '/opt/claw-trade',
+              sharedRoot: '/opt/claw-trade/shared',
+              resetPaths: [],
+              preservedPaths: [],
+              confirmation: 'RESET_CLAW_TRADE',
+            },
+            update: {
+              status: 'update_available',
+              userMessage: '发现新版本 1.2.3。',
+            },
+          });
+        }
+        if (maintenanceCalls === 2) {
+          return json({
+            factoryReset: {
+              installRoot: '/opt/claw-trade',
+              sharedRoot: '/opt/claw-trade/shared',
+              resetPaths: [],
+              preservedPaths: [],
+              confirmation: 'RESET_CLAW_TRADE',
+            },
+            update: {
+              status: 'health_checking',
+              userMessage: '正在检查更新后服务健康状态。',
+            },
+          });
+        }
+        return json({
+          factoryReset: {
+            installRoot: '/opt/claw-trade',
+            sharedRoot: '/opt/claw-trade/shared',
+            resetPaths: [],
+            preservedPaths: [],
+            confirmation: 'RESET_CLAW_TRADE',
+          },
+          update: {
+            status: 'installed',
+            userMessage: '已安装并启用版本 1.2.3。',
+          },
+        });
+      }
+      if (url.includes('/api/ui/install-update')) {
+        return json({
+          status: 'restart_scheduled',
+          version: '1.2.3',
+          userMessage: '已安装版本 1.2.3；正在重启服务并检查健康状态。',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+    screen.getByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = screen.getByTestId('settings-section-update');
+    expect(within(updateSection).getByText('发现新版本 1.2.3。')).toHaveClass('is-success');
+    const installButton = within(updateSection).getByRole('button', { name: '安装更新' });
+    expect(installButton).toBeEnabled();
+    fireEvent.click(installButton);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    const inProgress = within(updateSection).getByText('正在检查更新后服务健康状态。');
+    expect(inProgress).toHaveClass('is-warning');
+    expect(updateSection.querySelector('.ct-inline-alert.is-success')?.textContent ?? '').not.toContain(
+      '正在检查更新后服务健康状态。',
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(within(updateSection).getByText('已安装并启用版本 1.2.3。')).toHaveClass('is-success');
+  }, 10000);
 
   it('loads WeChat QR when opening general settings and still supports manual refresh', async () => {
     const seenUrls: string[] = [];

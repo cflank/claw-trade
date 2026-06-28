@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import posixpath
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
+
+
+RELEASE_NAME_RE = re.compile(r"^claw-trade-production-\d+\.\d+\.\d+-\d{8}T\d{6}Z$")
+ARCHIVE_NAME_RE = re.compile(r"^(claw-trade-production-\d+\.\d+\.\d+-\d{8}T\d{6}Z)\.tar\.gz$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+DEFAULT_PUBLIC_KEY_PATH = "/etc/claw-trade/update-signing-public.pem"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Apply a verified claw-trade update request.")
+    parser.add_argument("--install-root", default="/opt/claw-trade")
+    parser.add_argument("--request", default="")
+    parser.add_argument("--public-key", default=os.environ.get("CLAW_TRADE_UPDATE_PUBLIC_KEY_PATH", DEFAULT_PUBLIC_KEY_PATH))
+    args = parser.parse_args(argv)
+    install_root = Path(args.install_root)
+    request_path = Path(args.request) if args.request else install_root / "shared" / "updates" / "apply-request.json"
+    public_key_path = Path(args.public_key)
+    try:
+        return run(install_root=install_root, request_path=request_path, public_key_path=public_key_path)
+    except Exception as exc:
+        try:
+            validate_install_layout(install_root)
+            write_state(install_root, "install_failed", f"更新应用失败：{exc}")
+        except Exception:
+            pass
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        return 1
+
+
+def run(*, install_root: Path, request_path: Path, public_key_path: Path | None = None) -> int:
+    validate_install_layout(install_root)
+    public_key_path = public_key_path or Path(DEFAULT_PUBLIC_KEY_PATH)
+    validate_public_key(public_key_path)
+    lock_path = install_root / "shared" / "updates" / "apply.lock"
+    acquire_apply_lock(lock_path)
+    staging_dir: Path | None = None
+    try:
+        payload = json.loads(request_path.read_text(encoding="utf-8"))
+        version = str(payload.get("version") or "").strip()
+        archive_name = str(payload.get("archive") or "").strip()
+        archive_sha256 = str(payload.get("archiveSha256") or "").strip()
+        previous = current_release_target(install_root)
+        if not version:
+            raise ValueError("version 缺失")
+        release_name = validate_archive_name(archive_name)
+        if not SHA256_RE.fullmatch(archive_sha256):
+            raise ValueError("archiveSha256 非法")
+
+        downloads = install_root / "shared" / "updates" / "downloads"
+        manifest_path = downloads / "manifest.json"
+        manifest_sig_path = downloads / "manifest.json.sig"
+        archive_path = downloads / archive_name
+        archive_sig_path = downloads / f"{archive_name}.sig"
+        manifest_bytes = read_regular_file_once(manifest_path, "manifest")
+        manifest_signature = read_regular_file_once(manifest_sig_path, "manifest signature")
+        verify_signature_bytes(public_key_path=public_key_path, data=manifest_bytes, signature=manifest_signature)
+        manifest = load_manifest(manifest_bytes)
+        validate_manifest_for_archive(
+            manifest,
+            version=version,
+            archive_name=archive_name,
+            archive_sha256=archive_sha256,
+            current_version=current_release_version(install_root),
+        )
+        archive_bytes = read_regular_file_once(archive_path, "archive")
+        archive_signature = read_regular_file_once(archive_sig_path, "archive signature")
+        verify_archive_hash(archive_bytes, archive_sha256)
+        verify_signature_bytes(public_key_path=public_key_path, data=archive_bytes, signature=archive_signature)
+
+        target = install_root / "releases" / release_name
+        if target.exists() or target.is_symlink():
+            raise ValueError("目标版本目录已存在")
+        staging_dir = install_root / "releases" / f".{release_name}.applying.{os.getpid()}"
+        if staging_dir.exists() or staging_dir.is_symlink():
+            raise ValueError("临时版本目录已存在")
+        safe_extract_release_archive(archive_bytes, staging_dir, expected_top_dir=release_name)
+        run_preflight(staging_dir)
+        staging_dir.replace(target)
+        staging_dir = None
+
+        write_state(install_root, "restarting", f"正在切换到版本 {version} 并重启服务。")
+        switch_link(install_root / "current", target)
+        if not restart_main_services():
+            return rollback_or_rescue(install_root=install_root, previous=previous, reason="服务重启失败")
+
+        write_state(install_root, "health_checking", "正在检查更新后服务健康状态。")
+        if wait_for_ui_health():
+            write_state(install_root, "installed", f"已安装并启用版本 {version}。")
+            request_path.unlink(missing_ok=True)
+            return 0
+
+        return rollback_or_rescue(install_root=install_root, previous=previous, reason="更新后健康检查失败")
+    finally:
+        if staging_dir is not None and staging_dir.exists() and not staging_dir.is_symlink():
+            shutil.rmtree(staging_dir)
+        request_path.unlink(missing_ok=True)
+        lock_path.unlink(missing_ok=True)
+
+
+def acquire_apply_lock(lock_path: Path) -> None:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if lock_path.exists() and not lock_path.is_symlink():
+        if lock_path.read_text(encoding="utf-8").startswith("pending:"):
+            lock_path.write_text(str(os.getpid()), encoding="utf-8")
+            return
+        raise ValueError("已有更新应用任务正在运行。")
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileExistsError as exc:
+        raise ValueError("已有更新应用任务正在运行。") from exc
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(str(os.getpid()))
+
+
+def validate_install_layout(install_root: Path) -> None:
+    if not install_root.is_absolute() or install_root.name != "claw-trade":
+        raise ValueError("install-root 非法")
+    root = install_root.resolve(strict=False)
+    for label, relative in {
+        "install-root": Path("."),
+        "shared": Path("shared"),
+        "updates": Path("shared/updates"),
+        "releases": Path("releases"),
+    }.items():
+        path = install_root / relative
+        if path.is_symlink():
+            raise ValueError(f"{label} 不能是符号链接")
+        if not path.exists() or not path.is_dir():
+            raise ValueError(f"{label} 必须是目录")
+        if not path.resolve(strict=False).is_relative_to(root):
+            raise ValueError(f"{label} 超出安装根目录")
+    releases = install_root / "releases"
+    if releases.stat().st_mode & 0o022:
+        raise ValueError("releases 不能允许 group/other 写入")
+    if os.geteuid() == 0 and releases.stat().st_uid != 0:
+        raise ValueError("releases 必须归 root 所有")
+
+
+def validate_public_key(public_key_path: Path) -> None:
+    parent = public_key_path.parent
+    if parent.is_symlink() or not parent.exists() or not parent.is_dir():
+        raise ValueError("更新公钥目录非法")
+    if parent.stat().st_mode & 0o022:
+        raise ValueError("更新公钥目录不能允许 group/other 写入")
+    if os.geteuid() == 0 and parent.stat().st_uid != 0:
+        raise ValueError("更新公钥目录必须归 root 所有")
+    if public_key_path.is_symlink():
+        raise ValueError("更新公钥不能是符号链接")
+    if not public_key_path.exists() or not public_key_path.is_file():
+        raise ValueError("更新公钥不存在")
+    mode = public_key_path.stat().st_mode
+    if mode & 0o022:
+        raise ValueError("更新公钥不能允许 group/other 写入")
+    if os.geteuid() == 0 and public_key_path.stat().st_uid != 0:
+        raise ValueError("更新公钥必须归 root 所有")
+
+
+def validate_archive_name(archive_name: str) -> str:
+    match = ARCHIVE_NAME_RE.fullmatch(archive_name)
+    if not match:
+        raise ValueError("更新包文件名非法")
+    return match.group(1)
+
+
+def read_regular_file_once(path: Path, label: str) -> bytes:
+    if path.is_symlink() or not path.exists() or not path.is_file():
+        raise ValueError(f"{label} 文件非法")
+    return path.read_bytes()
+
+
+def verify_signature_bytes(*, public_key_path: Path, data: bytes, signature: bytes) -> None:
+    with tempfile.TemporaryDirectory(prefix="claw-trade-verify-") as temp_dir:
+        temp = Path(temp_dir)
+        data_path = temp / "payload"
+        signature_path = temp / "payload.sig"
+        data_path.write_bytes(data)
+        signature_path.write_bytes(signature)
+        subprocess.run(
+            [
+                "/usr/bin/openssl",
+                "pkeyutl",
+                "-verify",
+                "-pubin",
+                "-inkey",
+                str(public_key_path),
+                "-sigfile",
+                str(signature_path),
+                "-rawin",
+                "-in",
+                str(data_path),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def load_manifest(manifest_bytes: bytes) -> dict[str, str]:
+    payload = json.loads(manifest_bytes)
+    if not isinstance(payload, dict):
+        raise ValueError("manifest 必须是 JSON object")
+    result: dict[str, str] = {}
+    for key in ("product", "channel", "version", "arch", "archive", "sha256", "min_current_version"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"manifest 缺少字段: {key}")
+        result[key] = value.strip()
+    return result
+
+
+def validate_manifest_for_archive(
+    manifest: dict[str, str], *, version: str, archive_name: str, archive_sha256: str, current_version: str | None
+) -> None:
+    if manifest["product"] != "claw-trade" or manifest["channel"] != "stable" or manifest["arch"] != "linux-x86_64":
+        raise ValueError("manifest product/channel/arch 不匹配")
+    if manifest["version"] != version or manifest["archive"] != archive_name or manifest["sha256"] != archive_sha256:
+        raise ValueError("apply request 与 manifest 不匹配")
+    if not VERSION_RE.fullmatch(manifest["version"]) or not VERSION_RE.fullmatch(manifest["min_current_version"]):
+        raise ValueError("manifest version 非法")
+    if current_version is not None:
+        if version_tuple(manifest["version"]) <= version_tuple(current_version):
+            raise ValueError("manifest version 不高于当前版本")
+        if version_tuple(current_version) < version_tuple(manifest["min_current_version"]):
+            raise ValueError("当前版本低于 manifest 最低可升级版本")
+
+
+def current_release_version(install_root: Path) -> str | None:
+    current = current_release_target(install_root)
+    if current is None:
+        return None
+    match = RELEASE_NAME_RE.fullmatch(current.name)
+    if not match:
+        return None
+    parts = current.name.split("-")
+    return parts[3]
+
+
+def current_release_target(install_root: Path) -> Path | None:
+    current = install_root / "current"
+    if not current.is_symlink():
+        return None
+    target = current.resolve(strict=False)
+    validate_release_target(install_root, target, "current")
+    return target
+
+
+def version_tuple(value: str) -> tuple[int, int, int]:
+    if not VERSION_RE.fullmatch(value):
+        raise ValueError("版本号必须是 x.y.z")
+    return tuple(int(part) for part in value.split("."))  # type: ignore[return-value]
+
+
+def verify_archive_hash(archive_bytes: bytes, expected_sha256: str) -> None:
+    if hashlib.sha256(archive_bytes).hexdigest() != expected_sha256:
+        raise ValueError("更新包 sha256 校验失败")
+
+
+def normalize_member_name(raw_name: str) -> str:
+    if "\x00" in raw_name or "\\" in raw_name or raw_name.startswith("/"):
+        raise ValueError(f"更新包路径非法: {raw_name!r}")
+    stripped = raw_name.strip("/")
+    normalized = posixpath.normpath(stripped)
+    if normalized in {"", "."} or normalized != stripped or "/../" in f"/{normalized}/" or normalized.startswith("../"):
+        raise ValueError(f"更新包路径越界: {raw_name!r}")
+    return normalized
+
+
+def safe_extract_release_archive(archive_bytes: bytes, staging_dir: Path, *, expected_top_dir: str) -> None:
+    staging_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    seen = False
+    with tarfile.open(fileobj=BytesIO(archive_bytes), mode="r:gz") as archive:
+        for member in archive:
+            normalized = normalize_member_name(member.name)
+            parts = normalized.split("/", 1)
+            if parts[0] != expected_top_dir:
+                raise ValueError("更新包顶层目录和包名不一致")
+            if not (member.isdir() or member.isreg()):
+                raise ValueError("更新包包含不支持的文件类型")
+            if member.mode & 0o6000:
+                raise ValueError("更新包包含 setuid/setgid 权限")
+            relative = parts[1] if len(parts) == 2 else ""
+            target = staging_dir / relative
+            if not target.resolve(strict=False).is_relative_to(staging_dir.resolve(strict=False)):
+                raise ValueError("更新包解压路径越界")
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif relative:
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ValueError("更新包文件无法读取")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as output:
+                    shutil.copyfileobj(source, output)
+                target.chmod(member.mode & 0o777)
+            seen = True
+    if not seen:
+        raise ValueError("更新包为空")
+
+
+def run_preflight(release_dir: Path) -> None:
+    subprocess.run([str(release_dir / "bin" / "claw-trade-preflight")], check=True)
+
+
+def rollback_or_rescue(*, install_root: Path, previous: Path | None, reason: str) -> int:
+    if previous is not None:
+        write_state(install_root, "rollback_started", f"{reason}，正在回滚上一版本。")
+        switch_link(install_root / "current", previous)
+        if restart_main_services() and wait_for_ui_health():
+            write_state(install_root, "rollback_succeeded", f"{reason}，已回滚上一版本。")
+            return 1
+    try:
+        subprocess.run(["/bin/systemctl", "start", "claw-trade-rescue-trigger.service"], check=True)
+    except subprocess.CalledProcessError as exc:
+        write_state(install_root, "rollback_failed", f"{reason}，回滚失败，且救援页启动失败：{exc}")
+        return 1
+    write_state(install_root, "rollback_failed", f"{reason}，回滚失败，已启动救援页。")
+    return 1
+
+
+def validate_release_target(install_root: Path, path: Path, field: str) -> None:
+    if not install_root.is_absolute() or install_root.name != "claw-trade":
+        raise ValueError("install-root 非法")
+    releases = (install_root / "releases").resolve(strict=False)
+    if not path.is_absolute() or path.is_symlink() or not RELEASE_NAME_RE.fullmatch(path.name):
+        raise ValueError(f"{field} release 路径非法")
+    resolved = path.resolve(strict=False)
+    if resolved.parent != releases or not path.is_dir():
+        raise ValueError(f"{field} 必须指向 releases 下的版本目录")
+
+
+def switch_link(link_path: Path, target: Path) -> None:
+    temp = link_path.with_name(f".{link_path.name}.{os.getpid()}.tmp")
+    if temp.exists() or temp.is_symlink():
+        temp.unlink()
+    temp.symlink_to(target)
+    temp.replace(link_path)
+
+
+def restart_main_services() -> bool:
+    try:
+        subprocess.run(["/bin/systemctl", "restart", "claw-trade-control.service"], check=True)
+        subprocess.run(["/bin/systemctl", "restart", "claw-trade-ui.service"], check=True)
+    except subprocess.CalledProcessError:
+        return False
+    return True
+
+
+def wait_for_ui_health(*, url: str = "http://127.0.0.1:5175/healthz", timeout_seconds: int = 60) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=2) as response:  # nosec B310: fixed localhost health URL
+                if 200 <= response.status < 300:
+                    return True
+        except (OSError, URLError):
+            pass
+        time.sleep(2)
+    return False
+
+
+def write_state(install_root: Path, status: str, user_message: str) -> None:
+    state_path = install_root / "shared" / "updates" / "updater-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": status,
+        "userMessage": user_message,
+        "updatedAt": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    temp = state_path.with_name(f".{state_path.name}.{os.getpid()}.tmp")
+    temp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp.replace(state_path)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

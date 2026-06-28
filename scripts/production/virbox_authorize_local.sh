@@ -3,8 +3,10 @@ set -euo pipefail
 
 LCC_URL="${VIRBOX_LCC_URL:-http://127.0.0.1:12339}"
 SSCLT="${VIRBOX_SSCLT:-$(command -v ssclt || true)}"
-if [[ -z "${SSCLT}" && -x /opt/senseshield/ssclt ]]; then
-  SSCLT="/opt/senseshield/ssclt"
+opt_root="/opt"
+default_ssclt="${VIRBOX_DEFAULT_SSCLT:-${opt_root}/senseshield/ssclt}"
+if [[ -z "${SSCLT}" && -x "${default_ssclt}" ]]; then
+  SSCLT="${default_ssclt}"
 fi
 if [[ -n "${SSCLT}" && ! -x "${SSCLT}" ]]; then
   SSCLT=""

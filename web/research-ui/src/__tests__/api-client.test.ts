@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { getChannelStatus, sendChatMessage } from '../api/client';
+import { checkForUpdate, getChannelStatus, installUpdate, sendChatMessage } from '../api/client';
 
 describe('api client error translation', () => {
   const originalFetch = globalThis.fetch;
@@ -82,5 +82,54 @@ describe('api client error translation', () => {
     await getChannelStatus({ probe: false });
 
     expect(urls).toEqual(['/api/ui/get-channel-status']);
+  });
+
+  it('posts remote update check requests to the production maintenance endpoint', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        JSON.stringify({
+          status: 'not_configured',
+          latestVersion: null,
+          archive: null,
+          userMessage: '远程更新源未配置。',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    await checkForUpdate({ requestId: 'check-1' });
+
+    expect(requests[0]?.url).toBe('/api/ui/check-for-update');
+    expect(requests[0]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ requestId: 'check-1' });
+  });
+
+  it('posts signed update install requests to the production maintenance endpoint', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init });
+      return new Response(
+        JSON.stringify({
+          status: 'not_configured',
+          version: null,
+          userMessage: '远程更新源未配置。',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    await installUpdate({ requestId: 'install-1' });
+
+    expect(requests[0]?.url).toBe('/api/ui/install-update');
+    expect(requests[0]?.init?.method).toBe('POST');
+    expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ requestId: 'install-1' });
   });
 });

@@ -4,7 +4,10 @@ import { AppShell } from '../components/AppShell';
 import { SettingsSections } from '../components/SettingsSections';
 import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
+  checkForUpdate,
   getChannelStatus,
+  factoryReset,
+  getProductionMaintenanceStatus,
   getReportCleanupSettings,
   getSelectionAutoRefreshSettings,
   listDataSources,
@@ -16,6 +19,7 @@ import {
   saveReportCleanupSettings,
   saveSelectionAutoRefreshSettings,
   saveReportModelConfig,
+  installUpdate,
   testDataSource,
   testEmbeddingConnection,
   testReportModelConnection,
@@ -23,9 +27,11 @@ import {
   type DataSourceInstanceDraftInput,
   type DataSourceInstanceForUser,
   type LlmConfigDraft,
+  type ProductionMaintenanceStatusOutput,
   type ReportCleanupSettingsForUser,
   type ReportRetentionDays,
   type SelectionAutoRefreshSettingsForUser,
+  type UpdateActionStatus,
 } from '../api/workspace';
 
 type SectionErrors = {
@@ -36,6 +42,8 @@ type SectionErrors = {
   reportCleanup?: string;
   selectionAutoRefresh?: string;
   reset?: string;
+  update?: string;
+  factoryReset?: string;
 };
 
 function shouldEnableWechatPlugin(channel: ChannelStatusForUser | null) {
@@ -46,6 +54,7 @@ function shouldEnableWechatPlugin(channel: ChannelStatusForUser | null) {
 const SETTINGS_LOAD_TIMEOUT_MS = 8000;
 const MODEL_TEST_TIMEOUT_MS = 90000;
 const CHANNEL_STATUS_TIMEOUT_MS = 50000;
+const INSTALL_UPDATE_TIMEOUT_MS = 45000;
 const CHANNEL_LOGIN_POLL_MS = 2000;
 const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
   provider: 'deepseek',
@@ -69,6 +78,43 @@ const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
 });
 const DEFAULT_REPORT_CLEANUP: ReportCleanupSettingsForUser = { reportRetentionDays: 7 };
 const DEFAULT_SELECTION_AUTO_REFRESH: SelectionAutoRefreshSettingsForUser = { enabled: true };
+const UPDATE_ERROR_STATUSES = new Set<UpdateActionStatus>([
+  'check_failed',
+  'verify_failed',
+  'install_failed',
+  'rollback_failed',
+  'not_configured',
+]);
+const UPDATE_TERMINAL_STATUSES = new Set<UpdateActionStatus>([
+  'installed',
+  'rollback_succeeded',
+  'rollback_failed',
+  'install_failed',
+  'check_failed',
+  'verify_failed',
+]);
+const UPDATE_APPLY_ACTIVE_STATUSES = new Set<UpdateActionStatus>([
+  'restart_scheduled',
+  'restarting',
+  'health_checking',
+  'rollback_started',
+]);
+const UPDATE_SUCCESS_MESSAGE_STATUSES = new Set<UpdateActionStatus>([
+  'installed',
+  'rollback_succeeded',
+  'update_available',
+  'up_to_date',
+]);
+const UPDATE_STATUS_POLL_MS = 2000;
+const UPDATE_STATUS_POLL_LIMIT = 90;
+
+function isUpdateApplyActiveStatus(status?: UpdateActionStatus | null) {
+  return !!status && UPDATE_APPLY_ACTIVE_STATUSES.has(status);
+}
+
+function shouldShowUpdateActionMessage(status: UpdateActionStatus) {
+  return UPDATE_SUCCESS_MESSAGE_STATUSES.has(status);
+}
 
 function currentEmbeddingDraft(draft: LlmConfigDraft): NonNullable<LlmConfigDraft['embedding']> {
   return (
@@ -209,7 +255,20 @@ export function SettingsPage() {
   const [selectionAutoRefreshActionMessage, setSelectionAutoRefreshActionMessage] = useState('');
   const [resetActionBusy, setResetActionBusy] = useState(false);
   const [resetActionMessage, setResetActionMessage] = useState('');
+  const [factoryResetActionBusy, setFactoryResetActionBusy] = useState(false);
+  const [factoryResetActionMessage, setFactoryResetActionMessage] = useState('');
+  const [updateActionBusy, setUpdateActionBusy] = useState(false);
+  const [updateActionMessage, setUpdateActionMessage] = useState('');
+  const [updateActionStatus, setUpdateActionStatus] = useState<UpdateActionStatus | null>(null);
+  const [productionMaintenance, setProductionMaintenance] = useState<ProductionMaintenanceStatusOutput | null>(null);
   const autoQrRequestedRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -221,6 +280,28 @@ export function SettingsPage() {
       setDataSourceActionMessage('');
       setCleanupActionMessage('');
       setResetActionMessage('');
+      setFactoryResetActionMessage('');
+      setUpdateActionMessage('');
+      setUpdateActionStatus(null);
+      void getProductionMaintenanceStatus()
+        .then((result) => {
+          if (active) {
+            if (isProductionMaintenanceStatus(result)) {
+              setProductionMaintenance(result);
+              setUpdateActionStatus(result.update.status);
+              if (isUpdateApplyActiveStatus(result.update.status)) {
+                void pollProductionMaintenanceStatus();
+              }
+            } else {
+              setProductionMaintenance(null);
+            }
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setProductionMaintenance(null);
+          }
+        });
       let pending = 5;
       const finishOne = () => {
         pending -= 1;
@@ -718,6 +799,155 @@ export function SettingsPage() {
     }
   }
 
+  async function runFactoryReset() {
+    const confirmed = window.confirm(
+      '恢复出厂设置会删除本机应用配置、历史报告、缓存、队列、会话和临时文件；保留授权、更新包和当前版本。确定继续吗？',
+    );
+    if (!confirmed) {
+      return;
+    }
+    setFactoryResetActionBusy(true);
+    setFactoryResetActionMessage('');
+    setSectionErrors((current) => ({ ...current, factoryReset: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        factoryReset({
+          requestId: `factory-reset-${Date.now()}`,
+          confirmation: 'RESET_CLAW_TRADE',
+        }),
+        '恢复出厂暂不可用，请稍后重试。',
+      );
+      setFactoryResetActionMessage(result.userMessage);
+    } catch (resetError) {
+      setSectionErrors((current) => ({ ...current, factoryReset: (resetError as Error).message }));
+    } finally {
+      setFactoryResetActionBusy(false);
+    }
+  }
+
+  async function runCheckForUpdate() {
+    if (isUpdateApplyActiveStatus(productionMaintenance?.update.status ?? updateActionStatus)) {
+      return;
+    }
+    setUpdateActionBusy(true);
+    setUpdateActionMessage('');
+    setSectionErrors((current) => ({ ...current, update: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        checkForUpdate({ requestId: `check-update-${Date.now()}` }),
+        '检查更新暂不可用，请稍后重试。',
+      );
+      setUpdateActionStatus(result.status);
+      if (UPDATE_ERROR_STATUSES.has(result.status)) {
+        setSectionErrors((current) => ({ ...current, update: result.userMessage }));
+      } else if (shouldShowUpdateActionMessage(result.status)) {
+        setUpdateActionMessage(result.userMessage);
+      } else {
+        setUpdateActionMessage('');
+      }
+      setProductionMaintenance((current) =>
+        current
+          ? {
+              ...current,
+              update: {
+                ...current.update,
+                status: result.status,
+                userMessage: result.userMessage,
+                latestVersion: result.latestVersion,
+              },
+            }
+          : current,
+      );
+    } catch (updateError) {
+      setSectionErrors((current) => ({ ...current, update: (updateError as Error).message }));
+    } finally {
+      setUpdateActionBusy(false);
+    }
+  }
+
+  async function runInstallUpdate() {
+    if (isUpdateApplyActiveStatus(productionMaintenance?.update.status ?? updateActionStatus)) {
+      return;
+    }
+    const confirmed = window.confirm('安装更新会切换本机应用版本；安装完成后需要重启服务。确定继续吗？');
+    if (!confirmed) {
+      return;
+    }
+    setUpdateActionBusy(true);
+    setUpdateActionMessage('');
+    setSectionErrors((current) => ({ ...current, update: undefined }));
+    try {
+      const result = await withSettingsTimeout(
+        installUpdate({ requestId: `install-update-${Date.now()}` }),
+        '安装更新暂不可用，请稍后重试。',
+        INSTALL_UPDATE_TIMEOUT_MS,
+      );
+      setUpdateActionStatus(result.status);
+      if (UPDATE_ERROR_STATUSES.has(result.status)) {
+        setSectionErrors((current) => ({ ...current, update: result.userMessage }));
+      } else if (shouldShowUpdateActionMessage(result.status)) {
+        setUpdateActionMessage(result.userMessage);
+      } else {
+        setUpdateActionMessage('');
+      }
+      setProductionMaintenance((current) =>
+        current
+          ? {
+              ...current,
+              update: {
+                ...current.update,
+                status: result.status,
+                userMessage: result.userMessage,
+                latestVersion: result.version,
+              },
+            }
+          : current,
+      );
+      if (result.status === 'restart_scheduled') {
+        void pollProductionMaintenanceStatus();
+      }
+    } catch (updateError) {
+      setSectionErrors((current) => ({ ...current, update: (updateError as Error).message }));
+      void pollProductionMaintenanceStatus();
+    } finally {
+      setUpdateActionBusy(false);
+    }
+  }
+
+  async function pollProductionMaintenanceStatus() {
+    for (let attempt = 0; attempt < UPDATE_STATUS_POLL_LIMIT && mountedRef.current; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, UPDATE_STATUS_POLL_MS));
+      if (!mountedRef.current) {
+        return;
+      }
+      try {
+        const result = await getProductionMaintenanceStatus();
+        if (!isProductionMaintenanceStatus(result)) {
+          continue;
+        }
+        setProductionMaintenance(result);
+        setUpdateActionStatus(result.update.status);
+        if (UPDATE_ERROR_STATUSES.has(result.update.status)) {
+          setUpdateActionMessage('');
+          setSectionErrors((current) => ({ ...current, update: result.update.userMessage }));
+        } else {
+          setUpdateActionMessage('');
+          setSectionErrors((current) => ({ ...current, update: undefined }));
+        }
+        if (UPDATE_TERMINAL_STATUSES.has(result.update.status)) {
+          return;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  const canInstallUpdate =
+    !isUpdateApplyActiveStatus(productionMaintenance?.update.status ?? updateActionStatus) &&
+    (productionMaintenance?.update.status === 'update_available' || updateActionStatus === 'update_available');
+  const updateApplyBusy = isUpdateApplyActiveStatus(productionMaintenance?.update.status ?? updateActionStatus);
+
   return (
     <AppShell>
       <div className="ct-settings-wrap">
@@ -751,6 +981,13 @@ export function SettingsPage() {
           selectionAutoRefreshActionMessage={selectionAutoRefreshActionMessage}
           resetActionBusy={resetActionBusy}
           resetActionMessage={resetActionMessage}
+          factoryResetActionBusy={factoryResetActionBusy}
+          factoryResetActionMessage={factoryResetActionMessage}
+          updateActionBusy={updateActionBusy}
+          updateActionMessage={updateActionMessage}
+          updateApplyBusy={updateApplyBusy}
+          canInstallUpdate={canInstallUpdate}
+          productionMaintenance={productionMaintenance}
           onReconnectChannel={reconnectChannel}
           onDisconnectChannel={disconnectChannel}
           onSkipWechatSetup={skipWechatSetup}
@@ -778,8 +1015,19 @@ export function SettingsPage() {
           onSelectionAutoRefreshChange={(enabled: boolean) => setSelectionAutoRefresh({ enabled })}
           onSaveSelectionAutoRefresh={saveSelectionAutoRefresh}
           onResetSettings={resetSettings}
+          onFactoryReset={runFactoryReset}
+          onCheckForUpdate={runCheckForUpdate}
+          onInstallUpdate={runInstallUpdate}
         />
       </div>
     </AppShell>
+  );
+}
+
+function isProductionMaintenanceStatus(value: ProductionMaintenanceStatusOutput): value is ProductionMaintenanceStatusOutput {
+  return (
+    Array.isArray(value.factoryReset?.resetPaths) &&
+    Array.isArray(value.factoryReset?.preservedPaths) &&
+    typeof value.update?.userMessage === 'string'
   );
 }

@@ -116,6 +116,13 @@ describe('settings-css-sections', () => {
         selectionAutoRefreshActionMessage=""
         resetActionBusy={false}
         resetActionMessage=""
+        factoryResetActionBusy={false}
+        factoryResetActionMessage=""
+        updateActionBusy={false}
+        updateActionMessage=""
+        updateApplyBusy={false}
+        canInstallUpdate={false}
+        productionMaintenance={null}
         onReconnectChannel={noop}
         onDisconnectChannel={noop}
         onSkipWechatSetup={noop}
@@ -134,6 +141,9 @@ describe('settings-css-sections', () => {
         onSelectionAutoRefreshChange={noop}
         onSaveSelectionAutoRefresh={noop}
         onResetSettings={noop}
+        onFactoryReset={noop}
+        onCheckForUpdate={noop}
+        onInstallUpdate={noop}
       />,
     );
 

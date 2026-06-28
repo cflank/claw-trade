@@ -13,6 +13,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from claw_trade.production.auto_update import AutoUpdateScheduler, auto_update_enabled
+from claw_trade.production.maintenance_lock import ProductionMaintenanceLock
 from claw_trade.web.routes_ui import router as ui_router
 from claw_trade.web.settings import ResearchUiServerSettings
 from claw_trade.web.state import UiHttpServices, build_ui_http_services, default_frontend_dist
@@ -30,12 +32,14 @@ def build_research_ui_app(
     )
     report_cleanup_scheduler_enabled = owns_services
     price_alert_scan_scheduler_enabled = owns_services
+    auto_update_scheduler_enabled = owns_services and auto_update_enabled()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         selection_started = False
         cleanup_started = False
         price_alert_scan_started = False
+        auto_update_started = False
         try:
             if app.state.selection_auto_refresh_enabled:
                 app.state.ui_services.selection_refresh_service.start_automatic_refresh_scheduler()
@@ -47,8 +51,13 @@ def build_research_ui_app(
             if app.state.price_alert_scan_scheduler_enabled and price_alert_scan_scheduler is not None:
                 price_alert_scan_scheduler.start()
                 price_alert_scan_started = True
+            if app.state.auto_update_scheduler_enabled:
+                app.state.auto_update_scheduler.start()
+                auto_update_started = True
             yield
         finally:
+            if auto_update_started:
+                app.state.auto_update_scheduler.stop()
             if price_alert_scan_started:
                 app.state.ui_services.price_alert_scan_scheduler.stop()
             if cleanup_started:
@@ -63,6 +72,20 @@ def build_research_ui_app(
     app.state.selection_auto_refresh_enabled = selection_auto_refresh_enabled
     app.state.report_cleanup_scheduler_enabled = report_cleanup_scheduler_enabled
     app.state.price_alert_scan_scheduler_enabled = price_alert_scan_scheduler_enabled
+    app.state.auto_update_scheduler_enabled = auto_update_scheduler_enabled
+    app.state.auto_update_scheduler = AutoUpdateScheduler()
+    app.state.production_maintenance_lock = ProductionMaintenanceLock()
+
+    @app.middleware("http")
+    async def production_maintenance_lock_guard(request: Request, call_next):
+        if request.url.path.startswith("/api/ui") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            lock = getattr(request.app.state, "production_maintenance_lock", None)
+            if isinstance(lock, ProductionMaintenanceLock) and lock.is_locked():
+                return JSONResponse(
+                    status_code=409,
+                    content={"code": "MAINTENANCE_LOCKED", "message": "系统正在维护中，请稍后再试。"},
+                )
+        return await call_next(request)
 
     @app.exception_handler(RequestValidationError)
     async def ui_validation_error_handler(request: Request, exc: RequestValidationError):

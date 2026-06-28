@@ -1,14 +1,20 @@
 [Unit]
-Description=claw-trade UI backend
-After=claw-trade-control.service
+Description=claw-trade UI
+After=network-online.target claw-trade-control.service
+Wants=network-online.target
 Requires=claw-trade-control.service
+OnFailure=claw-trade-rescue-trigger.service
+OnFailureJobMode=replace
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
 User=clawtrade
 Group=clawtrade
-WorkingDirectory=/opt/claw-trade/current
-EnvironmentFile=-/opt/claw-trade/shared/config/runtime.env
+WorkingDirectory=/opt/claw-trade/shared
+EnvironmentFile=-/opt/claw-trade/shared/config/claw-trade.env
+EnvironmentFile=-/opt/claw-trade/shared/tmp/dev-services/runtime.env
 ExecStart=/opt/claw-trade/current/bin/claw-trade-ui
 Restart=on-failure
 RestartSec=5

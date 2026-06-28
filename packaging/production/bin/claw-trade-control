@@ -1,13 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
-CURRENT="${ROOT}/current"
-SHARED="${ROOT}/shared"
-if [[ -f "${SHARED}/config/runtime.env" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "${SHARED}/config/runtime.env"
-  set +a
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-/opt/claw-trade/shared}"
+
+for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env"; do
+  if [[ -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "${env_file}"
+    set +a
+  fi
+done
+
+export PYTHONPATH="${ROOT_DIR}/app/python:${ROOT_DIR}/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
+export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/third_party/openclaw/openclaw.mjs}"
+export OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/third_party/openclaw}"
+export CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"
+export CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR="${CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/mongodb}"
+if [[ -x "${ROOT_DIR}/.runtime/mongodb/current/bin/mongod" && -z "${CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR:-}" ]]; then
+  export CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR="${ROOT_DIR}/.runtime/mongodb/current"
 fi
-mkdir -p "${SHARED}/logs" "${SHARED}/data/openviking" "${SHARED}/data/openclaw-state"
-exec "${CURRENT}/runtime/bin/claw-trade-control-runtime" "$@"
+if [[ -z "${A_SHARE_FACTORY_SEED_PACKAGE:-}" ]]; then
+  current_seeds=("${ROOT_DIR}"/data/current-seed-*.tar)
+  if [[ -e "${current_seeds[0]}" ]]; then
+    A_SHARE_FACTORY_SEED_PACKAGE="${current_seeds[$((${#current_seeds[@]} - 1))]}"
+  else
+    A_SHARE_FACTORY_SEED_PACKAGE="${ROOT_DIR}/data/a-share-cn-required-300td-20260608.tar"
+  fi
+fi
+export A_SHARE_FACTORY_SEED_PACKAGE
+export A_SHARE_FACTORY_SEED_CHECKSUM="${A_SHARE_FACTORY_SEED_CHECKSUM:-${A_SHARE_FACTORY_SEED_PACKAGE}.sha256}"
+export A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-/opt/claw-trade/shared/cache/factory-seeds/current-seed/normalized}"
+export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}}"
+export CLAW_TRADE_SKIP_OPENCLAW_WEIXIN_PLUGIN_INSTALL="${CLAW_TRADE_SKIP_OPENCLAW_WEIXIN_PLUGIN_INSTALL:-1}"
+
+exec "${ROOT_DIR}/runtime/claw-trade-control-runtime" "$@"

@@ -1171,6 +1171,35 @@ body {
   color: var(--ct-text-muted);
 }
 
+.ct-settings-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ct-border);
+  border-radius: var(--ct-radius-sm);
+  background: var(--ct-surface-muted);
+}
+
+.ct-settings-summary-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ct-settings-summary-row span {
+  color: var(--ct-text-muted);
+}
+
+.ct-settings-summary-row strong {
+  min-width: 0;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
 .ct-settings-section h2 {
   margin: 0;
   font-size: 16px;
