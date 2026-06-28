@@ -63,10 +63,12 @@ class ReportTaskQueue:
         *,
         queue_limit: int = 10,
         completed_report_writer: Callable[[ReportTask, Any], None] | None = None,
+        report_permission_checker: Callable[[], None] | None = None,
     ) -> None:
         self._bridge = bridge
         self._queue_limit = queue_limit
         self._completed_report_writer = completed_report_writer
+        self._report_permission_checker = report_permission_checker
         self._tasks: dict[str, ReportTask] = {}
         self._enqueue_idempotency: dict[str, dict[str, Any]] = {}
         self._cancel_idempotency: dict[str, dict[str, Any]] = {}
@@ -83,6 +85,7 @@ class ReportTaskQueue:
         source: str,
         origin_context_id: str | None = None,
     ) -> dict[str, Any]:
+        self._assert_report_allowed()
         with self._state_lock:
             if request_id in self._enqueue_idempotency:
                 return self._enqueue_idempotency[request_id]
@@ -146,6 +149,15 @@ class ReportTaskQueue:
                 return None
             queued.sort(key=lambda item: (-item.priority, item.created_at))
             task = queued[0]
+        try:
+            self._assert_report_allowed()
+        except QueueError as exc:
+            self.handle_report_failed(task.task_id, exc)
+            return task
+        with self._state_lock:
+            current = self._tasks.get(task.task_id)
+            if current is not task or task.status != ReportTaskStatus.QUEUED:
+                return task
             task.status = ReportTaskStatus.RUNNING
             task.queue_position = None
             task.started_at = _now_iso()
@@ -226,7 +238,8 @@ class ReportTaskQueue:
             task = self._tasks.get(task_id)
             if task is None:
                 return None
-            failure = translate_internal_error_for_user(error)
+            category = error.category if isinstance(error, QueueError) else None
+            failure = translate_internal_error_for_user(error, category=category)
             task.status = ReportTaskStatus.FAILED
             task.failure = failure
             task.finished_at = _now_iso()
@@ -383,6 +396,14 @@ class ReportTaskQueue:
                 for task in self._tasks.values()
                 if task.run_id and task.status in protected_statuses
             }
+
+    def _assert_report_allowed(self) -> None:
+        if self._report_permission_checker is None:
+            return
+        try:
+            self._report_permission_checker()
+        except PermissionError as exc:
+            raise QueueError("LICENSE_BLOCKED", "license_blocked", str(exc)) from exc
 
     def _find_existing_queued(self, dedupe_key: str) -> ReportTask | None:
         for task in self._tasks.values():

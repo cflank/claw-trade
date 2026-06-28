@@ -49,6 +49,7 @@ class SelectionDataRefreshService:
         run_data_check: Callable[[SelectionRunPlan], object] | None = None,
         now_fn: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[], str] | None = None,
+        data_refresh_permission_checker: Callable[[], None] | None = None,
     ) -> None:
         self._store = store
         self._run_data_job = run_data_job
@@ -58,6 +59,7 @@ class SelectionDataRefreshService:
         self._run_data_check = run_data_check or run_data_job
         self._now_fn = now_fn or _utc_now
         self._run_id_factory = run_id_factory
+        self._data_refresh_permission_checker = data_refresh_permission_checker
         self._lock = Lock()
         self._auto_refresh_stop = Event()
         self._auto_refresh_thread: Thread | None = None
@@ -71,6 +73,9 @@ class SelectionDataRefreshService:
         select_workflow_run_id: str,
         force_refresh: bool = False,
     ) -> SelectionDataRefreshResult:
+        blocked = self._assert_data_refresh_allowed()
+        if blocked is not None:
+            return blocked
         reason = str(getattr(unavailable_code, "value", unavailable_code))
         try:
             trade_date = self._resolve_trade_date_for_market(request.market, request.trade_date)
@@ -189,6 +194,9 @@ class SelectionDataRefreshService:
         market: SelectionMarket = SelectionMarket.CN_A,
         profile: SelectionProfile | None = None,
     ) -> SelectionDataRefreshResult:
+        blocked = self._assert_data_refresh_allowed()
+        if blocked is not None:
+            return blocked
         if profile is None:
             profile = SelectionProfile.CRYPTO if market == SelectionMarket.CRYPTO else SelectionProfile.CN_A
         try:
@@ -432,6 +440,21 @@ class SelectionDataRefreshService:
         if market == SelectionMarket.CRYPTO:
             return resolve_crypto_selection_trade_date_for_scheduler
         return self._resolve_closed_trade_date
+
+    def _assert_data_refresh_allowed(self) -> SelectionDataRefreshResult | None:
+        if self._data_refresh_permission_checker is None:
+            return None
+        try:
+            self._data_refresh_permission_checker()
+        except PermissionError as exc:
+            return SelectionDataRefreshResult(
+                status="failed",
+                selection_run_id=None,
+                trade_date=None,
+                reason=str(exc),
+                error_code="license_blocked",
+            )
+        return None
 
     def _run_job_and_record_failure(self, plan: SelectionRunPlan) -> None:
         try:

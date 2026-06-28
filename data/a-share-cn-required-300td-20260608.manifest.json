@@ -1,0 +1,59 @@
+{
+  "archive": {
+    "bytes": 467384320,
+    "path": "data/a-share-cn-required-300td-20260608.tar",
+    "sha256": "f5b728c4da434c4fac29573db90d79b493fbcb078c4b20c263a1c9b26eb3fdff"
+  },
+  "catalog_storage": "mongo-jsonl",
+  "created_at": "2026-06-27T08:18:14.254869+00:00",
+  "datasets": {
+    "daily_bar": {
+      "granularity": "daily",
+      "market": "CN_A",
+      "period_end_max": "2026-05-27",
+      "period_start_min": "2025-03-03",
+      "relative_path": "market=CN_A/dataset=daily_bar/granularity=daily/partition-factory-300td-daily_bar.parquet",
+      "row_count": 1626559,
+      "sha256": "95574b202d89536a60c3a1fccfbb68a525fdd91dab5697e033c28008aff55713"
+    },
+    "valuation_metric": {
+      "granularity": "daily",
+      "market": "CN_A",
+      "period_end_max": "2026-05-27",
+      "period_start_min": "2025-03-03",
+      "relative_path": "market=CN_A/dataset=valuation_metric/granularity=daily/partition-factory-300td-valuation_metric.parquet",
+      "row_count": 1626559,
+      "sha256": "1f5ea4c8f2b33fc96b3fb10d664c81b4573ae2cc056e47992417abd69ff9210b"
+    }
+  },
+  "excluded": {
+    "crypto_history": true,
+    "developer_runtime_database": "claw_trade",
+    "provider_cache": true,
+    "ui_secrets": true,
+    "ui_settings": true
+  },
+  "market": "CN_A",
+  "mongo_records": {
+    "dataset_manifests": 2,
+    "provider_attempts": 1,
+    "raw_payloads": 1
+  },
+  "normalized_source_root": "/home/frank/src/claw-trade/.runtime/factory-seeds/a-share-cn-required-300td-20260608/normalized",
+  "normalized_storage": "parquet",
+  "package_id": "a-share-cn-required-300td-20260608",
+  "package_type": "factory_seed_rebuild_pack",
+  "parquet_files": [
+    {
+      "bytes": 260262831,
+      "relative_path": "market=CN_A/dataset=daily_bar/granularity=daily/partition-factory-300td-daily_bar.parquet",
+      "sha256": "95574b202d89536a60c3a1fccfbb68a525fdd91dab5697e033c28008aff55713"
+    },
+    {
+      "bytes": 206946440,
+      "relative_path": "market=CN_A/dataset=valuation_metric/granularity=daily/partition-factory-300td-valuation_metric.parquet",
+      "sha256": "1f5ea4c8f2b33fc96b3fb10d664c81b4573ae2cc056e47992417abd69ff9210b"
+    }
+  ],
+  "source_database": "claw_trade_a_share_factory_seed"
+}

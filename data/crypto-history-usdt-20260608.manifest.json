@@ -1,0 +1,37 @@
+{
+  "archive": {
+    "bytes": 780697600,
+    "path": "data/crypto-history-usdt-20260608.tar",
+    "sha256": "5a9bafe1547bee9b54ad2998f699dee0d8354029c49e80b5de4e13f47566c2db"
+  },
+  "catalog_storage": "mongo-jsonl",
+  "created_at": "2026-06-27T09:13:13.100624+00:00",
+  "datasets": {
+    "daily_bar:daily": {
+      "parquet_files": 1063,
+      "period_end_max": "2026-06-06",
+      "period_start_min": "2025-06-01",
+      "row_count": 355791
+    },
+    "intraday_bar:1h": {
+      "parquet_files": 1063,
+      "period_end_max": "2026-06-06",
+      "period_start_min": "2025-06-01",
+      "row_count": 8536045
+    }
+  },
+  "market": "CRYPTO",
+  "mongo_records": {
+    "dataset_manifests": 2126,
+    "provider_attempts": 2126,
+    "raw_payloads": 2126
+  },
+  "normalized_source_root": "/home/frank/src/claw-trade/data/crypto-history-full/normalized-columnar-usdt-only",
+  "normalized_storage": "parquet",
+  "package_id": "crypto-history-usdt-20260608",
+  "package_type": "crypto_history_seed_pack",
+  "parquet_bytes": 771338629,
+  "parquet_files": 2126,
+  "source": "local Binance public data USDT-only normalized columnar warehouse",
+  "symbol_count": 596
+}

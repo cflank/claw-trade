@@ -63,6 +63,42 @@ def test_serial_queue_only_one_running() -> None:
     assert snapshot["queuedCount"] == 1
 
 
+def test_report_queue_blocks_enqueue_when_license_denied() -> None:
+    def deny() -> None:
+        raise PermissionError("设备授权已失效，请在授权页修复后重试。")
+
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner), report_permission_checker=deny)
+
+    with pytest.raises(QueueError, match="设备授权已失效") as exc:
+        queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+
+    assert exc.value.code == "LICENSE_BLOCKED"
+    assert runner.calls == 0
+
+
+def test_report_queue_blocks_start_when_license_denied_after_queued() -> None:
+    allowed = True
+
+    def check() -> None:
+        if not allowed:
+            raise PermissionError("设备授权已失效，请在授权页修复后重试。")
+
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner), report_permission_checker=check)
+    queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+    queued = queue.enqueue_report_task(request_id="r2", task_input=_task_input("MSFT"), source="manual")
+    allowed = False
+    queue.handle_report_failed("task-1", RuntimeError("workflow failed"))
+
+    task = queue.get_task_for_testing(queued["task"]["taskId"])
+    assert runner.calls == 1
+    assert task is not None
+    assert task.status.value == "failed"
+    assert task.failure is not None
+    assert task.failure.code == "LICENSE_BLOCKED"
+
+
 def test_queue_limit_default_10() -> None:
     queue = ReportTaskQueue(ReportWorkflowBridge(_FakeRunner()), queue_limit=10)
     queue.enqueue_report_task(request_id="r1", task_input=_task_input("RUN1"), source="manual")

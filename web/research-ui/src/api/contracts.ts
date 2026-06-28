@@ -49,6 +49,7 @@ export interface UserFacingFailure {
     | 'REPORT_EXPORT_FAILED'
     | 'DATASOURCE_TEST_FAILED'
     | 'PDF_EXPORT_FAILED'
+    | 'LICENSE_BLOCKED'
     | 'PROFILE_STRATEGY_UNAPPROVED'
     | 'SCHEDULE_NOT_FOUND'
     | 'ALERT_NOT_FOUND'
@@ -114,6 +115,17 @@ export interface SelectionProgressForUser {
 
 export interface SelectionRefreshSnapshotForUser {
   selectionProgress?: SelectionProgressForUser | null;
+}
+
+export interface LicenseStatusForUser {
+  status: string;
+  allowsReportGeneration: boolean;
+  allowsDataRefresh: boolean;
+  expiresAt?: string | null;
+  graceUntil?: string | null;
+  deviceIdHash?: string | null;
+  licenseSuffix?: string | null;
+  message: string;
 }
 
 export interface ConfirmationCard {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 class ScheduledWorkRunnerError(RuntimeError):
@@ -19,11 +19,13 @@ class ScheduledWorkRunner:
         scheduler_service: Any | None = None,
         selection_data_refresh_runner: Any | None = None,
         data_maintenance_runner: Any | None = None,
+        data_refresh_permission_checker: Callable[[], None] | None = None,
     ) -> None:
         self._price_alert_scan_service = price_alert_scan_service
         self._scheduler_service = scheduler_service
         self._selection_data_refresh_runner = selection_data_refresh_runner
         self._data_maintenance_runner = data_maintenance_runner
+        self._data_refresh_permission_checker = data_refresh_permission_checker
         self._latest_results: dict[str, dict[str, Any]] = {}
 
     def handle_wake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -92,6 +94,7 @@ class ScheduledWorkRunner:
     def _handle_selection_data_refresh(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._selection_data_refresh_runner is None:
             raise ScheduledWorkRunnerError("INVALID_INPUT", "selection_data_refresh 暂未配置执行器。")
+        self._assert_data_refresh_allowed()
         reason = str(payload.get("reason") or "").strip() or "scheduled_data_refresh"
         result = self._selection_data_refresh_runner.run_automatic_refresh_once(reason=reason)
         result_payload = _plain_mapping(result)
@@ -111,6 +114,7 @@ class ScheduledWorkRunner:
     def _handle_data_maintenance(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._data_maintenance_runner is None:
             raise ScheduledWorkRunnerError("INVALID_INPUT", "data_maintenance 暂未配置执行器。")
+        self._assert_data_refresh_allowed()
         market = str(payload.get("market") or "").strip()
         job_kind = str(payload.get("jobKind") or "").strip()
         cron_run_id = str(payload.get("cronRunId") or "").strip() or None
@@ -159,6 +163,14 @@ class ScheduledWorkRunner:
         }
         self._latest_results[f"{kind}:{market}:{job_kind}"] = result_out
         return result_out
+
+    def _assert_data_refresh_allowed(self) -> None:
+        if self._data_refresh_permission_checker is None:
+            return
+        try:
+            self._data_refresh_permission_checker()
+        except PermissionError as exc:
+            raise ScheduledWorkRunnerError("LICENSE_BLOCKED", str(exc)) from exc
 
 
 def _plain_mapping(value: Any) -> dict[str, Any]:

@@ -1,0 +1,20 @@
+[Unit]
+Description=claw-trade control runtime
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clawtrade
+Group=clawtrade
+WorkingDirectory=/opt/claw-trade/current
+EnvironmentFile=-/opt/claw-trade/shared/config/runtime.env
+ExecStart=/opt/claw-trade/current/bin/claw-trade-control
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/opt/claw-trade/shared
+
+[Install]
+WantedBy=multi-user.target

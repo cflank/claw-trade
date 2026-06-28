@@ -160,6 +160,27 @@ def test_build_request_context_uses_repo_agents_root_when_cwd_changes(
     assert result.context is not None
 
 
+def test_build_request_context_uses_runtime_agents_root_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agents_root = tmp_path / "runtime-assets" / "agents"
+    _write_minimal_worker_workspace(agents_root, worker_id="market_analyst")
+    state = _state(tmp_path=tmp_path, profile="US")
+    monkeypatch.setenv("CLAW_TRADE_AGENTS_ROOT", str(agents_root))
+    monkeypatch.chdir(tmp_path)
+
+    result = build_request_context(
+        state=state,
+        worker_id="market_analyst",
+        stage=Stage.FRONTLINE,
+        manifest=ApprovedManifest.empty(),
+    )
+
+    assert result.ok is True
+    assert result.context is not None
+
+
 def _state(
     *,
     tmp_path: Path,
@@ -187,6 +208,36 @@ def _state(
         openviking_namespace=f"workflow/{run_id}",
         created_at="2026-05-03T12:00:00Z",
         updated_at="2026-05-03T12:00:00Z",
+    )
+
+
+def _write_minimal_worker_workspace(agents_root: Path, *, worker_id: str) -> None:
+    worker_root = agents_root / worker_id
+    (worker_root / "skills").mkdir(parents=True, exist_ok=True)
+    for name in ("AGENTS.md", "IDENTITY.md", "SKILLS.md"):
+        (worker_root / name).write_text(f"# {worker_id}\n", encoding="utf-8")
+    (worker_root / "skills" / "manifest.yaml").write_text(
+        "skills:\n  - path: claw-trade-stage/SKILL.md\n",
+        encoding="utf-8",
+    )
+    (worker_root / "STAGES.yaml").write_text(
+        "\n".join(
+            [
+                "worker: market_analyst",
+                "runtime: openclaw",
+                "stage: frontline",
+                "completion: openclaw_agent_turn",
+                "profiles:",
+                "  US:",
+                "    approved: true",
+                "    prompt: prompts/US.md",
+                "    tools:",
+                "      - us_market_data",
+                "    openviking_access: none",
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
 
 

@@ -509,6 +509,20 @@ def test_selection_data_refresh_wake_failed_result_raises_explicit_error() -> No
     )
 
 
+def test_selection_data_refresh_blocks_when_license_denied() -> None:
+    def deny() -> None:
+        raise PermissionError("设备授权已失效，请在授权页修复后重试。")
+
+    refresh = FakeSelectionRefreshRunner()
+    runner = ScheduledWorkRunner(selection_data_refresh_runner=refresh, data_refresh_permission_checker=deny)
+
+    with pytest.raises(ScheduledWorkRunnerError, match="设备授权已失效") as exc:
+        runner.handle_wake({"kind": "selection_data_refresh", "reason": "scheduled_data_refresh"})
+
+    assert exc.value.code == "LICENSE_BLOCKED"
+    assert refresh.reasons == []
+
+
 class FakeDataMaintenanceRunner:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -556,6 +570,20 @@ def test_data_maintenance_wake_dispatches_to_runner_with_payload_fields() -> Non
     ]
     assert response["status"] == "ok"
     assert response["maintenanceJobId"] == "job-crypto"
+
+
+def test_data_maintenance_blocks_when_license_denied() -> None:
+    def deny() -> None:
+        raise PermissionError("设备授权已失效，请在授权页修复后重试。")
+
+    maintenance = FakeDataMaintenanceRunner()
+    runner = ScheduledWorkRunner(data_maintenance_runner=maintenance, data_refresh_permission_checker=deny)
+
+    with pytest.raises(ScheduledWorkRunnerError, match="设备授权已失效") as exc:
+        runner.handle_wake({"kind": "data_maintenance", "market": "CN_A", "jobKind": "kline-refresh"})
+
+    assert exc.value.code == "LICENSE_BLOCKED"
+    assert maintenance.calls == []
 
 
 def test_data_maintenance_failures_preserve_error_code() -> None:

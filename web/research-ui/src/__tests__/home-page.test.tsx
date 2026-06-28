@@ -58,6 +58,7 @@ function mockWorkspaceFetch(
     workerChatResponse?: Promise<Response>;
     workerChatListFails?: boolean;
     workerChatWorkers?: typeof WORKERS;
+    licenseStatus?: Record<string, unknown> | (() => Record<string, unknown>);
     savedReports?: MockSavedReport[];
     deleteSavedReportResponses?: Record<string, MockDeleteSavedReportResponse>;
     deleteSavedReportFailures?: Record<string, Response | Error>;
@@ -188,6 +189,22 @@ function mockWorkspaceFetch(
           ? options.selectionRefreshSnapshot()
           : options.selectionRefreshSnapshot;
       return json(snapshot ?? { selectionProgress: null });
+    }
+
+    if (url.includes('/api/ui/get-license-status')) {
+      const status = typeof options.licenseStatus === 'function' ? options.licenseStatus() : options.licenseStatus;
+      return json(
+        status ?? {
+          status: 'activated',
+          allowsReportGeneration: true,
+          allowsDataRefresh: true,
+          expiresAt: null,
+          graceUntil: null,
+          deviceIdHash: null,
+          licenseSuffix: null,
+          message: '授权状态正常。',
+        },
+      );
     }
 
     if (url.includes('/api/ui/list-worker-chat-workers')) {
@@ -2593,6 +2610,41 @@ describe('home page', () => {
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
     expect(await screen.findByText('已取消本次创建。')).toBeInTheDocument();
     expect(mocked.getConfirmBodies().at(1)?.decision).toBe('cancel');
+  });
+
+  it('shows license status and disables report confirmation when license blocks report generation', async () => {
+    const mocked = mockWorkspaceFetch({
+      licenseStatus: {
+        status: 'revoked',
+        allowsReportGeneration: false,
+        allowsDataRefresh: false,
+        expiresAt: null,
+        graceUntil: null,
+        deviceIdHash: 'device-hash',
+        licenseSuffix: '1234',
+        message: '设备授权已失效，请在授权页修复后重试。',
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('license-status-banner')).toHaveTextContent('设备授权');
+    expect(screen.getByTestId('license-status-banner')).toHaveTextContent('报告不可用 · 数据刷新不可用 · 尾号 1234');
+
+    const input = await screen.findByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认' })).toBeDisabled();
+    expect(screen.getAllByText('设备授权已失效，请在授权页修复后重试。').length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(screen.getByRole('button', { name: '确认' }));
+    expect(mocked.getConfirmBodies()).toHaveLength(0);
   });
 
   it('shows local task-start feedback when confirm response has no messages', async () => {

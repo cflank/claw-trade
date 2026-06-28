@@ -121,16 +121,19 @@ function SelectionResultCard({
   selectionSubmittingKey,
   onConfirmSelectionCandidate,
   onOpenSelectionReport,
+  reportActionDisabledReason,
 }: {
   item: ChatMessageForUser;
   selectionSubmittingKey?: string | null;
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
   onOpenSelectionReport?: (item: ChatMessageForUser) => void;
+  reportActionDisabledReason?: string;
 }) {
   const safeText = selectionDisplayText(item.text);
   const workflowRunId = item.selection?.workflowRunId?.trim();
   const hasReport = Boolean(item.selection?.readerReportMarkdown?.trim());
   const confirmable = item.kind === 'selection_result' && workflowRunId ? parseConfirmableSelectionTickers(safeText) : [];
+  const reportActionBlocked = Boolean(reportActionDisabledReason);
   return (
     <section className={`ct-selection-card ${item.kind !== 'selection_result' ? 'is-unavailable' : ''}`}>
       <div className="ct-selection-markdown">
@@ -156,7 +159,8 @@ function SelectionResultCard({
                 type="button"
                 className="ct-button"
                 key={key}
-                disabled={busy}
+                disabled={busy || reportActionBlocked}
+                title={reportActionDisabledReason}
                 onClick={() => onConfirmSelectionCandidate?.(item, candidate.ticker)}
               >
                 {busy
@@ -168,6 +172,9 @@ function SelectionResultCard({
             );
           })}
         </div>
+      ) : null}
+      {confirmable.length && reportActionDisabledReason ? (
+        <p className="ct-inline-alert is-error">{reportActionDisabledReason}</p>
       ) : null}
     </section>
   );
@@ -190,6 +197,7 @@ function MessageBody({
   selectionSubmittingKey,
   onConfirmSelectionCandidate,
   onOpenSelectionReport,
+  reportActionDisabledReason,
 }: {
   item: ChatMessageForUser;
   card?: ConfirmationCard;
@@ -203,10 +211,12 @@ function MessageBody({
   onOpenReport?: (reportId: string) => void;
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
   onOpenSelectionReport?: (item: ChatMessageForUser) => void;
+  reportActionDisabledReason?: string;
 }) {
   if (item.kind === 'confirmation_card' && card) {
     const isBusy = cardSubmittingId === card.id;
     const canConfirm = card.status === 'active' && card.validationState !== 'mismatch';
+    const reportActionBlocked = Boolean(reportActionDisabledReason);
     return (
       <section className="ct-task-confirm ct-confirmation-card" data-testid={`confirmation-card-${card.id}`}>
         <h3 className="ct-task-confirm-title">{card.title}</h3>
@@ -264,7 +274,8 @@ function MessageBody({
           <button
             type="button"
             className="ct-button"
-            disabled={isBusy || !canConfirm}
+            disabled={isBusy || !canConfirm || reportActionBlocked}
+            title={reportActionDisabledReason}
             onClick={() => onConfirmCard?.(card)}
           >
             {isBusy ? '处理中' : '确认'}
@@ -278,6 +289,7 @@ function MessageBody({
             取消
           </button>
         </div>
+        {reportActionDisabledReason ? <p className="ct-inline-alert is-error">{reportActionDisabledReason}</p> : null}
       </section>
     );
   }
@@ -292,6 +304,7 @@ function MessageBody({
         selectionSubmittingKey={selectionSubmittingKey}
         onConfirmSelectionCandidate={onConfirmSelectionCandidate}
         onOpenSelectionReport={onOpenSelectionReport}
+        reportActionDisabledReason={reportActionDisabledReason}
       />
     );
   }
@@ -311,6 +324,7 @@ export function MessageStream({
   selectionSubmittingKey,
   onConfirmSelectionCandidate,
   onOpenSelectionReport,
+  reportActionDisabledReason,
 }: {
   items: ChatMessageForUser[];
   confirmationCards?: Record<string, ConfirmationCard>;
@@ -324,6 +338,7 @@ export function MessageStream({
   onOpenReport?: (reportId: string) => void;
   onConfirmSelectionCandidate?: (item: ChatMessageForUser, ticker: string) => Promise<void> | void;
   onOpenSelectionReport?: (item: ChatMessageForUser) => void;
+  reportActionDisabledReason?: string;
 }) {
   const streamRef = useRef<HTMLElement | null>(null);
   const lastMessageId = items.at(-1)?.messageId ?? '';
@@ -369,6 +384,7 @@ export function MessageStream({
             selectionSubmittingKey={selectionSubmittingKey}
             onConfirmSelectionCandidate={onConfirmSelectionCandidate}
             onOpenSelectionReport={onOpenSelectionReport}
+            reportActionDisabledReason={reportActionDisabledReason}
           />
         </article>
       ))}

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
+exec "${ROOT}/current/runtime/python/bin/python" -m claw_trade.cli.production_preflight --root "${ROOT}"

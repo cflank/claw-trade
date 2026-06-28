@@ -13,6 +13,7 @@ from claw_trade.artifacts.manifest import ApprovedManifest, ManifestStore
 from claw_trade.artifacts.openviking_client import OpenVikingReadResult
 from claw_trade.artifacts.refs import ApprovedMaterial
 from claw_trade.config.profiles import require_profile
+from claw_trade.config.runtime_assets import resolve_agents_root
 from claw_trade.config.tool_names import load_tool_registry
 from claw_trade.guards.artifact_flow import validate_artifact_flow
 from claw_trade.guards.common import (
@@ -194,7 +195,7 @@ class ControlRunner:
         self.tool_registry_probe = tool_registry_probe or _DefaultToolRegistryProbe()
         self.exporter = exporter
         self.now_text = now_text or _utc_now_iso_text
-        self.agents_root = agents_root or (Path(__file__).resolve().parents[3] / "agents")
+        self.agents_root = agents_root or resolve_agents_root()
         self.lineage_writer = lineage_writer
         self._legacy_provider_plan_injection_present = bool(legacy_kwargs)
         self._manifest_write_lock = Lock()
