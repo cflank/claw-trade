@@ -7,6 +7,7 @@ SHARED="${ROOT}/shared"
 PYTHON="${CURRENT}/runtime/python/bin/python"
 OPENCLAW="${CURRENT}/runtime/openclaw/openclaw.mjs"
 LOG_DIR="${SHARED}/logs"
+RUNTIME_ASSETS_ARCHIVE_DIR="${CURRENT}/runtime/assets"
 
 export OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
 export OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL:-${OPENVIKING_ENDPOINT}}"
@@ -16,10 +17,21 @@ export OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH:-${OPENVIKING_DA
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"
 export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
 export OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-${PYTHON}}"
+export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${OPENCLAW}}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}}"
+export OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
+export CLAW_TRADE_LLM_PROVIDER="${CLAW_TRADE_LLM_PROVIDER:-}"
+export CLAW_TRADE_LLM_MODEL="${CLAW_TRADE_LLM_MODEL:-${DEEPSEEK_MODEL:-}}"
+export DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+export QWEN_BASE_URL="${QWEN_BASE_URL:-${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}}"
+export CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
+export CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
+export CLAW_TRADE_RUNTIME_ASSETS_ROOT="${CLAW_TRADE_RUNTIME_ASSETS_ROOT:-${SHARED}/runtime-assets}"
+export CLAW_TRADE_AGENTS_ROOT="${CLAW_TRADE_AGENTS_ROOT:-${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/agents}"
+export CLAW_TRADE_OPENCLAW_PLUGINS_ROOT="${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT:-${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/openclaw_plugins}"
 
-mkdir -p "${LOG_DIR}" "$(dirname "${OPENVIKING_CONFIG_FILE}")" "${OPENVIKING_DATA_DIR}" "${OPENCLAW_STATE_DIR}"
+mkdir -p "${LOG_DIR}" "$(dirname "${OPENVIKING_CONFIG_FILE}")" "${OPENVIKING_DATA_DIR}" "${OPENCLAW_STATE_DIR}" "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"
 
 cleanup() {
   jobs -pr | xargs -r kill
@@ -39,6 +51,102 @@ wait_http_any() {
   done
   return 1
 }
+
+prepare_openviking_config() {
+  if [[ -f "${OPENVIKING_CONFIG_FILE}" ]]; then
+    return 0
+  fi
+  cat >"${OPENVIKING_CONFIG_FILE}" <<EOF
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 1933,
+    "cors_origins": ["*"]
+  },
+  "storage": {
+    "workspace": "${OPENVIKING_DATA_DIR}",
+    "agfs": { "backend": "local" },
+    "vectordb": { "backend": "local" }
+  },
+  "embedding": {
+    "dense": {
+      "provider": "openai",
+      "model": "claw-trade-report-no-vectorization",
+      "api_base": "http://127.0.0.1",
+      "dimension": 1024
+    },
+    "max_concurrent": 1,
+    "max_retries": 0
+  },
+  "log": {
+    "level": "INFO",
+    "output": "stdout"
+  }
+}
+EOF
+}
+
+prepare_runtime_assets() {
+  local agents_archive="${RUNTIME_ASSETS_ARCHIVE_DIR}/agents.tar"
+  local plugins_archive="${RUNTIME_ASSETS_ARCHIVE_DIR}/openclaw_plugins.tar"
+
+  if [[ ! -f "${agents_archive}" ]]; then
+    echo "runtime agents asset missing: ${agents_archive}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${plugins_archive}" ]]; then
+    echo "runtime OpenClaw plugins asset missing: ${plugins_archive}" >&2
+    exit 1
+  fi
+  if [[ -z "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}" || "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}" == "/" ]]; then
+    echo "unsafe CLAW_TRADE_RUNTIME_ASSETS_ROOT: ${CLAW_TRADE_RUNTIME_ASSETS_ROOT}" >&2
+    exit 1
+  fi
+  case "${CLAW_TRADE_AGENTS_ROOT}" in
+    "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/"*) ;;
+    *)
+      echo "unsafe CLAW_TRADE_AGENTS_ROOT outside runtime assets root: ${CLAW_TRADE_AGENTS_ROOT}" >&2
+      exit 1
+      ;;
+  esac
+  case "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}" in
+    "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/"*) ;;
+    *)
+      echo "unsafe CLAW_TRADE_OPENCLAW_PLUGINS_ROOT outside runtime assets root: ${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}" >&2
+      exit 1
+      ;;
+  esac
+
+  rm -rf "${CLAW_TRADE_AGENTS_ROOT}" "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}"
+  mkdir -p "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"
+  tar -C "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}" -xf "${agents_archive}"
+  tar -C "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}" -xf "${plugins_archive}"
+  mkdir -p "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party"
+  rm -rf "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party/openclaw"
+  ln -s "${CURRENT}/runtime/openclaw" "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party/openclaw"
+
+  if [[ ! -f "${CLAW_TRADE_AGENTS_ROOT}/market_analyst/AGENTS.md" ]]; then
+    echo "runtime agents asset extracted but market_analyst is missing" >&2
+    exit 1
+  fi
+  if [[ ! -f "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}/claw-trade-frontline-tools/index.js" ]]; then
+    echo "runtime OpenClaw plugins asset extracted but frontline plugin is missing" >&2
+    exit 1
+  fi
+}
+
+prepare_openclaw_config() {
+  "${PYTHON}" -m claw_trade.production.openclaw_config \
+    --config-path "${OPENCLAW_CONFIG_PATH}" \
+    --agents-root "${CLAW_TRADE_AGENTS_ROOT}" \
+    --plugins-root "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}" \
+    --gateway-token "${OPENCLAW_GATEWAY_TOKEN:-}" \
+    --llm-idle-timeout-seconds "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"
+}
+
+prepare_openviking_config
+prepare_runtime_assets
+prepare_openclaw_config
 
 "${PYTHON}" -m claw_trade.runtime.openviking_report_server \
   --config "${OPENVIKING_CONFIG_FILE}" \
@@ -60,6 +168,11 @@ fi
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}" \
+OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN}" \
+CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER}" \
+CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND}" \
+CLAW_TRADE_AGENTS_ROOT="${CLAW_TRADE_AGENTS_ROOT}" \
+CLAW_TRADE_OPENCLAW_PLUGINS_ROOT="${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}" \
 OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT}" \
 OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL}" \
 OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH}" \

@@ -12,6 +12,7 @@ from claw_trade.artifacts.refs import (
     make_material_target,
 )
 from claw_trade.config.profiles import ConfigError, require_profile
+from claw_trade.config.runtime_assets import resolve_agents_root
 from claw_trade.config.stage_policy import load_stage_policy, validate_stage_policy_matches_worker
 from claw_trade.config.tool_names import load_tool_registry, resolve_tools
 from claw_trade.config.workspace import validate_worker_workspace_for_control
@@ -25,10 +26,6 @@ from claw_trade.workflow.models import (
     WorkflowState,
 )
 from claw_trade.workflow.workers import worker_by_id
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_AGENTS_ROOT = _REPO_ROOT / "agents"
-
 
 @dataclass(frozen=True)
 class RequestBuildContext:
@@ -127,7 +124,8 @@ def build_request_context(
             reason=f"worker 阶段不匹配: {worker_id}/{stage.value}",
         )
 
-    workspace = validate_worker_workspace_for_control(_AGENTS_ROOT, worker_id)
+    agents_root = resolve_agents_root()
+    workspace = validate_worker_workspace_for_control(agents_root, worker_id)
     if not workspace.ok:
         return RequestBuildResult.failed(
             state=state,
@@ -138,7 +136,7 @@ def build_request_context(
             paths=workspace.missing_paths,
         )
 
-    policy_result = load_stage_policy(_AGENTS_ROOT, worker_id, profile.name)
+    policy_result = load_stage_policy(agents_root, worker_id, profile.name)
     if not policy_result.ok or policy_result.policy is None:
         return RequestBuildResult.failed(
             state=state,

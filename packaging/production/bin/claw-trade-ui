@@ -3,11 +3,26 @@ set -euo pipefail
 ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
 CURRENT="${ROOT}/current"
 SHARED="${ROOT}/shared"
+if [[ -f "${SHARED}/config/runtime.env" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "${SHARED}/config/runtime.env"
+  set +a
+fi
 export CLAW_TRADE_LICENSE_REQUIRED="${CLAW_TRADE_LICENSE_REQUIRED:-1}"
 export CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-${SHARED}/reports/runs}"
+export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
+export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${CURRENT}/runtime/openclaw/openclaw.mjs}"
+export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
+export CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
+export CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
+export CLAW_TRADE_RUNTIME_ASSETS_ROOT="${CLAW_TRADE_RUNTIME_ASSETS_ROOT:-${SHARED}/runtime-assets}"
+export CLAW_TRADE_AGENTS_ROOT="${CLAW_TRADE_AGENTS_ROOT:-${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/agents}"
+export CLAW_TRADE_OPENCLAW_PLUGINS_ROOT="${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT:-${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/openclaw_plugins}"
 exec "${CURRENT}/runtime/python/bin/python" -m claw_trade.web.app \
-  --host "${CLAW_TRADE_UI_HOST:-127.0.0.1}" \
+  --host "${CLAW_TRADE_UI_HOST:-0.0.0.0}" \
   --port "${CLAW_TRADE_UI_PORT:-5175}" \
   --frontend-dist "${CURRENT}/web/dist" \
-  --gateway-call-bin "${CURRENT}/runtime/openclaw/openclaw.mjs" \
-  --gateway-ws-url "${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
+  --gateway-call-bin "${OPENCLAW_GATEWAY_CALL_BIN}" \
+  --gateway-ws-url "${OPENCLAW_GATEWAY_URL}"

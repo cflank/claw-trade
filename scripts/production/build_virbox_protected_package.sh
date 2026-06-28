@@ -107,6 +107,6 @@ cp -a "${PROTECTED_PACKAGE}" "${SITE_PACKAGE}"
 rm -rf "${SITE_PACKAGE}.unprotected"
 
 tar -C "${STAGING_DIR}" -cf "${OUTPUT_ARCHIVE}" "claw-trade-${VERSION}"
-uv run python "${ROOT}/scripts/production/audit_production_package.py" "${OUTPUT_ARCHIVE}"
+"${AUDIT_PYTHON:-python3}" "${ROOT}/scripts/production/audit_production_package.py" "${OUTPUT_ARCHIVE}"
 sha256sum "${OUTPUT_ARCHIVE}" >"${OUTPUT_ARCHIVE}.sha256"
 echo "${OUTPUT_ARCHIVE}"
