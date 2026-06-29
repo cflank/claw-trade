@@ -25,16 +25,36 @@ function loadServerConfig() {
   }
   const cdpEndpoint = process.env.PLAYWRIGHT_WIN_CHROME_CDP_ENDPOINT;
   if (cdpEndpoint) {
+    const cdpTimeout = process.env.PLAYWRIGHT_WIN_CHROME_CDP_TIMEOUT_MS;
+    const args = server.args.map((arg) =>
+      typeof arg === "string" && arg.includes("--cdp-endpoint ")
+        ? arg.replace(/--cdp-endpoint\s+\S+/, `--cdp-endpoint ${cdpEndpoint}`)
+        : arg
+    );
+    if (cdpTimeout && !args.some((arg) => String(arg).includes("--cdp-timeout"))) {
+      const commandIndex = args.findIndex((arg) => typeof arg === "string" && arg.includes("@playwright/mcp"));
+      if (commandIndex >= 0) {
+        args[commandIndex] = `${args[commandIndex]} --cdp-timeout ${cdpTimeout}`;
+      }
+    }
+    const extraArgs = process.env.PLAYWRIGHT_WIN_CHROME_EXTRA_ARGS;
+    if (extraArgs) {
+      const commandIndex = args.findIndex((arg) => typeof arg === "string" && arg.includes("@playwright/mcp"));
+      if (commandIndex >= 0) {
+        args[commandIndex] = `${args[commandIndex]} ${extraArgs}`;
+      }
+    }
     return {
       ...server,
-      args: server.args.map((arg) =>
-        typeof arg === "string" && arg.includes("--cdp-endpoint ")
-          ? arg.replace(/--cdp-endpoint\s+\S+/, `--cdp-endpoint ${cdpEndpoint}`)
-          : arg
-      ),
+      args,
     };
   }
   return server;
+}
+
+function requestOptions() {
+  const timeout = Number.parseInt(process.env.PLAYWRIGHT_WIN_CHROME_REQUEST_TIMEOUT_MS || "", 10);
+  return Number.isFinite(timeout) && timeout > 0 ? { timeout } : undefined;
 }
 
 async function main() {
@@ -57,7 +77,7 @@ async function main() {
   await client.connect(transport);
   try {
     if (action === "list-tools") {
-      const result = await client.listTools();
+      const result = await client.listTools(undefined, requestOptions());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
@@ -69,7 +89,7 @@ async function main() {
         return;
       }
       const args = JSON.parse(rawArgs);
-      const result = await client.callTool({ name: toolName, arguments: args });
+      const result = await client.callTool({ name: toolName, arguments: args }, undefined, requestOptions());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
