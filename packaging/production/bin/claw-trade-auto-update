@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/runtime/python/bin/python}"
 
 export PYTHONPATH="${ROOT_DIR}/app/python:${ROOT_DIR}/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
 export CLAW_TRADE_PRODUCTION_PACKAGE=1

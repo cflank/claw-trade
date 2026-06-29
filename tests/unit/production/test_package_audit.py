@@ -100,6 +100,21 @@ def test_package_audit_rejects_missing_runtime_assets(tmp_path: Path) -> None:
     assert "runtime/assets/openclaw_plugins.tar" in result.missing_required
 
 
+def test_package_audit_requires_bundled_python(tmp_path: Path) -> None:
+    archive = _write_clean_archive(tmp_path)
+    payload = tmp_path / "payload"
+    with tarfile.open(archive) as source:
+        source.extractall(payload)
+    (payload / "claw-trade" / "runtime" / "python" / "bin" / "python").unlink()
+    with tarfile.open(archive, "w") as tar:
+        tar.add(payload / "claw-trade", arcname="claw-trade")
+
+    result = audit_archive(archive)
+
+    assert not result.ok
+    assert "runtime/python/bin/python" in result.missing_required
+
+
 def test_package_audit_rejects_top_level_plain_agent_assets(tmp_path: Path) -> None:
     archive = _write_archive(
         tmp_path,

@@ -102,6 +102,18 @@ def test_install_scripts_create_the_same_shared_dirs_under_default_root() -> Non
         assert expected_updates in text
 
 
+def test_factory_install_supports_license_key_file_activation() -> None:
+    factory_script = _read("scripts/production/install_factory_test_ubuntu.sh")
+
+    assert "--license-key-file" in factory_script
+    assert "license_key_file" in factory_script
+    assert "tr -d '[:space:]'" in factory_script
+    assert "/v1/license/bindLicenseKey?licenseKey=" in factory_script
+    assert "license key file not found" in factory_script
+    assert "Virbox local service not reachable" in factory_script
+    assert "cat \"${body_file}\"" not in factory_script
+
+
 def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> None:
     install_script = _read("scripts/production/install_production_package.sh")
     factory_script = _read("scripts/production/install_factory_test_ubuntu.sh")
@@ -347,6 +359,7 @@ def test_main_and_rescue_share_the_fixed_local_ui_port_contract() -> None:
 
     assert f'--host "${{CLAW_TRADE_UI_HOST:-{paths.RESCUE_BIND_HOST}}}"' in ui_bin
     assert f'--port "${{CLAW_TRADE_UI_PORT:-{paths.MAIN_UI_PORT}}}"' in ui_bin
+    assert 'PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/runtime/python/bin/python}"' in ui_bin
     assert f"User={paths.KIOSK_USER}" in kiosk_service
     assert f"Group={paths.KIOSK_GROUP}" in kiosk_service
     assert "ExecStart=/opt/claw-trade/current/bin/claw-trade-kiosk" in kiosk_service

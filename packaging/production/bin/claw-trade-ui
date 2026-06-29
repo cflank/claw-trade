@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3.12}"
+PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/runtime/python/bin/python}"
 SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-/opt/claw-trade/shared}"
 
 for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env"; do

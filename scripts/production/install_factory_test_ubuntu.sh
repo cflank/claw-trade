@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-package="${1:-}"
+package=""
+license_key_file=""
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bundle_root="$(cd "${script_dir}/.." && pwd)"
 install_root="${CLAW_TRADE_INSTALL_ROOT:-/opt/claw-trade}"
@@ -26,6 +27,36 @@ fail() {
 
 log() {
   printf '[INFO] %s\n' "$*"
+}
+
+usage() {
+  cat <<EOF
+Usage: $0 [claw-trade-production-*.tar.gz] [--license-key-file /path/to/license.key]
+EOF
+}
+
+parse_args() {
+  while (($#)); do
+    case "$1" in
+      --license-key-file)
+        [[ $# -ge 2 ]] || fail "missing value for --license-key-file"
+        license_key_file="$2"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --*)
+        fail "unknown option: $1"
+        ;;
+      *)
+        [[ -z "${package}" ]] || fail "unexpected argument: $1"
+        package="$1"
+        shift
+        ;;
+    esac
+  done
 }
 
 stop_ui() {
@@ -89,6 +120,48 @@ install_virbox_status_sdk() {
   [[ -f "${virbox_status_dir}/libslm_control.so" ]] && sudo chmod 0755 "${virbox_status_dir}/libslm_control.so"
   write_shared_env_var "CLAW_TRADE_VIRBOX_STATUS_COMMAND" "${virbox_status_command}"
   write_shared_env_var "VIRBOX_LICENSE_ID" "${virbox_license_id}"
+}
+
+url_encode() {
+  python3.12 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$1"
+}
+
+read_license_key_file() {
+  local path="$1"
+  [[ -f "${path}" ]] || fail "license key file not found: ${path}"
+  local license_key
+  license_key="$(tr -d '[:space:]' < "${path}")"
+  [[ -n "${license_key}" ]] || fail "license key file is empty: ${path}"
+  [[ "${license_key}" =~ ^[A-Za-z0-9-]+$ ]] || fail "license key file contains invalid characters: ${path}"
+  printf '%s' "${license_key}"
+}
+
+bind_virbox_license_key_file() {
+  [[ -n "${license_key_file}" ]] || return 0
+  local license_key suffix lcc_url encoded body_file status
+  license_key="$(read_license_key_file "${license_key_file}")"
+  suffix="${license_key: -4}"
+  lcc_url="${VIRBOX_LCC_URL:-http://127.0.0.1:12339}"
+  log "binding Virbox license key from file: ${license_key_file} (suffix: ${suffix})"
+
+  curl -fsS -X POST "${lcc_url}/v1/license/enumLicense" \
+    -H 'Content-Type: application/json' \
+    -d '{}' >/dev/null || fail "Virbox local service not reachable: ${lcc_url}"
+
+  encoded="$(url_encode "${license_key}")"
+  body_file="$(mktemp)"
+  if ! status="$(curl -sS -o "${body_file}" -w '%{http_code}' "${lcc_url}/v1/license/bindLicenseKey?licenseKey=${encoded}")"; then
+    rm -f "${body_file}"
+    fail "Virbox license bind request failed; key suffix: ${suffix}"
+  fi
+  rm -f "${body_file}"
+  [[ "${status}" == 2* ]] || fail "Virbox license bind failed HTTP ${status}; key suffix: ${suffix}"
+
+  if [[ -x "${virbox_status_command}" ]]; then
+    VIRBOX_LICENSE_ID="${virbox_license_id}" "${virbox_status_command}" >/dev/null \
+      || fail "Virbox status check failed after license bind; key suffix: ${suffix}"
+  fi
+  log "Virbox license bound (suffix: ${suffix})"
 }
 
 tail_log() {
@@ -172,6 +245,8 @@ elif new not in text:
 INNER_PY
 }
 
+parse_args "$@"
+
 if [[ -z "${package}" ]]; then
   shopt -s nullglob
   packages=(/tmp/claw-trade-production-*.tar.gz)
@@ -213,6 +288,7 @@ sudo chown root:root "${install_root}/releases"
 sudo chown -R root:root "${install_root}/releases/${top_dir}"
 sudo chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
 install_virbox_status_sdk
+bind_virbox_license_key_file
 
 "${install_root}/releases/${top_dir}/bin/claw-trade-preflight"
 tmp_current="${install_root}/.current.${top_dir}.$$"

@@ -45,6 +45,8 @@ require_path "third_party/openclaw/dist"
 require_path "third_party/openclaw/openclaw.mjs"
 require_path "third_party/openclaw/node_modules"
 require_path ".venv/lib/python3.12/site-packages"
+resolved_python_bin="$(command -v "${PYTHON_BIN}")"
+[[ -n "${resolved_python_bin}" ]] || fail "cannot resolve ${PYTHON_BIN}"
 
 rm -rf "${package_root}"
 mkdir -p \
@@ -92,6 +94,9 @@ if [[ -x .runtime/mongodb/current/bin/mongod ]]; then
 fi
 
 log "copying Python site-packages"
+mkdir -p "${package_root}/runtime/python/bin"
+cp -aL "${resolved_python_bin}" "${package_root}/runtime/python/bin/python"
+chmod 0755 "${package_root}/runtime/python/bin/python"
 cp -a .venv/lib/python3.12/site-packages "${package_root}/runtime/python-site-packages"
 rm -f "${package_root}"/runtime/python-site-packages/*claw_trade*.pth
 rm -rf "${package_root}/runtime/python-site-packages/claw_trade-0.1.0.dist-info"

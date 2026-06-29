@@ -13,6 +13,7 @@ from pathlib import Path
 REQUIRED_RELEASE_PATHS = {
     "bin/claw-trade-ui",
     "runtime/bin/claw-trade-control-runtime",
+    "runtime/python/bin/python",
     "runtime/openclaw/openclaw.mjs",
     "runtime/openclaw/node_modules/dotenv",
     "runtime/openclaw/node_modules/global-agent",
