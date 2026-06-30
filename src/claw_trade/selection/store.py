@@ -123,7 +123,10 @@ class SelectionRunStore:
 
     def save_data_run_record(self, record: SelectionDataRunRecord) -> None:
         existing = self._runs.get(record.run_plan.selection_run_id)
-        if existing is not None and existing.data_run.failure_code == "selection_refresh_cancelled":
+        if existing is not None and existing.data_run.failure_code in {
+            "selection_refresh_cancelled",
+            "selection_data_run_interrupted",
+        }:
             return
         if existing is not None and existing.data_run.status in {
             SelectionDataRunStatus.COMPLETED,
@@ -367,6 +370,7 @@ def _fail_interrupted_active_record(record: SelectionDataRunRecord) -> Selection
         feature_snapshot_ref=record.data_run.feature_snapshot_ref,
         data_gaps=record.data_run.data_gaps,
         started_at=record.data_run.started_at,
+        updated_at=failed_at,
         failed_at=failed_at,
         failure_code="selection_data_run_interrupted",
         failure_reason=(
@@ -613,13 +617,21 @@ def _iter_records_from_persisted_store_dir(persisted_runs_dir: Path) -> tuple[Se
         payload = _read_json_object(path)
         if payload is None:
             continue
-        record = _record_from_persisted_payload(payload)
+        try:
+            fallback_updated_at = _isoformat(datetime.fromtimestamp(path.stat().st_mtime, tz=UTC))
+        except OSError:
+            fallback_updated_at = None
+        record = _record_from_persisted_payload(payload, fallback_updated_at=fallback_updated_at)
         if record is not None:
             records.append(record)
     return tuple(records)
 
 
-def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataRunRecord | None:
+def _record_from_persisted_payload(
+    payload: Mapping[str, Any],
+    *,
+    fallback_updated_at: str | None = None,
+) -> SelectionDataRunRecord | None:
     try:
         run_plan_payload = _read_mapping(payload, "run_plan")
         data_run_payload = _read_mapping(payload, "data_run")
@@ -651,6 +663,7 @@ def _record_from_persisted_payload(payload: Mapping[str, Any]) -> SelectionDataR
             feature_snapshot_ref=_optional_text(data_run_payload.get("feature_snapshot_ref")),
             candidate_cache_ref=candidate_cache_ref,
             started_at=_optional_text(data_run_payload.get("started_at")),
+            updated_at=_optional_text(data_run_payload.get("updated_at")) or fallback_updated_at,
             completed_at=_optional_text(data_run_payload.get("completed_at")),
             failed_at=_optional_text(data_run_payload.get("failed_at")),
             failure_code=_optional_text(data_run_payload.get("failure_code")),
@@ -724,6 +737,7 @@ def _serialize_data_run_record(record: SelectionDataRunRecord) -> dict[str, Any]
                 else None
             ),
             "started_at": data_run.started_at,
+            "updated_at": data_run.updated_at,
             "completed_at": data_run.completed_at,
             "failed_at": data_run.failed_at,
             "failure_code": data_run.failure_code,

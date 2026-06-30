@@ -95,7 +95,11 @@ def translate_internal_error_for_user(error: Exception | str, *, category: str |
     code = public_code_for(normalized_category)
     if code not in _PUBLIC_ERROR_CODE_SET:
         code = "ASSISTANT_UNAVAILABLE"
-    message = _CODE_TO_MESSAGE.get(code, _CODE_TO_MESSAGE["ASSISTANT_UNAVAILABLE"])
+    message = _llm_runtime_message(raw_message, normalized_category)
+    if message is not None:
+        code = "ASSISTANT_UNAVAILABLE"
+    else:
+        message = _CODE_TO_MESSAGE.get(code, _CODE_TO_MESSAGE["ASSISTANT_UNAVAILABLE"])
     return UserFacingFailure(code=code, user_message=message)
 
 
@@ -154,3 +158,45 @@ def _infer_category(raw_message: str, category: str | None) -> str:
     if "conflict" in lowered:
         return "conflict"
     return "assistant_unavailable"
+
+
+def _llm_runtime_message(raw_message: str, category: str) -> str | None:
+    lowered = raw_message.lower()
+    llm_context = category in {
+        "assistant_unavailable",
+        "workflow_failed",
+        "openclaw_unavailable",
+        "openclaw_config_unavailable",
+        "openclaw_model_unavailable",
+        "openclaw_runtime",
+    } or any(
+        token in lowered
+        for token in (
+            "openclaw",
+            "llm",
+            "model",
+            "chat completion",
+            "completion",
+            "api key",
+            "insufficient_quota",
+            "billing",
+            "quota",
+            "rate_limit",
+            "rate limit",
+        )
+    )
+    if not llm_context:
+        return None
+    if "missing_credential" in lowered or "api key missing" in lowered or "missing api key" in lowered:
+        return "报告模型调用失败，请填写 API Key 后重新测试。"
+    if "invalid_expires" in lowered or ("expired" in lowered and ("api key" in lowered or "credential" in lowered)):
+        return "报告模型调用失败，API Key 已过期，请到设置更新后重新测试。"
+    if any(token in lowered for token in ("insufficient_quota", "billing", "quota", "balance", "credit", "payment_required", "402")):
+        return "报告模型调用失败，模型账户额度不足或计费异常，请到服务商后台处理后重新测试。"
+    if any(token in lowered for token in ("rate_limit", "rate limit", "too many requests", "429")):
+        return "报告模型调用失败，被服务商限流，请稍后重试或降低并发。"
+    if any(token in lowered for token in ("invalid_api_key", "invalid api key", "unauthorized", "authentication", "forbidden", "401", "403")):
+        return "报告模型调用失败，API Key 无效或无法认证，请到设置更新后重新测试。"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "报告模型调用超时，请稍后重试。"
+    return None

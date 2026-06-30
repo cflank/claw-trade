@@ -70,3 +70,31 @@ def test_final_report_structure_failure_in_stage_batch_is_not_reported_as_assist
 def test_translate_internal_error_for_user_can_infer_profile_unapproved() -> None:
     failure = translate_internal_error_for_user("HK strategy unapproved")
     assert failure.code == "PROFILE_STRATEGY_UNAPPROVED"
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (
+            "openclaw_runtime: provider returned insufficient_quota",
+            "报告模型调用失败，模型账户额度不足或计费异常，请到服务商后台处理后重新测试。",
+        ),
+        (
+            "openclaw_runtime: 429 rate limit exceeded",
+            "报告模型调用失败，被服务商限流，请稍后重试或降低并发。",
+        ),
+        (
+            "openclaw_runtime: API key expired",
+            "报告模型调用失败，API Key 已过期，请到设置更新后重新测试。",
+        ),
+        (
+            "openclaw_runtime: 401 unauthorized",
+            "报告模型调用失败，API Key 无效或无法认证，请到设置更新后重新测试。",
+        ),
+    ],
+)
+def test_llm_runtime_errors_are_translated_to_plain_messages(raw: str, message: str) -> None:
+    failure = translate_internal_error_for_user(raw)
+
+    assert failure.code == "ASSISTANT_UNAVAILABLE"
+    assert failure.user_message == message

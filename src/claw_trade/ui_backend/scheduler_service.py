@@ -139,6 +139,7 @@ class SchedulerService:
             workflow_settings=normalized_workflow_settings,
         )
         if existing is not None:
+            self._delete_collapsed_schedule_duplicates(existing)
             dto = to_scheduled_report_for_user(existing)
             payload = {"scheduledReport": dto}
             self._idempotency[request_id] = payload
@@ -183,6 +184,7 @@ class SchedulerService:
                 except Exception as exc:
                     raise UiServiceError("CRON_PROVISION_FAILED", "定时报告更新失败，OpenClaw cron 未配置成功。") from exc
             self._store.save_scheduled_report(nearby)
+            self._delete_collapsed_schedule_duplicates(nearby)
             dto = to_scheduled_report_for_user(nearby)
             payload = {
                 "scheduledReport": dto,
@@ -303,12 +305,9 @@ class SchedulerService:
         item = self._store.get_scheduled_report(scheduled_report_id)
         if item is None:
             raise UiServiceError("SCHEDULE_NOT_FOUND", "定时报告不存在。")
-        self._remove_cron_job(item)
-        item.state = "deleted"
-        item.next_run_at = None
-        item.updated_at = self._now_iso()
-        item.sync_error_message = None
-        self._store.save_scheduled_report(item)
+        targets = [other for other in self._ordered_visible_schedules() if self._schedules_collapse(item, other)] or [item]
+        for target in targets:
+            self._delete_schedule_item(target)
         payload = {"deleted": True, "scheduledReportId": item.id}
         self._idempotency[request_id] = payload
         return payload
@@ -571,6 +570,19 @@ class SchedulerService:
             if self._schedules_collapse(item, other) and (candidate is None or self._schedule_is_newer(other, candidate)):
                 candidate = other
         return candidate
+
+    def _delete_collapsed_schedule_duplicates(self, canonical: ScheduledReport) -> None:
+        for item in self._ordered_visible_schedules():
+            if item.id != canonical.id and self._schedules_collapse(canonical, item):
+                self._delete_schedule_item(item)
+
+    def _delete_schedule_item(self, item: ScheduledReport) -> None:
+        self._remove_cron_job(item)
+        item.state = "deleted"
+        item.next_run_at = None
+        item.updated_at = self._now_iso()
+        item.sync_error_message = None
+        self._store.save_scheduled_report(item)
 
     def _ordered_visible_schedules(self) -> list[ScheduledReport]:
         priority = {"active": 0, "due": 0, "enqueued": 0, "paused": 1}

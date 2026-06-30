@@ -970,6 +970,24 @@ body {
   margin-top: 8px;
 }
 
+.ct-dismissible-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ct-notice-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
 .ct-inline-alert {
   margin-top: 10px;
   border: 1px solid var(--ct-warning-border);

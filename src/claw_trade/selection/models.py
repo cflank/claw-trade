@@ -615,6 +615,7 @@ class SelectionDataRun:
     progress_completed: int | None = None
     progress_total: int | None = None
     started_at: str | None = None
+    updated_at: str | None = None
     completed_at: str | None = None
     failed_at: str | None = None
     failure_code: str | None = None
@@ -625,6 +626,8 @@ class SelectionDataRun:
         _require_enum("status", self.status, SelectionDataRunStatus)
         if self.started_at is not None:
             _require_iso_timestamp("started_at", self.started_at)
+        if self.updated_at is not None:
+            _require_iso_timestamp("updated_at", self.updated_at)
         if self.completed_at is not None:
             _require_iso_timestamp("completed_at", self.completed_at)
         if self.failed_at is not None:

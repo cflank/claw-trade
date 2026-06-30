@@ -157,6 +157,94 @@ def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> N
     assert progress["workflowRunId"] == "sel-refresh-active-1"
 
 
+def test_selection_refresh_service_marks_inactive_active_run_failed_and_allows_rerun() -> None:
+    store = SelectionRunStore()
+    run_calls: list[str] = []
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda plan: run_calls.append(plan.selection_run_id),  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 6, 4, 10, 20, tzinfo=UTC),
+        run_id_factory=lambda: "sel-refresh-rerun",
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=SelectionRunPlan(
+                selection_run_id="sel-refresh-stale",
+                market=SelectionMarket.CN_A,
+                profile=SelectionProfile.CN_A,
+                trade_date="2026-06-04",
+                lookback_trading_days=260,
+                universe_scope="all_a_shares",
+                data_need_audit_ref="plan://selection/cn_a/2026-06-04/batch-v1",
+                approved_strategy_config_ref="config://cn-a-selection-v1",
+                trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,
+            ),
+            data_run=SelectionDataRun(
+                selection_run_id="sel-refresh-stale",
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                lease_id="lease://sel-refresh-stale",
+                started_at="2026-06-04T09:58:00+00:00",
+                updated_at="2026-06-04T10:00:00+00:00",
+                progress_label="读取本地全市场历史日线",
+                progress_completed=1,
+                progress_total=1,
+            ),
+            manifest=None,
+        )
+    )
+
+    progress = service.latest_progress_for_user()["selectionProgress"]
+
+    assert isinstance(progress, dict)
+    assert progress["status"] == "failed"
+    assert progress["statusLabel"] == "补数据失败"
+    assert progress["workflowRunId"] == "sel-refresh-stale"
+    assert progress["workerStatusLabels"] == [
+        "失败原因：补数据任务超过 15 分钟没有进度写入；按中断任务处理。请重新发送 /select 启动新的补数据。"
+    ]
+    stale_record = store.load_data_run_record("sel-refresh-stale")
+    assert stale_record is not None
+    assert stale_record.data_run.status == SelectionDataRunStatus.FAILED
+    assert stale_record.data_run.failure_code == "selection_data_run_interrupted"
+    store.save_data_run_record(
+        replace(
+            stale_record,
+            data_run=replace(
+                stale_record.data_run,
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                updated_at="2026-06-04T10:21:00+00:00",
+                failed_at=None,
+                failure_code=None,
+                failure_reason=None,
+            ),
+        )
+    )
+    stale_record_after_late_update = store.load_data_run_record("sel-refresh-stale")
+    assert stale_record_after_late_update is not None
+    assert stale_record_after_late_update.data_run.status == SelectionDataRunStatus.FAILED
+    assert stale_record_after_late_update.data_run.failure_code == "selection_data_run_interrupted"
+    assert (
+        store.load_active_data_run_record(
+            market=SelectionMarket.CN_A,
+            profile=SelectionProfile.CN_A,
+            trade_date="2026-06-04",
+        )
+        is None
+    )
+
+    result = service.request_refresh(
+        request=_request(trade_date="2026-06-04"),
+        unavailable_code="no_completed_selection_run",
+        select_workflow_run_id="select-wf-rerun",
+    )
+
+    assert result.status == "started"
+    assert result.selection_run_id == "sel-refresh-rerun"
+
+
 def test_selection_refresh_service_cancel_hides_active_refresh_and_blocks_stale_updates() -> None:
     store = SelectionRunStore()
     service = SelectionDataRefreshService(

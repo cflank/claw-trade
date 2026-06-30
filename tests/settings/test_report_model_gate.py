@@ -248,13 +248,46 @@ def test_failed_model_test_returns_actionable_error_and_keeps_user_model(tmp_pat
     )
     assert tested["ok"] is False
     assert tested["error"]["code"] == "REPORT_MODEL_TEST_FAILED"
-    assert tested["userMessage"] == "报告模型连接测试失败，请检查 API Key 后重试。"
+    assert tested["userMessage"] == "报告模型认证失败，API Key 无效或无法认证，请到设置更新后重新测试。"
     assert gateway._probe_calls[-1]["provider"] == "deepseek"
     readiness = bridge.get_report_model_readiness()
     assert readiness.state == "failed"
     loaded = bridge.load_llm_settings()["draft"]
     assert loaded["defaultModel"] == "deepseek/deepseek-chat"
     assert loaded["reportModelStatus"]["state"] == "failed"
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        ("expired", "报告模型认证失败，API Key 已过期，请到设置更新后重新测试。"),
+        ("billing", "报告模型额度不足或账户计费异常，请到服务商后台处理后重新测试。"),
+        ("rate_limit", "报告模型请求被服务商限流，请稍后重试或降低并发。"),
+    ],
+)
+def test_model_probe_failure_messages_are_plain(tmp_path: Path, status: str, message: str) -> None:
+    gateway = _FakeGateway()
+    bridge = _bridge(tmp_path, gateway)
+    bridge.save_llm_config_via_openclaw(
+        draft={
+            "provider": "deepseek",
+            "defaultModel": "deepseek-chat",
+            "endpointUrl": "http://127.0.0.1:1",
+            "apiKeyReplacement": "sk-user-plain",
+        },
+        expected_settings_version="v_1",
+        request_id=f"req-save-{status}",
+    )
+    gateway.set_probe_result(status=status)
+
+    tested = bridge.test_llm_via_openclaw(
+        {"provider": "deepseek", "model": "deepseek-chat", "endpointUrl": "http://127.0.0.1:1"},
+        request_id=f"req-test-{status}",
+    )
+
+    assert tested["ok"] is False
+    assert tested["userMessage"] == message
+    assert bridge.get_report_model_status()["userMessage"] == message
 
 
 def test_ready_only_after_real_test_success(tmp_path: Path) -> None:

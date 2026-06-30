@@ -467,6 +467,18 @@ def test_parse_args_uses_runtime_gateway_token_when_env_is_missing(tmp_path: Pat
     assert args.gateway_token == "runtime-token"
 
 
+def test_parse_args_derives_dev_gateway_token_from_runtime_probe_id(tmp_path: Path, monkeypatch) -> None:
+    runtime_env = tmp_path / ".runtime" / "dev-services" / "runtime.env"
+    runtime_env.parent.mkdir(parents=True)
+    runtime_env.write_text("CLAW_TRADE_OPENVIKING_PROBE_RUN_ID=probe-20260630060419-27012\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENCLAW_GATEWAY_TOKEN", raising=False)
+
+    args = parse_args([])
+
+    assert args.gateway_token == "claw-trade-dev-probe-20260630060419-27012"
+
+
 def test_parse_args_does_not_read_runtime_gateway_token_in_production(tmp_path: Path, monkeypatch) -> None:
     runtime_env = tmp_path / ".runtime" / "dev-services" / "runtime.env"
     runtime_env.parent.mkdir(parents=True)
@@ -500,6 +512,32 @@ def test_selection_refresh_snapshot_falls_back_to_crypto_refresh_progress() -> N
     assert response.status_code == 200
     payload = json.loads(response.body)
     assert payload["selectionProgress"]["workflowRunId"] == "sel-auto-crypto-active"
+    assert refresh.calls == [
+        (None, None, None, False),
+        (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO, None, False),
+    ]
+
+
+def test_selection_refresh_snapshot_does_not_surface_terminal_refresh_failure() -> None:
+    refresh = _TerminalOnlyRefreshSnapshotProbe()
+    services = SimpleNamespace(
+        selection_controller=_SelectionControllerSnapshotProbe(),
+        selection_refresh_service=refresh,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/ui/get-selection-refresh-snapshot",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(ui_services=services)),
+        }
+    )
+
+    response = get_selection_refresh_snapshot(request)
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload == {"selectionProgress": None}
     assert refresh.calls == [
         (None, None, None, False),
         (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO, None, False),
@@ -995,6 +1033,30 @@ class _RefreshSnapshotProbe:
                 "selectionProgress": {
                     "kind": "data_refresh",
                     "workflowRunId": "sel-auto-crypto-active",
+                }
+            }
+        return {"selectionProgress": None}
+
+
+class _TerminalOnlyRefreshSnapshotProbe:
+    def __init__(self) -> None:
+        self.calls: list[tuple[SelectionMarket | None, SelectionProfile | None, str | None, bool]] = []
+
+    def latest_progress_for_user(
+        self,
+        *,
+        market: SelectionMarket | None = None,
+        profile: SelectionProfile | None = None,
+        trade_date: str | None = None,
+        include_terminal: bool = True,
+    ) -> dict[str, object]:
+        self.calls.append((market, profile, trade_date, include_terminal))
+        if include_terminal:
+            return {
+                "selectionProgress": {
+                    "kind": "data_refresh",
+                    "status": "failed",
+                    "workflowRunId": "old-auto-refresh-failed",
                 }
             }
         return {"selectionProgress": None}

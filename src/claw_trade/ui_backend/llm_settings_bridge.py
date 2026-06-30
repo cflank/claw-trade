@@ -294,6 +294,30 @@ class LlmSettingsBridge:
             "settingsVersion": _opaque_settings_version(config.get("revision")),
         }
 
+    def get_report_model_status(self) -> dict[str, Any]:
+        status = self._report_model_status_store.read()
+        runtime_config = self._report_model_config_store.read() if self._report_model_config_store is not None else {}
+        runtime_fields = _report_model_fields_from_runtime_config(runtime_config)
+        if not runtime_fields["configured"]:
+            if status.get("state") in {"ready", "failed", "saved_unverified"}:
+                return _report_model_status_payload(status)
+            return ReportModelReadiness(
+                state="unconfigured",
+                blocked=True,
+                ready=False,
+                user_message="请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。",
+                checked_at=_optional_str(status.get("checkedAt")),
+            ).to_user_payload()
+        if str(status.get("fingerprint") or "") == str(runtime_fields["fingerprint"] or ""):
+            return _report_model_status_payload(status)
+        return ReportModelReadiness(
+            state="saved_unverified",
+            blocked=True,
+            ready=False,
+            user_message="报告模型已保存但尚未测试通过，请先执行模型测试。",
+            checked_at=_optional_str(status.get("checkedAt") or status.get("savedAt")),
+        ).to_user_payload()
+
     def save_llm_config_via_openclaw(
         self,
         draft: Mapping[str, Any],
@@ -1071,6 +1095,63 @@ def _resolve_report_model_fields(
     }
 
 
+def _report_model_fields_from_runtime_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    provider = _optional_str(config.get("provider"))
+    model = _optional_str(config.get("model"))
+    endpoint = _optional_str(config.get("endpointUrl") or config.get("endpoint_url"))
+    api_key = _optional_str(config.get("apiKey") or config.get("api_key"))
+    configured = bool(provider and model and api_key)
+    fingerprint = _report_model_fingerprint(
+        provider=provider,
+        model=model,
+        endpoint_url=endpoint or "",
+        api_key=api_key,
+    )
+    return {
+        "provider": provider,
+        "model": model,
+        "endpoint_url": endpoint,
+        "api_key": api_key,
+        "configured": configured,
+        "fingerprint": fingerprint if configured else "",
+    }
+
+
+def _report_model_status_payload(status: Mapping[str, Any]) -> dict[str, Any]:
+    state = str(status.get("state") or "unconfigured")
+    if state == "ready":
+        return ReportModelReadiness(
+            state="ready",
+            blocked=False,
+            ready=True,
+            user_message="报告模型可用。",
+            checked_at=_optional_str(status.get("checkedAt")),
+        ).to_user_payload()
+    if state == "failed":
+        return ReportModelReadiness(
+            state="failed",
+            blocked=True,
+            ready=False,
+            user_message=_optional_str(status.get("lastErrorMessage")) or "报告模型连接测试失败，请检查配置后重试。",
+            checked_at=_optional_str(status.get("checkedAt")),
+        ).to_user_payload()
+    if state == "saved_unverified":
+        return ReportModelReadiness(
+            state="saved_unverified",
+            blocked=True,
+            ready=False,
+            user_message="报告模型已保存但尚未测试通过，请先执行模型测试。",
+            checked_at=_optional_str(status.get("checkedAt") or status.get("savedAt")),
+        ).to_user_payload()
+    return ReportModelReadiness(
+        state="unconfigured",
+        blocked=True,
+        ready=False,
+        user_message="请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。",
+        checked_at=_optional_str(status.get("checkedAt")),
+    ).to_user_payload()
+
+
 def _single_provider_id(config: Mapping[str, Any]) -> str | None:
     models = config.get("models")
     if not isinstance(models, Mapping):
@@ -1208,12 +1289,16 @@ def _probe_result_status(result: Mapping[str, Any] | None) -> str:
 
 def _probe_failure_user_message(result: Mapping[str, Any] | None) -> str:
     status = _probe_result_status(result)
-    if status in {"auth", "missing_credential", "expired", "invalid_expires", "unresolved_ref"}:
-        return "报告模型连接测试失败，请检查 API Key 后重试。"
+    if status == "missing_credential":
+        return "报告模型连接测试失败，请填写 API Key 后重新测试。"
+    if status in {"expired", "invalid_expires"}:
+        return "报告模型认证失败，API Key 已过期，请到设置更新后重新测试。"
+    if status in {"auth", "unresolved_ref"}:
+        return "报告模型认证失败，API Key 无效或无法认证，请到设置更新后重新测试。"
     if status == "rate_limit":
-        return "报告模型连接测试失败，当前触发频率限制，请稍后重试。"
+        return "报告模型请求被服务商限流，请稍后重试或降低并发。"
     if status == "billing":
-        return "报告模型连接测试失败，请检查账户额度或计费状态后重试。"
+        return "报告模型额度不足或账户计费异常，请到服务商后台处理后重新测试。"
     if status == "timeout":
         return "报告模型连接测试失败，请稍后重试（连接超时）。"
     if status in {"no_model", "excluded_by_auth_order"}:

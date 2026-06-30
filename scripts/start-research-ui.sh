@@ -14,6 +14,7 @@ RESEARCH_UI_LOG_DIR="${RESEARCH_UI_LOG_DIR:-${ROOT_DIR}/.runtime/dev-services/lo
 RESEARCH_UI_BACKEND_LOG="${RESEARCH_UI_BACKEND_LOG:-${RESEARCH_UI_LOG_DIR}/research-ui-backend.log}"
 RESEARCH_UI_READY_ENDPOINT="${RESEARCH_UI_READY_ENDPOINT:-/api/ui/get-report-queue-snapshot}"
 RESEARCH_UI_READY_TIMEOUT_SECONDS="${RESEARCH_UI_READY_TIMEOUT_SECONDS:-60}"
+OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT="${OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT:-${ROOT_DIR}/scripts/openclaw-gateway-rpc-helper.mjs}"
 CLAW_TRADE_UI_BACKEND_MODULE="${CLAW_TRADE_UI_BACKEND_MODULE:-claw_trade.web.app}"
 CLAW_TRADE_UI_BACKEND_COMMAND="${CLAW_TRADE_UI_BACKEND_COMMAND:-}"
 CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-}"
@@ -119,6 +120,29 @@ kill_pid_if_alive() {
     done
     kill -9 "${pid}" 2>/dev/null || true
   fi
+}
+
+clear_stale_openclaw_gateway_helpers() {
+  if [[ ! -f "${OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT}" ]]; then
+    return 0
+  fi
+
+  local helper_pids
+  helper_pids="$(ps -eo pid=,args= 2>/dev/null | awk -v helper="${OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT}" '
+    index($0, helper) > 0 && index($0, "node ") > 0 { print $1 }
+  ')"
+  if [[ -z "${helper_pids}" ]]; then
+    return 0
+  fi
+
+  local pid
+  while IFS= read -r pid; do
+    if [[ -z "${pid}" || "${pid}" == "$$" ]]; then
+      continue
+    fi
+    log_warn "清理旧 OpenClaw gateway helper：pid=${pid}"
+    kill_pid_if_alive "${pid}"
+  done <<< "${helper_pids}"
 }
 
 is_research_ui_backend_pid() {
@@ -278,6 +302,7 @@ cleanup_backend_on_exit() {
     kill "${started_backend_pid}" >/dev/null 2>&1 || true
     wait "${started_backend_pid}" >/dev/null 2>&1 || true
   fi
+  clear_stale_openclaw_gateway_helpers
 }
 
 run_backend_inside_runtime() {
@@ -327,6 +352,7 @@ run_main() {
   validate_backend_entry
   build_frontend_if_needed
   mkdir -p "${RESEARCH_UI_LOG_DIR}"
+  clear_stale_openclaw_gateway_helpers
 
   log_info "将通过 fixed runtime 启动 UI 全栈（OpenViking/OpenClaw/Mongo + UI 后端）"
   log_info "默认避开 5173；当前 UI 端口：${RESEARCH_UI_PORT}"

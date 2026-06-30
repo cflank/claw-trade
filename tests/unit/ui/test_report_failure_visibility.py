@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 
@@ -73,6 +74,38 @@ def test_export_asset_failure_is_visible_as_report_export_failure() -> None:
     assert "报告导出失败" in failed.failure.user_message
     snapshot = queue.get_report_queue_snapshot_for_user()
     assert snapshot["lastTerminalTask"]["failure"]["code"] == "REPORT_EXPORT_FAILED"
+
+
+@pytest.mark.parametrize(
+    ("reason", "message"),
+    [
+        (
+            "openclaw_runtime: provider returned insufficient_quota",
+            "报告模型调用失败，模型账户额度不足或计费异常，请到服务商后台处理后重新测试。",
+        ),
+        (
+            "openclaw_runtime: 429 rate limit exceeded",
+            "报告模型调用失败，被服务商限流，请稍后重试或降低并发。",
+        ),
+        (
+            "openclaw_runtime: API key expired",
+            "报告模型调用失败，API Key 已过期，请到设置更新后重新测试。",
+        ),
+    ],
+)
+def test_llm_runtime_failure_is_visible_as_plain_task_message(reason: str, message: str) -> None:
+    queue = ReportTaskQueue(ReportWorkflowBridge(_FakeRunner()))
+    payload = queue.enqueue_report_task(request_id=f"r-{reason}", task_input=_task_input(), source="manual")
+    task_id = payload["task"]["taskId"]
+
+    failed = queue.handle_report_failed(task_id, reason)
+
+    assert failed is not None
+    assert failed.failure is not None
+    assert failed.failure.code == "ASSISTANT_UNAVAILABLE"
+    assert failed.failure.user_message == message
+    snapshot = queue.get_report_queue_snapshot_for_user()
+    assert snapshot["lastTerminalTask"]["failure"]["message"] == message
 
 
 def test_final_report_structure_failure_is_visible_as_report_export_failure() -> None:

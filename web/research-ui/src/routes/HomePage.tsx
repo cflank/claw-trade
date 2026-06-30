@@ -8,7 +8,6 @@ import { InlineErrorState } from '../components/ErrorStates';
 import { HistoryRail } from '../components/HistoryRail';
 import { MessageStream } from '../components/MessageStream';
 import { RightRail } from '../components/RightRail';
-import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   cancelReportTask,
   cancelSelectionProgress,
@@ -24,13 +23,13 @@ import {
   getLicenseStatus,
   getReportChartEvidence,
   getReportDetail,
+  getReportModelStatus,
   getReportQueueSnapshot,
   getSelectionRefreshSnapshot,
   listPriceAlerts,
   listSavedReports,
   listScheduledReports,
   listWorkerChatWorkers,
-  loadLlmSettings,
   pausePriceAlert,
   pauseScheduledReport,
   resumePriceAlert,
@@ -49,8 +48,8 @@ import {
   type ChatMessageForUser,
   type ConfirmIntentDraftOutput,
   type LicenseStatusForUser,
-  type LlmConfigDraft,
   type ReportDetailForUser,
+  type ReportModelStatusForUser,
   type ReportQueueSnapshotForUser,
   type ReportTaskForUser,
   type SavedReportForUser,
@@ -85,27 +84,6 @@ const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
   queueLimit: 10,
   queuedCount: 0,
   isFull: false,
-};
-
-const DEFAULT_LLM_DRAFT: LlmConfigDraft = {
-  provider: 'deepseek',
-  defaultModel: '',
-  status: 'idle',
-  reportModelStatus: {
-    state: 'unconfigured',
-    blocked: true,
-    ready: false,
-    userMessage: '请先在设置中填写报告模型并完成测试。',
-    checkedAt: null,
-  },
-  embedding: {
-    provider: '',
-    model: '',
-    endpointUrl: '',
-    dimension: '',
-    apiKeyReplacement: '',
-    enabled: false,
-  },
 };
 
 const SELECTION_WORKER_LABELS = ['策略评审', '反方评审', '整合排序', '组合经理'];
@@ -460,10 +438,6 @@ function selectionSummarySnippet(text: string) {
   return line.replace(/^- /, '').slice(0, 80);
 }
 
-function modelStatusState(draft: LlmConfigDraft) {
-  return draft.reportModelStatus?.state ?? 'unconfigured';
-}
-
 function sanitizeModelFailureMessage(raw: string) {
   const message = raw.trim();
   if (!message) {
@@ -476,10 +450,12 @@ function sanitizeModelFailureMessage(raw: string) {
   return message;
 }
 
-function modelWarningMessage(draft: LlmConfigDraft) {
-  return sanitizeModelFailureMessage(
-    draft.reportModelStatus?.userMessage?.trim() || draft.lastTestMessage?.trim() || '请先在设置里配置报告模型并完成测试。',
-  );
+function isReportModelStatusState(state: unknown): state is ReportModelStatusForUser['state'] {
+  return state === 'ready' || state === 'unconfigured' || state === 'saved_unverified' || state === 'failed';
+}
+
+function modelWarningMessage(status: ReportModelStatusForUser) {
+  return sanitizeModelFailureMessage(status.userMessage?.trim() || '请先在设置里配置报告模型并完成测试。');
 }
 
 function readSummaryField(card: ConfirmationCard, label: string) {
@@ -539,7 +515,7 @@ export function HomePage() {
   const [reportForwardState, setReportForwardState] = useState<ReportForwardState>({});
   const [error, setError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
-  const [modelDraft, setModelDraft] = useState<LlmConfigDraft>(DEFAULT_LLM_DRAFT);
+  const [reportModelStatus, setReportModelStatus] = useState<ReportModelStatusForUser | null>(null);
   const consumedReportIdRef = useRef<string | null>(null);
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const channelRefreshInFlightRef = useRef(false);
@@ -643,13 +619,19 @@ export function HomePage() {
     setActiveSelectionDetail(null);
   }, []);
 
+  const refreshReportModelStatus = useCallback(async () => {
+    const status = await getReportModelStatus().catch(() => null);
+    if (status) {
+      setReportModelStatus(status);
+    }
+  }, []);
+
   const loadWorkspace = useCallback(async () => {
     setError('');
     try {
       const [
         historyResult,
         queueResult,
-        llmResult,
         normalChatResult,
         channelChatResult,
         selectionRefreshResult,
@@ -660,7 +642,6 @@ export function HomePage() {
       ] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
-        loadLlmSettings().catch(() => null),
         getChatSession(DEFAULT_CONTEXT.contextId).catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
@@ -692,9 +673,6 @@ export function HomePage() {
         applyChannelChatSnapshot(channelChatResult);
       }
       applySelectionRefreshSnapshot(selectionRefreshResult);
-      if (llmResult) {
-        setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
-      }
     } catch (loadError) {
       setError((loadError as Error).message);
     } finally {
@@ -717,6 +695,10 @@ export function HomePage() {
     void loadWorkspace();
   }, [loadWorkspace]);
 
+  useEffect(() => {
+    void refreshReportModelStatus();
+  }, [refreshReportModelStatus]);
+
   const refreshWorkspace = useCallback(async () => {
     const pendingAssistantReply = hasPendingAssistantReply(messages);
     if (document.hidden && !pendingAssistantReply) {
@@ -738,7 +720,6 @@ export function HomePage() {
       const [
         historyResult,
         queueResult,
-        llmResult,
         channelChatResult,
         selectionRefreshResult,
         licenseStatusResult,
@@ -748,7 +729,6 @@ export function HomePage() {
       ] = await Promise.all([
         listSavedReports(),
         getReportQueueSnapshot(),
-        loadLlmSettings().catch(() => null),
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
         getLicenseStatus().catch(() => null),
@@ -759,9 +739,6 @@ export function HomePage() {
       setSavedReports(historyResult.items);
       setScheduledReports(scheduledReportsResult.items);
       setPriceAlerts(priceAlertsResult.items);
-      if (llmResult) {
-        setModelDraft(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...llmResult.draft }));
-      }
       if (licenseStatusResult) {
         setLicenseStatus(licenseStatusResult);
       }
@@ -1618,11 +1595,14 @@ export function HomePage() {
   const readerTitle = activeDetail?.report.title ?? activeSelectionDetail?.title ?? '投研工作台';
   const contextLabel = activeDetail ? '报告阅读' : activeSelectionDetail ? '选股报告' : '聊天会话';
   const isReading = Boolean(activeDetail || activeSelectionDetail);
-  const modelState = modelStatusState(modelDraft);
-  const showModelWarning = !loading && !isReading && modelState !== 'ready';
+  const modelState = reportModelStatus?.state;
+  const showModelWarning = !loading && !isReading && isReportModelStatusState(modelState) && modelState !== 'ready';
   const modelWarningIsError = modelState === 'failed';
   const licenseReportBlockReason =
     licenseStatus?.allowsReportGeneration === false ? licenseStatus.message : undefined;
+  const showLicenseBanner = licenseStatus
+    ? !licenseStatus.allowsReportGeneration || !licenseStatus.allowsDataRefresh || licenseStatus.status !== 'activated'
+    : false;
   const licenseBannerTone = licenseStatus
     ? !licenseStatus.allowsReportGeneration || !licenseStatus.allowsDataRefresh
       ? 'is-error'
@@ -1698,8 +1678,20 @@ export function HomePage() {
           </section>
           {loading ? <div className="ct-notice">加载中...</div> : null}
           {error ? <InlineErrorState message={error} /> : null}
-          {actionMessage ? <div className="ct-notice" role="status">{actionMessage}</div> : null}
-          {licenseStatus ? (
+          {actionMessage ? (
+            <div className="ct-notice ct-dismissible-notice" role="status">
+              <span>{actionMessage}</span>
+              <button
+                type="button"
+                className="ct-notice-close"
+                aria-label="关闭任务提示"
+                onClick={() => setActionMessage('')}
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+          {showLicenseBanner && licenseStatus ? (
             <section
               className={`ct-license-status ${licenseBannerTone}`}
               data-testid="license-status-banner"
@@ -1716,7 +1708,7 @@ export function HomePage() {
               </span>
             </section>
           ) : null}
-          {showModelWarning ? (
+          {showModelWarning && reportModelStatus ? (
             <section
               className={`ct-model-warning${modelWarningIsError ? ' is-error' : ''}`}
               data-testid="llm-config-warning"
@@ -1725,7 +1717,7 @@ export function HomePage() {
             >
               <div>
                 <strong>报告模型还没配置成功</strong>
-                <p>{modelWarningMessage(modelDraft)}</p>
+                <p>{modelWarningMessage(reportModelStatus)}</p>
               </div>
               <a className="ct-button-link" href="/settings">
                 去设置模型

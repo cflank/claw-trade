@@ -26,6 +26,9 @@ from claw_trade.selection.scheduler import (
 from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
 
 
+_ACTIVE_DATA_RUN_STALE_AFTER = timedelta(minutes=15)
+
+
 @dataclass(frozen=True)
 class SelectionDataRefreshResult:
     status: str
@@ -108,6 +111,8 @@ class SelectionDataRefreshService:
                 profile=request.profile,
                 trade_date=trade_date,
             )
+            if active is not None and self._mark_stale_active_record_failed(active):
+                active = None
             if active is not None:
                 return SelectionDataRefreshResult(
                     status="already_running",
@@ -150,6 +155,7 @@ class SelectionDataRefreshService:
                         status=SelectionDataRunStatus.PLANNED,
                         lease_id=f"select-refresh://{select_workflow_run_id}",
                         started_at=self._now_fn().isoformat(),
+                        updated_at=self._now_fn().isoformat(),
                     ),
                     manifest=None,
                 )
@@ -232,11 +238,14 @@ class SelectionDataRefreshService:
                     trade_date=trade_date,
                     reason=reason,
                 )
-            if self._store.has_active_data_run(
+            active = self._store.load_active_data_run_record(
                 market=market,
                 profile=profile,
                 trade_date=trade_date,
-            ):
+            )
+            if active is not None and self._mark_stale_active_record_failed(active):
+                active = None
+            if active is not None:
                 return SelectionDataRefreshResult(
                     status="already_running",
                     selection_run_id=None,
@@ -277,6 +286,7 @@ class SelectionDataRefreshService:
                         status=SelectionDataRunStatus.PLANNED,
                         lease_id=f"auto-refresh://{reason}/{market.value}",
                         started_at=self._now_fn().isoformat(),
+                        updated_at=self._now_fn().isoformat(),
                     ),
                     manifest=None,
                 )
@@ -295,6 +305,7 @@ class SelectionDataRefreshService:
                         status=SelectionDataRunStatus.FAILED,
                         lease_id=f"auto-refresh://{reason}/{market.value}",
                         started_at=failed_at,
+                        updated_at=failed_at,
                         failed_at=failed_at,
                         failure_code="selection_auto_refresh_failed",
                         failure_reason=f"{type(exc).__name__}: {exc}",
@@ -337,6 +348,12 @@ class SelectionDataRefreshService:
                 record = self._store.load_latest_any_data_run_record(market=market, profile=profile)
             if record is None:
                 return {"selectionProgress": None}
+            if self._mark_stale_active_record_failed(record):
+                if not include_terminal:
+                    return {"selectionProgress": None}
+                record = self._store.load_latest_any_data_run_record(market=market, profile=profile)
+                if record is None:
+                    return {"selectionProgress": None}
             display_trade_date = self._canonical_trade_date_for_record(record)
             if (
                 record.data_run.status == SelectionDataRunStatus.FAILED
@@ -375,6 +392,16 @@ class SelectionDataRefreshService:
             )
         if record is None:
             return {"selectionProgress": None}
+        if self._mark_stale_active_record_failed(record):
+            if not include_terminal:
+                return {"selectionProgress": None}
+            record = self._store.load_latest_data_run_record(
+                market=market,
+                profile=profile,
+                trade_date=resolved_trade_date,
+            )
+            if record is None:
+                return {"selectionProgress": None}
         if self._has_valid_completed_run_for_record(record):
             return {"selectionProgress": None}
         return {"selectionProgress": _data_run_progress_for_user(record.data_run, trade_date=resolved_trade_date)}
@@ -393,6 +420,7 @@ class SelectionDataRefreshService:
             record.data_run,
             status=SelectionDataRunStatus.FAILED,
             failed_at=self._now_fn().isoformat(),
+            updated_at=self._now_fn().isoformat(),
             failure_code="selection_refresh_cancelled",
             failure_reason="用户取消了本次选股数据刷新。",
         )
@@ -456,6 +484,42 @@ class SelectionDataRefreshService:
             )
         return None
 
+    def _mark_stale_active_record_failed(self, record: SelectionDataRunRecord) -> bool:
+        if record.data_run.status not in {
+            SelectionDataRunStatus.PLANNED,
+            SelectionDataRunStatus.LEASE_PENDING,
+            SelectionDataRunStatus.RUNNING,
+            SelectionDataRunStatus.FETCHING_DATA,
+            SelectionDataRunStatus.NORMALIZING_INPUTS,
+            SelectionDataRunStatus.BUILDING_FEATURES,
+            SelectionDataRunStatus.FILTERING_AND_SCORING,
+            SelectionDataRunStatus.BUILDING_CANDIDATE_CACHE,
+            SelectionDataRunStatus.APPROVING_CANDIDATE_CACHE,
+        }:
+            return False
+        last_update = _parse_data_run_timestamp(record.data_run.updated_at)
+        if last_update is None:
+            return False
+        now = self._now_fn()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        if now.astimezone(UTC) - last_update <= _ACTIVE_DATA_RUN_STALE_AFTER:
+            return False
+        failed_at = now.isoformat()
+        failed = replace(
+            record.data_run,
+            status=SelectionDataRunStatus.FAILED,
+            updated_at=failed_at,
+            failed_at=failed_at,
+            failure_code="selection_data_run_interrupted",
+            failure_reason=(
+                "补数据任务超过 15 分钟没有进度写入；按中断任务处理。"
+                "请重新发送 /select 启动新的补数据。"
+            ),
+        )
+        self._store.save_data_run_record(replace(record, data_run=failed, manifest=None))
+        return True
+
     def _run_job_and_record_failure(self, plan: SelectionRunPlan) -> None:
         try:
             self._run_data_job(plan)
@@ -469,6 +533,7 @@ class SelectionDataRefreshService:
                         status=SelectionDataRunStatus.FAILED,
                         lease_id=f"lease://{plan.selection_run_id}",
                         started_at=failed_at,
+                        updated_at=failed_at,
                         failed_at=failed_at,
                         failure_code="selection_refresh_job_failed",
                         failure_reason=f"{type(exc).__name__}: {exc}",
@@ -506,6 +571,18 @@ def _to_shanghai(value: datetime) -> datetime:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(ZoneInfo("Asia/Shanghai"))
+
+
+def _parse_data_run_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 _DATA_RUN_STAGE_UI: dict[SelectionDataRunStatus, tuple[str, str, int]] = {

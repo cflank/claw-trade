@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from hashlib import sha1
 from pathlib import Path
 
 import pytest
@@ -259,6 +261,72 @@ def test_load_llm_settings_returns_unconfigured_draft_when_config_gateway_fails(
     assert payload["draft"]["defaultModel"] == "deepseek/deepseek-chat"
     assert payload["draft"]["reportModelStatus"]["state"] == "unconfigured"
     assert payload["draft"]["reportModelStatus"]["ready"] is False
+
+
+def test_get_report_model_status_does_not_call_openclaw_config(tmp_path: Path) -> None:
+    class _BrokenConfigClient(_FakeOpenClawLlmClient):
+        def config_get(self, *, paths):  # type: ignore[no-untyped-def]
+            _ = paths
+            raise AssertionError("must not call OpenClaw for home model status")
+
+    store = _FakeReportModelConfigStore()
+    store.payload = {
+        "provider": "deepseek",
+        "model": "deepseek/deepseek-chat",
+        "endpointUrl": "https://api.example",
+        "apiKey": "sk-test-1234",
+    }
+    fingerprint = sha1("deepseek|deepseek/deepseek-chat|https://api.example|sk-test-1234".encode("utf-8")).hexdigest()
+    (tmp_path / "report-model-status.json").write_text(
+        json.dumps(
+            {
+                "state": "ready",
+                "fingerprint": fingerprint,
+                "checkedAt": "2026-05-20T10:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    bridge = _bridge(_BrokenConfigClient(), tmp_path, report_model_config_store=store)
+
+    payload = bridge.get_report_model_status()
+
+    assert payload["state"] == "ready"
+    assert payload["ready"] is True
+
+
+def test_get_report_model_status_trusts_last_test_when_runtime_config_projection_is_empty(tmp_path: Path) -> None:
+    store = _FakeReportModelConfigStore()
+    (tmp_path / "report-model-status.json").write_text(
+        json.dumps({"state": "ready", "fingerprint": "last-known", "checkedAt": "2026-05-20T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path, report_model_config_store=store)
+
+    payload = bridge.get_report_model_status()
+
+    assert payload["state"] == "ready"
+    assert payload["ready"] is True
+
+
+def test_get_report_model_status_requires_matching_test_fingerprint(tmp_path: Path) -> None:
+    store = _FakeReportModelConfigStore()
+    store.payload = {
+        "provider": "deepseek",
+        "model": "deepseek/deepseek-chat",
+        "endpointUrl": "https://api.example",
+        "apiKey": "sk-new-key",
+    }
+    (tmp_path / "report-model-status.json").write_text(
+        json.dumps({"state": "ready", "fingerprint": "old", "checkedAt": "2026-05-20T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    bridge = _bridge(_FakeOpenClawLlmClient(), tmp_path, report_model_config_store=store)
+
+    payload = bridge.get_report_model_status()
+
+    assert payload["state"] == "saved_unverified"
+    assert payload["ready"] is False
 
 
 def test_load_llm_settings_reads_embedding_config_from_env_file(tmp_path: Path) -> None:

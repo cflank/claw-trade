@@ -142,6 +142,44 @@ def test_pause_resume_delete_scheduled_report_syncs_openclaw_cron_job() -> None:
     assert fake_gateway.calls[3]["params"] == {"jobId": "scheduled-report:schedule-1"}
 
 
+def test_delete_scheduled_report_deletes_collapsed_duplicates() -> None:
+    fake_gateway = _FakeCronGateway()
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=store,
+        now_provider=_fixed_now,
+    )
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    first = store.get_scheduled_report(created.scheduledReportId)
+    assert first is not None
+    store.save_scheduled_report(
+        replace(
+            first,
+            id="schedule-2",
+            openclaw_cron_job_id="scheduled-report:schedule-2",
+            created_at="2026-05-19T12:01:00Z",
+            updated_at="2026-05-19T12:01:00Z",
+        )
+    )
+
+    service.delete_scheduled_report(request_id="req-delete", scheduled_report_id="schedule-2")
+
+    assert store.get_scheduled_report("schedule-1").state == "deleted"
+    assert store.get_scheduled_report("schedule-2").state == "deleted"
+    assert [call for call in fake_gateway.calls if call["method"] == "cron.remove"] == [
+        {"method": "cron.remove", "params": {"jobId": "scheduled-report:schedule-1"}},
+        {"method": "cron.remove", "params": {"jobId": "scheduled-report:schedule-2"}},
+    ]
+
+
 def test_run_scheduled_report_now_uses_openclaw_cron_when_job_exists() -> None:
     enqueue_calls: list[tuple[dict[str, object], str]] = []
     fake_gateway = _FakeCronGateway()
@@ -386,6 +424,112 @@ def test_daily_scheduled_report_within_four_hours_replaces_existing_and_updates_
         "tz": "America/New_York",
         "staggerMs": 0,
     }
+
+
+def test_daily_scheduled_report_replacement_deletes_older_window_duplicates() -> None:
+    store = InMemoryScheduledWorkStore()
+    fake_gateway = _FakeCronGateway()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=store,
+        now_provider=_fixed_now,
+    )
+    first = service.create_scheduled_report(
+        request_id="req-first",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="23:59",
+    )
+    old = store.get_scheduled_report(first.scheduledReportId)
+    assert old is not None
+    store.save_scheduled_report(
+        replace(
+            old,
+            id="schedule-2",
+            openclaw_cron_job_id="scheduled-report:schedule-2",
+            created_at="2026-05-19T12:01:00Z",
+            updated_at="2026-05-19T12:01:00Z",
+        )
+    )
+
+    replaced = service.create_scheduled_report_for_user(
+        request_id="req-replace",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="23:58",
+    )
+
+    assert replaced["scheduledReport"].scheduledReportId == "schedule-2"
+    assert store.get_scheduled_report("schedule-1").state == "deleted"
+    kept = store.get_scheduled_report("schedule-2")
+    assert kept.state == "active"
+    assert kept.time_of_day == "23:58"
+    assert [item["scheduledReportId"] for item in service.list_scheduled_reports_for_user()["items"]] == ["schedule-2"]
+    assert [call for call in fake_gateway.calls if call["method"] in {"cron.update", "cron.remove"}] == [
+        {
+            "method": "cron.update",
+            "params": {
+                "jobId": "scheduled-report:schedule-2",
+                "name": "scheduled-report:schedule-2",
+                "schedule": {"kind": "cron", "expr": "58 23 * * *", "tz": "America/New_York", "staggerMs": 0},
+                "payload": {
+                    "kind": "toolCall",
+                    "toolName": "claw-trade-scheduled-work-wake",
+                    "input": {"kind": "scheduled_report", "scheduledReportId": "schedule-2", "cronRunId": "auto"},
+                },
+                "enabled": True,
+            },
+        },
+        {"method": "cron.remove", "params": {"jobId": "scheduled-report:schedule-1"}},
+    ]
+
+
+def test_exact_scheduled_report_create_deletes_older_duplicates() -> None:
+    store = InMemoryScheduledWorkStore()
+    fake_gateway = _FakeCronGateway()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=store,
+        now_provider=_fixed_now,
+    )
+    first = service.create_scheduled_report(
+        request_id="req-first",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    old = store.get_scheduled_report(first.scheduledReportId)
+    assert old is not None
+    store.save_scheduled_report(
+        replace(
+            old,
+            id="schedule-2",
+            openclaw_cron_job_id="scheduled-report:schedule-2",
+            created_at="2026-05-19T12:01:00Z",
+            updated_at="2026-05-19T12:01:00Z",
+        )
+    )
+
+    duplicate = service.create_scheduled_report(
+        request_id="req-duplicate",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    assert duplicate.scheduledReportId == "schedule-2"
+    assert store.get_scheduled_report("schedule-1").state == "deleted"
+    assert store.get_scheduled_report("schedule-2").state == "active"
+    assert [item["scheduledReportId"] for item in service.list_scheduled_reports_for_user()["items"]] == ["schedule-2"]
+    assert [call for call in fake_gateway.calls if call["method"] == "cron.remove"] == [
+        {"method": "cron.remove", "params": {"jobId": "scheduled-report:schedule-1"}}
+    ]
 
 
 def test_daily_scheduled_report_more_than_four_hours_apart_stays_separate() -> None:

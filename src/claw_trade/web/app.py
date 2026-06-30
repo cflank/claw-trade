@@ -197,7 +197,13 @@ def _default_gateway_token() -> str | None:
         return token
     if _production_mode_enabled():
         return None
-    return _runtime_env_value("OPENCLAW_GATEWAY_TOKEN")
+    token = _runtime_env_value("OPENCLAW_GATEWAY_TOKEN")
+    if token:
+        return token
+    probe_run_id = _runtime_env_value("CLAW_TRADE_OPENVIKING_PROBE_RUN_ID")
+    if probe_run_id:
+        return f"claw-trade-dev-{probe_run_id}"
+    return None
 
 
 def _production_mode_enabled() -> bool:

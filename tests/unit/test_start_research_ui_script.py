@@ -107,11 +107,16 @@ def test_start_research_ui_script_cleans_stale_project_backend_before_port_fallb
     text = _script_path().read_text(encoding="utf-8")
 
     assert "clear_stale_research_ui_port() {" in text
+    assert 'OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT="${OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT:-${ROOT_DIR}/scripts/openclaw-gateway-rpc-helper.mjs}"' in text
+    assert "clear_stale_openclaw_gateway_helpers() {" in text
+    assert 'awk -v helper="${OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT}"' in text
+    assert 'log_warn "清理旧 OpenClaw gateway helper：pid=${pid}"' in text
     assert '[[ "${cmd}" == *"-m ${CLAW_TRADE_UI_BACKEND_MODULE}"* ]]' in text
     assert '[[ "${cmd}" == *"--frontend-dist ${RESEARCH_UI_FRONTEND_DIST}"* ]]' in text
     assert 'log_warn "清理旧 Research UI 后端：pid=${pid} port=${port}"' in text
     assert 'clear_stale_research_ui_port "${RESEARCH_UI_PORT}"' in text
     assert 'clear_stale_research_ui_port "${candidate}"' in text
+    assert 'clear_stale_openclaw_gateway_helpers' in text
 
     clear_index = text.index('clear_stale_research_ui_port "${candidate}"')
     probe_index = text.index('if ! port_in_use_for "${candidate}"; then')

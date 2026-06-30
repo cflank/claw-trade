@@ -453,15 +453,7 @@ def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
         )
         if crypto_refresh_snapshot.get("selectionProgress"):
             return _success_response(crypto_refresh_snapshot)
-        refresh_snapshot = services.selection_refresh_service.latest_progress_for_user()
-        if refresh_snapshot.get("selectionProgress"):
-            return _success_response(refresh_snapshot)
-        return _success_response(
-            services.selection_refresh_service.latest_progress_for_user(
-                market=SelectionMarket.CRYPTO,
-                profile=SelectionProfile.CRYPTO,
-            )
-        )
+        return _success_response({"selectionProgress": None})
     except Exception as exc:
         return _exception_response(exc)
 
@@ -920,6 +912,15 @@ def load_llm_settings(request: Request, provider: str | None = Query(default=Non
     services = _services(request)
     try:
         return _success_response(services.llm_bridge.load_llm_settings(provider=provider))
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/get-report-model-status")
+def get_report_model_status(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(services.llm_bridge.get_report_model_status())
     except Exception as exc:
         return _exception_response(exc)
 

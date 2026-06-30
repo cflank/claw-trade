@@ -287,6 +287,7 @@ class SelectionDataJob:
                 candidate_cache_ref=approved_cache.candidate_cache_ref,
                 data_gaps=tuple(all_data_gaps),
                 started_at=self._started_at_for(plan, fallback=completed_at),
+                updated_at=completed_at,
                 completed_at=completed_at,
             )
             record = SelectionDataRunRecord(
@@ -338,6 +339,7 @@ class SelectionDataJob:
                     feature_snapshot_ref=feature_snapshot.feature_snapshot_ref if feature_snapshot else None,
                     data_gaps=tuple(all_data_gaps),
                     started_at=self._started_at_for(plan, fallback=completed_at),
+                    updated_at=completed_at,
                     completed_at=completed_at,
                 )
                 record = SelectionDataRunRecord(
@@ -383,6 +385,7 @@ class SelectionDataJob:
                 feature_snapshot_ref=feature_snapshot.feature_snapshot_ref if feature_snapshot else None,
                 data_gaps=tuple(all_data_gaps),
                 started_at=self._started_at_for(plan, fallback=failed_at),
+                updated_at=failed_at,
                 failed_at=failed_at,
                 failure_code=exc.code,
                 failure_reason=exc.reason,
@@ -438,6 +441,7 @@ class SelectionDataJob:
             status=status,
             lease_id=lease_id,
             started_at=started_at,
+            updated_at=_isoformat(self._now_fn()),
             progress_label=progress_label,
             progress_completed=progress_completed,
             progress_total=progress_total,

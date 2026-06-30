@@ -60,10 +60,14 @@ function mockWorkspaceFetch(
     workerChatWorkers?: typeof WORKERS;
     licenseStatus?: Record<string, unknown> | (() => Record<string, unknown>);
     savedReports?: MockSavedReport[];
+    priceAlerts?: Array<Record<string, unknown>>;
     deleteSavedReportResponses?: Record<string, MockDeleteSavedReportResponse>;
     deleteSavedReportFailures?: Record<string, Response | Error>;
     channelStatus?: Record<string, unknown>;
     sendReportFileResponse?: Promise<Response>;
+    runPriceAlertResponse?: Promise<Response>;
+    llmSettingsResponse?: Promise<Response>;
+    reportModelStatusResponse?: Promise<Response>;
   } = {},
 ) {
   const originalFetch = globalThis.fetch;
@@ -128,7 +132,23 @@ function mockWorkspaceFetch(
       );
     }
 
+    if (url.includes('/api/ui/get-report-model-status')) {
+      if (options.reportModelStatusResponse) {
+        return options.reportModelStatusResponse;
+      }
+      return json({
+        state: 'ready',
+        blocked: false,
+        ready: true,
+        userMessage: '报告模型可用。',
+        checkedAt: '2026-05-20T10:00:00Z',
+      });
+    }
+
     if (url.includes('/api/ui/load-llm-settings')) {
+      if (options.llmSettingsResponse) {
+        return options.llmSettingsResponse;
+      }
       return json({
         draft: {
           provider: 'deepseek',
@@ -391,6 +411,32 @@ function mockWorkspaceFetch(
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       sendReportFileBodies.push(body);
       return options.sendReportFileResponse ?? json({ sent: true, messageId: 'msg-1', userMessage: '完整报告已发送。' });
+    }
+
+    if (url.includes('/api/ui/list-scheduled-reports')) {
+      return json({ items: [] });
+    }
+
+    if (url.includes('/api/ui/list-price-alerts')) {
+      return json({ items: options.priceAlerts ?? [] });
+    }
+
+    if (url.includes('/api/ui/run-price-alert-now') && init?.method === 'POST') {
+      if (options.runPriceAlertResponse) {
+        return options.runPriceAlertResponse;
+      }
+      return json({
+        alert: options.priceAlerts?.[0] ?? {
+          priceAlertId: 'alert-1',
+          instrumentCode: 'BTC',
+          market: 'CRYPTO',
+          condition: { type: 'price_threshold', operator: 'above', value: 70000 },
+          notification: { channel: 'wechat_clawbot', enabled: true },
+          state: 'active',
+        },
+        triggered: false,
+        message: '已检查价格提醒。',
+      });
     }
 
     if (url.includes('/api/ui/send-worker-chat') && init?.method === 'POST') {
@@ -731,6 +777,36 @@ describe('home page', () => {
     expect(screen.getByText(/投资辩论中/)).toBeInTheDocument();
     expect(screen.getByText('多头研究员')).toBeInTheDocument();
     expect(screen.getByText('多头研究员：执行中')).toBeInTheDocument();
+    expect(screen.queryByTestId('license-status-banner')).not.toBeInTheDocument();
+  });
+
+  it('lets users dismiss task action messages', async () => {
+    const mocked = mockWorkspaceFetch({
+      priceAlerts: [
+        {
+          priceAlertId: 'alert-1',
+          instrumentCode: 'BTC',
+          market: 'CRYPTO',
+          condition: { type: 'price_threshold', operator: 'above', value: 70000 },
+          notification: { channel: 'wechat_clawbot', enabled: true },
+          state: 'active',
+          lastCheckedAt: '2026-05-19T10:00:00.000Z',
+        },
+      ],
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '立即检查' }));
+
+    expect(await screen.findByText('已检查价格提醒。')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭任务提示' }));
+    expect(screen.queryByText('已检查价格提醒。')).not.toBeInTheDocument();
   });
 
   it('restores normal chat messages when the workspace remounts', async () => {
@@ -984,24 +1060,13 @@ describe('home page', () => {
           canSendFile: false,
         });
       }
-      if (url.includes('/api/ui/load-llm-settings')) {
+      if (url.includes('/api/ui/get-report-model-status')) {
         return json({
-          draft: {
-            provider: 'deepseek',
-            apiKeyMasked: null,
-            endpointUrl: '',
-            defaultModel: '',
-            status: 'idle',
-            reportModelStatus: {
-              state: 'unconfigured',
-              blocked: true,
-              ready: false,
-              userMessage: '请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。',
-              checkedAt: null,
-            },
-          },
-          schemaVersion: 'v1',
-          settingsVersion: 's1',
+          state: 'unconfigured',
+          blocked: true,
+          ready: false,
+          userMessage: '请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。',
+          checkedAt: null,
         });
       }
       return json({});
@@ -1038,10 +1103,27 @@ describe('home page', () => {
     expect(pageText).not.toContain('/runs/');
   });
 
-  it('refreshes report model status after the startup settings load fails', async () => {
+  it('does not block the chat screen on slow model settings', async () => {
+    const mocked = mockWorkspaceFetch({
+      reportModelStatusResponse: new Promise<Response>(() => undefined),
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('message-stream')).toBeInTheDocument();
+    expect(await screen.findByLabelText('输入消息')).toBeInTheDocument();
+    expect(screen.queryByText('加载中...')).not.toBeInTheDocument();
+  });
+
+  it('does not refresh report model status from the workspace timer', async () => {
     const originalFetch = globalThis.fetch;
     const intervalCallbacks: Array<() => void> = [];
-    let llmCalls = 0;
+    let statusCalls = 0;
     restoreList.push(() => {
       globalThis.fetch = originalFetch;
     });
@@ -1054,31 +1136,14 @@ describe('home page', () => {
     vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('/api/ui/load-llm-settings')) {
-        llmCalls += 1;
-        if (llmCalls === 1) {
-          return new Response(JSON.stringify({ message: 'gateway warming up' }), {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
+      if (url.includes('/api/ui/get-report-model-status')) {
+        statusCalls += 1;
         return json({
-          draft: {
-            provider: 'deepseek',
-            apiKeyMasked: 'sk-****',
-            endpointUrl: 'https://api.example.com',
-            defaultModel: 'deepseek-chat',
-            status: 'saved',
-            reportModelStatus: {
-              state: 'ready',
-              blocked: false,
-              ready: true,
-              userMessage: '报告模型可用。',
-              checkedAt: '2026-05-20T10:00:00Z',
-            },
-          },
-          schemaVersion: 'v1',
-          settingsVersion: 's1',
+          state: 'unconfigured',
+          blocked: true,
+          ready: false,
+          userMessage: '请先在设置中填写报告模型（服务商、模型、API Key），并完成测试。',
+          checkedAt: null,
         });
       }
       if (url.includes('/api/ui/list-saved-reports')) {
@@ -1123,14 +1188,14 @@ describe('home page', () => {
     );
 
     expect(await screen.findByTestId('llm-config-warning')).toBeInTheDocument();
-    expect(llmCalls).toBe(1);
+    expect(statusCalls).toBe(1);
 
     await act(async () => {
       intervalCallbacks.at(0)?.();
     });
 
-    await waitFor(() => expect(screen.queryByTestId('llm-config-warning')).not.toBeInTheDocument());
-    expect(llmCalls).toBeGreaterThan(1);
+    expect(screen.getByTestId('llm-config-warning')).toBeInTheDocument();
+    expect(statusCalls).toBe(1);
   });
 
   it('refreshes wechat status from the workspace timer without requesting qr login', async () => {

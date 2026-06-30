@@ -42,6 +42,7 @@ import type {
   PriceAlertForUser,
   PriceAlertInput,
   ReportDetailForUser,
+  ReportModelStatusForUser,
   ReportQueueSnapshotForUser,
   ResetSettingsToDefaultsInput,
   ResetSettingsToDefaultsOutput,
@@ -308,6 +309,10 @@ export function getChannelChatSnapshot() {
 
 export function loadLlmSettings() {
   return requestJson<LoadLlmSettingsOutput>('/api/ui/load-llm-settings');
+}
+
+export function getReportModelStatus() {
+  return requestJson<ReportModelStatusForUser>('/api/ui/get-report-model-status');
 }
 
 export function getReportCleanupSettings() {
