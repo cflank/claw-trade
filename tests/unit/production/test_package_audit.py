@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tarfile
+import shutil
 from pathlib import Path
 
 from scripts.production.audit_production_package import (
@@ -8,6 +9,7 @@ from scripts.production.audit_production_package import (
     REQUIRED_PLUGIN_ASSET_PATHS,
     REQUIRED_RELEASE_PATHS,
     audit_archive,
+    main,
 )
 
 
@@ -42,6 +44,8 @@ def _write_clean_archive(tmp_path: Path) -> Path:
 
 def _write_nested_tar(path: Path, names: list[str]) -> None:
     source = path.parent / f"{path.stem}-source"
+    if source.exists():
+        shutil.rmtree(source)
     for name in names:
         file_path = source / name
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +102,31 @@ def test_package_audit_rejects_missing_runtime_assets(tmp_path: Path) -> None:
     assert not result.ok
     assert "runtime/assets/agents.tar" in result.missing_required
     assert "runtime/assets/openclaw_plugins.tar" in result.missing_required
+
+
+def test_package_audit_rejects_missing_bundled_weixin_plugin(tmp_path: Path) -> None:
+    archive = _write_clean_archive(tmp_path)
+    payload = tmp_path / "payload"
+    with tarfile.open(archive) as source:
+        source.extractall(payload)
+    plugins_tar = payload / "claw-trade" / "runtime" / "assets" / "openclaw_plugins.tar"
+    _write_nested_tar(
+        plugins_tar,
+        sorted(REQUIRED_PLUGIN_ASSET_PATHS - {"openclaw_plugins/node_modules/@tencent-weixin/openclaw-weixin/openclaw.plugin.json"}),
+    )
+    with tarfile.open(archive, "w") as tar:
+        tar.add(payload / "claw-trade", arcname="claw-trade")
+
+    result = audit_archive(archive)
+
+    assert not result.ok
+    assert any("openclaw-weixin/openclaw.plugin.json" in item for item in result.invalid_assets)
+
+
+def test_package_audit_cli_rejects_missing_bundled_weixin_plugin(tmp_path: Path) -> None:
+    archive = _write_archive(tmp_path, sorted(REQUIRED_RELEASE_PATHS))
+
+    assert main([str(archive)]) == 1
 
 
 def test_package_audit_requires_bundled_python(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ from pathlib import Path
 
 REQUIRED_RELEASE_PATHS = {
     "bin/claw-trade-ui",
-    "runtime/bin/claw-trade-control-runtime",
+    "runtime/claw-trade-control-runtime",
     "runtime/python/bin/python",
     "runtime/openclaw/openclaw.mjs",
     "runtime/openclaw/node_modules/dotenv",
@@ -35,6 +35,10 @@ REQUIRED_PLUGIN_ASSET_PATHS = {
     "openclaw_plugins/claw-trade-frontline-tools/index.js",
     "openclaw_plugins/claw-trade-selection-tools/index.js",
     "openclaw_plugins/claw-trade-scheduled-work-tools/index.js",
+    "openclaw_plugins/node_modules/@tencent-weixin/openclaw-weixin/openclaw.plugin.json",
+    "openclaw_plugins/node_modules/@tencent-weixin/openclaw-weixin/dist/index.js",
+    "openclaw_plugins/node_modules/qrcode-terminal/package.json",
+    "openclaw_plugins/node_modules/zod/package.json",
 }
 
 FORBIDDEN_TOP_LEVEL = {"tests", "docs", "memory"}
@@ -136,6 +140,12 @@ def _find_release_member(archive: tarfile.TarFile, release_name: str) -> str | N
 
 def _nested_asset_forbidden(name: str) -> bool:
     parts = set(name.strip("/").split("/"))
+    if name == "openclaw_plugins/node_modules" or name.startswith("openclaw_plugins/node_modules/"):
+        if ".git" in parts:
+            return True
+        if name.endswith(".env.local") or name.endswith(".pyc") or name.endswith("prompt-review.yaml"):
+            return True
+        return False
     if parts & {".git", "tests", "docs", "__pycache__"}:
         return True
     if name.endswith(".env.local") or name.endswith(".pyc") or name.endswith("prompt-review.yaml"):
@@ -151,9 +161,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     path = args.path
+    archive_result: AuditResult | None = None
     if path.is_dir():
         names = [p.relative_to(path).as_posix() for p in path.rglob("*")]
     elif tarfile.is_tarfile(path):
+        archive_result = audit_archive(path)
         with tarfile.open(path) as archive:
             names = [_release_relative_name(name.strip("/")) for name in archive.getnames()]
     else:
@@ -181,6 +193,11 @@ def main(argv: list[str] | None = None) -> int:
             failures.append(f"forbidden frontend source: {name}")
         if name.startswith("app/python/claw_trade/") and name.endswith(".py"):
             failures.append(f"forbidden claw_trade source: {name}")
+
+    if archive_result is not None:
+        failures.extend(f"forbidden archive path: {item}" for item in archive_result.forbidden_hits)
+        failures.extend(f"missing required path: {item}" for item in archive_result.missing_required)
+        failures.extend(f"invalid runtime asset: {item}" for item in archive_result.invalid_assets)
 
     if failures:
         for failure in failures[:100]:

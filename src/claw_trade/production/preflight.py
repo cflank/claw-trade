@@ -23,7 +23,7 @@ def run_preflight(paths: ProductionPaths) -> PreflightResult:
     _require_dir(paths.current, "current_missing", failures)
     _require_dir(paths.current / "bin", "bin_missing", failures)
     _require_file(paths.current / "web" / "dist" / "index.html", "frontend_dist_missing", failures)
-    _require_file(paths.current / "runtime" / "bin" / "claw-trade-control-runtime", "control_runtime_missing", failures)
+    _require_file(paths.current / "runtime" / "claw-trade-control-runtime", "control_runtime_missing", failures)
     _require_file(paths.current / "runtime" / "openclaw" / "openclaw.mjs", "openclaw_launcher_missing", failures)
     _require_dir(paths.current / "runtime" / "openclaw" / "dist", "openclaw_dist_missing", failures)
     _require_file(paths.current / "runtime" / "assets" / "agents.tar", "agents_asset_missing", failures)

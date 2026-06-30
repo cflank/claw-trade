@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from claw_trade.production.openclaw_config import PLUGIN_IDS, WORKER_IDS, prepare_openclaw_config
+from claw_trade.production.openclaw_config import (
+    PLUGIN_IDS,
+    WEIXIN_PLUGIN_LOAD_PATH,
+    WORKER_IDS,
+    prepare_openclaw_config,
+)
 
 
 def test_prepare_openclaw_config_uses_runtime_asset_paths(tmp_path: Path) -> None:
@@ -26,6 +31,7 @@ def test_prepare_openclaw_config_uses_runtime_asset_paths(tmp_path: Path) -> Non
     assert workers["market_analyst"]["workspace"] == str(agents_root / "market_analyst")
     assert workers["market_analyst"]["skills"] == ["claw-trade-stage"]
     assert str(plugins_root / "claw-trade-frontline-tools") in payload["plugins"]["load"]["paths"]
+    assert str(plugins_root / WEIXIN_PLUGIN_LOAD_PATH) in payload["plugins"]["load"]["paths"]
 
 
 def test_prepare_openclaw_config_preserves_existing_model_when_env_is_empty(tmp_path: Path) -> None:
@@ -76,3 +82,6 @@ def _write_plugins_root(root: Path) -> None:
         plugin_root = root / plugin_id
         plugin_root.mkdir(parents=True, exist_ok=True)
         (plugin_root / "index.js").write_text("export default {};\n", encoding="utf-8")
+    weixin_root = root / WEIXIN_PLUGIN_LOAD_PATH
+    weixin_root.mkdir(parents=True, exist_ok=True)
+    (weixin_root / "openclaw.plugin.json").write_text('{"id":"openclaw-weixin"}\n', encoding="utf-8")

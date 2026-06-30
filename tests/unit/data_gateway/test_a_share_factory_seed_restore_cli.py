@@ -48,7 +48,15 @@ def _write_package(tmp_path: Path, *, unsafe_member: str | None = None) -> tuple
         encoding="utf-8",
     )
     (mongo_path / "provider_attempts.jsonl").write_text(
-        json.dumps({"attempt_ref": "attempt:test", "provider": "local_a_share_required"}) + "\n",
+        json.dumps(
+            {
+                "attempt_ref": "attempt:test",
+                "provider": "local_a_share_required",
+                "message": "unicode line separator: \u2028",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     (mongo_path / "dataset_manifests.jsonl").write_text(

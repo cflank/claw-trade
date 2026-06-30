@@ -14,8 +14,8 @@ for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/ru
 done
 
 export PYTHONPATH="${ROOT_DIR}/app/python:${ROOT_DIR}/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
-export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/third_party/openclaw/openclaw.mjs}"
-export OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/third_party/openclaw}"
+export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/runtime/openclaw/openclaw.mjs}"
+export OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/runtime/openclaw}"
 export CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"
 export CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR="${CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/mongodb}"
 if [[ -x "${ROOT_DIR}/.runtime/mongodb/current/bin/mongod" && -z "${CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR:-}" ]]; then
@@ -26,7 +26,8 @@ if [[ -z "${A_SHARE_FACTORY_SEED_PACKAGE:-}" ]]; then
   if [[ -e "${current_seeds[0]}" ]]; then
     A_SHARE_FACTORY_SEED_PACKAGE="${current_seeds[$((${#current_seeds[@]} - 1))]}"
   else
-    A_SHARE_FACTORY_SEED_PACKAGE="${ROOT_DIR}/data/a-share-cn-required-300td-20260608.tar"
+    printf '[ERROR] missing data/current-seed-*.tar in production release\n' >&2
+    exit 1
   fi
 fi
 export A_SHARE_FACTORY_SEED_PACKAGE

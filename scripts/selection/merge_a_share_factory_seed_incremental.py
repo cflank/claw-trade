@@ -20,7 +20,7 @@ MARKET = "CN_A"
 GRANULARITY = "daily"
 PROVIDER_ID = "local_a_share_factory_merge"
 ENDPOINT_ID = "a_share_factory_seed_incremental_merge"
-DEFAULT_SEED_ROOT = Path(".runtime/factory-seeds/a-share-cn-required-300td-20260608/normalized")
+DEFAULT_SEED_ROOT = Path(".runtime/factory-seeds/current-seed-20260626/normalized")
 DEFAULT_INCREMENTAL_ROOT = Path(".runtime/dev-services/data-gateway/normalized")
 REPLACE_COLLECTIONS = ("normalized_datasets", "raw_payloads", "provider_attempts", "dataset_manifests")
 

@@ -138,6 +138,7 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
     assert 'mv -Tf "${tmp_current}" "${install_root}/current"' in install_script
     assert 'chown -h root:root "${install_root}/current"' in install_script
     assert 'mv -Tf "${tmp_rescue_current}" "${install_root}/rescue-current"' in install_script
+
     assert 'chown -h root:root "${install_root}/rescue-current"' in install_script
     assert 'install -m 0755 "${release_root}/${top_dir}/root-helper/claw-trade-apply-update" /usr/local/lib/claw-trade/claw-trade-apply-update' in install_script
     assert 'install -m 0644 "${release_root}/${top_dir}/systemd/"*.service /etc/systemd/system/' in install_script
@@ -185,6 +186,18 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
         "claw-trade-kiosk.service claw-trade-auto-update.timer"
     ) in readme
     assert "sudo /opt/claw-trade/current/bin/claw-trade-control" not in readme
+
+
+def test_production_package_bundles_weixin_plugin_and_uses_production_runtime() -> None:
+    build_script = _read("scripts/production/build_production_package.sh")
+
+    assert 'OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"' in build_script
+    assert "prepare_openclaw_plugin_assets" in build_script
+    assert 'npm install \\' in build_script
+    assert 'cp -a packaging/production/runtime/. "${package_root}/runtime/"' in build_script
+    assert 'cp -a scripts/start-control-runtime.sh "${package_root}/runtime/claw-trade-control-runtime"' not in build_script
+    assert "tar --exclude='agents/*/prompt-review.yaml'" in build_script
+    assert 'tar -C "${package_root}" -cf "${package_root}/runtime/assets/openclaw_plugins.tar" openclaw_plugins' in build_script
 
 
 def test_production_archive_validator_requires_basename_matched_single_top_dir(tmp_path: Path) -> None:
@@ -390,7 +403,7 @@ def test_rescue_entrypoint_runs_minimal_rescue_service() -> None:
 def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
     control_bin = _read("packaging/production/bin/claw-trade-control")
     ui_bin = _read("packaging/production/bin/claw-trade-ui")
-    build_script = _read("scripts/production/build_production_package.sh")
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
     mongodb_script = _read("scripts/start-local-mongodb.sh")
 
     assert "/opt/claw-trade/shared/cache/factory-seeds/current-seed/normalized" in control_bin
@@ -401,12 +414,9 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
         in control_bin
     )
     assert 'CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR="${ROOT_DIR}/.runtime/mongodb/current"' in control_bin
-    assert 'RUNTIME_DIR="${CLAW_TRADE_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/dev-services}"' in build_script
-    assert 'RUNS_PROBE_DIR="${CLAW_TRADE_RUNS_PROBE_DIR:-/opt/claw-trade/shared/runs/probe}"' in build_script
-    assert (
-        'LOCAL_MONGODB_PID_FILE="${CLAW_TRADE_LOCAL_MONGODB_PID_FILE:-/opt/claw-trade/shared/tmp/mongodb/run/mongod.pid}"'
-        in build_script
-    )
-    assert "/opt/claw-trade/shared/cache/factory-seeds/a-share-cn-required-300td-20260608/normalized" in build_script
+    assert 'SHARED="${ROOT}/shared"' in runtime_script
+    assert 'OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"' in runtime_script
+    assert 'CLAW_TRADE_RUNTIME_ASSETS_ROOT="${CLAW_TRADE_RUNTIME_ASSETS_ROOT:-${SHARED}/runtime-assets}"' in runtime_script
+    assert 'LOG_DIR="${SHARED}/logs"' in runtime_script
     assert 'RUNTIME_DIR="${CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR:-${ROOT_DIR}/.runtime/mongodb}"' in mongodb_script
     assert 'MONGO_CURRENT_DIR="${CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR:-${RUNTIME_DIR}/current}"' in mongodb_script

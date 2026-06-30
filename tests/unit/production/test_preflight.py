@@ -52,7 +52,7 @@ def _write_minimal_release(paths: ProductionPaths, *, include_assets: bool) -> N
     for directory in (
         paths.current / "bin",
         paths.current / "web" / "dist",
-        paths.current / "runtime" / "bin",
+        paths.current / "runtime",
         paths.current / "runtime" / "openclaw" / "dist",
         paths.config,
         paths.data,
@@ -61,7 +61,7 @@ def _write_minimal_release(paths: ProductionPaths, *, include_assets: bool) -> N
         directory.mkdir(parents=True, exist_ok=True)
     for file_path in (
         paths.current / "web" / "dist" / "index.html",
-        paths.current / "runtime" / "bin" / "claw-trade-control-runtime",
+        paths.current / "runtime" / "claw-trade-control-runtime",
         paths.current / "runtime" / "openclaw" / "openclaw.mjs",
     ):
         file_path.write_text("x\n", encoding="utf-8")

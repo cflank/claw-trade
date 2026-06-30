@@ -124,6 +124,9 @@ prepare_runtime_assets() {
   mkdir -p "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party"
   rm -rf "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party/openclaw"
   ln -s "${CURRENT}/runtime/openclaw" "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party/openclaw"
+  mkdir -p "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}/node_modules"
+  rm -rf "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}/node_modules/openclaw"
+  ln -s "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/third_party/openclaw" "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}/node_modules/openclaw"
 
   if [[ ! -f "${CLAW_TRADE_AGENTS_ROOT}/market_analyst/AGENTS.md" ]]; then
     echo "runtime agents asset extracted but market_analyst is missing" >&2
@@ -131,6 +134,10 @@ prepare_runtime_assets() {
   fi
   if [[ ! -f "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}/claw-trade-frontline-tools/index.js" ]]; then
     echo "runtime OpenClaw plugins asset extracted but frontline plugin is missing" >&2
+    exit 1
+  fi
+  if [[ ! -f "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}/node_modules/@tencent-weixin/openclaw-weixin/openclaw.plugin.json" ]]; then
+    echo "runtime OpenClaw plugins asset extracted but openclaw-weixin is missing" >&2
     exit 1
   fi
 }

@@ -50,6 +50,8 @@ PLUGIN_IDS = (
     "claw-trade-selection-tools",
     "claw-trade-scheduled-work-tools",
 )
+WEIXIN_PLUGIN_ID = "openclaw-weixin"
+WEIXIN_PLUGIN_LOAD_PATH = Path("node_modules") / "@tencent-weixin" / "openclaw-weixin"
 
 
 @dataclass(frozen=True)
@@ -136,8 +138,8 @@ def prepare_openclaw_config(
             **_object(existing_plugin_entries.get(plugin_id)),
             "enabled": True,
         }
-    existing_weixin = _object(existing_plugin_entries.get("openclaw-weixin"))
-    merged_plugin_entries["openclaw-weixin"] = {**existing_weixin, "enabled": True}
+    existing_weixin = _object(existing_plugin_entries.get(WEIXIN_PLUGIN_ID))
+    merged_plugin_entries[WEIXIN_PLUGIN_ID] = {**existing_weixin, "enabled": True}
     if llm is not None:
         merged_plugin_entries[llm.provider_id] = {
             **_object(existing_plugin_entries.get(llm.provider_id)),
@@ -154,7 +156,7 @@ def prepare_openclaw_config(
         "phone-control",
         "talk-voice",
         *PLUGIN_IDS,
-        "openclaw-weixin",
+        WEIXIN_PLUGIN_ID,
     ]
     if llm is not None:
         required_plugin_allow.append(llm.provider_id)
@@ -162,16 +164,21 @@ def prepare_openclaw_config(
     merged_plugins = {
         "enabled": True,
         "allow": _unique([*existing_plugin_allow, *required_plugin_allow]),
-        "load": {"paths": [str(plugins_root / plugin_id) for plugin_id in PLUGIN_IDS]},
+        "load": {
+            "paths": [
+                *[str(plugins_root / plugin_id) for plugin_id in PLUGIN_IDS],
+                str(plugins_root / WEIXIN_PLUGIN_LOAD_PATH),
+            ]
+        },
         "entries": merged_plugin_entries,
     }
 
     existing_channels = _object(existing.get("channels"))
-    existing_weixin_channel = _object(existing_channels.get("openclaw-weixin"))
+    existing_weixin_channel = _object(existing_channels.get(WEIXIN_PLUGIN_ID))
     weixin_enabled = False if existing_weixin_channel.get("enabled") is False else True
     merged_channels = {
         **existing_channels,
-        "openclaw-weixin": {
+        WEIXIN_PLUGIN_ID: {
             **existing_weixin_channel,
             "enabled": weixin_enabled,
             "replyProgressMessages": True,
@@ -232,6 +239,9 @@ def _require_runtime_assets(*, agents_root: Path, plugins_root: Path) -> None:
         plugin_entry = plugins_root / plugin_id / "index.js"
         if not plugin_entry.is_file():
             raise RuntimeError(f"OpenClaw 插件入口不存在：{plugin_entry}")
+    weixin_plugin_entry = plugins_root / WEIXIN_PLUGIN_LOAD_PATH / "openclaw.plugin.json"
+    if not weixin_plugin_entry.is_file():
+        raise RuntimeError(f"微信 OpenClaw 插件入口不存在：{weixin_plugin_entry}")
 
 
 def _ui_chat_agent(agents_root: Path) -> dict[str, Any]:

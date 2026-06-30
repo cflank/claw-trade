@@ -6,6 +6,7 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist/production}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.runtime/production-package}"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
+OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"
 
 version="$("${PYTHON_BIN}" - <<'PY' "${ROOT_DIR}/pyproject.toml"
 import sys, tomllib
@@ -31,6 +32,26 @@ require_path() {
   test -e "$1" || fail "missing required path: $1"
 }
 
+prepare_openclaw_plugin_assets() {
+  local plugins_root="$1"
+  local npm_root="${WORK_DIR}/openclaw-weixin-npm"
+
+  rm -rf "${npm_root}"
+  mkdir -p "${npm_root}"
+  log "installing bundled OpenClaw Weixin plugin: ${OPENCLAW_WEIXIN_PLUGIN_SPEC}"
+  npm install \
+    --prefix "${npm_root}" \
+    --omit=dev \
+    --legacy-peer-deps \
+    --ignore-scripts \
+    --package-lock=false \
+    "${OPENCLAW_WEIXIN_PLUGIN_SPEC}"
+  mkdir -p "${plugins_root}/node_modules"
+  cp -a "${npm_root}/node_modules/." "${plugins_root}/node_modules/"
+  require_path "${plugins_root}/node_modules/@tencent-weixin/openclaw-weixin/openclaw.plugin.json"
+  require_path "${plugins_root}/node_modules/@tencent-weixin/openclaw-weixin/dist/index.js"
+}
+
 cd "${ROOT_DIR}"
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || fail "missing ${PYTHON_BIN}"
 command -v tar >/dev/null 2>&1 || fail "missing tar"
@@ -52,8 +73,9 @@ rm -rf "${package_root}"
 mkdir -p \
   "${package_root}/app/python" \
   "${package_root}/runtime" \
+  "${package_root}/runtime/assets" \
+  "${package_root}/runtime/openclaw" \
   "${package_root}/web" \
-  "${package_root}/third_party/openclaw" \
   "${package_root}/data" \
   "${package_root}/scripts/selection" \
   "${OUT_DIR}"
@@ -64,15 +86,20 @@ cp -a packaging/production/systemd "${package_root}/systemd"
 cp -a packaging/production/sudoers "${package_root}/sudoers"
 cp -a packaging/production/root-helper "${package_root}/root-helper"
 cp -a packaging/production/kiosk "${package_root}/kiosk"
+cp -a packaging/production/runtime/. "${package_root}/runtime/"
 cp -a packaging/production/README_FACTORY_TEST.md "${package_root}/README_FACTORY_TEST.md"
 cp -a agents "${package_root}/agents"
 cp -a openclaw_plugins "${package_root}/openclaw_plugins"
+prepare_openclaw_plugin_assets "${package_root}/openclaw_plugins"
+tar --exclude='agents/*/prompt-review.yaml' -C "${package_root}" -cf "${package_root}/runtime/assets/agents.tar" agents
+tar -C "${package_root}" -cf "${package_root}/runtime/assets/openclaw_plugins.tar" openclaw_plugins
+rm -rf "${package_root}/agents" "${package_root}/openclaw_plugins"
 cp -a web/research-ui/dist "${package_root}/web/dist"
-cp -a third_party/openclaw/dist "${package_root}/third_party/openclaw/dist"
-cp -a third_party/openclaw/openclaw.mjs "${package_root}/third_party/openclaw/openclaw.mjs"
-cp -a third_party/openclaw/package.json "${package_root}/third_party/openclaw/package.json"
-cp -a third_party/openclaw/LICENSE "${package_root}/third_party/openclaw/LICENSE"
-cp -a third_party/openclaw/node_modules "${package_root}/third_party/openclaw/node_modules"
+cp -a third_party/openclaw/dist "${package_root}/runtime/openclaw/dist"
+cp -a third_party/openclaw/openclaw.mjs "${package_root}/runtime/openclaw/openclaw.mjs"
+cp -a third_party/openclaw/package.json "${package_root}/runtime/openclaw/package.json"
+cp -a third_party/openclaw/LICENSE "${package_root}/runtime/openclaw/LICENSE"
+cp -a third_party/openclaw/node_modules "${package_root}/runtime/openclaw/node_modules"
 cp -a scripts/selection/restore_a_share_factory_seed.py "${package_root}/scripts/selection/restore_a_share_factory_seed.py"
 
 shopt -s nullglob
@@ -82,9 +109,11 @@ if (( ${#current_seed_packages[@]} > 0 )); then
   current_seed="${current_seed_packages[$((${#current_seed_packages[@]} - 1))]}"
   cp -a "${current_seed}" "${package_root}/data/"
   cp -a "${current_seed}.sha256" "${package_root}/data/" 2>/dev/null || true
-elif [[ -f data/a-share-cn-required-300td-20260608.tar ]]; then
-  cp -a data/a-share-cn-required-300td-20260608.tar "${package_root}/data/"
-  cp -a data/a-share-cn-required-300td-20260608.tar.sha256 "${package_root}/data/" 2>/dev/null || true
+  if [[ ! -f "${package_root}/data/$(basename "${current_seed}").sha256" ]]; then
+    (cd "${package_root}/data" && sha256sum "$(basename "${current_seed}")" > "$(basename "${current_seed}").sha256")
+  fi
+else
+  fail "missing data/current-seed-*.tar; production package requires the current CN_A + CRYPTO seed package"
 fi
 
 if [[ -x .runtime/mongodb/current/bin/mongod ]]; then
@@ -137,16 +166,7 @@ for path in src.rglob("*"):
 PY
 
 log "preparing runtime scripts"
-cp -a scripts/start-control-runtime.sh "${package_root}/runtime/claw-trade-control-runtime"
 cp -a scripts/start-local-mongodb.sh "${package_root}/runtime/start-local-mongodb"
-sed -i \
-  -e 's#LOCAL_MONGODB_START_SCRIPT="${ROOT_DIR}/scripts/start-local-mongodb.sh"#LOCAL_MONGODB_START_SCRIPT="${ROOT_DIR}/runtime/start-local-mongodb"#' \
-  -e 's#RUNTIME_DIR="${ROOT_DIR}/.runtime/dev-services"#RUNTIME_DIR="${CLAW_TRADE_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/dev-services}"#' \
-  -e 's#RUNS_PROBE_DIR="${ROOT_DIR}/runs/probe"#RUNS_PROBE_DIR="${CLAW_TRADE_RUNS_PROBE_DIR:-/opt/claw-trade/shared/runs/probe}"#' \
-  -e 's#LOCAL_MONGODB_PID_FILE="${ROOT_DIR}/.runtime/mongodb/run/mongod.pid"#LOCAL_MONGODB_PID_FILE="${CLAW_TRADE_LOCAL_MONGODB_PID_FILE:-/opt/claw-trade/shared/tmp/mongodb/run/mongod.pid}"#' \
-  -e 's#A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-${ROOT_DIR}/.runtime/factory-seeds/a-share-cn-required-300td-20260608/normalized}"#A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-/opt/claw-trade/shared/cache/factory-seeds/a-share-cn-required-300td-20260608/normalized}"#' \
-  -e 's#uv run python#python3.12#g' \
-  "${package_root}/runtime/claw-trade-control-runtime"
 chmod +x "${package_root}/bin/"* "${package_root}/runtime/"*
 find "${package_root}" -type d -name __pycache__ -prune -exec rm -rf {} +
 

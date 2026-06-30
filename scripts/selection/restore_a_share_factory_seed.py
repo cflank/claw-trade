@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from claw_trade.data_gateway.warehouse import DatasetRepository
 from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
-DEFAULT_PACKAGE = Path("data/a-share-cn-required-300td-20260608.tar")
+DEFAULT_PACKAGE = Path("data/current-seed-20260626.tar")
 MONGO_JSONL_COLLECTIONS = ("raw_payloads", "provider_attempts", "dataset_manifests")
 REPLACE_COLLECTIONS = ("normalized_datasets", *MONGO_JSONL_COLLECTIONS)
 
@@ -287,7 +287,7 @@ def _read_jsonl_member(archive: tarfile.TarFile, member_name: str) -> tuple[dict
         raise ValueError(f"cannot read tar member: {member_name}")
     records: list[dict[str, Any]] = []
     with handle:
-        for line in handle.read().decode("utf-8").splitlines():
+        for line in handle.read().decode("utf-8").split("\n"):
             if not line.strip():
                 continue
             record = json.loads(line)

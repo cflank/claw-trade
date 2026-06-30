@@ -238,9 +238,10 @@ path = Path(sys.argv[1])
 text = path.read_text()
 old = 'OPENCLAW_GATEWAY_PORT=18789\n'
 new = 'OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"\n'
+export_new = 'export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"\n'
 if old in text:
     path.write_text(text.replace(old, new, 1))
-elif new not in text:
+elif new not in text and export_new not in text:
     raise SystemExit('unexpected OPENCLAW_GATEWAY_PORT assignment')
 INNER_PY
 }
@@ -301,7 +302,7 @@ sudo mv -Tf "${tmp_rescue_current}" "${install_root}/rescue-current"
 sudo chown -h root:root "${install_root}/rescue-current"
 export PYTHONPATH="${install_root}/current/app/python:${install_root}/current/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
 
-runtime_env="${install_root}/current/.runtime/dev-services/runtime.env"
+runtime_env="${install_root}/shared/tmp/dev-services/runtime.env"
 
 log "starting runtime control"
 stop_ui
@@ -311,7 +312,7 @@ export OPENCLAW_GATEWAY_PORT="${openclaw_gateway_port}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${openclaw_gateway_port}}"
 log "using OpenClaw gateway: ${OPENCLAW_GATEWAY_URL}"
 rm -f "${control_log}" "${runtime_env}"
-nohup sudo -u "${runtime_owner}" -g "${runtime_group}" env \
+nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'cd "$1"; shift; exec env "$@"' bash "${install_root}/current" \
   OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT}" \
   OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL}" \
   "${install_root}/current/bin/claw-trade-control" >"${control_log}" 2>&1 &
@@ -330,10 +331,17 @@ python3.12 -c 'import os; from pymongo import MongoClient; db=os.environ["DATA_G
 log "starting UI"
 stop_ui
 rm -f "${ui_log}"
-nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; runtime_env="$1"; ui_bin="$2"; set -a; . "${runtime_env}"; set +a; if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" && -n "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-}" ]]; then export OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"; fi; exec "${ui_bin}"' bash "${runtime_env}" "${install_root}/current/bin/claw-trade-ui" >"${ui_log}" 2>&1 &
+nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; runtime_env="$1"; ui_bin="$2"; cd "$(dirname "${ui_bin}")/.."; set -a; . "${runtime_env}"; set +a; export CLAW_TRADE_UI_HOST="${CLAW_TRADE_UI_HOST:-0.0.0.0}"; if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" && -n "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-}" ]]; then export OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"; fi; exec "${ui_bin}"' bash "${runtime_env}" "${install_root}/current/bin/claw-trade-ui" >"${ui_log}" 2>&1 &
 echo "$!" >"${ui_pid_file}"
-sleep 5
-if ! curl -fsS http://127.0.0.1:5175/ >/dev/null; then
+ui_ready=0
+for _ in $(seq 1 60); do
+  if curl -fsS http://127.0.0.1:5175/ >/dev/null; then
+    ui_ready=1
+    break
+  fi
+  sleep 1
+done
+if [[ "${ui_ready}" != "1" ]]; then
   tail_log "${ui_log}"
   fail "UI did not respond on 127.0.0.1:5175"
 fi
