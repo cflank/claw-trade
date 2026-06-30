@@ -5,6 +5,7 @@ from pathlib import Path
 
 from claw_trade.data_gateway.models import Market, WarehouseCheck
 from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
+from claw_trade.data_gateway.warehouse.repository import DatasetRecord
 from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
 
@@ -896,6 +897,144 @@ def test_repository_finds_company_names_from_columnar_quote_snapshot(tmp_path) -
     )
 
     assert names == {"688017.SH": "绿的谐波"}
+
+
+def test_repository_finds_company_name_from_seed_manifest_when_runtime_latest_row_has_no_name(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    warehouse = NormalizedColumnarWarehouse(tmp_path)
+    seed_collections = _collections()
+    runtime_collections = _collections()
+    seed_record = _base_record()
+    seed_record.update(
+        {
+            "symbol_id": "000001.SZ",
+            "period_start": date(2026, 5, 27),
+            "period_end": date(2026, 5, 27),
+            "field_set": ("date", "close", "company_name", "identity_source_ref"),
+            "row": {
+                "date": "2026-05-27",
+                "close": 10.76,
+                "company_name": "平安银行",
+                "identity_source_ref": "baostock://query_all_stock/2026-05-27",
+            },
+        }
+    )
+    seed_manifest = warehouse.write_records([seed_record]).manifest
+    seed_collections["dataset_manifests"][seed_manifest["manifest_ref"]] = seed_manifest
+    repo = DatasetRepository(
+        collections=runtime_collections,
+        seed_database=seed_collections,
+        normalized_columnar=warehouse,
+        allow_normalized_mongo_read=False,
+    )
+    runtime_record = _base_record()
+    runtime_record.update(
+        {
+            "symbol_id": "000001.SZ",
+            "period_start": date(2026, 6, 29),
+            "period_end": date(2026, 6, 29),
+            "row": {"date": "2026-06-29", "close": 11.1},
+        }
+    )
+    repo.insert_normalized(runtime_record)
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_ids=("000001.SZ",),
+    )
+
+    assert names == {"000001.SZ": "平安银行"}
+
+
+def test_repository_finds_company_name_when_seed_manifest_ref_matches_runtime_manifest(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    seed_warehouse = NormalizedColumnarWarehouse(tmp_path / "seed")
+    runtime_warehouse = NormalizedColumnarWarehouse(tmp_path / "runtime")
+    seed_collections = _collections()
+    runtime_collections = _collections()
+    seed_record = _base_record()
+    seed_record.update(
+        {
+            "symbol_id": "001331.SZ",
+            "period_start": date(2026, 5, 27),
+            "period_end": date(2026, 5, 27),
+            "field_set": ("date", "close", "company_name", "identity_source_ref"),
+            "row": {
+                "date": "2026-05-27",
+                "close": 11.25,
+                "company_name": "胜通能源",
+                "identity_source_ref": "baostock://query_all_stock/2026-05-27",
+            },
+        }
+    )
+    runtime_record = _base_record()
+    runtime_record.update(
+        {
+            "symbol_id": "001331.SZ",
+            "period_start": date(2026, 6, 29),
+            "period_end": date(2026, 6, 29),
+            "row": {"date": "2026-06-29", "close": 12.2},
+        }
+    )
+    seed_manifest = seed_warehouse.write_records([seed_record]).manifest
+    runtime_manifest = dict(runtime_warehouse.write_records([runtime_record]).manifest)
+    runtime_manifest["manifest_ref"] = seed_manifest["manifest_ref"]
+    seed_collections["dataset_manifests"][seed_manifest["manifest_ref"]] = seed_manifest
+    runtime_collections["dataset_manifests"][runtime_manifest["manifest_ref"]] = runtime_manifest
+    repo = DatasetRepository(
+        collections=runtime_collections,
+        seed_database=seed_collections,
+        allow_normalized_mongo_read=False,
+    )
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_ids=("001331.SZ",),
+    )
+
+    assert names == {"001331.SZ": "胜通能源"}
+
+
+def test_repository_batches_company_name_lookup_for_many_symbols(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    symbols = tuple(f"{600000 + index:06d}.SH" for index in range(25))
+    records = tuple(
+        DatasetRecord(
+            dataset_ref=f"dataset://normalized/CN_A/daily/{symbol}",
+            dataset="daily_bar",
+            market="CN_A",
+            symbol_id=symbol,
+            universe_ref=None,
+            granularity="daily",
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 1, 1),
+            field_set=("company_name",),
+            as_of=None,
+            fresh_until=None,
+            source_roles=(),
+            dataset_checksum=None,
+            dataset_checksum_algorithm=None,
+            dataset_checksum_scope=None,
+            row={"company_name": f"name-{symbol}"},
+        )
+        for symbol in symbols
+    )
+    repo = DatasetRepository(collections=_collections(), allow_normalized_mongo_read=False)
+    calls: list[str | None] = []
+
+    def fake_query_normalized(**kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kwargs["symbol_id"])
+        return records
+
+    monkeypatch.setattr(repo, "query_normalized", fake_query_normalized)
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_ids=symbols,
+    )
+
+    assert calls == [None]
+    assert names == {symbol: f"name-{symbol}" for symbol in symbols}
 
 
 def test_normalized_query_criteria_includes_datetime_range_branch_for_mongo_intraday() -> None:

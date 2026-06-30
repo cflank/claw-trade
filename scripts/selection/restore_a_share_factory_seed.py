@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, MutableMapping, Sequence
 from urllib.parse import urlparse
 
+from claw_trade.data_gateway.factory_seed_integrity import validate_cn_a_daily_bar_company_names
 from claw_trade.data_gateway.warehouse import DatasetRepository
 from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
@@ -27,6 +28,7 @@ class RestoreResult:
     columnar_root: str
     parquet_files: int
     parquet_bytes: int
+    company_name_integrity: dict[str, Any]
     mongo_imported: dict[str, int]
     seed_manifest: dict[str, Any]
     cleared_existing: dict[str, Any]
@@ -41,6 +43,7 @@ class RestoreResult:
             "catalog_storage": "mongo",
             "parquet_files": self.parquet_files,
             "parquet_bytes": self.parquet_bytes,
+            "company_name_integrity": self.company_name_integrity,
             "mongo_imported": self.mongo_imported,
             "normalized_datasets": 0,
             "cleared_existing": self.cleared_existing,
@@ -146,6 +149,10 @@ def restore_factory_seed(
             prefix=prefix,
             columnar_root=columnar_root,
         )
+        company_name_integrity = validate_cn_a_daily_bar_company_names(
+            columnar_root,
+            label="A-share factory seed",
+        )
 
     imported = _import_mongo_jsonl(repository, mongo_records)
     return RestoreResult(
@@ -154,6 +161,7 @@ def restore_factory_seed(
         columnar_root=str(columnar_root),
         parquet_files=parquet_files,
         parquet_bytes=parquet_bytes,
+        company_name_integrity=company_name_integrity,
         mongo_imported=imported,
         seed_manifest=seed_manifest,
         cleared_existing=cleared_existing,

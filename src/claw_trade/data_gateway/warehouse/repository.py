@@ -161,6 +161,7 @@ _DATASET_CHECKSUM_FIELDS = {
     "dataset_row_count",
 }
 _COMPANY_NAME_ROW_FIELDS = ("company_name", "name", "stock_name", "code_name", "security_name")
+_COMPANY_NAME_BATCH_QUERY_MIN_SYMBOLS = 20
 
 
 @dataclass(frozen=True)
@@ -295,11 +296,14 @@ class _CollectionAdapter:
             self.set(key, payload)
 
     def find(self, criteria: Mapping[str, Any], *, include_row: bool = True) -> tuple[dict[str, Any], ...]:
+        return self._dedupe_rows(self.find_all_backends(criteria, include_row=include_row))
+
+    def find_all_backends(self, criteria: Mapping[str, Any], *, include_row: bool = True) -> tuple[dict[str, Any], ...]:
         criteria_dict = dict(criteria)
         rows: list[dict[str, Any]] = []
         for backend in self._read_backends():
             rows.extend(self._find_from_backend(backend, criteria_dict, include_row=include_row))
-        return self._dedupe_rows(tuple(rows))
+        return tuple(rows)
 
     def _find_from_backend(
         self,
@@ -1597,7 +1601,12 @@ class DatasetRepository:
         market: str,
         symbols: Sequence[str],
     ) -> dict[str, str]:
-        names: dict[str, str] = {}
+        names = self._find_company_names_from_parquet_manifests(dataset=dataset, market=market, symbols=symbols)
+        if len(names) == len(symbols):
+            return names
+        symbols = tuple(symbol for symbol in symbols if symbol not in names)
+        if len(symbols) >= _COMPANY_NAME_BATCH_QUERY_MIN_SYMBOLS:
+            return {**self._find_company_names_from_normalized_batch_query(dataset=dataset, market=market, symbols=symbols), **names}
         for symbol in symbols:
             records = self.query_normalized(
                 dataset=dataset,
@@ -1620,6 +1629,86 @@ class DatasetRepository:
                 if company_name:
                     names[symbol] = company_name
                     break
+        return names
+
+    def _find_company_names_from_parquet_manifests(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbols: Sequence[str],
+    ) -> dict[str, str]:
+        wanted = set(symbols)
+        if not wanted:
+            return {}
+        with self._lock:
+            manifests = tuple(
+                self._collection("dataset_manifests").find_all_backends(
+                    {"storage": "parquet", "status": "active", "dataset": dataset, "market": market}
+                )
+            )
+        paths = tuple(Path(str(manifest.get("path") or "")) for manifest in manifests)
+        paths = tuple(path for path in paths if path.is_file())
+        if not paths:
+            return {}
+
+        import duckdb
+
+        names: dict[str, str] = {}
+        latest_seen: dict[str, str] = {}
+        with duckdb.connect(":memory:") as conn:
+            for path in paths:
+                for symbol, period_end, period_start, row_json in conn.execute(
+                    "select symbol_id, period_end, period_start, row_json from read_parquet(?)",
+                    [str(path)],
+                ).fetchall():
+                    symbol_text = str(symbol or "").strip()
+                    if symbol_text not in wanted:
+                        continue
+                    try:
+                        row = json.loads(str(row_json or "{}"))
+                    except json.JSONDecodeError:
+                        continue
+                    company_name = _company_name_from_row(row)
+                    if not company_name:
+                        continue
+                    period = _date_query_text(period_end) or _date_query_text(period_start) or ""
+                    if symbol_text in names and latest_seen.get(symbol_text, "") >= period:
+                        continue
+                    names[symbol_text] = company_name
+                    latest_seen[symbol_text] = period
+        return names
+
+    def _find_company_names_from_normalized_batch_query(
+        self,
+        *,
+        dataset: str,
+        market: str,
+        symbols: Sequence[str],
+    ) -> dict[str, str]:
+        wanted = set(symbols)
+        names: dict[str, str] = {}
+        latest_seen: dict[str, str] = {}
+        records = self.query_normalized(
+            dataset=dataset,
+            market=market,
+            symbol_id=None,
+            universe_ref=None,
+            require_integrity_metadata=True,
+            include_row=True,
+        )
+        for record in records:
+            symbol = str(record.symbol_id or "").strip()
+            if symbol not in wanted:
+                continue
+            company_name = _company_name_from_row(record.row)
+            if not company_name:
+                continue
+            period = _date_query_text(record.period_end) or _date_query_text(record.period_start) or ""
+            if symbol in names and latest_seen.get(symbol, "") >= period:
+                continue
+            names[symbol] = company_name
+            latest_seen[symbol] = period
         return names
 
     def insert_raw_payload(self, record: Mapping[str, Any]) -> str:

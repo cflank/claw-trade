@@ -7,6 +7,7 @@ import tarfile
 from hashlib import sha256
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from claw_trade.data_gateway.warehouse import DatasetRepository
@@ -26,7 +27,12 @@ def _collections() -> dict[str, dict[str, object]]:
     return {name: {} for name in DatasetRepository.collection_names()}
 
 
-def _write_package(tmp_path: Path, *, unsafe_member: str | None = None) -> tuple[Path, Path]:
+def _write_package(
+    tmp_path: Path,
+    *,
+    unsafe_member: str | None = None,
+    company_name: str | None = "平安银行",
+) -> tuple[Path, Path]:
     package_root = tmp_path / "pkg"
     normalized_path = package_root / "data" / "normalized" / "market=CN_A" / "dataset=daily_bar" / "granularity=daily"
     mongo_path = package_root / "mongo"
@@ -42,7 +48,7 @@ def _write_package(tmp_path: Path, *, unsafe_member: str | None = None) -> tuple
         ),
         encoding="utf-8",
     )
-    (normalized_path / "partition-test.parquet").write_bytes(b"parquet-bytes")
+    _write_daily_bar_parquet(normalized_path / "partition-test.parquet", company_name=company_name)
     (mongo_path / "raw_payloads.jsonl").write_text(
         json.dumps({"raw_ref": "raw:test", "provider": "local_a_share_required"}) + "\n",
         encoding="utf-8",
@@ -89,6 +95,35 @@ def _write_package(tmp_path: Path, *, unsafe_member: str | None = None) -> tuple
     return tar_path, checksum_path
 
 
+def _write_daily_bar_parquet(path: Path, *, company_name: str | None) -> None:
+    row = {
+        "dataset": "daily_bar",
+        "market": "CN_A",
+        "symbol_id": "000001.SZ",
+        "trade_date": "2026-05-27",
+        "close": 10.76,
+    }
+    if company_name is not None:
+        row["company_name"] = company_name
+    with duckdb.connect(":memory:") as conn:
+        conn.execute(
+            """
+            create table daily_bar as
+            select
+              'dataset:daily_bar:CN_A:test'::VARCHAR as dataset_ref,
+              'daily_bar'::VARCHAR as dataset,
+              'CN_A'::VARCHAR as market,
+              '000001.SZ'::VARCHAR as symbol_id,
+              'daily'::VARCHAR as granularity,
+              DATE '2026-05-27' as period_start,
+              DATE '2026-05-27' as period_end,
+              ?::VARCHAR as row_json
+            """,
+            [json.dumps(row, ensure_ascii=False)],
+        )
+        conn.execute(f"COPY daily_bar TO '{path.as_posix()}' (FORMAT PARQUET)")
+
+
 class _BytesReader:
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
@@ -127,13 +162,15 @@ def test_restore_factory_seed_extracts_parquet_and_imports_only_metadata(tmp_pat
     }
     assert payload["normalized_datasets"] == 0
     assert payload["cleared_existing"] == {}
-    assert (
-        columnar_root
-        / "market=CN_A"
-        / "dataset=daily_bar"
-        / "granularity=daily"
-        / "partition-test.parquet"
-    ).read_bytes() == b"parquet-bytes"
+    restored_parquet = (
+        columnar_root / "market=CN_A" / "dataset=daily_bar" / "granularity=daily" / "partition-test.parquet"
+    )
+    assert restored_parquet.is_file()
+    with duckdb.connect(":memory:") as conn:
+        assert conn.execute(
+            "select json_extract_string(row_json, ?) from read_parquet(?)",
+            ["$.company_name", str(restored_parquet)],
+        ).fetchone() == ("平安银行",)
     assert "raw:test" in collections["raw_payloads"]
     assert "attempt:test" in collections["provider_attempts"]
     assert "manifest:test" in collections["dataset_manifests"]
@@ -149,6 +186,19 @@ def test_restore_factory_seed_rejects_checksum_mismatch(tmp_path: Path) -> None:
     checksum_path.write_text("0" * 64 + "  factory.tar\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="sha256 mismatch"):
+        cli.restore_factory_seed(
+            package_path=tar_path,
+            checksum_path=checksum_path,
+            repository=DatasetRepository(collections=_collections()),
+            columnar_root=tmp_path / "normalized",
+        )
+
+
+def test_restore_factory_seed_rejects_cn_a_daily_bar_without_company_names(tmp_path: Path) -> None:
+    cli = _load_cli_module()
+    tar_path, checksum_path = _write_package(tmp_path, company_name=None)
+
+    with pytest.raises(ValueError, match="company_name missing"):
         cli.restore_factory_seed(
             package_path=tar_path,
             checksum_path=checksum_path,

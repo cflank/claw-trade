@@ -14,6 +14,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
+from claw_trade.data_gateway.factory_seed_integrity import validate_cn_a_daily_bar_company_names
+
 MONGO_JSONL_COLLECTIONS = ("raw_payloads", "provider_attempts", "dataset_manifests")
 COLLECTION_KEY_FIELDS = {
     "raw_payloads": "raw_ref",
@@ -30,6 +32,7 @@ class ExportResult:
     columnar_root: str
     parquet_files: int
     parquet_bytes: int
+    company_name_integrity: dict[str, Any]
     mongo_exported: dict[str, int]
     seed_manifest: dict[str, Any]
 
@@ -44,6 +47,7 @@ class ExportResult:
             "catalog_storage": "mongo_jsonl",
             "parquet_files": self.parquet_files,
             "parquet_bytes": self.parquet_bytes,
+            "company_name_integrity": self.company_name_integrity,
             "mongo_exported": self.mongo_exported,
             "seed_manifest": self.seed_manifest,
         }
@@ -147,6 +151,7 @@ def export_current_seed_package(
         columnar_root=columnar_root,
     )
     _verify_manifest_files_exist(normalized_records["dataset_manifests"], columnar_root=columnar_root)
+    company_name_integrity = validate_cn_a_daily_bar_company_names(columnar_root, label="current seed")
     parquet_files = _collect_parquet_files(columnar_root)
     if not parquet_files:
         raise ValueError(f"columnar root contains no Parquet files: {columnar_root}")
@@ -201,6 +206,7 @@ def export_current_seed_package(
         columnar_root=str(columnar_root),
         parquet_files=parquet_count,
         parquet_bytes=parquet_bytes,
+        company_name_integrity=company_name_integrity,
         mongo_exported={collection: len(records) for collection, records in normalized_records.items()},
         seed_manifest=seed_manifest,
     )
