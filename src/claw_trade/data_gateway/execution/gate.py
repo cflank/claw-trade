@@ -24,6 +24,8 @@ class GateBatchPlan(Protocol):
     lease_ttl_seconds: int
     deadline_at: datetime | None
     earliest_start_at: datetime | None
+    ignore_cached_empty: bool
+    ignore_provider_cache: bool
 
 
 class ExecutionGate:
@@ -44,9 +46,15 @@ class ExecutionGate:
 
     def enter(self, batch: GateBatchPlan) -> GateDecision:
         cache_lookup = self.cache.get(batch.cache_key)
-        if cache_lookup.state == "fresh_success" and cache_lookup.entry is not None:
+        ignore_provider_cache = bool(getattr(batch, "ignore_provider_cache", False))
+        if cache_lookup.state == "fresh_success" and cache_lookup.entry is not None and not ignore_provider_cache:
             return GateDecision.cache_hit(cache_lookup.entry.refs)
-        if cache_lookup.state == "fresh_empty" and cache_lookup.entry is not None:
+        if (
+            cache_lookup.state == "fresh_empty"
+            and cache_lookup.entry is not None
+            and not ignore_provider_cache
+            and not bool(getattr(batch, "ignore_cached_empty", False))
+        ):
             return GateDecision.cached_empty(cache_lookup.entry.refs)
 
         cooldown_key = _cooldown_key(batch)

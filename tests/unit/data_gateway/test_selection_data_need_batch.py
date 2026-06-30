@@ -63,6 +63,83 @@ def test_selection_data_need_batch_fans_out_merged_call_result_to_all_needs(monk
     assert all(result.rows and result.rows[0]["close"] == 1505.0 for result in results)
 
 
+def test_selection_universe_refresh_forces_provider_cache_bypass(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    deadline = datetime.now(tz=UTC) + timedelta(seconds=30)
+    need = DataNeed(
+        need_id="sel-run:selection:universe_refresh:1:all_a_shares:daily_bar",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="all_a_shares",
+        time_range_start=date(2026, 6, 30),
+        time_range_end=date(2026, 6, 30),
+        granularity="daily",
+        priority=NeedPriority.NORMAL,
+        requested_by_worker="selection",
+        purpose="selection_refresh",
+        freshness_policy="trading_day",
+        deadline_at=deadline,
+        consumer="select",
+    )
+    call = ProviderCallSpec(
+        call_id="call-daily-all",
+        method="POST",
+        public_api_id="cn_a.daily_bar",
+        implementation_id="cn_a.daily_bar:official_api_tushare:tushare.daily",
+        provider_id="official_api_tushare",
+        catalog_endpoint_id="tushare.daily",
+        official_path_or_api_name="daily",
+        params={"trade_date": "20260630"},
+        auth_scope="tushare_body_token",
+        rate_limit_bucket="ratelimit:tushare",
+        http_visibility="managed_http",
+        parser_status="normalized",
+        batch_key="batch:tushare.daily:20260630",
+        official_doc_ref="https://tushare.pro/document/2?doc_id=27",
+        deadline_at=deadline,
+        need_ids=(need.need_id,),
+        priority=NeedPriority.NORMAL,
+    )
+    monkeypatch.setattr(
+        selection_batch,
+        "plan_public_data_requests",
+        lambda _requests: NeedPlan(plan_id="plan", needs=(need,), planned_calls=(call,), created_at=deadline),
+    )
+    gate = _CaptureOwnerGate()
+    runtime = SimpleNamespace(
+        rate_limit_policy_resolver=SimpleNamespace(resolve=lambda **_kwargs: RateLimitPolicy(window_seconds=60, max_requests=None)),
+        rate_limiter=None,
+        data_service=SimpleNamespace(execution_gate=gate),
+        fetch_engine=SimpleNamespace(fetch=lambda batch: FetchResult.from_success(batch, payload={"rows": [_daily_row()]})),
+        ingest=SimpleNamespace(ingest=lambda result, batch: _ingest(batch.batch_id)),
+    )
+
+    selection_batch._execute_selection_data_need_batch(
+        runtime=runtime,
+        plan=_selection_plan(universe_scope="all_a_shares"),
+        needs=(
+            PublicDataRequest(
+                request_id=need.need_id,
+                item="日线",
+                market=Market.CN_A,
+                instrument="all_a_shares",
+                time_range_start=date(2026, 6, 30),
+                time_range_end=date(2026, 6, 30),
+                granularity="daily",
+                priority=PublicRequestPriority.NORMAL,
+                requested_by_worker="selection",
+                purpose="selection_refresh",
+                freshness_policy="trading_day",
+                deadline_at=deadline,
+                consumer="select",
+            ),
+        ),
+    )
+
+    assert len(gate.batches) == 1
+    assert gate.batches[0].ignore_provider_cache is True
+    assert gate.batches[0].ignore_cached_empty is True
+
+
 class _OwnerGate:
     def enter(self, _batch):  # type: ignore[no-untyped-def]
         return SimpleNamespace(kind="owner", owner_token="owner-token")
@@ -75,6 +152,18 @@ class _OwnerGate:
 
     def mark_cooldown_after_fetch(self, *_args):  # type: ignore[no-untyped-def]
         return None
+
+
+class _CaptureOwnerGate(_OwnerGate):
+    def __init__(self) -> None:
+        self.batches: list[SimpleNamespace] = []
+
+    def enter(self, batch):  # type: ignore[no-untyped-def]
+        self.batches.append(batch)
+        return super().enter(batch)
+
+    def publish_shared_result(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return True
 
 
 def _need(need_id: str, *, deadline: datetime) -> DataNeed:
@@ -111,14 +200,14 @@ def _request(request_id: str, *, deadline: datetime) -> PublicDataRequest:
     )
 
 
-def _selection_plan() -> SelectionRunPlan:
+def _selection_plan(*, universe_scope: str = "test") -> SelectionRunPlan:
     return SelectionRunPlan(
         selection_run_id="sel-run",
         market=SelectionMarket.CN_A,
         profile=SelectionProfile.CN_A,
         trade_date="2026-06-12",
         lookback_trading_days=20,
-        universe_scope="test",
+        universe_scope=universe_scope,
         data_need_audit_ref="audit:test",
         approved_strategy_config_ref="strategy:test",
         trigger_source=SelectionTriggerSource.SELECT_COMMAND_REFRESH,

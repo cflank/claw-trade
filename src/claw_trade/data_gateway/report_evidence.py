@@ -547,6 +547,17 @@ def _provider_call_batch(
     )
 
 
+def _selection_universe_ref_for_need(need: DataNeed) -> str | None:
+    instrument = str(getattr(need, "instrument", "") or "").strip()
+    if (
+        instrument
+        and str(getattr(need, "consumer", "") or "").strip() == "select"
+        and ":selection:universe_refresh:" in str(getattr(need, "need_id", "") or "")
+    ):
+        return instrument
+    return None
+
+
 def _official_api_call_batch(
     *,
     call: ProviderCallSpec,
@@ -565,6 +576,7 @@ def _official_api_call_batch(
         endpoint_id=call.catalog_endpoint_id,
         market=need.market,
         symbol_ids=(need.instrument,),
+        universe_ref=_selection_universe_ref_for_need(need),
         data_type=data_type,
         granularity=_batch_granularity(data_type=data_type, contract_granularity=granularity, need=need),
         fields_union=required_fields,
@@ -771,6 +783,7 @@ def _structured_provider_call_batch(
         endpoint_id=_adapter_endpoint_id(call),
         market=need.market,
         symbol_ids=(need.instrument,),
+        universe_ref=_selection_universe_ref_for_need(need),
         data_type=data_type,
         granularity=_batch_granularity(data_type=data_type, contract_granularity=granularity, need=need),
         fields_union=required_fields,

@@ -40,6 +40,8 @@ class _Batch:
     granularity: str = "daily"
     deadline_at: datetime | None = None
     earliest_start_at: datetime | None = None
+    ignore_cached_empty: bool = False
+    ignore_provider_cache: bool = False
 
 
 class _WaiterSingleFlight:
@@ -95,6 +97,24 @@ def test_gate_returns_cache_hit_before_rate_limit_or_single_flight() -> None:
     assert decision.refs.dataset_refs == ("dataset:1",)
 
 
+def test_gate_can_ignore_cached_success_for_forced_refresh() -> None:
+    now = datetime.now(UTC)
+    repository = DatasetRepository()
+    _insert_daily_bar(repository, "dataset:1")
+    cache = ProviderResultCache(repository=repository)
+    cache.put_remote_success(
+        cache_key="cache:key",
+        refs=ResultRefs(dataset_refs=("dataset:1",), raw_refs=("raw:1",), attempt_refs=("attempt:1",)),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    gate = ExecutionGate(cache=cache, rate_limiter=RateLimiter(), single_flight=SingleFlight())
+
+    decision = gate.enter(_Batch(ignore_provider_cache=True))
+
+    assert decision.kind == "owner"
+
+
 def test_gate_returns_cached_empty_from_cache() -> None:
     now = datetime.now(UTC)
     cache = ProviderResultCache()
@@ -108,6 +128,22 @@ def test_gate_returns_cached_empty_from_cache() -> None:
     decision = gate.enter(_Batch())
     assert decision.kind == "cached_empty"
     assert decision.refs.attempt_refs == ("attempt:empty",)
+
+
+def test_gate_can_ignore_cached_empty_for_forced_refresh() -> None:
+    now = datetime.now(UTC)
+    cache = ProviderResultCache()
+    cache.put_cached_empty(
+        cache_key="cache:key",
+        refs=ResultRefs(attempt_refs=("attempt:empty",)),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    gate = ExecutionGate(cache=cache, rate_limiter=RateLimiter(), single_flight=SingleFlight())
+
+    decision = gate.enter(_Batch(ignore_cached_empty=True))
+
+    assert decision.kind == "owner"
 
 
 def test_gate_waits_for_shared_result_using_deadline_budget() -> None:

@@ -15,6 +15,7 @@ from claw_trade.data_gateway._selection_batch import (
     _selection_feature_rows_from_repository,
     _selection_history_start_date,
     _selection_missing_strategy_required_fields,
+    _should_retry_selection_universe_cached_empty,
     _selection_universe_refresh_needs,
     _ticker_from_row,
     _selection_strategy_required_source_fields,
@@ -270,6 +271,36 @@ def test_scheduled_universe_refresh_retries_when_full_market_latest_count_collap
     assert needs[0].time_range_end == date(2026, 6, 24)
     assert needs[0].deadline_at is not None
     assert (needs[0].deadline_at - datetime.now(tz=UTC)).total_seconds() > 3_000
+
+
+def test_selection_universe_refresh_retries_cached_empty_for_full_market() -> None:
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-retry-cached-empty",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-06-30",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-06-30/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    need = DataNeed(
+        need_id=f"{plan.selection_run_id}:selection:universe_refresh:1:all_a_shares:daily_bar",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="all_a_shares",
+        time_range_start=date(2026, 6, 30),
+        time_range_end=date(2026, 6, 30),
+        granularity="daily",
+        requested_by_worker="selection_data_job",
+        purpose="selection_candidate_cache",
+        freshness_policy="trading_day",
+        deadline_at=datetime(2026, 6, 30, 8, 1, tzinfo=UTC),
+        consumer="select",
+    )
+
+    assert _should_retry_selection_universe_cached_empty(plan=plan, need=need)
 
 
 def test_selection_refresh_chunks_split_across_weekends() -> None:
@@ -1703,6 +1734,39 @@ def test_selection_local_feature_rows_blocks_full_market_latest_count_below_floo
     assert blocker.source_metadata["ticker_count"] == 3
     assert blocker.source_metadata["minimum_ticker_count"] == 5
     assert blocker.source_metadata["rows_returned"] == 3
+    assert SelectionColumnarWarehouse.default().load_valid_manifest(plan=plan) is None
+
+
+def test_selection_local_feature_rows_rejects_unscoped_single_symbol_as_full_market(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 5)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-unscoped-single-symbol",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-06-30",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-06-30/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    repository = DatasetRepository(collections={name: {} for name in DatasetRepository.collection_names()})
+    trade_day = date.fromisoformat(plan.trade_date)
+    for row in _history_rows_from(start=trade_day - timedelta(days=259), count=260, ticker="600519.SH"):
+        row["company_name"] = "贵州茅台"
+        record = _selection_daily_dataset_record(ticker="600519.SH", row=row)
+        record["universe_ref"] = None
+        repository.insert_normalized(record)
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert result.rows == ()
+    blocker = next(gap for gap in result.data_gaps if gap.gap_code == "selection_batch_universe_coverage_insufficient")
+    assert blocker.source_metadata is not None
+    assert blocker.source_metadata["ticker_count"] == 0
+    assert blocker.source_metadata["rows_returned"] == 0
     assert SelectionColumnarWarehouse.default().load_valid_manifest(plan=plan) is None
 
 

@@ -195,6 +195,64 @@ def test_pairs_market_snapshot_is_not_bound_to_specific_derivative_metrics() -> 
     assert "open_interest" not in set(batch.capability_fields)
 
 
+def test_selection_universe_refresh_batch_carries_universe_ref_for_warehouse_scope() -> None:
+    need = _need(
+        need_id="sel:selection:universe_refresh:1:all_a_shares:daily_bar",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="all_a_shares",
+        granularity="daily",
+        consumer="select",
+        purpose="selection_data_refresh",
+    )
+    call = _call(
+        call_id="call:tushare-daily-all",
+        public_api_id="cn_a.daily_bar",
+        provider_id="official_api_tushare",
+        catalog_endpoint_id="tushare.daily",
+        official_path_or_api_name="daily",
+        params={"trade_date": "20260630"},
+        auth_scope="tushare_token",
+        rate_limit_bucket="ratelimit:tushare",
+        batch_key="batch:tushare-daily-all",
+        official_doc_ref="https://tushare.pro/document/2?doc_id=27",
+        need_ids=(need.need_id,),
+    )
+
+    batch = _provider_call_batch(call=call, need=need, policy=RateLimitPolicy(window_seconds=60, max_requests=None))
+
+    assert batch.universe_ref == "all_a_shares"
+
+
+def test_selection_single_symbol_batch_does_not_carry_universe_ref() -> None:
+    need = _need(
+        need_id="sel:selection:1:600519.SH:daily_bar",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="600519.SH",
+        granularity="daily",
+        consumer="select",
+        purpose="selection_data_refresh",
+    )
+    call = _call(
+        call_id="call:tushare-daily-single",
+        public_api_id="cn_a.daily_bar",
+        provider_id="official_api_tushare",
+        catalog_endpoint_id="tushare.daily",
+        official_path_or_api_name="daily",
+        params={"ts_code": "600519.SH", "trade_date": "20260630"},
+        auth_scope="tushare_token",
+        rate_limit_bucket="ratelimit:tushare",
+        batch_key="batch:tushare-daily-single",
+        official_doc_ref="https://tushare.pro/document/2?doc_id=27",
+        need_ids=(need.need_id,),
+    )
+
+    batch = _provider_call_batch(call=call, need=need, policy=RateLimitPolicy(window_seconds=60, max_requests=None))
+
+    assert batch.universe_ref is None
+
+
 def test_structured_data_need_batch_does_not_require_provider_capability_declaration() -> None:
     call = _call(
         call_id="call:google-news",

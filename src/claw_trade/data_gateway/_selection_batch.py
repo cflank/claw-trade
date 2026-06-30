@@ -609,6 +609,24 @@ def _refresh_need_chunks(items: Sequence[PublicDataRequest], size: int) -> tuple
     return tuple(chunks)
 
 
+def _should_retry_selection_universe_cached_empty(*, plan: SelectionRunPlan, need: DataNeed) -> bool:
+    return _should_force_selection_universe_provider_refresh(plan=plan, need=need)
+
+
+def _should_force_selection_universe_provider_refresh(*, plan: SelectionRunPlan, need: DataNeed) -> bool:
+    return (
+        plan.market == SelectionMarket.CN_A
+        and str(getattr(need, "consumer", "") or "").strip() == "select"
+        and str(getattr(need, "instrument", "") or "").strip() == str(plan.universe_scope or "").strip()
+        and ":selection:universe_refresh:" in str(getattr(need, "need_id", "") or "")
+        and str(getattr(need, "freshness_policy", "") or "").strip() == "trading_day"
+    )
+
+
+def _requires_scoped_full_market_latest_rows(plan: SelectionRunPlan) -> bool:
+    return bool(plan.universe_scope) and _full_market_expected_min_tickers(plan) > 0
+
+
 def _notify_fetch_progress(
     callback: Callable[[SelectionDataFetchProgress], None] | None,
     *,
@@ -1251,6 +1269,9 @@ def _execute_selection_data_need_batch(
             earliest_start_at=scheduled.earliest_start_at,
             rate_limit_reserved_at=scheduled.rate_limit_reserved_at,
         )
+        if _should_force_selection_universe_provider_refresh(plan=plan, need=batch_need):
+            setattr(batch, "ignore_provider_cache", True)
+            setattr(batch, "ignore_cached_empty", True)
         gate = runtime.data_service.execution_gate.enter(batch)
         if gate.kind in {"cache_hit", "cached_empty", "rate_limited", "shared_result", "cooldown_skipped"}:
             ingest = runtime.ingest.record_gate_result(batch, gate)
@@ -1369,7 +1390,8 @@ def _selection_feature_rows_from_repository(
         start=trade_day,
         end=trade_day,
     )
-    if not latest_records and plan.universe_scope:
+    allow_unscoped_latest_fallback = not _requires_scoped_full_market_latest_rows(plan)
+    if not latest_records and plan.universe_scope and allow_unscoped_latest_fallback:
         latest_records = _query_daily_records(
             repository=repository,
             market=plan.market,
@@ -1388,7 +1410,7 @@ def _selection_feature_rows_from_repository(
             continue
         latest_rows_by_ticker[ticker] = row
         latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
-    if not latest_rows_by_ticker and plan.universe_scope:
+    if not latest_rows_by_ticker and plan.universe_scope and allow_unscoped_latest_fallback:
         latest_records = _query_daily_records(
             repository=repository,
             market=plan.market,
