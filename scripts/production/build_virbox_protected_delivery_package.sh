@@ -2,32 +2,52 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+CONFIG_FILE="${CONFIG_FILE:-${ROOT_DIR}/.runtime/virbox-protected-package.env}"
 
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  if [[ "${args[$i]}" == "--config" ]]; then
+    CONFIG_FILE="${args[$((i + 1))]:-}"
+  fi
+done
+
+if [[ -f "${CONFIG_FILE}" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "${CONFIG_FILE}"
+  set +a
+fi
+
+# Editable defaults. Prefer .runtime/virbox-protected-package.env for local changes.
+PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 INPUT_ARCHIVE="${INPUT_ARCHIVE:-}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/dist/production/virbox-protected-${STAMP}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/mnt/d/claw-trade-virbox/delivery-output/virbox-protected-${STAMP}}"
 WORK_DIR="${WORK_DIR:-}"
-PROTECTED_PYTHON="${PROTECTED_PYTHON:-}"
-PYTHON_SSP="${PYTHON_SSP:-}"
-PROTECTED_NODE="${PROTECTED_NODE:-}"
-NODE_SSP="${NODE_SSP:-}"
+PROTECTED_PYTHON="${PROTECTED_PYTHON:-/mnt/d/claw-trade-virbox/resource-test/protect-python-ds/protected/python}"
+PYTHON_SSP="${PYTHON_SSP:-/mnt/d/claw-trade-virbox/resource-test/protect-python-ds/python.ssp}"
+PROTECTED_NODE="${PROTECTED_NODE:-/mnt/d/claw-trade-virbox/node-ds-test/protected/node.bin}"
+NODE_SSP="${NODE_SSP:-/mnt/d/claw-trade-virbox/node-ds-test/input/node.ssp}"
 DSPROTECTOR="${DSPROTECTOR:-/mnt/d/sw/senseshield/sdk/Tool/VirboxProtect/bin/dsprotector_con.exe}"
 KEEP_WORK=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/production/build_virbox_protected_delivery_package.sh \
-    --input dist/production/claw-trade-production-<version>-<stamp>.tar.gz \
-    --protected-python /mnt/d/claw-trade-virbox/resource-test/protect-python-ds/protected/python \
-    --python-ssp /mnt/d/claw-trade-virbox/resource-test/protect-python-ds/python.ssp \
-    --protected-node /mnt/d/claw-trade-virbox/node-ds-test/protected/node.bin \
-    --node-ssp /mnt/d/claw-trade-virbox/node-ds-test/input/node.ssp \
-    --output-dir /mnt/d/claw-trade-virbox/delivery-output/virbox-protected-<stamp>
+  scripts/production/build_virbox_protected_delivery_package.sh
+
+One-time local config:
+  cp scripts/production/virbox-protected-package.env.example .runtime/virbox-protected-package.env
+  vim .runtime/virbox-protected-package.env
+  scripts/production/build_virbox_protected_delivery_package.sh
+
+Optional overrides:
+  --config <env-file>
+  --input <claw-trade-production-*.tar.gz>
+  --output-dir <dir>
 
 Environment overrides:
-  INPUT_ARCHIVE OUTPUT_DIR WORK_DIR PROTECTED_PYTHON PYTHON_SSP
+  CONFIG_FILE INPUT_ARCHIVE OUTPUT_DIR WORK_DIR PROTECTED_PYTHON PYTHON_SSP
   PROTECTED_NODE NODE_SSP DSPROTECTOR PYTHON_BIN
 EOF
 }
@@ -45,6 +65,10 @@ while (($# > 0)); do
   case "$1" in
     --input)
       INPUT_ARCHIVE="${2:-}"
+      shift 2
+      ;;
+    --config)
+      CONFIG_FILE="${2:-}"
       shift 2
       ;;
     --output-dir)
@@ -154,6 +178,20 @@ require_executable "${DSPROTECTOR}" "DSProtector CLI"
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || fail "missing ${PYTHON_BIN}"
 command -v tar >/dev/null 2>&1 || fail "missing tar"
 command -v sha256sum >/dev/null 2>&1 || fail "missing sha256sum"
+
+if [[ -z "${INPUT_ARCHIVE}" ]]; then
+  shopt -s nullglob
+  archives=("${ROOT_DIR}"/dist/production/claw-trade-production-*.tar.gz)
+  shopt -u nullglob
+  ((${#archives[@]} > 0)) || fail "missing input archive; set INPUT_ARCHIVE in ${CONFIG_FILE} or pass --input"
+  INPUT_ARCHIVE="${archives[0]}"
+  for candidate in "${archives[@]}"; do
+    if [[ "${candidate}" -nt "${INPUT_ARCHIVE}" ]]; then
+      INPUT_ARCHIVE="${candidate}"
+    fi
+  done
+  log "using latest input archive: ${INPUT_ARCHIVE}"
+fi
 
 release_name="$("${PYTHON_BIN}" "${ROOT_DIR}/scripts/production/validate_production_archive.py" "${INPUT_ARCHIVE}")"
 [[ -n "${release_name}" ]] || fail "could not detect release name"
