@@ -4,11 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 CONFIG_FILE="${CONFIG_FILE:-${ROOT_DIR}/.runtime/virbox-protected-package.env}"
+CONFIG_FILE_EXPLICIT=0
 
 args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   if [[ "${args[$i]}" == "--config" ]]; then
     CONFIG_FILE="${args[$((i + 1))]:-}"
+    CONFIG_FILE_EXPLICIT=1
   fi
 done
 
@@ -17,6 +19,9 @@ if [[ -f "${CONFIG_FILE}" ]]; then
   # shellcheck disable=SC1090
   . "${CONFIG_FILE}"
   set +a
+elif [[ "${CONFIG_FILE_EXPLICIT}" == "1" ]]; then
+  printf '[ERROR] config file not found: %s\n' "${CONFIG_FILE}" >&2
+  exit 1
 fi
 
 # Editable defaults. Prefer .runtime/virbox-protected-package.env for local changes.
