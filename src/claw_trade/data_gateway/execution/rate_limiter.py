@@ -203,7 +203,7 @@ class RateLimiter:
         timestamps = tuple(
             timestamp
             for timestamp in (_coerce_timestamp(raw) for raw in state.get("request_timestamps", ()))
-            if timestamp is not None and timestamp > cutoff
+            if timestamp is not None and cutoff < timestamp <= current
         )
         if len(timestamps) < effective_limit:
             return current
@@ -226,7 +226,7 @@ class RateLimiter:
         return tuple(
             timestamp
             for timestamp in (_coerce_timestamp(raw) for raw in state.get("request_timestamps", ()))
-            if timestamp is not None and timestamp > cutoff
+            if timestamp is not None and cutoff < timestamp <= current
         )
 
     def mark_cooldown(self, key: str, until: datetime, reason: str) -> None:

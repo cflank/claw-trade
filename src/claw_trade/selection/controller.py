@@ -33,6 +33,7 @@ from claw_trade.selection.models import (
     SelectionWorkerId,
     SelectRequest,
 )
+from claw_trade.data_gateway.selection_api import resolve_crypto_selection_trade_date_for_scheduler
 from claw_trade.selection.refresh import SelectionDataRefreshResult
 from claw_trade.selection.store import (
     LatestCompletedSelectionRun,
@@ -90,6 +91,14 @@ class SelectReadGateResult:
             unavailable_code=None,
             latest_completed_run=run,
         )
+
+
+@dataclass(frozen=True)
+class RawDataMaintenanceStatus:
+    status: str
+    job_id: str | None = None
+    reason: str | None = None
+    payload: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -357,6 +366,10 @@ _REFRESHABLE_UNAVAILABLE_CODES = frozenset(
         SelectUnavailableCode.SELECTION_WAREHOUSE_CHECK_MISSING,
     }
 )
+_RAW_DATA_MAINTENANCE_ACTIVE_STATUSES = frozenset(
+    {"running", "active", "in_progress", "started", "fetching_data", "normalizing_inputs"}
+)
+_RAW_DATA_MAINTENANCE_FAILED_STATUSES = frozenset({"failed", "error"})
 
 _SELECTION_WORKER_LABELS: dict[SelectionWorkerId, str] = {
     SelectionWorkerId.STRATEGIST: "策略评审",
@@ -397,6 +410,7 @@ class SelectionController:
         scheduler_enqueue: Callable[..., object] | None = None,
         data_job_runner: Callable[..., object] | None = None,
         default_trade_date_resolver: Callable[[str | None], str] | None = None,
+        raw_maintenance_status_provider: Callable[[SelectionMarket], object | None] | None = None,
     ) -> None:
         self._store = store
         self._now_fn = now_fn or _utc_now
@@ -407,6 +421,7 @@ class SelectionController:
         self._scheduler_enqueue = scheduler_enqueue
         self._data_job_runner = data_job_runner
         self._default_trade_date_resolver = default_trade_date_resolver
+        self._raw_maintenance_status_provider = raw_maintenance_status_provider
         self._progress_lock = Lock()
         self._active_progress: dict[str, object] | None = None
         self._cancelled_progress_ids: set[str] = set()
@@ -454,14 +469,7 @@ class SelectionController:
         request = _parse_select_request(
             raw_text=raw_text, request_id=request_id, user_id=user_id, now_fn=self._now_fn
         )
-        if (
-            request.market == SelectionMarket.CN_A
-            and request.trade_date is None
-            and self._default_trade_date_resolver is not None
-        ):
-            resolved_trade_date = self._default_trade_date_resolver(None).strip()
-            date.fromisoformat(resolved_trade_date)
-            request = replace(request, trade_date=resolved_trade_date)
+        request = self._resolve_default_trade_date(request)
         workflow_run_id = _build_select_workflow_run_id(
             request_id=request.request_id, now_fn=self._now_fn
         )
@@ -494,6 +502,13 @@ class SelectionController:
                     evidence_path=evidence_path,
                     unavailable_code=SelectUnavailableCode.SELECT_MARKET_UNSUPPORTED,
                 )
+            raw_maintenance_block = self._raw_data_maintenance_block(
+                request=request,
+                workflow_run_id=workflow_run_id,
+                evidence_dir=evidence_dir,
+            )
+            if raw_maintenance_block is not None:
+                return raw_maintenance_block
             if request.force_refresh:
                 payload = _base_workflow_evidence_payload(
                     request=request,
@@ -594,6 +609,70 @@ class SelectionController:
             )
         finally:
             self._clear_workflow_progress(workflow_run_id)
+
+    def _raw_data_maintenance_block(
+        self,
+        *,
+        request: SelectRequest,
+        workflow_run_id: str,
+        evidence_dir: Path,
+    ) -> SelectCommandResult | None:
+        status = self._raw_data_maintenance_status(request.market)
+        if status is None:
+            return None
+        if status.status in _RAW_DATA_MAINTENANCE_ACTIVE_STATUSES:
+            code = SelectUnavailableCode.RAW_DATA_MAINTENANCE_RUNNING
+        elif status.status in _RAW_DATA_MAINTENANCE_FAILED_STATUSES and not request.force_refresh:
+            code = SelectUnavailableCode.RAW_DATA_MAINTENANCE_FAILED
+        else:
+            return None
+        reason = status.reason or code.value
+        payload = _base_workflow_evidence_payload(
+            request=request,
+            workflow_run_id=workflow_run_id,
+            status=code.value,
+            selection_run_id=None,
+            reason=reason,
+        )
+        payload["raw_data_maintenance"] = dict(status.payload or {})
+        evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
+        return SelectCommandResult(
+            code=SelectCommandCode.UNAVAILABLE,
+            chat_text=_raw_data_maintenance_chat_text(code, reason=reason),
+            select_workflow_run_id=workflow_run_id,
+            evidence_path=evidence_path,
+            unavailable_code=code,
+            failure_reason=reason,
+        )
+
+    def _resolve_default_trade_date(self, request: SelectRequest) -> SelectRequest:
+        if request.trade_date is not None:
+            return request
+        resolver: Callable[[str | None], str] | None
+        if request.market == SelectionMarket.CRYPTO:
+            resolver = resolve_crypto_selection_trade_date_for_scheduler
+        elif request.market == SelectionMarket.CN_A:
+            resolver = self._default_trade_date_resolver
+        else:
+            resolver = None
+        if resolver is None:
+            return request
+        resolved_trade_date = resolver(None).strip()
+        date.fromisoformat(resolved_trade_date)
+        return replace(request, trade_date=resolved_trade_date)
+
+    def _raw_data_maintenance_status(self, market: SelectionMarket) -> RawDataMaintenanceStatus | None:
+        if self._raw_maintenance_status_provider is None:
+            return None
+        try:
+            raw_status = self._raw_maintenance_status_provider(market)
+        except Exception as exc:  # pragma: no cover - defensive path for live status storage errors
+            return RawDataMaintenanceStatus(
+                status="failed",
+                reason=f"raw_data_maintenance_status_unreadable:{exc}",
+                payload={"status": "failed", "error": str(exc)},
+            )
+        return _coerce_raw_data_maintenance_status(raw_status)
 
     def _run_available_select_workflow(
         self,
@@ -2394,6 +2473,51 @@ def _data_refresh_unavailable_chat_text(
     return f"{_unavailable_chat_text(code)} 已尝试启动后台补数，但调度失败：{refresh.error_code or refresh.reason}。"
 
 
+def _coerce_raw_data_maintenance_status(raw_status: object | None) -> RawDataMaintenanceStatus | None:
+    if raw_status is None:
+        return None
+    if isinstance(raw_status, RawDataMaintenanceStatus):
+        return raw_status
+    if isinstance(raw_status, Mapping):
+        payload = dict(raw_status)
+    else:
+        payload = {
+            "status": getattr(raw_status, "status", None),
+            "job_id": getattr(raw_status, "job_id", None),
+            "jobId": getattr(raw_status, "jobId", None),
+            "reason": getattr(raw_status, "reason", None),
+            "message": getattr(raw_status, "message", None),
+            "error": getattr(raw_status, "error", None),
+        }
+    status = str(payload.get("status") or "").strip().lower()
+    if not status:
+        return None
+    job_id = _optional_result_text(payload.get("job_id") or payload.get("jobId"))
+    reason = _optional_result_text(
+        payload.get("reason") or payload.get("message") or payload.get("error")
+    )
+    normalized_payload = dict(payload)
+    normalized_payload["status"] = status
+    if job_id is not None:
+        normalized_payload["job_id"] = job_id
+    if reason is not None:
+        normalized_payload["reason"] = reason
+    return RawDataMaintenanceStatus(
+        status=status,
+        job_id=job_id,
+        reason=reason,
+        payload=normalized_payload,
+    )
+
+
+def _raw_data_maintenance_chat_text(code: SelectUnavailableCode, *, reason: str) -> str:
+    if code == SelectUnavailableCode.RAW_DATA_MAINTENANCE_RUNNING:
+        return "`/select` 当前不可用：原始行情正在补数据，补完后会再计算候选池。"
+    if reason and reason != code.value:
+        return f"`/select` 当前不可用：最近一次原始行情补数据失败。原因：{reason}"
+    return "`/select` 当前不可用：最近一次原始行情补数据失败。"
+
+
 def _unavailable_chat_text(code: SelectUnavailableCode) -> str:
     messages = {
         SelectUnavailableCode.NO_COMPLETED_SELECTION_RUN: "`/select` 当前不可用：没有可用的已完成选股批次。",
@@ -2408,6 +2532,10 @@ def _unavailable_chat_text(code: SelectUnavailableCode) -> str:
         SelectUnavailableCode.CRYPTO_SELECT_HISTORY_MISSING: (
             "`/select` 当前不可用：Crypto 列式历史仓库未读到可用 spot USDT 日线。"
         ),
+        SelectUnavailableCode.RAW_DATA_MAINTENANCE_RUNNING: (
+            "`/select` 当前不可用：原始行情正在补数据，补完后会再计算候选池。"
+        ),
+        SelectUnavailableCode.RAW_DATA_MAINTENANCE_FAILED: "`/select` 当前不可用：最近一次原始行情补数据失败。",
     }
     return messages.get(code, "`/select` 当前不可用：选股数据暂不可用。")
 

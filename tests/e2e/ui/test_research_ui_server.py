@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -42,7 +43,12 @@ def _app(tmp_path: Path):
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
     (assets / "main.js").write_text("console.log('ok');", encoding="utf-8")
     settings = ResearchUiServerSettings(frontend_dist=dist)
-    return build_research_ui_app(settings=settings, services=build_ui_http_services(settings))
+    services = SimpleNamespace(
+        queue=_SavedReportQueueProbe(),
+        repository=_SavedReportRepositoryProbe(),
+        channel_bridge=_ConnectedChannelBridgeProbe(),
+    )
+    return build_research_ui_app(settings=settings, services=services)  # type: ignore[arg-type]
 
 
 def test_spa_fallback_is_last_and_api_prefix_keeps_json(tmp_path: Path) -> None:
@@ -157,7 +163,7 @@ def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
 
     selection_loaded = client.get("/api/ui/get-selection-auto-refresh-settings")
     assert selection_loaded.status_code == 200
-    assert selection_loaded.json()["selectionAutoRefresh"] == {"enabled": True}
+    assert selection_loaded.json()["selectionAutoRefresh"] == {"enabled": False}
 
     selection_saved = client.post(
         "/api/ui/save-selection-auto-refresh-settings",
@@ -170,9 +176,9 @@ def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:
     reset = client.post("/api/ui/reset-settings-to-defaults", json={"requestId": "req-reset"})
     assert reset.status_code == 200
     assert reset.json()["reportCleanup"] == {"reportRetentionDays": 7}
-    assert reset.json()["selectionAutoRefresh"] == {"enabled": True}
+    assert reset.json()["selectionAutoRefresh"] == {"enabled": False}
     assert cleanup.load_settings() == {"reportRetentionDays": 7}
-    assert selection_auto_refresh.load_settings() == {"enabled": True}
+    assert selection_auto_refresh.load_settings() == {"enabled": False}
 
 
 def test_production_factory_reset_route_uses_fixed_allowlist(tmp_path: Path) -> None:
@@ -291,7 +297,7 @@ def test_factory_reset_pauses_owned_background_schedulers(tmp_path: Path) -> Non
     assert price_alert_scan.started == 1
 
 
-def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
+def test_app_startup_does_not_start_owned_selection_auto_refresh_by_default(tmp_path: Path, monkeypatch) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
     (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
@@ -304,11 +310,94 @@ def test_app_startup_starts_owned_selection_auto_refresh_by_default(tmp_path: Pa
 
     with TestClient(app) as client:
         assert client.get("/healthz").status_code == 200
-        assert refresh.started == 1
+        assert refresh.started == 0
         assert cleanup.started == 1
 
-    assert refresh.stopped == 1
+    assert refresh.stopped == 0
     assert cleanup.stopped == 1
+
+
+def test_app_startup_runs_owned_data_maintenance_for_cn_a_and_crypto(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    scheduled_work = _ScheduledWorkRunnerProbe(expected_calls=2)
+    services = SimpleNamespace(
+        selection_refresh_service=refresh,
+        report_cleanup_scheduler=cleanup,
+        scheduled_work_runner=scheduled_work,
+    )
+    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert scheduled_work.called.wait(timeout=1.0)
+
+    assert len(scheduled_work.calls) == 2
+    assert sorted((call["kind"], call["market"], call["jobKind"]) for call in scheduled_work.calls) == [
+        ("data_maintenance", "CN_A", "eod"),
+        ("data_maintenance", "CRYPTO", "kline-refresh"),
+    ]
+    for call in scheduled_work.calls:
+        assert str(call["cronRunId"]).startswith("startup-")
+        assert "maintenanceJobId" not in call
+
+
+def test_app_startup_data_maintenance_keeps_running_after_cn_a_failure(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    scheduled_work = _FailingScheduledWorkRunnerProbe(fail_market="CN_A", expected_calls=2)
+    services = SimpleNamespace(
+        selection_refresh_service=refresh,
+        report_cleanup_scheduler=cleanup,
+        scheduled_work_runner=scheduled_work,
+    )
+    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert scheduled_work.called.wait(timeout=1.0)
+
+    assert sorted((call["market"], call["jobKind"]) for call in scheduled_work.calls) == [
+        ("CN_A", "eod"),
+        ("CRYPTO", "kline-refresh"),
+    ]
+
+
+def test_app_shutdown_waits_for_startup_data_maintenance_thread(tmp_path: Path, monkeypatch) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html><body>research-ui</body></html>", encoding="utf-8")
+    refresh = _RefreshServiceProbe()
+    cleanup = _CleanupSchedulerProbe()
+    scheduled_work = _BlockingScheduledWorkRunnerProbe()
+    services = SimpleNamespace(
+        selection_refresh_service=refresh,
+        report_cleanup_scheduler=cleanup,
+        scheduled_work_runner=scheduled_work,
+    )
+    monkeypatch.delenv("CLAW_TRADE_SELECTION_AUTO_REFRESH", raising=False)
+    monkeypatch.setattr("claw_trade.web.app.build_ui_http_services", lambda _settings: services)
+    app = build_research_ui_app(settings=ResearchUiServerSettings(frontend_dist=dist))
+
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+        assert scheduled_work.called.wait(timeout=1.0)
+        threads = app.state.startup_data_maintenance_threads
+        assert len(threads) == 2
+        assert any(thread.is_alive() for thread in threads)
+        scheduled_work.release.set()
+
+    assert all(not thread.is_alive() for thread in threads)
 
 
 def test_app_startup_starts_owned_selection_auto_refresh_when_enabled(tmp_path: Path, monkeypatch) -> None:
@@ -542,6 +631,75 @@ def test_selection_refresh_snapshot_does_not_surface_terminal_refresh_failure() 
         (None, None, None, False),
         (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO, None, False),
     ]
+
+
+def test_selection_refresh_snapshot_surfaces_running_raw_data_maintenance() -> None:
+    refresh = _TerminalOnlyRefreshSnapshotProbe()
+    raw_maintenance = _RawMaintenanceStatusProbe()
+    services = SimpleNamespace(
+        selection_controller=_SelectionControllerSnapshotProbe(),
+        selection_refresh_service=refresh,
+        raw_maintenance_status_provider=raw_maintenance,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/ui/get-selection-refresh-snapshot",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(ui_services=services)),
+        }
+    )
+
+    response = get_selection_refresh_snapshot(request)
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+
+    progress = payload["selectionProgress"]
+    assert progress["kind"] == "data_refresh"
+    assert progress["status"] == "running"
+    assert progress["statusLabel"] == "原始行情补数据中"
+    assert progress["stageLabel"] == "原始行情补数据"
+    assert progress["command"] == "系统启动自动补数据"
+    assert progress["workerStatusLabels"] == [
+        "A股：原始行情补数据中（job-cn-a）",
+        "加密币：原始行情补数据中（job-crypto）",
+    ]
+    assert progress["workflowRunId"] == "raw-data-maintenance:job-cn-a,job-crypto"
+    assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
+
+
+def test_selection_refresh_snapshot_surfaces_failed_raw_data_maintenance_reason() -> None:
+    refresh = _TerminalOnlyRefreshSnapshotProbe()
+    raw_maintenance = _FailedRawMaintenanceStatusProbe()
+    services = SimpleNamespace(
+        selection_controller=_SelectionControllerSnapshotProbe(),
+        selection_refresh_service=refresh,
+        raw_maintenance_status_provider=raw_maintenance,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/ui/get-selection-refresh-snapshot",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(ui_services=services)),
+        }
+    )
+
+    response = get_selection_refresh_snapshot(request)
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+
+    progress = payload["selectionProgress"]
+    assert progress["status"] == "failed"
+    assert progress["statusLabel"] == "原始行情补数据失败"
+    assert "binance_exchange_info_unavailable" in progress["currentAction"]
+    assert progress["workerStatusLabels"] == [
+        "加密币：原始行情补数据失败（job-crypto-failed）：binance_exchange_info_unavailable:timeout"
+    ]
+    assert progress["workflowRunId"] == "raw-data-maintenance:job-crypto-failed"
+    assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 
 def test_confirm_intent_draft_uses_chat_context_when_provided() -> None:
@@ -911,6 +1069,44 @@ class _CleanupSchedulerProbe:
         self.stopped += 1
 
 
+class _ScheduledWorkRunnerProbe:
+    def __init__(self, *, expected_calls: int = 1) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.expected_calls = expected_calls
+        self.called = Event()
+
+    def handle_wake(self, payload: dict[str, object]) -> dict[str, object]:
+        self.calls.append(dict(payload))
+        if len(self.calls) >= self.expected_calls:
+            self.called.set()
+        return {"status": "ok"}
+
+
+class _FailingScheduledWorkRunnerProbe(_ScheduledWorkRunnerProbe):
+    def __init__(self, *, fail_market: str, expected_calls: int) -> None:
+        super().__init__(expected_calls=expected_calls)
+        self.fail_market = fail_market
+
+    def handle_wake(self, payload: dict[str, object]) -> dict[str, object]:
+        super().handle_wake(payload)
+        if payload.get("market") == self.fail_market:
+            raise RuntimeError(f"{self.fail_market} maintenance failed")
+        return {"status": "ok"}
+
+
+class _BlockingScheduledWorkRunnerProbe:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.called = Event()
+        self.release = Event()
+
+    def handle_wake(self, payload: dict[str, object]) -> dict[str, object]:
+        self.calls.append(dict(payload))
+        self.called.set()
+        assert self.release.wait(timeout=1.0)
+        return {"status": "ok"}
+
+
 class _AutoUpdateSchedulerProbe:
     def __init__(self) -> None:
         self.started = 0
@@ -1060,6 +1256,50 @@ class _TerminalOnlyRefreshSnapshotProbe:
                 }
             }
         return {"selectionProgress": None}
+
+
+class _RawMaintenanceStatusProbe:
+    def __init__(self) -> None:
+        self.calls: list[SelectionMarket] = []
+
+    def __call__(self, market: SelectionMarket) -> dict[str, object] | None:
+        self.calls.append(market)
+        if market == SelectionMarket.CN_A:
+            return {
+                "status": "running",
+                "job_id": "job-cn-a",
+                "market": "CN_A",
+                "dataset_scope": "daily_bar",
+                "started_at": "2026-07-01T10:00:00+00:00",
+            }
+        if market == SelectionMarket.CRYPTO:
+            return {
+                "status": "running",
+                "job_id": "job-crypto",
+                "market": "CRYPTO",
+                "dataset_scope": "daily_bar",
+                "started_at": "2026-07-01T10:00:02+00:00",
+            }
+        return None
+
+
+class _FailedRawMaintenanceStatusProbe:
+    def __init__(self) -> None:
+        self.calls: list[SelectionMarket] = []
+
+    def __call__(self, market: SelectionMarket) -> dict[str, object] | None:
+        self.calls.append(market)
+        if market == SelectionMarket.CRYPTO:
+            return {
+                "status": "failed",
+                "job_id": "job-crypto-failed",
+                "market": "CRYPTO",
+                "dataset_scope": "daily_bar",
+                "started_at": "2026-07-01T10:00:02+00:00",
+                "finished_at": "2026-07-01T10:00:09+00:00",
+                "reason": "binance_exchange_info_unavailable:timeout",
+            }
+        return None
 
 
 class _RefreshCancelProbe:

@@ -607,10 +607,48 @@ def test_selection_refresh_service_startup_check_runs_data_job_and_dedupes_selec
 
     result = service.run_automatic_refresh_once(reason="startup_data_check")
 
-    assert result.status == "completed"
+    assert result.status == "no_candidate"
     assert result.selection_run_id == "sel-auto-check-1"
     assert result.trade_date == "2026-06-04"
     assert job_calls == ["sel-auto-check-1"]
+
+
+def test_selection_refresh_service_startup_check_returns_data_job_failure() -> None:
+    store = SelectionRunStore()
+
+    def run_job(plan: SelectionRunPlan) -> None:
+        store.save_data_run_record(
+            SelectionDataRunRecord(
+                run_plan=plan,
+                data_run=SelectionDataRun(
+                    selection_run_id=plan.selection_run_id,
+                    status=SelectionDataRunStatus.FAILED,
+                    lease_id=f"lease://{plan.selection_run_id}",
+                    started_at="2026-06-04T08:00:00+00:00",
+                    failed_at="2026-06-04T08:01:00+00:00",
+                    failure_code="crypto_select_history_missing",
+                    failure_reason="CRYPTO selection 未从本地列式历史仓库读到可用 spot USDT 日线",
+                ),
+                manifest=None,
+            )
+        )
+
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=run_job,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 6, 4, 8, tzinfo=UTC),
+        run_id_factory=lambda: "sel-auto-check-failed",
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup_data_check")
+
+    assert result.status == "failed"
+    assert result.selection_run_id == "sel-auto-check-failed"
+    assert result.error_code == "crypto_select_history_missing"
+    assert "本地列式历史仓库" in result.reason
 
 
 def test_selection_refresh_service_startup_batch_runs_cn_a_and_crypto(monkeypatch) -> None:
@@ -704,9 +742,9 @@ def test_selection_refresh_service_auto_check_dedupes_by_market_not_only_date(mo
 
     result = service.run_automatic_refresh_once(reason="startup_data_check")
 
-    assert result.status == "completed"
+    assert result.status == "no_candidate"
     assert result.selection_run_id == "sel-auto-cn-a-1"
-    assert nested_results == [("completed", "sel-auto-crypto-1")]
+    assert nested_results == [("no_candidate", "sel-auto-crypto-1")]
     assert markets == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 
@@ -736,6 +774,43 @@ def test_selection_refresh_service_startup_check_reuses_valid_candidate_cache(tm
     assert result.selection_run_id == "sel-existing-cache-1"
     assert result.reason == "startup_data_check:candidate_cache_valid"
     assert check_calls == []
+
+
+def test_selection_refresh_service_force_refresh_ignores_valid_candidate_cache(tmp_path: Path) -> None:
+    store = SelectionRunStore(persisted_runs_dir=tmp_path / "store" / "data-runs")
+    _save_completed_candidate_cache_record(
+        store=store,
+        artifact_root=tmp_path / "artifacts",
+        selection_run_id="sel-existing-cache-1",
+        trade_date="2026-06-04",
+    )
+    check_calls: list[SelectionRunPlan] = []
+
+    def run_check(plan: SelectionRunPlan) -> None:
+        check_calls.append(plan)
+        _save_completed_candidate_cache_record(
+            store=store,
+            artifact_root=tmp_path / "artifacts",
+            selection_run_id=plan.selection_run_id,
+            trade_date=plan.trade_date,
+        )
+
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        run_data_check=run_check,
+        resolve_closed_trade_date=lambda value: value or "2026-06-04",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 6, 4, 10, tzinfo=UTC),
+        run_id_factory=lambda: "sel-auto-check-after-raw-update",
+    )
+
+    result = service.run_automatic_refresh_once(reason="startup_data_check_after_maintenance", force_refresh=True)
+
+    assert result.status == "completed"
+    assert result.selection_run_id == "sel-auto-check-after-raw-update"
+    assert check_calls[0].selection_run_id == "sel-auto-check-after-raw-update"
 
 
 def test_selection_refresh_service_request_refresh_reuses_valid_candidate_cache(tmp_path: Path) -> None:

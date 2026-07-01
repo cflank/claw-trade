@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
+from typing import Callable
 
 import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
@@ -570,6 +571,7 @@ def _selection_controller_with_completed_run(
     legacy_summary: bool = False,
     raw_complete_summary: bool = False,
     selection_runner: _FakeSelectionOpenClawRunner | None = None,
+    raw_maintenance_status_provider: Callable[[SelectionMarket], object | None] | None = None,
 ) -> tuple[SelectionController, _FakeSelectionOpenClawRunner]:
     store = SelectionRunStore()
     summary_path = tmp_path / "candidate-cache-summary.md"
@@ -896,8 +898,99 @@ def _selection_controller_with_completed_run(
         now_fn=lambda: datetime.fromisoformat("2026-05-26T10:00:00+00:00").astimezone(UTC),
         openclaw=OpenClawClient(resolved_selection_runner),
         workflow_evidence_root=tmp_path / "selection-workflows",
+        raw_maintenance_status_provider=raw_maintenance_status_provider,
     )
     return selection_controller, resolved_selection_runner
+
+
+@pytest.mark.integration
+def test_select_command_blocks_old_completed_cache_while_raw_data_maintenance_is_running(tmp_path: Path) -> None:
+    selection_controller, selection_runner = _selection_controller_with_completed_run(
+        tmp_path,
+        raw_maintenance_status_provider=lambda _market: {
+            "status": "running",
+            "job_id": "data-maintenance:CN_A:eod:2026-05-26",
+        },
+    )
+
+    result = selection_controller.handle_select_command(
+        raw_text="/select",
+        request_id="sel-raw-maintenance-running",
+    )
+
+    assert result.code.value == "unavailable"
+    assert result.unavailable_code is not None
+    assert result.unavailable_code.value == "raw_data_maintenance_running"
+    assert "原始行情正在补数据" in result.chat_text
+    assert selection_runner.payloads == []
+    evidence = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    assert evidence["raw_data_maintenance"]["job_id"] == "data-maintenance:CN_A:eod:2026-05-26"
+
+
+@pytest.mark.integration
+def test_select_command_raw_maintenance_gate_does_not_read_completed_cache(tmp_path: Path) -> None:
+    selection_controller, _ = _selection_controller_with_completed_run(
+        tmp_path,
+        raw_maintenance_status_provider=lambda _market: {"status": "running"},
+    )
+
+    def _fail_if_cache_is_read(_request: object) -> object:
+        raise AssertionError("raw maintenance gate must run before completed cache read")
+
+    selection_controller.load_latest_completed_for_select = _fail_if_cache_is_read  # type: ignore[method-assign]
+
+    result = selection_controller.handle_select_command(
+        raw_text="/select",
+        request_id="sel-raw-maintenance-no-cache-read",
+    )
+
+    assert result.code.value == "unavailable"
+    assert result.unavailable_code is not None
+    assert result.unavailable_code.value == "raw_data_maintenance_running"
+
+
+@pytest.mark.integration
+def test_select_command_blocks_old_completed_cache_after_raw_data_maintenance_failed(tmp_path: Path) -> None:
+    selection_controller, selection_runner = _selection_controller_with_completed_run(
+        tmp_path,
+        raw_maintenance_status_provider=lambda _market: {
+            "status": "failed",
+            "job_id": "data-maintenance:CRYPTO:kline-refresh:2026-05-26",
+            "error": "scheduled maintenance DataAPI returned non-ready status: empty_result",
+        },
+    )
+
+    result = selection_controller.handle_select_command(
+        raw_text="/select 2",
+        request_id="sel-raw-maintenance-failed",
+    )
+
+    assert result.code.value == "unavailable"
+    assert result.unavailable_code is not None
+    assert result.unavailable_code.value == "raw_data_maintenance_failed"
+    assert result.failure_reason == "scheduled maintenance DataAPI returned non-ready status: empty_result"
+    assert "补数据失败" in result.chat_text
+    assert selection_runner.payloads == []
+
+
+@pytest.mark.integration
+def test_select_command_raw_maintenance_gate_is_market_scoped(tmp_path: Path) -> None:
+    selection_controller, selection_runner = _selection_controller_with_completed_run(
+        tmp_path,
+        raw_maintenance_status_provider=lambda market: (
+            {"status": "running", "job_id": "data-maintenance:CRYPTO:kline-refresh:2026-05-26"}
+            if market == SelectionMarket.CRYPTO
+            else None
+        ),
+    )
+
+    result = selection_controller.handle_select_command(
+        raw_text="/select",
+        request_id="sel-raw-maintenance-market-scoped",
+    )
+
+    assert result.code.value == "completed"
+    assert selection_runner.payloads
 
 
 @pytest.mark.integration
@@ -1015,6 +1108,125 @@ def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_co
         Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
     )
     assert evidence_payload["trade_date"] == "2026-06-04"
+    assert chat_transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+@pytest.mark.integration
+def test_select_crypto_refreshes_current_trade_date_instead_of_reusing_older_completed_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "claw_trade.selection.controller.resolve_crypto_selection_trade_date_for_scheduler",
+        lambda value: value or "2026-07-01",
+    )
+    refresh_calls: list[dict[str, object]] = []
+
+    def _refresh(**kwargs: object) -> SelectionDataRefreshResult:
+        refresh_calls.append(dict(kwargs))
+        return SelectionDataRefreshResult(
+            status="started",
+            selection_run_id="sel-refresh-crypto-20260701",
+            trade_date="2026-07-01",
+            reason="no_completed_selection_run",
+        )
+
+    old_selection_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
+    old_record = next(iter(old_selection_controller._store._runs.values()))  # noqa: SLF001
+    old_cache_ref = old_record.data_run.candidate_cache_ref
+    assert old_cache_ref is not None
+    assert old_record.manifest is not None
+    body_path = Path(old_cache_ref.l1_uri)
+    body_sha = sha256(body_path.read_bytes()).hexdigest()
+    crypto_run_id = "sel-old-crypto-20260606"
+    crypto_manifest_path = tmp_path / "crypto-candidate-cache-manifest.json"
+    manifest_payload = _candidate_cache_manifest_payload(run_id=crypto_run_id, body_sha=body_sha)
+    manifest_payload.update(
+        {
+            "market": "CRYPTO",
+            "profile": "CRYPTO",
+            "trade_date": "2026-06-06",
+            "strategy_config_ref": "config://crypto-selection-v1",
+            "strategy_config_version": "crypto.selection_strategy.v1",
+            "weight_version": "crypto.selection_weights.v1",
+        }
+    )
+    crypto_manifest_path.write_text(
+        json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    _write_readback_log(
+        crypto_manifest_path,
+        expected_sha256=sha256(crypto_manifest_path.read_bytes()).hexdigest(),
+    )
+    crypto_plan = replace(
+        old_record.run_plan,
+        selection_run_id=crypto_run_id,
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-06-06",
+        universe_scope="spot_usdt",
+        data_need_audit_ref="plan://selection/crypto/2026-06-06/batch-v1",
+        approved_strategy_config_ref="config://crypto-selection-v1",
+    )
+    crypto_cache_ref = replace(
+        old_cache_ref,
+        selection_run_id=crypto_run_id,
+        manifest_ref=str(crypto_manifest_path),
+        expires_at="2026-07-02T09:00:00+00:00",
+    )
+    crypto_data_run = replace(
+        old_record.data_run,
+        selection_run_id=crypto_run_id,
+        candidate_cache_ref=crypto_cache_ref,
+        normalized_refs=("dataset://normalized/CRYPTO/daily/BTCUSDT",),
+        provider_attempt_refs=("attempt://binance-1",),
+        select_data_plan_ref="select-data-plan://selection/crypto/2026-06-06",
+    )
+    crypto_manifest = replace(
+        old_record.manifest,
+        selection_run_id=crypto_run_id,
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-06-06",
+        strategy_config_ref="config://crypto-selection-v1",
+        strategy_config_version="crypto.selection_strategy.v1",
+        weight_version="crypto.selection_weights.v1",
+    )
+    selection_store = SelectionRunStore()
+    selection_store.save_data_run_record(
+        SelectionDataRunRecord(run_plan=crypto_plan, data_run=crypto_data_run, manifest=crypto_manifest)
+    )
+    selection_controller = SelectionController(
+        store=selection_store,
+        now_fn=lambda: datetime.fromisoformat("2026-07-01T10:00:00+00:00").astimezone(UTC),
+        openclaw=OpenClawClient(selection_runner),
+        scheduler_enqueue=_refresh,
+        workflow_evidence_root=tmp_path / "selection-workflows-crypto-current-date",
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
+
+    result = controller.send_chat_message(
+        request_id="sel-08-crypto-current-date-refresh",
+        context_id="ctx-refresh-crypto-current",
+        text="/select 2",
+    )
+
+    assert "error" not in result
+    assert result["selection"]["code"] == "data_refresh_requested"
+    assert result["selection"]["dataRefresh"]["tradeDate"] == "2026-07-01"
+    assert len(refresh_calls) == 1
+    request = refresh_calls[0]["request"]
+    assert getattr(request, "market") == SelectionMarket.CRYPTO
+    assert getattr(request, "trade_date") == "2026-07-01"
+    evidence_payload = json.loads(
+        Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
+    )
+    assert evidence_payload["trade_date"] == "2026-07-01"
+    assert selection_runner.payloads == []
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
 

@@ -547,6 +547,10 @@ def _param_value(name: str, need: DataNeed, symbol: str, base_asset: str, endpoi
         return _timestamp_millis_param(need.time_range_start, end_of_day=False)
     if name == "end_time" and endpoint.source_type == "coinglass":
         return _timestamp_millis_param(need.time_range_end, end_of_day=True)
+    if name == "startTime":
+        return _timestamp_millis_param(need.time_range_start, end_of_day=False)
+    if name == "endTime":
+        return _timestamp_millis_param(need.time_range_end, end_of_day=True)
     if name == "start_time":
         return _timestamp_param(need.time_range_start)
     if name == "end_time":

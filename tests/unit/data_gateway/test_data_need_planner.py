@@ -56,6 +56,14 @@ def _instrument_for_market(market: Market) -> str:
     }[market]
 
 
+def _binance_daily_bar_call(plan: object) -> ProviderCallSpec:
+    return next(
+        call
+        for call in plan.planned_calls  # type: ignore[attr-defined]
+        if call.provider_id == "crypto_primary" and call.catalog_endpoint_id == "binance.spot_daily_bar"
+    )
+
+
 def test_public_planner_derives_internal_need_and_catalog_calls_from_business_item() -> None:
     request = _request(item="日线")
 
@@ -463,6 +471,38 @@ def test_crypto_daily_bar_plans_to_real_price_history_interfaces() -> None:
     assert ("crypto_primary", "binance.spot_daily_bar", "crypto.daily_bar") in calls
     assert ("official_api_coinglass", "coinglass.futures_price_history", "crypto.daily_bar") in calls
     assert ("official_api_coinglass", "coinglass.spot_price_history", "crypto.daily_bar") in calls
+
+
+def test_crypto_binance_daily_bar_batch_key_includes_date_window() -> None:
+    first = _request(
+        request_id="crypto-daily-1",
+        item="日线",
+        market=Market.CRYPTO,
+        instrument="BTCUSDT",
+        time_range_start=date(2026, 6, 26),
+        time_range_end=date(2026, 6, 26),
+        granularity="daily",
+        purpose="scheduled_data_maintenance",
+    )
+    second = _request(
+        request_id="crypto-daily-2",
+        item="日线",
+        market=Market.CRYPTO,
+        instrument="BTCUSDT",
+        time_range_start=date(2026, 6, 27),
+        time_range_end=date(2026, 6, 27),
+        granularity="daily",
+        purpose="scheduled_data_maintenance",
+    )
+
+    first_call = _binance_daily_bar_call(plan_public_data_requests((first,)))
+    second_call = _binance_daily_bar_call(plan_public_data_requests((second,)))
+
+    assert "startTime" in first_call.params
+    assert "endTime" in first_call.params
+    assert first_call.params["startTime"] != second_call.params["startTime"]
+    assert first_call.params["endTime"] != second_call.params["endTime"]
+    assert first_call.batch_key != second_call.batch_key
 
 
 def test_crypto_intraday_coinglass_price_history_uses_supported_hourly_interval() -> None:

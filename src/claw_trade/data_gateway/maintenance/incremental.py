@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Iterable, Protocol
 
 from .jobs import (
@@ -38,10 +38,17 @@ def run_daily_incremental(
     as_of: date | datetime | None = None,
     request_from_gap: Callable[..., Any] | None = None,
     lock_owner: str = "maintenance.incremental",
+    lock_ttl: timedelta = timedelta(minutes=30),
+    begin_if_needed: bool = True,
 ) -> MaintenanceJob:
-    current, started = begin_job(repo, job, lock_owner=lock_owner)
-    if not started:
-        return current
+    if begin_if_needed:
+        current, started = begin_job(repo, job, lock_owner=lock_owner, lock_ttl=lock_ttl)
+        if not started:
+            return current
+    else:
+        current = job
+        if current.status != "running":
+            raise JobInvariantError(f"{current.job_id} is not running")
 
     incremental_gaps = list(
         gaps

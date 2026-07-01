@@ -14,7 +14,15 @@ import {
 } from '../api/workspace';
 
 type DiagnosticsState =
-  | { loading: true; provider: null; runtime: null; liveRun: null; evidence: null; maintenance: null; error: '' }
+  | {
+      loading: true;
+      provider: null;
+      runtime: null;
+      liveRun: null;
+      evidence: null;
+      maintenance: MaintenanceTaskDiagnosticsOutput | null;
+      error: '';
+    }
   | {
       loading: false;
       provider: AdvancedDiagnosticsProviderHealthOutput | null;
@@ -139,6 +147,19 @@ function sanitizeEvidenceFailureAction(raw: string) {
   return message;
 }
 
+function formatMaintenanceDataJob(item: Record<string, unknown>) {
+  const error = item.error;
+  const errorMessage =
+    typeof error === 'string'
+      ? error.trim()
+      : error && typeof error === 'object'
+        ? String((error as { message?: unknown }).message ?? '').trim()
+        : '';
+  return `${String(item.market ?? '未知市场')}:${String(item.jobKind ?? '未知作业')} / ${String(item.status ?? 'unknown')} / ${String(
+    item.maintenanceJobId || item.cronRunId || '暂无 run',
+  )}${errorMessage ? ` / ${errorMessage}` : ''}`;
+}
+
 export function AdvancedDiagnosticsPage() {
   const [state, setState] = useState<DiagnosticsState>({
     loading: true,
@@ -152,18 +173,26 @@ export function AdvancedDiagnosticsPage() {
 
   useEffect(() => {
     let active = true;
+    void getMaintenanceTaskDiagnostics()
+      .then((maintenanceData) => {
+        if (!active) {
+          return;
+        }
+        setState((current) => ({ ...current, maintenance: maintenanceData }));
+      })
+      .catch(() => undefined);
+
     void Promise.all([
       getAdvancedDiagnosticsProviderHealth(),
       getAdvancedDiagnosticsRuntimeServiceStatus(),
       getAdvancedDiagnosticsLiveRunGapSummary(),
       getAdvancedDiagnosticsEvidenceFailureReasonSummary(),
-      getMaintenanceTaskDiagnostics(),
     ])
-      .then(([providerData, runtimeData, liveRunData, evidenceData, maintenanceData]) => {
+      .then(([providerData, runtimeData, liveRunData, evidenceData]) => {
         if (!active) {
           return;
         }
-        setState({
+        setState((current) => ({
           loading: false,
           provider: { ...providerData, userMessage: sanitizeDiagnosticsMessage(providerData.userMessage) },
           runtime: {
@@ -179,23 +208,23 @@ export function AdvancedDiagnosticsPage() {
             userMessage: sanitizeEvidenceFailureMessage(evidenceData.userMessage),
             recommendedAction: sanitizeEvidenceFailureAction(evidenceData.recommendedAction),
           },
-          maintenance: maintenanceData,
+          maintenance: current.maintenance,
           error: '',
-        });
+        }));
       })
       .catch((error) => {
         if (!active) {
           return;
         }
-        setState({
+        setState((current) => ({
           loading: false,
           provider: null,
           runtime: null,
           liveRun: null,
           evidence: null,
-          maintenance: null,
+          maintenance: current.maintenance,
           error: (error as Error).message || FALLBACK_MESSAGE,
-        });
+        }));
       });
     return () => {
       active = false;
@@ -401,14 +430,7 @@ export function AdvancedDiagnosticsPage() {
             <span>数据维护</span>
             <span data-testid="maintenance-data-jobs">
               {(state.maintenance?.dataMaintenance ?? []).length
-                ? (state.maintenance?.dataMaintenance ?? [])
-                    .map(
-                      (item) =>
-                        `${String(item.market ?? '未知市场')}:${String(item.jobKind ?? '未知作业')} / ${String(item.status ?? 'unknown')} / ${String(
-                          item.maintenanceJobId ?? item.cronRunId ?? '暂无 run',
-                        )}`,
-                    )
-                    .join('；')
+                ? (state.maintenance?.dataMaintenance ?? []).map((item) => formatMaintenanceDataJob(item)).join('；')
                 : '暂无数据维护运行记录'}
             </span>
           </div>

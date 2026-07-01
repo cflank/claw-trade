@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Mapping, Sequence
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
@@ -16,6 +21,13 @@ from claw_trade.config.report_workflow_settings import (
     load_report_workflow_settings,
 )
 from claw_trade.data_gateway.maintenance import CollectionMaintenanceJobRepository, ScheduledDataMaintenanceRunner
+from claw_trade.data_gateway.maintenance.scheduled_runner import (
+    _BINANCE_SPOT_USDT_SYMBOL_RE,
+    _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS,
+    _CRYPTO_HISTORY_MIN_TRADING_SYMBOL_COVERAGE_RATIO,
+    _crypto_history_rows_are_complete,
+    _read_crypto_history_latest_rows,
+)
 from claw_trade.data_gateway.price_quote_provider import PriceAlertQuoteProvider
 from claw_trade.data_gateway.runtime import build_data_api_from_env, build_data_gateway_runtime_from_env
 from claw_trade.data_gateway.selection_api import (
@@ -50,6 +62,7 @@ from claw_trade.selection.confirmation import SelectionConfirmationController
 from claw_trade.selection.controller import SelectionController
 from claw_trade.selection.data_job import SelectionDataJob
 from claw_trade.selection.refresh import SelectionDataRefreshService
+from claw_trade.selection.models import SelectionMarket
 from claw_trade.selection.store import restore_selection_run_store
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
 from claw_trade.ui_backend.channel_text_inbound import (
@@ -96,6 +109,14 @@ from claw_trade.web.settings import ResearchUiServerSettings
 from claw_trade.workflow.models import RunStatus
 
 _DEFAULT_WORKFLOW_CREATE_TIMEOUT_SECONDS = 30.0
+_CRYPTO_HISTORY_BOOTSTRAP_START_DATE = date(2025, 6, 1)
+_CRYPTO_HISTORY_BOOTSTRAP_DIR = Path(".runtime/crypto-history-full/bootstrap")
+_CRYPTO_HISTORY_FACTORY_DATA_ROOT = Path("data/crypto-history-full")
+_CRYPTO_HISTORY_FACTORY_COLUMNAR_ROOT = _CRYPTO_HISTORY_FACTORY_DATA_ROOT / "normalized-columnar-usdt-only"
+_CRYPTO_HISTORY_FACTORY_RAW_ROOT = _CRYPTO_HISTORY_FACTORY_DATA_ROOT / "binance"
+_CRYPTO_HISTORY_RUNTIME_RAW_ROOT = Path(".runtime/crypto-history-full/binance")
+_CRYPTO_HISTORY_SEED_DATABASE = "claw_trade_crypto_history_usdt_20260608"
+_BINANCE_SPOT_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
 _SELECTION_REPORT_HANDOFF_MARKER = "selection_report_handoff"
 _SELECT_TRIGGERED_REPORT_NOTICE = (
     "> 本报告由 select 候选股票触发生成。select 仅表示该股票具备进一步研究价值，"
@@ -263,8 +284,231 @@ class _LazyDataMaintenanceRunner:
                     data_api=runtime.data_api,
                     job_repository=CollectionMaintenanceJobRepository(runtime.repository),
                     dataset_repository=runtime.repository,
+                    crypto_history_columnar_root=_crypto_history_columnar_root_for_maintenance(),
+                    crypto_history_initializer=_bootstrap_crypto_history_columnar_root,
+                    crypto_trading_symbol_loader=_load_binance_spot_trading_usdt_symbols,
                 )
         return self._runner
+
+
+def _load_binance_spot_trading_usdt_symbols() -> tuple[str, ...]:
+    request = urllib.request.Request(
+        _BINANCE_SPOT_EXCHANGE_INFO_URL,
+        headers={"accept": "application/json", "user-agent": "claw-trade/crypto-maintenance"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"binance_exchange_info_unavailable:{exc}") from exc
+    symbols: list[str] = []
+    for item in tuple(payload.get("symbols", ()) or ()):
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("status") or "").upper() != "TRADING":
+            continue
+        if item.get("isSpotTradingAllowed") is False:
+            continue
+        symbol = str(item.get("symbol") or "").strip().upper()
+        quote = str(item.get("quoteAsset") or "").strip().upper()
+        if symbol and quote == "USDT":
+            symbols.append(symbol)
+    result = tuple(sorted(dict.fromkeys(symbols)))
+    if not result:
+        raise RuntimeError("binance_exchange_info_has_no_trading_usdt_symbols")
+    return result
+
+
+def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) -> None:
+    target_root = root
+    writes_factory_seed = _path_is_under(root, _CRYPTO_HISTORY_FACTORY_DATA_ROOT)
+    if writes_factory_seed:
+        if os.environ.get("CLAW_TRADE_ALLOW_FACTORY_COLUMNAR_WRITE") != "1":
+            raise RuntimeError("CRYPTO history bootstrap requires CLAW_TRADE_ALLOW_FACTORY_COLUMNAR_WRITE=1")
+        if os.environ.get("CLAW_TRADE_ALLOW_FACTORY_MONGO_WRITE") != "1":
+            raise RuntimeError("CRYPTO history bootstrap requires CLAW_TRADE_ALLOW_FACTORY_MONGO_WRITE=1")
+    as_of_day = as_of.date() if isinstance(as_of, datetime) else as_of
+    if as_of_day < _CRYPTO_HISTORY_BOOTSTRAP_START_DATE:
+        raise RuntimeError(f"invalid CRYPTO bootstrap end date: {as_of_day.isoformat()}")
+    _CRYPTO_HISTORY_BOOTSTRAP_DIR.mkdir(parents=True, exist_ok=True)
+    download_manifest = _CRYPTO_HISTORY_BOOTSTRAP_DIR / f"download-spot-1d-{as_of_day.isoformat()}.json"
+    import_result = _CRYPTO_HISTORY_BOOTSTRAP_DIR / f"import-spot-1d-{as_of_day.isoformat()}.json"
+    raw_root = _CRYPTO_HISTORY_FACTORY_RAW_ROOT if writes_factory_seed else _CRYPTO_HISTORY_RUNTIME_RAW_ROOT
+    mongo_uri, mongo_database = _crypto_history_bootstrap_mongo_target(writes_factory_seed=writes_factory_seed)
+    if not mongo_uri:
+        raise RuntimeError("missing DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI for CRYPTO history bootstrap")
+
+    _run_crypto_history_bootstrap_command(
+        [
+            sys.executable,
+            "scripts/crypto/download_binance_public_data.py",
+            "--output-root",
+            str(raw_root),
+            "--market-segment",
+            "spot",
+            "--interval",
+            "1d",
+            "--start-date",
+            _CRYPTO_HISTORY_BOOTSTRAP_START_DATE.isoformat(),
+            "--end-date",
+            as_of_day.isoformat(),
+            "--all-symbols",
+            "--checksum-required",
+            "--ignore-missing",
+            "--progress-every",
+            "100",
+            "--output-json",
+            str(download_manifest),
+        ]
+    )
+    import_cmd = [
+        sys.executable,
+        "scripts/crypto/import_crypto_prepackaged_to_mongo.py",
+        "--spot-root",
+        str(raw_root / "data"),
+        "--trade-date",
+        as_of_day.isoformat(),
+        "--import-run-id",
+        f"crypto-usdt-bootstrap-{as_of_day.isoformat()}",
+        "--start-date",
+        _CRYPTO_HISTORY_BOOTSTRAP_START_DATE.isoformat(),
+        "--end-date",
+        as_of_day.isoformat(),
+        "--symbol-manifest",
+        str(download_manifest),
+        "--market-segment",
+        "spot",
+        "--interval",
+        "1d",
+        "--mongo-uri",
+        mongo_uri,
+        "--columnar-root",
+        str(target_root),
+        "--output-json",
+        str(import_result),
+    ]
+    if mongo_database:
+        import_cmd.extend(["--mongo-database", mongo_database])
+    _run_crypto_history_bootstrap_command(import_cmd)
+
+
+def _crypto_history_columnar_root_for_maintenance() -> Path:
+    if _crypto_history_seed_is_complete(_CRYPTO_HISTORY_FACTORY_COLUMNAR_ROOT):
+        return _CRYPTO_HISTORY_FACTORY_COLUMNAR_ROOT
+    configured = os.environ.get("DATA_GATEWAY_COLUMNAR_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path(".runtime/dev-services/data-gateway/normalized")
+
+
+def _crypto_history_seed_is_complete(root: Path) -> bool:
+    daily_dir = root / "market=CRYPTO" / "dataset=daily_bar" / "granularity=daily"
+    if not daily_dir.is_dir() or next(daily_dir.glob("*.parquet"), None) is None:
+        return False
+    try:
+        rows = _read_crypto_history_latest_rows(root)
+        if not _crypto_history_rows_are_complete(rows):
+            return False
+        return _crypto_history_seed_covers_current_trading_symbols(rows)
+    except Exception:
+        return False
+
+
+def _crypto_history_seed_covers_current_trading_symbols(rows: Sequence[tuple[Any, Any]]) -> bool:
+    try:
+        trading_symbols = _load_binance_spot_trading_usdt_symbols()
+    except Exception:
+        return False
+    current = {
+        str(symbol or "").strip().upper()
+        for symbol in trading_symbols
+        if _BINANCE_SPOT_USDT_SYMBOL_RE.fullmatch(str(symbol or "").strip().upper())
+    }
+    if len(current) < _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS:
+        return False
+    covered = {
+        str(symbol or "").strip().upper()
+        for symbol, _latest_day in rows
+        if _BINANCE_SPOT_USDT_SYMBOL_RE.fullmatch(str(symbol or "").strip().upper())
+    } & current
+    coverage_ratio = len(covered) / len(current)
+    return len(covered) >= _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS and coverage_ratio >= _CRYPTO_HISTORY_MIN_TRADING_SYMBOL_COVERAGE_RATIO
+
+
+def _crypto_history_bootstrap_mongo_target(*, writes_factory_seed: bool) -> tuple[str, str]:
+    if writes_factory_seed:
+        uri = (
+            os.environ.get("DATA_GATEWAY_SEED_MONGODB_URI")
+            or os.environ.get("DATA_GATEWAY_MONGODB_URI")
+            or os.environ.get("CN_A_MONGODB_URI")
+            or os.environ.get("CRYPTO_MONGODB_URI")
+            or ""
+        )
+        database = os.environ.get("CRYPTO_MONGODB_DATABASE") or _CRYPTO_HISTORY_SEED_DATABASE
+        return uri, database
+    uri = (
+        os.environ.get("DATA_GATEWAY_MONGODB_URI")
+        or os.environ.get("CN_A_MONGODB_URI")
+        or os.environ.get("CRYPTO_MONGODB_URI")
+        or ""
+    )
+    database = (
+        os.environ.get("DATA_GATEWAY_MONGODB_DATABASE")
+        or os.environ.get("CN_A_MONGODB_DATABASE")
+        or os.environ.get("CRYPTO_MONGODB_DATABASE")
+        or _mongo_database_from_uri(uri)
+        or ""
+    )
+    if database.startswith("claw_trade_crypto_history_"):
+        raise RuntimeError(
+            "CRYPTO runtime history bootstrap refuses to write seed Mongo database: "
+            f"{database}; use DATA_GATEWAY_MONGODB_DATABASE for runtime writes and DATA_GATEWAY_SEED_MONGODB_DATABASE for seed reads"
+        )
+    return uri, database
+
+
+def _mongo_database_from_uri(uri: str) -> str:
+    try:
+        parsed = urllib.parse.urlparse(uri)
+    except Exception:
+        return ""
+    path_name = parsed.path.strip("/")
+    if not path_name:
+        return ""
+    return path_name.split("/", 1)[0]
+
+
+def _path_is_under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _run_crypto_history_bootstrap_command(command: Sequence[str]) -> None:
+    completed = subprocess.run(
+        command,
+        cwd=Path.cwd(),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return
+    script = Path(command[1]).name if len(command) > 1 else "unknown"
+    raise RuntimeError(
+        f"{script} exit={completed.returncode}; "
+        f"stdout_tail={_tail(completed.stdout)}; stderr_tail={_tail(completed.stderr)}"
+    )
+
+
+def _tail(value: str, *, limit: int = 1000) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 class _LazyPriceAlertQuoteProvider:
@@ -313,6 +557,7 @@ class UiHttpServices:
     selection_confirmation: SelectionConfirmationController
     selection_controller: SelectionController
     selection_refresh_service: SelectionDataRefreshService
+    raw_maintenance_status_provider: Callable[[SelectionMarket], Mapping[str, object] | None]
     license_service: LicenseService
 
 
@@ -433,6 +678,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         openclaw=workflow_runner.selection_openclaw_client(),
         scheduler_enqueue=selection_refresh_service.request_refresh,
         default_trade_date_resolver=resolve_cn_a_closed_trade_date_for_scheduler,
+        raw_maintenance_status_provider=_select_raw_maintenance_status,
     )
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(rpc_client),
@@ -553,6 +799,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         selection_confirmation=selection_confirmation,
         selection_controller=selection_controller,
         selection_refresh_service=selection_refresh_service,
+        raw_maintenance_status_provider=_select_raw_maintenance_status,
         license_service=license_service,
     )
 
@@ -885,6 +1132,120 @@ def _format_maintenance_status_for_chat(llm_bridge: LlmSettingsBridge) -> str:
         "- 需要更多细节请打开“高级诊断”。",
     ]
     return "\n".join(lines)
+
+
+def _select_raw_maintenance_status(market: SelectionMarket) -> dict[str, object] | None:
+    target_market = {
+        SelectionMarket.CN_A: "CN_A",
+        SelectionMarket.CRYPTO: "CRYPTO",
+    }.get(market)
+    if target_market is None:
+        return None
+    runtime = build_data_gateway_runtime_from_env()
+    list_jobs = getattr(runtime.repository, "list_maintenance_jobs", None)
+    if not callable(list_jobs):
+        return None
+    jobs = [
+        job
+        for job in list_jobs()
+        if str(job.get("market") or "").upper() == target_market
+        and str(job.get("dataset_scope") or "") == "daily_bar"
+    ]
+    if not jobs:
+        return None
+    now = datetime.now(tz=UTC)
+    active = [job for job in jobs if _maintenance_job_is_active(job, now=now)]
+    if active:
+        return _maintenance_job_status_payload(max(active, key=_maintenance_job_sort_key), status="running")
+    latest = max(jobs, key=_maintenance_job_sort_key)
+    if _maintenance_job_is_failed(latest, now=now):
+        return _maintenance_job_status_payload(
+            latest,
+            status="failed",
+            reason=_maintenance_job_failure_reason(latest, now=now),
+        )
+    return None
+
+
+def _maintenance_job_is_active(job: Mapping[str, Any], *, now: datetime) -> bool:
+    if str(job.get("status") or "").strip().lower() != "running":
+        return False
+    lock_expires_at = _parse_maintenance_job_datetime(job.get("lock_expires_at"))
+    return lock_expires_at is None or lock_expires_at > now
+
+
+def _maintenance_job_is_failed(job: Mapping[str, Any], *, now: datetime) -> bool:
+    status = str(job.get("status") or "").strip().lower()
+    if status in {"failed", "error"}:
+        return True
+    if status == "running":
+        lock_expires_at = _parse_maintenance_job_datetime(job.get("lock_expires_at"))
+        return lock_expires_at is not None and lock_expires_at <= now
+    return False
+
+
+def _maintenance_job_failure_reason(job: Mapping[str, Any], *, now: datetime) -> str:
+    error = str(job.get("error") or "").strip()
+    if error:
+        return error
+    if str(job.get("status") or "").strip().lower() == "running":
+        lock_expires_at = _parse_maintenance_job_datetime(job.get("lock_expires_at"))
+        if lock_expires_at is not None and lock_expires_at <= now:
+            return f"raw_data_maintenance_lock_expired:{job.get('job_id')}"
+    return f"raw_data_maintenance_failed:{job.get('job_id')}"
+
+
+def _maintenance_job_status_payload(
+    job: Mapping[str, Any],
+    *,
+    status: str,
+    reason: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": status,
+        "job_id": str(job.get("job_id") or ""),
+        "market": str(job.get("market") or ""),
+        "dataset_scope": str(job.get("dataset_scope") or ""),
+        "started_at": _maintenance_job_payload_text(job.get("started_at")),
+        "finished_at": _maintenance_job_payload_text(job.get("finished_at")),
+        "lock_expires_at": _maintenance_job_payload_text(job.get("lock_expires_at")),
+    }
+    if reason:
+        payload["reason"] = reason
+        payload["error"] = reason
+    elif job.get("error"):
+        payload["reason"] = str(job.get("error"))
+        payload["error"] = str(job.get("error"))
+    return payload
+
+
+def _maintenance_job_payload_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _maintenance_job_sort_key(job: Mapping[str, Any]) -> tuple[datetime, datetime, str]:
+    scheduled_at = _parse_maintenance_job_datetime(job.get("scheduled_at")) or datetime.min.replace(tzinfo=UTC)
+    started_at = _parse_maintenance_job_datetime(job.get("started_at")) or datetime.min.replace(tzinfo=UTC)
+    return (scheduled_at, started_at, str(job.get("job_id") or ""))
+
+
+def _parse_maintenance_job_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def default_frontend_dist(project_root: Path | None = None) -> Path:

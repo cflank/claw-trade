@@ -251,6 +251,8 @@ class _CollectionAdapter:
         if isinstance(self.backend, MutableMapping):
             self.backend[key] = payload
             return
+        if self.key_field != "_id":
+            payload.pop("_id", None)
         payload = _mongo_safe_document(payload)
         replacer = getattr(self.backend, "replace_one", None)
         if callable(replacer):
@@ -276,6 +278,8 @@ class _CollectionAdapter:
         for key, doc in items:
             payload = dict(doc)
             payload[self.key_field] = key
+            if self.key_field != "_id":
+                payload.pop("_id", None)
             payloads.append((key, _mongo_safe_document(payload)))
 
         bulk_writer = getattr(self.backend, "bulk_write", None)
@@ -1855,11 +1859,44 @@ class DatasetRepository:
             return True
         with self._lock:
             normalized = self._collection("normalized_datasets")
-            if any(normalized.get(ref) is not None for ref in refs):
-                return True
-            manifests = self._collection("dataset_manifests").find({"storage": "parquet", "status": "active"})
+            rows_by_ref = {ref: normalized.get(ref) for ref in refs}
+            manifests = tuple(self._collection("dataset_manifests").find({"storage": "parquet", "status": "active"}))
+        for ref in refs:
+            row = rows_by_ref.get(ref)
+            if isinstance(row, Mapping):
+                if self._normalized_row_ref_has_readable_storage(row, manifests):
+                    continue
+                return False
+            if self._active_manifest_has_dataset_ref(ref, manifests):
+                continue
+            return False
+        return True
+
+    def _normalized_row_ref_has_readable_storage(
+        self,
+        row: Mapping[str, Any],
+        manifests: Sequence[Mapping[str, Any]],
+    ) -> bool:
+        dataset = str(row.get("dataset") or "").strip()
+        if dataset not in _COLUMNAR_ROW_REPLACEMENT_DATASETS or self._normalized_columnar is None:
+            return True
+        market = str(row.get("market") or "").strip()
+        if not market:
+            return False
+        symbol_id = str(row.get("symbol_id") or "").strip() or None
+        universe_ref = str(row.get("universe_ref") or "").strip() or None
+        start = _columnar_range_start_text(row.get("period_start"))
+        end = _columnar_range_end_text(row.get("period_end"))
         for manifest in manifests:
-            if not self._manifest_has_any_dataset_ref(manifest, refs):
+            if not self._columnar_manifest_matches(
+                manifest,
+                dataset=dataset,
+                market=market,
+                symbol_id=symbol_id,
+                universe_ref=universe_ref,
+                start=start,
+                end=end,
+            ):
                 continue
             path = str(manifest.get("path") or "").strip()
             if path and Path(path).exists():
@@ -1867,8 +1904,20 @@ class DatasetRepository:
         return False
 
     @staticmethod
-    def _manifest_has_any_dataset_ref(manifest: Mapping[str, Any], refs: set[str]) -> bool:
-        manifest_refs = {
+    def _active_manifest_has_dataset_ref(ref: str, manifests: Sequence[Mapping[str, Any]]) -> bool:
+        for manifest in manifests:
+            if manifest.get("storage") != "parquet" or manifest.get("status", "active") != "active":
+                continue
+            path = str(manifest.get("path") or "").strip()
+            if not path or not Path(path).exists():
+                continue
+            if ref in DatasetRepository._manifest_dataset_refs(manifest):
+                return True
+        return False
+
+    @staticmethod
+    def _manifest_dataset_refs(manifest: Mapping[str, Any]) -> set[str]:
+        return {
             str(ref).strip()
             for ref in (
                 *tuple(manifest.get("dataset_refs", ()) or ()),
@@ -1876,13 +1925,6 @@ class DatasetRepository:
             )
             if str(ref).strip()
         }
-        if manifest_refs & refs:
-            return True
-        dataset = str(manifest.get("dataset") or "").strip()
-        market = str(manifest.get("market") or "").strip()
-        if not dataset or not market:
-            return False
-        return any(ref.startswith(f"dataset:{dataset}:{market}:") for ref in refs)
 
     def delete_normalized_documents_for_maintenance(self, criteria: Mapping[str, Any]) -> int:
         with self._lock:
@@ -1977,7 +2019,8 @@ class DatasetRepository:
                     self._optional_datetime(raw)
                     for raw in row.get("request_timestamps", ())
                 )
-                if timestamp is not None and self._aware_datetime(timestamp, reference=now) > cutoff
+                if timestamp is not None
+                and cutoff < self._aware_datetime(timestamp, reference=now) <= now
             )
             timestamps = tuple(self._aware_datetime(timestamp, reference=now) for timestamp in timestamps)
             allowed = len(timestamps) + cost <= effective_limit

@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 
-DEFAULT_SELECTION_AUTO_REFRESH_SETTINGS = {"enabled": True}
+DEFAULT_SELECTION_AUTO_REFRESH_SETTINGS = {"enabled": False}
 _DEFAULT_JSON_PATH = Path("runs/.ui-selection-auto-refresh-settings.json")
 
 

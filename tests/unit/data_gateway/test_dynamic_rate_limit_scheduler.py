@@ -440,7 +440,7 @@ def test_scheduler_accounts_for_existing_sliding_window_usage() -> None:
     assert scheduled.scheduled_calls[0].earliest_start_at == now + timedelta(seconds=60)
 
 
-def test_scheduler_shares_future_bucket_reservations_across_separate_plans() -> None:
+def test_scheduler_smooths_batch_without_persisting_future_reservations() -> None:
     now = datetime(2026, 6, 12, 12, 0, tzinfo=UTC)
     policy = RateLimitPolicy(window_seconds=60, max_requests=2)
     limiter = RateLimiter(now_fn=lambda: now)
@@ -449,28 +449,27 @@ def test_scheduler_shares_future_bucket_reservations_across_separate_plans() -> 
         rate_limiter=limiter,
     )
 
-    scheduled_times = []
-    for index in range(3):
-        plan = NeedPlan(
-            plan_id=f"plan-{index}",
-            planned_calls=(
-                _call(
-                    str(index),
-                    bucket="ratelimit:any-paid-source",
-                    deadline_at=now + timedelta(seconds=180),
-                ),
-            ),
-            created_at=now,
-        )
-        scheduled = scheduler.schedule(plan, DataRunScheduleContext.for_plan(run_id=f"plan-{index}", run_started_at=now))
-        scheduled_times.append(scheduled.scheduled_calls[0].earliest_start_at)
-        assert scheduled.scheduled_calls[0].rate_limit_reserved_at == scheduled.scheduled_calls[0].earliest_start_at
+    plan = NeedPlan(
+        plan_id="plan-batch",
+        planned_calls=tuple(
+            _call(
+                str(index),
+                bucket="ratelimit:any-paid-source",
+                deadline_at=now + timedelta(seconds=180),
+            )
+            for index in range(3)
+        ),
+        created_at=now,
+    )
+    scheduled = scheduler.schedule(plan, DataRunScheduleContext.for_plan(run_id="plan-batch", run_started_at=now))
 
-    assert scheduled_times == [
+    assert [call.earliest_start_at for call in scheduled.scheduled_calls] == [
         now,
         now + timedelta(seconds=30),
         now + timedelta(seconds=60),
     ]
+    assert [call.rate_limit_reserved_at for call in scheduled.scheduled_calls] == [None, None, None]
+    assert limiter.active_request_timestamps("ratelimit:any-paid-source", policy, now=now) == ()
 
 
 def test_scheduler_skips_need_when_next_slot_exceeds_deadline() -> None:

@@ -29,6 +29,7 @@ _SCHEDULED_REPORT_AGENT_ID = "scheduled_report_runner"
 _SCHEDULED_WORK_TOOL = "claw-trade-scheduled-work-wake"
 _SCHEDULE_TIMEZONE = "America/New_York"
 _VISIBLE_SCHEDULE_STATES = {"active", "paused", "due", "enqueued"}
+_COLLAPSIBLE_SCHEDULE_STATES = _VISIBLE_SCHEDULE_STATES | {"sync_failed"}
 _DAILY_DUPLICATE_WINDOW_MINUTES = 4 * 60
 
 
@@ -246,6 +247,7 @@ class SchedulerService:
             item.sync_error_message = None
             item.updated_at = self._now_iso()
             self._store.save_scheduled_report(item)
+        self._delete_collapsed_schedule_duplicates(item)
         dto = to_scheduled_report_for_user(item)
         payload = {"scheduledReport": dto}
         self._idempotency[request_id] = payload
@@ -305,7 +307,7 @@ class SchedulerService:
         item = self._store.get_scheduled_report(scheduled_report_id)
         if item is None:
             raise UiServiceError("SCHEDULE_NOT_FOUND", "定时报告不存在。")
-        targets = [other for other in self._ordered_visible_schedules() if self._schedules_collapse(item, other)] or [item]
+        targets = [other for other in self._ordered_collapsible_schedules() if self._schedules_collapse(item, other)] or [item]
         for target in targets:
             self._delete_schedule_item(target)
         payload = {"deleted": True, "scheduledReportId": item.id}
@@ -572,7 +574,7 @@ class SchedulerService:
         return candidate
 
     def _delete_collapsed_schedule_duplicates(self, canonical: ScheduledReport) -> None:
-        for item in self._ordered_visible_schedules():
+        for item in self._ordered_collapsible_schedules():
             if item.id != canonical.id and self._schedules_collapse(canonical, item):
                 self._delete_schedule_item(item)
 
@@ -585,9 +587,15 @@ class SchedulerService:
         self._store.save_scheduled_report(item)
 
     def _ordered_visible_schedules(self) -> list[ScheduledReport]:
+        return self._ordered_schedules(states=_VISIBLE_SCHEDULE_STATES)
+
+    def _ordered_collapsible_schedules(self) -> list[ScheduledReport]:
+        return self._ordered_schedules(states=_COLLAPSIBLE_SCHEDULE_STATES)
+
+    def _ordered_schedules(self, *, states: set[str]) -> list[ScheduledReport]:
         priority = {"active": 0, "due": 0, "enqueued": 0, "paused": 1}
         return sorted(
-            self._store.list_scheduled_reports(states=_VISIBLE_SCHEDULE_STATES),
+            self._store.list_scheduled_reports(states=states),
             key=lambda item: (priority.get(item.state, 9), item.created_at, item.id),
         )
 

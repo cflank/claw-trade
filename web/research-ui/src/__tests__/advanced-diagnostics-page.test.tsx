@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AdvancedDiagnosticsPage } from '../routes/AdvancedDiagnosticsPage';
 
@@ -150,6 +150,54 @@ describe('advanced diagnostics page', () => {
     expect(screen.getByTestId('maintenance-price-scan')).toHaveTextContent('CRYPTO:3m: 启用 / scan-1');
     expect(screen.getByTestId('maintenance-data-jobs')).toHaveTextContent('CN_A:eod / ok / job-1');
     expect(screen.getByTestId('maintenance-report-cleanup')).toHaveTextContent('ok / cleanup-1');
+  });
+
+  it('shows maintenance tasks before slow provider health finishes', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/get-advanced-diagnostics-provider-health')) {
+        return new Promise<Response>(() => undefined);
+      }
+      if (url.includes('/api/ui/get-maintenance-task-diagnostics')) {
+        return json({
+          checkedAt: '2026-06-24T12:00:00Z',
+          selectionRefresh: [],
+          scheduledReportWakes: [],
+          priceAlertScanBuckets: [],
+          dataMaintenance: [
+            {
+              kind: 'data_maintenance',
+              market: 'CN_A',
+              jobKind: 'eod',
+              status: 'error',
+              maintenanceJobId: '',
+              cronRunId: 'startup-1',
+              error: { message: 'status=partial' },
+            },
+          ],
+          reportCleanup: { kind: 'report_cleanup', status: 'not_run', runId: null },
+        });
+      }
+      return json({
+        state: 'healthy',
+        severity: 'success',
+        userMessage: 'ok',
+        checkedAt: '2026-05-23T12:00:00Z',
+        source: 'test',
+        recommendedAction: 'ok',
+      });
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <AdvancedDiagnosticsPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('maintenance-data-jobs')).toHaveTextContent('CN_A:eod / error / startup-1 / status=partial');
+    });
+    expect(screen.getByTestId('provider-health-message')).toHaveTextContent('正在读取 provider 健康摘要...');
   });
 
   it('does not show provider attempt or raw request details even if endpoint returns them', async () => {

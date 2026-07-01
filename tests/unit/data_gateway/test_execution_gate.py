@@ -10,6 +10,7 @@ from claw_trade.data_gateway.execution.rate_limiter import RateLimiter, RateLimi
 from claw_trade.data_gateway.execution.single_flight import SingleFlight
 from claw_trade.data_gateway.ingest import DataGap, IngestResult
 from claw_trade.data_gateway.models import HttpVisibility
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
 
@@ -78,6 +79,33 @@ def _insert_daily_bar(repository: DatasetRepository, dataset_ref: str = "dataset
             "row": {"date": "2026-06-01", "close": 10.0},
         }
     )
+
+
+def _collections() -> dict[str, dict[str, object]]:
+    return {name: {} for name in DatasetRepository.collection_names()}
+
+
+def _daily_bar_doc(*, dataset_ref: str, market: str, symbol_id: str, universe_ref: str, day: str) -> dict[str, object]:
+    return {
+        "dataset_ref": dataset_ref,
+        "dataset": "daily_bar",
+        "market": market,
+        "symbol_id": symbol_id,
+        "universe_ref": universe_ref,
+        "granularity": "daily",
+        "period_start": day,
+        "period_end": day,
+        "exchange": "BINANCE" if market == "CRYPTO" else "SSE",
+        "currency": "USDT" if market == "CRYPTO" else "CNY",
+        "timezone": "UTC" if market == "CRYPTO" else "Asia/Shanghai",
+        "calendar": "CRYPTO_24_7" if market == "CRYPTO" else "CN_A_SSE_SZSE",
+        "base_asset": "BTC" if market == "CRYPTO" else None,
+        "quote_asset": "USDT" if market == "CRYPTO" else None,
+        "provider_lineage": {"provider": "unit"},
+        "schema_id": "daily_bar.v1",
+        "quality_flags": (),
+        "row": {"date": day, "close": 10.0},
+    }
 
 
 def test_gate_returns_cache_hit_before_rate_limit_or_single_flight() -> None:
@@ -246,6 +274,93 @@ def test_cache_accepts_fresh_success_when_dataset_refs_are_readable() -> None:
     assert lookup.state == "fresh_success"
     assert lookup.entry is not None
     assert lookup.entry.refs.dataset_refs == ("dataset:readable",)
+
+
+def test_cache_drops_columnar_success_when_active_manifest_does_not_cover_ref(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    collections = _collections()
+    repository = DatasetRepository(collections=collections, normalized_columnar=NormalizedColumnarWarehouse(tmp_path))
+    stale_ref = "dataset:daily_bar:CRYPTO:stale"
+    collections["normalized_datasets"][stale_ref] = _daily_bar_doc(
+        dataset_ref=stale_ref,
+        market="CRYPTO",
+        symbol_id="BTCUSDT",
+        universe_ref="binance_spot_all_symbols",
+        day="2026-06-30",
+    )
+    active_path = tmp_path / "active-old.parquet"
+    active_path.write_bytes(b"exists")
+    collections["dataset_manifests"]["manifest:active-old"] = {
+        "manifest_ref": "manifest:active-old",
+        "storage": "parquet",
+        "status": "active",
+        "dataset": "daily_bar",
+        "market": "CRYPTO",
+        "symbol_ids": ("BTCUSDT",),
+        "universe_refs": ("binance_spot_all_symbols",),
+        "period_start_min": "2026-06-29",
+        "period_end_max": "2026-06-29",
+        "path": str(active_path),
+    }
+    repository.write_provider_result_cache(
+        cache_key="cache:key",
+        status="remote_success",
+        dataset_refs=(stale_ref,),
+        raw_refs=("raw:stale",),
+        attempt_refs=("attempt:stale",),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    cache = ProviderResultCache(repository=repository)
+
+    lookup = cache.get("cache:key", now=now)
+
+    assert lookup.state == "miss"
+    assert repository.read_provider_result_cache("cache:key") is None
+
+
+def test_cache_accepts_columnar_success_when_active_manifest_covers_ref(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    collections = _collections()
+    repository = DatasetRepository(collections=collections, normalized_columnar=NormalizedColumnarWarehouse(tmp_path))
+    dataset_ref = "dataset:daily_bar:CRYPTO:readable"
+    collections["normalized_datasets"][dataset_ref] = _daily_bar_doc(
+        dataset_ref=dataset_ref,
+        market="CRYPTO",
+        symbol_id="BTCUSDT",
+        universe_ref="binance_spot_all_symbols",
+        day="2026-06-30",
+    )
+    active_path = tmp_path / "active.parquet"
+    active_path.write_bytes(b"exists")
+    collections["dataset_manifests"]["manifest:active"] = {
+        "manifest_ref": "manifest:active",
+        "storage": "parquet",
+        "status": "active",
+        "dataset": "daily_bar",
+        "market": "CRYPTO",
+        "symbol_ids": ("BTCUSDT",),
+        "universe_refs": ("binance_spot_all_symbols",),
+        "period_start_min": "2026-06-30",
+        "period_end_max": "2026-06-30",
+        "path": str(active_path),
+    }
+    repository.write_provider_result_cache(
+        cache_key="cache:key",
+        status="remote_success",
+        dataset_refs=(dataset_ref,),
+        raw_refs=("raw:readable",),
+        attempt_refs=("attempt:readable",),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    cache = ProviderResultCache(repository=repository)
+
+    lookup = cache.get("cache:key", now=now)
+
+    assert lookup.state == "fresh_success"
+    assert lookup.entry is not None
+    assert lookup.entry.refs.dataset_refs == (dataset_ref,)
 
 
 def test_gate_returns_rate_limited_when_quota_blocked() -> None:

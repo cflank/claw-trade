@@ -453,6 +453,9 @@ def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
         )
         if crypto_refresh_snapshot.get("selectionProgress"):
             return _success_response(crypto_refresh_snapshot)
+        raw_maintenance_progress = _raw_data_maintenance_progress_for_user(services)
+        if raw_maintenance_progress:
+            return _success_response({"selectionProgress": raw_maintenance_progress})
         return _success_response({"selectionProgress": None})
     except Exception as exc:
         return _exception_response(exc)
@@ -1221,6 +1224,92 @@ def save_data_source_instance(payload: SaveDataSourceInstanceRequest, request: R
 
 def _services(request: Request) -> UiHttpServices:
     return request.app.state.ui_services
+
+
+def _raw_data_maintenance_progress_for_user(services: UiHttpServices) -> dict[str, object] | None:
+    status_provider = getattr(services, "raw_maintenance_status_provider", None)
+    if not callable(status_provider):
+        return None
+    running: list[tuple[str, Mapping[str, object]]] = []
+    failed: list[tuple[str, Mapping[str, object]]] = []
+    for market, label in ((SelectionMarket.CN_A, "A股"), (SelectionMarket.CRYPTO, "加密币")):
+        raw_status = status_provider(market)
+        if not isinstance(raw_status, Mapping):
+            continue
+        status = str(raw_status.get("status") or "").strip().lower()
+        if status == "running":
+            running.append((label, raw_status))
+        elif status == "failed":
+            failed.append((label, raw_status))
+    if not running:
+        if not failed:
+            return None
+        return _raw_data_maintenance_failed_progress(failed)
+    job_ids = [str(status.get("job_id") or "").strip() for _label, status in running]
+    visible_job_ids = [job_id for job_id in job_ids if job_id]
+    market_labels = "、".join(label for label, _status in running)
+    worker_status_labels = [
+        f"{label}：原始行情补数据中" + (f"（{str(status.get('job_id') or '').strip()}）" if status.get("job_id") else "")
+        for label, status in running
+    ]
+    started_at_values = [
+        str(status.get("started_at") or "").strip() for _label, status in running if str(status.get("started_at") or "").strip()
+    ]
+    return {
+        "kind": "data_refresh",
+        "status": "running",
+        "statusLabel": "原始行情补数据中",
+        "command": "系统启动自动补数据",
+        "stageLabel": "原始行情补数据",
+        "currentAction": f"正在补齐{market_labels}原始行情，完成后会计算选股候选池。",
+        "percent": 25,
+        "workerStatusLabels": worker_status_labels,
+        "completedRoleLabels": ["启动检查"],
+        "waitingRoleLabels": ["计算选股缓存"],
+        "startedAt": min(started_at_values) if started_at_values else "",
+        "finishedAt": None,
+        "workflowRunId": "raw-data-maintenance:" + ",".join(visible_job_ids) if visible_job_ids else "raw-data-maintenance",
+    }
+
+
+def _raw_data_maintenance_failed_progress(failed: Sequence[tuple[str, Mapping[str, object]]]) -> dict[str, object]:
+    job_ids = [str(status.get("job_id") or "").strip() for _label, status in failed]
+    visible_job_ids = [job_id for job_id in job_ids if job_id]
+    market_labels = "、".join(label for label, _status in failed)
+    worker_status_labels = [
+        f"{label}：原始行情补数据失败"
+        + (f"（{str(status.get('job_id') or '').strip()}）" if status.get("job_id") else "")
+        + (f"：{_raw_data_maintenance_reason(status)}" if _raw_data_maintenance_reason(status) else "")
+        for label, status in failed
+    ]
+    started_at_values = [
+        str(status.get("started_at") or "").strip() for _label, status in failed if str(status.get("started_at") or "").strip()
+    ]
+    finished_at_values = [
+        str(status.get("finished_at") or "").strip() for _label, status in failed if str(status.get("finished_at") or "").strip()
+    ]
+    reasons = [_raw_data_maintenance_reason(status) for _label, status in failed]
+    visible_reasons = [reason for reason in reasons if reason]
+    reason_text = "；".join(visible_reasons)
+    return {
+        "kind": "data_refresh",
+        "status": "failed",
+        "statusLabel": "原始行情补数据失败",
+        "command": "系统启动自动补数据",
+        "stageLabel": "原始行情补数据",
+        "currentAction": f"{market_labels}原始行情补数据失败" + (f"：{reason_text}" if reason_text else "。"),
+        "percent": 100,
+        "workerStatusLabels": worker_status_labels,
+        "completedRoleLabels": ["启动检查"],
+        "waitingRoleLabels": [],
+        "startedAt": min(started_at_values) if started_at_values else "",
+        "finishedAt": max(finished_at_values) if finished_at_values else None,
+        "workflowRunId": "raw-data-maintenance:" + ",".join(visible_job_ids) if visible_job_ids else "raw-data-maintenance",
+    }
+
+
+def _raw_data_maintenance_reason(status: Mapping[str, object]) -> str:
+    return str(status.get("reason") or status.get("error") or "").strip()
 
 
 def _factory_reset_service(request: Request) -> FactoryResetService:

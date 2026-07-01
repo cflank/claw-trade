@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 import pytest
 
 from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy
 from claw_trade.data_gateway.models import DataGap, DataResult, DataResultStatus, GapReason, Market
 from claw_trade.data_gateway.needs import DataNeed, NeedPriority, ProviderCallSpec
+from claw_trade.data_gateway.planner.call_planner import plan_public_data_requests
+from claw_trade.data_gateway.public_api import PublicDataRequest
 from claw_trade.data_gateway.report_evidence import (
     _NeedResultRefs,
     _basic_data_need_model_visible_text,
     _build_public_data_request,
     _data_need_status,
+    _data_need_result_from_fetch,
+    _data_need_result_from_repository,
     _data_result_satisfies_need,
     _deadline_at,
     _empty_event_attempts_satisfy_need,
@@ -145,6 +150,55 @@ def test_crypto_onchain_event_endpoint_uses_event_granularity_for_daily_parent_n
     assert "whale_transfer" in set(batch.capability_fields)
 
 
+def test_crypto_binance_daily_bar_execution_cache_key_includes_date_window() -> None:
+    first_request = PublicDataRequest(
+        request_id="maintenance:CRYPTO:daily_bar:BTCUSDT:2026-06-26",
+        item="daily_bar",
+        market=Market.CRYPTO,
+        instrument="BTCUSDT",
+        time_range_start=date(2026, 6, 26),
+        time_range_end=date(2026, 6, 26),
+        granularity="daily",
+        requested_by_worker="openclaw_cron",
+        purpose="scheduled_data_maintenance",
+        deadline_at=datetime(2026, 6, 26, 12, 0, tzinfo=UTC),
+        consumer="maintenance",
+    )
+    second_request = first_request.model_copy(
+        update={
+            "request_id": "maintenance:CRYPTO:daily_bar:BTCUSDT:2026-06-27",
+            "time_range_start": date(2026, 6, 27),
+            "time_range_end": date(2026, 6, 27),
+        }
+    )
+    first_plan = plan_public_data_requests((first_request,))
+    second_plan = plan_public_data_requests((second_request,))
+    first_call = next(
+        call
+        for call in first_plan.planned_calls
+        if call.provider_id == "crypto_primary" and call.catalog_endpoint_id == "binance.spot_daily_bar"
+    )
+    second_call = next(
+        call
+        for call in second_plan.planned_calls
+        if call.provider_id == "crypto_primary" and call.catalog_endpoint_id == "binance.spot_daily_bar"
+    )
+
+    first_batch = _provider_call_batch(
+        call=first_call,
+        need=first_plan.needs[0],
+        policy=RateLimitPolicy(window_seconds=60, max_requests=None),
+    )
+    second_batch = _provider_call_batch(
+        call=second_call,
+        need=second_plan.needs[0],
+        policy=RateLimitPolicy(window_seconds=60, max_requests=None),
+    )
+
+    assert first_batch.single_flight_key != second_batch.single_flight_key
+    assert first_batch.cache_key != second_batch.cache_key
+
+
 def test_crypto_liquidation_heatmap_size_satisfies_public_contract() -> None:
     need = _need(
         need_id="need-heatmap",
@@ -215,6 +269,35 @@ def test_selection_universe_refresh_batch_carries_universe_ref_for_warehouse_sco
         auth_scope="tushare_token",
         rate_limit_bucket="ratelimit:tushare",
         batch_key="batch:tushare-daily-all",
+        official_doc_ref="https://tushare.pro/document/2?doc_id=27",
+        need_ids=(need.need_id,),
+    )
+
+    batch = _provider_call_batch(call=call, need=need, policy=RateLimitPolicy(window_seconds=60, max_requests=None))
+
+    assert batch.universe_ref == "all_a_shares"
+
+
+def test_maintenance_all_a_shares_batch_carries_universe_ref_for_warehouse_scope() -> None:
+    need = _need(
+        need_id="maintenance:CN_A:daily_bar:all_a_shares:2026-06-24:2026-06-30",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="all_a_shares",
+        granularity="daily",
+        consumer="maintenance",
+        purpose="scheduled_data_maintenance",
+    )
+    call = _call(
+        call_id="call:tushare-daily-all-maintenance",
+        public_api_id="cn_a.daily_bar",
+        provider_id="official_api_tushare",
+        catalog_endpoint_id="tushare.daily",
+        official_path_or_api_name="daily",
+        params={"trade_date": "20260630"},
+        auth_scope="tushare_token",
+        rate_limit_bucket="ratelimit:tushare",
+        batch_key="batch:tushare-daily-all-maintenance",
         official_doc_ref="https://tushare.pro/document/2?doc_id=27",
         need_ids=(need.need_id,),
     )
@@ -331,6 +414,75 @@ def test_basic_model_visible_text_does_not_show_internal_dataset_name() -> None:
     assert "日线" in text
     assert "daily_bar" not in text
     assert "api_id" not in text
+
+
+def test_data_need_result_from_fetch_preserves_remote_success_freshness() -> None:
+    result = _data_need_result_from_fetch(
+        need=_need(api_id="cn_a.daily_bar", market=Market.CN_A, instrument="600519.SH", granularity="daily"),
+        call=_call(public_api_id="cn_a.daily_bar", catalog_endpoint_id="tushare.daily"),
+        batch=SimpleNamespace(data_type="daily_bar"),
+        fetch_result=SimpleNamespace(payload={"rows": [{"date": "2026-06-12", "close": 10.5}]}),
+        ingest=SimpleNamespace(
+            dataset_refs=("dataset:daily",),
+            raw_refs=("raw:daily",),
+            attempt_refs=("attempt:daily",),
+            gaps=(),
+            remote_success=True,
+        ),
+        index=0,
+        as_of=datetime(2026, 6, 12, 12, 0, tzinfo=UTC),
+    )
+
+    assert result is not None
+    assert result.freshness["remote_success"] is True
+
+
+def test_data_need_result_from_repository_queries_all_a_shares_by_universe_ref() -> None:
+    calls: list[dict[str, object]] = []
+    dataset_ref = "dataset:daily_bar:CN_A:all_a_shares:2026-06-30"
+
+    class Repository:
+        def query_normalized(self, **kwargs: object) -> tuple[object, ...]:
+            calls.append(dict(kwargs))
+            if kwargs.get("symbol_id") is None and kwargs.get("universe_ref") == "all_a_shares":
+                return (
+                    SimpleNamespace(
+                        dataset_ref=dataset_ref,
+                        symbol_id=None,
+                        universe_ref="all_a_shares",
+                        granularity="daily",
+                        period_start=date(2026, 6, 30),
+                        period_end=date(2026, 6, 30),
+                        source_roles=("official",),
+                        row={"date": "2026-06-30", "close": 10.5},
+                    ),
+                )
+            return ()
+
+    result = _data_need_result_from_repository(
+        need=_need(
+            need_id="maintenance:CN_A:daily_bar:all_a_shares:2026-06-30",
+            api_id="cn_a.daily_bar",
+            market=Market.CN_A,
+            instrument="all_a_shares",
+            granularity="daily",
+            consumer="maintenance",
+            purpose="scheduled_data_maintenance",
+            time_range_start=date(2026, 6, 30),
+            time_range_end=date(2026, 6, 30),
+        ),
+        call=_call(public_api_id="cn_a.daily_bar", catalog_endpoint_id="tushare.daily"),
+        batch=SimpleNamespace(data_type="daily_bar"),
+        ingest=SimpleNamespace(dataset_refs=(dataset_ref,), raw_refs=(), attempt_refs=(), gaps=(), remote_success=False),
+        repository=Repository(),
+        index=0,
+        as_of=datetime(2026, 6, 30, 12, 0, tzinfo=UTC),
+    )
+
+    assert result is not None
+    assert calls[0]["symbol_id"] is None
+    assert calls[0]["universe_ref"] == "all_a_shares"
+    assert result.dataset_refs == (dataset_ref,)
 
 
 def test_cn_a_daily_bar_satisfies_when_only_current_trading_day_is_missing() -> None:

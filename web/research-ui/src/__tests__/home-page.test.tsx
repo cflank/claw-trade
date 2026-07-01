@@ -63,6 +63,8 @@ function mockWorkspaceFetch(
     priceAlerts?: Array<Record<string, unknown>>;
     deleteSavedReportResponses?: Record<string, MockDeleteSavedReportResponse>;
     deleteSavedReportFailures?: Record<string, Response | Error>;
+    scheduledReports?: Array<Record<string, unknown>>;
+    deleteScheduledReportResponse?: Promise<Response>;
     channelStatus?: Record<string, unknown>;
     sendReportFileResponse?: Promise<Response>;
     runPriceAlertResponse?: Promise<Response>;
@@ -76,6 +78,7 @@ function mockWorkspaceFetch(
   const cancelBodies: Array<Record<string, unknown>> = [];
   const cancelSelectionBodies: Array<Record<string, unknown>> = [];
   const deleteBodies: Array<Record<string, unknown>> = [];
+  const scheduledReportActionBodies: Array<Record<string, unknown>> = [];
   const clearChatBodies: Array<Record<string, unknown>> = [];
   const chatBodies: Array<Record<string, unknown>> = [];
   const workerChatBodies: Array<Record<string, unknown>> = [];
@@ -414,7 +417,16 @@ function mockWorkspaceFetch(
     }
 
     if (url.includes('/api/ui/list-scheduled-reports')) {
-      return json({ items: [] });
+      return json({ items: options.scheduledReports ?? [] });
+    }
+
+    if (url.includes('/api/ui/delete-scheduled-report') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      scheduledReportActionBodies.push(body);
+      if (options.deleteScheduledReportResponse) {
+        return options.deleteScheduledReportResponse;
+      }
+      return json({ deleted: true, scheduledReportId: body.scheduledReportId });
     }
 
     if (url.includes('/api/ui/list-price-alerts')) {
@@ -739,6 +751,7 @@ function mockWorkspaceFetch(
     getCancelBodies: () => cancelBodies,
     getCancelSelectionBodies: () => cancelSelectionBodies,
     getDeleteBodies: () => deleteBodies,
+    getScheduledReportActionBodies: () => scheduledReportActionBodies,
     getClearChatBodies: () => clearChatBodies,
     getChatBodies: () => chatBodies,
     getWorkerChatBodies: () => workerChatBodies,
@@ -807,6 +820,53 @@ describe('home page', () => {
     expect(await screen.findByText('已检查价格提醒。')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '关闭任务提示' }));
     expect(screen.queryByText('已检查价格提醒。')).not.toBeInTheDocument();
+  });
+
+  it('hides a scheduled report immediately while delete is pending', async () => {
+    let resolveDelete!: (value: Response) => void;
+    const deleteScheduledReportResponse = new Promise<Response>((resolve) => {
+      resolveDelete = resolve;
+    });
+    const mocked = mockWorkspaceFetch({
+      scheduledReports: [
+        {
+          scheduledReportId: 'schedule-1',
+          instrumentCode: 'AAPL',
+          instrumentName: 'AAPL',
+          market: 'US',
+          frequency: 'daily',
+          timeOfDay: '09:30',
+          weekday: null,
+          notification: { channel: 'in_app', enabled: true },
+          state: 'active',
+          nextRunAt: '2026-05-20T13:30:00.000Z',
+          lastRunTaskId: null,
+          cronJobId: 'cron-1',
+          lastCronRunId: null,
+          syncErrorMessage: null,
+          updatedAt: '2026-05-19T10:00:00.000Z',
+        },
+      ],
+      deleteScheduledReportResponse,
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('AAPL')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+
+    await waitFor(() => expect(screen.queryByText('AAPL')).not.toBeInTheDocument());
+    expect(mocked.getScheduledReportActionBodies()).toMatchObject([{ scheduledReportId: 'schedule-1' }]);
+
+    await act(async () => {
+      resolveDelete(json({ deleted: true, scheduledReportId: 'schedule-1' }));
+      await deleteScheduledReportResponse;
+    });
   });
 
   it('restores normal chat messages when the workspace remounts', async () => {
@@ -998,6 +1058,42 @@ describe('home page', () => {
     expect(screen.getByText('正在读取本地仓库并补齐缺失行情。')).toBeInTheDocument();
     expect(screen.getByText('拉取/补齐行情数据：补数据中')).toBeInTheDocument();
     expect(screen.getByText('工作流：sel-refresh-active-1')).toBeInTheDocument();
+  });
+
+  it('shows raw market data maintenance progress in the right rail', async () => {
+    const mocked = mockWorkspaceFetch({
+      selectionRefreshSnapshot: {
+        selectionProgress: {
+          kind: 'data_refresh',
+          status: 'running',
+          statusLabel: '原始行情补数据中',
+          command: '系统启动自动补数据',
+          stageLabel: '原始行情补数据',
+          currentAction: '正在补齐A股、加密币原始行情，完成后会计算选股候选池。',
+          percent: 25,
+          workerStatusLabels: ['A股：原始行情补数据中（job-cn-a）', '加密币：原始行情补数据中（job-crypto）'],
+          completedRoleLabels: ['启动检查'],
+          waitingRoleLabels: ['计算选股缓存'],
+          startedAt: '2026-07-01T10:00:00Z',
+          finishedAt: null,
+          workflowRunId: 'raw-data-maintenance:job-cn-a,job-crypto',
+        },
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { name: '原始行情补数据' })).toBeInTheDocument();
+    expect(screen.getByText('系统启动自动补数据')).toBeInTheDocument();
+    expect(screen.getByText('原始行情补数据中')).toBeInTheDocument();
+    expect(screen.getByText('A股：原始行情补数据中（job-cn-a）')).toBeInTheDocument();
+    expect(screen.getByText('加密币：原始行情补数据中（job-crypto）')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '停止选股' })).not.toBeInTheDocument();
   });
 
   it('stops backend selection progress from the right rail', async () => {

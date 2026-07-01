@@ -7,9 +7,12 @@ from pathlib import Path
 import pytest
 from claw_trade.data_gateway._selection_batch import (
     _daily_dates_between,
+    _crypto_seed_feature_rows,
     _history_row,
+    _latest_crypto_selection_history_trade_date,
     _LocalFeatureRowsResult,
     _refresh_need_chunks,
+    resolve_crypto_selection_trade_date_for_scheduler,
     _selection_data_requests,
     _selection_feature_projection_columns,
     _selection_feature_rows_from_repository,
@@ -31,6 +34,7 @@ from claw_trade.data_gateway.models import (
     Market,
 )
 from claw_trade.data_gateway.warehouse import DatasetRepository
+from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 from claw_trade.data_gateway.warehouse.selection_columnar import SelectionColumnarWarehouse
 from claw_trade.selection.data_job import SelectionDataNeedResult
 from claw_trade.selection.engine import FilteredUniverse, score_candidates
@@ -456,6 +460,100 @@ def test_build_selection_data_need_audit_supports_crypto_market_defaults() -> No
     assert plan.coverage_groups == ("crypto_selection_batch", "universe", "daily", "fundamental")
     assert plan.ttl_policy_ref == "ttl://selection/crypto/batch-v1/900s"
     assert plan.lineage_root_ref == "lineage://selection/crypto/2026-06-17/batch-v1"
+
+
+def test_crypto_selection_trade_date_uses_runtime_increment_after_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_root = tmp_path / "crypto-seed"
+    repository = _crypto_runtime_repository(
+        tmp_path=tmp_path,
+        ticker="BTCUSDT",
+        start=date(2026, 6, 7),
+        count=25,
+    )
+    NormalizedColumnarWarehouse(seed_root).write_records(
+        _crypto_daily_dataset_records(ticker="BTCUSDT", start=date(2026, 6, 1), count=6)
+    )
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._CRYPTO_HISTORY_COLUMNAR_ROOT", seed_root)
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._crypto_runtime_repository_or_none", lambda: repository)
+
+    assert _latest_crypto_selection_history_trade_date(root=seed_root, repository=repository) == date(2026, 7, 1)
+    assert resolve_crypto_selection_trade_date_for_scheduler(None) == "2026-07-01"
+
+
+def test_crypto_seed_feature_rows_overlay_runtime_increment_after_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_root = tmp_path / "crypto-seed"
+    NormalizedColumnarWarehouse(seed_root).write_records(
+        _crypto_daily_dataset_records(ticker="BTCUSDT", start=date(2026, 1, 1), count=157)
+    )
+    repository = _crypto_runtime_repository(
+        tmp_path=tmp_path,
+        ticker="BTCUSDT",
+        start=date(2026, 6, 7),
+        count=25,
+    )
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._CRYPTO_HISTORY_COLUMNAR_ROOT", seed_root)
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._crypto_runtime_repository_or_none", lambda: repository)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-crypto-runtime-overlay",
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-07-01",
+        lookback_trading_days=180,
+        universe_scope="spot_usdt",
+        data_need_audit_ref="plan://selection/crypto/2026-07-01/batch-v1",
+        approved_strategy_config_ref="config://crypto-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+
+    result = _crypto_seed_feature_rows(plan=plan, progress_callback=None)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["ticker"] == "BTCUSDT"
+    assert result.rows[0]["trade_date"] == "2026-07-01"
+    assert "runtime" in str(result.rows[0]["source_ref"])
+    assert "2026-07-01" in str(result.rows[0]["source_ref"])
+    assert "attempt:runtime:BTCUSDT" in result.attempt_refs
+    assert result.columnar_manifest_ref is not None
+
+
+def test_crypto_seed_feature_rows_uses_runtime_when_seed_files_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seed_root = tmp_path / "crypto-seed"
+    repository = _crypto_runtime_repository(
+        tmp_path=tmp_path,
+        ticker="BTCUSDT",
+        start=date(2026, 1, 3),
+        count=180,
+    )
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._CRYPTO_HISTORY_COLUMNAR_ROOT", seed_root)
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._crypto_runtime_repository_or_none", lambda: repository)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-crypto-runtime-only",
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date="2026-07-01",
+        lookback_trading_days=180,
+        universe_scope="spot_usdt",
+        data_need_audit_ref="plan://selection/crypto/2026-07-01/batch-v1",
+        approved_strategy_config_ref="config://crypto-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+
+    result = _crypto_seed_feature_rows(plan=plan, progress_callback=None)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["ticker"] == "BTCUSDT"
+    assert result.rows[0]["trade_date"] == "2026-07-01"
+    assert result.attempt_refs == ("attempt:runtime:BTCUSDT",)
+    assert result.columnar_manifest_ref is not None
 
 
 def test_selection_data_requests_for_crypto_uses_crypto_time_assets() -> None:
@@ -2356,6 +2454,103 @@ def _crypto_history_rows(*, ticker: str, closes: dict[int, float]) -> tuple[dict
                 "close": current,
                 "volume": 1000.0 + idx,
                 "amount": current * (1000.0 + idx),
+            }
+        )
+    return tuple(rows)
+
+
+def _crypto_runtime_repository(
+    *,
+    tmp_path: Path,
+    ticker: str,
+    start: date,
+    count: int,
+) -> DatasetRepository:
+    repository = DatasetRepository(
+        collections={name: {} for name in DatasetRepository.collection_names()},
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "runtime-normalized"),
+        allow_normalized_mongo_read=False,
+    )
+    result = NormalizedColumnarWarehouse(tmp_path / "runtime-normalized").write_records(
+        _crypto_daily_dataset_records(
+            ticker=ticker,
+            start=start,
+            count=count,
+            ref_prefix="dataset://runtime",
+            runtime_shape=True,
+        )
+    )
+    repository.write_dataset_manifest(result.manifest)
+    repository.insert_provider_attempt(
+        {
+            "attempt_ref": f"attempt:runtime:{ticker}",
+            "provider_id": "binance_public_data",
+            "endpoint_id": "spot_klines_daily",
+            "status": "success",
+            "dataset_refs": result.dataset_refs,
+        }
+    )
+    return repository
+
+
+def _crypto_daily_dataset_records(
+    *,
+    ticker: str,
+    start: date,
+    count: int,
+    ref_prefix: str = "dataset://seed",
+    runtime_shape: bool = False,
+) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    base = ticker.removesuffix("USDT")
+    for idx in range(count):
+        trade_date = start + timedelta(days=idx)
+        close = 100.0 + idx
+        row = {
+            "symbol_id": ticker,
+            "date": trade_date.isoformat(),
+            "open": close * 0.99,
+            "high": close * 1.01,
+            "low": close * 0.98,
+            "close": close,
+            "volume": 1000.0 + idx,
+            "amount": close * (1000.0 + idx),
+            "base_asset": base,
+            "quote_asset": "USDT",
+        }
+        if runtime_shape:
+            row["source_market_segment"] = "spot"
+        else:
+            row["ticker"] = ticker
+            row["market_segment"] = "spot"
+        rows.append(
+            {
+                "dataset_ref": f"{ref_prefix}/{ticker}/{trade_date.isoformat()}",
+                "dataset": "daily_bar",
+                "market": "CRYPTO",
+                "symbol_id": ticker,
+                "universe_ref": "binance_spot_all_symbols",
+                "granularity": "daily",
+                "period_start": trade_date.isoformat(),
+                "period_end": trade_date.isoformat(),
+                "field_set": tuple(sorted(row)),
+                "as_of": datetime(2026, 7, 1, tzinfo=UTC),
+                "fresh_until": datetime(2026, 7, 1, tzinfo=UTC),
+                "source_roles": ("official",),
+                "dataset_checksum": f"sha256:test:{ticker}:{trade_date.isoformat()}",
+                "dataset_checksum_algorithm": "sha256:canonical-json-v1",
+                "dataset_checksum_scope": "normalized-batch-v1",
+                "dataset_row_count": 1,
+                "exchange": "BINANCE",
+                "currency": "USDT",
+                "timezone": "UTC",
+                "calendar": "CRYPTO_24_7",
+                "base_asset": base,
+                "quote_asset": "USDT",
+                "provider_lineage": {"provider_id": "binance_public_data", "endpoint_id": "spot_klines_daily"},
+                "schema_id": "daily_bar.v1",
+                "quality_flags": (),
+                "row": row,
             }
         )
     return tuple(rows)

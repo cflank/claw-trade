@@ -785,7 +785,7 @@ def _provider_result_from_columnar_manifest(
 def resolve_crypto_selection_trade_date_for_scheduler(trade_date: str | None) -> str:
     if trade_date is not None and trade_date.strip():
         return date.fromisoformat(trade_date.strip()).isoformat()
-    latest = _latest_crypto_seed_trade_date()
+    latest = _latest_crypto_selection_history_trade_date()
     if latest is None:
         raise ValueError("crypto selection history seed has no daily spot data")
     return latest.isoformat()
@@ -844,8 +844,9 @@ def _crypto_seed_feature_rows(
     progress_callback: Callable[[SelectionDataFetchProgress], None] | None,
 ) -> _CryptoSeedRowsResult:
     root = _CRYPTO_HISTORY_COLUMNAR_ROOT
+    runtime_repository = _crypto_runtime_repository_or_none()
     files = _crypto_seed_daily_files(root)
-    if not files:
+    if not files and runtime_repository is None:
         return _CryptoSeedRowsResult(
             rows=(),
             normalized_refs=(),
@@ -857,13 +858,18 @@ def _crypto_seed_feature_rows(
         )
     trade_day = date.fromisoformat(plan.trade_date)
     history_start = _selection_history_start_date(plan=plan)
-    documents = _read_crypto_seed_daily_documents(root=root, start=history_start, end=trade_day)
+    documents = _read_crypto_selection_daily_documents(
+        root=root,
+        start=history_start,
+        end=trade_day,
+        repository=runtime_repository,
+    )
     if not documents:
-        latest = _latest_crypto_seed_trade_date(root=root)
+        latest = _latest_crypto_selection_history_trade_date(root=root, repository=runtime_repository)
         return _CryptoSeedRowsResult(
             rows=(),
             normalized_refs=(),
-            attempt_refs=_crypto_seed_attempt_refs(root=root, trade_date=plan.trade_date),
+            attempt_refs=_crypto_seed_attempt_refs(root=root, trade_date=plan.trade_date) if files else (),
             data_gaps=(),
             columnar_manifest_ref=None,
             columnar_manifest_sha256=None,
@@ -886,6 +892,7 @@ def _crypto_seed_feature_rows(
             refs_by_ticker.setdefault(ticker, []).append(ref)
     feature_rows: list[Mapping[str, object]] = []
     lineage_refs: list[str] = []
+    raw_lineage_refs: list[str] = []
     dropped: list[str] = []
     writer = SelectionColumnarWarehouse.default().begin_write(plan=plan)
     tickers = tuple(sorted(rows_by_ticker))
@@ -920,10 +927,18 @@ def _crypto_seed_feature_rows(
         feature_rows.append(feature_row)
         writer.add_feature_rows((feature_row,))
         lineage_refs.append(source_ref)
+        raw_ref = str(refs_by_ticker.get(ticker, ("",))[-1]).strip()
+        if raw_ref:
+            raw_lineage_refs.append(raw_ref)
         if index % 200 == 0 or index == len(tickers):
             _notify_fetch_progress(progress_callback, label="计算加密选币特征", completed=index, total=max(1, len(tickers)))
     normalized_refs = tuple(dict.fromkeys(lineage_refs))[:_LOCAL_FEATURE_REF_SAMPLE_LIMIT]
-    attempt_refs = _crypto_seed_attempt_refs(root=root, trade_date=plan.trade_date)
+    attempt_refs = _crypto_selection_attempt_refs(
+        root=root,
+        trade_date=plan.trade_date,
+        repository=runtime_repository,
+        dataset_refs=tuple(raw_lineage_refs),
+    )
     gaps: list[DataGapRef] = []
     if dropped:
         gaps.append(
@@ -996,9 +1011,84 @@ def _latest_crypto_seed_trade_date(root: Path | None = None) -> date | None:
     return parsed
 
 
+def _latest_crypto_selection_history_trade_date(
+    *,
+    root: Path | None = None,
+    repository: DatasetRepository | None = None,
+) -> date | None:
+    candidates = (
+        _latest_crypto_seed_trade_date(root=root),
+        _latest_crypto_runtime_trade_date(repository=repository),
+    )
+    return max((candidate for candidate in candidates if candidate is not None), default=None)
+
+
+def _latest_crypto_runtime_trade_date(*, repository: DatasetRepository | None = None) -> date | None:
+    repository = repository or _crypto_runtime_repository_or_none()
+    if repository is None:
+        return None
+    latest: date | None = None
+    for manifest in repository.list_dataset_manifests():
+        if not _is_crypto_spot_usdt_daily_manifest(manifest):
+            continue
+        value = _parse_date(manifest.get("period_end_max"))
+        if value is not None and (latest is None or value > latest):
+            latest = value
+    return latest
+
+
+def _crypto_runtime_repository_or_none() -> DatasetRepository | None:
+    if not (os.environ.get("DATA_GATEWAY_MONGODB_URI", "").strip() or os.environ.get("CN_A_MONGODB_URI", "").strip()):
+        return None
+    return _build_selection_gateway_context().repository
+
+
+def _is_crypto_spot_usdt_daily_manifest(manifest: Mapping[str, Any]) -> bool:
+    if str(manifest.get("storage") or "") != "parquet" or str(manifest.get("status") or "active") != "active":
+        return False
+    if str(manifest.get("market") or "") != "CRYPTO" or str(manifest.get("dataset") or "") != "daily_bar":
+        return False
+    if str(manifest.get("granularity") or "") != "daily":
+        return False
+    universe_refs = {str(item).strip() for item in tuple(manifest.get("universe_refs", ()) or ()) if str(item).strip()}
+    if "binance_spot_all_symbols" not in universe_refs:
+        return False
+    symbol_ids = tuple(str(item).strip().upper() for item in tuple(manifest.get("symbol_ids", ()) or ()) if str(item).strip())
+    return not symbol_ids or any(symbol.endswith("USDT") for symbol in symbol_ids)
+
+
+def _read_crypto_selection_daily_documents(
+    *,
+    root: Path,
+    start: date,
+    end: date,
+    repository: DatasetRepository | None,
+) -> tuple[Mapping[str, object], ...]:
+    documents_by_key: dict[tuple[str, str], Mapping[str, object]] = {}
+    for row in _read_crypto_seed_daily_documents(root=root, start=start, end=end):
+        key = _crypto_daily_document_key(row)
+        if key is not None:
+            documents_by_key[key] = row
+    for row in _read_crypto_runtime_daily_documents(repository=repository, start=start, end=end):
+        key = _crypto_daily_document_key(row)
+        if key is not None:
+            documents_by_key[key] = row
+    return tuple(documents_by_key.values())
+
+
+def _crypto_daily_document_key(row: Mapping[str, object]) -> tuple[str, str] | None:
+    ticker = _normalize_crypto_ticker(str(row.get("symbol_id") or row.get("ticker") or ""))
+    row_day = _row_date(row)
+    if ticker is None or row_day is None:
+        return None
+    return ticker, row_day
+
+
 def _read_crypto_seed_daily_documents(*, root: Path, start: date, end: date) -> tuple[Mapping[str, object], ...]:
     import duckdb
 
+    if not _crypto_seed_daily_files(root):
+        return ()
     glob_path = str(root / "market=CRYPTO" / "dataset=daily_bar" / "granularity=daily" / "*.parquet")
     with duckdb.connect(":memory:") as conn:
         rows = conn.execute(
@@ -1039,9 +1129,86 @@ def _read_crypto_seed_daily_documents(*, root: Path, start: date, end: date) -> 
     return tuple(output)
 
 
+def _read_crypto_runtime_daily_documents(
+    *,
+    repository: DatasetRepository | None,
+    start: date,
+    end: date,
+) -> tuple[Mapping[str, object], ...]:
+    if repository is None:
+        return ()
+    records = repository.query_normalized(
+        dataset="daily_bar",
+        market="CRYPTO",
+        symbol_id=None,
+        universe_ref="binance_spot_all_symbols",
+        date_range_start=start,
+        date_range_end=end,
+        require_integrity_metadata=True,
+        include_row=True,
+        fields=(
+            "date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "base_asset",
+            "quote_asset",
+            "source_market_segment",
+            "symbol_id",
+        ),
+    )
+    output: list[Mapping[str, object]] = []
+    for record in records:
+        row = _crypto_runtime_daily_document(record)
+        if row is not None:
+            output.append(row)
+    return tuple(output)
+
+
+def _crypto_runtime_daily_document(record: DatasetRecord) -> Mapping[str, object] | None:
+    row = dict(record.row)
+    ticker = _normalize_crypto_ticker(str(record.symbol_id or row.get("symbol_id") or row.get("ticker") or ""))
+    if ticker is None:
+        return None
+    quote_asset = str(row.get("quote_asset") or "").strip().upper()
+    market_segment = str(row.get("market_segment") or row.get("source_market_segment") or "").strip().lower()
+    if quote_asset != "USDT" or market_segment != "spot":
+        return None
+    row.update(
+        {
+            "dataset_ref": str(record.dataset_ref),
+            "symbol_id": ticker,
+            "ticker": ticker,
+            "market_segment": market_segment,
+            "universe_ref": str(record.universe_ref or "binance_spot_all_symbols"),
+            "period_start": str(record.period_start),
+            "period_end": str(record.period_end),
+        }
+    )
+    return row
+
+
 def _crypto_seed_attempt_refs(*, root: Path, trade_date: str) -> tuple[str, ...]:
     digest = hashlib.sha256(f"{root.resolve()}:{trade_date}".encode("utf-8")).hexdigest()[:12]
     return (f"attempt:local_crypto_prepackaged:binance_public_data_import:{digest}",)
+
+
+def _crypto_selection_attempt_refs(
+    *,
+    root: Path,
+    trade_date: str,
+    repository: DatasetRepository | None,
+    dataset_refs: Sequence[str],
+) -> tuple[str, ...]:
+    refs: list[str] = list(_crypto_seed_attempt_refs(root=root, trade_date=trade_date)) if _crypto_seed_daily_files(root) else []
+    if repository is not None and dataset_refs:
+        found = repository.find_provider_attempt_refs_by_dataset_ref(tuple(dataset_refs))
+        for attempt_refs in found.values():
+            refs.extend(str(ref) for ref in attempt_refs if str(ref).strip())
+    return tuple(dict.fromkeys(refs))
 
 
 def _crypto_company_name(row: Mapping[str, object], ticker: str) -> str:

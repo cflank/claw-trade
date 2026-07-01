@@ -199,6 +199,7 @@ class SelectionDataRefreshService:
         reason: str,
         market: SelectionMarket = SelectionMarket.CN_A,
         profile: SelectionProfile | None = None,
+        force_refresh: bool = False,
     ) -> SelectionDataRefreshResult:
         blocked = self._assert_data_refresh_allowed()
         if blocked is not None:
@@ -218,19 +219,20 @@ class SelectionDataRefreshService:
 
         auto_refresh_key = (market, profile, trade_date)
         with self._lock:
-            existing = self._store.load_latest_completed_selection_run(
-                market=market,
-                profile=profile,
-                trade_date=trade_date,
-                now=self._now_fn(),
-            )
-            if existing.is_available and existing.run is not None:
-                return SelectionDataRefreshResult(
-                    status="completed",
-                    selection_run_id=existing.run.run_plan.selection_run_id,
+            if not force_refresh:
+                existing = self._store.load_latest_completed_selection_run(
+                    market=market,
+                    profile=profile,
                     trade_date=trade_date,
-                    reason=f"{reason}:candidate_cache_valid",
+                    now=self._now_fn(),
                 )
+                if existing.is_available and existing.run is not None:
+                    return SelectionDataRefreshResult(
+                        status="completed",
+                        selection_run_id=existing.run.run_plan.selection_run_id,
+                        trade_date=trade_date,
+                        reason=f"{reason}:candidate_cache_valid",
+                    )
             if self._auto_refresh_key == auto_refresh_key:
                 return SelectionDataRefreshResult(
                     status="already_running",
@@ -294,7 +296,7 @@ class SelectionDataRefreshService:
             self._auto_refresh_key = auto_refresh_key
 
         try:
-            self._run_data_check(plan)
+            execution = self._run_data_check(plan)
         except Exception as exc:  # noqa: BLE001
             failed_at = self._now_fn().isoformat()
             self._store.save_data_run_record(
@@ -325,9 +327,12 @@ class SelectionDataRefreshService:
                 if self._auto_refresh_key == auto_refresh_key:
                     self._auto_refresh_key = None
 
-        return SelectionDataRefreshResult(
-            status="completed",
-            selection_run_id=plan.selection_run_id,
+        record = getattr(execution, "record", None)
+        if not isinstance(record, SelectionDataRunRecord):
+            record = self._store.load_data_run_record(plan.selection_run_id)
+        return self._refresh_result_from_data_run_record(
+            record=record,
+            plan=plan,
             trade_date=trade_date,
             reason=reason,
         )
@@ -452,6 +457,54 @@ class SelectionDataRefreshService:
             now=self._now_fn(),
         )
         return completed.is_available and completed.run is not None
+
+    def _refresh_result_from_data_run_record(
+        self,
+        *,
+        record: SelectionDataRunRecord | None,
+        plan: SelectionRunPlan,
+        trade_date: str,
+        reason: str,
+    ) -> SelectionDataRefreshResult:
+        if record is None:
+            return SelectionDataRefreshResult(
+                status="failed",
+                selection_run_id=plan.selection_run_id,
+                trade_date=trade_date,
+                reason=f"{reason}:data_run_record_missing",
+                error_code="selection_data_run_record_missing",
+            )
+        status = record.data_run.status
+        if status == SelectionDataRunStatus.COMPLETED:
+            return SelectionDataRefreshResult(
+                status="completed",
+                selection_run_id=plan.selection_run_id,
+                trade_date=trade_date,
+                reason=reason,
+            )
+        if status == SelectionDataRunStatus.NO_CANDIDATE:
+            return SelectionDataRefreshResult(
+                status="no_candidate",
+                selection_run_id=plan.selection_run_id,
+                trade_date=trade_date,
+                reason=reason,
+            )
+        if status == SelectionDataRunStatus.FAILED:
+            failure_reason = record.data_run.failure_reason or reason
+            return SelectionDataRefreshResult(
+                status="failed",
+                selection_run_id=plan.selection_run_id,
+                trade_date=trade_date,
+                reason=failure_reason,
+                error_code=record.data_run.failure_code or "selection_data_run_failed",
+            )
+        return SelectionDataRefreshResult(
+            status="failed",
+            selection_run_id=plan.selection_run_id,
+            trade_date=trade_date,
+            reason=f"{reason}:data_run_not_terminal:{status.value}",
+            error_code="selection_data_run_not_terminal",
+        )
 
     def _canonical_trade_date_for_record(self, record: SelectionDataRunRecord) -> str:
         try:

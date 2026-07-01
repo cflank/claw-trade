@@ -38,6 +38,8 @@ _EVENT_CURSOR_KEYS: tuple[str, ...] = (
     "manifest_ref",
     "manifest_hash",
 )
+_AUDIT_REF_INLINE_LIMIT = 1000
+_AUDIT_REF_SAMPLE_LIMIT = 50
 
 
 class JobAlreadyRunningError(RuntimeError):
@@ -247,6 +249,7 @@ def add_result_stats(job: MaintenanceJob, result: Any) -> None:
         raw_refs=count_ref_like(getattr(result, "raw_refs", ())),
         attempt_refs=count_ref_like(getattr(result, "attempt_refs", ())),
         gaps=count_ref_like(getattr(result, "gaps", ())),
+        remote_success=1 if _result_remote_success(result) else 0,
     )
     status = getattr(result, "status", None)
     status_value = getattr(status, "value", status)
@@ -338,9 +341,9 @@ def audit_result(
         "last_request_id": request_id,
         "last_input_range": input_range,
         "last_output_refs": {
-            "dataset_refs": list(dataset_refs),
-            "raw_refs": list(raw_refs),
-            "attempt_refs": list(attempt_refs),
+            "dataset_refs": _compact_ref_values(dataset_refs),
+            "raw_refs": _compact_ref_values(raw_refs),
+            "attempt_refs": _compact_ref_values(attempt_refs),
         },
         "last_gap_summary": list(gap_summary),
         "coverage_start": coverage_start,
@@ -400,14 +403,44 @@ def _load_audit_state(repo: MaintenanceJobRepository, job: MaintenanceJob) -> di
         output_refs = manifest.get("output_refs", {})
         if not isinstance(output_refs, Mapping):
             output_refs = {}
+        dataset_refs = _tuple_values(manifest.get("dataset_refs", output_refs.get("dataset_refs", ())))
+        raw_refs = _tuple_values(manifest.get("raw_refs", output_refs.get("raw_refs", ())))
+        attempt_refs = _tuple_values(manifest.get("attempt_refs", output_refs.get("attempt_refs", ())))
+        request_ids = _tuple_values(manifest.get("request_ids", ()))
+        required_fields = _tuple_values(manifest.get("required_fields", ()))
+        present_fields = _tuple_values(manifest.get("present_fields", ()))
+        gaps = _tuple_mapping_values(manifest.get("gap_summary", manifest.get("gaps", ())))
         return {
-            "request_ids": _tuple_values(manifest.get("request_ids", ())),
-            "dataset_refs": _tuple_values(manifest.get("dataset_refs", output_refs.get("dataset_refs", ()))),
-            "raw_refs": _tuple_values(manifest.get("raw_refs", output_refs.get("raw_refs", ()))),
-            "attempt_refs": _tuple_values(manifest.get("attempt_refs", output_refs.get("attempt_refs", ()))),
-            "required_fields": _tuple_values(manifest.get("required_fields", ())),
-            "present_fields": _tuple_values(manifest.get("present_fields", ())),
-            "gaps": _tuple_mapping_values(manifest.get("gap_summary", manifest.get("gaps", ()))),
+            "request_ids": request_ids,
+            "dataset_refs": dataset_refs,
+            "raw_refs": raw_refs,
+            "attempt_refs": attempt_refs,
+            "required_fields": required_fields,
+            "present_fields": present_fields,
+            "gaps": gaps,
+            "_counts": {
+                "request_ids": _stored_count(manifest, "request_id_count", request_ids),
+                "dataset_refs": _stored_count(manifest, "dataset_ref_count", dataset_refs),
+                "raw_refs": _stored_count(manifest, "raw_ref_count", raw_refs),
+                "attempt_refs": _stored_count(manifest, "attempt_ref_count", attempt_refs),
+                "required_fields": len(required_fields),
+                "present_fields": len(present_fields),
+                "gaps": len(gaps),
+            },
+            "_hashes": {
+                "dataset_refs": str(manifest.get("dataset_refs_sha256") or output_refs.get("dataset_refs_sha256") or ""),
+                "raw_refs": str(manifest.get("raw_refs_sha256") or output_refs.get("raw_refs_sha256") or ""),
+                "attempt_refs": str(manifest.get("attempt_refs_sha256") or output_refs.get("attempt_refs_sha256") or ""),
+            },
+            "_hash_algorithms": {
+                "dataset_refs": str(
+                    manifest.get("dataset_refs_hash_algorithm") or output_refs.get("dataset_refs_hash_algorithm") or ""
+                ),
+                "raw_refs": str(manifest.get("raw_refs_hash_algorithm") or output_refs.get("raw_refs_hash_algorithm") or ""),
+                "attempt_refs": str(
+                    manifest.get("attempt_refs_hash_algorithm") or output_refs.get("attempt_refs_hash_algorithm") or ""
+                ),
+            },
         }
     return {
         "request_ids": _tuple_values(_cursor_list(job.cursor, "audit_request_ids")),
@@ -436,14 +469,36 @@ def _append_audit_state(
         next_request_ids = tuple(str(item) for item in request_ids)
     else:
         next_request_ids = _append_unique(tuple(str(item) for item in request_ids), request_id)
+    dataset_ref_values = _append_sample_values(state, "dataset_refs", dataset_refs)
+    raw_ref_values = _append_sample_values(state, "raw_refs", raw_refs)
+    attempt_ref_values = _append_sample_values(state, "attempt_refs", attempt_refs)
+    required_field_values = _append_unique(tuple(str(item) for item in state.get("required_fields", ())), *required_fields)
+    present_field_values = _append_unique(tuple(str(item) for item in state.get("present_fields", ())), *present_fields)
+    gap_values = _append_gap_summary(tuple(state.get("gaps", ())), gap_summary)
+    hashes = {
+        "dataset_refs": _next_ref_hash(state, "dataset_refs", dataset_ref_values, dataset_refs),
+        "raw_refs": _next_ref_hash(state, "raw_refs", raw_ref_values, raw_refs),
+        "attempt_refs": _next_ref_hash(state, "attempt_refs", attempt_ref_values, attempt_refs),
+    }
     return {
         "request_ids": next_request_ids,
-        "dataset_refs": _append_unique(tuple(str(item) for item in state.get("dataset_refs", ())), *dataset_refs),
-        "raw_refs": _append_unique(tuple(str(item) for item in state.get("raw_refs", ())), *raw_refs),
-        "attempt_refs": _append_unique(tuple(str(item) for item in state.get("attempt_refs", ())), *attempt_refs),
-        "required_fields": _append_unique(tuple(str(item) for item in state.get("required_fields", ())), *required_fields),
-        "present_fields": _append_unique(tuple(str(item) for item in state.get("present_fields", ())), *present_fields),
-        "gaps": _append_gap_summary(tuple(state.get("gaps", ())), gap_summary),
+        "dataset_refs": dataset_ref_values,
+        "raw_refs": raw_ref_values,
+        "attempt_refs": attempt_ref_values,
+        "required_fields": required_field_values,
+        "present_fields": present_field_values,
+        "gaps": gap_values,
+        "_counts": {
+            "request_ids": _next_ref_count(state, "request_ids", next_request_ids, (request_id,) if request_id != "unknown" else ()),
+            "dataset_refs": _next_ref_count(state, "dataset_refs", dataset_ref_values, dataset_refs),
+            "raw_refs": _next_ref_count(state, "raw_refs", raw_ref_values, raw_refs),
+            "attempt_refs": _next_ref_count(state, "attempt_refs", attempt_ref_values, attempt_refs),
+            "required_fields": len(required_field_values),
+            "present_fields": len(present_field_values),
+            "gaps": len(gap_values),
+        },
+        "_hashes": {key: value["sha256"] for key, value in hashes.items()},
+        "_hash_algorithms": {key: value["algorithm"] for key, value in hashes.items()},
     }
 
 
@@ -463,6 +518,19 @@ def _write_audit_manifest(
     dataset_refs = tuple(str(item) for item in state.get("dataset_refs", ()))
     raw_refs = tuple(str(item) for item in state.get("raw_refs", ()))
     attempt_refs = tuple(str(item) for item in state.get("attempt_refs", ()))
+    counts = _audit_counts(state)
+    dataset_ref_count = counts["dataset_refs"]
+    raw_ref_count = counts["raw_refs"]
+    attempt_ref_count = counts["attempt_refs"]
+    dataset_refs_inline = _inline_ref_values(dataset_refs)
+    raw_refs_inline = _inline_ref_values(raw_refs)
+    attempt_refs_inline = _inline_ref_values(attempt_refs)
+    dataset_refs_hash = _state_ref_hash(state, "dataset_refs", dataset_refs)
+    raw_refs_hash = _state_ref_hash(state, "raw_refs", raw_refs)
+    attempt_refs_hash = _state_ref_hash(state, "attempt_refs", attempt_refs)
+    dataset_refs_hash_algorithm = _state_ref_hash_algorithm(state, "dataset_refs", dataset_refs)
+    raw_refs_hash_algorithm = _state_ref_hash_algorithm(state, "raw_refs", raw_refs)
+    attempt_refs_hash_algorithm = _state_ref_hash_algorithm(state, "attempt_refs", attempt_refs)
     required_fields = tuple(str(item) for item in state.get("required_fields", ()))
     present_fields = tuple(str(item) for item in state.get("present_fields", ()))
     gaps = tuple(dict(item) for item in state.get("gaps", ()) if isinstance(item, Mapping))
@@ -490,7 +558,13 @@ def _write_audit_manifest(
     doc = {
         "manifest_ref": manifest_ref,
         "request_ids": request_ids,
-        "dataset_refs": dataset_refs,
+        "request_id_count": len(request_ids),
+        "dataset_refs": dataset_refs_inline,
+        "dataset_ref_count": dataset_ref_count,
+        "dataset_ref_count_semantics": "observed_refs",
+        "dataset_refs_sha256": dataset_refs_hash,
+        "dataset_refs_hash_algorithm": dataset_refs_hash_algorithm,
+        "dataset_refs_truncated": dataset_ref_count > len(dataset_refs_inline),
         "requirement_fingerprint": requirement_fingerprint,
         "coverage_window": coverage_window,
         "required_fields": required_fields,
@@ -502,12 +576,37 @@ def _write_audit_manifest(
             "stats": dict(job.stats),
         },
         "source_summary": source_summary,
-        "raw_refs": raw_refs,
-        "attempt_refs": attempt_refs,
+        "raw_refs": raw_refs_inline,
+        "raw_ref_count": raw_ref_count,
+        "raw_ref_count_semantics": "observed_refs",
+        "raw_refs_sha256": raw_refs_hash,
+        "raw_refs_hash_algorithm": raw_refs_hash_algorithm,
+        "raw_refs_truncated": raw_ref_count > len(raw_refs_inline),
+        "attempt_refs": attempt_refs_inline,
+        "attempt_ref_count": attempt_ref_count,
+        "attempt_ref_count_semantics": "observed_refs",
+        "attempt_refs_sha256": attempt_refs_hash,
+        "attempt_refs_hash_algorithm": attempt_refs_hash_algorithm,
+        "attempt_refs_truncated": attempt_ref_count > len(attempt_refs_inline),
         "output_refs": {
-            "dataset_refs": dataset_refs,
-            "raw_refs": raw_refs,
-            "attempt_refs": attempt_refs,
+            "dataset_refs": dataset_refs_inline,
+            "dataset_ref_count": dataset_ref_count,
+            "dataset_ref_count_semantics": "observed_refs",
+            "dataset_refs_sha256": dataset_refs_hash,
+            "dataset_refs_hash_algorithm": dataset_refs_hash_algorithm,
+            "dataset_refs_truncated": dataset_ref_count > len(dataset_refs_inline),
+            "raw_refs": raw_refs_inline,
+            "raw_ref_count": raw_ref_count,
+            "raw_ref_count_semantics": "observed_refs",
+            "raw_refs_sha256": raw_refs_hash,
+            "raw_refs_hash_algorithm": raw_refs_hash_algorithm,
+            "raw_refs_truncated": raw_ref_count > len(raw_refs_inline),
+            "attempt_refs": attempt_refs_inline,
+            "attempt_ref_count": attempt_ref_count,
+            "attempt_ref_count_semantics": "observed_refs",
+            "attempt_refs_sha256": attempt_refs_hash,
+            "attempt_refs_hash_algorithm": attempt_refs_hash_algorithm,
+            "attempt_refs_truncated": attempt_ref_count > len(attempt_refs_inline),
         },
         "gaps": gaps,
         "gap_summary": gaps,
@@ -522,6 +621,16 @@ def _write_audit_manifest(
         {
             "request_ids": request_ids,
             "output_refs": doc["output_refs"],
+            "output_ref_counts": {
+                "dataset_refs": dataset_ref_count,
+                "raw_refs": raw_ref_count,
+                "attempt_refs": attempt_ref_count,
+            },
+            "output_ref_hashes": {
+                "dataset_refs": dataset_refs_hash,
+                "raw_refs": raw_refs_hash,
+                "attempt_refs": attempt_refs_hash,
+            },
             "gap_summary": gaps,
             "requirement_fingerprint": requirement_fingerprint,
             "status": status,
@@ -532,6 +641,17 @@ def _write_audit_manifest(
 
 
 def _audit_counts(state: Mapping[str, tuple[Any, ...]]) -> dict[str, int]:
+    counts = state.get("_counts")
+    if isinstance(counts, Mapping):
+        return {
+            "request_ids": int(counts.get("request_ids", 0) or 0),
+            "dataset_refs": int(counts.get("dataset_refs", 0) or 0),
+            "raw_refs": int(counts.get("raw_refs", 0) or 0),
+            "attempt_refs": int(counts.get("attempt_refs", 0) or 0),
+            "required_fields": int(counts.get("required_fields", 0) or 0),
+            "present_fields": int(counts.get("present_fields", 0) or 0),
+            "gaps": int(counts.get("gaps", 0) or 0),
+        }
     return {
         "request_ids": len(state.get("request_ids", ())),
         "dataset_refs": len(state.get("dataset_refs", ())),
@@ -594,6 +714,15 @@ def _gap_reasons(result: Any) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _result_remote_success(result: Any) -> bool:
+    freshness = getattr(result, "freshness", None)
+    if isinstance(result, Mapping):
+        freshness = result.get("freshness", freshness)
+    if isinstance(freshness, Mapping):
+        return bool(freshness.get("remote_success"))
+    return bool(getattr(result, "remote_success", False))
+
+
 def _refs(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
@@ -602,6 +731,119 @@ def _refs(raw: Any) -> tuple[str, ...]:
     if isinstance(raw, Mapping):
         return tuple(str(item) for item in raw.values())
     return tuple(str(item) for item in raw)
+
+
+def _stored_count(manifest: Mapping[str, Any], key: str, values: tuple[Any, ...]) -> int:
+    raw = manifest.get(key)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return len(values)
+
+
+def _append_sample_values(
+    state: Mapping[str, tuple[Any, ...]],
+    key: str,
+    incoming: tuple[Any, ...],
+) -> tuple[str, ...]:
+    values = _append_unique(tuple(str(item) for item in state.get(key, ())), *incoming)
+    if len(values) <= _AUDIT_REF_SAMPLE_LIMIT:
+        return values
+    return tuple(values[:_AUDIT_REF_SAMPLE_LIMIT])
+
+
+def _next_ref_count(
+    state: Mapping[str, tuple[Any, ...]],
+    key: str,
+    values: tuple[Any, ...],
+    incoming: tuple[Any, ...],
+) -> int:
+    counts = state.get("_counts")
+    previous = None
+    if isinstance(counts, Mapping):
+        try:
+            previous = int(counts.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            previous = None
+    previous_values = tuple(state.get(key, ()))
+    if previous is not None:
+        return previous + len(incoming)
+    return len(values)
+
+
+def _next_ref_hash(
+    state: Mapping[str, tuple[Any, ...]],
+    key: str,
+    values: tuple[str, ...],
+    incoming: tuple[str, ...],
+) -> dict[str, str]:
+    hashes = state.get("_hashes")
+    algorithms = state.get("_hash_algorithms")
+    previous_hash = ""
+    previous_algorithm = ""
+    if isinstance(hashes, Mapping):
+        previous_hash = str(hashes.get(key) or "")
+    if isinstance(algorithms, Mapping):
+        previous_algorithm = str(algorithms.get(key) or "")
+    if incoming and previous_hash:
+        return {
+            "sha256": _hash_payload({"previous": previous_hash, "incoming": list(incoming)}),
+            "algorithm": "rolling-sha256-v1",
+        }
+    if incoming:
+        return {
+            "sha256": _hash_ref_values(incoming),
+            "algorithm": "observed-batch-sha256-v1",
+        }
+    if previous_hash:
+        return {
+            "sha256": previous_hash,
+            "algorithm": previous_algorithm or "unknown",
+        }
+    return {
+        "sha256": _hash_ref_values(values),
+        "algorithm": "inline-sha256-v1",
+    }
+
+
+def _state_ref_hash(state: Mapping[str, tuple[Any, ...]], key: str, refs: tuple[str, ...]) -> str:
+    hashes = state.get("_hashes")
+    if isinstance(hashes, Mapping):
+        value = str(hashes.get(key) or "")
+        if value:
+            return value
+    return _hash_ref_values(refs)
+
+
+def _state_ref_hash_algorithm(state: Mapping[str, tuple[Any, ...]], key: str, refs: tuple[str, ...]) -> str:
+    algorithms = state.get("_hash_algorithms")
+    if isinstance(algorithms, Mapping):
+        value = str(algorithms.get(key) or "")
+        if value:
+            return value
+    return "inline-sha256-v1"
+
+
+def _inline_ref_values(refs: tuple[str, ...]) -> list[str]:
+    if len(refs) <= _AUDIT_REF_INLINE_LIMIT:
+        return list(refs)
+    return list(refs[:_AUDIT_REF_SAMPLE_LIMIT])
+
+
+def _compact_ref_values(refs: tuple[str, ...]) -> list[str] | dict[str, Any]:
+    inline = _inline_ref_values(refs)
+    if len(inline) == len(refs):
+        return inline
+    return {
+        "count": len(refs),
+        "sample": inline,
+        "sha256": _hash_ref_values(refs),
+        "truncated": True,
+    }
+
+
+def _hash_ref_values(refs: tuple[str, ...]) -> str:
+    return _hash_payload({"refs": list(refs)})
 
 
 def _request_id(result: Any, *, request: Any | None) -> str:

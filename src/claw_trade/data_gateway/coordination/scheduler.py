@@ -168,7 +168,7 @@ class DataRunScheduler:
                     batch_key=call.batch_key,
                     rate_limit_bucket=bucket,
                     earliest_start_at=reserved_at,
-                    rate_limit_reserved_at=reserved_at if self._rate_limiter is not None and policy.max_requests is not None else None,
+                    rate_limit_reserved_at=None,
                     deadline_at=deadline_at,
                     priority=_priority_for(call),
                 )
@@ -214,17 +214,11 @@ class DataRunScheduler:
         reserve_at: datetime,
         deadline_at: datetime,
     ) -> datetime | None:
-        if self._rate_limiter is None or policy.max_requests is None:
+        if policy.max_requests is None:
             return reserve_at
-        decision = self._rate_limiter.reserve_at(
-            bucket,
-            policy,
-            reserve_at=reserve_at,
-            deadline_at=deadline_at,
-        )
-        if not decision.allowed:
+        if _effective_limit(policy) <= 0 or reserve_at > deadline_at:
             return None
-        return decision.reserved_at or reserve_at
+        return reserve_at
 
     def _retry_after_for(self, *, bucket: str, policy: RateLimitPolicy, reserve_at: datetime) -> datetime:
         if self._rate_limiter is None:
@@ -361,6 +355,12 @@ def _policy_from_raw(raw: Any | None) -> RateLimitPolicy:
         max_requests=_optional_int(_read_attr(raw, "max_requests", _read_attr(raw, "max_calls", None))),
         safety_margin=int(_read_attr(raw, "safety_margin", 0) or 0),
     )
+
+
+def _effective_limit(policy: RateLimitPolicy) -> int:
+    if policy.max_requests is None:
+        return 0
+    return max(policy.max_requests - policy.safety_margin, 0)
 
 
 def _looks_like_provider_call(item: Any) -> bool:

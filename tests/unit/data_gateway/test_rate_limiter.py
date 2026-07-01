@@ -199,6 +199,28 @@ def test_rate_limiter_reserve_at_persists_future_slot_across_instances() -> None
     assert third.reserved_at == clock.now + timedelta(seconds=60)
 
 
+def test_rate_limiter_ignores_future_timestamps_left_by_interrupted_run() -> None:
+    clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
+    repository = DatasetRepository()
+    policy = RateLimitPolicy(window_seconds=60, max_requests=1)
+    repository.reserve_sliding_rate_limit(
+        rate_limit_key="ratelimit:tushare",
+        now=clock.now + timedelta(minutes=20),
+        window_seconds=60,
+        max_requests=1,
+        safety_margin=0,
+        cost=1,
+    )
+
+    limiter = RateLimiter(repository=repository, now_fn=clock)
+    decision = limiter.reserve("ratelimit:tushare", policy)
+    state = repository.get_latest_rate_limit_record(rate_limit_key="ratelimit:tushare")
+
+    assert decision.allowed is True
+    assert state is not None
+    assert tuple(state["request_timestamps"]) == (clock.now,)
+
+
 def test_rate_limiter_handles_naive_cooldown_records_from_storage() -> None:
     clock = _Clock(datetime(2026, 5, 31, 12, 0, tzinfo=UTC))
     repository = DatasetRepository()

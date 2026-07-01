@@ -511,6 +511,7 @@ export function HomePage() {
   const [selectionSubmittingKey, setSelectionSubmittingKey] = useState<string | null>(null);
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [cancellingSelectionId, setCancellingSelectionId] = useState<string | null>(null);
+  const [scheduledReportActionId, setScheduledReportActionId] = useState<string | null>(null);
   const [forwardingReportId, setForwardingReportId] = useState<string | null>(null);
   const [reportForwardState, setReportForwardState] = useState<ReportForwardState>({});
   const [error, setError] = useState('');
@@ -519,6 +520,7 @@ export function HomePage() {
   const consumedReportIdRef = useRef<string | null>(null);
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const channelRefreshInFlightRef = useRef(false);
+  const pendingScheduledReportDeletesRef = useRef(new Set<string>());
   const selectionRequestInFlightRef = useRef(false);
   const selectionCancelTokenRef = useRef(0);
   const localWorkerChatMessageIdsRef = useRef<Set<string>>(
@@ -654,7 +656,9 @@ export function HomePage() {
       ]);
       const workers = Array.isArray(workerChatResult.workers) ? workerChatResult.workers : [];
       setSavedReports(historyResult.items);
-      setScheduledReports(scheduledReportsResult.items);
+      setScheduledReports(
+        scheduledReportsResult.items.filter((item) => !pendingScheduledReportDeletesRef.current.has(item.scheduledReportId)),
+      );
       setPriceAlerts(priceAlertsResult.items);
       setWorkerChatWorkers(workers);
       if (licenseStatusResult) {
@@ -737,7 +741,9 @@ export function HomePage() {
         listPriceAlerts().catch(() => ({ items: [] })),
       ]);
       setSavedReports(historyResult.items);
-      setScheduledReports(scheduledReportsResult.items);
+      setScheduledReports(
+        scheduledReportsResult.items.filter((item) => !pendingScheduledReportDeletesRef.current.has(item.scheduledReportId)),
+      );
       setPriceAlerts(priceAlertsResult.items);
       if (licenseStatusResult) {
         setLicenseStatus(licenseStatusResult);
@@ -789,6 +795,11 @@ export function HomePage() {
   const handleScheduledReportAction = useCallback(
     async (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => {
       setError('');
+      setScheduledReportActionId(scheduledReportId);
+      if (action === 'delete') {
+        pendingScheduledReportDeletesRef.current.add(scheduledReportId);
+        setScheduledReports((items) => items.filter((item) => item.scheduledReportId !== scheduledReportId));
+      }
       try {
         const requestId = nextRequestId();
         if (action === 'pause') {
@@ -805,7 +816,14 @@ export function HomePage() {
         }
         await refreshWorkspace();
       } catch (actionError) {
+        pendingScheduledReportDeletesRef.current.delete(scheduledReportId);
+        await refreshWorkspace();
         setError((actionError as Error).message);
+      } finally {
+        if (action === 'delete') {
+          pendingScheduledReportDeletesRef.current.delete(scheduledReportId);
+        }
+        setScheduledReportActionId(null);
       }
     },
     [applyQueueSnapshot, refreshWorkspace],
@@ -1819,6 +1837,7 @@ export function HomePage() {
           cancellingTaskId={cancellingTaskId}
           onCancelSelection={cancelSelection}
           cancellingSelectionId={cancellingSelectionId}
+          scheduledReportActionId={scheduledReportActionId}
           onScheduledReportAction={handleScheduledReportAction}
           onPriceAlertAction={handlePriceAlertAction}
         />

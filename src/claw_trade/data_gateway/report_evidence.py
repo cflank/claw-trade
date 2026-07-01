@@ -547,8 +547,10 @@ def _provider_call_batch(
     )
 
 
-def _selection_universe_ref_for_need(need: DataNeed) -> str | None:
+def _universe_ref_for_need(need: DataNeed) -> str | None:
     instrument = str(getattr(need, "instrument", "") or "").strip()
+    if need.market == Market.CN_A and instrument.lower() in {"all_a_shares", "cn_a_all", "universe:all_a_shares"}:
+        return "all_a_shares"
     if (
         instrument
         and str(getattr(need, "consumer", "") or "").strip() == "select"
@@ -576,7 +578,7 @@ def _official_api_call_batch(
         endpoint_id=call.catalog_endpoint_id,
         market=need.market,
         symbol_ids=(need.instrument,),
-        universe_ref=_selection_universe_ref_for_need(need),
+        universe_ref=_universe_ref_for_need(need),
         data_type=data_type,
         granularity=_batch_granularity(data_type=data_type, contract_granularity=granularity, need=need),
         fields_union=required_fields,
@@ -783,7 +785,7 @@ def _structured_provider_call_batch(
         endpoint_id=_adapter_endpoint_id(call),
         market=need.market,
         symbol_ids=(need.instrument,),
-        universe_ref=_selection_universe_ref_for_need(need),
+        universe_ref=_universe_ref_for_need(need),
         data_type=data_type,
         granularity=_batch_granularity(data_type=data_type, contract_granularity=granularity, need=need),
         fields_union=required_fields,
@@ -1390,6 +1392,7 @@ def _data_need_result_from_fetch(
         raw_refs=tuple(getattr(ingest, "raw_refs", ()) or ()),
         attempt_refs=tuple(getattr(ingest, "attempt_refs", ()) or ()),
         gaps=gaps,
+        freshness={"remote_success": bool(getattr(ingest, "remote_success", False))},
         as_of=as_of,
     )
 
@@ -1414,13 +1417,13 @@ def _data_need_result_from_repository(
     if not data_type:
         return None
     records = ()
-    for symbol_id in _repository_symbol_ids_for_need(need):
+    for symbol_id, universe_ref in _repository_query_scopes_for_need(need):
         try:
             records = query(
                 dataset=data_type,
                 market=need.market.value,
                 symbol_id=symbol_id,
-                universe_ref=None,
+                universe_ref=universe_ref,
                 date_range_start=need.time_range_start,
                 date_range_end=need.time_range_end,
                 include_row=True,
@@ -1459,6 +1462,7 @@ def _data_need_result_from_repository(
         raw_refs=tuple(getattr(ingest, "raw_refs", ()) or ()),
         attempt_refs=tuple(getattr(ingest, "attempt_refs", ()) or ()),
         gaps=gaps,
+        freshness={"remote_success": bool(getattr(ingest, "remote_success", False))},
         as_of=as_of,
     )
 
@@ -1907,7 +1911,7 @@ def _basic_data_need_model_visible_text(
 ) -> str:
     result_gaps = _data_result_gaps(data_results)
     has_body_usable_result = _has_body_usable_result(data_results)
-    if not any(result.rows for result in data_results):
+    if not any(result.rows for result in data_results) and not attempts and planned_count != 0:
         return ""
     lines = [
         f"数据结果：{need.market.value} {need.instrument} 的{_business_data_label(need)}。",
@@ -2037,6 +2041,13 @@ def _repository_symbol_ids_for_need(need: DataNeed) -> tuple[str, ...]:
             mapped = map_crypto_asset_to_symbol(need.instrument)
             symbols.extend((mapped, mapped.replace("/", "")))
     return _dedupe(symbols)
+
+
+def _repository_query_scopes_for_need(need: DataNeed) -> tuple[tuple[str | None, str | None], ...]:
+    universe_ref = _universe_ref_for_need(need)
+    if universe_ref:
+        return ((None, universe_ref),)
+    return tuple((symbol_id, None) for symbol_id in _repository_symbol_ids_for_need(need))
 
 
 def _normalize_need_instrument(value: str, *, market: Market) -> str:

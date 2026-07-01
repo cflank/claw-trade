@@ -447,6 +447,7 @@ class DataService:
             raw_refs=ingest.raw_refs,
             attempt_refs=ingest.attempt_refs,
             gaps=gaps,
+            freshness={"remote_success": ingest.remote_success},
             as_of=datetime.now(tz=UTC),
         )
 
@@ -693,6 +694,8 @@ class DataService:
         raw_refs: list[str] = []
         attempt_refs: list[str] = list(final_warehouse.attempt_refs)
         gaps: list[DataGap] = [self._coerce_gap(gap, request_id=request_id) for gap in preserved_gaps]
+        freshness = dict(final_warehouse.freshness)
+        freshness["remote_success"] = any(ingest_result.remote_success for ingest_result in ingest_results)
         if final_warehouse.satisfied and final_warehouse.dataset_refs:
             gaps = [self._demote_preserved_gap_after_fill(gap) for gap in gaps]
         gaps.extend(self._coerce_gap(gap, request_id=request_id) for gap in final_warehouse.gaps)
@@ -722,7 +725,7 @@ class DataService:
             raw_refs=tuple(raw_refs),
             attempt_refs=tuple(attempt_refs),
             gaps=tuple(gaps),
-            freshness=final_warehouse.freshness,
+            freshness=freshness,
             as_of=datetime.now(tz=UTC),
         )
 
@@ -1118,7 +1121,7 @@ def _data_request_from_need(need: DataNeed) -> DataRequest:
         request_id=need.need_id,
         market=need.market,
         symbol_id=_warehouse_symbol_id(need),
-        universe_ref=None,
+        universe_ref=_warehouse_universe_ref(need),
         exchange=market_defaults["exchange"],
         currency=quote_asset or market_defaults["currency"],
         timezone=str(market_defaults["timezone"]),
@@ -1153,10 +1156,19 @@ def _crypto_assets(instrument: str) -> tuple[str | None, str | None]:
     return symbols.crypto_base_symbol, symbols.crypto_quote_symbol
 
 
-def _warehouse_symbol_id(need: DataNeed) -> str:
+def _warehouse_symbol_id(need: DataNeed) -> str | None:
+    if _warehouse_universe_ref(need) is not None:
+        return None
     if need.market == Market.CRYPTO:
         return resolve_crypto_provider_symbols(need.instrument).crypto_provider_symbol or need.instrument
     return need.instrument
+
+
+def _warehouse_universe_ref(need: DataNeed) -> str | None:
+    instrument = str(need.instrument or "").strip().lower()
+    if need.market == Market.CN_A and instrument in {"all_a_shares", "cn_a_all", "universe:all_a_shares"}:
+        return "all_a_shares"
+    return None
 
 
 def _adapter_endpoint_id(call: ProviderCallSpec) -> str:

@@ -36,9 +36,10 @@ class MemorySeedIngestRunner:
 
 
 class MemoryDataAPI:
-    def __init__(self, *, status: str = "ready", gaps: tuple[object, ...] = ()) -> None:
+    def __init__(self, *, status: str = "ready", gaps: tuple[object, ...] = (), remote_success: bool = False) -> None:
         self.status = status
         self.gaps = gaps
+        self.remote_success = remote_success
         self.requests: list[object] = []
         self.request_batches: list[tuple[object, ...]] = []
         self.get_data_calls = 0
@@ -61,6 +62,7 @@ class MemoryDataAPI:
             gaps=self.gaps,
             status=self.status,
             request_id=f"request-{request_id}",
+            freshness={"remote_success": self.remote_success},
         )
 
 
@@ -258,6 +260,32 @@ def test_daily_incremental_uses_public_requests_and_maintenance_consumer() -> No
     assert tuple(manifests[0]["output_refs"]["attempt_refs"]) == ("attempt:1", "attempt:2")
     assert manifests[0]["gap_summary"] == ()
     assert result.stats["attempt_refs"] == 2
+    assert "remote_success" not in result.stats
+
+
+def test_daily_incremental_counts_remote_success_for_real_raw_updates() -> None:
+    repo = InMemoryMaintenanceJobRepository()
+    job = MaintenanceJob(
+        job_id="job:inc:us:daily_bar:remote-success",
+        job_type="daily_incremental",
+        market="US",
+        dataset_scope="daily_bar",
+    )
+
+    result = run_daily_incremental(
+        job,
+        data_api=MemoryDataAPI(remote_success=True),
+        repo=repo,
+        gaps=[Gap("g1"), Gap("g2")],
+        request_from_gap=lambda gap, *, consumer, consumer_id: {
+            "request_id": f"request-{gap.gap_id}",
+            "api_id": "us.daily_bar",
+            "consumer": consumer,
+            "consumer_id": consumer_id,
+        },
+    )
+
+    assert result.stats["remote_success"] == 2
 
 
 def test_maintenance_cursor_stores_manifest_pointer_not_unbounded_refs() -> None:
@@ -296,6 +324,97 @@ def test_maintenance_cursor_stores_manifest_pointer_not_unbounded_refs() -> None
     assert len(manifests) == 1
     assert len(manifests[0]["output_refs"]["dataset_refs"]) == 25
     assert len(manifests[0]["output_refs"]["attempt_refs"]) == 25
+
+
+def test_maintenance_audit_compacts_large_ref_lists() -> None:
+    class LargeRefDataAPI(MemoryDataAPI):
+        def _record_request(self, request: object) -> object:
+            self.requests.append(request)
+            return SimpleNamespace(
+                dataset_refs=tuple(f"dataset:{index}" for index in range(1500)),
+                raw_refs=("raw:1",),
+                attempt_refs=("attempt:1",),
+                gaps=(),
+                status="ready",
+                request_id="request-large",
+                freshness={"remote_success": True},
+            )
+
+    repo = InMemoryMaintenanceJobRepository()
+    job = MaintenanceJob(
+        job_id="job:inc:cn-a:daily_bar:large-refs",
+        job_type="daily_incremental",
+        market="CN_A",
+        dataset_scope="daily_bar",
+    )
+
+    result = run_daily_incremental(
+        job,
+        data_api=LargeRefDataAPI(),
+        repo=repo,
+        gaps=[Gap("g1")],
+        request_from_gap=lambda gap, *, consumer, consumer_id: {
+            "request_id": f"request-{gap.gap_id}",
+            "api_id": "cn_a.daily_bar",
+            "consumer": consumer,
+            "consumer_id": consumer_id,
+        },
+    )
+
+    assert result.status == "succeeded"
+    assert result.cursor["audit_counts"]["dataset_refs"] == 1500
+    assert result.cursor["last_output_refs"]["dataset_refs"]["count"] == 1500
+    assert result.cursor["last_output_refs"]["dataset_refs"]["truncated"] is True
+    manifests = repo.list_dataset_manifests()
+    assert manifests[0]["dataset_ref_count"] == 1500
+    assert manifests[0]["dataset_ref_count_semantics"] == "observed_refs"
+    assert manifests[0]["dataset_refs_truncated"] is True
+    assert manifests[0]["dataset_refs_hash_algorithm"] == "rolling-sha256-v1"
+    assert manifests[0]["output_refs"]["dataset_ref_count"] == 1500
+    assert manifests[0]["output_refs"]["dataset_refs_sha256"] == manifests[0]["dataset_refs_sha256"]
+    assert len(manifests[0]["output_refs"]["dataset_refs"]) == 50
+
+
+def test_maintenance_audit_large_ref_count_is_observed_not_unique() -> None:
+    class DuplicateLargeRefDataAPI(MemoryDataAPI):
+        def _record_request(self, request: object) -> object:
+            self.requests.append(request)
+            return SimpleNamespace(
+                dataset_refs=tuple(f"dataset:{index}" for index in range(1500)),
+                raw_refs=("raw:1",),
+                attempt_refs=("attempt:1",),
+                gaps=(),
+                status="ready",
+                request_id=f"request-{len(self.requests)}",
+                freshness={"remote_success": True},
+            )
+
+    repo = InMemoryMaintenanceJobRepository()
+    job = MaintenanceJob(
+        job_id="job:inc:cn-a:daily_bar:duplicate-large-refs",
+        job_type="daily_incremental",
+        market="CN_A",
+        dataset_scope="daily_bar",
+    )
+
+    result = run_daily_incremental(
+        job,
+        data_api=DuplicateLargeRefDataAPI(),
+        repo=repo,
+        gaps=[Gap("g1"), Gap("g2")],
+        request_from_gap=lambda gap, *, consumer, consumer_id: {
+            "request_id": f"request-{gap.gap_id}",
+            "api_id": "cn_a.daily_bar",
+            "consumer": consumer,
+            "consumer_id": consumer_id,
+        },
+    )
+
+    manifests = repo.list_dataset_manifests()
+    assert result.cursor["audit_counts"]["dataset_refs"] == 3000
+    assert manifests[0]["dataset_ref_count"] == 3000
+    assert manifests[0]["dataset_ref_count_semantics"] == "observed_refs"
+    assert manifests[0]["dataset_refs_hash_algorithm"] == "rolling-sha256-v1"
 
 
 def test_maintenance_stats_use_enum_status_value() -> None:

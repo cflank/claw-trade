@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from claw_trade.data_gateway.coordination.service import DataService
+from claw_trade.data_gateway.coordination.service import DataService, _data_request_from_need
 from claw_trade.data_gateway.models import CoverageRequirement, DataRequest, IngestResult, Market, QueryPlan, WarehouseCheck, WarehouseResult
 from claw_trade.data_gateway.needs import DataNeed
 
@@ -110,6 +110,26 @@ def test_cache_hit_ingest_result_rehydrates_rows_from_warehouse() -> None:
     result = service._data_result_from_ingest(need=need, ingest=ingest)
 
     assert result.rows == (row,)
+
+
+def test_all_a_shares_need_queries_warehouse_by_universe_ref_not_symbol() -> None:
+    need = DataNeed(
+        need_id="maintenance:CN_A:daily_bar:all_a_shares:2026-06-24:2026-06-30",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="all_a_shares",
+        granularity="daily",
+        requested_by_worker="openclaw_cron",
+        purpose="scheduled_data_maintenance",
+        freshness_policy="trading_day",
+        deadline_at=datetime(2026, 7, 1, 0, 21, tzinfo=UTC),
+        consumer="maintenance",
+    )
+
+    request = _data_request_from_need(need)
+
+    assert request.symbol_id is None
+    assert request.universe_ref == "all_a_shares"
 
 
 class _Planner:

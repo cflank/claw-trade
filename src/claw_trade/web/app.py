@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import shlex
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from threading import Thread
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -19,6 +22,9 @@ from claw_trade.web.routes_ui import router as ui_router
 from claw_trade.web.settings import ResearchUiServerSettings
 from claw_trade.web.state import UiHttpServices, build_ui_http_services, default_frontend_dist
 
+_LOGGER = logging.getLogger("uvicorn.error")
+_STARTUP_DATA_MAINTENANCE_JOIN_TIMEOUT_SECONDS = 2.0
+
 
 def build_research_ui_app(
     *,
@@ -30,6 +36,7 @@ def build_research_ui_app(
     selection_auto_refresh_enabled = owns_services and _selection_auto_refresh_enabled(
         getattr(ui_services, "selection_auto_refresh_settings", None)
     )
+    startup_data_maintenance_enabled = owns_services
     report_cleanup_scheduler_enabled = owns_services
     price_alert_scan_scheduler_enabled = owns_services
     auto_update_scheduler_enabled = owns_services and auto_update_enabled()
@@ -40,10 +47,14 @@ def build_research_ui_app(
         cleanup_started = False
         price_alert_scan_started = False
         auto_update_started = False
+        startup_data_maintenance_threads: tuple[Thread, ...] = ()
         try:
             if app.state.selection_auto_refresh_enabled:
                 app.state.ui_services.selection_refresh_service.start_automatic_refresh_scheduler()
                 selection_started = True
+            if app.state.startup_data_maintenance_enabled:
+                startup_data_maintenance_threads = _start_startup_data_maintenance(app.state.ui_services)
+                app.state.startup_data_maintenance_threads = startup_data_maintenance_threads
             if app.state.report_cleanup_scheduler_enabled:
                 app.state.ui_services.report_cleanup_scheduler.start()
                 cleanup_started = True
@@ -56,6 +67,10 @@ def build_research_ui_app(
                 auto_update_started = True
             yield
         finally:
+            for thread in startup_data_maintenance_threads:
+                thread.join(timeout=_STARTUP_DATA_MAINTENANCE_JOIN_TIMEOUT_SECONDS)
+                if thread.is_alive():
+                    _LOGGER.warning("startup data maintenance still running during app shutdown: %s", thread.name)
             if auto_update_started:
                 app.state.auto_update_scheduler.stop()
             if price_alert_scan_started:
@@ -70,6 +85,8 @@ def build_research_ui_app(
     app.state.ui_services = ui_services
     app.state.owns_ui_services = owns_services
     app.state.selection_auto_refresh_enabled = selection_auto_refresh_enabled
+    app.state.startup_data_maintenance_enabled = startup_data_maintenance_enabled
+    app.state.startup_data_maintenance_threads = ()
     app.state.report_cleanup_scheduler_enabled = report_cleanup_scheduler_enabled
     app.state.price_alert_scan_scheduler_enabled = price_alert_scan_scheduler_enabled
     app.state.auto_update_scheduler_enabled = auto_update_scheduler_enabled
@@ -148,14 +165,42 @@ def build_research_ui_app(
     return app
 
 
+def _start_startup_data_maintenance(ui_services: object) -> tuple[Thread, ...]:
+    runner = getattr(ui_services, "scheduled_work_runner", None)
+    if runner is None:
+        return ()
+
+    def _run(market: str, job_kind: str) -> None:
+        cron_run_id = f"startup-{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+        try:
+            runner.handle_wake(
+                {
+                    "kind": "data_maintenance",
+                    "market": market,
+                    "jobKind": job_kind,
+                    "cronRunId": cron_run_id,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("startup %s data maintenance failed", market)
+
+    threads = tuple(
+        Thread(target=_run, args=(market, job_kind), daemon=True, name=f"startup-data-maintenance-{market.lower()}")
+        for market, job_kind in (("CN_A", "eod"), ("CRYPTO", "kline-refresh"))
+    )
+    for thread in threads:
+        thread.start()
+    return threads
+
+
 def _selection_auto_refresh_enabled(settings_service: object | None = None) -> bool:
     value = os.environ.get("CLAW_TRADE_SELECTION_AUTO_REFRESH")
     if value is not None:
         return value.strip().lower() not in {"0", "false", "no", "off"}
     if settings_service is None:
-        return True
+        return False
     settings = settings_service.load_settings()  # type: ignore[attr-defined]
-    return bool(settings.get("enabled", True))
+    return bool(settings.get("enabled", False))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

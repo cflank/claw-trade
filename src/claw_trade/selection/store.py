@@ -35,6 +35,8 @@ class SelectUnavailableCode(StrEnum):
     SELECTION_WAREHOUSE_CHECK_MISSING = "selection_warehouse_check_missing"
     SELECT_MARKET_UNSUPPORTED = "select_market_unsupported"
     CRYPTO_SELECT_HISTORY_MISSING = "crypto_select_history_missing"
+    RAW_DATA_MAINTENANCE_RUNNING = "raw_data_maintenance_running"
+    RAW_DATA_MAINTENANCE_FAILED = "raw_data_maintenance_failed"
 
 
 @dataclass(frozen=True)

@@ -114,6 +114,9 @@ function channelStateLabel(state?: string | null) {
 }
 
 function selectionProgressTitle(progress: SelectionProgressForUser) {
+  if (progress.stageLabel.includes('原始行情') || progress.statusLabel.includes('原始行情')) {
+    return '原始行情补数据';
+  }
   if (progress.kind === 'data_refresh' || progress.statusLabel.includes('补数据') || progress.stageLabel.includes('数据')) {
     return '选股数据刷新';
   }
@@ -133,6 +136,7 @@ function SelectionTaskBlock({
     return null;
   }
   const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
+  const canCancel = !String(progress.workflowRunId ?? '').startsWith('raw-data-maintenance:');
   return (
     <section className="ct-right-section" data-testid="right-rail-selection-section">
       <h2>{selectionProgressTitle(progress)}</h2>
@@ -157,7 +161,7 @@ function SelectionTaskBlock({
           ))}
         </ul>
         {progress.workflowRunId ? <div className="ct-small">工作流：{progress.workflowRunId}</div> : null}
-        {progress.status === 'running' && onCancelSelection ? (
+        {progress.status === 'running' && onCancelSelection && canCancel ? (
           <button
             type="button"
             className="ct-text-button ct-task-stop-button"
@@ -240,53 +244,78 @@ function TaskBlock({
 function ScheduledReportsBlock({
   items,
   onAction,
+  actionId,
 }: {
   items: ScheduledReportForUser[];
   onAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
+  actionId?: string | null;
 }) {
   const rows = items.filter((item) => item.state !== 'closed' && item.state !== 'deleted');
 
   return (
     <section className="ct-right-section" data-testid="right-rail-scheduled-reports-section">
       <h2>定时报表管理</h2>
-      {rows.map((item) => (
-        <article key={item.scheduledReportId} className="ct-task-item">
-          <div className="ct-task-head">
-            <strong>{item.instrumentCode}</strong>
-            <span>{item.state}</span>
-          </div>
-          <div className="ct-task-meta">
-            <span>{item.market}</span>
-            <span>{frequencyLabel(item)}</span>
-          </div>
-          <div className="ct-task-list-line">
-            <span>最近运行：{item.lastRunTaskId ?? '暂无'}</span>
-          </div>
-          <div className="ct-task-list-line">
-            <span>cron：{item.cronJobId ?? '未同步'} / {item.lastCronRunId ?? '暂无 wake'}</span>
-          </div>
-          <div className="ct-small">{item.syncErrorMessage ?? `下次运行：${formatDate(item.nextRunAt)}`}</div>
-          {onAction && item.state !== 'deleted' ? (
-            <div className="ct-inline-actions">
-              {item.state === 'paused' ? (
-                <button type="button" className="ct-text-button" onClick={() => onAction('resume', item.scheduledReportId)}>
-                  恢复
-                </button>
-              ) : (
-                <button type="button" className="ct-text-button" onClick={() => onAction('pause', item.scheduledReportId)}>
-                  暂停
-                </button>
-              )}
-              <button type="button" className="ct-text-button" onClick={() => onAction('run', item.scheduledReportId)}>
-                手动运行
-              </button>
-              <button type="button" className="ct-text-button" onClick={() => onAction('delete', item.scheduledReportId)}>
-                删除
-              </button>
+      {rows.map((item) => {
+        const busy = actionId === item.scheduledReportId;
+        return (
+          <article key={item.scheduledReportId} className="ct-task-item">
+            <div className="ct-task-head">
+              <strong>{item.instrumentCode}</strong>
+              <span>{busy ? '处理中' : item.state}</span>
             </div>
-          ) : null}
-        </article>
-      ))}
+            <div className="ct-task-meta">
+              <span>{item.market}</span>
+              <span>{frequencyLabel(item)}</span>
+            </div>
+            <div className="ct-task-list-line">
+              <span>最近运行：{item.lastRunTaskId ?? '暂无'}</span>
+            </div>
+            <div className="ct-task-list-line">
+              <span>cron：{item.cronJobId ?? '未同步'} / {item.lastCronRunId ?? '暂无 wake'}</span>
+            </div>
+            <div className="ct-small">{item.syncErrorMessage ?? `下次运行：${formatDate(item.nextRunAt)}`}</div>
+            {onAction && item.state !== 'deleted' ? (
+              <div className="ct-inline-actions">
+                {item.state === 'paused' ? (
+                  <button
+                    type="button"
+                    className="ct-text-button"
+                    onClick={() => onAction('resume', item.scheduledReportId)}
+                    disabled={busy}
+                  >
+                    {busy ? '处理中' : '恢复'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="ct-text-button"
+                    onClick={() => onAction('pause', item.scheduledReportId)}
+                    disabled={busy}
+                  >
+                    {busy ? '处理中' : '暂停'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ct-text-button"
+                  onClick={() => onAction('run', item.scheduledReportId)}
+                  disabled={busy}
+                >
+                  手动运行
+                </button>
+                <button
+                  type="button"
+                  className="ct-text-button"
+                  onClick={() => onAction('delete', item.scheduledReportId)}
+                  disabled={busy}
+                >
+                  删除
+                </button>
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
       {rows.length === 0 ? <p className="ct-empty">暂无定时报表</p> : null}
     </section>
   );
@@ -461,6 +490,7 @@ export function RightRail({
   cancellingTaskId,
   onCancelSelection,
   cancellingSelectionId,
+  scheduledReportActionId,
   onScheduledReportAction,
   onPriceAlertAction,
 }: {
@@ -476,6 +506,7 @@ export function RightRail({
   cancellingTaskId?: string | null;
   onCancelSelection?: (progress: SelectionProgressForUser) => void;
   cancellingSelectionId?: string | null;
+  scheduledReportActionId?: string | null;
   onScheduledReportAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
   onPriceAlertAction?: (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => void;
 }) {
@@ -492,7 +523,11 @@ export function RightRail({
             onCancelSelection={onCancelSelection}
             cancellingSelectionId={cancellingSelectionId}
           />
-          <ScheduledReportsBlock items={scheduledReports ?? []} onAction={onScheduledReportAction} />
+          <ScheduledReportsBlock
+            items={scheduledReports ?? []}
+            onAction={onScheduledReportAction}
+            actionId={scheduledReportActionId}
+          />
           <PriceAlertsBlock items={priceAlerts ?? []} onAction={onPriceAlertAction} />
         </>
       )}

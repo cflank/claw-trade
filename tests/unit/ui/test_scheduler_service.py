@@ -180,6 +180,35 @@ def test_delete_scheduled_report_deletes_collapsed_duplicates() -> None:
     ]
 
 
+def test_delete_scheduled_report_deletes_hidden_sync_failed_duplicate() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    created = service.create_scheduled_report(
+        request_id="req-create",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    first = store.get_scheduled_report(created.scheduledReportId)
+    assert first is not None
+    store.save_scheduled_report(
+        replace(
+            first,
+            id="schedule-failed",
+            state="sync_failed",
+            openclaw_cron_job_id=None,
+            created_at="2026-05-19T12:01:00Z",
+            updated_at="2026-05-19T12:01:00Z",
+        )
+    )
+
+    service.delete_scheduled_report(request_id="req-delete", scheduled_report_id=created.scheduledReportId)
+
+    assert store.get_scheduled_report("schedule-1").state == "deleted"
+    assert store.get_scheduled_report("schedule-failed").state == "deleted"
+
+
 def test_run_scheduled_report_now_uses_openclaw_cron_when_job_exists() -> None:
     enqueue_calls: list[tuple[dict[str, object], str]] = []
     fake_gateway = _FakeCronGateway()
@@ -530,6 +559,34 @@ def test_exact_scheduled_report_create_deletes_older_duplicates() -> None:
     assert [call for call in fake_gateway.calls if call["method"] == "cron.remove"] == [
         {"method": "cron.remove", "params": {"jobId": "scheduled-report:schedule-1"}}
     ]
+
+
+def test_create_scheduled_report_deletes_hidden_sync_failed_duplicate() -> None:
+    store = InMemoryScheduledWorkStore()
+    failed = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    created = failed.create_scheduled_report(
+        request_id="req-seed",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+    old = store.get_scheduled_report(created.scheduledReportId)
+    assert old is not None
+    store.save_scheduled_report(replace(old, id="schedule-failed", state="sync_failed", openclaw_cron_job_id=None))
+    store.save_scheduled_report(replace(old, state="deleted"))
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+
+    new = service.create_scheduled_report(
+        request_id="req-new",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+    )
+
+    assert new.scheduledReportId == "schedule-2"
+    assert store.get_scheduled_report("schedule-failed").state == "deleted"
 
 
 def test_daily_scheduled_report_more_than_four_hours_apart_stays_separate() -> None:

@@ -39,6 +39,15 @@ class _ManifestCollection:
         self.docs[str(payload["manifest_ref"])] = dict(payload)
 
 
+class _MongoIdRejectingManifestCollection(_ManifestCollection):
+    def replace_one(self, _criteria: Mapping[str, Any], payload: Mapping[str, Any], *, upsert: bool = False) -> None:
+        if "_id" in payload:
+            raise AssertionError("mongo_id_not_stripped")
+        stored = dict(payload)
+        stored["_id"] = f"mongo-id-{len(self.docs) + 1}"
+        self.docs[str(payload["manifest_ref"])] = stored
+
+
 def _manifest_matches_criteria(doc: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
     for key, expected in criteria.items():
         actual = doc.get(key)
@@ -968,6 +977,50 @@ def test_columnar_upsert_supersedes_old_partition_for_same_dataset_ref(tmp_path)
     assert result.rows[0]["close"] == 12.5
     assert sum(1 for manifest in manifests if manifest.get("status") == "active") == 1
     assert sum(1 for manifest in manifests if manifest.get("status") == "superseded") == 1
+
+
+def test_columnar_manifest_supersession_strips_mongo_id_before_replace(tmp_path) -> None:
+    collections = _collections()
+    manifest_collection = _MongoIdRejectingManifestCollection()
+    collections["dataset_manifests"] = manifest_collection
+    repository = DatasetRepository(
+        collections=collections,
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    first = _daily_row()
+    second = dict(first)
+    second["close"] = 12.5
+
+    repository.upsert_normalized_documents((first,))
+    repository.upsert_normalized_documents((second,))
+
+    manifests = tuple(manifest_collection.docs.values())
+    assert sum(1 for manifest in manifests if manifest.get("status") == "active") == 1
+    assert sum(1 for manifest in manifests if manifest.get("status") == "superseded") == 1
+
+
+def test_all_a_shares_universe_manifest_supersedes_old_symbol_only_manifest(tmp_path) -> None:
+    repository = DatasetRepository(
+        collections=_collections(),
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    old_rows = (_daily_row("600519.SH"), _daily_row("000001.SZ"))
+    repository.upsert_normalized_documents(old_rows)
+    old_manifest = repository.list_dataset_manifests()[0]
+
+    new_rows = []
+    for row in old_rows:
+        payload = dict(row)
+        payload["universe_ref"] = "all_a_shares"
+        new_rows.append(payload)
+    repository.upsert_normalized_documents(tuple(new_rows))
+
+    manifests = {str(item["manifest_ref"]): item for item in repository.list_dataset_manifests()}
+    active = [item for item in manifests.values() if item["status"] == "active"]
+
+    assert manifests[str(old_manifest["manifest_ref"])]["status"] == "superseded"
+    assert len(active) == 1
+    assert active[0]["universe_refs"] == ("all_a_shares",)
 
 
 def test_columnar_universe_coverage_uses_aggregate_metadata_not_row_materialization(tmp_path) -> None:
