@@ -22,6 +22,7 @@ from claw_trade.web.routes_ui import (
     ConfirmIntentDraftRequest,
     DeleteSavedReportRequest,
     DeleteSavedReportsRequest,
+    RetryRawDataMaintenanceRequest,
     cancel_report_task,
     cancel_selection_progress,
     confirm_intent_draft,
@@ -29,6 +30,7 @@ from claw_trade.web.routes_ui import (
     delete_saved_reports,
     get_chat_session,
     get_selection_refresh_snapshot,
+    retry_raw_data_maintenance,
 )
 from claw_trade.web.settings import ResearchUiServerSettings
 from claw_trade.web.state import build_ui_http_services
@@ -1021,6 +1023,38 @@ def test_cancel_selection_progress_route_cancels_workflow_and_refresh() -> None:
     }
     assert selection.workflow_run_ids == ["sel-refresh-active-1"]
     assert refresh.selection_run_ids == ["sel-refresh-active-1"]
+
+
+def test_retry_raw_data_maintenance_starts_cn_a_job() -> None:
+    scheduled_work = _ScheduledWorkRunnerProbe()
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/ui/retry-raw-data-maintenance",
+            "headers": [],
+            "app": SimpleNamespace(
+                state=SimpleNamespace(ui_services=SimpleNamespace(scheduled_work_runner=scheduled_work))
+            ),
+        }
+    )
+
+    response = retry_raw_data_maintenance(RetryRawDataMaintenanceRequest(requestId="req-retry-raw", market="CN_A"), request)
+
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+    assert payload["status"] == "started"
+    assert payload["market"] == "CN_A"
+    assert str(payload["cronRunId"]).startswith("manual-")
+    assert scheduled_work.called.wait(timeout=1.0)
+    assert scheduled_work.calls == [
+        {
+            "kind": "data_maintenance",
+            "market": "CN_A",
+            "jobKind": "eod",
+            "cronRunId": payload["cronRunId"],
+        }
+    ]
 
 
 def test_module_entrypoint_help_for_claw_trade_web_app() -> None:

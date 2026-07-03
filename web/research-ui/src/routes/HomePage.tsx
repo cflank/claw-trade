@@ -36,6 +36,7 @@ import {
   resumeScheduledReport,
   deletePriceAlert,
   deleteScheduledReport,
+  retryRawDataMaintenance as retryRawDataMaintenanceRequest,
   runPriceAlertNow,
   runScheduledReportNow,
   sendChatMessage,
@@ -87,6 +88,7 @@ const DEFAULT_QUEUE: ReportQueueSnapshotForUser = {
 };
 
 const SELECTION_WORKER_LABELS = ['策略评审', '反方评审', '整合排序', '组合经理'];
+type RawMaintenanceMarket = 'CN_A' | 'CRYPTO';
 
 type PendingChatCommand = 'select' | 'chat';
 
@@ -387,6 +389,25 @@ function runningSelectionProgress(command: string): SelectionProgressForUser {
   };
 }
 
+function runningRawMaintenanceProgress(market: RawMaintenanceMarket, cronRunId: string): SelectionProgressForUser {
+  const label = market === 'CN_A' ? 'A股' : '加密币';
+  return {
+    kind: 'data_refresh',
+    status: 'running',
+    statusLabel: '原始行情补数据中',
+    command: '手动重新补数据',
+    stageLabel: '原始行情补数据',
+    currentAction: `正在重新补齐${label}原始行情，完成后会计算选股候选池。`,
+    percent: 5,
+    workerStatusLabels: [`${label}：原始行情补数据中`],
+    completedRoleLabels: ['手动启动'],
+    waitingRoleLabels: ['计算选股缓存'],
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    workflowRunId: `raw-data-maintenance:${cronRunId}`,
+  };
+}
+
 function attachSelectionMetadata(
   messages: ChatMessageForUser[],
   selection: ChatMessageForUser['selection'] | undefined,
@@ -511,6 +532,7 @@ export function HomePage() {
   const [selectionSubmittingKey, setSelectionSubmittingKey] = useState<string | null>(null);
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [cancellingSelectionId, setCancellingSelectionId] = useState<string | null>(null);
+  const [retryingRawMarket, setRetryingRawMarket] = useState<RawMaintenanceMarket | null>(null);
   const [scheduledReportActionId, setScheduledReportActionId] = useState<string | null>(null);
   const [forwardingReportId, setForwardingReportId] = useState<string | null>(null);
   const [reportForwardState, setReportForwardState] = useState<ReportForwardState>({});
@@ -1124,6 +1146,23 @@ export function HomePage() {
       setCancellingSelectionId(null);
     }
   }, []);
+
+  const retryRawMaintenance = useCallback(async (market: RawMaintenanceMarket) => {
+    setRetryingRawMarket(market);
+    setError('');
+    try {
+      const result = await retryRawDataMaintenanceRequest({ requestId: nextRequestId(), market });
+      setSelectionProgress(runningRawMaintenanceProgress(result.market, result.cronRunId));
+      const refreshSnapshot = await getSelectionRefreshSnapshot().catch(() => null);
+      if (refreshSnapshot?.selectionProgress?.status === 'running') {
+        applySelectionRefreshSnapshot(refreshSnapshot);
+      }
+    } catch (retryError) {
+      setError((retryError as Error).message);
+    } finally {
+      setRetryingRawMarket(null);
+    }
+  }, [applySelectionRefreshSnapshot]);
 
   const onSendChat = useCallback(
     async (text: string) => {
@@ -1837,6 +1876,8 @@ export function HomePage() {
           cancellingTaskId={cancellingTaskId}
           onCancelSelection={cancelSelection}
           cancellingSelectionId={cancellingSelectionId}
+          onRetryRawDataMaintenance={retryRawMaintenance}
+          retryingRawMarket={retryingRawMarket}
           scheduledReportActionId={scheduledReportActionId}
           onScheduledReportAction={handleScheduledReportAction}
           onPriceAlertAction={handlePriceAlertAction}

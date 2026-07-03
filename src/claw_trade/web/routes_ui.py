@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -31,6 +32,7 @@ from claw_trade.web.session import resolve_context_id
 from claw_trade.web.state import UiHttpServices, build_report_detail_payload
 
 router = APIRouter()
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 class SendChatMessageRequest(BaseModel):
@@ -89,6 +91,11 @@ class CancelReportTaskRequest(BaseModel):
 class CancelSelectionProgressRequest(BaseModel):
     requestId: str
     workflowRunId: str
+
+
+class RetryRawDataMaintenanceRequest(BaseModel):
+    requestId: str
+    market: str
 
 
 class CreateScheduledReportRequest(BaseModel):
@@ -497,6 +504,35 @@ def cancel_selection_progress(payload: CancelSelectionProgressRequest, request: 
         )
     except Exception as exc:
         return _exception_response(exc)
+
+
+@router.post("/retry-raw-data-maintenance")
+def retry_raw_data_maintenance(payload: RetryRawDataMaintenanceRequest, request: Request) -> JSONResponse:
+    from datetime import UTC, datetime
+    from threading import Thread
+
+    services = _services(request)
+    market = payload.market.strip().upper()
+    job_kind = {"CN_A": "eod", "CRYPTO": "kline-refresh"}.get(market)
+    if job_kind is None:
+        return _exception_response(ScheduledWorkRunnerError("INVALID_INPUT", "不支持的原始行情市场。"))
+    cron_run_id = f"manual-{datetime.now(tz=UTC).strftime('%Y%m%dT%H%M%S%fZ')}"
+
+    def _run() -> None:
+        try:
+            services.scheduled_work_runner.handle_wake(
+                {
+                    "kind": "data_maintenance",
+                    "market": market,
+                    "jobKind": job_kind,
+                    "cronRunId": cron_run_id,
+                }
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("manual %s data maintenance failed", market)
+
+    Thread(target=_run, daemon=True, name=f"manual-data-maintenance-{market.lower()}").start()
+    return _success_response({"status": "started", "market": market, "cronRunId": cron_run_id})
 
 
 @router.post("/create-scheduled-report")

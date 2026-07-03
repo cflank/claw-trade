@@ -522,6 +522,17 @@ export interface CancelSelectionProgressOutput {
   message: string;
 }
 
+export interface RetryRawDataMaintenanceInput {
+  requestId: string;
+  market: 'CN_A' | 'CRYPTO';
+}
+
+export interface RetryRawDataMaintenanceOutput {
+  status: 'started';
+  market: 'CN_A' | 'CRYPTO';
+  cronRunId: string;
+}
+
 export interface ChannelChatSnapshotForUser {
   channelKind: 'wechat_clawbot';
   context?: ChatContextForUser | null;

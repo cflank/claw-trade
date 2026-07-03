@@ -46,6 +46,8 @@ import type {
   ReportQueueSnapshotForUser,
   ResetSettingsToDefaultsInput,
   ResetSettingsToDefaultsOutput,
+  RetryRawDataMaintenanceInput,
+  RetryRawDataMaintenanceOutput,
   RunPriceAlertNowOutput,
   RunScheduledReportNowOutput,
   SaveChannelConfigViaOpenClawInput,
@@ -201,6 +203,13 @@ export function cancelReportTask(input: CancelReportTaskInput) {
 
 export function cancelSelectionProgress(input: CancelSelectionProgressInput) {
   return requestJson<CancelSelectionProgressOutput>('/api/ui/cancel-selection-progress', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function retryRawDataMaintenance(input: RetryRawDataMaintenanceInput) {
+  return requestJson<RetryRawDataMaintenanceOutput>('/api/ui/retry-raw-data-maintenance', {
     method: 'POST',
     body: JSON.stringify(input),
   });

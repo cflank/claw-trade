@@ -10,6 +10,8 @@ import type {
   SelectionProgressForUser,
 } from '../api/contracts';
 
+type RawMaintenanceMarket = 'CN_A' | 'CRYPTO';
+
 function statusClass(value: string) {
   if (value === 'failed' || value === 'error') {
     return 'is-danger';
@@ -123,20 +125,36 @@ function selectionProgressTitle(progress: SelectionProgressForUser) {
   return '选股任务进度';
 }
 
+function failedRawMarkets(progress: SelectionProgressForUser): RawMaintenanceMarket[] {
+  if (progress.status !== 'failed' || selectionProgressTitle(progress) !== '原始行情补数据') {
+    return [];
+  }
+  const text = [progress.currentAction, ...progress.workerStatusLabels].join('\n');
+  return [
+    ...(text.includes('A股') ? (['CN_A'] as const) : []),
+    ...(text.includes('加密币') ? (['CRYPTO'] as const) : []),
+  ];
+}
+
 function SelectionTaskBlock({
   progress,
   onCancelSelection,
   cancellingSelectionId,
+  onRetryRawDataMaintenance,
+  retryingRawMarket,
 }: {
   progress?: SelectionProgressForUser | null;
   onCancelSelection?: (progress: SelectionProgressForUser) => void;
   cancellingSelectionId?: string | null;
+  onRetryRawDataMaintenance?: (market: RawMaintenanceMarket) => void;
+  retryingRawMarket?: RawMaintenanceMarket | null;
 }) {
   if (!progress) {
     return null;
   }
   const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
   const canCancel = !String(progress.workflowRunId ?? '').startsWith('raw-data-maintenance:');
+  const retryMarkets = failedRawMarkets(progress);
   return (
     <section className="ct-right-section" data-testid="right-rail-selection-section">
       <h2>{selectionProgressTitle(progress)}</h2>
@@ -171,6 +189,19 @@ function SelectionTaskBlock({
             {progress.workflowRunId && cancellingSelectionId === progress.workflowRunId ? '处理中' : '停止选股'}
           </button>
         ) : null}
+        {onRetryRawDataMaintenance
+          ? retryMarkets.map((market) => (
+              <button
+                key={market}
+                type="button"
+                className="ct-text-button ct-task-stop-button"
+                onClick={() => onRetryRawDataMaintenance(market)}
+                disabled={retryingRawMarket === market}
+              >
+                {retryingRawMarket === market ? '启动中' : `重新补${market === 'CN_A' ? 'A股' : '加密币'}`}
+              </button>
+            ))
+          : null}
       </article>
     </section>
   );
@@ -490,6 +521,8 @@ export function RightRail({
   cancellingTaskId,
   onCancelSelection,
   cancellingSelectionId,
+  onRetryRawDataMaintenance,
+  retryingRawMarket,
   scheduledReportActionId,
   onScheduledReportAction,
   onPriceAlertAction,
@@ -506,6 +539,8 @@ export function RightRail({
   cancellingTaskId?: string | null;
   onCancelSelection?: (progress: SelectionProgressForUser) => void;
   cancellingSelectionId?: string | null;
+  onRetryRawDataMaintenance?: (market: RawMaintenanceMarket) => void;
+  retryingRawMarket?: RawMaintenanceMarket | null;
   scheduledReportActionId?: string | null;
   onScheduledReportAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
   onPriceAlertAction?: (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => void;
@@ -522,6 +557,8 @@ export function RightRail({
             progress={selectionProgress}
             onCancelSelection={onCancelSelection}
             cancellingSelectionId={cancellingSelectionId}
+            onRetryRawDataMaintenance={onRetryRawDataMaintenance}
+            retryingRawMarket={retryingRawMarket}
           />
           <ScheduledReportsBlock
             items={scheduledReports ?? []}

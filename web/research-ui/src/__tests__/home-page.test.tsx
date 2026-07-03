@@ -77,6 +77,7 @@ function mockWorkspaceFetch(
   const confirmBodies: Array<Record<string, unknown>> = [];
   const cancelBodies: Array<Record<string, unknown>> = [];
   const cancelSelectionBodies: Array<Record<string, unknown>> = [];
+  const retryRawMaintenanceBodies: Array<Record<string, unknown>> = [];
   const deleteBodies: Array<Record<string, unknown>> = [];
   const scheduledReportActionBodies: Array<Record<string, unknown>> = [];
   const clearChatBodies: Array<Record<string, unknown>> = [];
@@ -408,6 +409,12 @@ function mockWorkspaceFetch(
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       cancelSelectionBodies.push(body);
       return json({ cancelled: true, selectionProgress: null, message: '已停止选股任务。' });
+    }
+
+    if (url.includes('/api/ui/retry-raw-data-maintenance') && init?.method === 'POST') {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      retryRawMaintenanceBodies.push(body);
+      return json({ status: 'started', market: body.market, cronRunId: 'manual-test-run' });
     }
 
     if (url.includes('/api/ui/send-report-file-via-channel') && init?.method === 'POST') {
@@ -750,6 +757,7 @@ function mockWorkspaceFetch(
     getConfirmBodies: () => confirmBodies,
     getCancelBodies: () => cancelBodies,
     getCancelSelectionBodies: () => cancelSelectionBodies,
+    getRetryRawMaintenanceBodies: () => retryRawMaintenanceBodies,
     getDeleteBodies: () => deleteBodies,
     getScheduledReportActionBodies: () => scheduledReportActionBodies,
     getClearChatBodies: () => clearChatBodies,
@@ -1094,6 +1102,41 @@ describe('home page', () => {
     expect(screen.getByText('A股：原始行情补数据中（job-cn-a）')).toBeInTheDocument();
     expect(screen.getByText('加密币：原始行情补数据中（job-crypto）')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止选股' })).not.toBeInTheDocument();
+  });
+
+  it('retries failed A-share raw data maintenance from the right rail', async () => {
+    const mocked = mockWorkspaceFetch({
+      selectionRefreshSnapshot: {
+        selectionProgress: {
+          kind: 'data_refresh',
+          status: 'failed',
+          statusLabel: '原始行情补数据失败',
+          command: '系统启动自动补数据',
+          stageLabel: '原始行情补数据',
+          currentAction: 'A股原始行情补数据失败：credential_missing:data_source:tushare',
+          percent: 100,
+          workerStatusLabels: ['A股：原始行情补数据失败：credential_missing:data_source:tushare'],
+          completedRoleLabels: ['启动检查'],
+          waitingRoleLabels: [],
+          startedAt: '2026-07-01T10:00:00Z',
+          finishedAt: '2026-07-01T10:00:01Z',
+          workflowRunId: 'raw-data-maintenance:job-cn-a',
+        },
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '重新补A股' }));
+
+    await waitFor(() => expect(mocked.getRetryRawMaintenanceBodies()).toHaveLength(1));
+    expect(mocked.getRetryRawMaintenanceBodies()[0]).toMatchObject({ market: 'CN_A' });
+    expect(await screen.findByText('手动重新补数据')).toBeInTheDocument();
   });
 
   it('stops backend selection progress from the right rail', async () => {
