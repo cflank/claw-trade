@@ -462,6 +462,8 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
         in control_bin
     )
     assert 'CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR="${ROOT_DIR}/.runtime/mongodb/current"' in control_bin
+    control_service = _read("packaging/production/systemd/claw-trade-control.service")
+    assert "ExecStartPre=/bin/rm -f /opt/claw-trade/shared/tmp/dev-services/runtime.env" in control_service
     assert 'SHARED="${ROOT}/shared"' in runtime_script
     assert 'RUNTIME_ENV_PATH="${RUNTIME_ENV_DIR}/runtime.env"' in runtime_script
     assert 'CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"' in runtime_script

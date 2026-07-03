@@ -13,6 +13,7 @@ User=clawtrade
 Group=clawtrade
 WorkingDirectory=/opt/claw-trade/shared
 EnvironmentFile=-/opt/claw-trade/shared/config/claw-trade.env
+ExecStartPre=/bin/rm -f /opt/claw-trade/shared/tmp/dev-services/runtime.env
 ExecStart=/opt/claw-trade/current/bin/claw-trade-control
 SuccessExitStatus=143
 Restart=on-failure
