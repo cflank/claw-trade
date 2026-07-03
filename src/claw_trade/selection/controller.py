@@ -411,6 +411,7 @@ class SelectionController:
         data_job_runner: Callable[..., object] | None = None,
         default_trade_date_resolver: Callable[[str | None], str] | None = None,
         raw_maintenance_status_provider: Callable[[SelectionMarket], object | None] | None = None,
+        report_model_ready_checker: Callable[[], None] | None = None,
     ) -> None:
         self._store = store
         self._now_fn = now_fn or _utc_now
@@ -424,6 +425,7 @@ class SelectionController:
         self._data_job_runner = data_job_runner
         self._default_trade_date_resolver = default_trade_date_resolver
         self._raw_maintenance_status_provider = raw_maintenance_status_provider
+        self._report_model_ready_checker = report_model_ready_checker
         self._progress_lock = Lock()
         self._active_progress: dict[str, object] | None = None
         self._cancelled_progress_ids: set[str] = set()
@@ -679,6 +681,39 @@ class SelectionController:
             )
         return _coerce_raw_data_maintenance_status(raw_status)
 
+    def _report_model_ready_block(
+        self,
+        *,
+        request: SelectRequest,
+        workflow_run_id: str,
+        evidence_dir: Path,
+        selection_run_id: str,
+    ) -> SelectCommandResult | None:
+        if self._report_model_ready_checker is None:
+            return None
+        try:
+            self._report_model_ready_checker()
+        except Exception as exc:
+            reason = str(exc).strip() or "report_model_not_ready"
+            payload = _base_workflow_evidence_payload(
+                request=request,
+                workflow_run_id=workflow_run_id,
+                status="report_model_not_ready",
+                selection_run_id=selection_run_id,
+                reason=reason,
+            )
+            evidence_path = _write_selection_workflow_evidence(
+                evidence_dir=evidence_dir, payload=payload
+            )
+            return SelectCommandResult(
+                code=SelectCommandCode.BLOCKED_ASK_HUMAN,
+                chat_text=f"`/select` 当前不可用：{reason}",
+                select_workflow_run_id=workflow_run_id,
+                evidence_path=evidence_path,
+                failure_reason=reason,
+            )
+        return None
+
     def _run_available_select_workflow(
         self,
         *,
@@ -739,6 +774,15 @@ class SelectionController:
                 evidence_path=evidence_path,
                 unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_INTEGRITY_FAILED,
             )
+
+        report_model_block = self._report_model_ready_block(
+            request=request,
+            workflow_run_id=workflow_run_id,
+            evidence_dir=evidence_dir,
+            selection_run_id=latest.run_plan.selection_run_id,
+        )
+        if report_model_block is not None:
+            return report_model_block
 
         if self._openclaw is None:
             payload = _base_workflow_evidence_payload(

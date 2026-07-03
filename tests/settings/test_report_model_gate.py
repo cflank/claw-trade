@@ -115,8 +115,11 @@ def test_production_ui_services_wire_report_model_gate(monkeypatch: pytest.Monke
     chat_checker = services.chat_controller._report_model_ready_checker  # type: ignore[attr-defined]
     confirmation = services.chat_controller._confirmation  # type: ignore[attr-defined]
     confirmation_checker = confirmation._report_model_ready_checker  # type: ignore[attr-defined]
+    selection_controller = services.chat_controller._selection_controller  # type: ignore[attr-defined]
+    select_checker = selection_controller._report_model_ready_checker  # type: ignore[attr-defined]
     assert getattr(chat_checker, "__self__", None) is services.llm_bridge
     assert getattr(confirmation_checker, "__self__", None) is services.llm_bridge
+    assert getattr(select_checker, "__self__", None) is services.llm_bridge
 
 
 def test_unconfigured_model_blocks_report_generation(tmp_path: Path) -> None:

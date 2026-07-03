@@ -692,6 +692,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         scheduler_enqueue=selection_refresh_service.request_refresh,
         default_trade_date_resolver=resolve_cn_a_closed_trade_date_for_scheduler,
         raw_maintenance_status_provider=_select_raw_maintenance_status,
+        report_model_ready_checker=llm_bridge.assert_report_model_ready,
     )
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(rpc_client),

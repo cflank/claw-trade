@@ -572,6 +572,7 @@ def _selection_controller_with_completed_run(
     raw_complete_summary: bool = False,
     selection_runner: _FakeSelectionOpenClawRunner | None = None,
     raw_maintenance_status_provider: Callable[[SelectionMarket], object | None] | None = None,
+    report_model_ready_checker: Callable[[], None] | None = None,
     selection_runs_root: Path | None = None,
     use_local_selection_refs: bool = False,
 ) -> tuple[SelectionController, _FakeSelectionOpenClawRunner]:
@@ -923,6 +924,7 @@ def _selection_controller_with_completed_run(
         openclaw=OpenClawClient(resolved_selection_runner),
         workflow_evidence_root=tmp_path / "selection-workflows",
         raw_maintenance_status_provider=raw_maintenance_status_provider,
+        report_model_ready_checker=report_model_ready_checker,
     )
     return selection_controller, resolved_selection_runner
 
@@ -995,6 +997,37 @@ def test_select_command_blocks_old_completed_cache_after_raw_data_maintenance_fa
     assert result.failure_reason == "scheduled maintenance DataAPI returned non-ready status: empty_result"
     assert "补数据失败" in result.chat_text
     assert selection_runner.payloads == []
+
+
+@pytest.mark.integration
+def test_select_command_blocks_openclaw_when_report_model_is_not_ready(tmp_path: Path) -> None:
+    def _report_model_not_ready() -> None:
+        raise RuntimeError("报告模型还没配置成功，请先在设置中完成测试。")
+
+    selection_controller, selection_runner = _selection_controller_with_completed_run(
+        tmp_path,
+        report_model_ready_checker=_report_model_not_ready,
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
+
+    result = controller.send_chat_message(
+        request_id="sel-08-model-not-ready", context_id="ctx-model-not-ready", text="/select"
+    )
+
+    assert "error" not in result
+    assert result["selection"]["code"] == "blocked_ask_human"
+    assert result["selection"]["failureReason"] == "报告模型还没配置成功，请先在设置中完成测试。"
+    assert result["messages"][-1]["kind"] == "selection_unavailable"
+    assert "报告模型还没配置成功" in result["messages"][-1]["text"]
+    assert selection_runner.payloads == []
+    assert chat_transport.calls == 0
+    assert workflow_runner.calls == 0
+    evidence_payload = json.loads(
+        Path(result["selection"]["evidencePath"]).read_text(encoding="utf-8")
+    )
+    assert evidence_payload["status"] == "report_model_not_ready"
 
 
 @pytest.mark.integration
