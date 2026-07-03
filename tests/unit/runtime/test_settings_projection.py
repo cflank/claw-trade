@@ -50,7 +50,7 @@ class _FakeDatabase:
                             "OPENVIKING_EMBEDDING_PROVIDER": "openai",
                             "OPENVIKING_EMBEDDING_MODEL": "text-embedding-3-small",
                             "OPENVIKING_EMBEDDING_API_KEY": "sk-embed",
-                            "OPENVIKING_EMBEDDING_API_BASE": "https://api.openai.com/v1",
+                            "OPENVIKING_EMBEDDING_API_BASE": "https://api.openai.com/v1/embeddings",
                             "OPENVIKING_EMBEDDING_DIMENSION": "1536",
                         },
                     }
@@ -73,6 +73,7 @@ def test_export_runtime_settings_from_mongo_projects_report_model_and_embedding(
     assert values["CLAW_TRADE_RUNTIME_REPORT_MODEL_API_KEY"] == "sk-ant-1234"
     assert values["OPENVIKING_EMBEDDING_PROVIDER"] == "openai"
     assert values["OPENVIKING_EMBEDDING_API_KEY"] == "sk-embed"
+    assert values["OPENVIKING_EMBEDDING_API_BASE"] == "https://api.openai.com/v1"
 
 
 def test_export_runtime_settings_imports_finnhub_env_to_mongo_without_exporting_secret(monkeypatch) -> None:  # type: ignore[no-untyped-def]

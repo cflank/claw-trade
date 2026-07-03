@@ -18,6 +18,7 @@ from claw_trade.selection.models import (
     SelectionWorkerId,
     SelectRequest,
 )
+from claw_trade.selection.store import SelectionRunStore
 from claw_trade.workflow.models import WorkflowEntryPoint
 
 
@@ -132,6 +133,34 @@ class _CorruptingOpenClawRunner(_FakeOpenClawRunner):
         return result
 
 
+class _FailingOpenClawRunner(_FakeOpenClawRunner):
+    def run_worker(self, payload: dict[str, object]) -> dict[str, object]:
+        self.payloads.append(dict(payload))
+        return {
+            "status": "failed",
+            "openclaw_run_id": f"oc-{payload['call_id']}",
+            "provider_request_id": None,
+            "provider_request_id_status": "not_available",
+            "workspace_evidence_path": None,
+            "provider_request_path": None,
+            "visible_tools_path": None,
+            "first_response_path": None,
+            "tool_calls_status": "not_available",
+            "tool_calls_path": None,
+            "raw_output_path": None,
+            "openviking_receipt_path": None,
+            "failure_reason": "missing candidate cache artifact",
+        }
+
+
+def test_selection_store_derives_candidate_cache_root_from_persisted_runs_dir(tmp_path: Path) -> None:
+    store = SelectionRunStore(
+        persisted_runs_dir=tmp_path / "shared" / "runs" / "selection" / "store" / "data-runs"
+    )
+
+    assert store.candidate_cache_artifact_root() == tmp_path / "shared" / "runs" / "selection" / "artifacts"
+
+
 def test_selection_dispatch_order_is_fixed_and_not_model_decided(tmp_path: Path) -> None:
     dispatches = _dispatches(tmp_path)
 
@@ -177,6 +206,7 @@ def test_selection_dispatch_executes_four_openclaw_single_worker_turns(tmp_path:
         assert payload["stop_after_first_response"] is False
         runtime_vars = payload["runtime_vars"]
         assert isinstance(runtime_vars, dict)
+        assert runtime_vars["selection_artifact_root"] == str((tmp_path / "selection-artifacts").resolve())
         candidate_cache_ref = runtime_vars.get("candidate_cache_ref")
         assert isinstance(candidate_cache_ref, str) and candidate_cache_ref
         candidate_cache_payload = json.loads(candidate_cache_ref)
@@ -335,6 +365,23 @@ def test_selection_dispatch_validation_failure_blocks_following_workers(tmp_path
     assert executions[0].openclaw_result.status == "failed"
     assert executions[0].openclaw_result.failure_reason is not None
     assert "selection dispatch evidence validation failed" in executions[0].openclaw_result.failure_reason
+
+
+def test_selection_dispatch_preserves_openclaw_failure_reason(tmp_path: Path) -> None:
+    runner = _FailingOpenClawRunner()
+    openclaw = OpenClawClient(runner=runner)
+
+    executions = execute_selection_dispatches(
+        openclaw=openclaw,
+        dispatches=(_dispatches(tmp_path)[0],),
+        candidate_cache_ref=_candidate_cache_ref(),
+        profile="CN_A",
+        selection_artifact_root=tmp_path / "selection-artifacts",
+    )
+
+    assert len(executions) == 1
+    assert executions[0].openclaw_result.status == "failed"
+    assert executions[0].openclaw_result.failure_reason == "missing candidate cache artifact"
 
 
 def _dispatches(tmp_path: Path):

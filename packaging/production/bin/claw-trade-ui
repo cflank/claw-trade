@@ -4,8 +4,35 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/runtime/python/bin/python}"
 SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-/opt/claw-trade/shared}"
+RUNTIME_ENV="${SHARED_ROOT}/tmp/dev-services/runtime.env"
 
-for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env"; do
+runtime_env_ready() {
+  [[ -f "${RUNTIME_ENV}" ]] || return 1
+  grep -q '^CLAW_TRADE_OPENCLAW_RUNNER=' "${RUNTIME_ENV}" || return 1
+  grep -q '^CLAW_TRADE_OPENVIKING_BACKEND=' "${RUNTIME_ENV}" || return 1
+  grep -q '^CLAW_TRADE_RUNTIME_ASSETS_ROOT=' "${RUNTIME_ENV}" || return 1
+  grep -q '^CLAW_TRADE_AGENTS_ROOT=' "${RUNTIME_ENV}" || return 1
+  grep -q '^CLAW_TRADE_OPENCLAW_PLUGINS_ROOT=' "${RUNTIME_ENV}" || return 1
+  grep -q '^CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN=' "${RUNTIME_ENV}" || return 1
+  (
+    set -a
+    # shellcheck disable=SC1090
+    . "${RUNTIME_ENV}"
+    set +a
+    [[ -f "${CLAW_TRADE_AGENTS_ROOT}/market_analyst/AGENTS.md" ]]
+  ) || return 1
+}
+
+for _ in $(seq 1 60); do
+  runtime_env_ready && break
+  sleep 1
+done
+if ! runtime_env_ready; then
+  printf '[ERROR] runtime env not ready: %s\n' "${RUNTIME_ENV}" >&2
+  exit 1
+fi
+
+for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env" "${RUNTIME_ENV}"; do
   if [[ -f "${env_file}" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -15,15 +42,21 @@ for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/ru
 done
 
 export PYTHONPATH="${ROOT_DIR}/app/python:${ROOT_DIR}/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED_ROOT}/cache/xdg}"
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"
+mkdir -p "${XDG_CACHE_HOME}" "${NUMBA_CACHE_DIR}" "${MPLCONFIGDIR}"
 export CLAW_TRADE_PRODUCTION_PACKAGE=1
-export CLAW_TRADE_LICENSE_REQUIRED="${CLAW_TRADE_LICENSE_REQUIRED:-1}"
+export CLAW_TRADE_LICENSE_REQUIRED="${CLAW_TRADE_LICENSE_REQUIRED:-0}"
 export CLAW_TRADE_SELECTION_AUTO_REFRESH="${CLAW_TRADE_SELECTION_AUTO_REFRESH:-0}"
 export CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"
+export CLAW_TRADE_RELEASE_ROOT="${CLAW_TRADE_RELEASE_ROOT:-${ROOT_DIR}}"
 export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/runtime/openclaw/openclaw.mjs}"
 export OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/runtime/openclaw}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
+export OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT="${OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT:-${ROOT_DIR}/scripts/openclaw-gateway-rpc-helper.mjs}"
 
 exec "${PYTHON_BIN}" -m claw_trade.web.app \
-  --host "${CLAW_TRADE_UI_HOST:-127.0.0.1}" \
+  --host "${CLAW_TRADE_UI_HOST:-0.0.0.0}" \
   --port "${CLAW_TRADE_UI_PORT:-5175}" \
   --frontend-dist "${CLAW_TRADE_UI_FRONTEND_DIST:-${ROOT_DIR}/web/dist}"

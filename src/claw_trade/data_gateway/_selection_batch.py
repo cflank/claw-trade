@@ -75,7 +75,9 @@ _CRYPTO_SELECTION_TIMEZONE = "UTC"
 _CRYPTO_SELECTION_CALENDAR = "CRYPTO_24_7"
 _CN_A_DEFAULT_UNIVERSE_SCOPE = "all_a_shares"
 _CRYPTO_DEFAULT_UNIVERSE_SCOPE = "spot_usdt"
-_CRYPTO_HISTORY_COLUMNAR_ROOT = Path("data/crypto-history-full/normalized-columnar-usdt-only")
+_CRYPTO_HISTORY_COLUMNAR_ROOT = Path(
+    os.environ.get("CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT") or "data/crypto-history-full/normalized-columnar-usdt-only"
+)
 _DEFAULT_LOOKBACK_TRADING_DAYS = 260
 _MIN_HISTORY_DAYS = 250
 _UNIVERSE_REFRESH_CHUNK_SIZE = 5

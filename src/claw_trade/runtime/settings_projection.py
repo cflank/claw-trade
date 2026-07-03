@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from hashlib import sha1
 from typing import Any, Mapping
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from claw_trade.ui_backend.data_source_settings import _SUPPORTED_SOURCE_PROFILES
 
@@ -72,7 +72,23 @@ def _embedding_exports(database: Any) -> dict[str, str]:
         "OPENVIKING_EMBEDDING_API_BASE",
         "OPENVIKING_EMBEDDING_DIMENSION",
     )
-    return {key: str(payload.get(key, "") or "").strip() for key in keys}
+    out = {key: str(payload.get(key, "") or "").strip() for key in keys}
+    out["OPENVIKING_EMBEDDING_API_BASE"] = _normalize_embedding_api_base_url(
+        out["OPENVIKING_EMBEDDING_API_BASE"]
+    )
+    return out
+
+
+def _normalize_embedding_api_base_url(raw: str) -> str:
+    value = raw.strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("/embeddings"):
+        path = path[: -len("/embeddings")].rstrip("/")
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+    return value
 
 
 def _import_env_data_sources(database: Any, env: Mapping[str, str]) -> int:

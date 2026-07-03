@@ -44,6 +44,36 @@ def test_config_patch_uses_gateway_raw_patch_and_current_base_hash(monkeypatch) 
     assert json.loads(str(params["raw"])) == {"channels": {"openclaw-weixin": {"enabled": True}}}
 
 
+def test_config_patch_resolves_base_hash_for_opaque_ui_version(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
+        _ = (capture_output, text, check, env, timeout)
+        method = command[3]
+        params = json.loads(command[command.index("--params") + 1])
+        calls.append({"method": method, "params": params})
+        if method == "config.get":
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"result": {"hash": "hash-1"}}), stderr="")
+        if method == "config.patch":
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"result": {"newHash": "hash-2"}}), stderr="")
+        raise AssertionError(method)
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token=None,
+        password=None,
+    )
+
+    result = client.config_patch(expected_settings_version="v_opaque", patch={"models": {"providers": {}}})
+
+    assert result["newHash"] == "hash-2"
+    assert [call["method"] for call in calls] == ["config.get", "config.patch"]
+    assert calls[1]["params"]["baseHash"] == "hash-1"
+
+
 def test_config_get_uses_current_gateway_shape_without_paths_param(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     calls: list[dict[str, object]] = []
 

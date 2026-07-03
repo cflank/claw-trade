@@ -2,11 +2,33 @@
 
 import readline from "node:readline";
 import process from "node:process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  GatewayClient,
-  startGatewayClientWhenEventLoopReady,
-} from "../third_party/openclaw/dist/plugin-sdk/gateway-runtime.js";
+function resolveGatewayRuntimeModule() {
+  const candidates = [];
+  if (process.env.OPENCLAW_PACKAGE_DIR) {
+    candidates.push(
+      join(process.env.OPENCLAW_PACKAGE_DIR, "dist", "plugin-sdk", "gateway-runtime.js"),
+    );
+  }
+  const here = dirname(fileURLToPath(import.meta.url));
+  candidates.push(
+    join(here, "..", "runtime", "openclaw", "dist", "plugin-sdk", "gateway-runtime.js"),
+    join(here, "..", "third_party", "openclaw", "dist", "plugin-sdk", "gateway-runtime.js"),
+  );
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return pathToFileURL(candidate).href;
+    }
+  }
+  throw new Error(`OpenClaw gateway runtime module not found: ${candidates.join(", ")}`);
+}
+
+const { GatewayClient, startGatewayClientWhenEventLoopReady } = await import(
+  resolveGatewayRuntimeModule()
+);
 
 const input = readline.createInterface({
   input: process.stdin,

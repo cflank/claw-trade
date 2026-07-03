@@ -120,6 +120,15 @@ def test_price_alert_wechat_send_uses_stored_target_over_default_channel_target(
     ]
 
 
+def test_crypto_history_root_prefers_explicit_release_seed(monkeypatch, tmp_path: Path) -> None:
+    crypto_root = tmp_path / "release-crypto-history"
+    runtime_root = tmp_path / "runtime-normalized"
+    monkeypatch.setenv("CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT", str(crypto_root))
+    monkeypatch.setenv("DATA_GATEWAY_COLUMNAR_ROOT", str(runtime_root))
+
+    assert web_state._crypto_history_columnar_root_for_maintenance() == crypto_root
+
+
 def test_crypto_history_root_uses_factory_seed_only_when_complete(monkeypatch, tmp_path: Path) -> None:
     factory_root = tmp_path / "factory-crypto"
     runtime_root = tmp_path / "runtime-normalized"

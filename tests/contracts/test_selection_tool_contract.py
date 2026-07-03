@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from hashlib import sha256
@@ -23,7 +24,15 @@ SEL04_APPROVED_ARTIFACTS = (
 )
 
 
-def _run_plugin_tool(*, worker_id: str, runtime_vars: dict[str, object], params: dict[str, object] | None = None) -> dict[str, object]:
+def _run_plugin_tool(
+    *,
+    worker_id: str,
+    runtime_vars: dict[str, object],
+    params: dict[str, object] | None = None,
+    evidence_dir: str = "/tmp/selection-tool-evidence",
+    cwd: Path = REPO_ROOT,
+    env: dict[str, str] | None = None,
+) -> dict[str, object]:
     script = f"""
 import plugin from {json.dumps(str(SELECTION_PLUGIN_PATH))};
 const ctx = JSON.parse(process.argv[1]);
@@ -48,13 +57,17 @@ process.stdout.write(JSON.stringify(result));
             "call_id": "dispatch-call-1",
             "worker_id": worker_id,
             "stage": "selection_review",
-            "evidence_dir": "/tmp/selection-tool-evidence",
+            "evidence_dir": evidence_dir,
             "runtime_vars": runtime_vars,
         }
     }
+    command_env = os.environ.copy()
+    if env:
+        command_env.update(env)
     completed = subprocess.run(
         ["node", "--input-type=module", "-e", script, json.dumps(ctx), json.dumps(params or {})],
-        cwd=REPO_ROOT,
+        cwd=cwd,
+        env=command_env,
         check=True,
         capture_output=True,
         text=True,
@@ -271,6 +284,66 @@ def test_selection_tool_accepts_candidate_cache_ref_json_string(tmp_path: Path) 
     details = result.get("details", {})
     assert details.get("ok") is True
     assert details.get("cache_body_sha256") == fixture["expected_sha256"]
+
+
+def test_selection_tool_absolutizes_paths_before_python(tmp_path: Path) -> None:
+    shared_root = tmp_path / "shared"
+    shared_root.mkdir()
+    python_stub = tmp_path / "capture-selection-python.py"
+    python_stub.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json, sys",
+                "payload = json.load(sys.stdin)",
+                "print(json.dumps({'ok': True, 'reader_brief_md': 'ok', 'runtime_context': payload['runtime_context']}))",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    python_stub.chmod(0o755)
+    runtime_vars = {
+        "market": "CN_A",
+        "profile": "CN_A",
+        "trade_date": "2026-05-26",
+        "selection_run_id": "sel04-approval-run",
+        "select_workflow_run_id": "wf-path-proof",
+        "selection_artifact_root": "runs/selection/artifacts",
+        "candidate_cache_ref": {
+            "selection_run_id": "sel04-approval-run",
+            "material_id": "selection-candidate-cache-path-proof",
+            "l1_uri": "local://selection/sel04-approval-run/candidate-cache/approved/candidate-cache.md",
+            "content_sha256": "a" * 64,
+            "manifest_ref": "local://selection/sel04-approval-run/candidate-cache/approved/candidate-cache-manifest.json",
+            "approved_at": "2026-05-26T09:00:00Z",
+            "expires_at": "2026-06-26T09:00:00Z",
+            "cache_summary_ref": "local://selection/sel04-approval-run/candidate-cache/approved/candidate-cache-summary.md",
+        },
+    }
+
+    result = _run_plugin_tool(
+        worker_id="selection_strategist",
+        runtime_vars=runtime_vars,
+        evidence_dir="runs/selection/workflows/wf-1/dispatches/dispatch-call-1",
+        cwd=shared_root,
+        env={"CLAW_TRADE_SELECTION_TOOL_PYTHON": str(python_stub)},
+    )
+
+    runtime_context = result["details"]["runtime_context"]
+    assert runtime_context["evidence_root"] == str(
+        shared_root
+        / "runs"
+        / "selection"
+        / "workflows"
+        / "wf-1"
+        / "dispatches"
+        / "dispatch-call-1"
+        / "selection-candidate-cache-tool-evidence"
+    )
+    assert runtime_context["selection_artifact_root"] == str(
+        shared_root / "runs" / "selection" / "artifacts"
+    )
 
 
 def test_selection_tool_rejects_business_params(tmp_path: Path) -> None:

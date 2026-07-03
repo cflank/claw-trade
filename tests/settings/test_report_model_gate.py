@@ -195,6 +195,51 @@ def test_model_test_uses_current_form_key_before_prior_save(tmp_path: Path) -> N
     assert bridge.get_report_model_readiness().state == "ready"
 
 
+def test_saving_unchanged_model_after_successful_test_keeps_ready_state(tmp_path: Path) -> None:
+    gateway = _FakeGateway()
+    bridge = _bridge(tmp_path, gateway)
+    gateway.set_probe_result(status="ok")
+
+    tested = bridge.test_llm_via_openclaw(
+        {
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "endpointUrl": "https://api.deepseek.com",
+            "apiKeyReplacement": "sk-from-form",
+        },
+        request_id="req-test-before-save",
+    )
+    assert tested["ok"] is True
+
+    saved = bridge.save_llm_config_via_openclaw(
+        draft={
+            "provider": "deepseek",
+            "defaultModel": "deepseek-chat",
+            "endpointUrl": "https://api.deepseek.com",
+            "apiKeyReplacement": "sk-from-form",
+        },
+        expected_settings_version="v_1",
+        request_id="req-save-after-test",
+    )
+
+    assert saved["reportModelStatus"]["state"] == "ready"
+    assert bridge.get_report_model_readiness().state == "ready"
+
+    changed = bridge.save_llm_config_via_openclaw(
+        draft={
+            "provider": "deepseek",
+            "defaultModel": "deepseek-chat",
+            "endpointUrl": "https://api.deepseek.example",
+            "apiKeyReplacement": "sk-from-form",
+        },
+        expected_settings_version="v_1",
+        request_id="req-save-changed-after-test",
+    )
+
+    assert changed["reportModelStatus"]["state"] == "saved_unverified"
+    assert bridge.get_report_model_readiness().state == "saved_unverified"
+
+
 def test_model_test_survives_gateway_restart_after_config_patch(tmp_path: Path) -> None:
     class _RestartingGateway(_FakeGateway):
         def __init__(self) -> None:
@@ -420,7 +465,7 @@ def test_model_test_does_not_patch_redacted_key_when_key_input_is_empty(tmp_path
     )
     gateway.set_probe_result(status="ok")
     tested = bridge.test_llm_via_openclaw(
-        {"provider": "deepseek", "model": "deepseek-chat", "endpointUrl": "https://api.deepseek.com"},
+        {"provider": "deepseek", "model": "deepseek-chat", "endpointUrl": "https://api2.deepseek.com"},
         request_id="req-test-no-redacted-patch",
     )
 

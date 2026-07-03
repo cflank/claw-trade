@@ -52,6 +52,8 @@ PLUGIN_IDS = (
 )
 WEIXIN_PLUGIN_ID = "openclaw-weixin"
 WEIXIN_PLUGIN_LOAD_PATH = Path("node_modules") / "@tencent-weixin" / "openclaw-weixin"
+UNCONFIGURED_DEFAULT_MODEL = "deepseek/deepseek-chat"
+UNCONFIGURED_DEFAULT_ALIAS = "DeepSeek Chat"
 
 
 @dataclass(frozen=True)
@@ -91,14 +93,13 @@ def prepare_openclaw_config(
     existing_plugin_entries = _object(existing_plugins.get("entries"))
     existing_plugin_allow = _string_list(existing_plugins.get("allow"))
 
-    has_saved_llm = bool(existing_providers) or bool(_object(existing_defaults.get("model")))
-    if llm is None and not has_saved_llm:
+    if llm is None:
         print(
             "[WARN] OpenClaw LLM 未配置：UI 可启动；报告执行会被报告模型 gate 阻断。",
             file=sys.stderr,
         )
 
-    merged_providers = dict(existing_providers)
+    merged_providers = dict(existing_providers) if llm is not None else {}
     if llm is not None:
         provider_entry: dict[str, Any] = {
             "apiKey": llm.api_key,
@@ -131,6 +132,9 @@ def prepare_openclaw_config(
     if llm is not None:
         merged_defaults["model"] = {"primary": llm.model}
         merged_defaults["models"] = {llm.model: {"alias": llm.provider_name}}
+    else:
+        merged_defaults["model"] = {"primary": UNCONFIGURED_DEFAULT_MODEL}
+        merged_defaults["models"] = {UNCONFIGURED_DEFAULT_MODEL: {"alias": UNCONFIGURED_DEFAULT_ALIAS}}
 
     merged_plugin_entries = dict(existing_plugin_entries)
     for plugin_id in PLUGIN_IDS:

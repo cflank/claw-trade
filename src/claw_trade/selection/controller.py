@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Mapping
 
+from claw_trade.data_gateway.selection_api import resolve_crypto_selection_trade_date_for_scheduler
 from claw_trade.runtime.openclaw_client import OpenClawClient
 from claw_trade.selection.candidate_cache import (
     CandidateCacheError,
@@ -33,7 +34,6 @@ from claw_trade.selection.models import (
     SelectionWorkerId,
     SelectRequest,
 )
-from claw_trade.data_gateway.selection_api import resolve_crypto_selection_trade_date_for_scheduler
 from claw_trade.selection.refresh import SelectionDataRefreshResult
 from claw_trade.selection.store import (
     LatestCompletedSelectionRun,
@@ -415,7 +415,9 @@ class SelectionController:
         self._store = store
         self._now_fn = now_fn or _utc_now
         self._openclaw = openclaw
-        self._workflow_evidence_root = workflow_evidence_root or Path("runs/selection/workflows")
+        self._workflow_evidence_root = (
+            workflow_evidence_root or Path("runs/selection/workflows")
+        ).resolve()
         # 这些依赖保留给后续 SEL-03/SEL-08 注入；/select 不应调用。
         self._provider_fetch = provider_fetch
         self._scheduler_enqueue = scheduler_enqueue
@@ -425,6 +427,9 @@ class SelectionController:
         self._progress_lock = Lock()
         self._active_progress: dict[str, object] | None = None
         self._cancelled_progress_ids: set[str] = set()
+
+    def _selection_artifact_root(self) -> Path:
+        return self._store.candidate_cache_artifact_root().resolve()
 
     def load_latest_completed_for_select(self, request: SelectRequest) -> SelectReadGateResult:
         resolved = resolve_latest_terminal_selection_run(
@@ -709,8 +714,10 @@ class SelectionController:
                 unavailable_code=SelectUnavailableCode.CANDIDATE_CACHE_NOT_APPROVED,
             )
 
+        selection_artifact_root = self._selection_artifact_root()
         candidate_cache_strategy_error = _candidate_cache_strategy_completeness_error(
-            candidate_cache_ref
+            candidate_cache_ref,
+            artifact_root=selection_artifact_root,
         )
         if candidate_cache_strategy_error is not None:
             payload = _base_workflow_evidence_payload(
@@ -752,7 +759,10 @@ class SelectionController:
                 failure_reason="selection_openclaw_not_configured",
             )
 
-        summary_md = _load_candidate_cache_summary(candidate_cache_ref)
+        summary_md = _load_candidate_cache_summary(
+            candidate_cache_ref,
+            artifact_root=selection_artifact_root,
+        )
         allowed_ticker_companies = _extract_allowed_ticker_companies_from_summary(summary_md)
         allowed_tickers = frozenset(allowed_ticker_companies)
         if not allowed_tickers:
@@ -815,6 +825,7 @@ class SelectionController:
                 dispatches=(dispatch,),
                 candidate_cache_ref=candidate_cache_ref,
                 profile=request.profile.value,
+                selection_artifact_root=selection_artifact_root,
             )
             if self._is_workflow_cancelled(workflow_run_id):
                 return _failed_result(
@@ -946,6 +957,7 @@ class SelectionController:
                     dispatches=(retry_dispatch,),
                     candidate_cache_ref=candidate_cache_ref,
                     profile=request.profile.value,
+                    selection_artifact_root=selection_artifact_root,
                 )
                 dispatch_results.append(
                     {
@@ -1330,15 +1342,21 @@ def _select_dispatch_for_worker(
             return dispatch
     raise ValueError(f"dispatch missing worker {worker_id.value}")
 
-
-def _load_candidate_cache_summary(candidate_cache_ref: CandidateCacheRef) -> str:
-    path = _resolve_selection_uri(candidate_cache_ref.cache_summary_ref)
+def _load_candidate_cache_summary(
+    candidate_cache_ref: CandidateCacheRef,
+    *,
+    artifact_root: Path | None = None,
+) -> str:
+    path = _resolve_selection_uri(candidate_cache_ref.cache_summary_ref, artifact_root=artifact_root)
     text = path.read_text(encoding="utf-8")
     if not text.strip():
         return ""
     if _candidate_cache_summary_has_required_labels(text):
         return text
-    rebuilt = _rebuild_candidate_cache_summary_from_json(candidate_cache_ref)
+    rebuilt = _rebuild_candidate_cache_summary_from_json(
+        candidate_cache_ref,
+        artifact_root=artifact_root,
+    )
     if rebuilt is not None:
         return rebuilt
     raw_field = _reader_visible_raw_field_name(text)
@@ -1366,8 +1384,10 @@ def _reader_visible_raw_field_name(summary_md: str) -> str | None:
 
 def _rebuild_candidate_cache_summary_from_json(
     candidate_cache_ref: CandidateCacheRef,
+    *,
+    artifact_root: Path | None = None,
 ) -> str | None:
-    json_path = _candidate_cache_json_path(candidate_cache_ref)
+    json_path = _candidate_cache_json_path(candidate_cache_ref, artifact_root=artifact_root)
     if json_path is None:
         return None
     try:
@@ -1380,7 +1400,7 @@ def _rebuild_candidate_cache_summary_from_json(
     if not isinstance(candidates, list) or not candidates:
         return None
 
-    sidecar = _candidate_cache_sidecar_payload(candidate_cache_ref)
+    sidecar = _candidate_cache_sidecar_payload(candidate_cache_ref, artifact_root=artifact_root)
     strategy_config_version = _first_text(
         payload.get("strategy_config_version"),
         sidecar.get("strategy_config_version"),
@@ -1457,21 +1477,27 @@ def _rebuild_candidate_cache_summary_from_json(
     return "\n".join(lines).strip()
 
 
-def _candidate_cache_json_path(candidate_cache_ref: CandidateCacheRef) -> Path | None:
-    summary_path = _resolve_selection_uri(candidate_cache_ref.cache_summary_ref)
+def _candidate_cache_json_path(
+    candidate_cache_ref: CandidateCacheRef,
+    *,
+    artifact_root: Path | None = None,
+) -> Path | None:
+    summary_path = _resolve_selection_uri(candidate_cache_ref.cache_summary_ref, artifact_root=artifact_root)
     candidates = (summary_path.with_name("candidate-cache.json"),)
     for path in candidates:
         if path.is_file():
             return path
-    body_path = _resolve_selection_uri(candidate_cache_ref.l1_uri)
+    body_path = _resolve_selection_uri(candidate_cache_ref.l1_uri, artifact_root=artifact_root)
     alt_path = body_path.with_name("candidate-cache.json")
     return alt_path if alt_path.is_file() else None
 
 
 def _candidate_cache_strategy_completeness_error(
     candidate_cache_ref: CandidateCacheRef,
+    *,
+    artifact_root: Path | None = None,
 ) -> str | None:
-    json_path = _candidate_cache_json_path(candidate_cache_ref)
+    json_path = _candidate_cache_json_path(candidate_cache_ref, artifact_root=artifact_root)
     if json_path is None:
         return "candidate_cache_strategy_fields_missing: candidate-cache.json missing"
     try:
@@ -1487,9 +1513,13 @@ def _candidate_cache_strategy_completeness_error(
     return None
 
 
-def _candidate_cache_sidecar_payload(candidate_cache_ref: CandidateCacheRef) -> dict[str, object]:
+def _candidate_cache_sidecar_payload(
+    candidate_cache_ref: CandidateCacheRef,
+    *,
+    artifact_root: Path | None = None,
+) -> dict[str, object]:
     try:
-        path = _resolve_selection_uri(candidate_cache_ref.manifest_ref)
+        path = _resolve_selection_uri(candidate_cache_ref.manifest_ref, artifact_root=artifact_root)
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return {}
@@ -1671,7 +1701,7 @@ def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(out)
 
 
-def _resolve_selection_uri(ref: str) -> Path:
+def _resolve_selection_uri(ref: str, *, artifact_root: Path | None = None) -> Path:
     prefix = "local://selection/"
     if not ref.startswith(prefix):
         return Path(ref)
@@ -1679,7 +1709,7 @@ def _resolve_selection_uri(ref: str) -> Path:
     segments = [part for part in relative.split("/") if part]
     if not segments or ".." in segments:
         raise ValueError(f"unsafe local selection uri: {ref}")
-    return Path("runs/selection/artifacts") / Path(*segments)
+    return (artifact_root or Path("runs/selection/artifacts")) / Path(*segments)
 
 
 def _extract_allowed_ticker_companies_from_summary(summary_md: str) -> dict[str, str]:

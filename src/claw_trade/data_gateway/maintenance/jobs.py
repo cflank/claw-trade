@@ -94,6 +94,8 @@ class MaintenanceJobRepository(Protocol):
 
     def save(self, job: MaintenanceJob) -> None: ...
 
+    def list(self) -> tuple[MaintenanceJob, ...]: ...
+
     def save_dataset_manifest(self, manifest: Mapping[str, Any]) -> str: ...
 
     def get_dataset_manifest(self, manifest_ref: str) -> dict[str, Any] | None: ...
@@ -111,6 +113,9 @@ class InMemoryMaintenanceJobRepository:
 
     def save(self, job: MaintenanceJob) -> None:
         self._jobs[job.job_id] = job
+
+    def list(self) -> tuple[MaintenanceJob, ...]:
+        return tuple(self._jobs.values())
 
     def save_dataset_manifest(self, manifest: Mapping[str, Any]) -> str:
         doc = dict(manifest)
@@ -139,6 +144,9 @@ class CollectionMaintenanceJobRepository:
 
     def save(self, job: MaintenanceJob) -> None:
         self.repository.save_maintenance_job(job.job_id, _job_to_doc(job))
+
+    def list(self) -> tuple[MaintenanceJob, ...]:
+        return tuple(_job_from_doc(item) for item in self.repository.list_maintenance_jobs())
 
     def save_dataset_manifest(self, manifest: Mapping[str, Any]) -> str:
         return self.repository.write_dataset_manifest(manifest)

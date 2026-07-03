@@ -30,7 +30,19 @@ _CHANNEL_STATUS_LIGHT_CACHE_TTL_SECONDS = 30.0
 _CHANNEL_STATUS_PROBE_CACHE_TTL_SECONDS = 15.0
 _CHAT_GATEWAY_METHODS = frozenset({"sessions.create", "agent", "chat.send", "agent.wait", "chat.history"})
 _BACKGROUND_GATEWAY_METHODS = frozenset({"channels.status"})
-_GATEWAY_RPC_HELPER_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "openclaw-gateway-rpc-helper.mjs"
+def _resolve_gateway_rpc_helper_script() -> Path:
+    env_path = os.environ.get("OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT", "").strip()
+    if env_path:
+        return Path(env_path)
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / "scripts" / "openclaw-gateway-rpc-helper.mjs"
+        if candidate.exists():
+            return candidate
+    return current.parents[3] / "scripts" / "openclaw-gateway-rpc-helper.mjs"
+
+
+_GATEWAY_RPC_HELPER_SCRIPT = _resolve_gateway_rpc_helper_script()
 _LOGGER = logging.getLogger("uvicorn.error")
 
 
@@ -494,11 +506,12 @@ class OpenClawGatewayRpcClient:
         params: dict[str, Any] = {
             "raw": json.dumps(dict(patch or {}), ensure_ascii=False, indent=2),
         }
-        base_hash = self._current_config_hash()
-        if base_hash:
-            params["baseHash"] = base_hash
         if expected_settings_version and not str(expected_settings_version).startswith("v_"):
             params["baseHash"] = expected_settings_version
+        else:
+            base_hash = self._current_config_hash()
+            if base_hash:
+                params["baseHash"] = base_hash
         self._clear_channels_status_cache()
         payload = self._call("config.patch", params, timeout_ms=15_000)
         self._clear_channels_status_cache()

@@ -369,6 +369,20 @@ def test_get_channel_status_treats_start_already_connected_as_connected() -> Non
     assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
 
 
+def test_non_light_status_clears_stale_light_status_cache() -> None:
+    client = _FakeChannelClient(connected=False, start_already_connected=True)
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status()
+    client.connected = True
+    connected = bridge.get_channel_status(probe=True, include_qr=True)
+    light = bridge.get_channel_status()
+
+    assert first["state"] == "disconnected"
+    assert connected["state"] == "connected"
+    assert light["state"] == "connected"
+
+
 def test_get_channel_status_treats_wechat_already_connected_message_as_connected() -> None:
     client = _FakeChannelClient(
         connected=False,

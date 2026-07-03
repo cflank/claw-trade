@@ -190,14 +190,54 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
 
 def test_production_package_bundles_weixin_plugin_and_uses_production_runtime() -> None:
     build_script = _read("scripts/production/build_production_package.sh")
+    preflight = _read("packaging/production/bin/claw-trade-preflight")
+    audit = _read("scripts/production/audit_production_package.py")
+    helper = _read("scripts/openclaw-gateway-rpc-helper.mjs")
 
     assert 'OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"' in build_script
     assert "prepare_openclaw_plugin_assets" in build_script
     assert 'npm install \\' in build_script
     assert 'cp -a packaging/production/runtime/. "${package_root}/runtime/"' in build_script
     assert 'cp -a scripts/start-control-runtime.sh "${package_root}/runtime/claw-trade-control-runtime"' not in build_script
+    assert 'cp -a scripts/openclaw-gateway-rpc-helper.mjs "${package_root}/scripts/openclaw-gateway-rpc-helper.mjs"' in build_script
+    assert 'cp -a scripts/crypto/download_binance_public_data.py "${package_root}/scripts/crypto/download_binance_public_data.py"' in build_script
+    assert 'cp -a scripts/crypto/import_crypto_prepackaged_to_mongo.py "${package_root}/scripts/crypto/import_crypto_prepackaged_to_mongo.py"' in build_script
+    assert 'require_path "data/crypto-history-full/normalized-columnar-usdt-only"' in build_script
+    assert (
+        'cp -a data/crypto-history-full/normalized-columnar-usdt-only '
+        '"${package_root}/data/crypto-history-full/normalized-columnar-usdt-only"'
+    ) in build_script
+    assert 'test -f "${ROOT_DIR}/scripts/openclaw-gateway-rpc-helper.mjs"' in preflight
+    assert 'test -f "${ROOT_DIR}/scripts/crypto/download_binance_public_data.py"' in preflight
+    assert 'test -f "${ROOT_DIR}/scripts/crypto/import_crypto_prepackaged_to_mongo.py"' in preflight
+    assert 'test -d "${ROOT_DIR}/data/crypto-history-full/normalized-columnar-usdt-only"' in preflight
+    assert "missing CRYPTO daily_bar parquet seed" in preflight
+    assert '"scripts/openclaw-gateway-rpc-helper.mjs"' in audit
+    assert '"scripts/crypto/download_binance_public_data.py"' in audit
+    assert '"scripts/crypto/import_crypto_prepackaged_to_mongo.py"' in audit
+    assert '"data/crypto-history-full/normalized-columnar-usdt-only"' in audit
+    assert '"runtime", "openclaw", "dist", "plugin-sdk", "gateway-runtime.js"' in helper
+    assert '"third_party", "openclaw", "dist", "plugin-sdk", "gateway-runtime.js"' in helper
     assert "tar --exclude='agents/*/prompt-review.yaml'" in build_script
     assert 'tar -C "${package_root}" -cf "${package_root}/runtime/assets/openclaw_plugins.tar" openclaw_plugins' in build_script
+
+
+def test_production_control_uses_release_crypto_history_seed() -> None:
+    control_bin = _read("packaging/production/bin/claw-trade-control")
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
+
+    assert (
+        'export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-'
+        '${ROOT_DIR}/data/crypto-history-full/normalized-columnar-usdt-only}"'
+    ) in control_bin
+    assert (
+        'export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-'
+        '${CURRENT}/data/crypto-history-full/normalized-columnar-usdt-only}"'
+    ) in runtime_script
+    assert (
+        'write_runtime_env_var "${tmp}" "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT" '
+        '"${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT}"'
+    ) in runtime_script
 
 
 def test_production_archive_validator_requires_basename_matched_single_top_dir(tmp_path: Path) -> None:
@@ -370,8 +410,9 @@ def test_main_and_rescue_share_the_fixed_local_ui_port_contract() -> None:
     trigger_service = _read("packaging/production/systemd/claw-trade-rescue-trigger.service")
     policy = json.loads(_read("packaging/production/kiosk/chromium-policy.json"))
 
-    assert f'--host "${{CLAW_TRADE_UI_HOST:-{paths.RESCUE_BIND_HOST}}}"' in ui_bin
+    assert '--host "${CLAW_TRADE_UI_HOST:-0.0.0.0}"' in ui_bin
     assert f'--port "${{CLAW_TRADE_UI_PORT:-{paths.MAIN_UI_PORT}}}"' in ui_bin
+    assert 'CLAW_TRADE_LICENSE_REQUIRED="${CLAW_TRADE_LICENSE_REQUIRED:-0}"' in ui_bin
     assert 'PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/runtime/python/bin/python}"' in ui_bin
     assert f"User={paths.KIOSK_USER}" in kiosk_service
     assert f"Group={paths.KIOSK_GROUP}" in kiosk_service
@@ -408,13 +449,84 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
 
     assert "/opt/claw-trade/shared/cache/factory-seeds/current-seed/normalized" in control_bin
     assert 'CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"' in control_bin
+    assert 'XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED_ROOT}/cache/xdg}"' in control_bin
+    assert 'NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"' in control_bin
+    assert 'MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"' in control_bin
     assert 'CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"' in ui_bin
+    assert 'XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED_ROOT}/cache/xdg}"' in ui_bin
+    assert 'NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"' in ui_bin
+    assert 'MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"' in ui_bin
+    assert 'mkdir -p "${XDG_CACHE_HOME}" "${NUMBA_CACHE_DIR}" "${MPLCONFIGDIR}"' in ui_bin
     assert (
         'CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR="${CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/mongodb}"'
         in control_bin
     )
     assert 'CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR="${ROOT_DIR}/.runtime/mongodb/current"' in control_bin
     assert 'SHARED="${ROOT}/shared"' in runtime_script
+    assert 'RUNTIME_ENV_PATH="${RUNTIME_ENV_DIR}/runtime.env"' in runtime_script
+    assert 'CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"' in runtime_script
+    assert 'DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"' in runtime_script
+    assert 'DATA_GATEWAY_COLUMNAR_ROOT="${DATA_GATEWAY_COLUMNAR_ROOT:-${SHARED}/data-gateway/normalized}"' in runtime_script
+    assert 'XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED}/cache/xdg}"' in runtime_script
+    assert 'NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED}/cache/numba}"' in runtime_script
+    assert 'MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED}/cache/matplotlib}"' in runtime_script
+    assert '"${XDG_CACHE_HOME}"' in runtime_script
+    assert '"${NUMBA_CACHE_DIR}"' in runtime_script
+    assert '"${MPLCONFIGDIR}"' in runtime_script
+    assert 'OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"' in runtime_script
+    assert 'start_local_mongodb_if_needed' in runtime_script
+    assert '"${CURRENT}/runtime/start-local-mongodb" >"${LOG_DIR}/mongodb-start.log" 2>&1' in runtime_script
+    assert 'ensure_a_share_factory_seed_restored' in runtime_script
+    assert 'OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"' in runtime_script
+    assert 'ensure_scheduled_work_internal_token' in runtime_script
+    assert 'scheduled-work-internal-token' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_TOKEN" "${OPENCLAW_GATEWAY_TOKEN}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENCLAW_RUNNER" "${CLAW_TRADE_OPENCLAW_RUNNER}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_BACKEND" "${CLAW_TRADE_OPENVIKING_BACKEND}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_RUNTIME_ASSETS_ROOT" "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_AGENTS_ROOT" "${CLAW_TRADE_AGENTS_ROOT}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENCLAW_PLUGINS_ROOT" "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}"' in runtime_script
+    assert 'CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-http://127.0.0.1:${CLAW_TRADE_UI_PORT:-5175}/api/ui/channel-inbound-message}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_UI_INBOUND_URL" "${CLAW_TRADE_UI_INBOUND_URL}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_UI_INBOUND_TIMEOUT_MS" "${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}"' in runtime_script
+    assert (
+        'write_runtime_env_var "${tmp}" "CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN" '
+        '"${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN}"'
+    ) in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_VECTORIZE" "${CLAW_TRADE_OPENVIKING_VECTORIZE}"' in runtime_script
+    assert (
+        'write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_VECTORIZE_REASON" '
+        '"${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON}"'
+    ) in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT" "${CURRENT}/scripts/openclaw-gateway-rpc-helper.mjs"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "DATA_GATEWAY_SEED_MONGODB_URI" "${DATA_GATEWAY_SEED_MONGODB_URI}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "XDG_CACHE_HOME" "${XDG_CACHE_HOME}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "NUMBA_CACHE_DIR" "${NUMBA_CACHE_DIR}"' in runtime_script
+    assert 'write_runtime_env_var "${tmp}" "MPLCONFIGDIR" "${MPLCONFIGDIR}"' in runtime_script
+    assert "load_mongo_ui_settings_into_process_env" in runtime_script
+    assert '"${PYTHON}" -m claw_trade.runtime.settings_projection' in runtime_script
+    assert runtime_script.index("\nload_mongo_ui_settings_into_process_env\n") < runtime_script.index("\nprepare_openclaw_config\n")
+    assert "preauthorize_openclaw_gateway_admin" in runtime_script
+    assert "--scope" in runtime_script
+    assert "operator.admin" in runtime_script
+    assert "scope upgrade pending approval" in runtime_script
+    assert "extract_openclaw_pairing_request_id" in runtime_script
+    assert "approve_openclaw_pairing_request_from_state" in runtime_script
+    assert '"${OPENCLAW_GATEWAY_CALL_BIN}" devices approve "${request_id}"' in runtime_script
+    assert 'approveDevicePairing(requestId, { callerScopes: ["operator.admin"] }, stateDir)' in runtime_script
+    assert 'RUNTIME_ENV="${SHARED_ROOT}/tmp/dev-services/runtime.env"' in ui_bin
+    assert "runtime_env_ready() {" in ui_bin
+    assert "grep -q '^CLAW_TRADE_OPENCLAW_RUNNER='" in ui_bin
+    assert "grep -q '^CLAW_TRADE_OPENVIKING_BACKEND='" in ui_bin
+    assert "grep -q '^CLAW_TRADE_RUNTIME_ASSETS_ROOT='" in ui_bin
+    assert "grep -q '^CLAW_TRADE_AGENTS_ROOT='" in ui_bin
+    assert "grep -q '^CLAW_TRADE_OPENCLAW_PLUGINS_ROOT='" in ui_bin
+    assert "grep -q '^CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN='" in ui_bin
+    assert '[[ -f "${CLAW_TRADE_AGENTS_ROOT}/market_analyst/AGENTS.md" ]]' in ui_bin
+    assert 'runtime env not ready' in ui_bin
+    assert '"${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env" "${RUNTIME_ENV}"' in ui_bin
+    assert 'CLAW_TRADE_RELEASE_ROOT="${CLAW_TRADE_RELEASE_ROOT:-${ROOT_DIR}}"' in ui_bin
     assert 'OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"' in runtime_script
     assert 'CLAW_TRADE_RUNTIME_ASSETS_ROOT="${CLAW_TRADE_RUNTIME_ASSETS_ROOT:-${SHARED}/runtime-assets}"' in runtime_script
     assert 'LOG_DIR="${SHARED}/logs"' in runtime_script

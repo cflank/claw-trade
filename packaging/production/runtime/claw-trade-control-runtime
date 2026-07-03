@@ -7,6 +7,9 @@ SHARED="${ROOT}/shared"
 PYTHON="${CURRENT}/runtime/python/bin/python"
 OPENCLAW="${CURRENT}/runtime/openclaw/openclaw.mjs"
 LOG_DIR="${SHARED}/logs"
+CONFIG_DIR="${SHARED}/config"
+RUNTIME_ENV_DIR="${SHARED}/tmp/dev-services"
+RUNTIME_ENV_PATH="${RUNTIME_ENV_DIR}/runtime.env"
 RUNTIME_ASSETS_ARCHIVE_DIR="${CURRENT}/runtime/assets"
 
 export OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT:-http://127.0.0.1:1933}"
@@ -20,18 +23,302 @@ export OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-${PYTHON}}"
 export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${OPENCLAW}}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}}"
+export OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"
 export OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
 export CLAW_TRADE_LLM_PROVIDER="${CLAW_TRADE_LLM_PROVIDER:-}"
 export CLAW_TRADE_LLM_MODEL="${CLAW_TRADE_LLM_MODEL:-${DEEPSEEK_MODEL:-}}"
 export DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
 export QWEN_BASE_URL="${QWEN_BASE_URL:-${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}}"
+export CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-http://127.0.0.1:${CLAW_TRADE_UI_PORT:-5175}/api/ui/channel-inbound-message}"
+export CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-60000}"
+export CN_A_MONGODB_BIND_IP="${CN_A_MONGODB_BIND_IP:-127.0.0.1}"
+export CN_A_MONGODB_PORT="${CN_A_MONGODB_PORT:-27017}"
+export CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"
+export CN_A_MONGODB_DATABASE="${CN_A_MONGODB_DATABASE:-claw_trade}"
+export CN_A_MONGODB_CACHE_COLLECTION="${CN_A_MONGODB_CACHE_COLLECTION:-cn_a_fundamental_cache}"
+export DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"
+export DATA_GATEWAY_MONGODB_DATABASE="${DATA_GATEWAY_MONGODB_DATABASE:-${CN_A_MONGODB_DATABASE}}"
+export DATA_GATEWAY_SEED_MONGODB_URI="${DATA_GATEWAY_SEED_MONGODB_URI:-${CN_A_MONGODB_URI}}"
+export DATA_GATEWAY_SEED_MONGODB_DATABASE="${DATA_GATEWAY_SEED_MONGODB_DATABASE:-claw_trade_a_share_factory_seed}"
+export DATA_GATEWAY_COLUMNAR_ROOT="${DATA_GATEWAY_COLUMNAR_ROOT:-${SHARED}/data-gateway/normalized}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED}/cache/xdg}"
+export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED}/cache/numba}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED}/cache/matplotlib}"
+if [[ -z "${A_SHARE_FACTORY_SEED_PACKAGE:-}" ]]; then
+  current_seeds=("${CURRENT}"/data/current-seed-*.tar)
+  if [[ -e "${current_seeds[0]}" ]]; then
+    A_SHARE_FACTORY_SEED_PACKAGE="${current_seeds[$((${#current_seeds[@]} - 1))]}"
+  fi
+fi
+export A_SHARE_FACTORY_SEED_PACKAGE="${A_SHARE_FACTORY_SEED_PACKAGE:-}"
+export A_SHARE_FACTORY_SEED_CHECKSUM="${A_SHARE_FACTORY_SEED_CHECKSUM:-${A_SHARE_FACTORY_SEED_PACKAGE}.sha256}"
+export A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-${SHARED}/cache/factory-seeds/current-seed/normalized}"
+export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-${CURRENT}/data/crypto-history-full/normalized-columnar-usdt-only}"
 export CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 export CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
+export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED="${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED:-0}"
+export CLAW_TRADE_OPENVIKING_VECTORIZE="${CLAW_TRADE_OPENVIKING_VECTORIZE:-0}"
+export CLAW_TRADE_OPENVIKING_VECTORIZE_REASON="${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON:-未配置 embedding LLM，OpenViking 只保存和读取材料，不启用语义检索。}"
 export CLAW_TRADE_RUNTIME_ASSETS_ROOT="${CLAW_TRADE_RUNTIME_ASSETS_ROOT:-${SHARED}/runtime-assets}"
 export CLAW_TRADE_AGENTS_ROOT="${CLAW_TRADE_AGENTS_ROOT:-${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/agents}"
 export CLAW_TRADE_OPENCLAW_PLUGINS_ROOT="${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT:-${CLAW_TRADE_RUNTIME_ASSETS_ROOT}/openclaw_plugins}"
 
-mkdir -p "${LOG_DIR}" "$(dirname "${OPENVIKING_CONFIG_FILE}")" "${OPENVIKING_DATA_DIR}" "${OPENCLAW_STATE_DIR}" "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"
+mkdir -p \
+  "${LOG_DIR}" \
+  "${CONFIG_DIR}" \
+  "${RUNTIME_ENV_DIR}" \
+  "$(dirname "${OPENVIKING_CONFIG_FILE}")" \
+  "${OPENVIKING_DATA_DIR}" \
+  "${OPENCLAW_STATE_DIR}" \
+  "${XDG_CACHE_HOME}" \
+  "${NUMBA_CACHE_DIR}" \
+  "${MPLCONFIGDIR}" \
+  "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"
+
+ensure_openclaw_gateway_token() {
+  local token_file="${OPENCLAW_GATEWAY_TOKEN_FILE:-${CONFIG_DIR}/openclaw-gateway-token}"
+  if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+    if [[ -s "${token_file}" ]]; then
+      OPENCLAW_GATEWAY_TOKEN="$(tr -d '\r\n' <"${token_file}")"
+    else
+      umask 077
+      OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
+      printf '%s\n' "${OPENCLAW_GATEWAY_TOKEN}" >"${token_file}"
+      chmod 0600 "${token_file}"
+    fi
+  fi
+  export OPENCLAW_GATEWAY_TOKEN
+}
+
+ensure_scheduled_work_internal_token() {
+  local token_file="${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN_FILE:-${CONFIG_DIR}/scheduled-work-internal-token}"
+  if [[ -z "${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN:-}" ]]; then
+    if [[ -s "${token_file}" ]]; then
+      CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN="$(tr -d '\r\n' <"${token_file}")"
+    else
+      umask 077
+      CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+      printf '%s\n' "${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN}" >"${token_file}"
+      chmod 0600 "${token_file}"
+    fi
+  fi
+  export CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN
+}
+
+write_runtime_env_var() {
+  local target="$1"
+  local key="$2"
+  local value="${3-}"
+  printf '%s=' "${key}" >>"${target}"
+  printf '%q\n' "${value}" >>"${target}"
+}
+
+write_runtime_env() {
+  local tmp="${RUNTIME_ENV_PATH}.tmp"
+  umask 077
+  : >"${tmp}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENCLAW_RUNNER" "${CLAW_TRADE_OPENCLAW_RUNNER}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_BACKEND" "${CLAW_TRADE_OPENVIKING_BACKEND}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_UI_INBOUND_URL" "${CLAW_TRADE_UI_INBOUND_URL}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_UI_INBOUND_TIMEOUT_MS" "${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN" "${CLAW_TRADE_SCHEDULED_WORK_INTERNAL_TOKEN}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED" "${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_VECTORIZE" "${CLAW_TRADE_OPENVIKING_VECTORIZE}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENVIKING_VECTORIZE_REASON" "${CLAW_TRADE_OPENVIKING_VECTORIZE_REASON}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_RUNTIME_ASSETS_ROOT" "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_AGENTS_ROOT" "${CLAW_TRADE_AGENTS_ROOT}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENCLAW_PLUGINS_ROOT" "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_CALL_BIN" "${OPENCLAW_GATEWAY_CALL_BIN}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_URL" "${OPENCLAW_GATEWAY_URL}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_TOKEN" "${OPENCLAW_GATEWAY_TOKEN}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_TIMEOUT_MS" "${OPENCLAW_GATEWAY_TIMEOUT_MS}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_STATE_DIR" "${OPENCLAW_STATE_DIR}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_MARKET_TOOL_PYTHON" "${OPENCLAW_MARKET_TOOL_PYTHON}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_PACKAGE_DIR" "${CURRENT}/runtime/openclaw"
+  write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT" "${CURRENT}/scripts/openclaw-gateway-rpc-helper.mjs"
+  write_runtime_env_var "${tmp}" "OPENVIKING_ENDPOINT" "${OPENVIKING_ENDPOINT}"
+  write_runtime_env_var "${tmp}" "OPENVIKING_BASE_URL" "${OPENVIKING_BASE_URL}"
+  write_runtime_env_var "${tmp}" "OPENVIKING_CONFIG_FILE" "${OPENVIKING_CONFIG_FILE}"
+  write_runtime_env_var "${tmp}" "OPENVIKING_DATA_DIR" "${OPENVIKING_DATA_DIR}"
+  write_runtime_env_var "${tmp}" "OPENVIKING_WRITE_LOCK_PATH" "${OPENVIKING_WRITE_LOCK_PATH}"
+  write_runtime_env_var "${tmp}" "CN_A_MONGODB_URI" "${CN_A_MONGODB_URI}"
+  write_runtime_env_var "${tmp}" "CN_A_MONGODB_DATABASE" "${CN_A_MONGODB_DATABASE}"
+  write_runtime_env_var "${tmp}" "CN_A_MONGODB_CACHE_COLLECTION" "${CN_A_MONGODB_CACHE_COLLECTION}"
+  write_runtime_env_var "${tmp}" "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"
+  write_runtime_env_var "${tmp}" "DATA_GATEWAY_MONGODB_DATABASE" "${DATA_GATEWAY_MONGODB_DATABASE}"
+  write_runtime_env_var "${tmp}" "DATA_GATEWAY_SEED_MONGODB_URI" "${DATA_GATEWAY_SEED_MONGODB_URI}"
+  write_runtime_env_var "${tmp}" "DATA_GATEWAY_SEED_MONGODB_DATABASE" "${DATA_GATEWAY_SEED_MONGODB_DATABASE}"
+  write_runtime_env_var "${tmp}" "DATA_GATEWAY_COLUMNAR_ROOT" "${DATA_GATEWAY_COLUMNAR_ROOT}"
+  write_runtime_env_var "${tmp}" "XDG_CACHE_HOME" "${XDG_CACHE_HOME}"
+  write_runtime_env_var "${tmp}" "NUMBA_CACHE_DIR" "${NUMBA_CACHE_DIR}"
+  write_runtime_env_var "${tmp}" "MPLCONFIGDIR" "${MPLCONFIGDIR}"
+  write_runtime_env_var "${tmp}" "A_SHARE_FACTORY_SEED_PACKAGE" "${A_SHARE_FACTORY_SEED_PACKAGE}"
+  write_runtime_env_var "${tmp}" "A_SHARE_FACTORY_SEED_COLUMNAR_ROOT" "${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT" "${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT}"
+  mv "${tmp}" "${RUNTIME_ENV_PATH}"
+  chmod 0600 "${RUNTIME_ENV_PATH}"
+}
+
+load_mongo_ui_settings_into_process_env() {
+  local exported_count=0
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    export "${key}=${value}"
+    exported_count=$((exported_count + 1))
+  done < <("${PYTHON}" -m claw_trade.runtime.settings_projection)
+  printf '[INFO] 已加载 Mongo UI 设置：%s 项\n' "${exported_count}"
+}
+
+preauthorize_openclaw_gateway_admin() {
+  local preauth_log="${LOG_DIR}/openclaw-gateway-admin-preauth.log"
+  local preauth_retry_log="${LOG_DIR}/openclaw-gateway-admin-preauth-retry.log"
+  local approve_log="${LOG_DIR}/openclaw-gateway-admin-approve.log"
+  local approve_state_log="${LOG_DIR}/openclaw-gateway-admin-approve-state.log"
+  local -a preauth_cmd=(
+    "${OPENCLAW_GATEWAY_CALL_BIN}"
+    gateway
+    call
+    update.status
+    --url
+    "${OPENCLAW_GATEWAY_URL}"
+    --token
+    "${OPENCLAW_GATEWAY_TOKEN}"
+    --scope
+    operator.admin
+    --timeout
+    10000
+    --params
+    '{}'
+    --json
+  )
+
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${preauth_cmd[@]}" >"${preauth_log}" 2>&1
+  local status=$?
+  set -e
+  if [[ "${status}" == "0" ]]; then
+    return 0
+  fi
+  if ! grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_log}"; then
+    sleep 2
+    set +e
+    OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+    OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+      "${preauth_cmd[@]}" >"${preauth_retry_log}" 2>&1
+    status=$?
+    set -e
+    if [[ "${status}" == "0" ]]; then
+      return 0
+    fi
+    if grep -Eiq 'pairing required|scope upgrade pending approval' "${preauth_retry_log}"; then
+      preauth_log="${preauth_retry_log}"
+    else
+      echo "OpenClaw gateway admin preauthorization failed; log: ${preauth_retry_log}" >&2
+      tail -n 40 "${preauth_retry_log}" >&2 || true
+      return 1
+    fi
+  fi
+
+  local request_id
+  request_id="$(extract_openclaw_pairing_request_id "${preauth_log}")"
+  if [[ -z "${request_id}" ]]; then
+    echo "OpenClaw gateway admin preauthorization needs device approval, but no requestId was found; log: ${preauth_log}" >&2
+    tail -n 40 "${preauth_log}" >&2 || true
+    return 1
+  fi
+
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${OPENCLAW_GATEWAY_CALL_BIN}" devices approve "${request_id}" >"${approve_log}" 2>&1
+  local approve_status=$?
+  set -e
+  if [[ "${approve_status}" != "0" ]]; then
+    local approval_request_id
+    approval_request_id="$(extract_openclaw_pairing_request_id "${approve_log}")"
+    if [[ -z "${approval_request_id}" ]]; then
+      echo "OpenClaw gateway admin device approval failed; log: ${approve_log}" >&2
+      tail -n 40 "${approve_log}" >&2 || true
+      return 1
+    fi
+    approve_openclaw_pairing_request_from_state "${approval_request_id}" "${approve_state_log}"
+  fi
+
+  set +e
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${preauth_cmd[@]}" >"${preauth_retry_log}" 2>&1
+  local retry_status=$?
+  set -e
+  if [[ "${retry_status}" == "0" ]]; then
+    return 0
+  fi
+  echo "OpenClaw gateway admin preauthorization failed after approval; log: ${preauth_retry_log}" >&2
+  tail -n 40 "${preauth_retry_log}" >&2 || true
+  return 1
+}
+
+approve_openclaw_pairing_request_from_state() {
+  local request_id="$1"
+  local output_log="$2"
+  local modules=("${OPENCLAW_PACKAGE_DIR}"/dist/device-pairing-*.js)
+  if [[ ! -f "${modules[0]}" ]]; then
+    echo "OpenClaw device-pairing dist module not found under ${OPENCLAW_PACKAGE_DIR}/dist" >&2
+    return 1
+  fi
+  set +e
+  OPENCLAW_DEVICE_PAIRING_MODULE_VALUE="${modules[0]}" \
+  OPENCLAW_PAIRING_REQUEST_ID_VALUE="${request_id}" \
+  OPENCLAW_PAIRING_STATE_DIR_VALUE="${OPENCLAW_STATE_DIR}" \
+    node --input-type=module - >"${output_log}" 2>&1 <<'NODE'
+const mod = await import(process.env.OPENCLAW_DEVICE_PAIRING_MODULE_VALUE);
+const approveDevicePairing = mod.approveDevicePairing ?? mod.n ?? mod.t;
+if (typeof approveDevicePairing !== "function") {
+  throw new Error("approveDevicePairing export not found");
+}
+const requestId = process.env.OPENCLAW_PAIRING_REQUEST_ID_VALUE;
+const stateDir = process.env.OPENCLAW_PAIRING_STATE_DIR_VALUE;
+const result = await approveDevicePairing(requestId, { callerScopes: ["operator.admin"] }, stateDir);
+if (!result || result.status !== "approved") {
+  throw new Error(`approval failed: ${JSON.stringify(result ?? null)}`);
+}
+process.stdout.write(JSON.stringify({ status: result.status, requestId: result.requestId ?? requestId }));
+NODE
+  local status=$?
+  set -e
+  if [[ "${status}" != "0" ]]; then
+    echo "OpenClaw local device approval failed; log: ${output_log}" >&2
+    tail -n 40 "${output_log}" >&2 || true
+    return 1
+  fi
+}
+
+extract_openclaw_pairing_request_id() {
+  local input_log="$1"
+  OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" node <<'NODE'
+const fs = require("node:fs");
+const logPath = process.env.OPENCLAW_PAIRING_LOG_PATH_VALUE;
+let text = "";
+try {
+  text = fs.readFileSync(logPath, "utf8");
+} catch {
+  process.exit(0);
+}
+const patterns = [
+  /requestId["']?\s*[:=]\s*["']?([0-9A-Za-z-]{16,})/i,
+  /request id\s*[:=]\s*["']?([0-9A-Za-z-]{16,})/i,
+];
+for (const pattern of patterns) {
+  const match = text.match(pattern);
+  if (match?.[1]) {
+    process.stdout.write(match[1]);
+    process.exit(0);
+  }
+}
+NODE
+}
 
 cleanup() {
   jobs -pr | xargs -r kill
@@ -50,6 +337,35 @@ wait_http_any() {
     sleep 1
   done
   return 1
+}
+
+start_local_mongodb_if_needed() {
+  "${CURRENT}/runtime/start-local-mongodb" >"${LOG_DIR}/mongodb-start.log" 2>&1
+}
+
+ensure_a_share_factory_seed_restored() {
+  if [[ "${CLAW_TRADE_SKIP_A_SHARE_FACTORY_SEED_RESTORE:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${A_SHARE_FACTORY_SEED_PACKAGE}" ]]; then
+    echo "A-share factory seed package missing: ${A_SHARE_FACTORY_SEED_PACKAGE}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${A_SHARE_FACTORY_SEED_CHECKSUM}" ]]; then
+    echo "A-share factory seed checksum missing: ${A_SHARE_FACTORY_SEED_CHECKSUM}" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}")" "${DATA_GATEWAY_COLUMNAR_ROOT}"
+  "${PYTHON}" "${CURRENT}/scripts/selection/restore_a_share_factory_seed.py" \
+    --package "${A_SHARE_FACTORY_SEED_PACKAGE}" \
+    --checksum "${A_SHARE_FACTORY_SEED_CHECKSUM}" \
+    --mongo-uri "${DATA_GATEWAY_SEED_MONGODB_URI}" \
+    --mongo-database "${DATA_GATEWAY_SEED_MONGODB_DATABASE}" \
+    --columnar-root "${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT}" \
+    --replace-existing \
+    --confirm-replace-existing \
+    --output-json "${LOG_DIR}/a-share-factory-seed-restore.json" \
+    >"${LOG_DIR}/a-share-factory-seed-restore.log" 2>&1
 }
 
 prepare_openviking_config() {
@@ -151,6 +467,12 @@ prepare_openclaw_config() {
     --llm-idle-timeout-seconds "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"
 }
 
+ensure_openclaw_gateway_token
+ensure_scheduled_work_internal_token
+start_local_mongodb_if_needed
+ensure_a_share_factory_seed_restored
+load_mongo_ui_settings_into_process_env
+write_runtime_env
 prepare_openviking_config
 prepare_runtime_assets
 prepare_openclaw_config
@@ -189,5 +511,6 @@ wait_http_any 90 "http://127.0.0.1:${OPENCLAW_GATEWAY_PORT}/health" || {
   echo "OpenClaw gateway health check failed" >&2
   exit 1
 }
+preauthorize_openclaw_gateway_admin
 
 wait -n

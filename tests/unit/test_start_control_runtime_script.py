@@ -359,14 +359,14 @@ def test_start_control_runtime_script_prepares_trade_worker_agent_config_before_
     assert text.count('contextInjection: "never"') == 3
     assert "list: [uiChatAgent, uiWorkerChatAgent, ...mergedWorkers]" in text
     assert "OpenClaw LLM 未配置：仅启动设置/诊断 UI" in text
-    assert "OpenClaw LLM 使用已保存配置；.env.local 未覆盖。" in text
+    assert "OpenClaw LLM 使用已保存配置；.env.local 未覆盖。" not in text
     assert ".env.local LLM provider 暂未接入 OpenClaw runtime 配置生成" in text
     assert ".env.local 缺少 DEEPSEEK_API_KEY" in text
     assert "const existingModelsConfig = isPlainObject(existingConfig.models) ? existingConfig.models : {};" in text
     assert "const existingProviders = isPlainObject(existingModelsConfig.providers) ? existingModelsConfig.providers : {};" in text
     assert "const existingDefaults = isPlainObject(existingAgentsConfig.defaults) ? existingAgentsConfig.defaults : {};" in text
-    assert "const hasSavedLlmConfig = Object.keys(existingProviders).length > 0 || Boolean(existingDefaults.model);" in text
-    assert "const mergedProviders = {" in text
+    assert "const hasSavedLlmConfig = Object.keys(existingProviders).length > 0 || Boolean(existingDefaults.model);" not in text
+    assert "const mergedProviders = llm" in text
     assert "...existingProviders," in text
     assert "[llm.providerId]: {" in text
     assert "apiKey: llm.apiKey" in text
@@ -451,19 +451,22 @@ def test_start_control_runtime_script_allows_missing_llm_for_settings_ui_startup
 
     missing_config_index = text.index("if (!selectedModel) {")
     no_llm_warning_index = text.index("OpenClaw LLM 未配置：仅启动设置/诊断 UI")
-    saved_config_info_index = text.index("OpenClaw LLM 使用已保存配置；.env.local 未覆盖。")
-    providers_index = text.index("const mergedProviders = {")
+    providers_index = text.index("const mergedProviders = llm")
     defaults_index = text.index("const mergedDefaults = {")
     missing_config_block = text[missing_config_index : text.index("  }", missing_config_index)]
     assert "return null;" in missing_config_block
     assert "process.exit(1)" not in missing_config_block
-    assert no_llm_warning_index < saved_config_info_index < providers_index < defaults_index
+    assert no_llm_warning_index < providers_index < defaults_index
+    assert "OpenClaw LLM 使用已保存配置；.env.local 未覆盖。" not in text
     assert "...existingProviders," in text
     assert "...existingDefaults," in text
     assert "openclaw_report_llm_configured() {" not in text
     assert "跳过 CLI scope 预授权" not in text
     assert "if ! openclaw_report_llm_configured; then" not in text
     assert "OpenClaw CLI scope 预授权完成。" in text
+    assert 'const unconfiguredDefaultModel = "deepseek/deepseek-chat";' in text
+    assert "primary: unconfiguredDefaultModel" in text
+    assert "[unconfiguredDefaultModel]" in text
 
 
 def test_start_control_runtime_script_uses_explicit_openviking_embedding_config_only() -> None:
@@ -530,9 +533,9 @@ def test_start_control_runtime_script_loads_mongo_ui_settings_before_runtime_con
     assert 'CLAW_TRADE_IMPORT_ENV_DATA_SOURCES="${import_env_data_sources}" uv run python -m claw_trade.runtime.settings_projection' in text
     assert "CLAW_TRADE_RUNTIME_REPORT_MODEL_PROVIDER_VALUE" in text
     assert "resolveMongoReportModelConfig() || resolveProjectLlmConfig()" in text
-    mongo_index = text.index("load_mongo_ui_settings_into_process_env")
-    embedding_flags_index = text.index("configure_openviking_embedding_runtime_flags")
-    openclaw_config_index = text.index("prepare_openclaw_trade_agent_config")
+    mongo_index = text.index("\nload_mongo_ui_settings_into_process_env\n")
+    embedding_flags_index = text.index("\nconfigure_openviking_embedding_runtime_flags\n")
+    openclaw_config_index = text.index("\nprepare_openclaw_trade_agent_config\n")
     assert mongo_index < embedding_flags_index
     assert mongo_index < openclaw_config_index
 

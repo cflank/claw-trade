@@ -341,7 +341,7 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
     _run_crypto_history_bootstrap_command(
         [
             sys.executable,
-            "scripts/crypto/download_binance_public_data.py",
+            str(_runtime_script_path("scripts/crypto/download_binance_public_data.py")),
             "--output-root",
             str(raw_root),
             "--market-segment",
@@ -363,7 +363,7 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
     )
     import_cmd = [
         sys.executable,
-        "scripts/crypto/import_crypto_prepackaged_to_mongo.py",
+        str(_runtime_script_path("scripts/crypto/import_crypto_prepackaged_to_mongo.py")),
         "--spot-root",
         str(raw_root / "data"),
         "--trade-date",
@@ -393,6 +393,9 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
 
 
 def _crypto_history_columnar_root_for_maintenance() -> Path:
+    configured_crypto = os.environ.get("CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT", "").strip()
+    if configured_crypto:
+        return Path(configured_crypto)
     if _crypto_history_seed_is_complete(_CRYPTO_HISTORY_FACTORY_COLUMNAR_ROOT):
         return _CRYPTO_HISTORY_FACTORY_COLUMNAR_ROOT
     configured = os.environ.get("DATA_GATEWAY_COLUMNAR_ROOT", "").strip()
@@ -484,6 +487,16 @@ def _path_is_under(path: Path, parent: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _runtime_script_path(relative_path: str) -> Path:
+    path = Path(relative_path)
+    if path.is_absolute():
+        return path
+    release_root = os.environ.get("CLAW_TRADE_RELEASE_ROOT", "").strip()
+    if release_root:
+        return Path(release_root) / path
+    return path
 
 
 def _run_crypto_history_bootstrap_command(command: Sequence[str]) -> None:

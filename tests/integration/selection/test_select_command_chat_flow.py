@@ -572,9 +572,22 @@ def _selection_controller_with_completed_run(
     raw_complete_summary: bool = False,
     selection_runner: _FakeSelectionOpenClawRunner | None = None,
     raw_maintenance_status_provider: Callable[[SelectionMarket], object | None] | None = None,
+    selection_runs_root: Path | None = None,
+    use_local_selection_refs: bool = False,
 ) -> tuple[SelectionController, _FakeSelectionOpenClawRunner]:
-    store = SelectionRunStore()
-    summary_path = tmp_path / "candidate-cache-summary.md"
+    run_id = "sel-run-08"
+    store = (
+        SelectionRunStore(persisted_runs_dir=selection_runs_root / "store" / "data-runs")
+        if selection_runs_root is not None
+        else SelectionRunStore()
+    )
+    cache_dir = (
+        store.candidate_cache_artifact_root() / run_id / "candidate-cache" / "approved"
+        if use_local_selection_refs
+        else tmp_path
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = cache_dir / "candidate-cache-summary.md"
     if legacy_summary or raw_complete_summary:
         summary_lines = (
             [
@@ -607,7 +620,7 @@ def _selection_controller_with_completed_run(
             "\n".join(summary_lines),
             encoding="utf-8",
         )
-        (tmp_path / "candidate-cache.json").write_text(
+        (cache_dir / "candidate-cache.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -682,7 +695,7 @@ def _selection_controller_with_completed_run(
             ),
             encoding="utf-8",
         )
-        (tmp_path / "candidate-cache-manifest.json").write_text(
+        (cache_dir / "candidate-cache-manifest.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -719,8 +732,8 @@ def _selection_controller_with_completed_run(
             ),
             encoding="utf-8",
         )
-    if not (tmp_path / "candidate-cache.json").is_file():
-        (tmp_path / "candidate-cache.json").write_text(
+    if not (cache_dir / "candidate-cache.json").is_file():
+        (cache_dir / "candidate-cache.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -796,9 +809,9 @@ def _selection_controller_with_completed_run(
             encoding="utf-8",
         )
     if not legacy_summary:
-        _add_candidate_cache_summary_fields(tmp_path / "candidate-cache.json")
-    if not (tmp_path / "candidate-cache-manifest.json").is_file():
-        (tmp_path / "candidate-cache-manifest.json").write_text(
+        _add_candidate_cache_summary_fields(cache_dir / "candidate-cache.json")
+    if not (cache_dir / "candidate-cache-manifest.json").is_file():
+        (cache_dir / "candidate-cache-manifest.json").write_text(
             json.dumps(
                 {
                     "trade_date": "2026-05-26",
@@ -812,7 +825,6 @@ def _selection_controller_with_completed_run(
             ),
             encoding="utf-8",
         )
-    run_id = "sel-run-08"
     plan = SelectionRunPlan(
         selection_run_id=run_id,
         market=SelectionMarket.CN_A,
@@ -824,7 +836,7 @@ def _selection_controller_with_completed_run(
         approved_strategy_config_ref="config://approved",
         trigger_source=SelectionTriggerSource.SCHEDULED,
     )
-    body_path = tmp_path / "candidate-cache.md"
+    body_path = cache_dir / "candidate-cache.md"
     body_text = "\n".join(
         [
             "# A股候选缓存",
@@ -834,7 +846,7 @@ def _selection_controller_with_completed_run(
     )
     body_path.write_text(body_text, encoding="utf-8")
     body_sha = sha256(body_text.encode("utf-8")).hexdigest()
-    manifest_path = tmp_path / "candidate-cache-manifest.json"
+    manifest_path = cache_dir / "candidate-cache-manifest.json"
     manifest_payload = _candidate_cache_manifest_payload(run_id=run_id, body_sha=body_sha)
     manifest_path.write_text(
         json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
@@ -847,12 +859,24 @@ def _selection_controller_with_completed_run(
     candidate_cache_ref = CandidateCacheRef(
         selection_run_id=run_id,
         material_id="mat-sel-run-08",
-        l1_uri=str(body_path),
+        l1_uri=(
+            f"local://selection/{run_id}/candidate-cache/approved/candidate-cache.md"
+            if use_local_selection_refs
+            else str(body_path)
+        ),
         content_sha256=body_sha,
-        manifest_ref=str(manifest_path),
+        manifest_ref=(
+            f"local://selection/{run_id}/candidate-cache/approved/candidate-cache-manifest.json"
+            if use_local_selection_refs
+            else str(manifest_path)
+        ),
         approved_at="2026-05-26T09:00:00+00:00",
         expires_at="2026-05-27T09:00:00+00:00",
-        cache_summary_ref=str(summary_path),
+        cache_summary_ref=(
+            f"local://selection/{run_id}/candidate-cache/approved/candidate-cache-summary.md"
+            if use_local_selection_refs
+            else str(summary_path)
+        ),
     )
     store.save_data_run_record(
         SelectionDataRunRecord(
@@ -1328,6 +1352,30 @@ def test_select_command_happy_path_runs_fixed_workers_and_renders_three_categori
     assert chat_transport.calls == 0
     assert workflow_runner.calls == 0
     assert result["context"]["kind"] == "normal_chat"
+
+
+@pytest.mark.integration
+def test_select_command_passes_store_artifact_root_to_openclaw_payload(tmp_path: Path) -> None:
+    shared_root = tmp_path / "shared"
+    selection_runs_root = shared_root / "runs" / "selection"
+    selection_controller, selection_runner = _selection_controller_with_completed_run(
+        tmp_path,
+        selection_runs_root=selection_runs_root,
+        use_local_selection_refs=True,
+    )
+
+    result = selection_controller.handle_select_command(
+        raw_text="/select",
+        request_id="sel-store-artifact-root",
+    )
+
+    assert result.code.value == "completed"
+    assert selection_runner.payloads
+    expected_root = str((selection_runs_root / "artifacts").resolve())
+    for payload in selection_runner.payloads:
+        runtime_vars = payload["runtime_vars"]
+        assert isinstance(runtime_vars, dict)
+        assert runtime_vars["selection_artifact_root"] == expected_root
 
 
 @pytest.mark.integration

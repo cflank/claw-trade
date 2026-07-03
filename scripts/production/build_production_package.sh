@@ -77,6 +77,8 @@ mkdir -p \
   "${package_root}/runtime/openclaw" \
   "${package_root}/web" \
   "${package_root}/data" \
+  "${package_root}/data/crypto-history-full" \
+  "${package_root}/scripts/crypto" \
   "${package_root}/scripts/selection" \
   "${OUT_DIR}"
 
@@ -100,7 +102,12 @@ cp -a third_party/openclaw/openclaw.mjs "${package_root}/runtime/openclaw/opencl
 cp -a third_party/openclaw/package.json "${package_root}/runtime/openclaw/package.json"
 cp -a third_party/openclaw/LICENSE "${package_root}/runtime/openclaw/LICENSE"
 cp -a third_party/openclaw/node_modules "${package_root}/runtime/openclaw/node_modules"
+cp -a scripts/openclaw-gateway-rpc-helper.mjs "${package_root}/scripts/openclaw-gateway-rpc-helper.mjs"
+cp -a scripts/crypto/download_binance_public_data.py "${package_root}/scripts/crypto/download_binance_public_data.py"
+cp -a scripts/crypto/import_crypto_prepackaged_to_mongo.py "${package_root}/scripts/crypto/import_crypto_prepackaged_to_mongo.py"
 cp -a scripts/selection/restore_a_share_factory_seed.py "${package_root}/scripts/selection/restore_a_share_factory_seed.py"
+require_path "data/crypto-history-full/normalized-columnar-usdt-only"
+cp -a data/crypto-history-full/normalized-columnar-usdt-only "${package_root}/data/crypto-history-full/normalized-columnar-usdt-only"
 
 shopt -s nullglob
 current_seed_packages=(data/current-seed-*.tar)

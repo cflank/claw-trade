@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -13,7 +14,8 @@ from claw_trade.data_gateway.maintenance import (
     InMemoryMaintenanceJobRepository,
     ScheduledDataMaintenanceRunner,
 )
-from claw_trade.data_gateway.models import DataResultStatus
+from claw_trade.data_gateway.maintenance.jobs import MaintenanceJob
+from claw_trade.data_gateway.models import DataGap, DataResultStatus, GapSeverity, Market
 from claw_trade.data_gateway.public_api import PublicDataRequest
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
 
@@ -53,6 +55,25 @@ class CryptoBypassPlanner:
     def find_gaps(self, *, market: str, dataset_scope: str, as_of: object) -> tuple[DailyBarMaintenanceGap, ...]:
         _ = market, dataset_scope, as_of
         return (DailyBarMaintenanceGap(market="CRYPTO", instrument="BTCUSDT", missing_day=date(2026, 6, 17)),)
+
+
+def test_crypto_default_history_root_reads_release_seed_env(monkeypatch, tmp_path: Path) -> None:
+    import claw_trade.data_gateway.maintenance.scheduled_runner as scheduled_runner_module
+
+    release_seed_root = tmp_path / "release-crypto-history"
+    monkeypatch.setenv("CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT", str(release_seed_root))
+    reloaded = importlib.reload(scheduled_runner_module)
+    try:
+        runner = reloaded.ScheduledDataMaintenanceRunner(
+            data_api=FakeDataAPI(),
+            job_repository=InMemoryMaintenanceJobRepository(),
+            dataset_repository=ManifestOnlyDatasetRepository(()),
+        )
+
+        assert runner._crypto_history_columnar_root == release_seed_root
+    finally:
+        monkeypatch.delenv("CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT", raising=False)
+        importlib.reload(scheduled_runner_module)
 
 
 class ManifestOnlyDatasetRepository:
@@ -959,6 +980,50 @@ def test_crypto_daily_maintenance_does_not_fallback_to_manifest_or_single_symbol
     assert saved.status == "failed"
 
 
+def test_startup_maintenance_marks_older_startup_running_job_interrupted() -> None:
+    old_started_at = datetime(2026, 7, 3, 1, 41, 24, tzinfo=UTC)
+    now = datetime(2026, 7, 3, 8, 0, tzinfo=UTC)
+    jobs = InMemoryMaintenanceJobRepository()
+    jobs.save(
+        MaintenanceJob(
+            job_id="data-maintenance:CN_A:eod:startup-20260703T014124000000Z",
+            job_type="daily_incremental",
+            market="CN_A",
+            dataset_scope="daily_bar",
+            status="running",
+            scheduled_at=old_started_at,
+            started_at=old_started_at,
+            lock_owner="maintenance.scheduled_runner",
+            lock_expires_at=old_started_at + timedelta(hours=4),
+        )
+    )
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=FakeDataAPI(),
+        job_repository=jobs,
+        dataset_repository=ManifestOnlyDatasetRepository(
+            (
+                {
+                    "dataset": "daily_bar",
+                    "market": "CN_A",
+                    "status": "active",
+                    "storage": "parquet",
+                    "universe_refs": ("all_a_shares",),
+                    "period_end_max": "2026-07-03",
+                },
+            )
+        ),
+        now_provider=lambda: now,
+    )
+
+    result = runner.run(market="CN_A", job_kind="eod", cron_run_id="startup-20260703T080000000000Z")
+
+    old = jobs.get("data-maintenance:CN_A:eod:startup-20260703T014124000000Z")
+    assert result.status == "succeeded"
+    assert old is not None
+    assert old.status == "failed"
+    assert old.error == "startup_data_maintenance_interrupted_by_new_startup"
+
+
 def test_scheduled_maintenance_fails_closed_on_non_ready_data_result(tmp_path: Path) -> None:
     root = tmp_path / "crypto-history"
     _write_crypto_history_daily_rows(
@@ -989,6 +1054,54 @@ def test_scheduled_maintenance_fails_closed_on_non_ready_data_result(tmp_path: P
         "scheduled maintenance DataAPI returned non-ready status: "
         "request_id=maintenance:CRYPTO:daily_bar:BTCUSDT:2026-06-17 status=partial"
     )
+
+
+def test_scheduled_maintenance_non_ready_result_includes_gap_reason(tmp_path: Path) -> None:
+    class CredentialMissingDataAPI:
+        def request_data(self, requests: tuple[Any, ...]) -> list[object]:
+            return [
+                SimpleNamespace(
+                    request_id=request.request_id,
+                    dataset_refs=(),
+                    raw_refs=(),
+                    attempt_refs=("attempt:tushare",),
+                    gaps=(
+                        DataGap.by_reason(
+                            "credential_missing",
+                            request_id=request.request_id,
+                            market=Market.CN_A,
+                            data_type="daily_bar",
+                            granularity="daily",
+                            severity=GapSeverity.BLOCKER,
+                            message="credential_missing:data_source:tushare",
+                        ),
+                    ),
+                    status=DataResultStatus.ERROR,
+                )
+                for request in requests
+            ]
+
+    jobs = InMemoryMaintenanceJobRepository()
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=CredentialMissingDataAPI(),
+        job_repository=jobs,
+        incremental_planner=FakePlanner(),
+        dataset_repository=DatasetRepository(),
+        now_provider=lambda: datetime(2026, 6, 18, 9, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(RuntimeError, match="credential_missing:data_source:tushare"):
+        runner.run(
+            market="CN_A",
+            job_kind="eod",
+            cron_run_id="cron-run-cn-a",
+            maintenance_job_id="job-cn-a-credential-missing",
+        )
+
+    saved = jobs.get("job-cn-a-credential-missing")
+    assert saved is not None
+    assert saved.status == "failed"
+    assert "credential_missing:data_source:tushare" in str(saved.error)
 
 
 def test_crypto_kline_refresh_fails_closed_when_full_history_is_missing(tmp_path: Path) -> None:

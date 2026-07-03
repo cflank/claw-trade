@@ -1066,6 +1066,8 @@ const deepseekBaseUrl = String(process.env.DEEPSEEK_BASE_URL_VALUE || "https://a
 const qwenBaseUrl = String(process.env.QWEN_BASE_URL_VALUE || "https://dashscope.aliyuncs.com/compatible-mode/v1").trim();
 const uiChatAgentId = "ui_chat";
 const uiWorkerChatAgentId = "ui_worker_chat";
+const unconfiguredDefaultModel = "deepseek/deepseek-chat";
+const unconfiguredDefaultAlias = "DeepSeek Chat";
 const contextFreeScheduledWorkerIds = new Set([
   "price_alert_scan_worker",
   "scheduled_report_runner",
@@ -1290,11 +1292,8 @@ const existingPluginEntries = isPlainObject(existingPluginsConfig.entries) ? exi
 const existingPluginAllow = Array.isArray(existingPluginsConfig.allow)
   ? existingPluginsConfig.allow.map((item) => String(item || "").trim()).filter(Boolean)
   : [];
-const hasSavedLlmConfig = Object.keys(existingProviders).length > 0 || Boolean(existingDefaults.model);
-if (!llm && !hasSavedLlmConfig) {
+if (!llm) {
   console.error("[WARN] OpenClaw LLM 未配置：仅启动设置/诊断 UI；报告执行会继续由报告模型 gate 阻断。");
-} else if (!llm) {
-  console.error("[INFO] OpenClaw LLM 使用已保存配置；.env.local 未覆盖。");
 } else if (mongoReportProvider && mongoReportModel && mongoReportApiKey) {
   console.error("[INFO] OpenClaw LLM 使用 Mongo UI 设置。");
 }
@@ -1379,10 +1378,9 @@ const mergedWorkers = workers.map((workerId) => {
   };
 });
 
-const mergedProviders = {
-  ...existingProviders,
-  ...(llm
-    ? {
+const mergedProviders = llm
+  ? {
+    ...existingProviders,
       [llm.providerId]: {
         ...(llm.baseUrl ? { baseUrl: llm.baseUrl } : {}),
         apiKey: llm.apiKey,
@@ -1400,8 +1398,7 @@ const mergedProviders = {
         ],
       },
     }
-    : {}),
-};
+  : {};
 const mergedModels = {
   ...existingModelsConfig,
   providers: mergedProviders,
@@ -1418,6 +1415,15 @@ if (llm) {
   mergedDefaults.models = {
     [llm.model]: {
       alias: llm.providerName,
+    },
+  };
+} else {
+  mergedDefaults.model = {
+    primary: unconfiguredDefaultModel,
+  };
+  mergedDefaults.models = {
+    [unconfiguredDefaultModel]: {
+      alias: unconfiguredDefaultAlias,
     },
   };
 }

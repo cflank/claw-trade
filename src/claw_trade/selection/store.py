@@ -168,7 +168,7 @@ class SelectionRunStore:
         )
         if latest.data_run.status == SelectionDataRunStatus.NO_CANDIDATE:
             return LatestCompletedSelectionRunResult.unavailable(SelectUnavailableCode.NO_CANDIDATE_SELECTION_RUN)
-        code = _validate_record_for_select(latest, now=now, artifact_root=self._candidate_cache_artifact_root())
+        code = _validate_record_for_select(latest, now=now, artifact_root=self.candidate_cache_artifact_root())
         if code is not None:
             return LatestCompletedSelectionRunResult.unavailable(code)
         assert latest.manifest is not None
@@ -327,7 +327,7 @@ class SelectionRunStore:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(output)
 
-    def _candidate_cache_artifact_root(self) -> Path:
+    def candidate_cache_artifact_root(self) -> Path:
         if self._artifact_root is not None:
             return self._artifact_root
         if self._persisted_runs_dir is not None:

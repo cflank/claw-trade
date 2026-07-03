@@ -32,7 +32,7 @@ stop_ui() {
       kill "${pid}" 2>/dev/null || true
       sleep 2
     fi
-    rm -f "${ui_pid_file}"
+    sudo rm -f "${ui_pid_file}"
   fi
   pkill -f 'python3.12 -m claw_trade.web.app' 2>/dev/null || true
 }
@@ -60,7 +60,7 @@ if [[ "${purge_shared}" == "1" && -d "${install_root}/shared" ]]; then
   sudo rm -rf "${install_root}/shared"
 fi
 
-rm -f /tmp/claw-trade-ui.log "${ui_pid_file}"
+sudo rm -f /tmp/claw-trade-ui.log "${ui_pid_file}"
 sudo rm -f /etc/sudoers.d/claw-trade-update
 sudo rm -f /usr/local/lib/claw-trade/claw-trade-apply-update
 

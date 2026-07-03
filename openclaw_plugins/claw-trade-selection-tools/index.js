@@ -36,6 +36,14 @@ function textValue(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function absolutePathValue(value) {
+  const text = textValue(value);
+  if (!text) {
+    return undefined;
+  }
+  return path.isAbsolute(text) ? text : path.resolve(text);
+}
+
 class SelectionToolError extends Error {
   constructor(code, message, details = undefined) {
     super(message);
@@ -115,7 +123,7 @@ function readCommand(ctx) {
   const stage = textValue(command.stage);
   const runId = textValue(command.run_id);
   const callId = textValue(command.call_id);
-  const evidenceDir = textValue(command.evidence_dir);
+  const evidenceDir = absolutePathValue(command.evidence_dir);
   const runtimeVars = isRecord(command.runtime_vars) ? command.runtime_vars : {};
   const selectWorkflowRunId = textValue(command.select_workflow_run_id) ?? textValue(runtimeVars.select_workflow_run_id);
   const selectionRunId = textValue(command.selection_run_id) ?? textValue(runtimeVars.selection_run_id);
@@ -285,8 +293,8 @@ async function runSelectionTool(ctx, params, toolCallId) {
         ? runtime.command.candidate_cache_ref
         : runtime.runtimeVars.candidate_cache_ref,
       selection_artifact_root:
-        textValue(runtime.command.selection_artifact_root) ??
-        textValue(runtime.runtimeVars.selection_artifact_root) ??
+        absolutePathValue(runtime.command.selection_artifact_root) ??
+        absolutePathValue(runtime.runtimeVars.selection_artifact_root) ??
         null,
     },
   };

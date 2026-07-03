@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -28,7 +29,9 @@ _SUPPORTED_JOBS: dict[tuple[str, str], tuple[str, str]] = {
 _DEFAULT_DAILY_BAR_MAINTENANCE_INSTRUMENTS: dict[str, str] = {
     "CN_A": "all_a_shares",
 }
-_CRYPTO_HISTORY_COLUMNAR_ROOT = Path("data/crypto-history-full/normalized-columnar-usdt-only")
+_CRYPTO_HISTORY_COLUMNAR_ROOT = Path(
+    os.environ.get("CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT") or "data/crypto-history-full/normalized-columnar-usdt-only"
+)
 _CRYPTO_HISTORY_COLUMNAR_DAILY_GLOB = "market=CRYPTO/dataset=daily_bar/granularity=daily/*.parquet"
 _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS = 300
 _CRYPTO_HISTORY_MIN_TRADING_SYMBOL_COVERAGE_RATIO = 0.90
@@ -121,6 +124,8 @@ class ScheduledDataMaintenanceRunner:
             requested_by=_REQUESTED_BY,
             scheduled_at=as_of,
         )
+        if _is_startup_cron_run_id(cron_run_id):
+            self._mark_interrupted_startup_jobs(job=job, job_kind=normalized_job_kind, as_of=as_of)
         if self._incremental_planner is not None:
             if normalized_market == "CRYPTO" and dataset_scope == "daily_bar":
                 error = "CRYPTO daily_bar maintenance must use full spot USDT columnar history; incremental planner bypass is not allowed"
@@ -184,6 +189,25 @@ class ScheduledDataMaintenanceRunner:
             day = as_of.date() if isinstance(as_of, datetime) else as_of
             run_id = day.isoformat()
         return f"data-maintenance:{market}:{job_kind}:{run_id}"
+
+    def _mark_interrupted_startup_jobs(self, *, job: MaintenanceJob, job_kind: str, as_of: datetime | date) -> None:
+        ts = as_of if isinstance(as_of, datetime) else datetime.now(tz=UTC)
+        prefix = f"data-maintenance:{job.market}:{job_kind}:startup-"
+        for existing in self._job_repository.list():
+            if existing.job_id == job.job_id:
+                continue
+            if existing.status != "running":
+                continue
+            if existing.market != job.market or existing.dataset_scope != job.dataset_scope:
+                continue
+            if not existing.job_id.startswith(prefix):
+                continue
+            mark_job_failed(
+                self._job_repository,
+                existing,
+                error="startup_data_maintenance_interrupted_by_new_startup",
+                now=ts,
+            )
 
     def _plan_daily_bar_gaps(
         self,
@@ -695,6 +719,10 @@ def _date_or_none(value: Any) -> date | None:
         return None
 
 
+def _is_startup_cron_run_id(value: str | None) -> bool:
+    return str(value or "").startswith("startup-")
+
+
 def _is_later(left: Any, right: Any) -> bool:
     left_day = _date_or_none(left)
     right_day = _date_or_none(right)
@@ -739,9 +767,11 @@ class _FailClosedDataApi:
         for result in results:
             status = _result_status(result)
             if status != DataResultStatus.READY.value:
+                detail = _result_failure_detail(result)
+                reason = f" reason={detail}" if detail else ""
                 raise RuntimeError(
                     f"scheduled maintenance DataAPI returned non-ready status: "
-                    f"request_id={_result_request_id(result)} status={status}"
+                    f"request_id={_result_request_id(result)} status={status}{reason}"
                 )
         return results
 
@@ -758,3 +788,16 @@ def _result_request_id(result: Any) -> str:
     if isinstance(result, dict):
         return str(result.get("request_id") or result.get("requestId") or "unknown")
     return str(getattr(result, "request_id", "") or "unknown")
+
+
+def _result_failure_detail(result: Any) -> str:
+    gaps = result.get("gaps", ()) if isinstance(result, dict) else getattr(result, "gaps", ())
+    for gap in tuple(gaps or ()):
+        if isinstance(gap, dict):
+            detail = gap.get("human_readable") or gap.get("reason")
+        else:
+            detail = getattr(gap, "human_readable", None) or getattr(getattr(gap, "reason", None), "value", None) or getattr(gap, "reason", None)
+        text = str(detail or "").strip()
+        if text:
+            return text
+    return ""

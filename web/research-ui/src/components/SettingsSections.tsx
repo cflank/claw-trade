@@ -482,7 +482,7 @@ export function SettingsSections({
               onChange={(event) =>
                 onLlmChange({ embedding: { ...embedding, provider: event.target.value } })
               }
-              placeholder="例如 openai / jina / minimax"
+              placeholder="例如 jina / minimax / qwen"
             />
           </label>
           <label className="ct-field">

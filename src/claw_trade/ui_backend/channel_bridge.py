@@ -90,6 +90,8 @@ class ChannelBridge:
         def finish(status: dict[str, Any]) -> dict[str, Any]:
             if cache_light_status:
                 self._store_light_channel_status(status)
+            else:
+                self._clear_light_channel_status_cache()
             return status
 
         if include_qr and poll_login and self._active_qr_data_url and self._active_qr_session_key:

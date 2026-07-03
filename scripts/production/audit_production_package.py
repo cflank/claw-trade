@@ -21,6 +21,10 @@ REQUIRED_RELEASE_PATHS = {
     "runtime/openclaw/node_modules/supports-color",
     "runtime/assets/agents.tar",
     "runtime/assets/openclaw_plugins.tar",
+    "scripts/openclaw-gateway-rpc-helper.mjs",
+    "scripts/crypto/download_binance_public_data.py",
+    "scripts/crypto/import_crypto_prepackaged_to_mongo.py",
+    "data/crypto-history-full/normalized-columnar-usdt-only",
     "web/dist/index.html",
 }
 

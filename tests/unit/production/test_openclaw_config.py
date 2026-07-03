@@ -32,9 +32,11 @@ def test_prepare_openclaw_config_uses_runtime_asset_paths(tmp_path: Path) -> Non
     assert workers["market_analyst"]["skills"] == ["claw-trade-stage"]
     assert str(plugins_root / "claw-trade-frontline-tools") in payload["plugins"]["load"]["paths"]
     assert str(plugins_root / WEIXIN_PLUGIN_LOAD_PATH) in payload["plugins"]["load"]["paths"]
+    assert payload["agents"]["defaults"]["model"] == {"primary": "deepseek/deepseek-chat"}
+    assert "deepseek/deepseek-chat" in payload["agents"]["defaults"]["models"]
 
 
-def test_prepare_openclaw_config_preserves_existing_model_when_env_is_empty(tmp_path: Path) -> None:
+def test_prepare_openclaw_config_discards_stale_model_when_env_is_empty(tmp_path: Path) -> None:
     agents_root = tmp_path / "runtime-assets" / "agents"
     plugins_root = tmp_path / "runtime-assets" / "openclaw_plugins"
     _write_agents_root(agents_root)
@@ -45,7 +47,7 @@ def test_prepare_openclaw_config_preserves_existing_model_when_env_is_empty(tmp_
         json.dumps(
             {
                 "agents": {"defaults": {"model": {"primary": "deepseek/deepseek-chat"}}},
-                "models": {"providers": {"deepseek": {"apiKey": "saved", "models": []}}},
+                "models": {"providers": {"openai": {"apiKey": "stale", "models": []}}},
             }
         ),
         encoding="utf-8",
@@ -60,7 +62,7 @@ def test_prepare_openclaw_config_preserves_existing_model_when_env_is_empty(tmp_
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["agents"]["defaults"]["model"]["primary"] == "deepseek/deepseek-chat"
-    assert payload["models"]["providers"]["deepseek"]["apiKey"] == "saved"
+    assert payload["models"]["providers"] == {}
 
 
 def _write_agents_root(root: Path) -> None:

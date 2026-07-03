@@ -52,8 +52,10 @@ function shouldEnableWechatPlugin(channel: ChannelStatusForUser | null) {
 }
 
 const SETTINGS_LOAD_TIMEOUT_MS = 8000;
+const SETTINGS_SAVE_TIMEOUT_MS = 30000;
 const MODEL_TEST_TIMEOUT_MS = 90000;
 const CHANNEL_STATUS_TIMEOUT_MS = 50000;
+const CHANNEL_STATUS_REFRESH_MS = 10000;
 const INSTALL_UPDATE_TIMEOUT_MS = 45000;
 const CHANNEL_LOGIN_POLL_MS = 2000;
 const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
@@ -437,6 +439,30 @@ export function SettingsPage() {
     };
   }, [channel?.qrCodeImageDataUrl, channel?.state]);
 
+  useEffect(() => {
+    if (channel?.qrCodeImageDataUrl) {
+      return undefined;
+    }
+    let active = true;
+    const timer = window.setInterval(() => {
+      void withSettingsTimeout(
+        getChannelStatus({ probe: false }),
+        '微信通道暂不可用，请稍后重试。',
+        CHANNEL_STATUS_TIMEOUT_MS,
+      )
+        .then((result) => {
+          if (active) {
+            setChannel(result);
+          }
+        })
+        .catch(() => undefined);
+    }, CHANNEL_STATUS_REFRESH_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [channel?.qrCodeImageDataUrl]);
+
   async function refreshChannel() {
     if (shouldEnableWechatPlugin(channel)) {
       await setChannelEnabled(true);
@@ -549,8 +575,18 @@ export function SettingsPage() {
           expectedSettingsVersion: llmSettingsVersion,
         }),
         '模型配置暂不可保存，请稍后重试。',
+        SETTINGS_SAVE_TIMEOUT_MS,
       );
-      setLlm(withSavedUnverifiedStatus({ ...draft, status: 'saved', updatedAt: result.updatedAt }, result.updatedAt));
+      const savedDraft = { ...draft, status: 'saved' as const, updatedAt: result.updatedAt };
+      setLlm(
+        result.reportModelStatus
+          ? {
+              ...savedDraft,
+              lastTestMessage: result.reportModelStatus.userMessage,
+              reportModelStatus: result.reportModelStatus,
+            }
+          : withSavedUnverifiedStatus(savedDraft, result.updatedAt),
+      );
       if (result.settingsVersion) {
         setLlmSettingsVersion(result.settingsVersion);
       }

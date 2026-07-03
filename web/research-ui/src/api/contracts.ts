@@ -401,12 +401,6 @@ export interface ChannelStatusForUser {
 
 export interface LlmConfigDraft {
   provider:
-    | 'openai'
-    | 'anthropic'
-    | 'google'
-    | 'mistral'
-    | 'openrouter'
-    | 'xai'
     | 'deepseek'
     | 'qwen'
     | 'glm'
@@ -728,6 +722,7 @@ export interface SaveLlmConfigViaOpenClawOutput {
   status: 'saved';
   updatedAt: string;
   settingsVersion?: string;
+  reportModelStatus?: ReportModelStatusForUser | null;
 }
 
 export interface SaveEmbeddingConfigViaOpenVikingInput {

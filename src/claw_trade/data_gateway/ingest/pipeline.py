@@ -203,9 +203,9 @@ class IngestPipeline:
 def gaps_from_fetch_result(result: Any, batch: Any) -> tuple[DataGap, ...]:
     status = _fetch_status(result)
     if status == "credential_missing":
-        return (_batch_gap(batch, "credential_missing"),)
+        return (_batch_gap(batch, "credential_missing", message=_fetch_error_detail(result)),)
     if status == "permission_denied":
-        return (_batch_gap(batch, "permission_denied"),)
+        return (_batch_gap(batch, "permission_denied", message=_fetch_error_detail(result)),)
     if status == "rate_limited":
         evidence_refs = tuple(getattr(obs, "request_key", "") for obs in getattr(result, "http_observations", ()) if getattr(obs, "request_key", ""))
         if not evidence_refs:
@@ -221,6 +221,14 @@ def gaps_from_fetch_result(result: Any, batch: Any) -> tuple[DataGap, ...]:
         reason = getattr(result, "error_message", None) or getattr(result, "error_code", None) or "provider_error"
         return (_batch_gap(batch, "provider_error", message=str(reason)),)
     return ()
+
+
+def _fetch_error_detail(result: Any) -> str | None:
+    detail = getattr(result, "error_message", None) or getattr(result, "error_code", None)
+    if detail is None:
+        return None
+    text = str(detail).strip()
+    return text or None
 
 
 def _batch_gap(

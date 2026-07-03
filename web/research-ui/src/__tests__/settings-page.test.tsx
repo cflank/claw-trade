@@ -73,6 +73,7 @@ describe('settings-wechat settings page', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     window.confirm = originalConfirm;
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -191,9 +192,9 @@ describe('settings-wechat settings page', () => {
     expect(screen.getByRole('heading', { name: 'Embedding' })).toBeInTheDocument();
     const modelSection = screen.getByRole('heading', { name: '报告模型' }).closest('section') as HTMLElement;
     expect(within(modelSection).getByLabelText('服务商')).toHaveValue('deepseek');
-    expect(within(modelSection).getByRole('option', { name: 'OpenAI' })).toBeInTheDocument();
-    expect(within(modelSection).getByRole('option', { name: 'Anthropic Claude' })).toBeInTheDocument();
-    expect(within(modelSection).getByRole('option', { name: 'Google Gemini' })).toBeInTheDocument();
+    expect(within(modelSection).queryByRole('option', { name: 'OpenAI' })).not.toBeInTheDocument();
+    expect(within(modelSection).getByRole('option', { name: '通义千问' })).toBeInTheDocument();
+    expect(within(modelSection).getByRole('option', { name: '智谱 GLM' })).toBeInTheDocument();
     expect(within(modelSection).getByLabelText('模型')).toHaveValue('deepseek/deepseek-chat');
     expect(within(modelSection).getByLabelText('接口地址')).toHaveValue('https://api.example.com');
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
@@ -983,6 +984,98 @@ describe('settings-wechat settings page', () => {
     expect(within(section).getAllByText('可用').length).toBeGreaterThanOrEqual(1);
   });
 
+  it('keeps report model visible as ready when save returns ready status', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/save-llm-config-via-openclaw')) {
+        return json({
+          status: 'saved',
+          updatedAt: '2026-05-20T12:01:00Z',
+          settingsVersion: 'v-new',
+          reportModelStatus: {
+            state: 'ready',
+            blocked: false,
+            ready: true,
+            userMessage: '报告模型可用。',
+            checkedAt: '2026-05-20T12:00:00Z',
+          },
+        });
+      }
+      if (url.includes('/api/ui/load-llm-settings')) {
+        return json({
+          draft: {
+            provider: 'deepseek',
+            apiKeyMasked: 'sk-****',
+            endpointUrl: 'https://api.example.com',
+            defaultModel: 'deepseek-chat',
+            status: 'saved',
+            reportModelStatus: {
+              state: 'ready',
+              blocked: false,
+              ready: true,
+              userMessage: '报告模型可用。',
+              checkedAt: '2026-05-20T12:00:00Z',
+            },
+          },
+          schemaVersion: 'v1',
+          settingsVersion: 's1',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    const section = (await screen.findByRole('heading', { name: '报告模型' })).closest('section') as HTMLElement;
+    fireEvent.click(within(section).getByRole('button', { name: '保存报告模型配置' }));
+
+    expect(await screen.findByText('模型配置已保存。')).toBeInTheDocument();
+    expect(within(section).getAllByText('可用').length).toBeGreaterThanOrEqual(1);
+    expect(within(section).queryByText('已保存未验证')).not.toBeInTheDocument();
+  });
+
+  it('keeps waiting when model config save outlives the normal settings load timeout', async () => {
+    vi.useFakeTimers();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/save-llm-config-via-openclaw')) {
+        return new Promise<Response>((resolve) => {
+          setTimeout(
+            () => resolve(json({ status: 'saved', updatedAt: '2026-05-20T12:01:00Z', settingsVersion: 'v-new' })),
+            9000,
+          );
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const section = screen.getByRole('heading', { name: '报告模型' }).closest('section') as HTMLElement;
+    fireEvent.click(within(section).getByRole('button', { name: '保存报告模型配置' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8500);
+    });
+    expect(screen.queryByText('模型配置暂不可保存，请稍后重试。')).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByText('模型配置已保存。')).toBeInTheDocument();
+  });
+
   it('keeps model surfaces free of forbidden setting terms in visible UI text', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -1225,6 +1318,54 @@ describe('settings-wechat settings page', () => {
     expect(seenUrls.some((url) => url.includes('pollLogin=true'))).toBe(true);
   }, 8000);
 
+  it('refreshes stale connected WeChat status while settings page stays open', async () => {
+    const intervalCallbacks: Array<() => void> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    let channelStatusCalls = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/get-channel-status')) {
+        channelStatusCalls += 1;
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: channelStatusCalls === 1 ? 'connected' : 'disconnected',
+          displayName: '微信 ClawBot',
+          accountLabel: channelStatusCalls === 1 ? '测试号' : null,
+          canSendText: channelStatusCalls === 1,
+          canSendFile: false,
+          qrCodeImageDataUrl: null,
+          qrCodeRefreshRequired: channelStatusCalls !== 1,
+        });
+      }
+      const response = baseSettingsResponse(url);
+      return response ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    const section = screen.getByTestId('settings-section-wechat');
+    expect(within(section).getAllByText('已连接').length).toBeGreaterThan(0);
+    expect(intervalCallbacks.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      intervalCallbacks.at(-1)?.();
+    });
+
+    await waitFor(() => expect(within(section).getByText('待连接')).toBeInTheDocument());
+  });
+
   it('supports reconnect and disconnect actions from the WeChat section', async () => {
     const calls: Array<{ url: string; body?: string }> = [];
     let status = 'disconnected';
@@ -1431,7 +1572,7 @@ describe('settings-wechat settings page', () => {
     });
     const embeddingSection = screen.getByRole('heading', { name: 'Embedding' }).closest('section') as HTMLElement;
     fireEvent.change(within(embeddingSection).getByLabelText('Embedding 服务商'), {
-      target: { value: 'openai' },
+      target: { value: 'jina' },
     });
     fireEvent.change(within(embeddingSection).getByLabelText('Embedding 模型'), {
       target: { value: 'text-embedding-3-small' },

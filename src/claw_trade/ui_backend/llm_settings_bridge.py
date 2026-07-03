@@ -25,21 +25,6 @@ _EMBEDDING_ENV_KEYS = (
 )
 
 _PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
-    "openai": {
-        "endpoint_url": "https://api.openai.com/v1",
-        "api": "openai-responses",
-        "default_model": "gpt-5.2",
-    },
-    "anthropic": {
-        "endpoint_url": "https://api.anthropic.com",
-        "api": "anthropic-messages",
-        "default_model": "claude-sonnet-4-20250514",
-    },
-    "google": {
-        "endpoint_url": "https://generativelanguage.googleapis.com",
-        "api": "google-generative-ai",
-        "default_model": "gemini-2.5-flash",
-    },
     "deepseek": {
         "endpoint_url": "https://api.deepseek.com",
         "api": "openai-completions",
@@ -49,21 +34,6 @@ _PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "endpoint_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "api": "openai-completions",
         "default_model": "qwen-plus",
-    },
-    "mistral": {
-        "endpoint_url": "https://api.mistral.ai/v1",
-        "api": "openai-completions",
-        "default_model": "mistral-large-latest",
-    },
-    "openrouter": {
-        "endpoint_url": "https://openrouter.ai/api/v1",
-        "api": "openai-completions",
-        "default_model": "~openai/gpt-latest",
-    },
-    "xai": {
-        "endpoint_url": "https://api.x.ai/v1",
-        "api": "openai-completions",
-        "default_model": "grok-4.3",
     },
     "glm": {
         "endpoint_url": "https://open.bigmodel.cn/api/paas/v4",
@@ -101,6 +71,25 @@ _PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "default_model": "custom-model",
     },
 }
+_DISABLED_REPORT_MODEL_PROVIDERS = {"openai", "anthropic", "google", "mistral", "openrouter", "xai"}
+
+
+def _normalize_report_provider_id(provider: str) -> str:
+    return provider.strip().lower()
+
+
+def _is_allowed_report_provider(provider: str) -> bool:
+    normalized = _normalize_report_provider_id(provider)
+    return normalized in _PROVIDER_PRESETS and normalized not in _DISABLED_REPORT_MODEL_PROVIDERS
+
+
+def _require_allowed_report_provider(provider: str) -> str:
+    normalized = _normalize_report_provider_id(provider)
+    if not normalized:
+        raise UiBoundaryError("INVALID_INPUT", "请选择模型服务商。")
+    if not _is_allowed_report_provider(normalized):
+        raise UiBoundaryError("INVALID_INPUT", "该模型服务商未开放，请使用 DeepSeek、通义千问或国内兼容接口。")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -295,11 +284,16 @@ class LlmSettingsBridge:
         }
 
     def get_report_model_status(self) -> dict[str, Any]:
+        try:
+            config = self._client.config_get(paths=("agents.defaults.model", "models.providers"))
+            return self._evaluate_report_model_readiness(config=config).to_user_payload()
+        except Exception:
+            pass
         status = self._report_model_status_store.read()
         runtime_config = self._report_model_config_store.read() if self._report_model_config_store is not None else {}
         runtime_fields = _report_model_fields_from_runtime_config(runtime_config)
         if not runtime_fields["configured"]:
-            if status.get("state") in {"ready", "failed", "saved_unverified"}:
+            if status.get("state") in {"ready", "failed", "saved_unverified"} and _status_provider_allowed(status):
                 return _report_model_status_payload(status)
             return ReportModelReadiness(
                 state="unconfigured",
@@ -326,21 +320,31 @@ class LlmSettingsBridge:
     ) -> dict[str, Any]:
         if request_id in self._idempotency:
             return self._idempotency[request_id]
-        provider = str(draft.get("provider", "")).strip()
+        provider = _normalize_report_provider_id(str(draft.get("provider", "")))
         default_model = str(draft.get("defaultModel", "")).strip()
-        if not provider:
-            raise UiBoundaryError("INVALID_INPUT", "请选择模型服务商。")
+        provider = _require_allowed_report_provider(provider)
         if not default_model:
             raise UiBoundaryError("INVALID_INPUT", "请选择默认模型。")
         model_ref = _normalize_model_ref(provider, default_model)
-        _ = self._client.config_schema_lookup(path="models.providers")
-        _ = self._client.config_schema_lookup(path="agents.defaults.model")
-        existing_config = self._client.config_get(paths=("agents.defaults.model", "models.providers"))
-        patch = self._build_config_patch(draft)
-        result = self._client.config_patch(
-            expected_settings_version=expected_settings_version,
-            patch=patch,
-        )
+        try:
+            existing_config = self._client.config_get(paths=("agents.defaults.model", "models.providers"))
+            patch = self._build_config_patch(draft)
+            openclaw_base_hash = _optional_str(existing_config.get("revision")) or expected_settings_version
+            current_fields = _resolve_report_model_fields(existing_config, provider_hint=provider)
+            result = {"newHash": openclaw_base_hash}
+            if _report_model_config_patch_needed(
+                current_fields,
+                provider=provider,
+                model_ref=model_ref,
+                endpoint_url=draft.get("endpointUrl"),
+                api_key_replacement=draft.get("apiKeyReplacement"),
+            ):
+                result = self._client.config_patch(
+                    expected_settings_version=openclaw_base_hash,
+                    patch=patch,
+                )
+        except RuntimeError as exc:
+            raise UiBoundaryError("ASSISTANT_UNAVAILABLE", "模型配置暂不可保存，请稍后重试。") from exc
         report_fields = _resolve_report_model_fields(
             existing_config,
             provider_hint=provider,
@@ -349,17 +353,26 @@ class LlmSettingsBridge:
             api_key_hint=draft.get("apiKeyReplacement"),
         )
         saved_at = _now_iso()
-        self._report_model_status_store.write(
-            {
-                "state": "saved_unverified",
-                "provider": report_fields["provider"],
-                "model": report_fields["model"],
-                "endpointUrl": report_fields["endpoint_url"],
-                "fingerprint": report_fields["fingerprint"],
-                "savedAt": saved_at,
-                "lastErrorMessage": None,
-            }
-        )
+        current_status = self._report_model_status_store.read()
+        status_is_current = str(current_status.get("fingerprint") or "") == str(report_fields["fingerprint"] or "")
+        status_is_masked_current = _status_matches_current_public_model_fields(
+            current_status,
+            report_fields,
+        ) and _looks_masked_secret(str(report_fields.get("api_key") or ""))
+        if current_status.get("state") == "ready" and (status_is_current or status_is_masked_current):
+            self._report_model_status_store.write({**current_status, "savedAt": saved_at})
+        else:
+            self._report_model_status_store.write(
+                {
+                    "state": "saved_unverified",
+                    "provider": report_fields["provider"],
+                    "model": report_fields["model"],
+                    "endpointUrl": report_fields["endpoint_url"],
+                    "fingerprint": report_fields["fingerprint"],
+                    "savedAt": saved_at,
+                    "lastErrorMessage": None,
+                }
+            )
         self._write_report_model_runtime_config(
             draft=draft,
             existing_config=existing_config,
@@ -369,6 +382,7 @@ class LlmSettingsBridge:
             "status": "saved",
             "updatedAt": saved_at,
             "settingsVersion": _opaque_settings_version(result.get("newHash") or result.get("new_hash")),
+            "reportModelStatus": _report_model_status_payload(self._report_model_status_store.read()),
         }
         self._idempotency[request_id] = out
         return out
@@ -418,9 +432,7 @@ class LlmSettingsBridge:
     def test_llm_via_openclaw(self, input_data: Mapping[str, Any], request_id: str) -> dict[str, Any]:
         if request_id in self._idempotency:
             return self._idempotency[request_id]
-        provider = str(input_data.get("provider", "")).strip()
-        if not provider:
-            raise UiBoundaryError("INVALID_INPUT", "请选择模型服务商。")
+        provider = _require_allowed_report_provider(str(input_data.get("provider", "")))
         config = _retry_transient_runtime_call(
             lambda: self._client.config_get(paths=("agents.defaults.model", "models.providers")),
             timeout_seconds=20.0,
@@ -434,17 +446,25 @@ class LlmSettingsBridge:
             draft_model = model_hint_raw or _optional_str(current_fields.get("model")) or str(
                 _provider_preset(provider)["default_model"]
             )
-            self._client.config_patch(
-                expected_settings_version=None,
-                patch=self._build_config_patch(
-                    {
-                        "provider": provider,
-                        "defaultModel": draft_model,
-                        "endpointUrl": endpoint_hint,
-                        "apiKeyReplacement": api_key_replacement,
-                    }
-                ),
-            )
+            draft_model_ref = _normalize_model_ref(provider, draft_model)
+            if _report_model_config_patch_needed(
+                current_fields,
+                provider=provider,
+                model_ref=draft_model_ref,
+                endpoint_url=endpoint_hint,
+                api_key_replacement=api_key_replacement,
+            ):
+                self._client.config_patch(
+                    expected_settings_version=None,
+                    patch=self._build_config_patch(
+                        {
+                            "provider": provider,
+                            "defaultModel": draft_model,
+                            "endpointUrl": endpoint_hint,
+                            "apiKeyReplacement": api_key_replacement,
+                        }
+                    ),
+                )
         report_fields = _resolve_report_model_fields(
             config,
             provider_hint=provider,
@@ -529,7 +549,7 @@ class LlmSettingsBridge:
             "provider": provider,
             "model": model,
             "apiKey": api_key,
-            "endpointUrl": str(input_data.get("endpointUrl", "") or "").strip(),
+            "endpointUrl": _normalize_embedding_api_base_url(str(input_data.get("endpointUrl", "") or "")),
             "dimension": str(input_data.get("dimension", "") or "").strip(),
         }
         checked_at = _now_iso()
@@ -786,14 +806,18 @@ class LlmSettingsBridge:
         status: Mapping[str, Any],
     ) -> dict[str, Any]:
         root = _config_root(config)
-        resolved_provider = (
+        resolved_provider = _normalize_report_provider_id(
             str(provider or "").strip()
             or _optional_str(root.get("active_provider"))
             or _provider_from_default_model(root)
             or _single_provider_id(root)
             or "deepseek"
         )
-        provider_item = _provider_config(root, resolved_provider)
+        if not _is_allowed_report_provider(resolved_provider):
+            resolved_provider = "deepseek"
+            provider_item: Mapping[str, Any] = {}
+        else:
+            provider_item = _provider_config(root, resolved_provider)
         model = _model_name_from_config(root, provider_item)
         api_key = _provider_api_key(provider_item)
         preset = _provider_preset(resolved_provider)
@@ -816,17 +840,17 @@ class LlmSettingsBridge:
     ) -> None:
         if self._report_model_config_store is None:
             return
-        provider = str(report_fields.get("provider") or draft.get("provider") or "").strip()
+        provider = _normalize_report_provider_id(str(report_fields.get("provider") or draft.get("provider") or ""))
         model = str(report_fields.get("model") or draft.get("defaultModel") or "").strip()
-        if not provider or not model:
+        if not provider or not model or not _is_allowed_report_provider(provider):
             return
         root = _config_root(existing_config)
         provider_item = _provider_config(root, provider)
         stored = self._report_model_config_store.read()
         api_key = (
             _optional_str(draft.get("apiKeyReplacement"))
-            or _optional_str(stored.get("apiKey"))
             or _provider_api_key(provider_item)
+            or _optional_str(stored.get("apiKey"))
         )
         if not api_key or _looks_masked_secret(api_key):
             return
@@ -845,7 +869,7 @@ class LlmSettingsBridge:
         self._report_model_config_store.write(payload)
 
     def _build_config_patch(self, draft: Mapping[str, Any]) -> dict[str, Any]:
-        provider = str(draft["provider"]).strip()
+        provider = _require_allowed_report_provider(str(draft["provider"]))
         preset = _provider_preset(provider)
         model_ref = _normalize_model_ref(provider, str(draft.get("defaultModel", "")).strip())
         model_id = _model_id_for_provider(provider, model_ref)
@@ -883,7 +907,9 @@ class LlmSettingsBridge:
             "provider": provider,
             "model": model,
             "apiKeyMasked": _mask_secret(api_key),
-            "endpointUrl": _configured_value(env_values, "OPENVIKING_EMBEDDING_API_BASE"),
+            "endpointUrl": _normalize_embedding_api_base_url(
+                _configured_value(env_values, "OPENVIKING_EMBEDDING_API_BASE")
+            ),
             "dimension": _configured_value(env_values, "OPENVIKING_EMBEDDING_DIMENSION"),
             "enabled": bool(provider and model),
         }
@@ -912,7 +938,9 @@ class LlmSettingsBridge:
         updates = {
             "OPENVIKING_EMBEDDING_PROVIDER": provider,
             "OPENVIKING_EMBEDDING_MODEL": model,
-            "OPENVIKING_EMBEDDING_API_BASE": str(raw.get("endpointUrl", "")).strip(),
+            "OPENVIKING_EMBEDDING_API_BASE": _normalize_embedding_api_base_url(
+                str(raw.get("endpointUrl", "") or "")
+            ),
             "OPENVIKING_EMBEDDING_DIMENSION": str(raw.get("dimension", "")).strip(),
         }
         if api_key_replacement or not provider:
@@ -976,13 +1004,23 @@ class LlmSettingsBridge:
 
 
 def _provider_config(config: Mapping[str, Any], provider: str) -> Mapping[str, Any]:
+    normalized_provider = _normalize_report_provider_id(provider)
     models = config.get("models")
     if not isinstance(models, Mapping):
         return {}
     providers = models.get("providers")
     if not isinstance(providers, Mapping):
         return {}
-    entry = providers.get(provider)
+    entry = providers.get(normalized_provider)
+    if not isinstance(entry, Mapping):
+        entry = next(
+            (
+                value
+                for key, value in providers.items()
+                if _normalize_report_provider_id(str(key)) == normalized_provider
+            ),
+            {},
+        )
     return entry if isinstance(entry, Mapping) else {}
 
 
@@ -1021,11 +1059,12 @@ def _build_report_model_reset_patch(config: Mapping[str, Any]) -> dict[str, Any]
 
 
 def _provider_preset(provider: str) -> Mapping[str, Any]:
-    return _PROVIDER_PRESETS.get(provider.strip(), _PROVIDER_PRESETS["deepseek"])
+    normalized = _normalize_report_provider_id(provider)
+    return _PROVIDER_PRESETS.get(normalized, _PROVIDER_PRESETS["deepseek"])
 
 
 def _normalize_model_ref(provider: str, model: str) -> str:
-    normalized_provider = provider.strip() or "deepseek"
+    normalized_provider = _normalize_report_provider_id(provider) or "deepseek"
     normalized_model = model.strip() or str(_provider_preset(normalized_provider)["default_model"])
     if "/" in normalized_model:
         return normalized_model
@@ -1033,7 +1072,7 @@ def _normalize_model_ref(provider: str, model: str) -> str:
 
 
 def _model_id_for_provider(provider: str, model_ref: str) -> str:
-    normalized_provider = provider.strip()
+    normalized_provider = _normalize_report_provider_id(provider)
     normalized = model_ref.strip()
     prefix = f"{normalized_provider}/"
     if normalized_provider and normalized.startswith(prefix):
@@ -1066,14 +1105,23 @@ def _resolve_report_model_fields(
     api_key_hint: Any = None,
 ) -> dict[str, Any]:
     root = _config_root(config)
-    provider = _optional_str(provider_hint) or _optional_str(root.get("active_provider")) or ""
+    provider = _normalize_report_provider_id(_optional_str(provider_hint) or _optional_str(root.get("active_provider")) or "")
     providers = root.get("models", {}).get("providers", {}) if isinstance(root.get("models"), Mapping) else {}
     if not provider:
         inferred = _provider_from_default_model(root)
         if inferred:
-            provider = inferred
+            provider = _normalize_report_provider_id(inferred)
     if not provider:
-        provider = _single_provider_id(root) or ""
+        provider = _normalize_report_provider_id(_single_provider_id(root) or "")
+    if provider and not _is_allowed_report_provider(provider):
+        return {
+            "provider": provider,
+            "model": "",
+            "endpoint_url": "",
+            "api_key": "",
+            "configured": False,
+            "fingerprint": "",
+        }
     provider_item = _provider_config(root, provider) if provider else {}
     model = _optional_str(model_hint) or _model_name_from_config(root, provider_item)
     endpoint = _optional_str(endpoint_hint) or _provider_endpoint_url(provider_item)
@@ -1096,11 +1144,11 @@ def _resolve_report_model_fields(
 
 
 def _report_model_fields_from_runtime_config(config: Mapping[str, Any]) -> dict[str, Any]:
-    provider = _optional_str(config.get("provider"))
+    provider = _normalize_report_provider_id(_optional_str(config.get("provider")) or "")
     model = _optional_str(config.get("model"))
     endpoint = _optional_str(config.get("endpointUrl") or config.get("endpoint_url"))
     api_key = _optional_str(config.get("apiKey") or config.get("api_key"))
-    configured = bool(provider and model and api_key)
+    configured = bool(provider and model and api_key and _is_allowed_report_provider(provider))
     fingerprint = _report_model_fingerprint(
         provider=provider,
         model=model,
@@ -1115,6 +1163,11 @@ def _report_model_fields_from_runtime_config(config: Mapping[str, Any]) -> dict[
         "configured": configured,
         "fingerprint": fingerprint if configured else "",
     }
+
+
+def _status_provider_allowed(status: Mapping[str, Any]) -> bool:
+    provider = _optional_str(status.get("provider"))
+    return not provider or _is_allowed_report_provider(provider)
 
 
 def _report_model_status_payload(status: Mapping[str, Any]) -> dict[str, Any]:
@@ -1315,7 +1368,7 @@ def _probe_openviking_embedding_runtime(input_data: Mapping[str, Any]) -> dict[s
         "model": _optional_str(input_data.get("model")),
     }
     api_key = _optional_str(input_data.get("apiKey"))
-    endpoint_url = _optional_str(input_data.get("endpointUrl"))
+    endpoint_url = _normalize_embedding_api_base_url(_optional_str(input_data.get("endpointUrl")))
     if api_key:
         dense_config["api_key"] = api_key
     if endpoint_url:
@@ -1718,6 +1771,24 @@ def _status_matches_current_public_model_fields(status: Mapping[str, Any], repor
     )
 
 
+def _report_model_config_patch_needed(
+    current_fields: Mapping[str, Any],
+    *,
+    provider: str,
+    model_ref: str,
+    endpoint_url: Any,
+    api_key_replacement: Any,
+) -> bool:
+    if _optional_str(api_key_replacement):
+        return True
+    if _normalize_report_provider_id(_optional_str(current_fields.get("provider"))) != provider:
+        return True
+    if _normalize_model_ref(provider, _optional_str(current_fields.get("model"))) != model_ref:
+        return True
+    desired_endpoint = _optional_str(endpoint_url) or str(_provider_preset(provider)["endpoint_url"])
+    return _optional_str(current_fields.get("endpoint_url")) != desired_endpoint
+
+
 def _opaque_settings_version(raw: Any) -> str:
     text = str(raw or "unknown")
     return f"v_{sha1(text.encode('utf-8')).hexdigest()[:12]}"
@@ -1769,6 +1840,18 @@ def _configured_value(file_values: Mapping[str, str], key: str) -> str:
     if key in file_values:
         return file_values[key].strip()
     return os.environ.get(key, "").strip()
+
+
+def _normalize_embedding_api_base_url(raw: str) -> str:
+    value = raw.strip().rstrip("/")
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    path = parsed.path.rstrip("/")
+    if path.lower().endswith("/embeddings"):
+        path = path[: -len("/embeddings")].rstrip("/")
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+    return value
 
 
 def _strip_env_quotes(value: str) -> str:

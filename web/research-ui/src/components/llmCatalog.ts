@@ -17,39 +17,6 @@ export type LlmProviderPreset = {
 
 const PRESETS: LlmProviderPreset[] = [
   {
-    value: 'openai',
-    label: 'OpenAI',
-    endpointUrl: 'https://api.openai.com/v1',
-    defaultModel: 'openai/gpt-5.2',
-    models: [
-      { value: 'openai/gpt-5.2', label: 'GPT-5.2' },
-      { value: 'openai/gpt-5-mini', label: 'GPT-5 mini' },
-      { value: 'openai/gpt-4.1', label: 'GPT-4.1' },
-    ],
-  },
-  {
-    value: 'anthropic',
-    label: 'Anthropic Claude',
-    endpointUrl: 'https://api.anthropic.com',
-    defaultModel: 'anthropic/claude-sonnet-4-20250514',
-    models: [
-      { value: 'anthropic/claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-      { value: 'anthropic/claude-opus-4-1-20250805', label: 'Claude Opus 4.1' },
-      { value: 'anthropic/claude-3-5-haiku-20241022', label: 'Claude Haiku 3.5' },
-    ],
-  },
-  {
-    value: 'google',
-    label: 'Google Gemini',
-    endpointUrl: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'google/gemini-2.5-flash',
-    models: [
-      { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-      { value: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
-      { value: 'google/gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
-    ],
-  },
-  {
     value: 'deepseek',
     label: 'DeepSeek',
     endpointUrl: 'https://api.deepseek.com',
@@ -68,37 +35,6 @@ const PRESETS: LlmProviderPreset[] = [
       { value: 'qwen/qwen-plus', label: 'Qwen Plus' },
       { value: 'qwen/qwen3.6-plus', label: 'Qwen 3.6 Plus' },
       { value: 'qwen/qwen3.7-max', label: 'Qwen 3.7 Max' },
-    ],
-  },
-  {
-    value: 'mistral',
-    label: 'Mistral',
-    endpointUrl: 'https://api.mistral.ai/v1',
-    defaultModel: 'mistral/mistral-large-latest',
-    models: [
-      { value: 'mistral/mistral-large-latest', label: 'Mistral Large latest' },
-      { value: 'mistral/mistral-small-latest', label: 'Mistral Small latest' },
-    ],
-  },
-  {
-    value: 'openrouter',
-    label: 'OpenRouter',
-    endpointUrl: 'https://openrouter.ai/api/v1',
-    defaultModel: 'openrouter/~openai/gpt-latest',
-    models: [
-      { value: 'openrouter/~openai/gpt-latest', label: 'OpenAI latest' },
-      { value: 'openrouter/~anthropic/claude-sonnet-latest', label: 'Claude Sonnet latest' },
-      { value: 'openrouter/openrouter/free', label: 'OpenRouter free' },
-    ],
-  },
-  {
-    value: 'xai',
-    label: 'xAI Grok',
-    endpointUrl: 'https://api.x.ai/v1',
-    defaultModel: 'xai/grok-4.3',
-    models: [
-      { value: 'xai/grok-4.3', label: 'Grok 4.3' },
-      { value: 'xai/grok-4', label: 'Grok 4' },
     ],
   },
   {

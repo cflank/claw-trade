@@ -119,6 +119,15 @@ def execute_selection_dispatches(
         )
         command_snapshot = _write_selection_dispatch_command_snapshot(dispatch, command)
         openclaw_result = openclaw.run_worker(command)
+        if openclaw_result.status != "succeeded":
+            runs.append(
+                SelectionDispatchExecution(
+                    dispatch=dispatch,
+                    openclaw_result=openclaw_result,
+                    command_snapshot_path=command_snapshot,
+                )
+            )
+            return tuple(runs)
         evidence_guard = validate_selection_dispatch_evidence(evidence_from_dispatch(dispatch))
         if not evidence_guard.ok:
             reason = evidence_guard.reason or "selection dispatch evidence validation failed"
@@ -174,7 +183,7 @@ def build_openclaw_command_for_selection_dispatch(
         candidate_cache_ref
     )
     if selection_artifact_root is not None:
-        runtime_vars["selection_artifact_root"] = str(selection_artifact_root)
+        runtime_vars["selection_artifact_root"] = str(selection_artifact_root.resolve())
     upstream_materials = _build_upstream_material_refs(
         dispatch=dispatch,
         candidate_cache_ref=candidate_cache_ref,
