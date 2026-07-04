@@ -458,7 +458,7 @@ def test_channel_send_caps_long_gateway_timeout_by_media_type(monkeypatch) -> No
         dedupe_key="file:r-1",
     )
 
-    assert timeouts == ["15000", "75000"]
+    assert timeouts == ["15000", "180000"]
 
 
 def test_gateway_call_has_subprocess_timeout(monkeypatch) -> None:  # type: ignore[no-untyped-def]

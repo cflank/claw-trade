@@ -489,6 +489,7 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
     assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_AGENTS_ROOT" "${CLAW_TRADE_AGENTS_ROOT}"' in runtime_script
     assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_OPENCLAW_PLUGINS_ROOT" "${CLAW_TRADE_OPENCLAW_PLUGINS_ROOT}"' in runtime_script
     assert 'CLAW_TRADE_UI_INBOUND_URL="${CLAW_TRADE_UI_INBOUND_URL:-http://127.0.0.1:${CLAW_TRADE_UI_PORT:-5175}/api/ui/channel-inbound-message}"' in runtime_script
+    assert 'CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-180000}"' in runtime_script
     assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_UI_INBOUND_URL" "${CLAW_TRADE_UI_INBOUND_URL}"' in runtime_script
     assert 'write_runtime_env_var "${tmp}" "CLAW_TRADE_UI_INBOUND_TIMEOUT_MS" "${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS}"' in runtime_script
     assert (

@@ -33,8 +33,10 @@ const STDERR_SUMMARY_MAX_CHARS = 2000;
 const STDOUT_SUMMARY_MAX_CHARS = 2000;
 const WECHAT_CHANNEL_ID = "openclaw-weixin";
 const UI_CHANNEL_KIND = "wechat_clawbot";
-const DEFAULT_UI_INBOUND_TIMEOUT_MS = 60000;
+const DEFAULT_UI_INBOUND_TIMEOUT_MS = 180000;
 const IMMEDIATE_INBOUND_ACK_TEXT = "收到，正在处理。";
+const REPORT_BRIDGE_FALLBACK_TEXT =
+  "报告请求已收到，但当前无法确认处理结果。请稍后查看微信消息；如果没有收到文件或回复，请再发送一次。";
 
 const OPTIONAL_TEXT = {
   type: "string",
@@ -310,6 +312,19 @@ function shouldSendImmediateInboundAck(payload) {
   return Boolean(text && !looksLikeReportRequestText(text));
 }
 
+function claimReportBridgeFailure(payload, ctx) {
+  const text = textValue(payload?.text);
+  if (!text || !looksLikeReportRequestText(text)) {
+    return null;
+  }
+  const queuedFinal = Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: REPORT_BRIDGE_FALLBACK_TEXT }));
+  return {
+    handled: true,
+    queuedFinal,
+    counts: currentDispatchCounts(ctx?.dispatcher),
+  };
+}
+
 async function postInboundMessageToUi(url, payload, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -332,13 +347,13 @@ async function postInboundMessageToUi(url, payload, timeoutMs) {
 
 async function handleReplyDispatchHook(event, ctx) {
   const counts = currentDispatchCounts(ctx?.dispatcher);
-  const inboundUrl = textValue(process.env.CLAW_TRADE_UI_INBOUND_URL);
-  if (!inboundUrl) {
-    return { handled: false, queuedFinal: false, counts };
-  }
   const payload = buildUiInboundPayload(event);
   if (!payload) {
     return { handled: false, queuedFinal: false, counts };
+  }
+  const inboundUrl = textValue(process.env.CLAW_TRADE_UI_INBOUND_URL);
+  if (!inboundUrl) {
+    return claimReportBridgeFailure(payload, ctx) ?? { handled: false, queuedFinal: false, counts };
   }
   const ackQueued = shouldSendImmediateInboundAck(payload)
     ? Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: IMMEDIATE_INBOUND_ACK_TEXT }))
@@ -346,15 +361,24 @@ async function handleReplyDispatchHook(event, ctx) {
   try {
     const inboundResult = await postInboundMessageToUi(inboundUrl, payload, readInboundTimeoutMs());
     if (!isRecord(inboundResult)) {
-      return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+      return (
+        claimReportBridgeFailure(payload, ctx) ??
+        { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
+      );
     }
     if (inboundResult.handled !== true) {
-      return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+      return (
+        claimReportBridgeFailure(payload, ctx) ??
+        { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
+      );
     }
     const replyText = textValue(inboundResult.replyText);
     if (!replyText) {
       console.warn("[claw-trade-frontline-tools] inbound UI bridge returned handled=true without replyText");
-      return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+      return (
+        claimReportBridgeFailure(payload, ctx) ??
+        { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
+      );
     }
     const queuedFinal = Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: replyText }));
     return {
@@ -365,7 +389,10 @@ async function handleReplyDispatchHook(event, ctx) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[claw-trade-frontline-tools] inbound UI bridge failed: ${message}`);
-    return { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) };
+    return (
+      claimReportBridgeFailure(payload, ctx) ??
+      { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
+    );
   }
 }
 
