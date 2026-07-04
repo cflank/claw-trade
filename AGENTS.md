@@ -512,6 +512,32 @@ Rules:
 - Do not bypass this gate via alternate startup method, invest sidecar startup, temporary `/tmp` config, source-tree guessing, or mock/stub/fake/capture-only substitutions.
 - Do not manually start OpenViking and OpenClaw separately before tests that need a clean runtime; use the fixed script command mode instead.
 
+### 12.2 WSL Real Chrome Gate
+
+For WSL-local UI integration tests, do not guess the Chrome startup path.
+
+Rules:
+
+- First read the latest `memory/` entries that mention Chrome, WSL, `9223`, `9224`, `mcp-chrome`, or `playwright-win-chrome`.
+- Verify the WSL runtime before opening Chrome: `http://127.0.0.1:5175/healthz`, `http://127.0.0.1:1933/health`, and `http://127.0.0.1:18789/health` must return 200.
+- Use the WSL IP URL for local UI tests, for example `http://172.27.36.34:5175/`. Do not use the target-machine URL such as `192.168.1.21` when the human says to test WSL.
+- Start with the project script, not a handwritten Chrome command:
+  - `scripts/mcp-chrome.sh --endpoint http://127.0.0.1:9223 --check`
+  - `scripts/mcp-chrome.sh --endpoint http://127.0.0.1:9223 --start`
+- If `9223` is not usable, do not force-kill it and do not invent a new PowerShell launch command. Check the known fallback port from Windows side:
+  - `http://127.0.0.1:9224/json/version`
+- If Windows-side `9224` is ready, connect with:
+
+```bash
+PLAYWRIGHT_WIN_CHROME_CDP_ENDPOINT=http://127.0.0.1:9224 \
+PLAYWRIGHT_WIN_CHROME_CDP_TIMEOUT_MS=15000 \
+PLAYWRIGHT_WIN_CHROME_REQUEST_TIMEOUT_MS=30000 \
+scripts/playwright-win-chrome-mcp-call.mjs call browser_navigate '{"url":"http://<wsl-ip>:5175/"}'
+```
+
+- If neither `9223` nor `9224` is ready, stop and ask the human to start the Windows Chrome debugging profile. Do not create another profile or port unless the human explicitly approves it in the current turn.
+- Real Chrome evidence must include the actual page URL, page title, console error/warning count, and the user flow result. For WSL local tests, the URL must show the WSL IP.
+
 ## 13. Collect-First Rule
 
 For scoped regression, single-market live gates, and four-market fresh comparison, default to collect-first.
