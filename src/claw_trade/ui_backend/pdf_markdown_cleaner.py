@@ -3,16 +3,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_TABLE_SEPARATOR_DOUBLE = "|------|------|"
-_TABLE_SEPARATOR_SINGLE = "|------|"
-_TABLE_SEPARATOR_DOUBLE_TOKEN = "__CLAW_TRADE_TABLE_SEPARATOR_DOUBLE__"
-_TABLE_SEPARATOR_SINGLE_TOKEN = "__CLAW_TRADE_TABLE_SEPARATOR_SINGLE__"
-
 _STYLE_BLOCK_RE = re.compile(r"<style\b[^>]*>.*?</style>", flags=re.IGNORECASE | re.DOTALL)
 _WRITING_MODE_TAG_RE = re.compile(r"<[^>]*writing-mode[^>]*>", flags=re.IGNORECASE)
 _TEXT_ORIENTATION_TAG_RE = re.compile(r"<[^>]*text-orientation[^>]*>", flags=re.IGNORECASE)
 _DIV_SPAN_TAG_RE = re.compile(r"<(div|span)\b([^>]*)>", flags=re.IGNORECASE)
 _STYLE_ATTR_RE = re.compile(r"""\sstyle\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)""", flags=re.IGNORECASE)
+_TABLE_SEPARATOR_CELL_RE = re.compile(r":?-{3,}:?")
 
 _QUOTE_REPLACEMENTS = str.maketrans(
     {
@@ -37,12 +33,11 @@ class PdfMarkdownCleaner:
         if first_line.startswith("---") or first_line.startswith("..."):
             cleaned = "\n" + cleaned
 
-        cleaned = cleaned.replace(_TABLE_SEPARATOR_DOUBLE, _TABLE_SEPARATOR_DOUBLE_TOKEN)
-        cleaned = cleaned.replace(_TABLE_SEPARATOR_SINGLE, _TABLE_SEPARATOR_SINGLE_TOKEN)
-        cleaned = cleaned.replace("---", "—")
+        cleaned = "\n".join(
+            line if _is_markdown_table_separator(line) else line.replace("---", "—")
+            for line in cleaned.splitlines()
+        )
         cleaned = cleaned.replace("...", "…")
-        cleaned = cleaned.replace(_TABLE_SEPARATOR_DOUBLE_TOKEN, _TABLE_SEPARATOR_DOUBLE)
-        cleaned = cleaned.replace(_TABLE_SEPARATOR_SINGLE_TOKEN, _TABLE_SEPARATOR_SINGLE)
 
         cleaned = cleaned.translate(_QUOTE_REPLACEMENTS)
         cleaned = _STYLE_BLOCK_RE.sub("", cleaned)
@@ -60,3 +55,11 @@ class PdfMarkdownCleaner:
         attrs = match.group(2)
         attrs_without_style = _STYLE_ATTR_RE.sub("", attrs)
         return f"<{tag_name}{attrs_without_style}>"
+
+
+def _is_markdown_table_separator(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return False
+    cells = [cell.strip().replace(" ", "") for cell in stripped.strip("|").split("|")]
+    return bool(cells) and all(_TABLE_SEPARATOR_CELL_RE.fullmatch(cell) for cell in cells)

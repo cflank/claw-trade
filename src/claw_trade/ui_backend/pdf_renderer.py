@@ -93,7 +93,7 @@ class PdfHtmlRenderer:
       font-family: "Noto Sans CJK SC", "Microsoft YaHei", "SimHei", "Arial", sans-serif;
       line-height: 1.8;
       color: #333;
-      margin: 20mm;
+      margin: 0;
       padding: 0;
       background: white;
     }}

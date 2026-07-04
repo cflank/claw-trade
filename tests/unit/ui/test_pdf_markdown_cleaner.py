@@ -28,11 +28,16 @@ def test_cleaner_replaces_normal_separator_and_ellipsis() -> None:
 
 def test_cleaner_keeps_markdown_table_separators() -> None:
     cleaned = PdfMarkdownCleaner().clean(
-        "# 标题\n|------|\n|------|------|\n---\n...\n"
+        "# 标题\n"
+        "| 指标 | 数据 | 推导 | 交易作用 | 样本边界 |\n"
+        "|------|------|------|----------|----------|\n"
+        "| A | B | C | D | E |\n"
+        "---\n"
+        "...\n"
     )
 
-    assert "|------|" in cleaned
-    assert "|------|------|" in cleaned
+    assert "|------|------|------|----------|----------|" in cleaned
+    assert "|------|------|——|———-|———-|" not in cleaned
     assert "__CLAW_TRADE_TABLE_SEPARATOR" not in cleaned
     assert "\n—\n" in cleaned
     assert cleaned.endswith("\n…")

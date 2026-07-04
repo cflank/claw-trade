@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
-from claw_trade.ui_backend.pdf_renderer import PdfKitRenderer
+from claw_trade.ui_backend.pdf_renderer import PdfHtmlRenderer, PdfKitRenderer
 from claw_trade.ui_backend.pdf_runtime_capabilities import (
     PdfRuntimeCapabilities,
     PdfRuntimeCapability,
@@ -75,6 +75,15 @@ def test_pdfkit_renderer_calls_from_string_with_required_options(monkeypatch) ->
         "margin-bottom": "20mm",
         "margin-left": "20mm",
     }
+
+
+def test_pdf_html_renderer_does_not_double_apply_page_margin() -> None:
+    html = PdfHtmlRenderer().render("# 标题\n正文").html
+    body_block = html.split("body {", maxsplit=1)[1].split("}", maxsplit=1)[0]
+
+    assert "body {" in html
+    assert "margin: 0;" in body_block
+    assert "margin: 20mm;" not in body_block
 
 
 def test_export_saved_markdown_to_pdf_keeps_markdown_hash(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -175,6 +184,7 @@ def test_pdf_export_failure_does_not_write_artifact_when_validation_fails(monkey
     record = service.export_saved_markdown_to_pdf("r-pdf", request_id="pdf-2")
     assert record.state == "failed"
     assert record.pdf_artifact_id is None
+    assert record.failure_detail == "pdf validation failed: missing keywords"
     assert write_calls == []
     assert len(repo.list_saved_reports()) == 1
     assert repo.latest_pdf_artifact("r-pdf") is None
@@ -185,6 +195,7 @@ def test_pdf_export_failure_does_not_remove_saved_report() -> None:
     service = PdfExportService(repo, renderer=_FailRenderer(), runtime_capabilities_provider=_ready_capabilities)
     record = service.export_saved_markdown_to_pdf("r-pdf", request_id="pdf-2")
     assert record.state == "failed"
+    assert record.failure_detail == "render failed"
     assert len(repo.list_saved_reports()) == 1
 
 
