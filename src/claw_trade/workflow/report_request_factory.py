@@ -49,6 +49,7 @@ def build_report_run_request(
     target_worker_id: str | None = None,
     target_stage: Stage | None = None,
     entry_point: WorkflowEntryPoint = WorkflowEntryPoint.REPORT_COMMAND,
+    ui_origin_context_id: str | None = None,
 ) -> RunRequest:
     identity = resolve_instrument_identity(ticker, market_hint=market)
     resolved_profile = _profile_from_args(profile, identity.profile)
@@ -75,6 +76,7 @@ def build_report_run_request(
         max_debate_rounds=settings.max_debate_rounds,
         max_risk_discuss_rounds=settings.max_risk_discuss_rounds,
         frontline_execution_mode=settings.frontline_execution_mode,
+        ui_origin_context_id=_optional_text(ui_origin_context_id),
     )
 
 
@@ -118,6 +120,11 @@ def _profile_from_args(raw_profile: str | None, resolved_profile: str) -> str:
 def _value_or_default(raw_value: str | None, default: str) -> str:
     value = str(raw_value or "").strip()
     return value or default
+
+
+def _optional_text(raw_value: str | None) -> str | None:
+    value = str(raw_value or "").strip()
+    return value or None
 
 
 def _parse_date(value: str | None) -> date:

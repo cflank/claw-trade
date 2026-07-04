@@ -1721,8 +1721,8 @@ def test_data_need_model_visible_text_allows_empty_lockup_event_as_no_records_fo
     )
 
     assert "状态：" not in text
-    assert text == ""
-    assert "查询范围内未发现该类事件记录" not in text
+    assert "查询范围内未发现该类事件记录" in text
+    assert "不要重复请求同一数据需求" in text
     assert "未返回事件记录" not in text
     assert "数据缺口" not in text
     assert "不得写具体价格" not in text
@@ -1812,8 +1812,9 @@ def test_unsatisfied_rows_are_not_presented_as_body_usable() -> None:
     assert "已经可用于正文" not in text
     assert "没有满足当前数据需求" not in text
     assert "不要当成正文可引用结论" not in text
-    assert text == ""
-    assert "只使用已返回的可引用材料" not in text
+    assert "媒体/搜索线索已返回" in text
+    assert "不能单独作为正式事实源" in text
+    assert "不要重复请求同一数据需求" in text
 
 
 def test_data_need_model_visible_text_keeps_current_result_gap_visible() -> None:
@@ -1939,12 +1940,11 @@ def test_data_need_model_visible_text_for_raw_refs_only_forbids_model_memory_fil
         data_results=(),
     )
 
-    assert text == ""
-    assert "不要重复请求同一数据需求" not in text
+    assert "不要重复请求同一数据需求" in text
     assert "没有返回可直接引用的结构化数值或明细行" not in text
     assert "缺口" not in text
-    assert "不得用模型记忆" not in text
-    assert "营收、利润、ROE、PE/PB、目标价" not in text
+    assert "不得用模型记忆" in text
+    assert "营收、利润、ROE、PE/PB、目标价" in text
 
 
 def test_data_need_without_data_refs_is_missing_even_when_attempts_exist() -> None:

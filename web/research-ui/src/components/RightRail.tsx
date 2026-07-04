@@ -22,6 +22,25 @@ function statusClass(value: string) {
   return 'is-info';
 }
 
+function priceAlertStateLabel(state: PriceAlertForUser['state']) {
+  if (state === 'active') {
+    return '监控中';
+  }
+  if (state === 'checking') {
+    return '检查中';
+  }
+  if (state === 'paused') {
+    return '已暂停';
+  }
+  if (state === 'closed') {
+    return '已触发';
+  }
+  if (state === 'error') {
+    return '异常';
+  }
+  return state;
+}
+
 function formatDate(value?: string | null) {
   if (!value) {
     return '—';
@@ -216,10 +235,13 @@ function TaskBlock({
   onCancelTask?: (task: ReportTaskForUser) => void;
   cancellingTaskId?: string | null;
 }) {
+  const failedTerminalTask =
+    queue.lastTerminalTask?.status === 'failed' ? queue.lastTerminalTask : null;
   const rows = [
     ...(queue.runningTask ? [queue.runningTask] : []),
     ...queue.queuedTasks,
-  ].filter((task) => task.status === 'running' || task.status === 'queued');
+    ...(failedTerminalTask ? [failedTerminalTask] : []),
+  ].filter((task) => task.status === 'running' || task.status === 'queued' || task.status === 'failed');
 
   return (
     <section className="ct-right-section" data-testid="right-rail-task-section">
@@ -231,7 +253,7 @@ function TaskBlock({
           <article key={task.taskId} className="ct-task-item">
             <div className="ct-task-head">
               <strong>{task.instrumentCode}</strong>
-              <span>{task.statusLabel}</span>
+              <span className={statusClass(task.status)}>{task.statusLabel}</span>
             </div>
             <div className="ct-task-meta">
               <span>{progress?.stageLabel ?? '等待处理中'}</span>
@@ -241,6 +263,7 @@ function TaskBlock({
               <div className="ct-progress-fill" style={{ width: `${percent}%` }} />
             </div>
             <p className="ct-task-action">{progress?.currentAction ?? '正在推进任务流程'}</p>
+            {task.failure?.message ? <p className="ct-task-error">{task.failure.message}</p> : null}
             {progress?.workerStatusLabels?.length ? (
               <ul className="ct-task-status-list">
                 {progress.workerStatusLabels.map((item) => (
@@ -254,7 +277,7 @@ function TaskBlock({
             <div className="ct-task-list-line">
               <span>待执行：{(progress?.waitingRoleLabels ?? []).join('、') || '暂无'}</span>
             </div>
-            {onCancelTask ? (
+            {(task.status === 'running' || task.status === 'queued') && onCancelTask ? (
               <button
                 type="button"
                 className={`ct-text-button${task.status === 'running' ? ' ct-task-stop-button' : ''}`}
@@ -368,7 +391,7 @@ function PriceAlertsBlock({
         <article key={alert.priceAlertId} className="ct-task-item">
           <div className="ct-task-head">
             <strong>{alert.instrumentCode}</strong>
-            <span>{alert.state}</span>
+            <span>{priceAlertStateLabel(alert.state)}</span>
           </div>
           <div className="ct-task-meta">
             <span>{alert.market}</span>

@@ -845,7 +845,7 @@ def test_resolve_default_report_file_target_uses_single_weixin_context_token(
     )
 
 
-def test_resolve_default_report_file_target_uses_single_login_context_token(
+def test_resolve_default_report_file_target_uses_single_login_account_file(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -854,10 +854,6 @@ def test_resolve_default_report_file_target_uses_single_login_context_token(
     accounts_dir.mkdir(parents=True)
     (accounts_dir / "acc-1.json").write_text(
         '{"userId":"sender-login@im.wechat","token":"secret"}',
-        encoding="utf-8",
-    )
-    (accounts_dir / "acc-1.context-tokens.json").write_text(
-        '{"sender-login@im.wechat":"token-1"}',
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
@@ -886,7 +882,7 @@ def test_resolve_default_report_file_target_returns_none_for_multiple_weixin_tar
     assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) is None
 
 
-def test_resolve_default_report_file_target_ignores_login_user_without_context_token(
+def test_resolve_default_report_file_target_ignores_login_user_without_token(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -895,7 +891,7 @@ def test_resolve_default_report_file_target_ignores_login_user_without_context_t
     accounts_dir.mkdir(parents=True)
     (state_dir / "openclaw-weixin" / "accounts.json").write_text('["acc-1"]', encoding="utf-8")
     (accounts_dir / "acc-1.json").write_text(
-        '{"userId":"sender-login@im.wechat","token":"secret"}',
+        '{"userId":"sender-login@im.wechat"}',
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
@@ -904,7 +900,7 @@ def test_resolve_default_report_file_target_ignores_login_user_without_context_t
     assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) is None
 
 
-def test_resolve_default_report_file_target_ignores_login_users_without_context_tokens(
+def test_resolve_default_report_file_target_returns_none_for_multiple_login_account_targets(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -912,8 +908,8 @@ def test_resolve_default_report_file_target_ignores_login_users_without_context_
     accounts_dir = state_dir / "openclaw-weixin" / "accounts"
     accounts_dir.mkdir(parents=True)
     (state_dir / "openclaw-weixin" / "accounts.json").write_text('["acc-1","acc-2"]', encoding="utf-8")
-    (accounts_dir / "acc-1.json").write_text('{"userId":"sender-1@im.wechat"}', encoding="utf-8")
-    (accounts_dir / "acc-2.json").write_text('{"userId":"sender-2@im.wechat"}', encoding="utf-8")
+    (accounts_dir / "acc-1.json").write_text('{"userId":"sender-1@im.wechat","token":"secret-1"}', encoding="utf-8")
+    (accounts_dir / "acc-2.json").write_text('{"userId":"sender-2@im.wechat","token":"secret-2"}', encoding="utf-8")
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
     bridge = ChannelBridge(_FakeChannelClient(connected=True))
 

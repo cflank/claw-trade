@@ -772,6 +772,12 @@ body {
   font-size: 13px;
 }
 
+.ct-task-error {
+  margin: 8px 0 0;
+  color: #b42318;
+  font-size: 13px;
+}
+
 .ct-task-status-list {
   margin: 8px 0 0;
   padding: 0;
@@ -826,6 +832,7 @@ body {
 
 .ct-report-summary-card p {
   margin: 0;
+  white-space: pre-wrap;
 }
 
 .ct-report-summary-card button {

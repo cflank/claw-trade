@@ -789,6 +789,20 @@ def _single_weixin_report_file_target() -> tuple[str, str | None] | None:
             token = str(raw_token or "").strip()
             if user_id.endswith("@im.wechat") and token:
                 candidates.add((user_id, account_id or None))
+    for path in sorted(accounts_dir.glob("*.json")):
+        if path.name.endswith((".context-tokens.json", ".sync.json")):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, Mapping):
+            continue
+        user_id = str(data.get("userId") or "").strip()
+        token = str(data.get("token") or "").strip()
+        if user_id.endswith("@im.wechat") and token:
+            account_id = _optional_str(data.get("accountId")) or path.name.removesuffix(".json").strip()
+            candidates.add((user_id, account_id or None))
     if len(candidates) != 1:
         return None
     return next(iter(candidates))

@@ -616,8 +616,15 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             repository,
             report_notification_service,
             chat_controller,
+            channel_text_inbound,
             task=task,
             workflow_state=workflow_state,
+        ),
+        failed_report_writer=lambda task: _handle_failed_workflow_report(
+            chat_controller,
+            channel_text_inbound,
+            channel_bridge,
+            task=task,
         ),
         report_permission_checker=license_service.assert_report_generation_allowed,
     )
@@ -785,6 +792,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             target=target,
         ),
     )
+    restore_report_completion_chat_messages(repository, summary_builder, chat_controller, channel_text_inbound)
     settings_service = SettingsService(env_writer=None)
     return UiHttpServices(
         report_settings=report_settings,
@@ -879,6 +887,7 @@ def _handle_completed_workflow_report(
     repository: ReportRepository,
     notification_service: object,
     chat_controller: object,
+    channel_text_inbound: object | None = None,
     *,
     task: object,
     workflow_state: object,
@@ -915,6 +924,77 @@ def _handle_completed_workflow_report(
         task_id=task_id,
         text=text,
     )
+    remember = getattr(channel_text_inbound, "remember_conversation_context", None)
+    if callable(remember) and _reply_target_from_origin_context(origin_context_id) is not None:
+        remember(origin_context_id)
+
+
+def _handle_failed_workflow_report(
+    chat_controller: object,
+    channel_text_inbound: object | None,
+    channel_bridge: object | None,
+    *,
+    task: object,
+) -> None:
+    origin_context_id = str(getattr(task, "origin_context_id", "") or "").strip()
+    if not origin_context_id:
+        return
+    failure = getattr(task, "failure", None)
+    failure_text = str(getattr(failure, "user_message", "") or "").strip()
+    if not failure_text:
+        failure_text = "报告任务失败，请稍后重试。"
+    instrument = str(getattr(task, "instrument_code", "") or "").strip()
+    text = f"{instrument} 报告任务失败：{failure_text}" if instrument else f"报告任务失败：{failure_text}"
+    append_plain = getattr(chat_controller, "append_channel_plain_message", None)
+    if callable(append_plain):
+        append_plain(context_id=origin_context_id, actor="system", text=text)
+    target = _reply_target_from_origin_context(origin_context_id)
+    remember = getattr(channel_text_inbound, "remember_conversation_context", None)
+    if callable(remember) and target is not None:
+        remember(origin_context_id)
+    send_text = getattr(channel_bridge, "send_text", None)
+    if not callable(send_text) or target is None:
+        return
+    task_id = str(getattr(task, "task_id", "") or "").strip() or "unknown"
+    try:
+        send_text(
+            channel_kind=target.channel_kind,
+            text=text,
+            dedupe_key=f"report-failed:{task_id}",
+            target=target.sender_id,
+            account_id=target.account_id,
+        )
+    except Exception:
+        pass
+
+
+def restore_report_completion_chat_messages(
+    repository: ReportRepository,
+    summary_builder: CompletionSummaryBuilder,
+    chat_controller: ChatController,
+    channel_text_inbound: ChannelTextInboundController,
+) -> int:
+    restored = 0
+    for report in repository.list_saved_report_records():
+        origin_context_id = str(report.origin_context_id or "").strip()
+        if not origin_context_id or _reply_target_from_origin_context(origin_context_id) is None:
+            continue
+        try:
+            summary = summary_builder.build_completion_summary_from_saved_report(
+                report.id,
+                pdf_available=repository.latest_pdf_artifact(report.id) is not None,
+            )
+            text = render_completion_summary_text(summary)
+        except UiProductError:
+            text = "报告已完成，但完成简报暂未生成；请查看完整报告。"
+        chat_controller.append_report_completed_message(
+            context_id=origin_context_id,
+            report_id=report.id,
+            text=text,
+        )
+        channel_text_inbound.remember_conversation_context(origin_context_id)
+        restored += 1
+    return restored
 
 
 def _render_saved_completion_summary_text(repository: ReportRepository, report_id: str) -> str:
@@ -1079,6 +1159,11 @@ def restore_completed_workflow_reports(repository: ReportRepository, run_root: P
             markdown=markdown,
             generated_at=_optional_text(state.get("updated_at") or state.get("created_at")),
             asset_dir=run_dir / "reports" / "assets",
+            origin_context_id=_optional_text(
+                request_payload.get("ui_origin_context_id")
+                or request_payload.get("origin_context_id")
+                or request_payload.get("originContextId")
+            ),
         )
         pdf_dir = run_dir / "reports" / "pdf"
         if pdf_dir.is_dir():

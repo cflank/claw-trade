@@ -35,7 +35,7 @@ class _FakeChatTransport:
 
     def chat_send(self, *, context_id: str, text: str, request_id: str) -> dict[str, str]:
         self.calls += 1
-        if text.strip().lower() in {"/help", "help", "帮助"}:
+        if text.strip().lower().startswith(("/help", "help")) or text.strip().lower() == "帮助":
             raise AssertionError("help command must not call normal chat")
         _ = (context_id, request_id)
         return {"text": f"chat:{text}"}
@@ -86,7 +86,7 @@ def test_bare_report_command_returns_help_instead_of_falling_through_to_normal_c
 def test_help_command_returns_command_usage_without_normal_chat() -> None:
     controller = _controller()
     replies = []
-    for index, text in enumerate(("/help", "help", "帮助"), start=1):
+    for index, text in enumerate(("/help", "help", "帮助", "help $superpowers:using-superpowers"), start=1):
         result = controller.send_chat_message(
             request_id=f"s06-help-command-{index}",
             context_id=f"ctx-help-{index}",
@@ -99,10 +99,15 @@ def test_help_command_returns_command_usage_without_normal_chat() -> None:
         assert "/sched <标的> 每天 HH:MM" in result["messages"][-1]["text"]
         assert "/alert <标的> 高于/低于 <价格>" in result["messages"][-1]["text"]
         assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["messages"][-1]["text"]
-        assert "1/cn_a/A股 = A股；2/crypto/加密 = 加密" in result["messages"][-1]["text"]
-        assert "/select 1、/select 2、/select crypto、/select 2 refresh" in result["messages"][-1]["text"]
+        assert "带 refresh/刷新 时强制刷新数据" in result["messages"][-1]["text"]
+        assert "市场放前面，刷新放后面" in result["messages"][-1]["text"]
+        assert "1 / cn_a / A股" in result["messages"][-1]["text"]
+        assert "2 / crypto / 加密" in result["messages"][-1]["text"]
+        assert "/select 2\n  /select 刷新\n  /select 2 刷新" in result["messages"][-1]["text"]
+        assert "$superpowers:using-superpowers" not in result["messages"][-1]["text"]
         assert "/maint" in result["messages"][-1]["text"]
-    assert replies[0] == replies[1] == replies[2]
+        assert max(len(line) for line in result["messages"][-1]["text"].splitlines()) <= 42
+    assert replies[0] == replies[1] == replies[2] == replies[3]
 
 
 def test_sched_alias_builds_scheduled_report_confirmation_card() -> None:

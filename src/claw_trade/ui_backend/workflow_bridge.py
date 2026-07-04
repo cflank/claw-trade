@@ -54,6 +54,7 @@ class ReportWorkflowBridge:
             end_date=str(task["endDate"]),
             settings=_settings_from_task(settings),
             entry_point=WorkflowEntryPoint.REPORT_COMMAND,
+            ui_origin_context_id=_optional_task_text(task.get("originContextId") or task.get("origin_context_id")),
         )
 
     def create_workflow_run(self, task: dict[str, Any]) -> WorkflowRunRecord:
@@ -112,6 +113,11 @@ class ReportWorkflowBridge:
 
 def _now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def _optional_task_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _settings_from_task(settings: dict[str, Any]) -> ReportWorkflowSettings:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from threading import Lock
@@ -20,7 +21,9 @@ from claw_trade.workflow.report_request_factory import report_display_name
 _PRICE_ALERT_SCAN_INTERVAL_MS = 180_000
 _PRICE_ALERT_SCAN_FREQUENCY = "3m"
 _PRICE_ALERT_SCAN_AGENT_ID = "price_alert_scan_worker"
-_VISIBLE_PRICE_ALERT_STATES = {"active", "checking", "error", "paused"}
+_VISIBLE_PRICE_ALERT_STATES = {"active", "checking", "error", "paused", "closed"}
+_MATCHABLE_PRICE_ALERT_STATES = {"active", "checking", "error", "paused"}
+_LOGGER = logging.getLogger("uvicorn.error")
 
 
 class UiServiceError(RuntimeError):
@@ -253,6 +256,7 @@ class PriceAlertService:
         except UiServiceError:
             raise
         except Exception as exc:
+            _LOGGER.exception("price alert evaluation failed: alert_id=%s", price_alert_id)
             item.state = "error"
             item.last_checked_at = self._now_iso()
             item.last_error_message = "价格提醒检查失败，请稍后重试。"
@@ -314,7 +318,7 @@ class PriceAlertService:
         condition: dict[str, Any],
         notification: dict[str, Any],
     ) -> PriceAlert | None:
-        for item in self._ordered_visible_alerts(market=market):
+        for item in self._ordered_alerts(market=market, states=_MATCHABLE_PRICE_ALERT_STATES):
             if (
                 item.instrument_code == instrument_code
                 and self._same_alert_condition(item.condition, condition)
@@ -325,7 +329,7 @@ class PriceAlertService:
 
     def _deduped_visible_alerts(self) -> list[PriceAlert]:
         out: list[PriceAlert] = []
-        for item in self._ordered_visible_alerts():
+        for item in self._ordered_alerts(states=_VISIBLE_PRICE_ALERT_STATES):
             if not any(
                 kept.instrument_code == item.instrument_code
                 and kept.market == item.market
@@ -336,10 +340,10 @@ class PriceAlertService:
                 out.append(item)
         return out
 
-    def _ordered_visible_alerts(self, *, market: MarketProfile | None = None) -> list[PriceAlert]:
+    def _ordered_alerts(self, *, states: set[str], market: MarketProfile | None = None) -> list[PriceAlert]:
         priority = {"active": 0, "checking": 0, "error": 1, "paused": 2, "closed": 3}
         return sorted(
-            self._store.list_price_alerts(market=market, states=_VISIBLE_PRICE_ALERT_STATES),
+            self._store.list_price_alerts(market=market, states=states),
             key=lambda item: (priority.get(item.state, 9), item.created_at, item.id),
         )
 

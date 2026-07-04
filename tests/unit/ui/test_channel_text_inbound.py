@@ -126,19 +126,29 @@ def test_ordinary_wechat_text_uses_normal_chat_without_report_workflow() -> None
 
 def test_help_command_returns_usage_without_openclaw_chat() -> None:
     controller, runner, chat_transport = _controller()
-    result = controller.handle_message(_message("r-help", "帮助"))
+    result = controller.handle_message(_message("r-help", "help $superpowers:using-superpowers"))
     assert result["handled"] is True
     assert result["state"] == "replied"
-    assert "/report <标的>" in result["replyText"]
-    assert "/sched <标的> 每天 HH:MM" in result["replyText"]
-    assert "/alert <标的> 高于/低于 <价格>" in result["replyText"]
-    assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["replyText"]
-    assert "1/cn_a/A股 = A股；2/crypto/加密 = 加密" in result["replyText"]
+    assert "/report TSLA：美股报告" in result["replyText"]
+    assert "/report 600519.SH：A股报告" in result["replyText"]
+    assert "/select：A股选股结果" in result["replyText"]
+    assert "/select 2：加密选股结果" in result["replyText"]
+    assert "/select 2 刷新：刷新加密数据" in result["replyText"]
+    assert "发送完整报告：发PDF" in result["replyText"]
+    assert "$superpowers:using-superpowers" not in result["replyText"]
+    lines = result["replyText"].splitlines()
+    assert len(lines) <= 14
+    assert max(len(line) for line in lines) <= 28
     assert runner.calls == 0
     assert chat_transport.calls == []
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["text"] for item in snapshot["messages"]] == [
+        "help $superpowers:using-superpowers",
+        result["replyText"],
+    ]
 
 
-@pytest.mark.parametrize("text", ("/select 1", "/select 2", "/select crypto", "/select 2 refresh"))
+@pytest.mark.parametrize("text", ("/select 1", "/select 2", "/select crypto", "/select 刷新", "/select 2 刷新"))
 def test_channel_select_detector_accepts_market_tokens(text: str) -> None:
     assert _looks_like_select_command(text)
 

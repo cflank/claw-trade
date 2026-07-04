@@ -36,6 +36,7 @@ class PdfExportRecord:
     state: str
     pdf_artifact_id: str | None
     user_message: str | None
+    failure_detail: str | None
     updated_at: str
 
 
@@ -111,16 +112,18 @@ class PdfExportService:
                 state="ready",
                 pdf_artifact_id=artifact.id,
                 user_message=None,
+                failure_detail=None,
                 updated_at=_now_iso(),
             )
-        except Exception:
+        except Exception as exc:
             record = PdfExportRecord(
                 id=record_id,
                 report_id=report_id,
                 source_markdown_hash=source_hash_before,
                 state="failed",
                 pdf_artifact_id=None,
-                user_message="PDF 暂不可用，完整报告仍可在设备界面查看。",
+                user_message=_pdf_export_user_message(exc),
+                failure_detail=_trim_failure_detail(str(exc)),
                 updated_at=_now_iso(),
             )
         self._records[report_id] = record
@@ -151,6 +154,7 @@ class PdfExportService:
             state="ready",
             pdf_artifact_id=artifact.id,
             user_message=None,
+            failure_detail=None,
             updated_at=artifact.created_at,
         )
         self._records[report_id] = record
@@ -173,10 +177,30 @@ class PdfExportService:
 
 
 def to_pdf_export_for_user(record: PdfExportRecord) -> dict[str, object]:
-    return {
+    payload = {
         "reportId": record.report_id,
         "state": record.state,
         "available": record.state == "ready",
         "userMessage": record.user_message,
         "updatedAt": record.updated_at,
     }
+    if record.failure_detail:
+        payload["failureDetail"] = record.failure_detail
+    return payload
+
+
+def _pdf_export_user_message(exc: Exception) -> str:
+    detail = _trim_failure_detail(str(exc))
+    if detail.startswith("pdf primary runtime capability missing:"):
+        missing = detail.split(":", 1)[1].strip() or "PDF 运行依赖"
+        return f"PDF 暂不可用：目标机缺少 {missing}。完整报告仍可在设备界面查看。"
+    if detail.startswith("pdf validation failed:"):
+        return f"PDF 暂不可用：导出校验失败（{detail.split(':', 1)[1].strip()}）。完整报告仍可在设备界面查看。"
+    return "PDF 暂不可用，完整报告仍可在设备界面查看。"
+
+
+def _trim_failure_detail(text: str) -> str:
+    clean = " ".join(text.split())
+    if len(clean) <= 240:
+        return clean
+    return clean[:237] + "..."

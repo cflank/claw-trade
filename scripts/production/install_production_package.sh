@@ -21,6 +21,20 @@ fail() {
   exit 1
 }
 
+require_command() {
+  local command_name="$1"
+  local message="$2"
+  command -v "${command_name}" >/dev/null 2>&1 || fail "${message}"
+}
+
+require_noto_cjk_font() {
+  local family
+  family="$(fc-match -f '%{family}\n' 'Noto Sans CJK SC' 2>/dev/null || true)"
+  if [[ ! "${family,,}" =~ noto.*cjk ]]; then
+    fail "missing PDF Chinese font: install fonts-noto-cjk"
+  fi
+}
+
 ensure_system_identity() {
   local user="$1"
   local group="$2"
@@ -35,6 +49,9 @@ ensure_system_identity() {
 ensure_system_identity "${runtime_owner}" "${runtime_group}"
 ensure_system_identity "${kiosk_owner}" "${kiosk_group}"
 [[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"
+require_command wkhtmltopdf "missing PDF renderer: install wkhtmltopdf"
+require_command fc-match "missing PDF font runtime: install fontconfig"
+require_noto_cjk_font
 
 top_dir="$(python3 "${script_dir}/validate_production_archive.py" "${archive}")"
 install -d -m 0755 "${release_root}"

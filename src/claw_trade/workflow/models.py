@@ -75,6 +75,7 @@ class RunRequest:
     max_debate_rounds: int = 1
     max_risk_discuss_rounds: int = 1
     frontline_execution_mode: str = "parallel"
+    ui_origin_context_id: str | None = None
 
 
 @dataclass(frozen=True)

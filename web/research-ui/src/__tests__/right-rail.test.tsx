@@ -91,6 +91,46 @@ describe('RightRail channel state text', () => {
     expect(onCancelTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ taskId: 'task-queued' }));
   });
 
+  it('keeps the latest failed report task visible with the failure reason', () => {
+    const queue: ReportQueueSnapshotForUser = {
+      runningTask: null,
+      queuedTasks: [],
+      lastTerminalTask: {
+        taskId: 'task-failed',
+        source: 'manual',
+        status: 'failed',
+        statusLabel: '失败',
+        instrumentCode: 'BTC',
+        market: 'CRYPTO',
+        companyName: 'BTC',
+        currencySymbol: 'USDT',
+        startDate: '2026-05-01',
+        endDate: '2026-05-19',
+        currentDate: '2026-05-19',
+        queuePosition: null,
+        createdAt: '2026-05-19T09:55:00.000Z',
+        finishedAt: '2026-05-19T10:00:00.000Z',
+        failure: {
+          code: 'ASSISTANT_UNAVAILABLE',
+          message: '报告数据请求超时，请稍后重试。',
+          severity: 'error',
+        },
+      },
+      queueLimit: 10,
+      queuedCount: 0,
+      isFull: false,
+    };
+
+    render(<RightRail queue={queue} detail={null} channel={null} latestReport={null} onCancelTask={vi.fn()} />);
+
+    const section = screen.getByTestId('right-rail-task-section');
+    expect(within(section).getByText('BTC')).toBeInTheDocument();
+    expect(within(section).getByText('失败')).toBeInTheDocument();
+    expect(within(section).getByText('报告数据请求超时，请稍后重试。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '取消排队' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '停止任务' })).not.toBeInTheDocument();
+  });
+
   it('shows stop control for active selection progress', () => {
     const onCancelSelection = vi.fn();
 

@@ -235,13 +235,14 @@ def test_request_full_report_file_without_target_or_saved_origin_returns_clear_m
     assert channel.send_calls == 0
 
 
-def test_request_full_report_file_pdf_failed_returns_unsupported_and_never_calls_send(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_request_full_report_file_pdf_failed_returns_pdf_error_and_never_calls_send(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
     channel = _FileChannelBridge(state="connected", can_send_file=True)
     service = _make_service(channel, renderer=_FailRenderer())
     result = service.request_full_report_file("r-file", "req-file-pdf-failed", target="sender-1")
     assert result["sent"] is False
-    assert result["code"] == "FILE_SEND_UNSUPPORTED"
+    assert result["code"] == "PDF_EXPORT_FAILED"
+    assert "PDF 暂不可用" in result["userMessage"]
     assert channel.send_calls == 0
 
 

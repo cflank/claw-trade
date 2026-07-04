@@ -20,9 +20,11 @@ class _FakeRunner:
     def __init__(self) -> None:
         self.calls = 0
         self.state = _FakeWorkflowState()
+        self.requests = []
 
     def create_run(self, request):  # type: ignore[no-untyped-def]
         self.calls += 1
+        self.requests.append(request)
         return f"run-{self.calls}"
 
     def load_state(self, run_id: str) -> _FakeWorkflowState:
@@ -61,6 +63,20 @@ def test_serial_queue_only_one_running() -> None:
     snapshot = queue.get_report_queue_snapshot_for_user()
     assert snapshot["runningTask"]["instrumentCode"] == "AAPL"
     assert snapshot["queuedCount"] == 1
+
+
+def test_report_queue_carries_origin_context_into_workflow_request() -> None:
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+
+    queue.enqueue_report_task(
+        request_id="r-origin",
+        task_input=_task_input("BTC", market="CRYPTO", source_profile="CRYPTO"),
+        source="manual",
+        origin_context_id="wechat_clawbot:account-1:sender-1",
+    )
+
+    assert runner.requests[0].ui_origin_context_id == "wechat_clawbot:account-1:sender-1"
 
 
 def test_report_queue_blocks_enqueue_when_license_denied() -> None:
@@ -171,6 +187,23 @@ def test_running_snapshot_derives_worker_status_from_run_evidence(tmp_path: Path
     assert "投资组合经理：已完成" in progress["workerStatusLabels"]
 
 
+def test_failed_snapshot_uses_tool_call_error_from_collect_first_evidence(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    _write_collect_first_tool_failure(run_dir)
+    runner = _FakeRunner()
+    runner.state = _FakeWorkflowState(status="failed", run_dir=run_dir)
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+
+    queue.enqueue_report_task(request_id="r1", task_input=_task_input("BTC", "CRYPTO", "CRYPTO"), source="manual")
+
+    snapshot = queue.get_report_queue_snapshot_for_user()
+    assert snapshot["runningTask"] is None
+    terminal = snapshot["lastTerminalTask"]
+    assert terminal["status"] == "failed"
+    assert terminal["failure"]["message"] == "报告数据请求超时，请稍后重试。"
+    assert "助手服务暂不可用" not in terminal["failure"]["message"]
+
+
 def test_completed_workflow_marks_task_succeeded_and_calls_writer() -> None:
     runner = _FakeRunner()
     runner.state = _FakeWorkflowState(status="completed")
@@ -186,6 +219,63 @@ def test_completed_workflow_marks_task_succeeded_and_calls_writer() -> None:
     assert snapshot["runningTask"] is None
     assert saved == ["task-1"]
     assert queue.get_task_for_testing("task-1").status.value == "succeeded"
+
+
+def test_failed_report_writer_is_called_after_failure() -> None:
+    runner = _FakeRunner()
+    notified: list[str] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        failed_report_writer=lambda task: notified.append(task.task_id),
+    )
+    payload = queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+
+    queue.handle_report_failed(payload["task"]["taskId"], RuntimeError("workflow failed"))
+
+    assert notified == [payload["task"]["taskId"]]
+
+
+def _write_collect_first_tool_failure(run_dir: Path) -> None:
+    tool_calls_path = run_dir / "calls" / "call-1" / "tool-calls.json"
+    tool_calls_path.parent.mkdir(parents=True, exist_ok=True)
+    tool_calls_path.write_text(
+        json.dumps(
+            {
+                "source": "model_tool_events",
+                "status": "recorded",
+                "calls": [
+                    {
+                        "tool_call_id": "call_09",
+                        "tool_name": "claw_request_data",
+                        "action": "invoke",
+                        "status": "error",
+                        "error": "数据工具执行超时",
+                        "result_sha256": "s" * 64,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    (reports_dir / "collect-first-frontline-t00.json").write_text(
+        json.dumps(
+            {
+                "collect_first_compliance": {
+                    "failures_collected": [
+                        {
+                            "worker_id": "market_analyst",
+                            "category": "tool_calls",
+                            "reason": "CRYPTO frontline worker 必需数据工具调用失败: claw_request_data",
+                            "evidence_paths": [str(tool_calls_path)],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _write_call_result(run_dir: Path, stage: str, worker_id: str, status: str) -> None:

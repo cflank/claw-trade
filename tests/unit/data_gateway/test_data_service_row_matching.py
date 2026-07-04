@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from claw_trade.data_gateway.coordination.service import DataService, _data_request_from_need
+from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy
 from claw_trade.data_gateway.models import CoverageRequirement, DataRequest, IngestResult, Market, QueryPlan, WarehouseCheck, WarehouseResult
-from claw_trade.data_gateway.needs import DataNeed
+from claw_trade.data_gateway.needs import DataNeed, ProviderCallSpec
 
 
 def _request(*, symbol_id: str, market: Market = Market.CRYPTO) -> DataRequest:
@@ -110,6 +111,48 @@ def test_cache_hit_ingest_result_rehydrates_rows_from_warehouse() -> None:
     result = service._data_result_from_ingest(need=need, ingest=ingest)
 
     assert result.rows == (row,)
+
+
+def test_price_alert_provider_batch_bypasses_provider_cache() -> None:
+    service = DataService(
+        query_planner=object(),
+        warehouse=object(),
+        execution_gate=object(),
+        fetch_engine=object(),
+        ingest=object(),
+    )
+    need = DataNeed(
+        need_id="price-alert:CRYPTO:BTC:20260625122448",
+        api_id="crypto.realtime_quote",
+        market=Market.CRYPTO,
+        instrument="BTC",
+        granularity="realtime",
+        requested_by_worker="price_alert_quote_provider",
+        purpose="price_alert_quote",
+        freshness_policy="realtime",
+        deadline_at=datetime(2026, 6, 25, 12, 24, 58, tzinfo=UTC),
+        consumer="price_alert",
+    )
+    call = ProviderCallSpec(
+        call_id="call:binance:ticker",
+        provider_id="crypto_binance_spot_market",
+        catalog_endpoint_id="binance.ticker_24hr",
+        official_path_or_api_name="/api/v3/ticker/24hr",
+        params={"symbol": "BTCUSDT"},
+        auth_scope="none",
+        rate_limit_bucket="binance",
+        http_visibility="managed_http",
+        parser_status="normalized",
+        batch_key="batch:binance:ticker:BTC",
+        official_doc_ref="https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints",
+        deadline_at=datetime(2026, 6, 25, 12, 24, 58, tzinfo=UTC),
+        need_ids=(need.need_id,),
+    )
+
+    batch = service._provider_call_batch(call=call, need=need, policy=RateLimitPolicy(window_seconds=60, max_requests=None))
+
+    assert batch.ignore_provider_cache is True
+    assert batch.ignore_cached_empty is True
 
 
 def test_all_a_shares_need_queries_warehouse_by_universe_ref_not_symbol() -> None:

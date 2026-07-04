@@ -174,8 +174,9 @@ class ReportNotificationService:
         if latest_pdf.state != "ready" or not latest_pdf.pdf_artifact_id:
             return {
                 "sent": False,
-                "code": "FILE_SEND_UNSUPPORTED",
-                "userMessage": "完整报告文件暂不可发送，请在设备界面查看。",
+                "code": "PDF_EXPORT_FAILED",
+                "userMessage": latest_pdf.user_message
+                or "PDF 暂不可用，完整报告仍可在设备界面查看。",
             }
 
         status = self._channel_bridge.get_channel_status(probe=True)

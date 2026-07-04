@@ -156,9 +156,9 @@ def test_notify_report_completion_does_not_ask_for_file_when_channel_cannot_send
     result = service.notify_report_completion("r-notify", target="sender-1", account_id="account-1")
 
     assert result["sent"] is True
-    assert "微信当前只能发送文字通知" in channel.last_text
+    assert "当前微信只能发送文字通知" in channel.last_text
     assert "回复“发送完整报告”" not in channel.last_text
-    assert "完整 PDF 暂不能从该通道发送" in channel.last_text
+    assert "PDF 暂不能从该通道发送" in channel.last_text
 
 
 def test_notify_report_completion_falls_back_to_in_app_when_channel_unavailable() -> None:

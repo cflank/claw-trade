@@ -392,7 +392,7 @@ class DataService:
     ) -> Any:
         from claw_trade.data_gateway.report_evidence import _provider_call_batch
 
-        return _provider_call_batch(
+        batch = _provider_call_batch(
             call=call,
             need=need,
             policy=policy,
@@ -400,6 +400,10 @@ class DataService:
             earliest_start_at=earliest_start_at,
             rate_limit_reserved_at=rate_limit_reserved_at,
         )
+        if str(need.consumer).strip() == "price_alert":
+            setattr(batch, "ignore_provider_cache", True)
+            setattr(batch, "ignore_cached_empty", True)
+        return batch
 
     def _data_result_from_fetch(
         self,

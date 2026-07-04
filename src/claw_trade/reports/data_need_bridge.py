@@ -557,7 +557,8 @@ def _data_need_model_visible_text(
     market = _market_from_request_payload(request)
     instrument = str(request.get("instrument") or "标的")
     has_visible_material = _has_model_visible_rows(data_results) or bool(chart_payload) or bool(crypto_lens_payload)
-    if not has_visible_material:
+    has_terminal_material = bool(data_results or attempts or refs.dataset_refs or refs.raw_refs or refs.attempt_refs)
+    if not has_visible_material and not has_terminal_material:
         return ""
     lines = [
         f"数据结果：{market.value} {instrument} 的{_business_data_label_from_request(request)}。",

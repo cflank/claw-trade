@@ -521,19 +521,29 @@ function mockWorkspaceFetch(
               actor: 'system',
               kind: 'plain',
               text: [
-                '可用命令：',
+                '命令帮助：',
                 '',
                 '/report <标的>',
-                '  生成完整投资报告。',
-                '  示例：/report TSLA',
+                '用途：生成完整投资报告。',
+                '例子：',
+                '  /report TSLA',
                 '',
                 '/select [市场] [refresh|刷新] [YYYY-MM-DD]',
-                '  查看或刷新选股结果；不写市场时默认 A股。',
-                '  市场：1/cn_a/A股 = A股；2/crypto/加密 = 加密。',
-                '  示例：/select、/select 1、/select 2、/select crypto、/select 2 refresh',
+                '用途：查看选股结果；带 refresh/刷新 时强制刷新数据。',
+                '默认：不写市场时使用 A股。',
+                '市场放前面，刷新放后面。',
+                '市场：',
+                '  1 / cn_a / A股',
+                '  2 / crypto / 加密',
+                '例子：',
+                '  /select',
+                '  /select 1',
+                '  /select 2',
+                '  /select 刷新',
+                '  /select 2 刷新',
                 '',
                 '/help',
-                '  查看命令详细用法。',
+                '用途：查看这份命令帮助。',
               ].join('\n'),
               createdAt: '2026-05-19T10:08:01.000Z',
             },
@@ -2264,12 +2274,15 @@ describe('home page', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
-    const help = await screen.findByText(/可用命令：/);
+    const help = await screen.findByText(/命令帮助：/);
     expect(help).toHaveClass('ct-message-text');
-    expect(help.textContent).toContain('/report <标的>\n  生成完整投资报告。');
+    expect(help.textContent).toContain('/report <标的>\n用途：生成完整投资报告。');
     expect(help.textContent).toContain('/select [市场] [refresh|刷新] [YYYY-MM-DD]');
-    expect(help.textContent).toContain('/select 1、/select 2、/select crypto、/select 2 refresh');
-    expect(help.textContent).toContain('/help\n  查看命令详细用法。');
+    expect(help.textContent).toContain('带 refresh/刷新 时强制刷新数据');
+    expect(help.textContent).toContain('市场放前面，刷新放后面。');
+    expect(help.textContent).toContain('1 / cn_a / A股');
+    expect(help.textContent).toContain('/select 2\n  /select 刷新\n  /select 2 刷新');
+    expect(help.textContent).toContain('/help\n用途：查看这份命令帮助。');
   });
 
   it('shows backend input errors in the chat bubble for invalid select commands', async () => {
@@ -3595,8 +3608,79 @@ describe('home page', () => {
     });
   });
 
+  it('shows background price alert messages from normal chat polling', async () => {
+    let chatHasPriceAlert = false;
+    const intervalCallbacks: Array<() => void> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: () => ({
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: chatHasPriceAlert
+          ? [
+              {
+                messageId: 'msg-price-alert',
+                contextKind: 'normal_chat',
+                actor: 'system',
+                kind: 'plain',
+                text: 'BTC 已触发价格提醒，当前价格 62198.24。',
+                createdAt: '2026-07-03T19:36:31.000Z',
+              },
+            ]
+          : [],
+      }),
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('workspace-layout');
+    expect(screen.queryByText('BTC 已触发价格提醒，当前价格 62198.24。')).not.toBeInTheDocument();
+    chatHasPriceAlert = true;
+
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    expect(await screen.findByText('BTC 已触发价格提醒，当前价格 62198.24。')).toBeInTheDocument();
+  });
+
   it('shows latest wechat channel conversation in the message stream', async () => {
     const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: {
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'normal-system-1',
+            contextKind: 'normal_chat',
+            actor: 'system',
+            kind: 'plain',
+            text: '网页聊天里的消息',
+            createdAt: '2026-05-19T10:09:00.000Z',
+          },
+        ],
+      },
       channelChatSnapshot: {
         channelKind: 'wechat_clawbot',
         context: {
@@ -3635,8 +3719,8 @@ describe('home page', () => {
       </MemoryRouter>,
     );
 
+    expect(await screen.findByText('网页聊天里的消息')).toBeInTheDocument();
     expect(await screen.findByText('微信里发来的问题')).toBeInTheDocument();
     expect(screen.getByText('微信通道回复')).toBeInTheDocument();
-    expect(screen.getByText('微信聊天')).toBeInTheDocument();
   });
 });

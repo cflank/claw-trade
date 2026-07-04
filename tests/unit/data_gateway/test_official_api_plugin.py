@@ -1441,6 +1441,33 @@ def test_coinglass_official_api_reuses_configured_proxy_and_header_name() -> Non
     assert request.headers["X-Api-Key"] == "coinglass-token"
 
 
+def test_coinglass_official_api_defaults_keystore_proxy_header_name() -> None:
+    client = _RecordingHttpClient()
+    plugin = _plugin("coinglass")
+    task = _task(
+        plugin.plugin_id,
+        "coinglass",
+        {"provider_call_spec": _call_spec("coinglass", "coinglass.futures_funding_rate", {"symbol": "BTC", "interval": "1h"})},
+    )
+
+    result = plugin.fetch(
+        task,
+        SimpleNamespace(
+            managed_http=ManagedHttp(client),
+            credential_resolver=_Resolver(
+                "coinglass",
+                endpoint_url="https://proxy.keystore.com.cn/api/v1/proxy/coinglass",
+            ),
+        ),
+    )
+
+    assert result.status.value == "empty"
+    request = client.requests[0]
+    assert request.headers is not None
+    assert request.headers["X-Api-Key"] == "coinglass-token"
+    assert "CG-API-KEY" not in request.headers
+
+
 def test_coinglass_official_spot_markets_filters_list_to_requested_asset() -> None:
     client = _RecordingHttpClient(
         json.dumps(

@@ -32,6 +32,7 @@ export function Composer({
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastSubmittedTextRef = useRef('');
   const hintId = useId();
   const showWorkerSelector = Boolean(workerChatEnabled && workers.length > 0 && onWorkerChange);
   const mentionQuery = workerChatEnabled && !onWorkerChange ? leadingMentionQuery(text) : null;
@@ -60,6 +61,7 @@ export function Composer({
     if (!value || disabled) {
       return;
     }
+    lastSubmittedTextRef.current = value;
     setText(workerChatEnabled && !onWorkerChange ? nextVisibleWorkerMention(value, workers) : '');
     setWorkerSelectorOpen(false);
     await onSend(value);
@@ -113,30 +115,35 @@ export function Composer({
       }
       return;
     }
-    if (mentionQuery === null) {
+    if (mentionQuery !== null) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (visibleMentionWorkers.length > 0) {
+          setActiveMentionIndex((current) => (current + 1) % visibleMentionWorkers.length);
+        }
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (visibleMentionWorkers.length > 0) {
+          setActiveMentionIndex((current) => (current - 1 + visibleMentionWorkers.length) % visibleMentionWorkers.length);
+        }
+      } else if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (visibleMentionWorkers.length > 0) {
+          insertWorkerMention(visibleMentionWorkers[activeMentionIndex] ?? visibleMentionWorkers[0]);
+        }
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        setText('');
+      }
       return;
     }
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowUp' && text.trim() === '' && lastSubmittedTextRef.current) {
       event.preventDefault();
       event.stopPropagation();
-      if (visibleMentionWorkers.length > 0) {
-        setActiveMentionIndex((current) => (current + 1) % visibleMentionWorkers.length);
-      }
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      event.stopPropagation();
-      if (visibleMentionWorkers.length > 0) {
-        setActiveMentionIndex((current) => (current - 1 + visibleMentionWorkers.length) % visibleMentionWorkers.length);
-      }
-    } else if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault();
-      event.stopPropagation();
-      if (visibleMentionWorkers.length > 0) {
-        insertWorkerMention(visibleMentionWorkers[activeMentionIndex] ?? visibleMentionWorkers[0]);
-      }
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      setText('');
+      setText(lastSubmittedTextRef.current);
     }
   }
 

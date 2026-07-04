@@ -8,7 +8,7 @@ from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.web.state import restore_completed_workflow_reports
 
 
-def _write_completed_run(run_root: Path, run_id: str) -> Path:
+def _write_completed_run(run_root: Path, run_id: str, *, origin_context_id: str | None = None) -> Path:
     run_dir = run_root / run_id
     (run_dir / "reports").mkdir(parents=True)
     (run_dir / "reports" / "final-report.md").write_text(
@@ -27,6 +27,7 @@ def _write_completed_run(run_root: Path, run_id: str) -> Path:
                     "company_name": "Bitcoin",
                     "market": "CRYPTO",
                     "profile": "CRYPTO",
+                    "ui_origin_context_id": origin_context_id,
                 },
             }
         ),
@@ -67,6 +68,23 @@ def test_restore_completed_workflow_reports_restores_existing_pdf(tmp_path: Path
     artifact = repo.latest_pdf_artifact("run-pdf-1")
     assert artifact is not None
     assert artifact.path == pdf_path.resolve()
+
+
+def test_restore_completed_workflow_reports_restores_wechat_origin_context(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    _write_completed_run(
+        run_root,
+        "run-wechat-origin",
+        origin_context_id="wechat_clawbot:account-1:sender-1",
+    )
+    repo = ReportRepository(deletion_index_path=run_root / ".ui-deleted-reports.json")
+
+    restore_completed_workflow_reports(repo, run_root)
+
+    report = repo.get_report("run-wechat-origin")
+    assert report is not None
+    assert report.origin_context_id == "wechat_clawbot:account-1:sender-1"
+    assert repo.list_saved_reports()[0]["canForwardToChannel"] is True
 
 
 def test_deleted_restored_report_stays_hidden_without_removing_run_files(tmp_path: Path) -> None:

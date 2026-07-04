@@ -87,6 +87,37 @@ describe('worker chat frontend', () => {
     expect(screen.getAllByRole('option')).toHaveLength(7);
   });
 
+  it('restores the last submitted input with ArrowUp when empty', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<Composer onSend={onSend} placeholder="输入消息" buttonLabel="发送" />);
+
+    const input = screen.getByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/select 2 refresh' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('/select 2 refresh'));
+    expect(input).toHaveValue('');
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+
+    expect(input).toHaveValue('/select 2 refresh');
+  });
+
+  it('does not overwrite a draft with the last submitted input', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined);
+    render(<Composer onSend={onSend} placeholder="输入消息" buttonLabel="发送" />);
+
+    const input = screen.getByLabelText('输入消息');
+    fireEvent.change(input, { target: { value: '/select 2 refresh' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('/select 2 refresh'));
+
+    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+
+    expect(input).toHaveValue('/report BTC');
+  });
+
   it('sends worker chat with the worker selected from the list', async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const onWorkerChange = vi.fn();

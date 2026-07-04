@@ -212,7 +212,8 @@ def test_pdf_file_failure_returns_file_send_unsupported() -> None:
     )
     result = service.request_full_report_file("r-pdf-fail", "req-pdf-fail", target="sender-1")
     assert result["sent"] is False
-    assert result["code"] == "FILE_SEND_UNSUPPORTED"
+    assert result["code"] == "PDF_EXPORT_FAILED"
+    assert "PDF 暂不可用" in result["userMessage"]
 
 
 def test_wechat_report_confirm_flow_and_running_cancel_stops_task() -> None:

@@ -259,7 +259,7 @@ fi
 
 log "installing OS dependencies"
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl tar python3.12
+sudo apt-get install -y ca-certificates curl tar python3.12 wkhtmltopdf fontconfig fonts-noto-cjk
 
 node_major="$(node --version 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
 if [[ -z "${node_major}" || "${node_major}" -lt 22 ]]; then

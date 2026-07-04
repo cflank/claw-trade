@@ -112,23 +112,39 @@ class CompletionSummaryBuilder:
 def render_completion_summary_text(summary: dict[str, Any], *, can_send_file: bool | None = None) -> str:
     reasons = summary.get("coreReasons") or []
     risks = summary.get("mainRisks") or []
-    reason_text = "；".join(str(item) for item in reasons[:3]) or "完整理由请查看报告正文。"
-    risk_text = "；".join(str(item) for item in risks[:2]) or "主要风险请查看报告正文。"
-    final_text = str(summary.get("finalConclusion") or "最终结论请查看报告正文。")
+    final_text = _compact_item(str(summary.get("finalConclusion") or "最终结论请查看报告正文。"), max_chars=180)
+    instrument_code = str(summary.get("instrumentCode") or "").strip()
     lines = [
-        "报告已完成。",
-        f"最终结论：{final_text}",
-        f"核心理由：{reason_text}",
-        f"主要风险：{risk_text}",
-        "查看完整报告以获取全部分析细节。",
+        "报告已完成",
+        f"标的：{instrument_code}" if instrument_code else "",
+        "",
+        "结论",
+        final_text,
+        "",
+        "核心理由",
+        *_numbered_lines(reasons[:3], fallback="完整理由请查看报告正文。", max_chars=110),
+        "",
+        "主要风险",
+        *_numbered_lines(risks[:2], fallback="主要风险请查看报告正文。", max_chars=110),
+        "",
+        "完整报告",
+        "查看完整报告可获取全部分析细节。",
     ]
     if can_send_file is True:
-        lines.append("需要我把完整 PDF 发到微信吗？如需发送，请回复“发送完整报告”。")
+        lines.append("需要 PDF 时，回复“发送完整报告”。")
     elif can_send_file is False:
-        lines.append("微信当前只能发送文字通知；完整 PDF 暂不能从该通道发送，请在设备界面查看。")
+        lines.append("当前微信只能发送文字通知，PDF 暂不能从该通道发送。")
     else:
         lines.append("完整报告可在设备界面查看。")
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line != "")
+
+
+def _numbered_lines(items: list[Any], *, fallback: str, max_chars: int) -> list[str]:
+    cleaned = [_compact_item(str(item), max_chars=max_chars) for item in items]
+    cleaned = [item for item in cleaned if _is_meaningful_item(item)]
+    if not cleaned:
+        cleaned = [fallback]
+    return [f"{index}. {item}" for index, item in enumerate(cleaned, start=1)]
 
 
 def _extract_final_conclusion(pm_conclusion: str | None, markdown: str) -> str:

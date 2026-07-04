@@ -95,6 +95,9 @@ def translate_internal_error_for_user(error: Exception | str, *, category: str |
     code = public_code_for(normalized_category)
     if code not in _PUBLIC_ERROR_CODE_SET:
         code = "ASSISTANT_UNAVAILABLE"
+    message = _data_tool_message(raw_message)
+    if message is not None:
+        return UserFacingFailure(code=code, user_message=message)
     message = _llm_runtime_message(raw_message, normalized_category)
     if message is not None:
         code = "ASSISTANT_UNAVAILABLE"
@@ -158,6 +161,26 @@ def _infer_category(raw_message: str, category: str | None) -> str:
     if "conflict" in lowered:
         return "conflict"
     return "assistant_unavailable"
+
+
+def _data_tool_message(raw_message: str) -> str | None:
+    lowered = raw_message.lower()
+    if not (
+        "claw_request_data" in lowered
+        or "数据工具" in raw_message
+        or "tool_calls" in lowered
+        or "data tool" in lowered
+    ):
+        return None
+    if "链上" in raw_message:
+        subject = "链上数据"
+    elif "行情" in raw_message:
+        subject = "行情数据"
+    else:
+        subject = "报告数据"
+    if "超时" in raw_message or "timeout" in lowered or "timed out" in lowered:
+        return f"{subject}请求超时，请稍后重试。"
+    return f"{subject}请求失败，请检查数据源后重试。"
 
 
 def _llm_runtime_message(raw_message: str, category: str) -> str | None:

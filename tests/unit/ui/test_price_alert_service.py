@@ -252,10 +252,22 @@ def test_run_price_alert_now_triggers_and_closes_by_default() -> None:
 
     assert first["triggered"] is True
     assert first["alert"].state == "closed"
-    assert service.list_price_alerts_for_user()["items"] == []
+    listed = service.list_price_alerts_for_user()["items"]
+    assert len(listed) == 1
+    assert listed[0]["priceAlertId"] == alert.priceAlertId
+    assert listed[0]["state"] == "closed"
     assert len(sent) == 1
     assert second["triggered"] is True
     assert len(sent) == 1
+    recreated = service.create_price_alert(
+        request_id="req-create-again",
+        instrument_code="BTC",
+        market=MarketProfile.CRYPTO,
+        condition={"type": "price_threshold", "operator": "above", "value": 70000},
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )
+    assert recreated.priceAlertId != alert.priceAlertId
+    assert recreated.state == "active"
 
 
 def test_price_threshold_uses_window_extrema_when_available() -> None:

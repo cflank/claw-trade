@@ -148,11 +148,16 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
             "report_id": "run-1",
             "task_id": "task-1",
             "text": (
-                "报告已完成。\n"
-                "最终结论：维持观察，等待突破确认。\n"
-                "核心理由：日线趋势改善\n"
-                "主要风险：估值波动\n"
-                "查看完整报告以获取全部分析细节。\n"
+                "报告已完成\n"
+                "标的：BTC\n"
+                "结论\n"
+                "维持观察，等待突破确认。\n"
+                "核心理由\n"
+                "1. 日线趋势改善\n"
+                "主要风险\n"
+                "1. 估值波动\n"
+                "完整报告\n"
+                "查看完整报告可获取全部分析细节。\n"
                 "完整报告可在设备界面查看。"
             ),
         }

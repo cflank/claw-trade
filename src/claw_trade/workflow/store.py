@@ -358,6 +358,7 @@ class WorkflowStore:
                 payload.get("frontline_execution_mode", "parallel"),
                 "frontline_execution_mode",
             ),
+            ui_origin_context_id=self._optional_str(payload.get("ui_origin_context_id"), "ui_origin_context_id"),
         )
 
     def _worker_result_from_dict(self, payload: dict[str, Any]) -> WorkerResult:

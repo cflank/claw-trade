@@ -67,6 +67,17 @@ def test_final_report_structure_failure_in_stage_batch_is_not_reported_as_assist
     assert "助手服务暂不可用" not in failure.user_message
 
 
+def test_data_tool_timeout_is_not_reported_as_assistant_unavailable() -> None:
+    failure = translate_internal_error_for_user(
+        "stage_batch: tool_calls: workers=['market_analyst']; "
+        "reasons=['CRYPTO frontline worker 必需数据工具调用失败: claw_request_data; 数据工具执行超时']"
+    )
+
+    assert failure.code == "ASSISTANT_UNAVAILABLE"
+    assert failure.user_message == "报告数据请求超时，请稍后重试。"
+    assert "助手服务暂不可用" not in failure.user_message
+
+
 def test_translate_internal_error_for_user_can_infer_profile_unapproved() -> None:
     failure = translate_internal_error_for_user("HK strategy unapproved")
     assert failure.code == "PROFILE_STRATEGY_UNAPPROVED"

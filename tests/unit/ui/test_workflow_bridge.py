@@ -57,6 +57,17 @@ def test_build_run_request_uses_frozen_snapshot() -> None:
     assert request.entry_point == WorkflowEntryPoint.REPORT_COMMAND
 
 
+def test_build_run_request_preserves_ui_origin_context() -> None:
+    runner = _FakeRunner()
+    bridge = ReportWorkflowBridge(runner)
+    task = _task()
+    task["originContextId"] = "wechat_clawbot:account-1:sender-1"
+
+    request = bridge.build_run_request(task)
+
+    assert request.ui_origin_context_id == "wechat_clawbot:account-1:sender-1"
+
+
 def test_create_and_poll_workflow_run() -> None:
     runner = _FakeRunner()
     bridge = ReportWorkflowBridge(runner)

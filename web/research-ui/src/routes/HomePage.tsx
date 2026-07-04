@@ -301,6 +301,30 @@ function mergeLocalWorkerChatMessages(
     .map(({ message }) => message);
 }
 
+function mergeIncomingChatMessages(
+  currentMessages: ChatMessageForUser[],
+  nextMessages: ChatMessageForUser[],
+) {
+  if (nextMessages.length === 0) {
+    return currentMessages;
+  }
+  const byId = new Map<string, ChatMessageForUser>();
+  for (const message of currentMessages) {
+    byId.set(message.messageId, message);
+  }
+  for (const message of nextMessages) {
+    byId.set(message.messageId, message);
+  }
+  return [...byId.values()]
+    .map((message, index) => ({ message, index, time: Date.parse(message.createdAt) }))
+    .sort((left, right) => {
+      const leftTime = Number.isFinite(left.time) ? left.time : 0;
+      const rightTime = Number.isFinite(right.time) ? right.time : 0;
+      return leftTime - rightTime || left.index - right.index;
+    })
+    .map(({ message }) => message);
+}
+
 function loadPersistedHomeChatState(): PersistedHomeChatState | null {
   if (typeof window === 'undefined') {
     return null;
@@ -614,14 +638,10 @@ export function HomePage() {
     if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
       return;
     }
-    const snapshotMessages = snapshot.messages;
-    setContext(snapshot.context);
-    setMessages((current) => mergeLocalWorkerChatMessages(current, snapshotMessages, localWorkerChatMessageIdsRef.current));
+    setMessages((current) => mergeIncomingChatMessages(current, snapshot.messages));
     if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
-    setActiveDetail(null);
-    setActiveSelectionDetail(null);
   }, []);
 
   const applyChatSessionSnapshot = useCallback((snapshot: SendChatMessageOutput | null | undefined) => {
@@ -635,7 +655,7 @@ export function HomePage() {
       return;
     }
     setContext(snapshot.context);
-    setMessages((current) => mergeLocalWorkerChatMessages(current, snapshot.messages, localWorkerChatMessageIdsRef.current));
+    setMessages((current) => mergeIncomingChatMessages(current, snapshot.messages));
     if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
@@ -693,11 +713,8 @@ export function HomePage() {
         current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
       );
       applyQueueSnapshot(queueResult);
-      if (normalChatResult?.messages?.length) {
-        applyChatSessionSnapshot(normalChatResult);
-      } else {
-        applyChannelChatSnapshot(channelChatResult);
-      }
+      applyChatSessionSnapshot(normalChatResult);
+      applyChannelChatSnapshot(channelChatResult);
       applySelectionRefreshSnapshot(selectionRefreshResult);
     } catch (loadError) {
       setError((loadError as Error).message);
@@ -742,7 +759,6 @@ export function HomePage() {
       return;
     }
     try {
-      const shouldLoadCurrentChat = context.kind !== 'normal_chat';
       const [
         historyResult,
         queueResult,
@@ -758,7 +774,7 @@ export function HomePage() {
         getChannelChatSnapshot().catch(() => null),
         getSelectionRefreshSnapshot().catch(() => null),
         getLicenseStatus().catch(() => null),
-        shouldLoadCurrentChat ? getChatSession(context.contextId).catch(() => null) : Promise.resolve(null),
+        getChatSession(context.contextId).catch(() => null),
         listScheduledReports().catch(() => ({ items: [] })),
         listPriceAlerts().catch(() => ({ items: [] })),
       ]);
@@ -771,11 +787,8 @@ export function HomePage() {
         setLicenseStatus(licenseStatusResult);
       }
       applyQueueSnapshot(queueResult);
-      if (currentChatResult?.messages?.length) {
-        applyChatSessionSnapshot(currentChatResult);
-      } else {
-        applyChannelChatSnapshot(channelChatResult);
-      }
+      applyChatSessionSnapshot(currentChatResult);
+      applyChannelChatSnapshot(channelChatResult);
       applySelectionRefreshSnapshot(selectionRefreshResult);
     } catch {
       // 保留当前 UI 状态，轮询失败不打断用户操作。

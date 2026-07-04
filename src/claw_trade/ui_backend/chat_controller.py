@@ -658,36 +658,59 @@ class ChatController:
 
     @staticmethod
     def _is_help_command(text: str) -> bool:
-        return text.strip().lower() in {"/help", "help", "帮助"}
+        lowered = text.strip().lower()
+        return (
+            lowered in {"/help", "help", "帮助"}
+            or lowered.startswith("/help ")
+            or lowered.startswith("help ")
+            or lowered.startswith("帮助 ")
+        )
 
     @staticmethod
     def _command_help_message() -> str:
         return "\n".join(
             [
-                "可用命令：",
+                "命令帮助：",
                 "",
                 "/report <标的>",
-                "  生成完整投资报告。",
-                "  示例：/report TSLA、/report 600519.SH、/report BTC/USDT",
+                "用途：生成完整投资报告。",
+                "例子：",
+                "  /report TSLA",
+                "  /report 600519.SH",
+                "  /report BTC/USDT",
                 "",
                 "/sched <标的> 每天 HH:MM",
-                "  创建定时报告。",
-                "  示例：/sched TSLA 每天 08:00",
+                "用途：创建定时报告。",
+                "例子：",
+                "  /sched TSLA 每天 08:00",
                 "",
                 "/alert <标的> 高于/低于 <价格>",
-                "  创建价格提醒。",
-                "  示例：/alert BTC 高于 70000",
+                "用途：创建价格提醒。",
+                "例子：",
+                "  /alert BTC 高于 70000",
                 "",
                 "/select [市场] [refresh|刷新] [YYYY-MM-DD]",
-                "  查看或刷新选股结果；不写市场时默认 A股。",
-                "  市场：1/cn_a/A股 = A股；2/crypto/加密 = 加密。",
-                "  示例：/select、/select 1、/select 2、/select crypto、/select 2 refresh",
+                "用途：查看选股结果；带 refresh/刷新 时强制刷新数据。",
+                "默认：不写市场时使用 A股。",
+                "市场放前面，刷新放后面。",
+                "市场：",
+                "  1 / cn_a / A股",
+                "  2 / crypto / 加密",
+                "例子：",
+                "  /select",
+                "  /select 1",
+                "  /select 2",
+                "  /select 刷新",
+                "  /select 2 刷新",
                 "",
                 "/maint",
-                "  查看维护状态摘要。",
+                "用途：查看维护状态摘要。",
+                "",
+                "/help",
+                "用途：查看这份命令帮助。",
                 "",
                 "回到普通聊天",
-                "  退出当前报告上下文。",
+                "用途：退出当前报告上下文。",
             ]
         )
 

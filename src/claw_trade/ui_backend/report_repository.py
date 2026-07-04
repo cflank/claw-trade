@@ -112,6 +112,9 @@ class ReportRepository:
             items.append(to_saved_report_for_user(report))
         return items
 
+    def list_saved_report_records(self) -> tuple[SavedReportRecord, ...]:
+        return tuple(self._reports[report_id] for report_id in self._report_order)
+
     def get_report(self, report_id: str) -> SavedReportRecord | None:
         return self._reports.get(report_id)
 

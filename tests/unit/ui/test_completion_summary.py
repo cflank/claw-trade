@@ -77,6 +77,8 @@ def test_completion_summary_extracts_real_brief_from_numbered_final_report() -> 
     assert "最终结论已写入完整报告" not in rendered
     assert "完整理由请查看报告正文" not in rendered
     assert "主要风险请查看报告正文" not in rendered
+    assert "核心理由\n1." in rendered
+    assert "主要风险\n1." in rendered
     assert summary["finalConclusion"].startswith("综合以上所有分析")
     assert any("技术面空头趋势明确" in item for item in summary["coreReasons"])
     assert any("回购支撑" in item for item in summary["coreReasons"])

@@ -105,6 +105,13 @@ class ChannelTextInboundController:
                 text=text,
             )
 
+        if _looks_like_help_command(text):
+            return self._handle_help_command(
+                message=message,
+                conversation_key=conversation_key,
+                text=text,
+            )
+
         if not _looks_like_supported_chat_intent(text):
             return self._handle_normal_chat(message=message, conversation_key=conversation_key, text=text)
 
@@ -133,6 +140,29 @@ class ChannelTextInboundController:
                 "replyText": _format_confirmation_reply(card),
                 "state": "awaiting_confirmation",
             },
+        )
+
+    def _handle_help_command(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+    ) -> dict[str, Any]:
+        reply_text = _wechat_help_message()
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="user",
+            text=text,
+        )
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="system",
+            text=reply_text,
+        )
+        return self._remember(
+            message.request_id,
+            {"handled": True, "replyText": reply_text, "state": "replied"},
         )
 
     def _handle_confirmation(
@@ -415,6 +445,11 @@ class ChannelTextInboundController:
         snapshot = self._chat_controller.get_chat_session(context_id=conversation_key)
         return {"channelKind": "wechat_clawbot", **snapshot}
 
+    def remember_conversation_context(self, conversation_key: str) -> None:
+        cleaned = conversation_key.strip()
+        if cleaned:
+            self._remember_latest_conversation(cleaned)
+
     def _remember_latest_conversation(self, conversation_key: str) -> None:
         with self._lock:
             self._latest_conversation_key = conversation_key
@@ -475,10 +510,20 @@ def _is_date_token(text: str) -> bool:
     return re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) is not None
 
 
-def _looks_like_supported_chat_intent(text: str) -> bool:
+def _looks_like_help_command(text: str) -> bool:
     lowered = text.strip().lower()
     return (
         lowered in {"/help", "help", "帮助"}
+        or lowered.startswith("/help ")
+        or lowered.startswith("help ")
+        or lowered.startswith("帮助 ")
+    )
+
+
+def _looks_like_supported_chat_intent(text: str) -> bool:
+    lowered = text.strip().lower()
+    return (
+        _looks_like_help_command(text)
         or IntentRecognizer.looks_like_supported_intent(text)
         or lowered.startswith("/maint")
         or ("维护" in lowered and ("状态" in lowered or "情况" in lowered or "摘要" in lowered))
@@ -549,6 +594,26 @@ def _reply_from_chat_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def _format_select_completion_reply(text: str) -> str:
     return f"{text}\n\n如需完整选股报告 PDF，回复“发送完整报告”。"
+
+
+def _wechat_help_message() -> str:
+    return "\n".join(
+        [
+            "命令帮助",
+            "/report TSLA：美股报告",
+            "/report 600519.SH：A股报告",
+            "/report BTC/USDT：加密报告",
+            "/select：A股选股结果",
+            "/select 2：加密选股结果",
+            "/select 刷新：刷新A股数据",
+            "/select 2 刷新：刷新加密数据",
+            "/alert BTC 高于 70000：价格提醒",
+            "/sched TSLA 每天 08:00：定时报告",
+            "/maint：维护状态",
+            "发送完整报告：发PDF",
+            "回到普通聊天：退出报告",
+        ]
+    )
 
 
 def _format_confirmation_reply(card: dict[str, Any]) -> str:

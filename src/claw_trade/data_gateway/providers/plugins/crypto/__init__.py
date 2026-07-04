@@ -1439,7 +1439,12 @@ def _coinglass_header_name(ctx: Any, credential_name: str) -> str:
     resolver = getattr(ctx, "credential_resolver", None)
     getter = getattr(resolver, "get_header_name", None)
     configured = non_empty(getter(credential_name)) if callable(getter) else None
-    return configured or "CG-API-KEY"
+    if configured:
+        return configured
+    host, prefix = endpoint(ctx, credential_name, "https://open-api-v4.coinglass.com")
+    if _is_keystore_coinglass_proxy(host, prefix):
+        return "X-Api-Key"
+    return "CG-API-KEY"
 
 
 def _is_keystore_coinglass_proxy(host: str, prefix: str) -> bool:

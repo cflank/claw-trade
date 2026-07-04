@@ -94,6 +94,8 @@ def test_export_fails_when_primary_runtime_capability_missing() -> None:
 
     assert record.state == "failed"
     assert record.pdf_artifact_id is None
+    assert record.failure_detail == "pdf primary runtime capability missing: bin:wkhtmltopdf"
+    assert record.user_message == "PDF 暂不可用：目标机缺少 bin:wkhtmltopdf。完整报告仍可在设备界面查看。"
     assert renderer.called is False
     assert repo.latest_pdf_artifact("r-pdf-gate") is None
 

@@ -412,7 +412,7 @@ def test_price_alert_list_dedupes_existing_matching_rows() -> None:
     assert [item["priceAlertId"] for item in payload["items"]] == [created.priceAlertId]
 
 
-def test_price_alert_list_hides_closed_and_deleted_rows() -> None:
+def test_price_alert_list_keeps_closed_rows_and_hides_deleted_rows() -> None:
     service = _alert_service()
     closed = service.create_price_alert(
         request_id="req-closed",
@@ -438,4 +438,5 @@ def test_price_alert_list_hides_closed_and_deleted_rows() -> None:
 
     payload = service.list_price_alerts_for_user()
 
-    assert [item["priceAlertId"] for item in payload["items"]] == [active.priceAlertId]
+    assert [item["priceAlertId"] for item in payload["items"]] == [active.priceAlertId, closed.priceAlertId]
+    assert [item["state"] for item in payload["items"]] == ["active", "closed"]
