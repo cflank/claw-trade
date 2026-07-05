@@ -15,6 +15,7 @@ runtime_group="${CLAW_TRADE_RUNTIME_GROUP:-clawtrade}"
 kiosk_owner="${CLAW_TRADE_KIOSK_OWNER:-clawkiosk}"
 kiosk_group="${CLAW_TRADE_KIOSK_GROUP:-clawkiosk}"
 kiosk_browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"
+update_base_url="${CLAW_TRADE_UPDATE_BASE_URL:-https://download.cflank-trade.top/stable/}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -46,6 +47,18 @@ ensure_system_identity() {
   fi
 }
 
+write_shared_env_var() {
+  local key="$1"
+  local value="$2"
+  local env_file="${install_root}/shared/config/claw-trade.env"
+  install -d -m 0750 -o "${runtime_owner}" -g "${runtime_group}" "${install_root}/shared/config"
+  touch "${env_file}"
+  sed -i "/^${key}=/d" "${env_file}"
+  printf '%s=%s\n' "${key}" "${value}" >>"${env_file}"
+  chown "${runtime_owner}:${runtime_group}" "${env_file}"
+  chmod 0640 "${env_file}"
+}
+
 ensure_system_identity "${runtime_owner}" "${runtime_group}"
 ensure_system_identity "${kiosk_owner}" "${kiosk_group}"
 [[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"
@@ -65,6 +78,7 @@ chmod 0755 "${release_root}/${top_dir}"
 chown root:root "${release_root}"
 chown -R root:root "${release_root}/${top_dir}"
 chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
+write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"
 
 "${release_root}/${top_dir}/bin/claw-trade-preflight"
 install -d -m 0755 /usr/local/lib/claw-trade

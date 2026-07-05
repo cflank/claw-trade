@@ -31,10 +31,12 @@ OUTPUT_DIR="${OUTPUT_DIR:-/mnt/d/claw-trade-virbox/delivery-output/virbox-protec
 WORK_DIR="${WORK_DIR:-}"
 PROTECTED_PYTHON="${PROTECTED_PYTHON:-/mnt/d/claw-trade-virbox/resource-test/protect-python-ds/protected/python}"
 PYTHON_SSP="${PYTHON_SSP:-/mnt/d/claw-trade-virbox/resource-test/protect-python-ds/python.ssp}"
-PROTECTED_NODE="${PROTECTED_NODE:-/mnt/d/claw-trade-virbox/node-ds-test/protected/node.bin}"
+PROTECTED_NODE="${PROTECTED_NODE:-/mnt/d/claw-trade-virbox/node-ds-test/input/protected/node}"
 NODE_SSP="${NODE_SSP:-/mnt/d/claw-trade-virbox/node-ds-test/input/node.ssp}"
 DSPROTECTOR="${DSPROTECTOR:-/mnt/d/sw/senseshield/sdk/Tool/VirboxProtect/bin/dsprotector_con.exe}"
+DSPROTECTOR_TMP_DIR="${DSPROTECTOR_TMP_DIR:-/mnt/d/claw-trade-virbox/dsprotector-tmp/${STAMP}-$$}"
 KEEP_WORK=0
+DSPROTECTOR_CALL_COUNT=0
 
 usage() {
   cat <<'EOF'
@@ -53,7 +55,7 @@ Optional overrides:
 
 Environment overrides:
   CONFIG_FILE INPUT_ARCHIVE OUTPUT_DIR WORK_DIR PROTECTED_PYTHON PYTHON_SSP
-  PROTECTED_NODE NODE_SSP DSPROTECTOR PYTHON_BIN
+  PROTECTED_NODE NODE_SSP DSPROTECTOR DSPROTECTOR_TMP_DIR PYTHON_BIN
 EOF
 }
 
@@ -144,7 +146,41 @@ encrypt_to() {
   local src="$2"
   local dst="$3"
   mkdir -p "$(dirname "${dst}")"
-  "${DSPROTECTOR}" -s "$(tool_path "${ssp}")" -i "$(tool_path "${src}")" -o "$(tool_path "${dst}")" < /dev/null
+  if [[ "${DSPROTECTOR}" == *.exe ]]; then
+    DSPROTECTOR_CALL_COUNT=$((DSPROTECTOR_CALL_COUNT + 1))
+    local tmp_base="${DSPROTECTOR_TMP_DIR}/${DSPROTECTOR_CALL_COUNT}"
+    local tmp_src="${tmp_base}/input/$(basename "${src}")"
+    local tmp_ssp="${tmp_base}/config/$(basename "${ssp}")"
+    local tmp_dst="${tmp_base}/output/$(basename "${dst}")"
+    mkdir -p "$(dirname "${tmp_src}")" "$(dirname "${tmp_ssp}")" "$(dirname "${tmp_dst}")"
+    cp -a "${src}" "${tmp_src}"
+    cp -a "${ssp}" "${tmp_ssp}"
+    "${DSPROTECTOR}" "$(tool_path "${tmp_src}")" -c "$(tool_path "${tmp_ssp}")" -o "$(tool_path "${tmp_dst}")" < /dev/null
+    cp -a "${tmp_dst}" "${dst}"
+  else
+    "${DSPROTECTOR}" "${src}" -c "${ssp}" -o "${dst}" < /dev/null
+  fi
+}
+
+encrypt_tree_to() {
+  local ssp="$1"
+  local src_dir="$2"
+  local dst_dir="$3"
+  mkdir -p "${dst_dir}"
+  if [[ "${DSPROTECTOR}" == *.exe ]]; then
+    DSPROTECTOR_CALL_COUNT=$((DSPROTECTOR_CALL_COUNT + 1))
+    local tmp_base="${DSPROTECTOR_TMP_DIR}/${DSPROTECTOR_CALL_COUNT}"
+    local tmp_src="${tmp_base}/input"
+    local tmp_ssp="${tmp_base}/config/$(basename "${ssp}")"
+    local tmp_dst="${tmp_base}/output"
+    mkdir -p "${tmp_src}" "$(dirname "${tmp_ssp}")" "${tmp_dst}"
+    cp -a "${src_dir}/." "${tmp_src}/"
+    cp -a "${ssp}" "${tmp_ssp}"
+    "${DSPROTECTOR}" "$(tool_path "${tmp_src}")" -c "$(tool_path "${tmp_ssp}")" -o "$(tool_path "${tmp_dst}")" < /dev/null
+    cp -a "${tmp_dst}/." "${dst_dir}/"
+  else
+    "${DSPROTECTOR}" "${src_dir}" -c "${ssp}" -o "${dst_dir}" < /dev/null
+  fi
 }
 
 encrypt_overwrite() {
@@ -174,7 +210,6 @@ path.write_text(text.replace(old, new), encoding="utf-8")
 PY
 }
 
-require_file "${INPUT_ARCHIVE}" "input production archive"
 require_file "${PROTECTED_PYTHON}" "protected Python runtime"
 require_file "${PYTHON_SSP}" "Python .ssp"
 require_file "${PROTECTED_NODE}" "protected Node runtime"
@@ -197,6 +232,7 @@ if [[ -z "${INPUT_ARCHIVE}" ]]; then
   done
   log "using latest input archive: ${INPUT_ARCHIVE}"
 fi
+require_file "${INPUT_ARCHIVE}" "input production archive"
 
 release_name="$("${PYTHON_BIN}" "${ROOT_DIR}/scripts/production/validate_production_archive.py" "${INPUT_ARCHIVE}")"
 [[ -n "${release_name}" ]] || fail "could not detect release name"
@@ -231,16 +267,21 @@ cp -a "${PROTECTED_NODE}" "${release_dir}/runtime/node"
 chmod 0755 "${release_dir}/runtime/node"
 
 log "encrypting Python bytecode"
+py_input="${WORK_DIR}/_ds_python_in"
 py_tmp="${WORK_DIR}/_ds_python_out"
+rm -rf "${py_input}"
 rm -rf "${py_tmp}"
+mkdir -p "${py_input}"
 mkdir -p "${py_tmp}"
 py_count=0
 while IFS= read -r -d '' src; do
   rel="${src#"${release_dir}/"}"
-  encrypt_to "${PYTHON_SSP}" "${src}" "${py_tmp}/${rel}"
+  mkdir -p "$(dirname "${py_input}/${rel}")"
+  cp -a "${src}" "${py_input}/${rel}"
   py_count=$((py_count + 1))
 done < <(find "${release_dir}/app/python/claw_trade" -type f -name '*.pyc' -print0)
 ((py_count > 0)) || fail "no .pyc files found under app/python/claw_trade"
+encrypt_tree_to "${PYTHON_SSP}" "${py_input}/app/python/claw_trade" "${py_tmp}/app/python/claw_trade"
 cp -a "${py_tmp}/app/python/claw_trade/." "${release_dir}/app/python/claw_trade/"
 
 log "encrypting OpenClaw entry"
@@ -252,12 +293,20 @@ mkdir -p "${assets_tmp}"
 
 log "encrypting agent markdown asset"
 tar -C "${assets_tmp}" -xf "${release_dir}/runtime/assets/agents.tar"
+agent_input="${WORK_DIR}/_ds_agent_in"
+agent_output="${WORK_DIR}/_ds_agent_out"
+rm -rf "${agent_input}" "${agent_output}"
+mkdir -p "${agent_input}" "${agent_output}"
 agent_count=0
 while IFS= read -r -d '' src; do
-  encrypt_overwrite "${NODE_SSP}" "${src}"
+  rel="${src#"${assets_tmp}/"}"
+  mkdir -p "$(dirname "${agent_input}/${rel}")"
+  cp -a "${src}" "${agent_input}/${rel}"
   agent_count=$((agent_count + 1))
 done < <(find "${assets_tmp}/agents" -type f -name '*.md' -print0)
 ((agent_count > 0)) || fail "no agent markdown files found in agents asset"
+encrypt_tree_to "${NODE_SSP}" "${agent_input}/agents" "${agent_output}/agents"
+cp -a "${agent_output}/agents/." "${assets_tmp}/agents/"
 if grep -R -a -q 'TradingAgents' "${assets_tmp}/agents"; then
   fail "agent asset still contains plaintext TradingAgents after DS protection"
 fi
@@ -266,12 +315,20 @@ tar -C "${assets_tmp}" -cf "${release_dir}/runtime/assets/agents.tar" agents
 log "encrypting OpenClaw plugin javascript asset"
 rm -rf "${assets_tmp:?}/"*
 tar -C "${assets_tmp}" -xf "${release_dir}/runtime/assets/openclaw_plugins.tar"
+plugin_input="${WORK_DIR}/_ds_plugin_in"
+plugin_output="${WORK_DIR}/_ds_plugin_out"
+rm -rf "${plugin_input}" "${plugin_output}"
+mkdir -p "${plugin_input}" "${plugin_output}"
 plugin_count=0
 while IFS= read -r -d '' src; do
-  encrypt_overwrite "${NODE_SSP}" "${src}"
+  rel="${src#"${assets_tmp}/"}"
+  mkdir -p "$(dirname "${plugin_input}/${rel}")"
+  cp -a "${src}" "${plugin_input}/${rel}"
   plugin_count=$((plugin_count + 1))
 done < <(find "${assets_tmp}/openclaw_plugins" -path '*/node_modules/*' -prune -o -type f -name '*.js' -print0)
 ((plugin_count > 0)) || fail "no plugin javascript files found in OpenClaw plugins asset"
+encrypt_tree_to "${NODE_SSP}" "${plugin_input}/openclaw_plugins" "${plugin_output}/openclaw_plugins"
+cp -a "${plugin_output}/openclaw_plugins/." "${assets_tmp}/openclaw_plugins/"
 tar -C "${assets_tmp}" -cf "${release_dir}/runtime/assets/openclaw_plugins.tar" openclaw_plugins
 
 log "creating protected OpenClaw launcher"
@@ -310,6 +367,12 @@ tar --dereference --hard-dereference -C "${WORK_DIR}" -czf "${output_archive}" "
   cd "${OUTPUT_DIR}"
   sha256sum "$(basename "${output_archive}")" > "$(basename "${output_archive}").sha256"
 )
+if [[ "${DSPROTECTOR}" == *.exe && "${KEEP_WORK}" != "1" ]]; then
+  rm -rf "${DSPROTECTOR_TMP_DIR}"
+fi
+if [[ "${KEEP_WORK}" != "1" ]]; then
+  rm -rf "${WORK_DIR}"
+fi
 
 log "done"
 printf '%s\n' "${output_archive}"

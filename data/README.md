@@ -13,10 +13,17 @@ data/current-seed-20260626.tar
 制作新的 seed：
 
 ```bash
-uv run python scripts/production/export_current_seed.py \
-  --env-file .runtime/dev-services/runtime.env \
+SEED_COLUMNAR_ROOT="$(find .runtime/factory-seeds -mindepth 2 -maxdepth 2 -type d -name normalized ! -path '*-test/normalized' | sort | tail -n 1)"
+test -n "$SEED_COLUMNAR_ROOT"
+echo "using seed columnar root: $SEED_COLUMNAR_ROOT"
+
+scripts/start-control-runtime.sh -- uv run python scripts/production/export_current_seed.py \
+  --mongo-database claw_trade_a_share_factory_seed \
+  --columnar-root "$SEED_COLUMNAR_ROOT" \
   --output data/current-seed-$(date -u +%Y%m%d).tar
 ```
+
+`.runtime/dev-services/runtime.env` 只在本地固定 runtime 运行期间生成，不是仓库自带文件。已有运行中的本地 runtime 时，才改用 `--env-file .runtime/dev-services/runtime.env`。不要省略 `--mongo-database` 和 `--columnar-root`，否则会导出运行时增量数据根，而不是干净 factory seed。
 
 这个命令不会重新下载数据。它只把当前 Mongo 元数据和当前 Parquet 历史数据打包成新的交付 seed。
 
