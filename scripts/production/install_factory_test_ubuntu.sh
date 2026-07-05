@@ -19,6 +19,7 @@ ui_pid_file="${CLAW_TRADE_UI_PID_FILE:-/tmp/claw-trade-ui.pid}"
 control_pid_file="${CLAW_TRADE_CONTROL_PID_FILE:-/tmp/claw-trade-control.pid}"
 control_log="${CLAW_TRADE_CONTROL_LOG:-/tmp/claw-trade-control.log}"
 ui_log="${CLAW_TRADE_UI_LOG:-/tmp/claw-trade-ui.log}"
+update_base_url="${CLAW_TRADE_UPDATE_BASE_URL:-https://download.cflank-trade.top/stable/}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -289,6 +290,7 @@ sudo chown root:root "${install_root}/releases"
 sudo chown -R root:root "${install_root}/releases/${top_dir}"
 sudo chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
 install_virbox_status_sdk
+write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"
 bind_virbox_license_key_file
 
 "${install_root}/releases/${top_dir}/bin/claw-trade-preflight"

@@ -48,6 +48,41 @@ def test_formal_package_and_release_name_contract() -> None:
     assert "validate_production_archive.py" in factory_script
 
 
+def test_install_scripts_pin_default_update_base_url() -> None:
+    expected = "https://download.cflank-trade.top/stable/"
+    for script in (
+        _read("scripts/production/install_factory_test_ubuntu.sh"),
+        _read("scripts/production/install_production_package.sh"),
+    ):
+        assert f'update_base_url="${{CLAW_TRADE_UPDATE_BASE_URL:-{expected}}}"' in script
+        assert 'write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"' in script
+
+
+def test_virbox_protected_package_script_autoselects_archive_before_requiring_it() -> None:
+    script = _read("scripts/production/build_virbox_protected_delivery_package.sh")
+
+    autoselect_index = script.index('if [[ -z "${INPUT_ARCHIVE}" ]]; then')
+    require_index = script.index('require_file "${INPUT_ARCHIVE}" "input production archive"')
+    assert autoselect_index < require_index
+
+
+def test_virbox_protected_package_script_uses_dsprotector_config_flag_contract() -> None:
+    script = _read("scripts/production/build_virbox_protected_delivery_package.sh")
+
+    assert '"${DSPROTECTOR}" "$(tool_path "${tmp_src}")" -c "$(tool_path "${tmp_ssp}")" -o "$(tool_path "${tmp_dst}")"' in script
+    assert '"${DSPROTECTOR}" "${src}" -c "${ssp}" -o "${dst}"' in script
+    assert 'DSPROTECTOR_TMP_DIR="${DSPROTECTOR_TMP_DIR:-/mnt/d/claw-trade-virbox/dsprotector-tmp/${STAMP}-$$}"' in script
+    assert 'PROTECTED_NODE="${PROTECTED_NODE:-/mnt/d/claw-trade-virbox/node-ds-test/input/protected/node}"' in script
+    assert 'cp -a "${src}" "${tmp_src}"' in script
+    assert 'cp -a "${tmp_dst}" "${dst}"' in script
+    assert "encrypt_tree_to()" in script
+    assert 'encrypt_tree_to "${PYTHON_SSP}" "${py_input}/app/python/claw_trade" "${py_tmp}/app/python/claw_trade"' in script
+    assert 'encrypt_tree_to "${NODE_SSP}" "${agent_input}/agents" "${agent_output}/agents"' in script
+    assert 'encrypt_tree_to "${NODE_SSP}" "${plugin_input}/openclaw_plugins" "${plugin_output}/openclaw_plugins"' in script
+    assert 'rm -rf "${WORK_DIR}"' in script
+    assert '-s "$(tool_path "${ssp}")" -i "$(tool_path "${src}")"' not in script
+
+
 def test_update_public_key_owner_and_mode_contract() -> None:
     assert paths.UPDATE_PUBLIC_KEY_PATH == Path("/etc/claw-trade/update-signing-public.pem")
     assert paths.PRODUCTION_USER == "clawtrade"
