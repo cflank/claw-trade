@@ -93,7 +93,11 @@ cp -a packaging/production/README_FACTORY_TEST.md "${package_root}/README_FACTOR
 cp -a agents "${package_root}/agents"
 cp -a openclaw_plugins "${package_root}/openclaw_plugins"
 prepare_openclaw_plugin_assets "${package_root}/openclaw_plugins"
-tar --exclude='agents/*/prompt-review.yaml' -C "${package_root}" -cf "${package_root}/runtime/assets/agents.tar" agents
+tar \
+  --exclude='agents/*/prompt-review.yaml' \
+  --exclude='*/__pycache__' \
+  --exclude='*.pyc' \
+  -C "${package_root}" -cf "${package_root}/runtime/assets/agents.tar" agents
 tar -C "${package_root}" -cf "${package_root}/runtime/assets/openclaw_plugins.tar" openclaw_plugins
 rm -rf "${package_root}/agents" "${package_root}/openclaw_plugins"
 cp -a web/research-ui/dist "${package_root}/web/dist"

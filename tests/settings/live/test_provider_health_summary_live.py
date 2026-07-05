@@ -133,7 +133,7 @@ def test_live_provider_health_summary_has_real_source_and_no_internal_leak(tmp_p
     assert response.status_code == 200
     payload = response.json()
     assert payload["state"] in {"not_configured", "healthy", "degraded"}
-    assert payload["source"] == "openclaw.models.authStatus"
+    assert payload["source"] == "openclaw.models.probeStatus"
     assert payload["checkedAt"]
 
     lowered = str(payload["userMessage"]).lower()

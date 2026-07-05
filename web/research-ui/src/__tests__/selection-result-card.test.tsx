@@ -92,13 +92,13 @@ raw payload: hidden`),
   it('labels failed select results as failed instead of unavailable', () => {
     render(
       <MessageStream
-        items={[selectionMessage('`/select` 执行失败，本轮结果未生效，请稍后重试。', 'selection_failed')]}
+        items={[selectionMessage('`/select` 失败：选股评审服务没有正常返回。本轮结果未生效。', 'selection_failed')]}
       />,
     );
 
     expect(screen.getByText((content) => content.includes('选股失败'))).toBeInTheDocument();
     expect(screen.queryByText((content) => content.includes('选股不可用'))).not.toBeInTheDocument();
-    expect(document.body).toHaveTextContent('/select 执行失败，本轮结果未生效，请稍后重试。');
+    expect(document.body).toHaveTextContent('/select 失败：选股评审服务没有正常返回。本轮结果未生效。');
   });
 
   it('calls confirmation only from an explicit candidate button click', () => {

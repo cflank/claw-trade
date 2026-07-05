@@ -602,16 +602,19 @@ class LlmSettingsBridge:
                 checked_at=checked_at,
                 provider=provider,
                 model=model,
-                source="openclaw.models.authStatus",
+                source="openclaw.models.probeStatus",
             ).to_user_payload()
-        status = self._client.models_auth_status(
+        probe_status = self._client.models_probe_status(
             provider=str(report_fields["provider"]),
             model=_optional_str(report_fields.get("model")),
             endpoint_url=_optional_str(report_fields.get("endpoint_url")),
-            probe=True,
         )
-        raw_message = _normalize_failure_message(status) if isinstance(status, Mapping) else ""
-        ok = bool(status.get("ok")) if isinstance(status, Mapping) else False
+        probe_result = _select_provider_probe_result(
+            probe_status,
+            provider=str(report_fields["provider"]),
+            model=_optional_str(report_fields.get("model")),
+        )
+        ok = _probe_result_status(probe_result) == "ok"
         if ok:
             user_message = "provider 健康检查通过。"
             return ProviderHealthSummary(
@@ -621,8 +624,9 @@ class LlmSettingsBridge:
                 checked_at=checked_at,
                 provider=provider,
                 model=model,
-                source="openclaw.models.authStatus",
+                source="openclaw.models.probeStatus",
             ).to_user_payload()
+        raw_message = _probe_failure_user_message(probe_result)
         return ProviderHealthSummary(
             state="degraded",
             severity="warning",
@@ -630,7 +634,7 @@ class LlmSettingsBridge:
             checked_at=checked_at,
             provider=provider,
             model=model,
-            source="openclaw.models.authStatus",
+            source="openclaw.models.probeStatus",
         ).to_user_payload()
 
     def get_runtime_service_status_summary(self) -> dict[str, Any]:
@@ -1264,11 +1268,6 @@ def _provider_from_default_model(config: Mapping[str, Any]) -> str | None:
         return None
     provider = model_name.split("/", 1)[0].strip()
     return provider or None
-
-
-def _normalize_failure_message(status: Mapping[str, Any]) -> str:
-    raw = _optional_str(status.get("userMessage")) or _optional_str(status.get("message"))
-    return raw or "provider 健康检查失败，请检查模型服务商配置后重试。"
 
 
 def _select_provider_probe_result(

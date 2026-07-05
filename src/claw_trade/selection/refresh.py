@@ -722,5 +722,5 @@ def _data_run_progress_for_user(data_run: SelectionDataRun, *, trade_date: str) 
 def _failure_reason_for_user(data_run: SelectionDataRun) -> str:
     reason = (data_run.failure_reason or "").strip()
     if data_run.failure_code == "provider_evidence_failed" or reason == "provider attempts 缺失":
-        return "缺少数据源调用证据（provider attempts 缺失）"
+        return "数据源没有返回可核验的调用记录。"
     return reason

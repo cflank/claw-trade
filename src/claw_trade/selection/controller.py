@@ -1106,7 +1106,7 @@ class SelectionController:
                 )
                 return SelectCommandResult(
                     code=SelectCommandCode.FAILED,
-                    chat_text="`/select` 执行失败，本轮结果未生效，请稍后重试。",
+                    chat_text=_failed_chat_text(reason),
                     select_workflow_run_id=workflow_run_id,
                     evidence_path=evidence_path,
                     failure_reason=reason,
@@ -2544,7 +2544,8 @@ def _data_refresh_unavailable_chat_text(
         return (
             f"{_unavailable_chat_text(code)} 已确认需要补数，但当前运行环境没有配置后台补数通道。"
         )
-    return f"{_unavailable_chat_text(code)} 已尝试启动后台补数，但调度失败：{refresh.error_code or refresh.reason}。"
+    reason = _selection_failure_reason_for_user(refresh.error_code or refresh.reason or "")
+    return f"{_unavailable_chat_text(code)} 已尝试启动后台补数，但失败了：{reason}"
 
 
 def _coerce_raw_data_maintenance_status(raw_status: object | None) -> RawDataMaintenanceStatus | None:
@@ -2588,7 +2589,7 @@ def _raw_data_maintenance_chat_text(code: SelectUnavailableCode, *, reason: str)
     if code == SelectUnavailableCode.RAW_DATA_MAINTENANCE_RUNNING:
         return "`/select` 当前不可用：原始行情正在补数据，补完后会再计算候选池。"
     if reason and reason != code.value:
-        return f"`/select` 当前不可用：最近一次原始行情补数据失败。原因：{reason}"
+        return f"`/select` 当前不可用：最近一次原始行情补数据失败。{_selection_failure_reason_for_user(reason)}"
     return "`/select` 当前不可用：最近一次原始行情补数据失败。"
 
 
@@ -2632,11 +2633,41 @@ def _failed_result(
     evidence_path = _write_selection_workflow_evidence(evidence_dir=evidence_dir, payload=payload)
     return SelectCommandResult(
         code=SelectCommandCode.FAILED,
-        chat_text="`/select` 执行失败，本轮结果未生效，请稍后重试。",
+        chat_text=_failed_chat_text(reason),
         select_workflow_run_id=workflow_run_id,
         evidence_path=evidence_path,
         failure_reason=reason,
     )
+
+
+def _failed_chat_text(reason: str) -> str:
+    return f"`/select` 失败：{_selection_failure_reason_for_user(reason)}本轮结果未生效。"
+
+
+def _selection_failure_reason_for_user(reason: str) -> str:
+    text = reason.strip()
+    lower = text.lower()
+    if not text:
+        return "系统没有拿到可用的选股结果。"
+    if "credential_missing" in lower or "api key" in lower or "api_key" in lower or "auth" in lower:
+        return "数据源凭证没配好，拿不到选股需要的数据。"
+    if "timeout" in lower or "timed out" in lower:
+        return "服务响应超时，请稍后重试。"
+    if "selection_workflow_cancelled" in lower or "user_cancelled" in lower:
+        return "选股任务已停止。"
+    if "worker_runtime_failed" in lower:
+        return "选股评审服务没有正常返回。"
+    if "empty_output" in lower:
+        return "选股评审没有生成可用结论。"
+    if "selection_result_invalid" in lower:
+        return "选股结果格式不完整，系统没有采用这轮结果。"
+    if "candidate_cache" in lower or "hash" in lower or "lineage" in lower:
+        return "候选池数据不完整或校验失败。"
+    if "selection_data_refresh" in lower or "data_run" in lower:
+        return "选股数据刷新失败。"
+    if "provider" in lower:
+        return "数据源没有返回可核验的调用记录。"
+    return "系统没有拿到可用的选股结果。"
 
 
 def _utc_now() -> datetime:

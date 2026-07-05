@@ -1840,6 +1840,7 @@ def test_select_command_worker_runtime_failure_stops_downstream_dispatches(tmp_p
 
     assert result["selection"]["code"] == "failed"
     assert result["selection"]["failureReason"] == "worker_runtime_failed:selection_strategist"
+    assert result["messages"][-1]["text"] == "`/select` 失败：选股评审服务没有正常返回。本轮结果未生效。"
     assert [payload["worker_id"] for payload in selection_runner.payloads] == [
         "selection_strategist"
     ]
@@ -1862,6 +1863,7 @@ def test_select_command_empty_worker_output_stops_before_manager(tmp_path: Path)
         result["selection"]["failureReason"]
         == "artifact_approval_failed:selection_skeptic:empty_output"
     )
+    assert result["messages"][-1]["text"] == "`/select` 失败：选股评审没有生成可用结论。本轮结果未生效。"
     assert [payload["worker_id"] for payload in selection_runner.payloads] == [
         "selection_strategist",
         "selection_skeptic",

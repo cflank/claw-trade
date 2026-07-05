@@ -557,7 +557,7 @@ def test_selection_refresh_service_humanizes_provider_evidence_failure_for_right
 
     assert isinstance(progress, dict)
     assert progress["workerStatusLabels"] == [
-        "失败原因：缺少数据源调用证据（provider attempts 缺失）",
+        "失败原因：数据源没有返回可核验的调用记录。",
     ]
 
 

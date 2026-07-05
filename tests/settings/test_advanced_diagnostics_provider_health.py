@@ -9,16 +9,17 @@ from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
 class _FakeGateway:
     def __init__(self) -> None:
         self._revision = 0
-        self._auth_payload: dict[str, Any] = {"ok": False, "message": "auth failed"}
+        self._probe_status = "auth"
         self.auth_calls: list[dict[str, Any]] = []
+        self.probe_calls: list[dict[str, Any]] = []
         self._config: dict[str, object] = {
             "active_provider": "",
             "agents": {"defaults": {"model": ""}},
             "models": {"providers": {}},
         }
 
-    def set_auth_result(self, *, ok: bool, message: str) -> None:
-        self._auth_payload = {"ok": ok, "message": message}
+    def set_probe_result(self, *, status: str) -> None:
+        self._probe_status = status
 
     def config_schema_lookup(self, *, path: str) -> dict[str, str]:
         return {"path": path}
@@ -57,7 +58,7 @@ class _FakeGateway:
                 "probe": probe,
             }
         )
-        return dict(self._auth_payload)
+        return {"ok": self._probe_status == "ok"}
 
     def models_probe_status(
         self,
@@ -66,8 +67,13 @@ class _FakeGateway:
         model: str | None = None,
         endpoint_url: str | None = None,
     ) -> dict[str, Any]:
-        _ = endpoint_url
-        status = "ok" if bool(self._auth_payload.get("ok")) else "auth"
+        self.probe_calls.append(
+            {
+                "provider": provider,
+                "model": model,
+                "endpoint_url": endpoint_url,
+            }
+        )
         return {
             "auth": {
                 "probes": {
@@ -75,7 +81,7 @@ class _FakeGateway:
                         {
                             "provider": provider,
                             "model": model or "",
-                            "status": status,
+                            "status": self._probe_status,
                         }
                     ]
                 }
@@ -100,21 +106,21 @@ def test_provider_health_summary_reads_real_status_and_is_not_hardcoded(tmp_path
     }
     bridge = _bridge(tmp_path, gateway)
 
-    gateway.set_auth_result(ok=True, message="ok")
+    gateway.set_probe_result(status="ok")
     healthy = bridge.get_provider_health_summary()
     assert healthy["state"] == "healthy"
-    assert healthy["source"] == "openclaw.models.authStatus"
+    assert healthy["source"] == "openclaw.models.probeStatus"
 
-    gateway.set_auth_result(ok=False, message="gateway timeout")
+    gateway.set_probe_result(status="timeout")
     degraded = bridge.get_provider_health_summary()
     assert degraded["state"] == "degraded"
     assert degraded["severity"] == "warning"
     assert degraded["userMessage"] != "provider 健康检查通过。"
 
-    assert len(gateway.auth_calls) == 2
-    assert gateway.auth_calls[0]["provider"] == "deepseek"
-    assert gateway.auth_calls[0]["model"] == "deepseek-chat"
-    assert gateway.auth_calls[0]["probe"] is True
+    assert gateway.auth_calls == []
+    assert len(gateway.probe_calls) == 2
+    assert gateway.probe_calls[0]["provider"] == "deepseek"
+    assert gateway.probe_calls[0]["model"] == "deepseek-chat"
 
 
 def test_provider_health_summary_sanitizes_internal_provider_detail(tmp_path: Path) -> None:
@@ -125,10 +131,7 @@ def test_provider_health_summary_sanitizes_internal_provider_detail(tmp_path: Pa
         "models": {"providers": {"deepseek": {"api_key": "sk-real", "endpoint_url": "https://api.example.com"}}},
     }
     bridge = _bridge(tmp_path, gateway)
-    gateway.set_auth_result(
-        ok=False,
-        message="gateway failed: provider attempt #2 raw payload leaked",
-    )
+    gateway.set_probe_result(status="auth")
     summary = bridge.get_provider_health_summary()
     text = str(summary["userMessage"]).lower()
     assert "provider attempt" not in text
@@ -149,7 +152,7 @@ def test_provider_health_summary_does_not_create_new_report_hard_block(tmp_path:
         expected_settings_version="v_1",
         request_id="s08-save-1",
     )
-    gateway.set_auth_result(ok=True, message="ready")
+    gateway.set_probe_result(status="ok")
     tested = bridge.test_llm_via_openclaw(
         {"provider": "deepseek", "model": "deepseek-chat", "endpointUrl": "https://api.example.com"},
         request_id="s08-test-1",
@@ -158,7 +161,7 @@ def test_provider_health_summary_does_not_create_new_report_hard_block(tmp_path:
     readiness_before = bridge.get_report_model_readiness()
     assert readiness_before.ready is True
 
-    gateway.set_auth_result(ok=False, message="provider attempt #3 timeout")
+    gateway.set_probe_result(status="timeout")
     summary = bridge.get_provider_health_summary()
     readiness_after = bridge.get_report_model_readiness()
 

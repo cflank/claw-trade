@@ -182,7 +182,7 @@ def test_select_command_is_routed_to_selection_before_report_intent() -> None:
 def test_select_command_failed_result_uses_failed_message_kind() -> None:
     selection = _FakeSelectionController(
         code=SelectCommandCode.FAILED,
-        chat_text="`/select` 执行失败，本轮结果未生效，请稍后重试。",
+        chat_text="`/select` 失败：选股评审服务没有正常返回。本轮结果未生效。",
     )
     controller, transport, workflow_runner = _build_controller(selection_controller=selection)
 
@@ -191,7 +191,7 @@ def test_select_command_failed_result_uses_failed_message_kind() -> None:
     assert "error" not in result
     assert result["selection"]["code"] == "failed"
     assert result["messages"][-1]["kind"] == "selection_failed"
-    assert result["messages"][-1]["text"] == "`/select` 执行失败，本轮结果未生效，请稍后重试。"
+    assert result["messages"][-1]["text"] == "`/select` 失败：选股评审服务没有正常返回。本轮结果未生效。"
     assert transport.calls == 0
     assert workflow_runner.calls == 0
 
