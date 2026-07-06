@@ -4,6 +4,8 @@ src-bak/
 .worktrees/
 .runtime/
 .env.local
+update-signing-private.pem
+update-signing-public.pem
 .claude/
 runs/
 logs/

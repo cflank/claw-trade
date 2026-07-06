@@ -16,6 +16,8 @@ kiosk_owner="${CLAW_TRADE_KIOSK_OWNER:-clawkiosk}"
 kiosk_group="${CLAW_TRADE_KIOSK_GROUP:-clawkiosk}"
 kiosk_browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"
 update_base_url="${CLAW_TRADE_UPDATE_BASE_URL:-https://download.cflank-trade.top/stable/}"
+auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-1}"
+update_public_key_file="${CLAW_TRADE_UPDATE_PUBLIC_KEY_FILE:-/tmp/update-signing-public.pem}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -59,6 +61,16 @@ write_shared_env_var() {
   chmod 0640 "${env_file}"
 }
 
+install_update_public_key_file() {
+  [[ -f "${update_public_key_file}" ]] || {
+    printf '[INFO] update public key not found; remote update will fail until installed: %s\n' "${update_public_key_file}"
+    return 0
+  }
+  install -d -m 0755 /etc/claw-trade
+  install -m 0644 "${update_public_key_file}" /etc/claw-trade/update-signing-public.pem
+  printf '[INFO] installed update public key: /etc/claw-trade/update-signing-public.pem\n'
+}
+
 ensure_system_identity "${runtime_owner}" "${runtime_group}"
 ensure_system_identity "${kiosk_owner}" "${kiosk_group}"
 [[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"
@@ -79,6 +91,8 @@ chown root:root "${release_root}"
 chown -R root:root "${release_root}/${top_dir}"
 chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
 write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"
+write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"
+install_update_public_key_file
 
 "${release_root}/${top_dir}/bin/claw-trade-preflight"
 install -d -m 0755 /usr/local/lib/claw-trade

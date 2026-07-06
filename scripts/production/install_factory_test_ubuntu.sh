@@ -3,6 +3,7 @@ set -euo pipefail
 
 package=""
 license_key_file=""
+update_public_key_file="${CLAW_TRADE_UPDATE_PUBLIC_KEY_FILE:-/tmp/update-signing-public.pem}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bundle_root="$(cd "${script_dir}/.." && pwd)"
 install_root="${CLAW_TRADE_INSTALL_ROOT:-/opt/claw-trade}"
@@ -20,6 +21,7 @@ control_pid_file="${CLAW_TRADE_CONTROL_PID_FILE:-/tmp/claw-trade-control.pid}"
 control_log="${CLAW_TRADE_CONTROL_LOG:-/tmp/claw-trade-control.log}"
 ui_log="${CLAW_TRADE_UI_LOG:-/tmp/claw-trade-ui.log}"
 update_base_url="${CLAW_TRADE_UPDATE_BASE_URL:-https://download.cflank-trade.top/stable/}"
+auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-1}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -69,7 +71,7 @@ stop_ui() {
     fi
     rm -f "${ui_pid_file}"
   fi
-  sudo pkill -f 'python3.12 -m claw_trade.web.app' 2>/dev/null || true
+  sudo pkill -f 'claw_trade.web.app' 2>/dev/null || true
 }
 
 stop_control() {
@@ -81,6 +83,9 @@ stop_control() {
     fi
     rm -f "${control_pid_file}"
   fi
+  sudo pkill -f 'claw-trade-control-runtime' 2>/dev/null || true
+  sudo pkill -f 'claw_trade.runtime.openviking_report_server' 2>/dev/null || true
+  sudo pkill -f 'openclaw$' 2>/dev/null || true
 }
 
 ensure_system_identity() {
@@ -163,6 +168,16 @@ bind_virbox_license_key_file() {
       || fail "Virbox status check failed after license bind; key suffix: ${suffix}"
   fi
   log "Virbox license bound (suffix: ${suffix})"
+}
+
+install_update_public_key_file() {
+  [[ -f "${update_public_key_file}" ]] || {
+    log "update public key not found; remote update will fail until installed: ${update_public_key_file}"
+    return 0
+  }
+  sudo install -d -m 0755 /etc/claw-trade
+  sudo install -m 0644 "${update_public_key_file}" /etc/claw-trade/update-signing-public.pem
+  log "installed update public key: /etc/claw-trade/update-signing-public.pem"
 }
 
 tail_log() {
@@ -291,6 +306,8 @@ sudo chown -R root:root "${install_root}/releases/${top_dir}"
 sudo chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
 install_virbox_status_sdk
 write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"
+write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"
+install_update_public_key_file
 bind_virbox_license_key_file
 
 "${install_root}/releases/${top_dir}/bin/claw-trade-preflight"

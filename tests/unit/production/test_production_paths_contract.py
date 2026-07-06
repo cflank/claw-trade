@@ -55,7 +55,46 @@ def test_install_scripts_pin_default_update_base_url() -> None:
         _read("scripts/production/install_production_package.sh"),
     ):
         assert f'update_base_url="${{CLAW_TRADE_UPDATE_BASE_URL:-{expected}}}"' in script
+        assert 'auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-1}"' in script
         assert 'write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"' in script
+        assert 'write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"' in script
+
+
+def test_install_scripts_install_update_public_key_from_tmp() -> None:
+    for script in (
+        _read("scripts/production/install_factory_test_ubuntu.sh"),
+        _read("scripts/production/install_production_package.sh"),
+    ):
+        assert 'update_public_key_file="${CLAW_TRADE_UPDATE_PUBLIC_KEY_FILE:-/tmp/update-signing-public.pem}"' in script
+        assert "install_update_public_key_file()" in script
+        assert "/etc/claw-trade/update-signing-public.pem" in script
+
+
+def test_factory_installer_stops_existing_runtime_processes_by_current_names() -> None:
+    script = _read("scripts/production/install_factory_test_ubuntu.sh")
+
+    assert "pkill -f 'claw_trade.web.app'" in script
+    assert "pkill -f 'claw-trade-control-runtime'" in script
+    assert "pkill -f 'claw_trade.runtime.openviking_report_server'" in script
+    assert "pkill -f 'openclaw$'" in script
+    assert "pkill -f 'python3.12 -m claw_trade.web.app'" not in script
+
+
+def test_r2_target_install_bootstrap_contract() -> None:
+    script = _read("scripts/production/install_from_r2_ubuntu.sh")
+    manual = _read("docs/生产及升级操作手册.md")
+
+    assert "https://download.cflank-trade.top/delivery" in script
+    assert 'download "${release_name}.tar.gz"' in script
+    assert 'download "${release_name}.tar.gz.sha256"' in script
+    assert 'download "install_factory_test_ubuntu.sh"' in script
+    assert 'download "validate_production_archive.py"' in script
+    assert 'download "update-signing-public.pem"' in script
+    assert 'sha256sum -c "${release_name}.tar.gz.sha256"' in script
+    assert 'sudo bash "${work_dir}/install_factory_test_ubuntu.sh"' in script
+    assert "delivery/install_from_r2_ubuntu.sh" in manual
+    assert "delivery/validate_production_archive.py" in manual
+    assert 'bash /tmp/install_from_r2_ubuntu.sh "$REL"' in manual
 
 
 def test_virbox_protected_package_script_autoselects_archive_before_requiring_it() -> None:
@@ -253,7 +292,7 @@ def test_production_package_bundles_weixin_plugin_and_uses_production_runtime() 
     assert '"data/crypto-history-full/normalized-columnar-usdt-only"' in audit
     assert '"runtime", "openclaw", "dist", "plugin-sdk", "gateway-runtime.js"' in helper
     assert '"third_party", "openclaw", "dist", "plugin-sdk", "gateway-runtime.js"' in helper
-    assert "tar --exclude='agents/*/prompt-review.yaml'" in build_script
+    assert "--exclude='agents/*/prompt-review.yaml'" in build_script
     assert 'tar -C "${package_root}" -cf "${package_root}/runtime/assets/openclaw_plugins.tar" openclaw_plugins' in build_script
 
 

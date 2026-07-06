@@ -22,16 +22,15 @@ sudo scripts/production/install_production_package.sh /path/to/claw-trade-produc
 `/opt/claw-trade/releases` 和 `current`/`rescue-current` 链接归 root 所有；`/opt/claw-trade/shared` 归 `clawtrade` 写入运行期状态，systemd 服务的工作目录也在 shared 下。
 安装脚本同时安装 root-owned 更新应用 helper 到 `/usr/local/lib/claw-trade/claw-trade-apply-update`，用于复验 signed manifest/archive、解包 release、切换版本、重启服务和健康检查；helper 运行期间持有 `/opt/claw-trade/shared/updates/apply.lock`，应用 release 内不保存 root helper。
 
-远程更新需要先把更新公钥安装为 root-owned 文件：
+如果 `/tmp/update-signing-public.pem` 存在，安装脚本会自动安装到：
 
-```bash
-sudo install -d -m 0755 /etc/claw-trade
-sudo install -m 0644 update-signing-public.pem /etc/claw-trade/update-signing-public.pem
+```text
+/etc/claw-trade/update-signing-public.pem
 ```
 
 不要手动 `tar -xzf` 后再用通配符 `ln -sfn` 切换 `current`；这会绕过安装脚本的包名和顶层目录校验。
 
-安装脚本只接受可信本地生产包。当前代码可从对象存储检查 signed manifest，并手动下载、校验、安装 signed archive。UI 服务在配置 `CLAW_TRADE_UPDATE_BASE_URL` 后会后台定时检查更新；全新 systemd 安装也会启用 `claw-trade-auto-update.timer`。如需自动安装，把 `CLAW_TRADE_AUTO_UPDATE_INSTALL=1` 写入 `/opt/claw-trade/shared/config/claw-trade.env`。
+安装脚本只接受可信本地生产包。当前代码可从对象存储检查 signed manifest，并手动下载、校验、安装 signed archive。安装脚本默认写入 `CLAW_TRADE_UPDATE_BASE_URL` 和 `CLAW_TRADE_AUTO_UPDATE_INSTALL=1`；全新 systemd 安装也会启用 `claw-trade-auto-update.timer`。
 
 ## 启动
 
