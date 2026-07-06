@@ -15,7 +15,7 @@ BASE="https://download.cflank-trade.top/delivery"
 Ubuntu 24.04 机器
 sudo 密码
 Virbox 授权码
-Virbox LCC 已安装并启动
+Virbox LCC Ubuntu 安装包：senseshield-lcc-*.deb
 ```
 
 ## 2. 登录 Ubuntu
@@ -31,7 +31,17 @@ sudo apt-get update
 sudo apt-get install -y ca-certificates curl
 ```
 
-## 4. 检查 Virbox LCC
+## 4. 安装 Virbox LCC
+
+先把 `senseshield-lcc-*.deb` 放到目标机 `/tmp`。
+
+```bash
+cd /tmp
+ls -lh senseshield-lcc-*.deb
+sudo apt-get install -y ./senseshield-lcc-*.deb
+```
+
+检查 LCC 服务：
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:12339/v1/license/enumLicense \
@@ -39,7 +49,7 @@ curl -fsS -X POST http://127.0.0.1:12339/v1/license/enumLicense \
   -d '{}'
 ```
 
-这条失败，就先启动或安装 Virbox LCC，再继续。
+这条失败，就先处理 Virbox LCC，成功后再继续。
 
 ## 5. 设置 split lock
 
