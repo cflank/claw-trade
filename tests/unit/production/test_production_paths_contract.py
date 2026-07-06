@@ -216,6 +216,7 @@ def test_factory_install_warms_protected_python_after_license_binding() -> None:
     assert "warm_up_protected_python()" in factory_script
     assert "protected Python warmup failed" in factory_script
     assert 'sudo -u "${runtime_owner}" -g "${runtime_group}" env PYTHONPATH="${pythonpath}"' in factory_script
+    assert '"${python_bin}" "${release_dir}/scripts/selection/restore_a_share_factory_seed.py" --help' in factory_script
     assert 'bind_virbox_license_key_file\nwarm_up_protected_python "${install_root}/releases/${top_dir}"' in factory_script
 
 

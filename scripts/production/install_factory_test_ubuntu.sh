@@ -271,7 +271,7 @@ warm_up_protected_python() {
   log "warming protected Python runtime"
   for attempt in 1 2 3; do
     if sudo -u "${runtime_owner}" -g "${runtime_group}" env PYTHONPATH="${pythonpath}" \
-      "${python_bin}" -c 'import sys; print(sys.version.split()[0])' >/dev/null; then
+      "${python_bin}" "${release_dir}/scripts/selection/restore_a_share_factory_seed.py" --help >/dev/null; then
       return 0
     fi
     status="$?"
