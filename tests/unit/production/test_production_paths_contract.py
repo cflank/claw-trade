@@ -210,6 +210,15 @@ def test_factory_install_supports_license_key_file_activation() -> None:
     assert "cat \"${body_file}\"" not in factory_script
 
 
+def test_factory_install_warms_protected_python_after_license_binding() -> None:
+    factory_script = _read("scripts/production/install_factory_test_ubuntu.sh")
+
+    assert "warm_up_protected_python()" in factory_script
+    assert "protected Python warmup failed" in factory_script
+    assert 'sudo -u "${runtime_owner}" -g "${runtime_group}" env PYTHONPATH="${pythonpath}"' in factory_script
+    assert 'bind_virbox_license_key_file\nwarm_up_protected_python "${install_root}/releases/${top_dir}"' in factory_script
+
+
 def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> None:
     install_script = _read("scripts/production/install_production_package.sh")
     factory_script = _read("scripts/production/install_factory_test_ubuntu.sh")

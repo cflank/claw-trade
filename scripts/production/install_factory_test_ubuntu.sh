@@ -261,6 +261,26 @@ elif new not in text and export_new not in text:
 INNER_PY
 }
 
+warm_up_protected_python() {
+  local release_dir="$1"
+  local python_bin="${release_dir}/runtime/python/bin/python"
+  local pythonpath="${release_dir}/app/python:${release_dir}/runtime/python-site-packages"
+  local attempt status
+
+  [[ -x "${python_bin}" ]] || fail "protected Python runtime missing: ${python_bin}"
+  log "warming protected Python runtime"
+  for attempt in 1 2 3; do
+    if sudo -u "${runtime_owner}" -g "${runtime_group}" env PYTHONPATH="${pythonpath}" \
+      "${python_bin}" -c 'import sys; print(sys.version.split()[0])' >/dev/null; then
+      return 0
+    fi
+    status="$?"
+    log "protected Python warmup failed (attempt ${attempt}/3, exit ${status}); retrying"
+    sleep 3
+  done
+  fail "protected Python warmup failed"
+}
+
 parse_args "$@"
 
 if [[ -z "${package}" ]]; then
@@ -311,6 +331,7 @@ write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"
 write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"
 install_update_public_key_file
 bind_virbox_license_key_file
+warm_up_protected_python "${install_root}/releases/${top_dir}"
 
 "${install_root}/releases/${top_dir}/bin/claw-trade-preflight"
 tmp_current="${install_root}/.current.${top_dir}.$$"
