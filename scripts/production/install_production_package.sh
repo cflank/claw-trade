@@ -18,6 +18,10 @@ kiosk_browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"
 update_base_url="${CLAW_TRADE_UPDATE_BASE_URL:-https://download.cflank-trade.top/stable/}"
 auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-1}"
 update_public_key_file="${CLAW_TRADE_UPDATE_PUBLIC_KEY_FILE:-/tmp/update-signing-public.pem}"
+virbox_status_sdk_archive="${VIRBOX_STATUS_SDK_ARCHIVE:-}"
+virbox_status_dir="${install_root}/shared/license/virbox-status-sdk"
+virbox_status_command="${virbox_status_dir}/virbox_status_sdk"
+virbox_license_id="${VIRBOX_LICENSE_ID:-16427}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -71,6 +75,18 @@ install_update_public_key_file() {
   printf '[INFO] installed update public key: /etc/claw-trade/update-signing-public.pem\n'
 }
 
+install_virbox_status_sdk() {
+  write_shared_env_var "CLAW_TRADE_LICENSE_REQUIRED" "1"
+  [[ -f "${virbox_status_sdk_archive}" ]] || fail "missing Virbox status SDK archive: ${virbox_status_sdk_archive}"
+  install -d -m 0750 -o root -g "${runtime_group}" "${virbox_status_dir}"
+  tar -xzf "${virbox_status_sdk_archive}" -C "${virbox_status_dir}"
+  chown -R root:"${runtime_group}" "${virbox_status_dir}"
+  chmod 0755 "${virbox_status_dir}" "${virbox_status_command}"
+  [[ -f "${virbox_status_dir}/libslm_control.so" ]] && chmod 0755 "${virbox_status_dir}/libslm_control.so"
+  write_shared_env_var "CLAW_TRADE_VIRBOX_STATUS_COMMAND" "${virbox_status_command}"
+  write_shared_env_var "VIRBOX_LICENSE_ID" "${virbox_license_id}"
+}
+
 ensure_system_identity "${runtime_owner}" "${runtime_group}"
 ensure_system_identity "${kiosk_owner}" "${kiosk_group}"
 [[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"
@@ -79,6 +95,9 @@ require_command fc-match "missing PDF font runtime: install fontconfig"
 require_noto_cjk_font
 
 top_dir="$(python3 "${script_dir}/validate_production_archive.py" "${archive}")"
+if [[ -z "${virbox_status_sdk_archive}" ]]; then
+  virbox_status_sdk_archive="${release_root}/${top_dir}/virbox/virbox-status-sdk-linux-x86_64.tgz"
+fi
 install -d -m 0755 "${release_root}"
 install -d -m 0750 \
   "${install_root}/shared" \
@@ -90,6 +109,7 @@ chmod 0755 "${release_root}/${top_dir}"
 chown root:root "${release_root}"
 chown -R root:root "${release_root}/${top_dir}"
 chown -R "${runtime_owner}:${runtime_group}" "${install_root}/shared"
+install_virbox_status_sdk
 write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"
 write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"
 install_update_public_key_file

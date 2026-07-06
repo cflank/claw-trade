@@ -7,6 +7,7 @@ WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.runtime/production-package}"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
 OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"
+VIRBOX_STATUS_SDK_ARCHIVE="${VIRBOX_STATUS_SDK_ARCHIVE:-${ROOT_DIR}/.runtime/virbox-status-sdk/virbox-status-sdk-linux-x86_64.tgz}"
 
 version="$("${PYTHON_BIN}" - <<'PY' "${ROOT_DIR}/pyproject.toml"
 import sys, tomllib
@@ -66,6 +67,7 @@ require_path "third_party/openclaw/dist"
 require_path "third_party/openclaw/openclaw.mjs"
 require_path "third_party/openclaw/node_modules"
 require_path ".venv/lib/python3.12/site-packages"
+require_path "${VIRBOX_STATUS_SDK_ARCHIVE}"
 resolved_python_bin="$(command -v "${PYTHON_BIN}")"
 [[ -n "${resolved_python_bin}" ]] || fail "cannot resolve ${PYTHON_BIN}"
 
@@ -75,6 +77,7 @@ mkdir -p \
   "${package_root}/runtime" \
   "${package_root}/runtime/assets" \
   "${package_root}/runtime/openclaw" \
+  "${package_root}/virbox" \
   "${package_root}/web" \
   "${package_root}/data" \
   "${package_root}/data/crypto-history-full" \
@@ -90,6 +93,7 @@ cp -a packaging/production/root-helper "${package_root}/root-helper"
 cp -a packaging/production/kiosk "${package_root}/kiosk"
 cp -a packaging/production/runtime/. "${package_root}/runtime/"
 cp -a packaging/production/README_FACTORY_TEST.md "${package_root}/README_FACTORY_TEST.md"
+cp -a "${VIRBOX_STATUS_SDK_ARCHIVE}" "${package_root}/virbox/virbox-status-sdk-linux-x86_64.tgz"
 cp -a agents "${package_root}/agents"
 cp -a openclaw_plugins "${package_root}/openclaw_plugins"
 prepare_openclaw_plugin_assets "${package_root}/openclaw_plugins"

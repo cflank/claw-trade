@@ -70,6 +70,25 @@ def test_install_scripts_install_update_public_key_from_tmp() -> None:
         assert "/etc/claw-trade/update-signing-public.pem" in script
 
 
+def test_install_scripts_require_virbox_status_sdk_from_release_package() -> None:
+    build_status_sdk = _read("techlab/virbox_probe/build_virbox_status_sdk.sh")
+
+    assert "/mnt/d/sw/senseshield/sdk/API" in build_status_sdk
+    assert "virbox-status-sdk-linux-x86_64.tgz" in build_status_sdk
+    assert 'tar -C "${OUT_DIR}" -czf "${ARCHIVE}" virbox_status_sdk libslm_control.so' in build_status_sdk
+
+    for script in (
+        _read("scripts/production/install_factory_test_ubuntu.sh"),
+        _read("scripts/production/install_production_package.sh"),
+    ):
+        assert 'virbox_status_sdk_archive="${VIRBOX_STATUS_SDK_ARCHIVE:-}"' in script
+        assert "install_virbox_status_sdk()" in script
+        assert "missing Virbox status SDK archive" in script
+        assert "virbox/virbox-status-sdk-linux-x86_64.tgz" in script
+        assert "CLAW_TRADE_VIRBOX_STATUS_COMMAND" in script
+        assert "license gate will fail closed" not in script
+
+
 def test_factory_installer_stops_existing_runtime_processes_by_current_names() -> None:
     script = _read("scripts/production/install_factory_test_ubuntu.sh")
 
@@ -276,17 +295,22 @@ def test_production_package_bundles_weixin_plugin_and_uses_production_runtime() 
     assert 'cp -a scripts/openclaw-gateway-rpc-helper.mjs "${package_root}/scripts/openclaw-gateway-rpc-helper.mjs"' in build_script
     assert 'cp -a scripts/crypto/download_binance_public_data.py "${package_root}/scripts/crypto/download_binance_public_data.py"' in build_script
     assert 'cp -a scripts/crypto/import_crypto_prepackaged_to_mongo.py "${package_root}/scripts/crypto/import_crypto_prepackaged_to_mongo.py"' in build_script
+    assert 'VIRBOX_STATUS_SDK_ARCHIVE="${VIRBOX_STATUS_SDK_ARCHIVE:-${ROOT_DIR}/.runtime/virbox-status-sdk/virbox-status-sdk-linux-x86_64.tgz}"' in build_script
+    assert 'require_path "${VIRBOX_STATUS_SDK_ARCHIVE}"' in build_script
+    assert 'cp -a "${VIRBOX_STATUS_SDK_ARCHIVE}" "${package_root}/virbox/virbox-status-sdk-linux-x86_64.tgz"' in build_script
     assert 'require_path "data/crypto-history-full/normalized-columnar-usdt-only"' in build_script
     assert (
         'cp -a data/crypto-history-full/normalized-columnar-usdt-only '
         '"${package_root}/data/crypto-history-full/normalized-columnar-usdt-only"'
     ) in build_script
     assert 'test -f "${ROOT_DIR}/scripts/openclaw-gateway-rpc-helper.mjs"' in preflight
+    assert 'test -f "${ROOT_DIR}/virbox/virbox-status-sdk-linux-x86_64.tgz"' in preflight
     assert 'test -f "${ROOT_DIR}/scripts/crypto/download_binance_public_data.py"' in preflight
     assert 'test -f "${ROOT_DIR}/scripts/crypto/import_crypto_prepackaged_to_mongo.py"' in preflight
     assert 'test -d "${ROOT_DIR}/data/crypto-history-full/normalized-columnar-usdt-only"' in preflight
     assert "missing CRYPTO daily_bar parquet seed" in preflight
     assert '"scripts/openclaw-gateway-rpc-helper.mjs"' in audit
+    assert '"virbox/virbox-status-sdk-linux-x86_64.tgz"' in audit
     assert '"scripts/crypto/download_binance_public_data.py"' in audit
     assert '"scripts/crypto/import_crypto_prepackaged_to_mongo.py"' in audit
     assert '"data/crypto-history-full/normalized-columnar-usdt-only"' in audit

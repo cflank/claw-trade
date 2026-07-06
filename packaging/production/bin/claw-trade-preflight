@@ -15,6 +15,7 @@ test -x "${ROOT_DIR}/runtime/openclaw/openclaw.mjs" || fail "missing runtime/ope
 test -d "${ROOT_DIR}/runtime/openclaw/dist" || fail "missing runtime/openclaw/dist"
 test -f "${ROOT_DIR}/runtime/assets/agents.tar" || fail "missing runtime/assets/agents.tar"
 test -f "${ROOT_DIR}/runtime/assets/openclaw_plugins.tar" || fail "missing runtime/assets/openclaw_plugins.tar"
+test -f "${ROOT_DIR}/virbox/virbox-status-sdk-linux-x86_64.tgz" || fail "missing virbox/virbox-status-sdk-linux-x86_64.tgz"
 test -f "${ROOT_DIR}/scripts/openclaw-gateway-rpc-helper.mjs" || fail "missing scripts/openclaw-gateway-rpc-helper.mjs"
 test -f "${ROOT_DIR}/scripts/crypto/download_binance_public_data.py" || fail "missing scripts/crypto/download_binance_public_data.py"
 test -f "${ROOT_DIR}/scripts/crypto/import_crypto_prepackaged_to_mongo.py" || fail "missing scripts/crypto/import_crypto_prepackaged_to_mongo.py"

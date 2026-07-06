@@ -12,7 +12,7 @@ runtime_group="${CLAW_TRADE_RUNTIME_GROUP:-clawtrade}"
 kiosk_owner="${CLAW_TRADE_KIOSK_OWNER:-clawkiosk}"
 kiosk_group="${CLAW_TRADE_KIOSK_GROUP:-clawkiosk}"
 kiosk_browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"
-virbox_status_sdk_archive="${VIRBOX_STATUS_SDK_ARCHIVE:-${bundle_root}/virbox/virbox-status-sdk-linux-x86_64.tgz}"
+virbox_status_sdk_archive="${VIRBOX_STATUS_SDK_ARCHIVE:-}"
 virbox_status_dir="${install_root}/shared/license/virbox-status-sdk"
 virbox_status_command="${virbox_status_dir}/virbox_status_sdk"
 virbox_license_id="${VIRBOX_LICENSE_ID:-16427}"
@@ -114,8 +114,7 @@ write_shared_env_var() {
 install_virbox_status_sdk() {
   write_shared_env_var "CLAW_TRADE_LICENSE_REQUIRED" "1"
   if [[ ! -f "${virbox_status_sdk_archive}" ]]; then
-    log "Virbox status SDK archive not found; license gate will fail closed until configured: ${virbox_status_sdk_archive}"
-    return 0
+    fail "missing Virbox status SDK archive: ${virbox_status_sdk_archive}"
   fi
 
   log "installing Virbox status SDK"
@@ -299,6 +298,9 @@ sudo install -d -m 0755 "${install_root}/releases"
   "${install_root}/shared/updates"/{downloads,logs}
 top_dir="$(python3.12 "${script_dir}/validate_production_archive.py" "${package}")"
 sudo tar --no-same-owner --no-same-permissions -xzf "${package}" -C "${install_root}/releases"
+if [[ -z "${virbox_status_sdk_archive}" ]]; then
+  virbox_status_sdk_archive="${install_root}/releases/${top_dir}/virbox/virbox-status-sdk-linux-x86_64.tgz"
+fi
 patch_runtime_control "${install_root}/releases/${top_dir}"
 sudo chmod 0755 "${install_root}/releases/${top_dir}"
 sudo chown root:root "${install_root}/releases"
