@@ -443,6 +443,14 @@ tmp_rescue_current="${install_root}/.rescue-current.${top_dir}.$$"
 sudo ln -sfn "${install_root}/releases/${top_dir}" "${tmp_rescue_current}"
 sudo mv -Tf "${tmp_rescue_current}" "${install_root}/rescue-current"
 sudo chown -h root:root "${install_root}/rescue-current"
+sudo install -d -m 0755 /usr/local/lib/claw-trade
+sudo install -m 0755 "${install_root}/current/root-helper/claw-trade-apply-update" /usr/local/lib/claw-trade/claw-trade-apply-update
+sudo install -m 0644 "${install_root}/current/systemd/"*.service /etc/systemd/system/
+sudo install -m 0644 "${install_root}/current/systemd/"*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo install -m 0440 "${install_root}/current/sudoers/claw-trade-update" /etc/sudoers.d/claw-trade-update
+sudo visudo -cf /etc/sudoers.d/claw-trade-update >/dev/null
+sudo systemctl disable --now claw-trade-auto-update.timer >/dev/null 2>&1 || true
 export PYTHONPATH="${install_root}/current/app/python:${install_root}/current/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
 
 runtime_env="${install_root}/shared/tmp/dev-services/runtime.env"
@@ -488,6 +496,13 @@ if [[ "${ui_ready}" != "1" ]]; then
   tail_log "${ui_log}"
   fail "UI did not respond on 127.0.0.1:5175"
 fi
+
+log "verifying auto update command"
+sudo systemctl reset-failed claw-trade-auto-update.service claw-trade-control.service claw-trade-rescue.service >/dev/null 2>&1 || true
+sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; set -a; . "$1"; set +a; exec "$2"' \
+  bash "${install_root}/shared/config/claw-trade.env" "${install_root}/current/bin/claw-trade-auto-update" >/dev/null \
+  || fail "auto update command did not run successfully"
+sudo systemctl reset-failed claw-trade-auto-update.service claw-trade-control.service claw-trade-rescue.service >/dev/null 2>&1 || true
 
 cat <<EOF
 [OK] claw-trade installed

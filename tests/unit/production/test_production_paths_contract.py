@@ -116,9 +116,14 @@ def test_r2_target_install_bootstrap_contract() -> None:
     assert 'download "update-signing-public.pem"' in script
     assert 'sha256sum -c "${release_name}.tar.gz.sha256"' in script
     assert 'sudo bash "${work_dir}/install_factory_test_ubuntu.sh"' in script
+    assert "latest.txt" in script
+    assert "ensure_split_lock_off" in script
     assert "delivery/install_from_r2_ubuntu.sh" in manual
     assert "delivery/validate_production_archive.py" in manual
-    assert 'bash /tmp/install_from_r2_ubuntu.sh "$REL"' in manual
+    assert "delivery/latest.txt" in manual
+    assert 'LICENSE_KEY_FILE="$HOME/.claw-trade/license.key"' in manual
+    assert 'curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}" --license-key-file "${LICENSE_KEY_FILE}"' in manual
+    assert "bash /tmp/install_from_r2_ubuntu.sh" not in manual
 
 
 def test_virbox_protected_package_script_autoselects_archive_before_requiring_it() -> None:

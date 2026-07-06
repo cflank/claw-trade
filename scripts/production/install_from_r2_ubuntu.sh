@@ -3,6 +3,7 @@ set -euo pipefail
 
 release_name=""
 base_url="${CLAW_TRADE_DELIVERY_BASE_URL:-https://download.cflank-trade.top/delivery}"
+stable_base_url="${CLAW_TRADE_STABLE_BASE_URL:-https://download.cflank-trade.top/stable}"
 license_key_file=""
 work_dir="${CLAW_TRADE_INSTALL_DOWNLOAD_DIR:-/tmp}"
 lcc_deb="${CLAW_TRADE_LCC_DEB:-senseshield-lcc-2.7.5.69040-amd64.deb}"
@@ -18,8 +19,59 @@ log() {
 
 usage() {
   cat <<'EOF'
-Usage: install_from_r2_ubuntu.sh claw-trade-production-版本-时间 [--license-key-file /path/to/license.key]
+Usage: install_from_r2_ubuntu.sh [claw-trade-production-版本-时间] [--license-key-file /path/to/license.key]
+
+Without a release argument, the script reads delivery/latest.txt first, then stable/manifest.json.
 EOF
+}
+
+ensure_split_lock_off() {
+  if grep -qw 'split_lock_detect=off' /proc/cmdline; then
+    log "split_lock_detect=off already active"
+    return 0
+  fi
+
+  [[ -f /etc/default/grub ]] || fail "missing /etc/default/grub; cannot configure split_lock_detect=off"
+  log "configuring split_lock_detect=off; machine will reboot"
+  sudo cp -a /etc/default/grub "/etc/default/grub.bak-claw-trade-$(date -u +%Y%m%dT%H%M%SZ)"
+  if ! grep -q 'split_lock_detect=off' /etc/default/grub; then
+    if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+      sudo sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/"$/ split_lock_detect=off"/' /etc/default/grub
+    else
+      printf '%s\n' 'GRUB_CMDLINE_LINUX_DEFAULT="split_lock_detect=off"' | sudo tee -a /etc/default/grub >/dev/null
+    fi
+  fi
+  sudo update-grub
+  rerun_cmd="curl -fsSL ${base_url%/}/install_from_r2_ubuntu.sh | bash -s -- --base-url ${base_url%/}"
+  [[ -z "${release_name}" ]] || rerun_cmd="${rerun_cmd} ${release_name}"
+  [[ -z "${license_key_file}" ]] || rerun_cmd="${rerun_cmd} --license-key-file ${license_key_file}"
+  log "rebooting now; after SSH comes back, run:"
+  log "  ${rerun_cmd}"
+  sudo reboot
+  exit 75
+}
+
+resolve_release_name() {
+  local latest manifest archive
+  base_url="${base_url%/}"
+  stable_base_url="${stable_base_url%/}"
+
+  if [[ -n "${release_name}" ]]; then
+    release_name="${release_name%.tar.gz}"
+  else
+    latest="$(curl -fsS "${base_url}/latest.txt" 2>/dev/null | awk 'NF {print $1; exit}' || true)"
+    if [[ -n "${latest}" ]]; then
+      release_name="${latest%.tar.gz}"
+    else
+      manifest="$(curl -fsS "${stable_base_url}/manifest.json" 2>/dev/null || true)"
+      archive="$(printf '%s\n' "${manifest}" | sed -nE 's/.*"archive"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1)"
+      release_name="${archive%.tar.gz}"
+    fi
+  fi
+
+  [[ -n "${release_name}" ]] || fail "missing release; upload ${base_url}/latest.txt or pass claw-trade-production-版本-时间"
+  [[ "${release_name}" == claw-trade-production-* ]] || fail "bad release name: ${release_name}"
+  log "using release: ${release_name}"
 }
 
 while (($#)); do
@@ -49,19 +101,16 @@ while (($#)); do
   esac
 done
 
-[[ -n "${release_name}" ]] || {
-  usage >&2
-  exit 2
-}
-[[ "${release_name}" == claw-trade-production-* ]] || fail "bad release name: ${release_name}"
-
 command -v curl >/dev/null 2>&1 || fail "missing curl"
 command -v sha256sum >/dev/null 2>&1 || fail "missing sha256sum"
 command -v sudo >/dev/null 2>&1 || fail "missing sudo"
 
+sudo -v
+ensure_split_lock_off
+resolve_release_name
+
 mkdir -p "${work_dir}"
 cd "${work_dir}"
-base_url="${base_url%/}"
 
 download() {
   local name="$1"
@@ -69,13 +118,17 @@ download() {
   curl -fL -o "${name}" "${base_url}/${name}"
 }
 
-download "${release_name}.tar.gz"
 download "${release_name}.tar.gz.sha256"
+if [[ -f "${release_name}.tar.gz" ]] && sha256sum -c "${release_name}.tar.gz.sha256"; then
+  log "using cached ${release_name}.tar.gz"
+else
+  download "${release_name}.tar.gz"
+  sha256sum -c "${release_name}.tar.gz.sha256"
+fi
 download "${lcc_deb}"
 download "install_factory_test_ubuntu.sh"
 download "validate_production_archive.py"
 download "update-signing-public.pem"
-sha256sum -c "${release_name}.tar.gz.sha256"
 sudo apt-get install -y "${work_dir}/${lcc_deb}"
 
 if [[ -z "${license_key_file}" ]]; then
