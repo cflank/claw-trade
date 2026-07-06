@@ -42,9 +42,8 @@ static int status_allows_features(normalized_status_t status) {
 static normalized_status_t map_license_status(int raw_status) {
     switch (raw_status) {
         case 0:
-            return STATUS_ACTIVATED;
         case 1:
-            return STATUS_GRACE_PERIOD;
+            return STATUS_ACTIVATED;
         case 2:
             return STATUS_EXPIRED;
         case 4:
@@ -227,6 +226,9 @@ static void consider_license(
     int *best_raw_status,
     char *best_expires_at,
     size_t best_expires_at_size,
+    char *best_license_suffix,
+    size_t best_license_suffix_size,
+    const char *device_license_key,
     normalized_status_t *best_status
 ) {
     int license_id;
@@ -259,6 +261,7 @@ static void consider_license(
     if (*best_raw_status < 0 || *best_status == mapped) {
         *best_raw_status = raw_status;
         unix_time_to_iso(end_time, best_expires_at, best_expires_at_size);
+        suffix_from_license_key(device_license_key, best_license_suffix, best_license_suffix_size);
     }
 }
 
@@ -270,6 +273,8 @@ static void scan_descriptions(
     int *best_raw_status,
     char *best_expires_at,
     size_t best_expires_at_size,
+    char *best_license_suffix,
+    size_t best_license_suffix_size,
     normalized_status_t *best_status
 ) {
     if (descriptions == NULL || descriptions->type != cJSON_Array) {
@@ -279,6 +284,7 @@ static void scan_descriptions(
     for (int device_index = 0; device_index < cJSON_GetArraySize(descriptions); ++device_index) {
         cJSON *device = cJSON_GetArrayItem(descriptions, device_index);
         char *device_desc = NULL;
+        const char *device_license_key = NULL;
         SS_CHAR *licenses_text = NULL;
         cJSON *licenses = NULL;
         SS_UINT32 ret;
@@ -286,6 +292,7 @@ static void scan_descriptions(
         if (device == NULL) {
             continue;
         }
+        device_license_key = json_string(device, "license_key");
         device_desc = cJSON_PrintUnformatted(device);
         if (device_desc == NULL) {
             continue;
@@ -307,6 +314,9 @@ static void scan_descriptions(
                     best_raw_status,
                     best_expires_at,
                     best_expires_at_size,
+                    best_license_suffix,
+                    best_license_suffix_size,
+                    device_license_key,
                     best_status
                 );
             }
@@ -378,6 +388,8 @@ int main(void) {
         &best_raw_status,
         best_expires_at,
         sizeof(best_expires_at),
+        license_suffix,
+        sizeof(license_suffix),
         &best_status
     );
 
@@ -391,6 +403,8 @@ int main(void) {
             &best_raw_status,
             best_expires_at,
             sizeof(best_expires_at),
+            license_suffix,
+            sizeof(license_suffix),
             &best_status
         );
         cJSON_Delete(offline_devices);

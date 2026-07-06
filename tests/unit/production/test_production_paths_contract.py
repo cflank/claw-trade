@@ -72,10 +72,13 @@ def test_install_scripts_install_update_public_key_from_tmp() -> None:
 
 def test_install_scripts_require_virbox_status_sdk_from_release_package() -> None:
     build_status_sdk = _read("techlab/virbox_probe/build_virbox_status_sdk.sh")
+    virbox_status_sdk = _read("techlab/virbox_probe/virbox_status_sdk.c")
 
     assert "/mnt/d/sw/senseshield/sdk/API" in build_status_sdk
     assert "virbox-status-sdk-linux-x86_64.tgz" in build_status_sdk
     assert 'tar -C "${OUT_DIR}" -czf "${ARCHIVE}" virbox_status_sdk libslm_control.so' in build_status_sdk
+    assert "case 0:\n        case 1:\n            return STATUS_ACTIVATED;" in virbox_status_sdk
+    assert "suffix_from_license_key(device_license_key, best_license_suffix, best_license_suffix_size);" in virbox_status_sdk
 
     for script in (
         _read("scripts/production/install_factory_test_ubuntu.sh"),
