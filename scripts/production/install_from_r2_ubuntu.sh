@@ -5,6 +5,7 @@ release_name=""
 base_url="${CLAW_TRADE_DELIVERY_BASE_URL:-https://download.cflank-trade.top/delivery}"
 license_key_file=""
 work_dir="${CLAW_TRADE_INSTALL_DOWNLOAD_DIR:-/tmp}"
+lcc_deb="${CLAW_TRADE_LCC_DEB:-senseshield-lcc-2.7.5.69040-amd64.deb}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -70,10 +71,12 @@ download() {
 
 download "${release_name}.tar.gz"
 download "${release_name}.tar.gz.sha256"
+download "${lcc_deb}"
 download "install_factory_test_ubuntu.sh"
 download "validate_production_archive.py"
 download "update-signing-public.pem"
 sha256sum -c "${release_name}.tar.gz.sha256"
+sudo apt-get install -y "${work_dir}/${lcc_deb}"
 
 if [[ -z "${license_key_file}" ]]; then
   license_key_file="${work_dir}/license.key"

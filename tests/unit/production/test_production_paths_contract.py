@@ -109,6 +109,8 @@ def test_r2_target_install_bootstrap_contract() -> None:
     assert "https://download.cflank-trade.top/delivery" in script
     assert 'download "${release_name}.tar.gz"' in script
     assert 'download "${release_name}.tar.gz.sha256"' in script
+    assert 'download "${lcc_deb}"' in script
+    assert 'sudo apt-get install -y "${work_dir}/${lcc_deb}"' in script
     assert 'download "install_factory_test_ubuntu.sh"' in script
     assert 'download "validate_production_archive.py"' in script
     assert 'download "update-signing-public.pem"' in script
@@ -204,7 +206,21 @@ def test_factory_install_supports_license_key_file_activation() -> None:
     assert "--license-key-file" in factory_script
     assert "license_key_file" in factory_script
     assert "tr -d '[:space:]'" in factory_script
+    assert "configure_virbox_message_timeout()" in factory_script
+    assert 'virbox_lcc_root="${VIRBOX_LCC_ROOT:-${opt_root}/senseshield}"' in factory_script
+    assert "<MSG_TIMEOUT>60000</MSG_TIMEOUT>" in factory_script
+    assert "ChinaVBPGlobalCDN" in factory_script
+    assert '"operationTimeout" : 60000' in factory_script
+    assert '"longTimeout" : 120000' in factory_script
+    assert "wait_for_virbox_lcc_ready()" in factory_script
+    assert "systemctl restart senseshield virboxlcc || true" in factory_script
+    assert "virbox_license_available()" in factory_script
+    assert 'item.get("licenseAvailable")' in factory_script
+    assert 'log "Virbox license already available (suffix: ${suffix})"' in factory_script
     assert "/v1/license/bindLicenseKey?licenseKey=" in factory_script
+    assert "--max-time 90" in factory_script
+    assert "max_attempts=12" in factory_script
+    assert 'Virbox license bind failed HTTP ${status}: ${body_text}; key suffix: ${suffix}' in factory_script
     assert "license key file not found" in factory_script
     assert "Virbox local service not reachable" in factory_script
     assert "cat \"${body_file}\"" not in factory_script
@@ -217,7 +233,9 @@ def test_factory_install_warms_protected_python_after_license_binding() -> None:
     assert "protected Python warmup failed" in factory_script
     assert 'sudo -u "${runtime_owner}" -g "${runtime_group}" env PYTHONPATH="${pythonpath}"' in factory_script
     assert '"${python_bin}" "${release_dir}/scripts/selection/restore_a_share_factory_seed.py" --help' in factory_script
-    assert 'bind_virbox_license_key_file\nwarm_up_protected_python "${install_root}/releases/${top_dir}"' in factory_script
+    assert 'else\n      status="$?"' in factory_script
+    assert 'if (( attempt < 3 )); then' in factory_script
+    assert 'configure_virbox_message_timeout\nbind_virbox_license_key_file\nwarm_up_protected_python "${install_root}/releases/${top_dir}"' in factory_script
 
 
 def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> None:
@@ -231,7 +249,9 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
     assert 'kiosk_group="${CLAW_TRADE_KIOSK_GROUP:-clawkiosk}"' in install_script
     assert 'kiosk_browser="${CLAW_TRADE_KIOSK_BROWSER_BIN:-/usr/bin/chromium-browser}"' in install_script
     assert 'groupadd --system "${group}"' in install_script
-    assert 'useradd --system --no-create-home --gid "${group}" --shell /usr/sbin/nologin "${user}"' in install_script
+    assert 'useradd --system --create-home --gid "${group}" --shell /usr/sbin/nologin "${user}"' in install_script
+    assert 'home="$(getent passwd "${user}" | awk -F: \'{print $6}\')"' in install_script
+    assert 'install -d -m 0750 -o "${user}" -g "${group}" "${home}"' in install_script
     assert 'ensure_system_identity "${runtime_owner}" "${runtime_group}"' in install_script
     assert 'ensure_system_identity "${kiosk_owner}" "${kiosk_group}"' in install_script
     assert '[[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"' in install_script
@@ -261,6 +281,8 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
 
     assert 'runtime_owner="${CLAW_TRADE_RUNTIME_OWNER:-clawtrade}"' in factory_script
     assert 'runtime_group="${CLAW_TRADE_RUNTIME_GROUP:-clawtrade}"' in factory_script
+    assert 'sudo useradd --system --create-home --gid "${group}" --shell /usr/sbin/nologin "${user}"' in factory_script
+    assert 'sudo install -d -m 0750 -o "${user}" -g "${group}" "${home}"' in factory_script
     assert 'sudo -u "${runtime_owner}" -g "${runtime_group}"' in factory_script
     assert 'patch_runtime_control "${install_root}/releases/${top_dir}"' in factory_script
     assert '"${install_root}/releases/${top_dir}/bin/claw-trade-preflight"' in factory_script

@@ -45,11 +45,16 @@ require_noto_cjk_font() {
 ensure_system_identity() {
   local user="$1"
   local group="$2"
+  local home
   if ! getent group "${group}" >/dev/null; then
     groupadd --system "${group}"
   fi
   if ! id -u "${user}" >/dev/null 2>&1; then
-    useradd --system --no-create-home --gid "${group}" --shell /usr/sbin/nologin "${user}"
+    useradd --system --create-home --gid "${group}" --shell /usr/sbin/nologin "${user}"
+  fi
+  home="$(getent passwd "${user}" | awk -F: '{print $6}')"
+  if [[ -n "${home}" && "${home}" != "/" && "${home}" != "/nonexistent" ]]; then
+    install -d -m 0750 -o "${user}" -g "${group}" "${home}"
   fi
 }
 
