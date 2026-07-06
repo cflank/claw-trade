@@ -15,7 +15,6 @@ BASE="https://download.cflank-trade.top/delivery"
 Ubuntu 24.04 机器
 sudo 密码
 Virbox 授权码
-Virbox LCC Ubuntu 安装包：senseshield-lcc-*.deb
 ```
 
 ## 2. 登录 Ubuntu
@@ -31,14 +30,16 @@ sudo apt-get update
 sudo apt-get install -y ca-certificates curl
 ```
 
-## 4. 安装 Virbox LCC
-
-先把 `senseshield-lcc-*.deb` 放到目标机 `/tmp`。
+## 4. 下载并安装 Virbox LCC
 
 ```bash
+BASE="https://download.cflank-trade.top/delivery"
+LCC_DEB="senseshield-lcc-2.7.5.69040-amd64.deb"
+
 cd /tmp
-ls -lh senseshield-lcc-*.deb
-sudo apt-get install -y ./senseshield-lcc-*.deb
+curl -fL -o "$LCC_DEB" "${BASE}/${LCC_DEB}"
+ls -lh "$LCC_DEB"
+sudo apt-get install -y "/tmp/${LCC_DEB}"
 ```
 
 检查 LCC 服务：
