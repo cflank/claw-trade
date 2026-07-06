@@ -89,7 +89,7 @@ bash /tmp/install_from_r2_ubuntu.sh "$REL"
 
 ```bash
 curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5175/
-curl -fsS http://127.0.0.1:5175/api/license/status
+curl -fsS http://127.0.0.1:5175/api/ui/get-license-status
 grep CLAW_TRADE_UPDATE_BASE_URL /opt/claw-trade/shared/config/claw-trade.env
 grep CLAW_TRADE_AUTO_UPDATE_INSTALL /opt/claw-trade/shared/config/claw-trade.env
 ls -l /etc/claw-trade/update-signing-public.pem
