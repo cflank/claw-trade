@@ -23,7 +23,7 @@ control_pid_file="${CLAW_TRADE_CONTROL_PID_FILE:-/tmp/claw-trade-control.pid}"
 control_log="${CLAW_TRADE_CONTROL_LOG:-/tmp/claw-trade-control.log}"
 ui_log="${CLAW_TRADE_UI_LOG:-/tmp/claw-trade-ui.log}"
 update_base_url="${CLAW_TRADE_UPDATE_BASE_URL:-https://download.cflank-trade.top/stable/}"
-auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-1}"
+auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-0}"
 
 fail() {
   printf '[ERROR] %s\n' "$*" >&2
@@ -486,7 +486,7 @@ nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefai
 echo "$!" >"${ui_pid_file}"
 ui_ready=0
 for _ in $(seq 1 60); do
-  if curl -fsS http://127.0.0.1:5175/ >/dev/null; then
+  if curl -fsS http://127.0.0.1:5175/ >/dev/null 2>&1; then
     ui_ready=1
     break
   fi

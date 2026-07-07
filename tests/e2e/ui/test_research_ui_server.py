@@ -269,6 +269,15 @@ def test_production_maintenance_lock_blocks_ui_state_changes(tmp_path: Path) -> 
     assert response.status_code == 409
     assert response.json()["code"] == "MAINTENANCE_LOCKED"
 
+    with lock.hold(reason="install_update", request_id="busy"):
+        response = client.post(
+            "/api/ui/send-chat-message",
+            json={"requestId": "req-2", "contextId": "normal-chat", "text": "hello"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["message"] == "正在下载或安装更新，请稍后再试。"
+
 
 def test_factory_reset_pauses_owned_background_schedulers(tmp_path: Path) -> None:
     dist = tmp_path / "dist"

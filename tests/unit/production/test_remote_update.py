@@ -62,6 +62,51 @@ def test_remote_update_check_verifies_signed_manifest_and_writes_state(tmp_path:
     assert state["latestVersion"] == "1.2.3"
 
 
+def test_remote_update_check_treats_current_archive_as_up_to_date(tmp_path: Path) -> None:
+    install_root = tmp_path / "opt" / "claw-trade"
+    release = install_root / "releases" / "claw-trade-production-1.0.0-20260707T014943Z"
+    release.mkdir(parents=True)
+    (install_root / "current").symlink_to(release)
+    key = Ed25519PrivateKey.generate()
+    public_key_path = install_root / "shared" / "updates" / "update-signing-public.pem"
+    public_key_path.parent.mkdir(parents=True)
+    public_key_path.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    manifest = json.dumps(
+        {
+            "product": "claw-trade",
+            "channel": "stable",
+            "version": "1.0.1",
+            "arch": "linux-x86_64",
+            "archive": "claw-trade-production-1.0.0-20260707T014943Z.tar.gz",
+            "sha256": "a" * 64,
+            "created_at": "2026-07-07T00:00:00Z",
+            "min_current_version": "1.0.0",
+        }
+    ).encode()
+    objects = {
+        "https://updates.example.com/stable/manifest.json": manifest,
+        "https://updates.example.com/stable/manifest.json.sig": key.sign(manifest),
+    }
+    service = RemoteUpdateService(
+        install_root=install_root,
+        base_url="https://updates.example.com/stable",
+        current_version="1.0.0",
+        public_key_path=public_key_path,
+        fetch_bytes=lambda url: objects[url],
+    )
+
+    result = service.check_manifest()
+
+    assert result.status == "up_to_date"
+    assert result.manifest is None
+    assert UpdaterStateStore(install_root=install_root).read()["status"] == "up_to_date"
+
+
 def test_remote_update_check_rejects_bad_manifest_signature(tmp_path: Path) -> None:
     install_root = tmp_path / "opt" / "claw-trade"
     key = Ed25519PrivateKey.generate()

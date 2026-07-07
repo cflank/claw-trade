@@ -55,7 +55,7 @@ def test_install_scripts_pin_default_update_base_url() -> None:
         _read("scripts/production/install_production_package.sh"),
     ):
         assert f'update_base_url="${{CLAW_TRADE_UPDATE_BASE_URL:-{expected}}}"' in script
-        assert 'auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-1}"' in script
+        assert 'auto_update_install="${CLAW_TRADE_AUTO_UPDATE_INSTALL:-0}"' in script
         assert 'write_shared_env_var "CLAW_TRADE_UPDATE_BASE_URL" "${update_base_url}"' in script
         assert 'write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"' in script
 

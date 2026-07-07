@@ -30,7 +30,7 @@ sudo scripts/production/install_production_package.sh /path/to/claw-trade-produc
 
 不要手动 `tar -xzf` 后再用通配符 `ln -sfn` 切换 `current`；这会绕过安装脚本的包名和顶层目录校验。
 
-安装脚本只接受可信本地生产包。当前代码可从对象存储检查 signed manifest，并手动下载、校验、安装 signed archive。安装脚本默认写入 `CLAW_TRADE_UPDATE_BASE_URL` 和 `CLAW_TRADE_AUTO_UPDATE_INSTALL=1`；全新 systemd 安装也会启用 `claw-trade-auto-update.timer`。
+安装脚本只接受可信本地生产包。当前代码可从对象存储检查 signed manifest，并手动下载、校验、安装 signed archive。安装脚本默认写入 `CLAW_TRADE_UPDATE_BASE_URL` 和 `CLAW_TRADE_AUTO_UPDATE_INSTALL=0`；全新 systemd 安装也会启用 `claw-trade-auto-update.timer`，但默认只检查，不自动下载安装。需要自动安装时显式设置 `CLAW_TRADE_AUTO_UPDATE_INSTALL=1`。
 
 ## 启动
 

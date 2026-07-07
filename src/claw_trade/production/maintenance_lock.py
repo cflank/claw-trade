@@ -22,6 +22,18 @@ class ProductionMaintenanceLock:
     def is_locked(self) -> bool:
         return self.path.exists()
 
+    def user_message(self) -> str:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return "系统正在维护中，请稍后再试。"
+        reason = str(payload.get("reason") or "")
+        if reason == "install_update":
+            return "正在下载或安装更新，请稍后再试。"
+        if reason == "factory_reset":
+            return "正在恢复出厂设置，请稍后再试。"
+        return "系统正在维护中，请稍后再试。"
+
     @contextmanager
     def hold(self, *, reason: str, request_id: str) -> Iterator[None]:
         self.path.parent.mkdir(parents=True, exist_ok=True)

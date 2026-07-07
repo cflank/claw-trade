@@ -100,7 +100,7 @@ def build_research_ui_app(
             if isinstance(lock, ProductionMaintenanceLock) and lock.is_locked():
                 return JSONResponse(
                     status_code=409,
-                    content={"code": "MAINTENANCE_LOCKED", "message": "系统正在维护中，请稍后再试。"},
+                    content={"code": "MAINTENANCE_LOCKED", "message": lock.user_message()},
                 )
         return await call_next(request)
 

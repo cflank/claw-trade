@@ -162,6 +162,11 @@ class RemoteUpdateService:
                 return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
             state = self._state_store.write(status="check_failed", user_message=str(exc))
             return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+        if _read_current_target(self._install_root) == str(
+            self._install_root / "releases" / _release_name_from_archive(manifest.archive)
+        ):
+            state = self._state_store.write(status="up_to_date", user_message="当前已是最新版本。")
+            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
 
         state = self._state_store.write(
             status="update_available",
