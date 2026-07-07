@@ -255,6 +255,29 @@ echo '{{"ok": true}}'
     assert marker.exists() is True
 
 
+def test_data_need_uses_openclaw_market_tool_python_alias(tmp_path: Path) -> None:
+    marker = tmp_path / "python_called.txt"
+    probe_python = tmp_path / "probe_python.sh"
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env bash
+cat > /dev/null
+echo called > {marker}
+echo '{{"ok": true}}'
+""",
+    )
+
+    result = _run_tool(
+        tool_name="claw_request_data",
+        ctx=_runtime_ctx(worker_id="market_analyst"),
+        params={"item": "日线", "purpose": "market_report"},
+        env_overrides={"OPENCLAW_MARKET_TOOL_PYTHON": str(probe_python)},
+    )
+
+    assert result.get("isError") in {False, None}
+    assert marker.exists() is True
+
+
 def test_non_frontline_stage_returns_context_incomplete_without_spawning_python(tmp_path: Path) -> None:
     marker = tmp_path / "python_called.txt"
     probe_python = tmp_path / "probe_python.sh"

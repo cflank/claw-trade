@@ -463,7 +463,7 @@ export OPENCLAW_GATEWAY_PORT="${openclaw_gateway_port}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${openclaw_gateway_port}}"
 log "using OpenClaw gateway: ${OPENCLAW_GATEWAY_URL}"
 rm -f "${control_log}" "${runtime_env}"
-nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'cd "$1"; shift; exec env "$@"' bash "${install_root}/current" \
+nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'cd "$1"; shift; exec env "$@"' bash "${install_root}/shared" \
   OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT}" \
   OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL}" \
   "${install_root}/current/bin/claw-trade-control" >"${control_log}" 2>&1 &
@@ -482,7 +482,7 @@ python3.12 -c 'import os; from pymongo import MongoClient; db=os.environ["DATA_G
 log "starting UI"
 stop_ui
 rm -f "${ui_log}"
-nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; runtime_env="$1"; ui_bin="$2"; cd "$(dirname "${ui_bin}")/.."; set -a; . "${runtime_env}"; set +a; export CLAW_TRADE_UI_HOST="${CLAW_TRADE_UI_HOST:-0.0.0.0}"; if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" && -n "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-}" ]]; then export OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"; fi; exec "${ui_bin}"' bash "${runtime_env}" "${install_root}/current/bin/claw-trade-ui" >"${ui_log}" 2>&1 &
+nohup sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; runtime_env="$1"; ui_bin="$2"; shared_root="$3"; cd "${shared_root}"; set -a; . "${runtime_env}"; set +a; export CLAW_TRADE_UI_HOST="${CLAW_TRADE_UI_HOST:-0.0.0.0}"; if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" && -n "${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID:-}" ]]; then export OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"; fi; exec "${ui_bin}"' bash "${runtime_env}" "${install_root}/current/bin/claw-trade-ui" "${install_root}/shared" >"${ui_log}" 2>&1 &
 echo "$!" >"${ui_pid_file}"
 ui_ready=0
 for _ in $(seq 1 60); do

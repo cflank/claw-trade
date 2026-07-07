@@ -102,6 +102,16 @@ def test_factory_installer_stops_existing_runtime_processes_by_current_names() -
     assert "pkill -f 'python3.12 -m claw_trade.web.app'" not in script
 
 
+def test_factory_installer_starts_temporary_runtime_from_shared_cwd() -> None:
+    script = _read("scripts/production/install_factory_test_ubuntu.sh")
+
+    assert 'bash "${install_root}/shared" \\' in script
+    assert 'shared_root="$3"; cd "${shared_root}"' in script
+    assert '"${install_root}/current/bin/claw-trade-ui" "${install_root}/shared"' in script
+    assert 'bash "${install_root}/current" \\' not in script
+    assert 'cd "$(dirname "${ui_bin}")/.."' not in script
+
+
 def test_factory_installer_prints_lan_ui_url() -> None:
     script = _read("scripts/production/install_factory_test_ubuntu.sh")
 

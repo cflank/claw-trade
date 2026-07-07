@@ -524,7 +524,9 @@ function assertExpectedMarket(toolName, toolInput, expectedMarket) {
 }
 
 function pythonExecutable() {
-  const explicit = textValue(process.env.CLAW_TRADE_FRONTLINE_TOOL_PYTHON);
+  const explicit =
+    textValue(process.env.CLAW_TRADE_FRONTLINE_TOOL_PYTHON) ??
+    textValue(process.env.OPENCLAW_MARKET_TOOL_PYTHON);
   if (explicit) {
     return explicit;
   }

@@ -159,6 +159,7 @@ describe('RightRail channel state text', () => {
       />,
     );
 
+    expect(screen.queryByText('工作流：select-run-1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '停止选股' }));
 
     expect(onCancelSelection).toHaveBeenCalledWith(expect.objectContaining({ workflowRunId: 'select-run-1' }));

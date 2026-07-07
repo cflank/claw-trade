@@ -144,6 +144,18 @@ def test_probe_read_stat_receipt_can_prepare_receipt_when_backend_supports_it() 
     assert backend.prepare_calls == 1
 
 
+def test_probe_receipt_uses_report_run_dir_when_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_root = tmp_path / "shared" / "runs"
+    monkeypatch.setenv("CLAW_TRADE_REPORT_RUN_DIR", str(run_root))
+    backend = fake_backend(include_probe_receipt=False, auto_prepare_probe_receipt=True)
+
+    probe = OpenVikingClient(backend).probe_read_stat_receipt()
+
+    assert probe.ok
+    assert run_root / "probe" / "openviking" / "receipt.json" in backend.receipt_by_path
+    assert OPENVIKING_PROBE_RECEIPT_PATH not in backend.receipt_by_path
+
+
 def test_probe_read_stat_receipt_skips_prepare_when_existing_receipt_is_valid() -> None:
     backend = fake_backend(prepare_raises_busy=True)
     client = OpenVikingClient(backend)

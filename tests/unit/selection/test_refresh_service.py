@@ -148,12 +148,12 @@ def test_selection_refresh_service_exposes_active_progress_for_right_rail() -> N
     assert isinstance(progress, dict)
     assert progress["kind"] == "data_refresh"
     assert progress["status"] == "running"
-    assert progress["statusLabel"] == "补数据中"
+    assert progress["statusLabel"] == "选股数据准备中"
     assert progress["command"] == "/select 2026-06-04"
-    assert progress["stageLabel"] == "拉取/补齐行情数据"
+    assert progress["stageLabel"] == "补齐行情数据"
     assert progress["currentAction"] == "补齐全市场日线数据：已完成 128/512。"
     assert progress["percent"] == 38
-    assert progress["workerStatusLabels"] == ["拉取/补齐行情数据：补数据中（128/512）"]
+    assert progress["workerStatusLabels"] == ["已完成 128/512"]
     assert progress["workflowRunId"] == "sel-refresh-active-1"
 
 

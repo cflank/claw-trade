@@ -61,6 +61,13 @@ def _validate_error_category(error_category: OpenVikingErrorCategory | None) -> 
         raise ValueError(f"unsupported error_category {error_category!r}, allowed: {allowed}")
 
 
+def _configured_probe_run_root() -> Path | None:
+    run_dir = os.environ.get("CLAW_TRADE_REPORT_RUN_DIR", "").strip()
+    if run_dir:
+        return Path(run_dir)
+    return None
+
+
 class OpenVikingAccessError(RuntimeError):
     def __init__(self, message: str, *, category: OpenVikingErrorCategory = "unknown") -> None:
         super().__init__(message)
@@ -175,16 +182,21 @@ class OpenVikingClient:
     def __init__(self, backend: OpenVikingBackend) -> None:
         self._backend = backend
         probe_run_id = os.environ.get("CLAW_TRADE_OPENVIKING_PROBE_RUN_ID", "").strip()
+        probe_run_root = _configured_probe_run_root()
         if probe_run_id:
             # 每次 boot probe 使用独立 URI，避免 OpenViking 对固定 probe 文件的并发锁污染正式运行。
             self._probe_run_id = probe_run_id
-            self._probe_receipt_path = Path("runs") / probe_run_id / "openviking" / "receipt.json"
+            self._probe_receipt_path = (probe_run_root or Path("runs")) / probe_run_id / "openviking" / "receipt.json"
             self._probe_stat_uri = f"viking://resources/workflow/{probe_run_id}/frontline/probe_worker/probe_call/report.md"
             self._probe_namespace = f"workflow/{probe_run_id}"
             self._probe_namespace_uri = f"viking://resources/workflow/{probe_run_id}/"
         else:
             self._probe_run_id = "probe"
-            self._probe_receipt_path = OPENVIKING_PROBE_RECEIPT_PATH
+            self._probe_receipt_path = (
+                probe_run_root / "probe" / "openviking" / "receipt.json"
+                if probe_run_root is not None
+                else OPENVIKING_PROBE_RECEIPT_PATH
+            )
             self._probe_stat_uri = OPENVIKING_PROBE_STAT_URI
             self._probe_namespace = OPENVIKING_PROBE_NAMESPACE
             self._probe_namespace_uri = OPENVIKING_PROBE_NAMESPACE_URI

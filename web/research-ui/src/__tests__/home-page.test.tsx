@@ -1048,13 +1048,13 @@ describe('home page', () => {
         selectionProgress: {
           kind: 'data_refresh',
           status: 'running',
-          statusLabel: '补数据中',
+          statusLabel: '选股数据准备中',
           command: '/select 2026-06-04',
-          stageLabel: '拉取/补齐行情数据',
+          stageLabel: '补齐行情数据',
           currentAction: '正在读取本地仓库并补齐缺失行情。',
           percent: 35,
-          workerStatusLabels: ['拉取/补齐行情数据：补数据中'],
-          completedRoleLabels: ['排队准备', '申请执行锁', '数据作业启动'],
+          workerStatusLabels: [],
+          completedRoleLabels: ['准备选股数据', '准备执行刷新', '启动数据刷新'],
           waitingRoleLabels: ['标准化输入', '构建特征'],
           startedAt: '2026-06-04T10:00:00Z',
           finishedAt: null,
@@ -1072,10 +1072,10 @@ describe('home page', () => {
 
     expect(await screen.findByText('选股数据刷新')).toBeInTheDocument();
     expect(screen.getByText('/select 2026-06-04')).toBeInTheDocument();
-    expect(screen.getByText('拉取/补齐行情数据')).toBeInTheDocument();
+    expect(screen.getByText('补齐行情数据')).toBeInTheDocument();
     expect(screen.getByText('正在读取本地仓库并补齐缺失行情。')).toBeInTheDocument();
-    expect(screen.getByText('拉取/补齐行情数据：补数据中')).toBeInTheDocument();
-    expect(screen.getByText('工作流：sel-refresh-active-1')).toBeInTheDocument();
+    expect(screen.queryByText('拉取/补齐行情数据：补数据中')).not.toBeInTheDocument();
+    expect(screen.queryByText('工作流：sel-refresh-active-1')).not.toBeInTheDocument();
   });
 
   it('shows raw market data maintenance progress in the right rail', async () => {
@@ -1160,12 +1160,12 @@ describe('home page', () => {
         selectionProgress: {
           kind: 'data_refresh',
           status: 'running',
-          statusLabel: '补数据中',
+          statusLabel: '选股数据准备中',
           command: '/select 2026-06-04',
-          stageLabel: '拉取/补齐行情数据',
+          stageLabel: '补齐行情数据',
           currentAction: '正在读取本地仓库并补齐缺失行情。',
           percent: 35,
-          workerStatusLabels: ['拉取/补齐行情数据：补数据中'],
+          workerStatusLabels: [],
           completedRoleLabels: [],
           waitingRoleLabels: [],
           startedAt: '2026-06-04T10:00:00Z',

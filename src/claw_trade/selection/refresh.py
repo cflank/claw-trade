@@ -639,10 +639,10 @@ def _parse_data_run_timestamp(value: str | None) -> datetime | None:
 
 
 _DATA_RUN_STAGE_UI: dict[SelectionDataRunStatus, tuple[str, str, int]] = {
-    SelectionDataRunStatus.PLANNED: ("排队准备", "已创建选股数据刷新任务，等待数据作业启动。", 5),
-    SelectionDataRunStatus.LEASE_PENDING: ("申请执行锁", "正在申请选股数据作业执行权。", 10),
-    SelectionDataRunStatus.RUNNING: ("数据作业启动", "选股数据作业已启动。", 15),
-    SelectionDataRunStatus.FETCHING_DATA: ("拉取/补齐行情数据", "正在读取本地仓库并补齐缺失行情。", 35),
+    SelectionDataRunStatus.PLANNED: ("准备选股数据", "已创建选股数据刷新任务，等待数据刷新启动。", 5),
+    SelectionDataRunStatus.LEASE_PENDING: ("准备执行刷新", "正在准备执行选股数据刷新。", 10),
+    SelectionDataRunStatus.RUNNING: ("启动数据刷新", "选股数据刷新已启动。", 15),
+    SelectionDataRunStatus.FETCHING_DATA: ("补齐行情数据", "正在读取本地仓库并补齐缺失行情。", 35),
     SelectionDataRunStatus.NORMALIZING_INPUTS: ("标准化输入", "正在整理选股所需的行情、因子和身份字段。", 50),
     SelectionDataRunStatus.BUILDING_FEATURES: ("构建特征", "正在生成选股策略使用的特征快照。", 65),
     SelectionDataRunStatus.FILTERING_AND_SCORING: ("过滤并打分", "正在执行硬过滤、策略命中和候选打分。", 78),
@@ -693,15 +693,15 @@ def _data_run_progress_for_user(data_run: SelectionDataRun, *, trade_date: str) 
         status_label = "数据已准备"
     else:
         status = "running"
-        status_label = "补数据中"
+        status_label = "选股数据准备中"
     if data_run.failure_reason:
         worker_status_labels = [f"失败原因：{_failure_reason_for_user(data_run)}"]
     elif data_run.status == SelectionDataRunStatus.FAILED:
         worker_status_labels = ["失败原因：未记录，查看任务证据。"]
     elif has_progress:
-        worker_status_labels = [f"{stage_label}：{status_label}（{progress_completed}/{progress_total}）"]
+        worker_status_labels = [f"已完成 {progress_completed}/{progress_total}"]
     else:
-        worker_status_labels = [f"{stage_label}：{status_label}"]
+        worker_status_labels = []
     return {
         "kind": "data_refresh",
         "status": status,

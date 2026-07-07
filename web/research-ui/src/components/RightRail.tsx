@@ -199,7 +199,6 @@ function SelectionTaskBlock({
             <li key={`${progress.startedAt}-${item}`}>{item}</li>
           ))}
         </ul>
-        {progress.workflowRunId && !isRawMaintenance ? <div className="ct-small">工作流：{progress.workflowRunId}</div> : null}
         {progress.status === 'running' && onCancelSelection && canCancel ? (
           <button
             type="button"
