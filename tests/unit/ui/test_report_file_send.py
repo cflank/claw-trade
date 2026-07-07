@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from claw_trade.ui_backend import pdf_validation
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.pdf_runtime_capabilities import (
     PdfRuntimeCapabilities,
@@ -14,6 +13,8 @@ from claw_trade.ui_backend.report_repository import ReportRepository, UiProductE
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 
+from claw_trade.ui_backend import pdf_validation
+
 
 class _FileChannelBridge:
     def __init__(
@@ -23,18 +24,23 @@ class _FileChannelBridge:
         can_send_file: bool,
         send_result: dict[str, object] | None = None,
         send_error: Exception | None = None,
+        send_text_result: dict[str, object] | None = None,
+        send_text_error: Exception | None = None,
         default_report_file_target: tuple[str, str | None] | None = None,
     ) -> None:
         self.state = state
         self.can_send_file = can_send_file
         self.send_result = send_result if send_result is not None else {"sent": True, "messageId": "msg-1"}
         self.send_error = send_error
+        self.send_text_result = send_text_result if send_text_result is not None else {"sent": True, "messageId": "txt-1"}
+        self.send_text_error = send_text_error
         self.default_report_file_target = default_report_file_target
         self.last_payload: bytes | None = None
         self.last_file_path: Path | None = None
         self.last_target: str | None = None
         self.last_account_id: str | None = None
         self.send_calls = 0
+        self.sent_texts: list[dict[str, object]] = []
 
     def get_channel_status(self, *, probe: bool = False) -> dict[str, object]:
         return {"state": self.state, "canSendText": True, "canSendFile": self.can_send_file}
@@ -52,7 +58,18 @@ class _FileChannelBridge:
         target: str | None = None,
         account_id: str | None = None,
     ) -> dict[str, object]:
-        return {"sent": True}
+        self.sent_texts.append(
+            {
+                "channel_kind": channel_kind,
+                "text": text,
+                "dedupe_key": dedupe_key,
+                "target": target,
+                "account_id": account_id,
+            }
+        )
+        if self.send_text_error is not None:
+            raise self.send_text_error
+        return dict(self.send_text_result)
 
     def send_report_file_via_channel(
         self,
@@ -150,6 +167,15 @@ def test_request_full_report_file_requires_file_capability(monkeypatch) -> None:
     assert result["code"] == "FILE_SEND_UNSUPPORTED"
 
 
+def test_request_full_report_file_does_not_stop_on_stale_status_before_send(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(state="error", can_send_file=True)
+    service = _make_service(channel)
+    result = service.request_full_report_file("r-file", "req-file-stale-status", target="sender-1")
+    assert result["sent"] is True
+    assert channel.send_calls == 1
+
+
 def test_request_full_report_file_sends_ready_pdf(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
     channel = _FileChannelBridge(state="connected", can_send_file=True)
@@ -190,7 +216,7 @@ def test_request_full_report_file_marks_report_in_flight_while_sending(tmp_path,
     assert tracker.active_report_ids() == set()
 
 
-def test_request_full_report_file_uses_saved_wechat_origin_when_target_is_not_explicit(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_request_full_report_file_does_not_use_saved_wechat_origin_without_current_default(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
     channel = _FileChannelBridge(state="connected", can_send_file=True)
     service = _make_service(
@@ -199,11 +225,51 @@ def test_request_full_report_file_uses_saved_wechat_origin_when_target_is_not_ex
         origin_context_id="wechat_clawbot:account-1:sender-1",
     )
     result = service.request_full_report_file("r-file", "req-file-current-wechat")
+    assert result["sent"] is False
+    assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+    assert channel.send_calls == 0
+
+
+def test_request_full_report_file_replaces_stale_saved_origin_with_current_default(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(
+        state="connected",
+        can_send_file=True,
+        default_report_file_target=("sender-current", "account-current"),
+    )
+    service = _make_service(
+        channel,
+        asset_dir=tmp_path / "reports" / "assets",
+        origin_context_id="wechat_clawbot:account-old:sender-old",
+    )
+
+    result = service.request_full_report_file("r-file", "req-file-stale-wechat")
+
     assert result["sent"] is True
     assert channel.send_calls == 1
-    assert channel.last_file_path is not None
-    assert channel.last_target == "sender-1"
-    assert channel.last_account_id == "account-1"
+    assert channel.last_target == "sender-current"
+    assert channel.last_account_id == "account-current"
+
+
+def test_request_full_report_file_keeps_explicit_target_when_default_differs(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(
+        state="connected",
+        can_send_file=True,
+        default_report_file_target=("sender-default", "account-default"),
+    )
+    service = _make_service(channel, asset_dir=tmp_path / "reports" / "assets")
+
+    result = service.request_full_report_file(
+        "r-file",
+        "req-file-explicit-wechat",
+        target="sender-explicit",
+        account_id="account-explicit",
+    )
+
+    assert result["sent"] is True
+    assert channel.last_target == "sender-explicit"
+    assert channel.last_account_id == "account-explicit"
 
 
 def test_request_full_report_file_uses_default_wechat_conversation_when_saved_origin_is_missing(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -316,6 +382,85 @@ def test_request_full_report_file_preserves_notification_unavailable(monkeypatch
     assert result["sent"] is False
     assert result["code"] == "NOTIFICATION_UNAVAILABLE"
     assert result["userMessage"] == "微信文件发送超时，报告没有发出。请稍后重试。"
+
+
+def test_request_full_report_file_sends_download_link_after_file_cdn_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(
+        state="connected",
+        can_send_file=True,
+        send_error=UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件上传失败，报告没有发出。请稍后重试。"),
+    )
+    service = _make_service(channel)
+
+    result = service.request_full_report_file(
+        "r-file",
+        "req-file-cdn-link",
+        target="sender-1",
+        download_url="http://192.168.1.21:5175/api/ui/download-report-pdf?reportId=r-file",
+    )
+
+    assert result["sent"] is True
+    assert result["delivery"] == "download_link"
+    assert result["messageId"] == "txt-1"
+    assert result["userMessage"] == "微信附件上传失败，已发送 PDF 下载链接。"
+    assert channel.send_calls == 1
+    assert len(channel.sent_texts) == 1
+    assert "完整报告 PDF 已生成" in str(channel.sent_texts[0]["text"])
+    assert "download-report-pdf?reportId=r-file" in str(channel.sent_texts[0]["text"])
+
+
+def test_request_full_report_file_does_not_claim_download_link_success_when_text_send_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(
+        state="connected",
+        can_send_file=True,
+        send_error=UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件上传失败，报告没有发出。请稍后重试。"),
+        send_text_result={"sent": False},
+    )
+    service = _make_service(channel)
+
+    result = service.request_full_report_file(
+        "r-file",
+        "req-file-cdn-link-fail",
+        target="sender-1",
+        download_url="https://download.example.com/report.pdf",
+    )
+
+    assert result["sent"] is False
+    assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+
+
+def test_request_full_report_file_sends_download_link_when_file_capability_is_missing(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(state="connected", can_send_file=False)
+    service = _make_service(channel)
+
+    result = service.request_full_report_file(
+        "r-file",
+        "req-file-capability-link",
+        target="sender-1",
+        download_url="https://download.example.com/report.pdf",
+    )
+
+    assert result["sent"] is True
+    assert result["delivery"] == "download_link"
+    assert channel.send_calls == 0
+    assert len(channel.sent_texts) == 1
+
+
+def test_request_full_report_file_uses_file_specific_notification_fallback(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    channel = _FileChannelBridge(
+        state="connected",
+        can_send_file=True,
+        send_error=UiBoundaryError("NOTIFICATION_UNAVAILABLE", ""),
+    )
+    service = _make_service(channel)
+    result = service.request_full_report_file("r-file", "req-file-notification-empty", target="sender-1")
+    assert result["sent"] is False
+    assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+    assert result["userMessage"] == "微信文件发送失败，报告没有发出。请稍后重试。"
 
 
 def test_request_full_report_file_does_not_claim_success_when_channel_send_returns_ok_false(monkeypatch) -> None:  # type: ignore[no-untyped-def]

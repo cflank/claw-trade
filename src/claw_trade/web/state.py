@@ -20,7 +20,10 @@ from claw_trade.config.report_workflow_settings import (
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
 )
-from claw_trade.data_gateway.maintenance import CollectionMaintenanceJobRepository, ScheduledDataMaintenanceRunner
+from claw_trade.data_gateway.maintenance import (
+    CollectionMaintenanceJobRepository,
+    ScheduledDataMaintenanceRunner,
+)
 from claw_trade.data_gateway.maintenance.scheduled_runner import (
     _BINANCE_SPOT_USDT_SYMBOL_RE,
     _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS,
@@ -29,7 +32,10 @@ from claw_trade.data_gateway.maintenance.scheduled_runner import (
     _read_crypto_history_latest_rows,
 )
 from claw_trade.data_gateway.price_quote_provider import PriceAlertQuoteProvider
-from claw_trade.data_gateway.runtime import build_data_api_from_env, build_data_gateway_runtime_from_env
+from claw_trade.data_gateway.runtime import (
+    build_data_api_from_env,
+    build_data_gateway_runtime_from_env,
+)
 from claw_trade.data_gateway.selection_api import (
     build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
@@ -61,8 +67,8 @@ from claw_trade.runtime.openclaw_client import OpenClawClient, ProbeResult
 from claw_trade.selection.confirmation import SelectionConfirmationController
 from claw_trade.selection.controller import SelectionController
 from claw_trade.selection.data_job import SelectionDataJob
-from claw_trade.selection.refresh import SelectionDataRefreshService
 from claw_trade.selection.models import SelectionMarket
+from claw_trade.selection.refresh import SelectionDataRefreshService
 from claw_trade.selection.store import restore_selection_run_store
 from claw_trade.ui_backend.channel_bridge import ChannelBridge
 from claw_trade.ui_backend.channel_text_inbound import (
@@ -83,11 +89,17 @@ from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_ex
 from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
 from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_capabilities
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
-from claw_trade.ui_backend.price_alert_scan_service import PriceAlertScanScheduler, PriceAlertScanService
+from claw_trade.ui_backend.price_alert_scan_service import (
+    PriceAlertScanScheduler,
+    PriceAlertScanService,
+)
 from claw_trade.ui_backend.price_alert_service import PriceAlertService
-from claw_trade.ui_backend.report_cleanup import ReportCleanupScheduler, ReportCleanupService, ReportFileSendTracker
+from claw_trade.ui_backend.report_cleanup import (
+    ReportCleanupScheduler,
+    ReportCleanupService,
+    ReportFileSendTracker,
+)
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
-from claw_trade.ui_backend.selection_auto_refresh_settings import SelectionAutoRefreshSettingsService
 from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestionService
@@ -96,6 +108,9 @@ from claw_trade.ui_backend.report_repository import ReportRepository, UiProductE
 from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner
 from claw_trade.ui_backend.scheduled_work_store import JsonScheduledWorkStore
 from claw_trade.ui_backend.scheduler_service import SchedulerService
+from claw_trade.ui_backend.selection_auto_refresh_settings import (
+    SelectionAutoRefreshSettingsService,
+)
 from claw_trade.ui_backend.settings_service import SettingsService
 from claw_trade.ui_backend.summary_builder import (
     CompletionSummaryBuilder,

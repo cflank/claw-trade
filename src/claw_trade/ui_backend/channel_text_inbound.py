@@ -299,22 +299,45 @@ class ChannelTextInboundController:
             account_id=message.account_id,
             sender_id=message.sender_id,
         )
-        result = self._request_full_report_file(
-            report_id,
-            f"channel-full-report:{message.request_id}",
-            target,
-        )
-        reply_text = str(result.get("userMessage") or "").strip() or (
-            "完整报告已发送。" if result.get("sent") else "完整报告文件暂不可发送，请在设备界面查看。"
-        )
+        request_full_report_file = self._request_full_report_file
+        reply_text = "收到，正在发送完整报告。"
         self._chat_controller.append_channel_plain_message(
             context_id=conversation_key,
             actor="system",
             text=reply_text,
         )
+        request_id = message.request_id
+
+        def _finish() -> None:
+            try:
+                result = request_full_report_file(
+                    report_id,
+                    f"channel-full-report:{request_id}",
+                    target,
+                )
+                final_text = str(result.get("userMessage") or "").strip() or (
+                    "完整报告已发送。" if result.get("sent") else "完整报告文件暂不可发送，请在设备界面查看。"
+                )
+            except Exception as exc:
+                final_text = str(getattr(exc, "user_message", "") or exc).strip()
+                if not final_text:
+                    final_text = "完整报告文件暂不可发送，请在设备界面查看。"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=final_text,
+            )
+            if self._send_channel_text is None:
+                return
+            try:
+                self._send_channel_text(final_text, f"channel-full-report-result:{request_id}", target)
+            except Exception:
+                return
+
+        self._background_submitter(_finish)
         return self._remember(
             message.request_id,
-            {"handled": True, "replyText": reply_text, "state": "sent" if result.get("sent") else "failed"},
+            {"handled": True, "replyText": reply_text, "state": "file_sending"},
         )
 
     def _send_selection_report_file(
@@ -341,23 +364,48 @@ class ChannelTextInboundController:
             account_id=message.account_id,
             sender_id=message.sender_id,
         )
-        result = self._request_selection_report_file(
-            selection_report.workflow_run_id,
-            selection_report.markdown,
-            f"channel-selection-report:{message.request_id}",
-            target,
-        )
-        reply_text = str(result.get("userMessage") or "").strip() or (
-            "完整选股报告已发送。" if result.get("sent") else "完整选股报告文件暂不可发送，请在设备界面查看。"
-        )
+        request_selection_report_file = self._request_selection_report_file
+        reply_text = "收到，正在发送完整选股报告。"
         self._chat_controller.append_channel_plain_message(
             context_id=conversation_key,
             actor="system",
             text=reply_text,
         )
+        request_id = message.request_id
+
+        def _finish() -> None:
+            try:
+                result = request_selection_report_file(
+                    selection_report.workflow_run_id,
+                    selection_report.markdown,
+                    f"channel-selection-report:{request_id}",
+                    target,
+                )
+                final_text = str(result.get("userMessage") or "").strip() or (
+                    "完整选股报告已发送。"
+                    if result.get("sent")
+                    else "完整选股报告文件暂不可发送，请在设备界面查看。"
+                )
+            except Exception as exc:
+                final_text = str(getattr(exc, "user_message", "") or exc).strip()
+                if not final_text:
+                    final_text = "完整选股报告文件暂不可发送，请在设备界面查看。"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=final_text,
+            )
+            if self._send_channel_text is None:
+                return
+            try:
+                self._send_channel_text(final_text, f"channel-selection-report-result:{request_id}", target)
+            except Exception:
+                return
+
+        self._background_submitter(_finish)
         return self._remember(
             message.request_id,
-            {"handled": True, "replyText": reply_text, "state": "sent" if result.get("sent") else "failed"},
+            {"handled": True, "replyText": reply_text, "state": "file_sending"},
         )
 
     def _push_select_result_to_channel(

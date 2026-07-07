@@ -70,6 +70,7 @@ def _controller(
     selection_controller: _FakeSelectionController | None = None,
     background_submitter=None,  # type: ignore[no-untyped-def]
     send_channel_text=None,  # type: ignore[no-untyped-def]
+    request_full_report_file=None,  # type: ignore[no-untyped-def]
     request_selection_report_file=None,  # type: ignore[no-untyped-def]
 ) -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
     runner = _FakeRunner()
@@ -86,6 +87,7 @@ def _controller(
     return (
         ChannelTextInboundController(
             chat_controller,
+            request_full_report_file=request_full_report_file,
             background_submitter=background_submitter,
             send_channel_text=send_channel_text,
             request_selection_report_file=request_selection_report_file,
@@ -235,11 +237,21 @@ def test_select_command_pushes_wechat_summary_and_sends_selection_pdf_on_request
 
     file_result = controller.handle_message(_message("r-select-file", "发送完整报告"))
 
-    assert file_result == {"handled": True, "replyText": "完整选股报告已发送。", "state": "sent"}
+    assert file_result == {"handled": True, "replyText": "收到，正在发送完整选股报告。", "state": "file_sending"}
+    assert sent_files == []
+    assert len(background_jobs) == 2
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["text"] for item in snapshot["messages"]][-2:] == ["发送完整报告", "收到，正在发送完整选股报告。"]
+
+    background_jobs[1]()
+
     assert len(sent_files) == 1
     assert sent_files[0]["workflowRunId"] == "select-wechat-test-run"
     assert "候选事实表" in sent_files[0]["markdown"]
     assert sent_files[0]["target"].sender_id == "sender-1"
+    assert sent_texts[-1]["text"] == "完整选股报告已发送。"
+    snapshot = controller.latest_conversation_snapshot()
+    assert snapshot["messages"][-1]["text"] == "完整选股报告已发送。"
     assert runner.calls == 0
     assert chat_transport.calls == []
 
@@ -330,7 +342,13 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
         settings=ReportWorkflowSettings(),
     )
     chat_ref["controller"] = chat_controller
+    background_jobs = []
+    sent_texts = []
     full_report_requests: list[tuple[str, str, ChannelReplyTarget]] = []
+
+    def send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
 
     def request_full_report(report_id: str, request_id: str, target: ChannelReplyTarget) -> dict[str, object]:
         full_report_requests.append((report_id, request_id, target))
@@ -339,6 +357,8 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
     controller = ChannelTextInboundController(
         chat_controller,
         request_full_report_file=request_full_report,
+        background_submitter=background_jobs.append,
+        send_channel_text=send_text,
     )
 
     controller.handle_message(_message("r-7", "/report TSLA"))
@@ -354,9 +374,17 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
     assert "最终结论：维持观察" in completed["text"]
 
     full = controller.handle_message(_message("r-9", "发送完整报告"))
-    assert full == {"handled": True, "replyText": "完整报告已发送。", "state": "sent"}
+    assert full == {"handled": True, "replyText": "收到，正在发送完整报告。", "state": "file_sending"}
+    assert full_report_requests == []
+    assert len(background_jobs) == 1
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["text"] for item in snapshot["messages"]][-2:] == ["发送完整报告", "收到，正在发送完整报告。"]
+
+    background_jobs[0]()
+
     assert [(report_id, target.sender_id, target.account_id) for report_id, _, target in full_report_requests] == [
         ("run-1", "sender-1", "account-1")
     ]
+    assert sent_texts[-1]["text"] == "完整报告已发送。"
     snapshot = controller.latest_conversation_snapshot()
-    assert [item["text"] for item in snapshot["messages"]][-2:] == ["发送完整报告", "完整报告已发送。"]
+    assert snapshot["messages"][-1]["text"] == "完整报告已发送。"

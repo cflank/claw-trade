@@ -624,7 +624,7 @@ class ChannelBridge:
         provider_channel = self.resolve_clawbot_channel_id(channel_kind)
         status = self.get_channel_status(probe=True)
         if str(status.get("state")) != "connected":
-            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。")
+            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送前检查失败，报告没有发出。请稍后重试。")
         if not bool(status.get("canSendFile")):
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
         try:
@@ -647,7 +647,7 @@ class ChannelBridge:
                 if attempt + 1 < _FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS and _is_cdn_upload_server_error(exc):
                     continue
                 if _is_cdn_upload_server_error(exc):
-                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
+                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件上传失败，报告没有发出。请稍后重试。") from exc
                 if _is_gateway_send_timeout(exc):
                     raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送超时，报告没有发出。请稍后重试。") from exc
                 raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
@@ -672,7 +672,15 @@ class ChannelBridge:
 
     def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None:
         self.resolve_clawbot_channel_id(channel_kind)
-        return _single_weixin_report_file_target()
+        connected_account_id: str | None = None
+        try:
+            connected_account_id = _connected_provider_account_id(
+                self._client.channels_status(probe=True),
+                _PROVIDER_CHANNEL_ID,
+            )
+        except Exception:
+            return None
+        return _single_weixin_report_file_target(account_id=connected_account_id)
 
 
 def to_channel_status_for_user(status: Mapping[str, Any]) -> dict[str, Any]:
@@ -765,7 +773,7 @@ def _resolve_openclaw_state_dir() -> Path | None:
     return None
 
 
-def _single_weixin_report_file_target() -> tuple[str, str | None] | None:
+def _single_weixin_report_file_target(*, account_id: str | None = None) -> tuple[str, str | None] | None:
     state_dir = _resolve_openclaw_state_dir()
     if state_dir is None:
         default_state_dir = Path(".runtime/dev-services/openclaw-state")
@@ -777,7 +785,9 @@ def _single_weixin_report_file_target() -> tuple[str, str | None] | None:
         return None
     candidates: set[tuple[str, str | None]] = set()
     for path in sorted(accounts_dir.glob("*.context-tokens.json")):
-        account_id = path.name.removesuffix(".context-tokens.json").strip()
+        candidate_account_id = path.name.removesuffix(".context-tokens.json").strip()
+        if account_id and candidate_account_id != account_id:
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -788,7 +798,7 @@ def _single_weixin_report_file_target() -> tuple[str, str | None] | None:
             user_id = str(raw_user_id or "").strip()
             token = str(raw_token or "").strip()
             if user_id.endswith("@im.wechat") and token:
-                candidates.add((user_id, account_id or None))
+                candidates.add((user_id, candidate_account_id or None))
     for path in sorted(accounts_dir.glob("*.json")):
         if path.name.endswith((".context-tokens.json", ".sync.json")):
             continue
@@ -801,11 +811,26 @@ def _single_weixin_report_file_target() -> tuple[str, str | None] | None:
         user_id = str(data.get("userId") or "").strip()
         token = str(data.get("token") or "").strip()
         if user_id.endswith("@im.wechat") and token:
-            account_id = _optional_str(data.get("accountId")) or path.name.removesuffix(".json").strip()
-            candidates.add((user_id, account_id or None))
+            candidate_account_id = _optional_str(data.get("accountId")) or path.name.removesuffix(".json").strip()
+            if account_id and candidate_account_id != account_id:
+                continue
+            candidates.add((user_id, candidate_account_id or None))
     if len(candidates) != 1:
         return None
     return next(iter(candidates))
+
+
+def _connected_provider_account_id(raw: Mapping[str, Any], provider_channel_id: str) -> str | None:
+    channel_accounts = raw.get("channelAccounts") if isinstance(raw, Mapping) else None
+    if not isinstance(channel_accounts, Mapping):
+        return None
+    accounts = channel_accounts.get(provider_channel_id)
+    if not isinstance(accounts, (list, tuple)):
+        return None
+    item = _find_default_account_snapshot(accounts, _default_account_id(raw, provider_channel_id))
+    if item is None or _account_state(item) != "connected":
+        return None
+    return _optional_str(item.get("accountId"))
 
 
 def _cleanup_superseded_file_delivery_queue_entries(
@@ -973,14 +998,20 @@ def _find_default_account_snapshot(
     default_account_id: str | None,
 ) -> Mapping[str, Any] | None:
     fallback: Mapping[str, Any] | None = None
+    connected_fallback: Mapping[str, Any] | None = None
+    default_fallback: Mapping[str, Any] | None = None
     for account in accounts:
         if not isinstance(account, Mapping):
             continue
         if fallback is None:
             fallback = account
+        if connected_fallback is None and _account_state(account) == "connected":
+            connected_fallback = account
         if default_account_id and _optional_str(account.get("accountId")) == default_account_id:
-            return account
-    return fallback
+            if _account_state(account) == "connected":
+                return account
+            default_fallback = account
+    return connected_fallback or default_fallback or fallback
 
 
 def _account_state(item: Mapping[str, Any]) -> str:

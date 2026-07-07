@@ -122,6 +122,7 @@ class ReportNotificationService:
         channel_kind: str = "wechat_clawbot",
         target: str | None = None,
         account_id: str | None = None,
+        download_url: str | None = None,
     ) -> dict[str, object]:
         with self._file_send_tracker.track(report_id):
             return self._request_full_report_file(
@@ -130,6 +131,7 @@ class ReportNotificationService:
                 channel_kind=channel_kind,
                 target=target,
                 account_id=account_id,
+                download_url=download_url,
             )
 
     def _request_full_report_file(
@@ -140,24 +142,18 @@ class ReportNotificationService:
         channel_kind: str,
         target: str | None,
         account_id: str | None,
+        download_url: str | None,
     ) -> dict[str, object]:
         report = self._repository.get_report(report_id)
         if report is None:
             raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
 
+        current_default_target = self._channel_bridge.resolve_default_report_file_target(channel_kind=channel_kind)
         resolved_target = str(target or "").strip()
         resolved_account_id = str(account_id or "").strip() or None
         if not resolved_target:
-            report_target = _report_target_from_origin_context(
-                report.origin_context_id,
-                channel_kind=channel_kind,
-            )
-            if report_target is not None:
-                resolved_target, resolved_account_id = report_target
-        if not resolved_target:
-            report_target = self._channel_bridge.resolve_default_report_file_target(channel_kind=channel_kind)
-            if report_target is not None:
-                resolved_target, resolved_account_id = report_target
+            if current_default_target is not None:
+                resolved_target, resolved_account_id = current_default_target
         if not resolved_target:
             return {
                 "sent": False,
@@ -180,13 +176,18 @@ class ReportNotificationService:
             }
 
         status = self._channel_bridge.get_channel_status(probe=True)
-        if str(status.get("state")) != "connected":
-            return {
-                "sent": False,
-                "code": "NOTIFICATION_UNAVAILABLE",
-                "userMessage": "微信通知暂不可用，请在设备界面查看。",
-            }
-        if not bool(status.get("canSendFile")):
+        if str(status.get("state")) == "connected" and not bool(status.get("canSendFile")):
+            if download_url:
+                fallback = self._send_report_download_link(
+                    report_title=report.title,
+                    download_url=download_url,
+                    channel_kind=channel_kind,
+                    request_id=request_id,
+                    target=resolved_target,
+                    account_id=resolved_account_id,
+                )
+                if fallback is not None:
+                    return fallback
             return {
                 "sent": False,
                 "code": "FILE_SEND_UNSUPPORTED",
@@ -221,6 +222,17 @@ class ReportNotificationService:
             code = str(getattr(exc, "code", "FILE_SEND_UNSUPPORTED"))
             if code not in {"NOTIFICATION_UNAVAILABLE", "FILE_SEND_UNSUPPORTED"}:
                 code = "FILE_SEND_UNSUPPORTED"
+            if download_url:
+                fallback = self._send_report_download_link(
+                    report_title=report.title,
+                    download_url=download_url,
+                    channel_kind=channel_kind,
+                    request_id=request_id,
+                    target=resolved_target,
+                    account_id=resolved_account_id,
+                )
+                if fallback is not None:
+                    return fallback
             user_message = str(getattr(exc, "user_message", "") or "").strip()
             return {
                 "sent": False,
@@ -229,7 +241,7 @@ class ReportNotificationService:
                 or (
                     "完整报告文件暂不可发送，请在设备界面查看。"
                     if code == "FILE_SEND_UNSUPPORTED"
-                    else "微信通知暂不可用，请在设备界面查看。"
+                    else "微信文件发送失败，报告没有发出。请稍后重试。"
                 ),
             }
         if not isinstance(result, Mapping):
@@ -261,19 +273,36 @@ class ReportNotificationService:
             "userMessage": "完整报告已发送。",
         }
 
-
-def _report_target_from_origin_context(
-    origin_context_id: object,
-    *,
-    channel_kind: str,
-) -> tuple[str, str | None] | None:
-    text = str(origin_context_id or "").strip()
-    if not text:
-        return None
-    parts = [part.strip() for part in text.split(":", 2)]
-    if len(parts) != 3:
-        return None
-    origin_channel, account_id, sender_id = parts
-    if origin_channel != channel_kind or not sender_id:
-        return None
-    return sender_id, account_id or None
+    def _send_report_download_link(
+        self,
+        *,
+        report_title: str,
+        download_url: str,
+        channel_kind: str,
+        request_id: str,
+        target: str,
+        account_id: str | None,
+    ) -> dict[str, object] | None:
+        try:
+            raw = self._channel_bridge.send_text(
+                channel_kind=channel_kind,
+                text=f"完整报告 PDF 已生成。\n{report_title}\n下载链接：{download_url}",
+                dedupe_key=f"{request_id}:pdf-download-link",
+                target=target,
+                account_id=account_id,
+            )
+        except Exception:
+            return None
+        if raw.get("ok") is False or raw.get("sent") is False:
+            return None
+        message_id = raw.get("messageId") or raw.get("message_id")
+        if isinstance(message_id, str):
+            message_id = message_id.strip() or None
+        else:
+            message_id = None
+        return {
+            "sent": True,
+            "messageId": message_id,
+            "delivery": "download_link",
+            "userMessage": "微信附件上传失败，已发送 PDF 下载链接。",
+        }

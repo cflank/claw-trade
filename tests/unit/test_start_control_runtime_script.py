@@ -68,6 +68,7 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert 'OPENCLAW_GATEWAY_TOKEN="claw-trade-dev-${CLAW_TRADE_OPENVIKING_PROBE_RUN_ID}"' in text
     assert "export OPENCLAW_GATEWAY_TOKEN" in text
     assert 'CLAW_TRADE_UI_INBOUND_TIMEOUT_MS="${CLAW_TRADE_UI_INBOUND_TIMEOUT_MS:-180000}"' in text
+    assert 'CLAW_TRADE_UI_PUBLIC_BASE_URL="${CLAW_TRADE_UI_PUBLIC_BASE_URL:-}"' in text
     assert "LOCAL_MONGODB_START_SCRIPT" in text
     assert "start_local_mongodb_if_needed" in text
     assert "wait_mongodb_ok" in text
@@ -109,6 +110,7 @@ def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_
     assert 'write_runtime_env_var "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"' in text
     assert 'write_runtime_env_var "OPENCLAW_GATEWAY_TIMEOUT_MS" "${OPENCLAW_GATEWAY_TIMEOUT_MS}"' in text
     assert 'write_runtime_env_var "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"' in text
+    assert 'write_runtime_env_var "CLAW_TRADE_UI_PUBLIC_BASE_URL" "${CLAW_TRADE_UI_PUBLIC_BASE_URL}"' in text
     assert 'write_runtime_env_var "CN_A_MONGODB_URI" "${CN_A_MONGODB_URI}"' in text
     assert 'write_runtime_env_var "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"' in text
     assert 'write_runtime_env_var "DATA_GATEWAY_SEED_MONGODB_URI" "${DATA_GATEWAY_SEED_MONGODB_URI}"' in text

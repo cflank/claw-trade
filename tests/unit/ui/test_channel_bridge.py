@@ -5,9 +5,10 @@ import threading
 from pathlib import Path
 
 import pytest
-from claw_trade.ui_backend import channel_bridge as channel_bridge_module
 from claw_trade.ui_backend.channel_bridge import USER_CHANNEL_KIND, ChannelBridge
 from claw_trade.ui_backend.settings_service import UiBoundaryError
+
+from claw_trade.ui_backend import channel_bridge as channel_bridge_module
 
 
 class _FakeChannelClient:
@@ -256,6 +257,38 @@ def test_get_channel_status_treats_running_configured_account_as_connected() -> 
     assert payload["state"] == "connected"
     assert payload["accountLabel"] == "微信账号"
     assert payload["canSendText"] is True
+
+
+def test_get_channel_status_ignores_stale_default_account_when_running_account_exists() -> None:
+    class _StaleDefaultAccountClient(_FakeChannelClient):
+        def channels_status(self, *, probe=False):  # type: ignore[no-untyped-def]
+            self.channels_status_calls.append({"probe": probe})
+            return {
+                "channelAccounts": {
+                    "openclaw-weixin": [
+                        {
+                            "accountId": "old-bot",
+                            "configured": False,
+                            "running": False,
+                            "lastError": "not configured",
+                        },
+                        {
+                            "accountId": "new-bot",
+                            "configured": True,
+                            "running": True,
+                            "accountLabel": "新微信账号",
+                        },
+                    ]
+                },
+                "channelDefaultAccountId": {"openclaw-weixin": "old-bot"},
+            }
+
+    bridge = ChannelBridge(_StaleDefaultAccountClient(connected=False))
+
+    payload = bridge.get_channel_status(probe=True)
+
+    assert payload["state"] == "connected"
+    assert payload["accountLabel"] == "新微信账号"
 
 
 def test_get_channel_status_caches_light_homepage_status_without_caching_probe() -> None:
@@ -845,6 +878,73 @@ def test_resolve_default_report_file_target_uses_single_weixin_context_token(
     )
 
 
+def test_resolve_default_report_file_target_filters_to_connected_account(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _ConnectedAccountClient(_FakeChannelClient):
+        def channels_status(self, *, probe=False):  # type: ignore[no-untyped-def]
+            self.channels_status_calls.append({"probe": probe})
+            return {
+                "channelAccounts": {
+                    "openclaw-weixin": [
+                        {
+                            "accountId": "old-bot",
+                            "configured": False,
+                            "running": False,
+                        },
+                        {
+                            "accountId": "new-bot",
+                            "configured": True,
+                            "running": True,
+                        },
+                    ]
+                },
+                "channelDefaultAccountId": {"openclaw-weixin": "old-bot"},
+            }
+
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (accounts_dir / "old-bot.context-tokens.json").write_text(
+        '{"old-user@im.wechat":"old-token"}',
+        encoding="utf-8",
+    )
+    (accounts_dir / "new-bot.context-tokens.json").write_text(
+        '{"new-user@im.wechat":"new-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_ConnectedAccountClient(connected=False))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) == (
+        "new-user@im.wechat",
+        "new-bot",
+    )
+
+
+def test_resolve_default_report_file_target_returns_none_when_status_probe_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class _StatusFailClient(_FakeChannelClient):
+        def channels_status(self, *, probe=False):  # type: ignore[no-untyped-def]
+            self.channels_status_calls.append({"probe": probe})
+            raise RuntimeError("gateway unavailable")
+
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (accounts_dir / "old-bot.context-tokens.json").write_text(
+        '{"old-user@im.wechat":"old-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_StatusFailClient(connected=False))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) is None
+
+
 def test_resolve_default_report_file_target_uses_single_login_account_file(
     tmp_path: Path,
     monkeypatch,
@@ -972,6 +1072,21 @@ def test_send_report_file_attempts_send_when_media_capability_is_unverified() ->
     assert result["sent"] is True
 
 
+def test_send_report_file_returns_file_specific_message_when_not_connected() -> None:
+    bridge = ChannelBridge(_FakeChannelClient(connected=False))
+    with pytest.raises(UiBoundaryError) as exc:
+        bridge.send_report_file_via_channel(
+            request_id="r-disconnected",
+            report_id="rp-disconnected",
+            channel_kind="wechat_clawbot",
+            file_name="report.pdf",
+            payload=b"pdf",
+            target="sender-1",
+        )
+    assert exc.value.code == "NOTIFICATION_UNAVAILABLE"
+    assert exc.value.user_message == "微信文件发送前检查失败，报告没有发出。请稍后重试。"
+
+
 def test_send_report_file_returns_file_send_unsupported_without_file_sender() -> None:
     class _NoFileSenderClient(_FakeChannelClient):
         def __getattribute__(self, name: str):  # type: ignore[no-untyped-def]
@@ -1034,7 +1149,7 @@ def test_send_report_file_returns_notification_unavailable_after_cdn_retry_failu
             target="sender-1",
         )
     assert exc.value.code == "NOTIFICATION_UNAVAILABLE"
-    assert exc.value.user_message == "微信通知暂不可用，请在设备界面查看。"
+    assert exc.value.user_message == "微信文件上传失败，报告没有发出。请稍后重试。"
 
 
 def test_send_report_file_returns_clear_error_after_gateway_timeout() -> None:

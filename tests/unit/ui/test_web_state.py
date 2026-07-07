@@ -120,6 +120,39 @@ def test_price_alert_wechat_send_uses_stored_target_over_default_channel_target(
     ]
 
 
+def test_selection_report_file_send_uses_explicit_message_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class _Renderer:
+        def render(self, markdown: str, *, report_asset_dir=None) -> bytes:  # type: ignore[no-untyped-def]
+            _ = (markdown, report_asset_dir)
+            return b"%PDF-1.7\nselection"
+
+    class _Bridge(_FakeChannelBridge):
+        def send_report_file_via_channel(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls.append(kwargs)
+            return {"sent": True, "messageId": "msg-selection"}
+
+    bridge = _Bridge(default_target=("sender-default", "account-default"))
+    monkeypatch.setattr(web_state, "detect_pdf_runtime_capabilities", lambda: SimpleNamespace(primary_ready=True))
+    monkeypatch.setattr(web_state, "PdfKitWithPandocFallbackRenderer", lambda: _Renderer())
+    monkeypatch.setattr(web_state, "validate_pdf_bytes", lambda _payload, required_keywords: SimpleNamespace(valid=True))
+
+    result = web_state._send_selection_report_file(
+        channel_bridge=bridge,  # type: ignore[arg-type]
+        workflow_run_id="select-run-1",
+        markdown="# 选股报告",
+        request_id="req-selection-file",
+        target=web_state.ChannelReplyTarget(
+            channel_kind="wechat_clawbot",
+            account_id="account-explicit",
+            sender_id="sender-explicit",
+        ),
+    )
+
+    assert result["sent"] is True
+    assert bridge.calls[-1]["target"] == "sender-explicit"
+    assert bridge.calls[-1]["account_id"] == "account-explicit"
+
+
 def test_crypto_history_root_prefers_explicit_release_seed(monkeypatch, tmp_path: Path) -> None:
     crypto_root = tmp_path / "release-crypto-history"
     runtime_root = tmp_path / "runtime-normalized"
