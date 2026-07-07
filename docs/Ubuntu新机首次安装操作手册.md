@@ -49,11 +49,13 @@ LICENSE_KEY_FILE="$HOME/.claw-trade/license.key"
 
 mkdir -p "$(dirname "${LICENSE_KEY_FILE}")"
 umask 077
-printf '%s\n' '这里粘贴 Virbox 授权码' > "${LICENSE_KEY_FILE}"
+printf '%s\n' '4VK2-P90K-8T64-JJT4' > "${LICENSE_KEY_FILE}"
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl
 curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}" --license-key-file "${LICENSE_KEY_FILE}"
 ```
+
+复制上面整段执行。最后一行是一条完整命令；如果手工分行复制，行尾保留 `\` 续行。
 
 脚本会自动做这些事：
 
@@ -69,19 +71,26 @@ curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}"
 验证 factory seed、UI、auto-update 命令。
 ```
 
-如果脚本因为 split lock 重启机器，重新登录后再执行上面同一条 `curl -fsSL ... | bash` 命令。不要执行 `/tmp/install_from_r2_ubuntu.sh`，重启后 `/tmp` 里的脚本文件可能不存在。
+## 4. 重启后继续安装
 
-## 4. 指定版本安装
+如果脚本设置 split lock 后自动重启，重新登录 Ubuntu，再执行：
+
+```bash
+BASE="https://download.cflank-trade.top/delivery"
+LICENSE_KEY_FILE="$HOME/.claw-trade/license.key"
+
+curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}" --license-key-file "${LICENSE_KEY_FILE}"
+```
+
+## 5. 指定版本安装
 
 通常不用指定版本。需要固定版本时：
 
 ```bash
-curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}" \
-  claw-trade-production-1.0.0-20260706T053438Z \
-  --license-key-file "${LICENSE_KEY_FILE}"
+curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}" claw-trade-production-1.0.0-20260706T053438Z --license-key-file "${LICENSE_KEY_FILE}"
 ```
 
-## 5. 验证
+## 6. 验证
 
 ```bash
 curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5175/
@@ -105,9 +114,9 @@ update-signing-public.pem 存在。
 systemctl --failed 输出 0 loaded units listed。
 ```
 
-说明：不要把 `claw-trade-auto-update.timer` 当作成功标志。受保护 Python 在 systemd service 下会崩溃；自动更新由 UI 进程内调度器执行，安装脚本会验证 `claw-trade-auto-update` 命令本身可运行。
+说明：成功标志按本节验证结果判断。自动更新由 UI 进程内调度器执行，安装脚本会验证 `claw-trade-auto-update` 命令本身可运行。
 
-## 6. 打开页面
+## 7. 打开页面
 
 在同一局域网电脑浏览器打开：
 

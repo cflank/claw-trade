@@ -172,11 +172,13 @@ function SelectionTaskBlock({
     return null;
   }
   const percent = Math.max(0, Math.min(100, Math.round(progress.percent)));
-  const canCancel = !String(progress.workflowRunId ?? '').startsWith('raw-data-maintenance:');
+  const title = selectionProgressTitle(progress);
+  const isRawMaintenance = title === '原始行情补数据' || String(progress.workflowRunId ?? '').startsWith('raw-data-maintenance');
+  const canCancel = !isRawMaintenance;
   const retryMarkets = failedRawMarkets(progress);
   return (
     <section className="ct-right-section" data-testid="right-rail-selection-section">
-      <h2>{selectionProgressTitle(progress)}</h2>
+      <h2>{title}</h2>
       <article className="ct-task-item">
         <div className="ct-task-head">
           <strong>{progress.command}</strong>
@@ -197,7 +199,7 @@ function SelectionTaskBlock({
             <li key={`${progress.startedAt}-${item}`}>{item}</li>
           ))}
         </ul>
-        {progress.workflowRunId ? <div className="ct-small">工作流：{progress.workflowRunId}</div> : null}
+        {progress.workflowRunId && !isRawMaintenance ? <div className="ct-small">工作流：{progress.workflowRunId}</div> : null}
         {progress.status === 'running' && onCancelSelection && canCancel ? (
           <button
             type="button"
@@ -235,13 +237,10 @@ function TaskBlock({
   onCancelTask?: (task: ReportTaskForUser) => void;
   cancellingTaskId?: string | null;
 }) {
-  const failedTerminalTask =
-    queue.lastTerminalTask?.status === 'failed' ? queue.lastTerminalTask : null;
   const rows = [
     ...(queue.runningTask ? [queue.runningTask] : []),
     ...queue.queuedTasks,
-    ...(failedTerminalTask ? [failedTerminalTask] : []),
-  ].filter((task) => task.status === 'running' || task.status === 'queued' || task.status === 'failed');
+  ].filter((task) => task.status === 'running' || task.status === 'queued');
 
   return (
     <section className="ct-right-section" data-testid="right-rail-task-section">

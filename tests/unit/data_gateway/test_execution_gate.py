@@ -57,6 +57,12 @@ class _WaiterSingleFlight:
         return SimpleNamespace(refs=ResultRefs(dataset_refs=("dataset:shared",), raw_refs=(), attempt_refs=("attempt:shared",)))
 
 
+class _TimeoutSingleFlight(_WaiterSingleFlight):
+    def wait(self, key: str, timeout_seconds: int) -> SimpleNamespace:
+        self.wait_budget_seconds = timeout_seconds
+        raise TimeoutError
+
+
 def _insert_daily_bar(repository: DatasetRepository, dataset_ref: str = "dataset:daily_bar:CN_A:row-1") -> None:
     repository.insert_normalized(
         {
@@ -174,16 +180,39 @@ def test_gate_can_ignore_cached_empty_for_forced_refresh() -> None:
     assert decision.kind == "owner"
 
 
-def test_gate_waits_for_shared_result_using_deadline_budget() -> None:
+def test_gate_caps_shared_result_wait_below_data_need_deadline() -> None:
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     single_flight = _WaiterSingleFlight()
-    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=single_flight)  # type: ignore[arg-type]
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=single_flight, now_fn=lambda: now)  # type: ignore[arg-type]
 
-    decision = gate.enter(_Batch(deadline_at=datetime.now(UTC) + timedelta(seconds=30)))
+    decision = gate.enter(_Batch(deadline_at=now + timedelta(seconds=30)))
 
     assert decision.kind == "shared_result"
     assert decision.refs.dataset_refs == ("dataset:shared",)
-    assert single_flight.wait_budget_seconds is not None
-    assert 0 < single_flight.wait_budget_seconds <= 30
+    assert single_flight.wait_budget_seconds == 8
+
+
+def test_gate_uses_remaining_deadline_when_below_shared_wait_cap() -> None:
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    single_flight = _WaiterSingleFlight()
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=single_flight, now_fn=lambda: now)  # type: ignore[arg-type]
+
+    decision = gate.enter(_Batch(deadline_at=now + timedelta(seconds=3)))
+
+    assert decision.kind == "shared_result"
+    assert single_flight.wait_budget_seconds == 3
+
+
+def test_gate_returns_tool_budget_rate_limit_when_shared_wait_times_out() -> None:
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    single_flight = _TimeoutSingleFlight()
+    gate = ExecutionGate(cache=ProviderResultCache(), rate_limiter=RateLimiter(), single_flight=single_flight, now_fn=lambda: now)  # type: ignore[arg-type]
+
+    decision = gate.enter(_Batch(deadline_at=now + timedelta(seconds=30)))
+
+    assert decision.kind == "rate_limited"
+    assert decision.reason == "rate_limited_by_tool_budget"
+    assert single_flight.wait_budget_seconds == 8
 
 
 def test_gate_does_not_wait_for_shared_result_without_deadline() -> None:

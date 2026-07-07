@@ -92,6 +92,80 @@ def test_remote_update_check_rejects_bad_manifest_signature(tmp_path: Path) -> N
     assert UpdaterStateStore(install_root=install_root).read()["status"] == "verify_failed"
 
 
+def test_remote_update_check_treats_missing_manifest_as_up_to_date_without_leaking_url(tmp_path: Path) -> None:
+    install_root = tmp_path / "opt" / "claw-trade"
+    key = Ed25519PrivateKey.generate()
+    public_key_path = install_root / "shared" / "updates" / "update-signing-public.pem"
+    public_key_path.parent.mkdir(parents=True)
+    public_key_path.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.HTTPError(
+        "404 Client Error: Not Found for url: https://updates.example.com/stable/manifest.json",
+        response=response,
+    )
+    service = RemoteUpdateService(
+        install_root=install_root,
+        base_url="https://updates.example.com/stable",
+        current_version="1.2.2",
+        public_key_path=public_key_path,
+        fetch_bytes=lambda _url: (_ for _ in ()).throw(error),
+    )
+
+    result = service.check_manifest()
+
+    assert result.status == "up_to_date"
+    assert result.user_message == "当前已是最新版本。"
+    assert "https://" not in result.user_message
+    assert "updates.example.com" not in UpdaterStateStore(install_root=install_root).read()["userMessage"]
+
+
+def test_remote_update_check_fails_when_manifest_signature_is_missing(tmp_path: Path) -> None:
+    install_root = tmp_path / "opt" / "claw-trade"
+    key = Ed25519PrivateKey.generate()
+    public_key_path = install_root / "shared" / "updates" / "update-signing-public.pem"
+    public_key_path.parent.mkdir(parents=True)
+    public_key_path.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    manifest = b'{"product":"claw-trade"}'
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.HTTPError(
+        "404 Client Error: Not Found for url: https://updates.example.com/stable/manifest.json.sig",
+        response=response,
+    )
+
+    def fetch(url: str) -> bytes:
+        if url.endswith("manifest.json.sig"):
+            raise error
+        return manifest
+
+    service = RemoteUpdateService(
+        install_root=install_root,
+        base_url="https://updates.example.com/stable",
+        current_version="1.2.2",
+        public_key_path=public_key_path,
+        fetch_bytes=fetch,
+    )
+
+    result = service.check_manifest()
+
+    assert result.status == "check_failed"
+    assert result.user_message == "远程更新清单检查失败：远程文件不存在或更新源尚未发布。"
+    assert "https://" not in result.user_message
+    assert "updates.example.com" not in UpdaterStateStore(install_root=install_root).read()["userMessage"]
+
+
 def test_remote_update_check_records_not_configured(tmp_path: Path) -> None:
     install_root = tmp_path / "opt" / "claw-trade"
     service = RemoteUpdateService(install_root=install_root, base_url=None, current_version="1.2.2")
@@ -252,6 +326,37 @@ def test_remote_update_rejects_archive_hash_mismatch_without_switching_current(t
     assert result.status == "verify_failed"
     assert (install_root / "current").resolve(strict=False) == old_release
     assert not (install_root / "releases" / "claw-trade-production-1.2.3-20260626T120000Z").exists()
+
+
+def test_remote_update_install_hides_remote_url_from_archive_fetch_error(tmp_path: Path) -> None:
+    install_root, objects = _signed_update_objects(tmp_path)
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.HTTPError(
+        "404 Client Error: Not Found for url: https://updates.example.com/stable/claw-trade-production-1.2.3.tar.gz",
+        response=response,
+    )
+
+    def fetch(url: str) -> bytes:
+        if url.endswith(".tar.gz"):
+            raise error
+        return objects[url]
+
+    service = RemoteUpdateService(
+        install_root=install_root,
+        base_url="https://updates.example.com/stable",
+        current_version="1.2.2",
+        public_key_path=_update_public_key_path(install_root),
+        fetch_bytes=fetch,
+        preflight_runner=lambda _: None,
+    )
+
+    result = service.install_checked_update()
+
+    assert result.status == "install_failed"
+    assert result.user_message == "更新安装失败：远程文件不存在或更新源尚未发布。"
+    assert "https://" not in result.user_message
+    assert "updates.example.com" not in UpdaterStateStore(install_root=install_root).read()["userMessage"]
 
 
 def test_remote_update_rejects_existing_target_release_without_overwriting(tmp_path: Path) -> None:

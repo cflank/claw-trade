@@ -19,7 +19,11 @@ export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"
 export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/runtime/openclaw/openclaw.mjs}"
 export OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/runtime/openclaw}"
-export CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"
+if [[ -z "${CLAW_TRADE_REPORT_RUN_DIR:-}" || "${CLAW_TRADE_REPORT_RUN_DIR}" != /* ]]; then
+  export CLAW_TRADE_REPORT_RUN_DIR="${SHARED_ROOT}/runs"
+else
+  export CLAW_TRADE_REPORT_RUN_DIR
+fi
 export CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR="${CLAW_TRADE_LOCAL_MONGODB_RUNTIME_DIR:-/opt/claw-trade/shared/tmp/mongodb}"
 if [[ -x "${ROOT_DIR}/.runtime/mongodb/current/bin/mongod" && -z "${CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR:-}" ]]; then
   export CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR="${ROOT_DIR}/.runtime/mongodb/current"

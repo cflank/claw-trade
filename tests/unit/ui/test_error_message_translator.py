@@ -78,6 +78,14 @@ def test_data_tool_timeout_is_not_reported_as_assistant_unavailable() -> None:
     assert "助手服务暂不可用" not in failure.user_message
 
 
+def test_storage_permission_failure_is_not_reported_as_assistant_unavailable() -> None:
+    failure = translate_internal_error_for_user("workflow_storage_unavailable: [Errno 13] Permission denied: 'runs'")
+
+    assert failure.code == "ASSISTANT_UNAVAILABLE"
+    assert "报告运行目录不可写" in failure.user_message
+    assert "助手服务暂不可用" not in failure.user_message
+
+
 def test_translate_internal_error_for_user_can_infer_profile_unapproved() -> None:
     failure = translate_internal_error_for_user("HK strategy unapproved")
     assert failure.code == "PROFILE_STRATEGY_UNAPPROVED"

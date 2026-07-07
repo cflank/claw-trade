@@ -91,7 +91,7 @@ describe('RightRail channel state text', () => {
     expect(onCancelTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ taskId: 'task-queued' }));
   });
 
-  it('keeps the latest failed report task visible with the failure reason', () => {
+  it('does not keep the latest failed report task in the active task rail', () => {
     const queue: ReportQueueSnapshotForUser = {
       runningTask: null,
       queuedTasks: [],
@@ -124,9 +124,10 @@ describe('RightRail channel state text', () => {
     render(<RightRail queue={queue} detail={null} channel={null} latestReport={null} onCancelTask={vi.fn()} />);
 
     const section = screen.getByTestId('right-rail-task-section');
-    expect(within(section).getByText('BTC')).toBeInTheDocument();
-    expect(within(section).getByText('失败')).toBeInTheDocument();
-    expect(within(section).getByText('报告数据请求超时，请稍后重试。')).toBeInTheDocument();
+    expect(within(section).getByText('暂无运行中或排队中的报告任务')).toBeInTheDocument();
+    expect(within(section).queryByText('BTC')).not.toBeInTheDocument();
+    expect(within(section).queryByText('失败')).not.toBeInTheDocument();
+    expect(within(section).queryByText('报告数据请求超时，请稍后重试。')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '取消排队' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止任务' })).not.toBeInTheDocument();
   });

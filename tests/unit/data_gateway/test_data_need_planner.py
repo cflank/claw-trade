@@ -783,12 +783,28 @@ def test_crypto_onchain_project_item_plans_to_coinglass_onchain_interfaces() -> 
     plan = plan_public_data_requests((request,))
 
     calls = {(call.provider_id, call.catalog_endpoint_id, call.public_api_id) for call in plan.planned_calls}
-    assert ("official_api_coinglass", "coinglass.onchain_exchange_balance", "crypto.onchain_metric") in calls
+    assert ("official_api_coinglass", "coinglass.onchain_exchange_balance", "crypto.onchain_metric") not in calls
     assert ("official_api_coinglass", "coinglass.onchain_whale_transfer", "crypto.onchain_metric") in calls
     assert ("official_api_coinglass", "coinglass.raw_index_bitcoin_active_addresses", "crypto.onchain_metric") in calls
     assert ("official_api_coinglass", "coinglass.raw_index_bitcoin_sth_sopr", "crypto.onchain_metric") in calls
     assert ("official_api_coinglass", "coinglass.raw_index_bitcoin_lth_sopr", "crypto.onchain_metric") in calls
     assert ("official_api_coinglass", "coinglass.raw_index_bitcoin_net_unrealized_profit_loss", "crypto.onchain_metric") in calls
+
+
+def test_crypto_exchange_balance_item_still_plans_to_coinglass_balance_endpoint() -> None:
+    request = _request(
+        request_id="crypto-exchange-balance",
+        item="交易所余额",
+        market=Market.CRYPTO,
+        instrument="BTC",
+        granularity="realtime",
+        purpose="fundamental_report",
+    )
+
+    plan = plan_public_data_requests((request,))
+
+    calls = {(call.provider_id, call.catalog_endpoint_id, call.public_api_id) for call in plan.planned_calls}
+    assert ("official_api_coinglass", "coinglass.onchain_exchange_balance", "crypto.exchange_balance") in calls
 
 
 def test_crypto_institutional_product_flow_alias_plans_to_etf_flow_interfaces() -> None:

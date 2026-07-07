@@ -228,17 +228,26 @@ def test_production_factory_reset_route_uses_fixed_allowlist(tmp_path: Path) -> 
         base_url=None,
         current_version="0.1.0",
     )
-    update = client.post(
+    update_client = TestClient(app, base_url="http://192.168.1.21:5175")
+    external_update_origin = update_client.post(
         "/api/ui/check-for-update",
-        headers={"origin": "http://127.0.0.1:5175"},
+        headers={"origin": "https://example.com"},
+        json={"requestId": "update-check"},
+    )
+    assert external_update_origin.status_code == 401
+    assert external_update_origin.json()["message"] == "远程更新只能从当前界面执行。"
+
+    update = update_client.post(
+        "/api/ui/check-for-update",
+        headers={"origin": "http://192.168.1.21:5175"},
         json={"requestId": "update-check"},
     )
     assert update.status_code == 200
     assert update.json()["status"] == "not_configured"
 
-    install_update = client.post(
+    install_update = update_client.post(
         "/api/ui/install-update",
-        headers={"origin": "http://127.0.0.1:5175"},
+        headers={"origin": "http://192.168.1.21:5175"},
         json={"requestId": "install-update"},
     )
     assert install_update.status_code == 200
@@ -664,10 +673,10 @@ def test_selection_refresh_snapshot_surfaces_running_raw_data_maintenance() -> N
     assert progress["stageLabel"] == "原始行情补数据"
     assert progress["command"] == "系统启动自动补数据"
     assert progress["workerStatusLabels"] == [
-        "A股：原始行情补数据中（job-cn-a）",
-        "加密币：原始行情补数据中（job-crypto）",
+        "A股：原始行情补数据中",
+        "加密币：原始行情补数据中",
     ]
-    assert progress["workflowRunId"] == "raw-data-maintenance:job-cn-a,job-crypto"
+    assert progress["workflowRunId"] == "raw-data-maintenance"
     assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 
@@ -696,11 +705,12 @@ def test_selection_refresh_snapshot_surfaces_failed_raw_data_maintenance_reason(
     progress = payload["selectionProgress"]
     assert progress["status"] == "failed"
     assert progress["statusLabel"] == "原始行情补数据失败"
-    assert "binance_exchange_info_unavailable" in progress["currentAction"]
+    assert progress["currentAction"] == "加密币原始行情补数据失败：数据源响应超时，请稍后重试。"
     assert progress["workerStatusLabels"] == [
-        "加密币：原始行情补数据失败（job-crypto-failed）：binance_exchange_info_unavailable:timeout"
+        "加密币：原始行情补数据失败：数据源响应超时，请稍后重试。"
     ]
-    assert progress["workflowRunId"] == "raw-data-maintenance:job-crypto-failed"
+    assert "binance_exchange_info_unavailable" not in json.dumps(progress, ensure_ascii=False)
+    assert progress["workflowRunId"] == "raw-data-maintenance"
     assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 

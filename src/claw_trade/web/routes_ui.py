@@ -1174,7 +1174,7 @@ def get_production_maintenance_status(request: Request) -> JSONResponse:
 def check_for_update(payload: CheckForUpdateRequest, request: Request) -> JSONResponse:
     _ = payload
     try:
-        _assert_local_request(request)
+        _assert_same_ui_request(request, "远程更新只能从当前界面执行。")
         result = _remote_update_service(request).check_manifest()
         return _success_response(result.to_user_dict())
     except UiBoundaryError as exc:
@@ -1188,7 +1188,7 @@ def install_update(payload: InstallUpdateRequest, request: Request) -> JSONRespo
     _ = payload
     resume_background = None
     try:
-        _assert_local_request(request)
+        _assert_same_ui_request(request, "远程更新只能从当前界面执行。")
         resume_background = _pause_owned_background_services(request)
         result = _remote_update_service(request).install_checked_update()
         return _success_response(result.to_user_dict())
@@ -1281,13 +1281,8 @@ def _raw_data_maintenance_progress_for_user(services: UiHttpServices) -> dict[st
         if not failed:
             return None
         return _raw_data_maintenance_failed_progress(failed)
-    job_ids = [str(status.get("job_id") or "").strip() for _label, status in running]
-    visible_job_ids = [job_id for job_id in job_ids if job_id]
     market_labels = "、".join(label for label, _status in running)
-    worker_status_labels = [
-        f"{label}：原始行情补数据中" + (f"（{str(status.get('job_id') or '').strip()}）" if status.get("job_id") else "")
-        for label, status in running
-    ]
+    worker_status_labels = [f"{label}：原始行情补数据中" for label, _status in running]
     started_at_values = [
         str(status.get("started_at") or "").strip() for _label, status in running if str(status.get("started_at") or "").strip()
     ]
@@ -1304,17 +1299,14 @@ def _raw_data_maintenance_progress_for_user(services: UiHttpServices) -> dict[st
         "waitingRoleLabels": ["计算选股缓存"],
         "startedAt": min(started_at_values) if started_at_values else "",
         "finishedAt": None,
-        "workflowRunId": "raw-data-maintenance:" + ",".join(visible_job_ids) if visible_job_ids else "raw-data-maintenance",
+        "workflowRunId": "raw-data-maintenance",
     }
 
 
 def _raw_data_maintenance_failed_progress(failed: Sequence[tuple[str, Mapping[str, object]]]) -> dict[str, object]:
-    job_ids = [str(status.get("job_id") or "").strip() for _label, status in failed]
-    visible_job_ids = [job_id for job_id in job_ids if job_id]
     market_labels = "、".join(label for label, _status in failed)
     worker_status_labels = [
         f"{label}：原始行情补数据失败"
-        + (f"（{str(status.get('job_id') or '').strip()}）" if status.get("job_id") else "")
         + (f"：{_raw_data_maintenance_reason(status)}" if _raw_data_maintenance_reason(status) else "")
         for label, status in failed
     ]
@@ -1340,12 +1332,46 @@ def _raw_data_maintenance_failed_progress(failed: Sequence[tuple[str, Mapping[st
         "waitingRoleLabels": [],
         "startedAt": min(started_at_values) if started_at_values else "",
         "finishedAt": max(finished_at_values) if finished_at_values else None,
-        "workflowRunId": "raw-data-maintenance:" + ",".join(visible_job_ids) if visible_job_ids else "raw-data-maintenance",
+        "workflowRunId": "raw-data-maintenance",
     }
 
 
 def _raw_data_maintenance_reason(status: Mapping[str, object]) -> str:
-    return str(status.get("reason") or status.get("error") or "").strip()
+    reason = str(status.get("reason") or status.get("error") or "").strip()
+    return _raw_data_maintenance_reason_for_user(reason)
+
+
+def _raw_data_maintenance_reason_for_user(reason: str) -> str:
+    text = reason.strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if any(token in lower for token in ("credential_missing", "api key", "api_key", "auth", "token", "unauthorized", "forbidden", "401", "403")):
+        return "数据源凭证没配好，拿不到原始行情。"
+    if "timeout" in lower or "timed out" in lower or "超时" in text:
+        return "数据源响应超时，请稍后重试。"
+    if "rate limit" in lower or "rate_limit" in lower or "限流" in text or "频率" in text:
+        return "数据源被限流，请稍后重试。"
+    if "binance_exchange_info_unavailable" in lower:
+        return "币安交易对列表暂时不可用，无法补齐加密币行情。"
+    if "raw_data_maintenance_lock_expired" in lower or "startup_data_maintenance_interrupted" in lower:
+        return "补数据任务中断，请重新补数据。"
+    if any(token in lower for token in ("empty_result", "no data", "rows=0")):
+        return "数据源没有返回可用行情。"
+    if any(token in lower for token in ("provider", "attempt", "evidence")):
+        return "数据源没有返回可核验的调用记录。"
+    if _looks_internal_raw_maintenance_reason(text):
+        return "补数据失败，请查看高级诊断中的任务证据。"
+    return text
+
+
+def _looks_internal_raw_maintenance_reason(text: str) -> bool:
+    lower = text.lower()
+    if text.startswith(("{", "[")):
+        return True
+    if any(token in lower for token in ("traceback", "runtimeerror", "exception", "data-maintenance:")):
+        return True
+    return ":" in text or "_" in text
 
 
 def _factory_reset_service(request: Request) -> FactoryResetService:
@@ -1416,6 +1442,18 @@ def _assert_local_request(request: Request) -> None:
     raise UiBoundaryError("UNAUTHORIZED", "恢复出厂只能从本机界面执行。")
 
 
+def _assert_same_ui_request(request: Request, message: str) -> None:
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    if origin:
+        if not _is_same_ui_url(origin, request):
+            raise UiBoundaryError("UNAUTHORIZED", message)
+        return
+    if referer and _is_same_ui_url(referer, request):
+        return
+    raise UiBoundaryError("UNAUTHORIZED", message)
+
+
 def _is_local_browser_url(value: str) -> bool:
     try:
         parsed = urlsplit(value)
@@ -1425,6 +1463,27 @@ def _is_local_browser_url(value: str) -> bool:
         None,
         5175,
     }
+
+
+def _is_same_ui_url(value: str, request: Request) -> bool:
+    try:
+        candidate = urlsplit(value)
+        current = urlsplit(str(request.url))
+    except ValueError:
+        return False
+    return (
+        candidate.scheme in {"http", "https"}
+        and candidate.hostname == current.hostname
+        and (candidate.port or _default_port(candidate.scheme)) == (current.port or _default_port(current.scheme))
+    )
+
+
+def _default_port(scheme: str) -> int | None:
+    if scheme == "http":
+        return 80
+    if scheme == "https":
+        return 443
+    return None
 
 
 def _report_cleanup_settings_response(settings: dict[str, int]) -> dict[str, Any]:

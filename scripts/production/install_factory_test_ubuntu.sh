@@ -504,11 +504,21 @@ sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; set
   || fail "auto update command did not run successfully"
 sudo systemctl reset-failed claw-trade-auto-update.service claw-trade-control.service claw-trade-rescue.service >/dev/null 2>&1 || true
 
+ui_lan_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<NF; i++) if ($i == "src") {print $(i+1); exit}}')"
+if [[ -z "${ui_lan_ip}" ]]; then
+  ui_lan_ip="$(ip -o -4 addr show scope global 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4; exit}')"
+fi
+ui_lan_url=""
+if [[ -n "${ui_lan_ip}" ]]; then
+  ui_lan_url="UI(LAN): http://${ui_lan_ip}:5175/"
+fi
+
 cat <<EOF
 [OK] claw-trade installed
 Package: ${package}
 Current: ${install_root}/current
-UI: http://127.0.0.1:5175/
+UI(local): http://127.0.0.1:5175/
+${ui_lan_url}
 Log: /tmp/claw-trade-ui.log
 Control log: /tmp/claw-trade-control.log
 EOF

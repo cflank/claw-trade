@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import signal
 import sys
 import threading
 from contextlib import contextmanager, redirect_stdout
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
@@ -198,6 +200,7 @@ def run_data_need_tool_request(tool_input: Mapping[str, Any], runtime_context: M
                         earliest_start_at=scheduled.earliest_start_at,
                         rate_limit_reserved_at=scheduled.rate_limit_reserved_at,
                     )
+                    _append_data_need_trace(runtime_context, event="execution_gate_enter", call=call, batch=batch)
                     gate = runtime.data_service.execution_gate.enter(batch)
                     if gate.kind in _NON_REMOTE_GATE_KINDS:
                         ingest = runtime.ingest.record_gate_result(batch, gate)
@@ -247,6 +250,7 @@ def run_data_need_tool_request(tool_input: Mapping[str, Any], runtime_context: M
                             )
                         continue
                     try:
+                        _append_data_need_trace(runtime_context, event="provider_fetch_start", call=call, batch=batch)
                         with _provider_call_timer(
                             call.deadline_at,
                             provider_id=call.provider_id,
@@ -259,6 +263,7 @@ def run_data_need_tool_request(tool_input: Mapping[str, Any], runtime_context: M
                     retry_waiter = getattr(runtime.data_service.execution_gate, "wait_after_rate_limited_fetch", None)
                     if callable(retry_waiter) and retry_waiter(batch, fetch_result):
                         try:
+                            _append_data_need_trace(runtime_context, event="provider_fetch_start", call=call, batch=batch)
                             with _provider_call_timer(
                                 call.deadline_at,
                                 provider_id=call.provider_id,
@@ -1208,6 +1213,52 @@ def _attempt_gap_reason_from_fetch(fetch_result: FetchResult) -> GapReason:
 def _runtime_now(runtime_context: Mapping[str, Any]) -> datetime:
     parsed = _parse_iso_datetime(runtime_context.get("current_time"))
     return parsed or datetime.now(tz=UTC)
+
+
+def _append_data_need_trace(
+    runtime_context: Mapping[str, Any],
+    *,
+    event: str,
+    call: ProviderCallSpec,
+    batch: Any,
+) -> None:
+    path = _data_need_trace_path(runtime_context)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline_at = getattr(call, "deadline_at", None)
+    payload = {
+        "event": event,
+        "at": _runtime_now(runtime_context).isoformat(),
+        "run_id": str(runtime_context.get("run_id") or "run"),
+        "call_id": str(runtime_context.get("call_id") or "call"),
+        "worker_id": str(runtime_context.get("worker_id") or ""),
+        "provider_call_id": str(getattr(call, "call_id", "") or ""),
+        "provider_id": str(getattr(call, "provider_id", "") or ""),
+        "catalog_endpoint_id": str(getattr(call, "catalog_endpoint_id", "") or ""),
+        "public_api_id": str(getattr(call, "public_api_id", "") or ""),
+        "business_api_id": str(getattr(call, "business_api_id", "") or ""),
+        "source_group_id": str(getattr(call, "source_group_id", "") or ""),
+        "execution_group_id": str(getattr(call, "execution_group_id", "") or ""),
+        "fallback_order": getattr(call, "fallback_order", None),
+        "batch_id": str(getattr(batch, "batch_id", getattr(call, "call_id", "")) or ""),
+        "batch_key": str(getattr(batch, "batch_key", getattr(call, "batch_key", "")) or ""),
+        "single_flight_key": str(getattr(batch, "single_flight_key", getattr(call, "batch_key", "")) or ""),
+        "deadline_at": deadline_at.isoformat() if isinstance(deadline_at, datetime) else None,
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        handle.write("\n")
+
+
+def _data_need_trace_path(runtime_context: Mapping[str, Any]) -> Path | None:
+    root_value = str(runtime_context.get("evidence_root") or runtime_context.get("evidence_dir") or "").strip()
+    if not root_value:
+        return None
+    evidence_root = Path(root_value).expanduser()
+    run_id = _safe_identifier(str(runtime_context.get("run_id") or "run"))
+    call_id = _safe_identifier(str(runtime_context.get("call_id") or "call"))
+    return evidence_root / "data-layer" / "data-need-trace" / run_id / call_id / "events.jsonl"
 
 
 def _parse_iso_datetime(value: Any) -> datetime | None:

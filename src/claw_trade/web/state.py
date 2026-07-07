@@ -150,6 +150,9 @@ class _ControlWorkflowRunner:
             def _run_workflow() -> None:
                 try:
                     runner.run(request)
+                except Exception as exc:
+                    created_state["error"] = exc
+                    created_event.set()
                 finally:
                     runner.store.create_run = original_create
 
@@ -158,6 +161,9 @@ class _ControlWorkflowRunner:
 
         if not created_event.wait(timeout=_workflow_create_timeout_seconds()):
             raise RuntimeError("assistant_unavailable")
+        error = created_state.get("error")
+        if isinstance(error, Exception):
+            raise _workflow_start_error(error) from error
         state = created_state.get("value")
         run_id = str(getattr(state, "run_id", "")).strip()
         if not run_id:
@@ -201,7 +207,7 @@ class _ControlWorkflowRunner:
                 try:
                     self._runner = _build_runner(self._run_dir)
                 except Exception as exc:
-                    raise RuntimeError("assistant_unavailable") from exc
+                    raise _workflow_start_error(exc) from exc
         return self._runner
 
     def _require_openclaw_runner(self):  # type: ignore[no-untyped-def]
@@ -213,6 +219,14 @@ class _ControlWorkflowRunner:
         if openclaw_runner is None:
             raise RuntimeError("assistant_unavailable")
         return openclaw_runner
+
+
+def _workflow_start_error(exc: Exception) -> RuntimeError:
+    message = str(exc).strip()
+    lowered = message.lower()
+    if isinstance(exc, PermissionError) or "permission denied" in lowered or "errno 13" in lowered:
+        return RuntimeError(f"workflow_storage_unavailable: {message}")
+    return RuntimeError("assistant_unavailable")
 
 
 class _SelectionOpenClawRunner:

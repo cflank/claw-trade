@@ -1089,12 +1089,12 @@ describe('home page', () => {
           stageLabel: '原始行情补数据',
           currentAction: '正在补齐A股、加密币原始行情，完成后会计算选股候选池。',
           percent: 25,
-          workerStatusLabels: ['A股：原始行情补数据中（job-cn-a）', '加密币：原始行情补数据中（job-crypto）'],
+          workerStatusLabels: ['A股：原始行情补数据中', '加密币：原始行情补数据中'],
           completedRoleLabels: ['启动检查'],
           waitingRoleLabels: ['计算选股缓存'],
           startedAt: '2026-07-01T10:00:00Z',
           finishedAt: null,
-          workflowRunId: 'raw-data-maintenance:job-cn-a,job-crypto',
+          workflowRunId: 'raw-data-maintenance:data-maintenance:CRYPTO:kline-refresh:startup-20260706T221001993164Z',
         },
       },
     });
@@ -1109,8 +1109,9 @@ describe('home page', () => {
     expect(await screen.findByRole('heading', { name: '原始行情补数据' })).toBeInTheDocument();
     expect(screen.getByText('系统启动自动补数据')).toBeInTheDocument();
     expect(screen.getByText('原始行情补数据中')).toBeInTheDocument();
-    expect(screen.getByText('A股：原始行情补数据中（job-cn-a）')).toBeInTheDocument();
-    expect(screen.getByText('加密币：原始行情补数据中（job-crypto）')).toBeInTheDocument();
+    expect(screen.getByText('A股：原始行情补数据中')).toBeInTheDocument();
+    expect(screen.getByText('加密币：原始行情补数据中')).toBeInTheDocument();
+    expect(screen.queryByText(/工作流：raw-data-maintenance/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止选股' })).not.toBeInTheDocument();
   });
 
@@ -1123,9 +1124,9 @@ describe('home page', () => {
           statusLabel: '原始行情补数据失败',
           command: '系统启动自动补数据',
           stageLabel: '原始行情补数据',
-          currentAction: 'A股原始行情补数据失败：credential_missing:data_source:tushare',
+          currentAction: 'A股原始行情补数据失败：数据源凭证没配好，拿不到原始行情。',
           percent: 100,
-          workerStatusLabels: ['A股：原始行情补数据失败：credential_missing:data_source:tushare'],
+          workerStatusLabels: ['A股：原始行情补数据失败：数据源凭证没配好，拿不到原始行情。'],
           completedRoleLabels: ['启动检查'],
           waitingRoleLabels: [],
           startedAt: '2026-07-01T10:00:00Z',
@@ -1142,11 +1143,15 @@ describe('home page', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: '重新补A股' }));
+    const retryButton = await screen.findByRole('button', { name: '重新补A股' });
+    expect(screen.queryByText(/credential_missing/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/工作流：raw-data-maintenance/)).not.toBeInTheDocument();
+    fireEvent.click(retryButton);
 
     await waitFor(() => expect(mocked.getRetryRawMaintenanceBodies()).toHaveLength(1));
     expect(mocked.getRetryRawMaintenanceBodies()[0]).toMatchObject({ market: 'CN_A' });
     expect(await screen.findByText('手动重新补数据')).toBeInTheDocument();
+    expect(screen.queryByText(/工作流：raw-data-maintenance/)).not.toBeInTheDocument();
   });
 
   it('stops backend selection progress from the right rail', async () => {

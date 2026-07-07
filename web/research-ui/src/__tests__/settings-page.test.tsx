@@ -1763,7 +1763,7 @@ describe('settings-wechat settings page', () => {
         });
       }
       if (url.includes('/api/ui/load-llm-settings')) {
-        return errorJson('助手服务暂不可用，请稍后重试。');
+        return errorJson('报告模型设置暂不可用，请稍后重试。');
       }
       if (url.includes('/api/ui/list-data-sources')) {
         return json({
@@ -1781,7 +1781,7 @@ describe('settings-wechat settings page', () => {
     );
 
     expect(await screen.findByRole('heading', { name: '报告模型' })).toBeInTheDocument();
-    expect(screen.getByText('助手服务暂不可用，请稍后重试。')).toBeInTheDocument();
+    expect(screen.getByText('报告模型设置暂不可用，请稍后重试。')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
     expect(await screen.findByText('微信通知')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重新连接' })).toBeInTheDocument();
@@ -1837,11 +1837,11 @@ describe('settings-wechat settings page', () => {
 
     expect(screen.getByRole('heading', { name: '报告模型' })).toBeInTheDocument();
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(9000);
+      await vi.advanceTimersByTimeAsync(16000);
     });
 
     expect(screen.queryByText('加载中...')).not.toBeInTheDocument();
-    expect(screen.getByText('助手服务暂不可用，请稍后重试。')).toBeInTheDocument();
+    expect(screen.getByText('报告模型设置暂不可用，请稍后重试。')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '数据源' }));
     expect(screen.getByRole('heading', { name: '增强数据源' })).toBeInTheDocument();
     const dataSection = screen.getByRole('heading', { name: '增强数据源' }).closest('section') as HTMLElement;

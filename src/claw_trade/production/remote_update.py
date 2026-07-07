@@ -129,10 +129,24 @@ class RemoteUpdateService:
         self._state_store.write(status="checking_manifest", user_message="正在检查远程更新清单。")
         try:
             manifest_bytes = self._fetch_bytes(urljoin(self._base_url, "manifest.json"))
+        except requests.RequestException as exc:
+            if _remote_request_not_found(exc):
+                state = self._state_store.write(status="up_to_date", user_message="当前已是最新版本。")
+                return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            state = self._state_store.write(status="check_failed", user_message=_remote_request_error_message("远程更新清单检查失败", exc))
+            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+        except (OSError, ValueError) as exc:
+            state = self._state_store.write(status="check_failed", user_message=f"远程更新清单检查失败：{exc}")
+            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+
+        try:
             signature = self._fetch_bytes(urljoin(self._base_url, "manifest.json.sig"))
             public_key = self._public_key_path.read_bytes()
             signature_ok = verify_ed25519_signature(public_key_pem=public_key, data=manifest_bytes, signature=signature)
-        except (OSError, requests.RequestException, ValueError) as exc:
+        except requests.RequestException as exc:
+            state = self._state_store.write(status="check_failed", user_message=_remote_request_error_message("远程更新清单检查失败", exc))
+            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+        except (OSError, ValueError) as exc:
             state = self._state_store.write(status="check_failed", user_message=f"远程更新清单检查失败：{exc}")
             return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
         if not signature_ok:
@@ -249,7 +263,10 @@ class RemoteUpdateService:
                     )
                     return RemoteUpdateInstall(status=str(state["status"]), version=manifest.version, user_message=str(state["userMessage"]))
                 return RemoteUpdateInstall(status=str(state["status"]), version=manifest.version, user_message=str(state["userMessage"]))
-        except (OSError, tarfile.TarError, ValueError, subprocess.CalledProcessError, requests.RequestException) as exc:
+        except requests.RequestException as exc:
+            state = self._state_store.write(status="install_failed", user_message=_remote_request_error_message("更新安装失败", exc))
+            return RemoteUpdateInstall(status=str(state["status"]), version=None, user_message=str(state["userMessage"]))
+        except (OSError, tarfile.TarError, ValueError, subprocess.CalledProcessError) as exc:
             state = self._state_store.write(status="install_failed", user_message=f"更新安装失败：{exc}")
             return RemoteUpdateInstall(status=str(state["status"]), version=None, user_message=str(state["userMessage"]))
         finally:
@@ -343,6 +360,16 @@ def _requests_fetch_bytes(url: str) -> bytes:
     response = requests.get(url, timeout=20)
     response.raise_for_status()
     return response.content
+
+
+def _remote_request_error_message(prefix: str, exc: requests.RequestException) -> str:
+    if _remote_request_not_found(exc):
+        return f"{prefix}：远程文件不存在或更新源尚未发布。"
+    return f"{prefix}：远程服务暂不可用，请稍后重试。"
+
+
+def _remote_request_not_found(exc: requests.RequestException) -> bool:
+    return exc.response is not None and exc.response.status_code == 404
 
 
 def _requests_download_file(

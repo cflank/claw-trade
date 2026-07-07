@@ -12,6 +12,7 @@ from .single_flight import SingleFlight
 
 _LOCAL_QUOTA_SIGNALS = {"local_rate_limited", "rate_limited_by_tool_budget"}
 _MATERIAL_RESULT_GAP_REASONS = {"field_missing", "date_range_missing", "data_integrity_failed", "granularity_mismatch"}
+_SINGLE_FLIGHT_WAIT_CAP_SECONDS = 8
 
 
 class GateBatchPlan(Protocol):
@@ -71,7 +72,7 @@ class ExecutionGate:
         if flight.kind == "shared" and flight.published is not None:
             return _shared_result_decision(flight.published)
         if flight.kind == "waiter":
-            wait_budget_seconds = _single_flight_wait_budget_seconds(batch)
+            wait_budget_seconds = _single_flight_wait_budget_seconds(batch, now=self._now())
             if wait_budget_seconds <= 0:
                 return GateDecision.rate_limited(_deadline_at(batch), "rate_limited_by_tool_budget")
             try:
@@ -226,11 +227,12 @@ def _earliest_start_at(batch: GateBatchPlan) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-def _single_flight_wait_budget_seconds(batch: GateBatchPlan) -> int:
+def _single_flight_wait_budget_seconds(batch: GateBatchPlan, *, now: datetime) -> int:
     deadline_at = _deadline_at(batch)
     if deadline_at is None:
         return 0
-    return int(max((deadline_at - datetime.now(UTC)).total_seconds(), 0))
+    remaining = int(max((deadline_at - now).total_seconds(), 0))
+    return min(remaining, _SINGLE_FLIGHT_WAIT_CAP_SECONDS)
 
 
 def _default_cache_window_seconds(batch: Any | None) -> tuple[int, int]:

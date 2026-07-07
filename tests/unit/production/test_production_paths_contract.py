@@ -102,13 +102,24 @@ def test_factory_installer_stops_existing_runtime_processes_by_current_names() -
     assert "pkill -f 'python3.12 -m claw_trade.web.app'" not in script
 
 
+def test_factory_installer_prints_lan_ui_url() -> None:
+    script = _read("scripts/production/install_factory_test_ubuntu.sh")
+
+    assert "ip -4 route get 1.1.1.1" in script
+    assert "ip -o -4 addr show scope global" in script
+    assert 'ui_lan_url="UI(LAN): http://${ui_lan_ip}:5175/"' in script
+    assert "UI(local): http://127.0.0.1:5175/" in script
+
+
 def test_r2_target_install_bootstrap_contract() -> None:
     script = _read("scripts/production/install_from_r2_ubuntu.sh")
     manual = _read("docs/生产及升级操作手册.md")
 
     assert "https://download.cflank-trade.top/delivery" in script
-    assert 'download "${release_name}.tar.gz"' in script
+    assert 'download_resumable "${release_name}.tar.gz"' in script
     assert 'download "${release_name}.tar.gz.sha256"' in script
+    assert "--http1.1 --retry 8 --retry-delay 5 --retry-all-errors" in script
+    assert 'curl --http1.1 --retry 8 --retry-delay 5 --retry-all-errors -fL -C - -o "${name}"' in script
     assert 'download "${lcc_deb}"' in script
     assert 'sudo apt-get install -y "${work_dir}/${lcc_deb}"' in script
     assert 'download "install_factory_test_ubuntu.sh"' in script
@@ -118,10 +129,12 @@ def test_r2_target_install_bootstrap_contract() -> None:
     assert 'sudo bash "${work_dir}/install_factory_test_ubuntu.sh"' in script
     assert "latest.txt" in script
     assert "ensure_split_lock_off" in script
+    assert "missing --license-key-file" in script
     assert "delivery/install_from_r2_ubuntu.sh" in manual
     assert "delivery/validate_production_archive.py" in manual
     assert "delivery/latest.txt" in manual
     assert 'LICENSE_KEY_FILE="$HOME/.claw-trade/license.key"' in manual
+    assert 'read -rsp "Virbox license key: " KEY' in manual
     assert 'curl -fsSL "${BASE}/install_from_r2_ubuntu.sh" | bash -s -- --base-url "${BASE}" --license-key-file "${LICENSE_KEY_FILE}"' in manual
     assert "bash /tmp/install_from_r2_ubuntu.sh" not in manual
 
@@ -586,11 +599,13 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
     mongodb_script = _read("scripts/start-local-mongodb.sh")
 
     assert "/opt/claw-trade/shared/cache/factory-seeds/current-seed/normalized" in control_bin
-    assert 'CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"' in control_bin
+    assert '[[ -z "${CLAW_TRADE_REPORT_RUN_DIR:-}" || "${CLAW_TRADE_REPORT_RUN_DIR}" != /* ]]' in control_bin
+    assert 'export CLAW_TRADE_REPORT_RUN_DIR="${SHARED_ROOT}/runs"' in control_bin
     assert 'XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED_ROOT}/cache/xdg}"' in control_bin
     assert 'NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"' in control_bin
     assert 'MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"' in control_bin
-    assert 'CLAW_TRADE_REPORT_RUN_DIR="${CLAW_TRADE_REPORT_RUN_DIR:-/opt/claw-trade/shared/runs}"' in ui_bin
+    assert '[[ -z "${CLAW_TRADE_REPORT_RUN_DIR:-}" || "${CLAW_TRADE_REPORT_RUN_DIR}" != /* ]]' in ui_bin
+    assert 'export CLAW_TRADE_REPORT_RUN_DIR="${SHARED_ROOT}/runs"' in ui_bin
     assert 'XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED_ROOT}/cache/xdg}"' in ui_bin
     assert 'NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"' in ui_bin
     assert 'MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"' in ui_bin

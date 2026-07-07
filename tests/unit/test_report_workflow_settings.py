@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from claw_trade.config.report_workflow_settings import (
+    ReportWorkflowSettings,
     ReportWorkflowSettingsError,
     load_report_workflow_settings,
 )
@@ -35,6 +36,26 @@ def test_load_report_workflow_settings_defaults_frontline_mode_to_parallel() -> 
     settings = load_report_workflow_settings({})
 
     assert settings.frontline_execution_mode == "parallel"
+
+
+def test_load_report_workflow_settings_forces_production_run_dir_to_shared_absolute_path() -> None:
+    settings = load_report_workflow_settings(
+        {
+            "CLAW_TRADE_PRODUCTION_PACKAGE": "1",
+            "CLAW_TRADE_REPORT_RUN_DIR": "runs",
+        }
+    )
+
+    assert settings.run_dir == "/opt/claw-trade/shared/runs"
+
+
+def test_default_report_workflow_settings_uses_shared_run_dir_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CLAW_TRADE_PRODUCTION_PACKAGE", "1")
+    monkeypatch.setenv("CLAW_TRADE_REPORT_RUN_DIR", "runs")
+
+    settings = ReportWorkflowSettings()
+
+    assert settings.run_dir == "/opt/claw-trade/shared/runs"
 
 
 def test_load_report_workflow_settings_rejects_rounds_above_hard_limit() -> None:

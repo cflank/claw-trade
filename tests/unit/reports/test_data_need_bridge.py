@@ -2736,6 +2736,252 @@ def test_data_need_returns_budget_gap_instead_of_spawning_provider_after_deadlin
     assert "材料外内容直接跳过" not in payload["model_visible_text"]
 
 
+def test_data_need_writes_trace_before_execution_gate_wait(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import claw_trade.data_gateway.report_evidence as report_evidence
+
+    class Gate:
+        def __init__(self) -> None:
+            self.entered_batches: list[str] = []
+
+        def enter(self, batch):  # type: ignore[no-untyped-def]
+            self.entered_batches.append(batch.batch_id)
+            return GateDecision.rate_limited(None, "rate_limited_by_tool_budget")
+
+    gate = Gate()
+    runtime = SimpleNamespace(
+        rate_limit_policy_resolver=SimpleNamespace(resolve=lambda **kwargs: RateLimitPolicy(window_seconds=60, max_requests=None)),
+        data_service=SimpleNamespace(execution_gate=gate),
+        fetch_engine=SimpleNamespace(fetch=lambda batch: (_ for _ in ()).throw(AssertionError("fetch should not run"))),
+        ingest=SimpleNamespace(record_gate_result=_record_gate_result),
+    )
+
+    def fake_plan(needs):  # type: ignore[no-untyped-def]
+        need = _internal_need_from_public_request(tuple(needs)[0])
+        return NeedPlan(
+            plan_id="plan-gate-trace",
+            needs=(need,),
+            planned_calls=(_provider_call("call-gate-trace", need),),
+            created_at=datetime.now(tz=UTC),
+        )
+
+    monkeypatch.setenv("CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS", "60")
+    monkeypatch.setattr(report_evidence, "plan_public_data_requests", fake_plan)
+    monkeypatch.setattr(report_evidence, "build_data_gateway_runtime_from_env", lambda: runtime)
+
+    payload = run_claw_request_data(
+        {
+            "item": "日线",
+            "purpose": "market_report",
+            "instrument": "600519.SH",
+            "market": "CN_A",
+            "time_range": {"start": "2026-06-12", "end": "2026-06-12"},
+        },
+        {
+            "worker_id": "market_analyst",
+            "run_id": "run-gate-trace",
+            "call_id": "call-gate-trace",
+            "evidence_root": str(tmp_path),
+            "current_date": "2026-06-12",
+            "current_time": datetime.now(tz=UTC).isoformat(),
+        },
+    )
+
+    events = _data_need_trace_events(tmp_path, run_id="run-gate-trace", call_id="call-gate-trace")
+
+    assert payload["ok"] is True
+    assert gate.entered_batches == ["call-gate-trace"]
+    assert [event["event"] for event in events] == ["execution_gate_enter"]
+    assert events[0]["provider_id"] == "official_api_slow"
+    assert events[0]["catalog_endpoint_id"] == "tushare.daily"
+    assert events[0]["single_flight_key"] == "batch:call-gate-trace"
+
+
+def test_data_need_writes_trace_before_provider_fetch(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import claw_trade.data_gateway.report_evidence as report_evidence
+
+    def fetch(batch):  # type: ignore[no-untyped-def]
+        return FetchResult.from_error(batch, status="error", error=RuntimeError("provider failed"))
+
+    def ingest(result, batch):  # type: ignore[no-untyped-def]
+        return IngestResult.from_refs(
+            batch_id=batch.batch_id,
+            dataset_refs=(),
+            raw_refs=(),
+            attempt_refs=("attempt:fetch-error",),
+            gaps=(DataGap.by_reason(GapReason.PROVIDER_ERROR, request_id=batch.batch_id, market=Market.CN_A, data_type=batch.data_type),),
+            remote_success=False,
+        )
+
+    runtime = SimpleNamespace(
+        rate_limit_policy_resolver=SimpleNamespace(resolve=lambda **kwargs: RateLimitPolicy(window_seconds=60, max_requests=None)),
+        data_service=SimpleNamespace(execution_gate=_OwnerExecutionGate()),
+        fetch_engine=SimpleNamespace(fetch=fetch),
+        ingest=SimpleNamespace(ingest=ingest),
+    )
+
+    def fake_plan(needs):  # type: ignore[no-untyped-def]
+        need = _internal_need_from_public_request(tuple(needs)[0])
+        return NeedPlan(
+            plan_id="plan-fetch-trace",
+            needs=(need,),
+            planned_calls=(_provider_call("call-fetch-trace", need),),
+            created_at=datetime.now(tz=UTC),
+        )
+
+    monkeypatch.setenv("CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS", "60")
+    monkeypatch.setattr(report_evidence, "plan_public_data_requests", fake_plan)
+    monkeypatch.setattr(report_evidence, "build_data_gateway_runtime_from_env", lambda: runtime)
+
+    payload = run_claw_request_data(
+        {
+            "item": "日线",
+            "purpose": "market_report",
+            "instrument": "600519.SH",
+            "market": "CN_A",
+            "time_range": {"start": "2026-06-12", "end": "2026-06-12"},
+        },
+        {
+            "worker_id": "market_analyst",
+            "run_id": "run-fetch-trace",
+            "call_id": "call-fetch-trace",
+            "evidence_root": str(tmp_path),
+            "current_date": "2026-06-12",
+            "current_time": datetime.now(tz=UTC).isoformat(),
+        },
+    )
+
+    events = _data_need_trace_events(tmp_path, run_id="run-fetch-trace", call_id="call-fetch-trace")
+
+    assert payload["ok"] is True
+    assert [event["event"] for event in events] == ["execution_gate_enter", "provider_fetch_start"]
+    assert events[1]["provider_id"] == "official_api_slow"
+    assert events[1]["catalog_endpoint_id"] == "tushare.daily"
+
+
+def test_data_need_gate_wait_timeout_advances_to_next_candidate_with_attempt_evidence(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import claw_trade.data_gateway.report_evidence as report_evidence
+
+    class Gate:
+        def __init__(self) -> None:
+            self.entered_batches: list[str] = []
+
+        def enter(self, batch):  # type: ignore[no-untyped-def]
+            self.entered_batches.append(batch.batch_id)
+            if batch.batch_id == "call-wait-timeout":
+                return GateDecision.rate_limited(None, "rate_limited_by_tool_budget")
+            return GateDecision.owner("owner-token")
+
+        def publish_shared_result(self, single_flight_key, owner_token, ingest, *, batch=None):  # type: ignore[no-untyped-def]
+            return True
+
+        def wait_after_rate_limited_fetch(self, batch, fetch_result):  # type: ignore[no-untyped-def]
+            return False
+
+        def mark_cooldown_after_fetch(self, batch, fetch_result):  # type: ignore[no-untyped-def]
+            return None
+
+    fetched: list[str] = []
+
+    def fetch(batch):  # type: ignore[no-untyped-def]
+        fetched.append(batch.batch_id)
+        return FetchResult.from_success(
+            batch,
+            payload={
+                "rows": [
+                    {
+                        "dataset": "daily_bar",
+                        "symbol_id": "600519.SH",
+                        "date": "2026-06-12",
+                        "open": 1490.0,
+                        "high": 1510.0,
+                        "low": 1480.0,
+                        "close": 1500.0,
+                        "volume": 1000000.0,
+                    }
+                ]
+            },
+            row_count=1,
+        )
+
+    def ingest(result, batch):  # type: ignore[no-untyped-def]
+        return IngestResult.from_refs(
+            batch_id=batch.batch_id,
+            dataset_refs=(f"dataset:{batch.batch_id}",),
+            raw_refs=(f"raw:{batch.batch_id}",),
+            attempt_refs=(f"attempt:{batch.batch_id}",),
+            gaps=(),
+            remote_success=True,
+        )
+
+    gate = Gate()
+    runtime = SimpleNamespace(
+        rate_limit_policy_resolver=SimpleNamespace(resolve=lambda **kwargs: RateLimitPolicy(window_seconds=60, max_requests=None)),
+        data_service=SimpleNamespace(execution_gate=gate),
+        fetch_engine=SimpleNamespace(fetch=fetch),
+        ingest=SimpleNamespace(ingest=ingest, record_gate_result=_record_gate_result),
+    )
+
+    def fake_plan(needs):  # type: ignore[no-untyped-def]
+        need = _internal_need_from_public_request(tuple(needs)[0])
+        wait_call = _provider_call("call-wait-timeout", need)
+        fallback_call = _provider_call("call-after-timeout", need).model_copy(
+            update={
+                "provider_id": "cn_a_fast_fallback",
+                "official_path_or_api_name": "daily_fallback",
+                "rate_limit_bucket": "ratelimit:fast",
+                "batch_key": "batch:call-after-timeout",
+            }
+        )
+        return NeedPlan(
+            plan_id="plan-gate-timeout-fallback",
+            needs=(need,),
+            planned_calls=(wait_call, fallback_call),
+            created_at=datetime.now(tz=UTC),
+        )
+
+    monkeypatch.setenv("CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS", "60")
+    monkeypatch.setattr(report_evidence, "plan_public_data_requests", fake_plan)
+    monkeypatch.setattr(report_evidence, "build_data_gateway_runtime_from_env", lambda: runtime)
+
+    payload = run_claw_request_data(
+        {
+            "item": "日线",
+            "purpose": "market_report",
+            "instrument": "600519.SH",
+            "market": "CN_A",
+            "time_range": {"start": "2026-06-12", "end": "2026-06-12"},
+        },
+        {
+            "worker_id": "market_analyst",
+            "run_id": "run-gate-timeout",
+            "call_id": "call-gate-timeout",
+            "evidence_root": str(tmp_path),
+            "current_date": "2026-06-12",
+            "current_time": datetime.now(tz=UTC).isoformat(),
+        },
+    )
+
+    events = _data_need_trace_events(tmp_path, run_id="run-gate-timeout", call_id="call-gate-timeout")
+
+    assert payload["ok"] is True
+    assert payload["status"] == "ready"
+    assert gate.entered_batches == ["call-wait-timeout", "call-after-timeout"]
+    assert fetched == ["call-after-timeout"]
+    assert [item["provider_id"] for item in payload["provider_attempts_summary"]] == [
+        "official_api_slow",
+        "cn_a_fast_fallback",
+    ]
+    assert payload["provider_attempts_summary"][0]["status"] == "rate_limited"
+    assert payload["provider_attempts_summary"][0]["error_message"] == "rate_limited_by_tool_budget"
+    assert [event["event"] for event in events] == [
+        "execution_gate_enter",
+        "execution_gate_enter",
+        "provider_fetch_start",
+    ]
+    assert events[0]["provider_call_id"] == "call-wait-timeout"
+    assert events[1]["provider_call_id"] == "call-after-timeout"
+
+
 def test_data_need_provider_timeout_becomes_formal_attempt_not_subprocess_timeout(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import claw_trade.data_gateway.report_evidence as report_evidence
 
@@ -3698,6 +3944,11 @@ class _CacheHitExecutionGate(_OwnerExecutionGate):
                 attempt_refs=("attempt:source",),
             )
         )
+
+
+def _data_need_trace_events(root, *, run_id: str, call_id: str):  # type: ignore[no-untyped-def]
+    path = root / "data-layer" / "data-need-trace" / run_id / call_id / "events.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def _record_gate_result(batch, gate):  # type: ignore[no-untyped-def]

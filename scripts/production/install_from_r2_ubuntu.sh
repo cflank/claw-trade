@@ -105,6 +105,10 @@ command -v curl >/dev/null 2>&1 || fail "missing curl"
 command -v sha256sum >/dev/null 2>&1 || fail "missing sha256sum"
 command -v sudo >/dev/null 2>&1 || fail "missing sudo"
 
+if [[ -z "${license_key_file}" && ! -t 0 ]]; then
+  fail "missing --license-key-file; create a license file first, then pass --license-key-file /path/to/license.key on the same curl | bash command"
+fi
+
 sudo -v
 ensure_split_lock_off
 resolve_release_name
@@ -115,14 +119,28 @@ cd "${work_dir}"
 download() {
   local name="$1"
   log "downloading ${name}"
-  curl -fL -o "${name}" "${base_url}/${name}"
+  curl --http1.1 --retry 8 --retry-delay 5 --retry-all-errors -fL -o "${name}" "${base_url}/${name}"
+}
+
+download_resumable() {
+  local name="$1"
+  log "downloading ${name}"
+  if [[ -s "${name}" ]]; then
+    log "resuming existing ${name}"
+    if curl --http1.1 --retry 8 --retry-delay 5 --retry-all-errors -fL -C - -o "${name}" "${base_url}/${name}"; then
+      return 0
+    fi
+    log "resume failed for ${name}; restarting full download"
+    rm -f "${name}"
+  fi
+  curl --http1.1 --retry 8 --retry-delay 5 --retry-all-errors -fL -o "${name}" "${base_url}/${name}"
 }
 
 download "${release_name}.tar.gz.sha256"
 if [[ -f "${release_name}.tar.gz" ]] && sha256sum -c "${release_name}.tar.gz.sha256"; then
   log "using cached ${release_name}.tar.gz"
 else
-  download "${release_name}.tar.gz"
+  download_resumable "${release_name}.tar.gz"
   sha256sum -c "${release_name}.tar.gz.sha256"
 fi
 download "${lcc_deb}"

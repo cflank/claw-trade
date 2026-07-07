@@ -480,6 +480,74 @@ sleep 60
     assert "数据工具执行超时" in result["content"][0]["text"]
 
 
+def test_data_need_subprocess_timeout_preserves_trace_file(tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence" / "run-1" / "call-1"
+    probe_script = tmp_path / "probe.py"
+    probe_script.write_text(
+        """
+import json
+import pathlib
+import sys
+import time
+
+payload = json.load(sys.stdin)
+ctx = payload["runtime_context"]
+trace_path = (
+    pathlib.Path(ctx["evidence_root"])
+    / "data-layer"
+    / "data-need-trace"
+    / ctx["run_id"]
+    / ctx["call_id"]
+    / "events.jsonl"
+)
+trace_path.parent.mkdir(parents=True, exist_ok=True)
+trace_path.write_text(
+    '{"event":"probe_before_sleep","provider_id":"probe","catalog_endpoint_id":"probe.endpoint"}\\n',
+    encoding="utf-8",
+)
+time.sleep(60)
+""",
+        encoding="utf-8",
+    )
+    probe_python = tmp_path / "probe_python.sh"
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env bash
+python3 {json.dumps(str(probe_script))}
+""",
+    )
+    ctx = _runtime_ctx(
+        worker_id="market_analyst",
+        runtime_vars={
+            "ticker": "BTC",
+            "market": "CRYPTO",
+            "profile": "CRYPTO",
+            "company_name": "Bitcoin",
+            "currency": "USDT",
+        },
+    )
+    command = ctx["singleWorkerCommand"]
+    assert isinstance(command, dict)
+    command["evidence_dir"] = str(evidence_dir)
+
+    result = _run_tool(
+        tool_name="claw_request_data",
+        ctx=ctx,
+        params={"item": "链上", "purpose": "fundamental_report"},
+        env_overrides={
+            "CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python),
+            "CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS": "1",
+            "CN_A_PROVIDER_TOTAL_TIMEOUT_MS": "1",
+        },
+    )
+
+    trace_path = evidence_dir / "data-need-tool-evidence" / "data-layer" / "data-need-trace" / "run-1" / "call-1__tool-call" / "events.jsonl"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    assert result.get("isError") is True
+    assert _error_code(result) == "TOOL_SUBPROCESS_TIMEOUT"
+    assert events == [{"event": "probe_before_sleep", "provider_id": "probe", "catalog_endpoint_id": "probe.endpoint"}]
+
+
 def test_data_need_error_text_hides_internal_execution_details_from_model(tmp_path: Path) -> None:
     probe_python = tmp_path / "probe_python.sh"
     payload = {

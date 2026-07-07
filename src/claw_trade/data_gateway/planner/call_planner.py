@@ -355,6 +355,8 @@ def _public_candidates_for_request(
     matches: list[tuple[int, int, int, str, str, OfficialEndpoint]] = []
     requested_granularity = _effective_request_granularity(request)
     for index, endpoint in enumerate(catalog_endpoints):
+        if _endpoint_excluded_for_public_request(endpoint, request):
+            continue
         best_rank: int | None = None
         best_granularity_rank: int | None = None
         for output in _endpoint_public_outputs(endpoint):
@@ -398,6 +400,13 @@ def _public_candidates_for_request(
                 row[4],
             ),
         )
+    )
+
+
+def _endpoint_excluded_for_public_request(endpoint: OfficialEndpoint, request: PublicDataRequest) -> bool:
+    return (
+        request.api_id == "crypto.onchain_metric"
+        and endpoint.endpoint_id == "coinglass.onchain_exchange_balance"
     )
 
 

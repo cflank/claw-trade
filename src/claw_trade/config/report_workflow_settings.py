@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import environ
 from typing import Mapping
 
@@ -12,13 +12,17 @@ class ReportWorkflowSettingsError(ValueError):
 _PRODUCT_MAX_ROUNDS_HARD_LIMIT = 3
 
 
+def _default_report_run_dir() -> str:
+    return _report_run_dir(environ)
+
+
 @dataclass(frozen=True)
 class ReportWorkflowSettings:
     max_debate_rounds: int = 1
     max_risk_discuss_rounds: int = 1
     max_rounds_hard_limit: int = _PRODUCT_MAX_ROUNDS_HARD_LIMIT
     frontline_execution_mode: str = "parallel"
-    run_dir: str = "runs"
+    run_dir: str = field(default_factory=_default_report_run_dir)
     default_profile: str = "CN_A"
     default_market: str = "CN_A"
     default_currency: str = "CNY"
@@ -54,7 +58,7 @@ def load_report_workflow_settings(env: Mapping[str, str] | None = None) -> Repor
         raise ReportWorkflowSettingsError(
             "CLAW_TRADE_REPORT_FRONTLINE_EXECUTION_MODE 只允许 serial 或 parallel"
         )
-    run_dir = _plain(values, "CLAW_TRADE_REPORT_RUN_DIR", default="runs")
+    run_dir = _report_run_dir(values)
     if not run_dir:
         raise ReportWorkflowSettingsError("CLAW_TRADE_REPORT_RUN_DIR 不能为空")
     return ReportWorkflowSettings(
@@ -72,6 +76,20 @@ def load_report_workflow_settings(env: Mapping[str, str] | None = None) -> Repor
 
 def _plain(env: Mapping[str, str], key: str, *, default: str) -> str:
     return str(env.get(key, default)).strip()
+
+
+def _report_run_dir(env: Mapping[str, str]) -> str:
+    run_dir = _plain(env, "CLAW_TRADE_REPORT_RUN_DIR", default="runs")
+    if _truthy(env.get("CLAW_TRADE_PRODUCTION_PACKAGE", "")) and (not run_dir or not run_dir.startswith("/")):
+        shared_root = _plain(env, "CLAW_TRADE_SHARED_ROOT", default="/opt/claw-trade/shared")
+        if not shared_root.startswith("/"):
+            shared_root = "/opt/claw-trade/shared"
+        return f"{shared_root.rstrip('/')}/runs"
+    return run_dir
+
+
+def _truthy(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _positive_int(env: Mapping[str, str], key: str, *, default: int) -> int:

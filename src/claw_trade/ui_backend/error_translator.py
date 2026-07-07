@@ -98,6 +98,9 @@ def translate_internal_error_for_user(error: Exception | str, *, category: str |
     message = _data_tool_message(raw_message)
     if message is not None:
         return UserFacingFailure(code=code, user_message=message)
+    message = _storage_path_message(raw_message)
+    if message is not None:
+        return UserFacingFailure(code=code, user_message=message)
     message = _llm_runtime_message(raw_message, normalized_category)
     if message is not None:
         code = "ASSISTANT_UNAVAILABLE"
@@ -181,6 +184,13 @@ def _data_tool_message(raw_message: str) -> str | None:
     if "超时" in raw_message or "timeout" in lowered or "timed out" in lowered:
         return f"{subject}请求超时，请稍后重试。"
     return f"{subject}请求失败，请检查数据源后重试。"
+
+
+def _storage_path_message(raw_message: str) -> str | None:
+    lowered = raw_message.lower()
+    if "workflow_storage_unavailable" not in lowered and "permission denied" not in lowered and "errno 13" not in lowered:
+        return None
+    return "报告运行目录不可写，请检查生产运行目录权限后重试。"
 
 
 def _llm_runtime_message(raw_message: str, category: str) -> str | None:

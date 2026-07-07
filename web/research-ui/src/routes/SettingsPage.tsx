@@ -52,6 +52,7 @@ function shouldEnableWechatPlugin(channel: ChannelStatusForUser | null) {
 }
 
 const SETTINGS_LOAD_TIMEOUT_MS = 8000;
+const LLM_SETTINGS_LOAD_TIMEOUT_MS = 15000;
 const SETTINGS_SAVE_TIMEOUT_MS = 30000;
 const MODEL_TEST_TIMEOUT_MS = 90000;
 const CHANNEL_STATUS_TIMEOUT_MS = 50000;
@@ -329,7 +330,11 @@ export function SettingsPage() {
           }
         })
         .finally(finishOne);
-      void withSettingsTimeout(loadLlmSettings(), '助手服务暂不可用，请稍后重试。')
+      void withSettingsTimeout(
+        loadLlmSettings(),
+        '报告模型设置暂不可用，请稍后重试。',
+        LLM_SETTINGS_LOAD_TIMEOUT_MS,
+      )
         .then((result) => {
           if (active) {
             setLlm(withLlmProviderDefaults({ ...DEFAULT_LLM_DRAFT, ...result.draft }));
