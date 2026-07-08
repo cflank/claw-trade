@@ -283,6 +283,41 @@ def test_run_worker_approves_local_scope_upgrade_and_retries_once(
     assert [call[0] for call in calls] == ["openclaw", "node", "openclaw"]
 
 
+def test_scope_upgrade_uses_configured_openclaw_node_bin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    node_bin = "/opt/claw-trade/current/runtime/node"
+    monkeypatch.setenv("OPENCLAW_NODE_BIN", node_bin)
+    monkeypatch.setattr(
+        openclaw_local_runner,
+        "_openclaw_device_pairing_dist_module_path",
+        lambda: tmp_path / "device-pairing.js",
+    )
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args, kwargs
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=0,
+            stdout=json.dumps({"status": "approved"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    openclaw_local_runner._approve_local_scope_upgrade_request(
+        request_id="5cbaaad0-5154-497a-8429-9fe8a66d20f3",
+        requested_scopes=("operator.read", "operator.write"),
+        state_dir=tmp_path / "openclaw-state",
+    )
+
+    assert calls
+    assert calls[0][0] == node_bin
+
+
 def test_probe_and_run_worker_fail_when_gateway_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = OpenClawLocalRunner(gateway_ws_url="ws://127.0.0.1:9", timeout_ms=500)
     probe = runner.probe()

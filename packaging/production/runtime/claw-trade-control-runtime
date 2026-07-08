@@ -20,6 +20,15 @@ export OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH:-${OPENVIKING_DA
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"
 export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
 export OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-${PYTHON}}"
+export CLAW_TRADE_SELECTION_TOOL_PYTHON="${CLAW_TRADE_SELECTION_TOOL_PYTHON:-${PYTHON}}"
+if [[ -z "${OPENCLAW_NODE_BIN:-}" ]]; then
+  if [[ -x "${CURRENT}/runtime/node" ]]; then
+    OPENCLAW_NODE_BIN="${CURRENT}/runtime/node"
+  else
+    OPENCLAW_NODE_BIN="node"
+  fi
+fi
+export OPENCLAW_NODE_BIN
 export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${OPENCLAW}}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:${OPENCLAW_GATEWAY_PORT}}"
@@ -135,6 +144,8 @@ write_runtime_env() {
   write_runtime_env_var "${tmp}" "OPENCLAW_STATE_DIR" "${OPENCLAW_STATE_DIR}"
   write_runtime_env_var "${tmp}" "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"
   write_runtime_env_var "${tmp}" "OPENCLAW_MARKET_TOOL_PYTHON" "${OPENCLAW_MARKET_TOOL_PYTHON}"
+  write_runtime_env_var "${tmp}" "CLAW_TRADE_SELECTION_TOOL_PYTHON" "${CLAW_TRADE_SELECTION_TOOL_PYTHON}"
+  write_runtime_env_var "${tmp}" "OPENCLAW_NODE_BIN" "${OPENCLAW_NODE_BIN}"
   write_runtime_env_var "${tmp}" "OPENCLAW_PACKAGE_DIR" "${CURRENT}/runtime/openclaw"
   write_runtime_env_var "${tmp}" "OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT" "${CURRENT}/scripts/openclaw-gateway-rpc-helper.mjs"
   write_runtime_env_var "${tmp}" "OPENVIKING_ENDPOINT" "${OPENVIKING_ENDPOINT}"
@@ -272,7 +283,7 @@ approve_openclaw_pairing_request_from_state() {
   OPENCLAW_DEVICE_PAIRING_MODULE_VALUE="${modules[0]}" \
   OPENCLAW_PAIRING_REQUEST_ID_VALUE="${request_id}" \
   OPENCLAW_PAIRING_STATE_DIR_VALUE="${OPENCLAW_STATE_DIR}" \
-    node --input-type=module - >"${output_log}" 2>&1 <<'NODE'
+    "${OPENCLAW_NODE_BIN}" --input-type=module - >"${output_log}" 2>&1 <<'NODE'
 const mod = await import(process.env.OPENCLAW_DEVICE_PAIRING_MODULE_VALUE);
 const approveDevicePairing = mod.approveDevicePairing ?? mod.n ?? mod.t;
 if (typeof approveDevicePairing !== "function") {
@@ -297,7 +308,7 @@ NODE
 
 extract_openclaw_pairing_request_id() {
   local input_log="$1"
-  OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" node <<'NODE'
+  OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" "${OPENCLAW_NODE_BIN}" <<'NODE'
 const fs = require("node:fs");
 const logPath = process.env.OPENCLAW_PAIRING_LOG_PATH_VALUE;
 let text = "";
@@ -497,6 +508,8 @@ fi
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}" \
+CLAW_TRADE_SELECTION_TOOL_PYTHON="${CLAW_TRADE_SELECTION_TOOL_PYTHON}" \
+OPENCLAW_NODE_BIN="${OPENCLAW_NODE_BIN}" \
 OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN}" \
 CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER}" \
 CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND}" \

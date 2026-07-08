@@ -13,6 +13,8 @@ from pathlib import Path
 from time import perf_counter, sleep
 from typing import Any, Mapping
 
+from claw_trade.runtime.node_runtime import resolve_openclaw_node_bin
+
 _DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
 _PARAMS_ARG_BYTE_LIMIT = 60_000
 _SUBPROCESS_TIMEOUT_GRACE_SECONDS = 5.0
@@ -131,7 +133,7 @@ class _GatewayRpcHelperProcess:
         if self._password:
             env["OPENCLAW_GATEWAY_PASSWORD"] = self._password
         self._process = subprocess.Popen(
-            ["node", str(self._helper_script)],
+            [resolve_openclaw_node_bin(env), str(self._helper_script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

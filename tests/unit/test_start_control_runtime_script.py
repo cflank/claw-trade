@@ -110,6 +110,15 @@ def test_start_control_runtime_script_writes_mcp_started_status_and_conditional_
     assert 'write_runtime_env_var "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"' in text
     assert 'write_runtime_env_var "OPENCLAW_GATEWAY_TIMEOUT_MS" "${OPENCLAW_GATEWAY_TIMEOUT_MS}"' in text
     assert 'write_runtime_env_var "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"' in text
+    assert 'write_runtime_env_var "CLAW_TRADE_SELECTION_TOOL_PYTHON" "${CLAW_TRADE_SELECTION_TOOL_PYTHON}"' in text
+    assert 'write_runtime_env_var "OPENCLAW_NODE_BIN" "${OPENCLAW_NODE_BIN}"' in text
+    assert 'export CLAW_TRADE_SELECTION_TOOL_PYTHON' in text
+    assert 'export OPENCLAW_NODE_BIN' in text
+    assert 'CLAW_TRADE_SELECTION_TOOL_PYTHON="${CLAW_TRADE_SELECTION_TOOL_PYTHON}" \\' in text
+    assert 'OPENCLAW_NODE_BIN="${OPENCLAW_NODE_BIN}" \\' in text
+    assert '"${OPENCLAW_NODE_BIN:-node}" --input-type=module -' in text
+    assert 'OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" "${OPENCLAW_NODE_BIN:-node}" <<' in text
+    assert '"${OPENCLAW_MARKET_TOOL_PYTHON}" - "${ROOT_DIR}" "${since_epoch}"' in text
     assert 'write_runtime_env_var "CLAW_TRADE_UI_PUBLIC_BASE_URL" "${CLAW_TRADE_UI_PUBLIC_BASE_URL}"' in text
     assert 'write_runtime_env_var "CN_A_MONGODB_URI" "${CN_A_MONGODB_URI}"' in text
     assert 'write_runtime_env_var "DATA_GATEWAY_MONGODB_URI" "${DATA_GATEWAY_MONGODB_URI}"' in text

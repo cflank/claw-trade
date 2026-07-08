@@ -12,6 +12,7 @@ from typing import Any
 from urllib import error, parse, request
 
 from claw_trade.runtime.openclaw_client import ProbeResult
+from claw_trade.runtime.node_runtime import resolve_openclaw_node_bin
 
 _DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
 _DEFAULT_TIMEOUT_MS = 10_000
@@ -364,7 +365,7 @@ process.stdout.write(JSON.stringify(result ?? null));
 """
     completed = subprocess.run(
         [
-            "node",
+            resolve_openclaw_node_bin(),
             "--input-type=module",
             "--eval",
             script,

@@ -346,6 +346,55 @@ def test_selection_tool_absolutizes_paths_before_python(tmp_path: Path) -> None:
     )
 
 
+def test_selection_tool_uses_market_python_alias_when_specific_env_missing(tmp_path: Path) -> None:
+    marker = tmp_path / "selection-python-called.txt"
+    python_stub = tmp_path / "probe-selection-python.py"
+    python_stub.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import json, sys",
+                f"marker = {json.dumps(str(marker))}",
+                "json.load(sys.stdin)",
+                "open(marker, 'w', encoding='utf-8').write('called')",
+                "print(json.dumps({'ok': True, 'reader_brief_md': 'ok'}))",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    python_stub.chmod(0o755)
+
+    result = _run_plugin_tool(
+        worker_id="selection_strategist",
+        runtime_vars={
+            "market": "CN_A",
+            "profile": "CN_A",
+            "trade_date": "2026-05-26",
+            "selection_run_id": "sel04-approval-run",
+            "select_workflow_run_id": "wf-market-python-alias-proof",
+            "selection_artifact_root": str(tmp_path / "selection-artifacts"),
+            "candidate_cache_ref": {
+                "selection_run_id": "sel04-approval-run",
+                "material_id": "selection-candidate-cache-python-alias-proof",
+                "l1_uri": "local://selection/sel04-approval-run/candidate-cache/approved/candidate-cache.md",
+                "content_sha256": "a" * 64,
+                "manifest_ref": "local://selection/sel04-approval-run/candidate-cache/approved/candidate-cache-manifest.json",
+                "approved_at": "2026-05-26T09:00:00Z",
+                "expires_at": "2026-06-26T09:00:00Z",
+                "cache_summary_ref": "local://selection/sel04-approval-run/candidate-cache/approved/candidate-cache-summary.md",
+            },
+        },
+        env={
+            "CLAW_TRADE_SELECTION_TOOL_PYTHON": "",
+            "OPENCLAW_MARKET_TOOL_PYTHON": str(python_stub),
+        },
+    )
+
+    assert result.get("isError") is False
+    assert marker.read_text(encoding="utf-8") == "called"
+
+
 def test_selection_tool_rejects_business_params(tmp_path: Path) -> None:
     fixture = _prepare_candidate_cache_fixture(tmp_path)
     result = _run_plugin_tool(

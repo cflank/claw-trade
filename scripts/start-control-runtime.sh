@@ -24,7 +24,7 @@ load_runtime_env_files_into_process_env() {
     exported_count=$(( exported_count + 1 ))
   done < <(
     CLAW_TRADE_ENV_PATH_VALUE="${CLAW_TRADE_ENV_PATH}" \
-    node <<'NODE'
+    "${OPENCLAW_NODE_BIN:-node}" <<'NODE'
 const fs = require("node:fs");
 
 function parseEnvFile(envPath) {
@@ -147,6 +147,7 @@ OPENVIKING_WORKSPACE="${OPENVIKING_WORKSPACE:-workflow}"
 OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"
 OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/third_party/openclaw/openclaw.mjs}"
 OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/third_party/openclaw}"
+OPENCLAW_NODE_BIN="${OPENCLAW_NODE_BIN:-node}"
 OPENCLAW_CONTROL_UI_INDEX="${OPENCLAW_CONTROL_UI_INDEX:-${OPENCLAW_PACKAGE_DIR}/dist/control-ui/index.html}"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${RUNTIME_DIR}/openclaw-state}"
 OPENCLAW_DEFAULT_STATE_DIR="${RUNTIME_DIR}/openclaw-state"
@@ -156,6 +157,7 @@ OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/open
 OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-}"
+CLAW_TRADE_SELECTION_TOOL_PYTHON="${CLAW_TRADE_SELECTION_TOOL_PYTHON:-}"
 CLAW_TRADE_LLM_PROVIDER="${CLAW_TRADE_LLM_PROVIDER:-}"
 CLAW_TRADE_LLM_MODEL="${CLAW_TRADE_LLM_MODEL:-${DEEPSEEK_MODEL:-}}"
 DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
@@ -551,7 +553,7 @@ read_openclaw_plugin_state() {
   local plugin_id="$2"
   OPENCLAW_PLUGINS_JSON_PATH_VALUE="${plugins_json_path}" \
   OPENCLAW_PLUGIN_ID_VALUE="${plugin_id}" \
-    node <<'NODE'
+    "${OPENCLAW_NODE_BIN:-node}" <<'NODE'
 const fs = require("node:fs");
 const pluginsJsonPath = process.env.OPENCLAW_PLUGINS_JSON_PATH_VALUE;
 const pluginId = process.env.OPENCLAW_PLUGIN_ID_VALUE;
@@ -720,6 +722,8 @@ export_runtime_env_for_child_commands() {
   export OPENCLAW_GATEWAY_TIMEOUT_MS
   export OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS
   export OPENCLAW_MARKET_TOOL_PYTHON
+  export CLAW_TRADE_SELECTION_TOOL_PYTHON
+  export OPENCLAW_NODE_BIN
   export CLAW_TRADE_LLM_PROVIDER
   export CLAW_TRADE_LLM_MODEL
   export DEEPSEEK_BASE_URL
@@ -765,7 +769,7 @@ wait_report_runs_started_after() {
   while true; do
     set +e
     wait_output="$(
-      python3 - "${ROOT_DIR}" "${since_epoch}" <<'PY'
+      "${OPENCLAW_MARKET_TOOL_PYTHON}" - "${ROOT_DIR}" "${since_epoch}" <<'PY'
 import json
 import sys
 from datetime import datetime
@@ -980,7 +984,7 @@ approve_openclaw_pairing_request_from_state() {
   OPENCLAW_DEVICE_PAIRING_MODULE_VALUE="${modules[0]}" \
   OPENCLAW_PAIRING_REQUEST_ID_VALUE="${request_id}" \
   OPENCLAW_PAIRING_STATE_DIR_VALUE="${OPENCLAW_STATE_DIR}" \
-    node --input-type=module - >"${output_log}" 2>&1 <<'NODE'
+    "${OPENCLAW_NODE_BIN:-node}" --input-type=module - >"${output_log}" 2>&1 <<'NODE'
 const mod = await import(process.env.OPENCLAW_DEVICE_PAIRING_MODULE_VALUE);
 const approveDevicePairing = mod.approveDevicePairing ?? mod.n ?? mod.t;
 if (typeof approveDevicePairing !== "function") {
@@ -1005,7 +1009,7 @@ NODE
 
 extract_openclaw_pairing_request_id() {
   local input_log="$1"
-  OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" node <<'NODE'
+  OPENCLAW_PAIRING_LOG_PATH_VALUE="${input_log}" "${OPENCLAW_NODE_BIN:-node}" <<'NODE'
 const fs = require("node:fs");
 const logPath = process.env.OPENCLAW_PAIRING_LOG_PATH_VALUE;
 let text = "";
@@ -1048,7 +1052,7 @@ prepare_openclaw_trade_agent_config() {
   CLAW_TRADE_LLM_MODEL_VALUE="${CLAW_TRADE_LLM_MODEL}" \
   DEEPSEEK_BASE_URL_VALUE="${DEEPSEEK_BASE_URL}" \
   QWEN_BASE_URL_VALUE="${QWEN_BASE_URL}" \
-    node <<'NODE'
+    "${OPENCLAW_NODE_BIN:-node}" <<'NODE'
 const fs = require("node:fs");
 const rootDir = process.env.ROOT_DIR_VALUE;
 const outputPath = process.env.OPENCLAW_CONFIG_PATH_VALUE;
@@ -1568,7 +1572,7 @@ prepare_openviking_runtime_config() {
   OPENVIKING_EMBEDDING_QUERY_PARAM_VALUE="${OPENVIKING_EMBEDDING_QUERY_PARAM}" \
   OPENVIKING_EMBEDDING_DOCUMENT_PARAM_VALUE="${OPENVIKING_EMBEDDING_DOCUMENT_PARAM}" \
   JINA_API_KEY_VALUE="${JINA_API_KEY:-}" \
-    node <<'NODE'
+    "${OPENCLAW_NODE_BIN:-node}" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -1836,6 +1840,12 @@ fi
 if [[ -z "${OPENCLAW_MARKET_TOOL_PYTHON}" && -x "${ROOT_DIR}/.venv/bin/python" ]]; then
   OPENCLAW_MARKET_TOOL_PYTHON="${ROOT_DIR}/.venv/bin/python"
 fi
+if [[ -z "${OPENCLAW_MARKET_TOOL_PYTHON}" ]]; then
+  OPENCLAW_MARKET_TOOL_PYTHON="python3"
+fi
+if [[ -z "${CLAW_TRADE_SELECTION_TOOL_PYTHON}" ]]; then
+  CLAW_TRADE_SELECTION_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}"
+fi
 
 gateway_cmd=(
   "${OPENCLAW_GATEWAY_CALL_BIN}"
@@ -1860,6 +1870,8 @@ log_info "启动 OpenClaw gateway（${OPENCLAW_GATEWAY_URL}）"
 OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON}" \
+CLAW_TRADE_SELECTION_TOOL_PYTHON="${CLAW_TRADE_SELECTION_TOOL_PYTHON}" \
+OPENCLAW_NODE_BIN="${OPENCLAW_NODE_BIN}" \
 OPENVIKING_ENDPOINT="${OPENVIKING_ENDPOINT}" \
 OPENVIKING_BASE_URL="${OPENVIKING_BASE_URL}" \
 OPENVIKING_WRITE_LOCK_PATH="${OPENVIKING_WRITE_LOCK_PATH}" \
@@ -1899,6 +1911,8 @@ write_runtime_env_var "OPENCLAW_CONFIG_PATH" "${OPENCLAW_CONFIG_PATH}"
 write_runtime_env_var "OPENCLAW_GATEWAY_TIMEOUT_MS" "${OPENCLAW_GATEWAY_TIMEOUT_MS}"
 write_runtime_env_var "OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS" "${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS}"
 write_runtime_env_var "OPENCLAW_MARKET_TOOL_PYTHON" "${OPENCLAW_MARKET_TOOL_PYTHON}"
+write_runtime_env_var "CLAW_TRADE_SELECTION_TOOL_PYTHON" "${CLAW_TRADE_SELECTION_TOOL_PYTHON}"
+write_runtime_env_var "OPENCLAW_NODE_BIN" "${OPENCLAW_NODE_BIN}"
 write_runtime_env_var "CLAW_TRADE_LLM_PROVIDER" "${CLAW_TRADE_LLM_PROVIDER}"
 write_runtime_env_var "CLAW_TRADE_LLM_MODEL" "${CLAW_TRADE_LLM_MODEL}"
 write_runtime_env_var "DEEPSEEK_BASE_URL" "${DEEPSEEK_BASE_URL}"

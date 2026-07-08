@@ -176,7 +176,9 @@ function validateEmptyParams(params) {
 }
 
 function pythonExecutable() {
-  const explicit = textValue(process.env.CLAW_TRADE_SELECTION_TOOL_PYTHON);
+  const explicit =
+    textValue(process.env.CLAW_TRADE_SELECTION_TOOL_PYTHON) ??
+    textValue(process.env.OPENCLAW_MARKET_TOOL_PYTHON);
   if (explicit) {
     return explicit;
   }
