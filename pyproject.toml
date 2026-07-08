@@ -1,6 +1,6 @@
 [project]
 name = "claw-trade"
-version = "1.0.0"
+version = "1.0.1"
 description = "claw-trade control migration workspace"
 requires-python = ">=3.12"
 dependencies = [
