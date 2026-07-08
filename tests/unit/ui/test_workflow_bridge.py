@@ -141,3 +141,22 @@ def test_build_run_request_does_not_use_ticker_as_company_name_when_unresolved()
 
     assert request.ticker == "688017.SH"
     assert request.company_name == "名称未查到"
+
+
+def test_build_run_request_allows_crypto_base_symbol_as_display_name() -> None:
+    runner = _FakeRunner()
+    bridge = ReportWorkflowBridge(runner)
+    task = _task()
+    task.update(
+        {
+            "instrumentCode": "XRP",
+            "instrumentName": "XRP",
+            "market": "CRYPTO",
+            "companyName": "XRP",
+        }
+    )
+
+    request = bridge.build_run_request(task)
+
+    assert request.ticker == "XRP"
+    assert request.company_name == "XRP"

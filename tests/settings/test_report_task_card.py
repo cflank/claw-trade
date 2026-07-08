@@ -182,6 +182,20 @@ def test_report_command_builds_confirmation_card_for_crypto_pair_name() -> None:
     assert card["summaryLines"] == ["标的：BTC/USDT", "名称：Bitcoin", "市场：CRYPTO"]
 
 
+def test_report_command_builds_confirmation_card_for_unknown_crypto_pair_base() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-crypto-wif", context_id="ctx-crypto-wif", text="/report WIF/USDT")
+    card = result["confirmationCard"]
+    assert card["summaryLines"] == ["标的：WIF/USDT", "名称：WIF", "市场：CRYPTO"]
+
+
+def test_report_command_builds_confirmation_card_for_crypto_base_symbol_name() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(request_id="s06-crypto-xrp", context_id="ctx-crypto-xrp", text="/report XRP")
+    card = result["confirmationCard"]
+    assert card["summaryLines"] == ["标的：XRP", "名称：XRP", "市场：CRYPTO"]
+
+
 def test_report_command_builds_confirmation_card_for_hk_name() -> None:
     controller = _controller()
     result = controller.send_chat_message(request_id="s06-hk", context_id="ctx-hk", text="/report 00700.HK")

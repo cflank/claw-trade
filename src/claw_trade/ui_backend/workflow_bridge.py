@@ -89,7 +89,7 @@ class ReportWorkflowBridge:
 
     def _company_name_for_task(self, *, task: dict[str, Any], ticker: str, market: str) -> str:
         fallback = str(task.get("companyName") or task.get("instrumentName") or "").strip()
-        safe_fallback = fallback if fallback and fallback.upper() != ticker.upper() else _UNRESOLVED_COMPANY_NAME
+        safe_fallback = fallback if _is_usable_display_name(ticker=ticker, market=market, value=fallback) else _UNRESOLVED_COMPANY_NAME
         resolver = self._company_name_resolver
         if resolver is None:
             return safe_fallback
@@ -108,7 +108,7 @@ class ReportWorkflowBridge:
             )
             return safe_fallback
         name = str(names.get(identity.ticker) or "").strip()
-        return name if name and name.upper() != identity.ticker.upper() else safe_fallback
+        return name if _is_usable_display_name(ticker=identity.ticker, market=identity.profile, value=name) else safe_fallback
 
 
 def _now_iso() -> str:
@@ -118,6 +118,19 @@ def _now_iso() -> str:
 def _optional_task_text(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _is_usable_display_name(*, ticker: str, market: str, value: str) -> bool:
+    name = value.strip()
+    if not name:
+        return False
+    if name.upper() != ticker.upper():
+        return True
+    try:
+        identity = resolve_instrument_identity(ticker, market_hint=market)
+    except Exception:  # noqa: BLE001
+        return False
+    return identity.profile == "CRYPTO" and bool(identity.provider_symbols.crypto_base_symbol)
 
 
 def _settings_from_task(settings: dict[str, Any]) -> ReportWorkflowSettings:

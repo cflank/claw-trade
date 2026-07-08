@@ -12,12 +12,6 @@ from claw_trade.workflow.models import RunRequest, Stage, StopPoint, WorkflowEnt
 
 DEFAULT_REPORT_LOOKBACK_DAYS = 365
 
-_CRYPTO_DISPLAY_NAMES = {
-    "BTC": "Bitcoin",
-    "ETH": "Ethereum",
-    "SOL": "Solana",
-    "DOGE": "Dogecoin",
-}
 _KNOWN_DISPLAY_NAMES = {
     "CN_A": {
         "600519.SH": "贵州茅台",
@@ -97,7 +91,7 @@ def report_display_name(ticker: str, profile: str) -> str:
     if known_name:
         return known_name
     if profile == "CRYPTO":
-        return crypto_display_name(ticker) or _CRYPTO_DISPLAY_NAMES.get(ticker, ticker)
+        return crypto_display_name(ticker) or ticker
     return ticker
 
 

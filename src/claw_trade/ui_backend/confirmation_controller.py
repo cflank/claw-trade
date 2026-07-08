@@ -175,7 +175,7 @@ class ConfirmationController:
         if resolved:
             return resolved
         existing = (draft.instrument_name or "").strip()
-        if existing and existing.upper() != draft.instrument_code.upper():
+        if self._is_usable_display_name(draft, existing):
             return existing
         return _UNRESOLVED_COMPANY_NAME
 
@@ -220,7 +220,7 @@ class ConfirmationController:
             )
             return None
         name = str(names.get(draft.instrument_code) or "").strip()
-        if name and name.upper() != draft.instrument_code.upper():
+        if self._is_usable_display_name(draft, name):
             return name
         return None
 
@@ -228,13 +228,26 @@ class ConfirmationController:
         if self._company_name_for_draft(draft):
             return
         existing = (draft.instrument_name or "").strip()
-        if existing and existing.upper() != draft.instrument_code.upper():
+        if self._is_usable_display_name(draft, existing):
             return
         raise QueueError(
             "INVALID_INPUT",
             "invalid_input",
             f"标的 {draft.instrument_code} 名称解析失败，不能创建确认卡。请先检查标的或配置名称解析数据源。",
         )
+
+    @staticmethod
+    def _is_usable_display_name(draft: IntentDraft, value: str) -> bool:
+        name = value.strip()
+        if not name:
+            return False
+        if name.upper() != draft.instrument_code.upper():
+            return True
+        try:
+            identity = resolve_instrument_identity(draft.instrument_code, market_hint=draft.market.value)
+        except Exception:  # noqa: BLE001
+            return False
+        return identity.profile == "CRYPTO" and bool(identity.provider_symbols.crypto_base_symbol)
 
     def _assert_profile_strategy_approved(self, draft: IntentDraft) -> None:
         profile = draft.workflow_settings.defaultProfile or draft.market.value

@@ -145,7 +145,7 @@ def crypto_display_name(ticker: str) -> str | None:
         "ETH": "Ethereum",
         "SOL": "Solana",
     }
-    return names.get(base)
+    return names.get(base, base)
 
 
 def _normalize_ticker(value: str) -> str:

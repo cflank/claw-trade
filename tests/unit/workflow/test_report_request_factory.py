@@ -39,6 +39,18 @@ def test_build_report_run_request_accepts_slash_crypto_pair() -> None:
     assert request.currency_symbol == "USDT"
 
 
+def test_build_report_run_request_uses_crypto_base_when_pair_name_is_unknown() -> None:
+    request = build_report_run_request(
+        ticker="WIF/USDT",
+        settings=ReportWorkflowSettings(),
+        current_date="2026-05-20",
+    )
+
+    assert request.ticker == "WIF/USDT"
+    assert request.company_name == "WIF"
+    assert request.market == "CRYPTO"
+
+
 def test_build_report_run_request_normalizes_market_specific_tickers() -> None:
     settings = ReportWorkflowSettings()
 
