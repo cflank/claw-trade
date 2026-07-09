@@ -813,6 +813,12 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             target=target.sender_id,
             account_id=target.account_id,
         ),
+        ask_report_question=lambda report_id, text, request_id, context_id: report_question_service.ask_report_question(
+            report_id=report_id,
+            text=text,
+            request_id=request_id,
+            context_id=context_id,
+        ),
         request_selection_report_file=lambda workflow_run_id, markdown, request_id, target: _send_selection_report_file(
             channel_bridge=channel_bridge,
             workflow_run_id=workflow_run_id,

@@ -72,6 +72,7 @@ def _controller(
     send_channel_text=None,  # type: ignore[no-untyped-def]
     request_full_report_file=None,  # type: ignore[no-untyped-def]
     request_selection_report_file=None,  # type: ignore[no-untyped-def]
+    ask_report_question=None,  # type: ignore[no-untyped-def]
     company_name_resolver=None,  # type: ignore[no-untyped-def]
 ) -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
     runner = _FakeRunner()
@@ -92,6 +93,7 @@ def _controller(
             background_submitter=background_submitter,
             send_channel_text=send_channel_text,
             request_selection_report_file=request_selection_report_file,
+            ask_report_question=ask_report_question,
         ),
         runner,
         chat_transport,
@@ -109,7 +111,7 @@ def _message(request_id: str, text: str, *, sender_id: str = "sender-1") -> Chan
     )
 
 
-def test_ordinary_wechat_text_runs_normal_chat_in_background_without_report_workflow() -> None:
+def test_ordinary_wechat_text_is_left_to_openclaw_native_channel() -> None:
     background_jobs = []
     sent_texts = []
 
@@ -122,12 +124,7 @@ def test_ordinary_wechat_text_runs_normal_chat_in_background_without_report_work
         send_channel_text=_send_text,
     )
     result = controller.handle_message(_message("r-1", "你好"))
-    assert result == {
-        "handled": True,
-        "replyText": "收到，正在处理。",
-        "state": "chat_processing",
-        "deferFinalReply": True,
-    }
+    assert result == {"handled": False}
     snapshot = controller.latest_conversation_snapshot()
     assert snapshot["context"]["contextId"] == "wechat_clawbot:account-1:sender-1"
     assert snapshot["context"]["title"] == "微信聊天"
@@ -135,21 +132,68 @@ def test_ordinary_wechat_text_runs_normal_chat_in_background_without_report_work
     assert runner.calls == 0
     assert chat_transport.calls == []
     assert sent_texts == []
+    assert background_jobs == []
+
+
+def test_report_reading_wechat_question_uses_report_qa_instead_of_native_chat() -> None:
+    background_jobs = []
+    sent_texts = []
+    question_calls = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
+
+    def _ask_report_question(report_id, text, request_id, context_id):  # type: ignore[no-untyped-def]
+        question_calls.append(
+            {
+                "reportId": report_id,
+                "text": text,
+                "requestId": request_id,
+                "contextId": context_id,
+            }
+        )
+        return {"text": "报告里说，主要风险是估值波动。"}
+
+    controller, runner, chat_transport = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+        ask_report_question=_ask_report_question,
+    )
+    controller._chat_controller.append_report_completed_message(  # noqa: SLF001
+        context_id="wechat_clawbot:account-1:sender-1",
+        report_id="run-1",
+        text="报告已完成。",
+    )
+
+    result = controller.handle_message(_message("r-report-q", "估值风险是什么？"))
+
+    assert result == {
+        "handled": True,
+        "replyText": "收到，正在查这份报告。",
+        "state": "report_question_processing",
+        "deferFinalReply": True,
+    }
+    assert chat_transport.calls == []
+    assert runner.calls == 0
+    assert question_calls == []
+    assert sent_texts == []
     assert len(background_jobs) == 1
 
     background_jobs[0]()
 
-    assert chat_transport.calls == [
+    assert question_calls == [
         {
+            "reportId": "run-1",
+            "text": "估值风险是什么？",
+            "requestId": "r-report-q",
             "contextId": "wechat_clawbot:account-1:sender-1",
-            "text": "你好",
-            "requestId": "r-1",
         }
     ]
     assert sent_texts == [
         {
-            "text": "echo:你好",
-            "dedupeKey": "channel-chat-result:r-1",
+            "text": "报告里说，主要风险是估值波动。",
+            "dedupeKey": "channel-report-question:r-report-q",
             "target": ChannelReplyTarget(
                 channel_kind="wechat_clawbot",
                 account_id="account-1",
@@ -158,7 +202,12 @@ def test_ordinary_wechat_text_runs_normal_chat_in_background_without_report_work
         }
     ]
     snapshot = controller.latest_conversation_snapshot()
-    assert [item["text"] for item in snapshot["messages"]] == ["你好", "echo:你好"]
+    assert [item["text"] for item in snapshot["messages"]][-4:] == [
+        "报告已完成。",
+        "估值风险是什么？",
+        "收到，正在查这份报告。",
+        "报告里说，主要风险是估值波动。",
+    ]
 
 
 def test_help_command_returns_usage_without_openclaw_chat() -> None:

@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
+from claw_trade.ui_contracts.enums import ChatContextKind
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class _PendingSelectionReport:
     markdown: str
 
 
-_NORMAL_CHAT_PROCESSING_REPLY = "收到，正在处理。"
+_REPORT_QUESTION_PROCESSING_REPLY = "收到，正在查这份报告。"
 _CONFIRMATION_PROCESSING_REPLY = "收到，正在识别标的，请稍等。"
 
 
@@ -51,12 +52,14 @@ class ChannelTextInboundController:
         background_submitter: Callable[[Callable[[], None]], None] | None = None,
         send_channel_text: Callable[[str, str, ChannelReplyTarget], dict[str, object]] | None = None,
         request_selection_report_file: Callable[[str, str, str, ChannelReplyTarget], dict[str, object]] | None = None,
+        ask_report_question: Callable[[str, str, str, str], dict[str, str]] | None = None,
     ) -> None:
         self._chat_controller = chat_controller
         self._request_full_report_file = request_full_report_file
         self._background_submitter = background_submitter or _submit_background_job
         self._send_channel_text = send_channel_text
         self._request_selection_report_file = request_selection_report_file
+        self._ask_report_question = ask_report_question
         self._pending: dict[str, _PendingDraft] = {}
         self._selection_reports: dict[str, _PendingSelectionReport] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
@@ -523,6 +526,18 @@ class ChannelTextInboundController:
         conversation_key: str,
         text: str,
     ) -> dict[str, Any]:
+        snapshot = self._chat_controller.get_chat_session(context_id=conversation_key)
+        context = snapshot.get("context")
+        if isinstance(context, dict) and context.get("kind") == ChatContextKind.REPORT_READING.value:
+            report_id = str(context.get("activeReportId") or "").strip()
+            if report_id:
+                return self._handle_report_question(
+                    message=message,
+                    conversation_key=conversation_key,
+                    report_id=report_id,
+                    text=text,
+                )
+
         if self._chat_controller.is_running_task_context(context_id=conversation_key):
             result = self._chat_controller.send_chat_message(
                 request_id=message.request_id,
@@ -531,60 +546,76 @@ class ChannelTextInboundController:
             )
             return self._remember(message.request_id, _reply_from_chat_result(result))
 
-        if self._send_channel_text is not None:
-            target = ChannelReplyTarget(
-                channel_kind=message.channel_kind,
-                account_id=message.account_id,
-                sender_id=message.sender_id,
+        return self._remember(message.request_id, {"handled": False})
+
+    def _handle_report_question(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        report_id: str,
+        text: str,
+    ) -> dict[str, Any]:
+        self._chat_controller.append_channel_plain_message(context_id=conversation_key, actor="user", text=text)
+        if self._ask_report_question is None:
+            reply_text = "报告追问暂不可用，请在页面查看。"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=reply_text,
             )
+            return self._remember(message.request_id, {"handled": True, "replyText": reply_text, "state": "failed"})
 
-            def _finish() -> None:
-                result = self._chat_controller.send_chat_message(
-                    request_id=message.request_id,
-                    context_id=conversation_key,
-                    text=text,
-                )
-                reply_text = _normal_chat_reply_text(result)
-                try:
-                    self._send_channel_text(reply_text, f"channel-chat-result:{message.request_id}", target)
-                except Exception:
-                    return
-
-            self._background_submitter(_finish)
-            return self._remember(
-                message.request_id,
-                {
-                    "handled": True,
-                    "replyText": _NORMAL_CHAT_PROCESSING_REPLY,
-                    "state": "chat_processing",
-                    "deferFinalReply": True,
-                },
-            )
-
-        result = self._chat_controller.send_chat_message(
-            request_id=message.request_id,
-            context_id=conversation_key,
-            text=text,
+        target = ChannelReplyTarget(
+            channel_kind=message.channel_kind,
+            account_id=message.account_id,
+            sender_id=message.sender_id,
         )
-        error = _extract_error(result)
-        if error is not None:
-            return self._remember(message.request_id, {"handled": True, "replyText": error, "state": "failed"})
-        selection = result.get("selection")
-        if isinstance(selection, dict):
-            return self._remember(
-                message.request_id,
-                {
-                    "handled": True,
-                    "replyText": _normal_chat_reply_text(result),
-                    "state": _selection_reply_state(selection),
-                },
+
+        def _finish() -> None:
+            reply_text = self._report_question_reply_text(
+                report_id=report_id,
+                text=text,
+                request_id=message.request_id,
+                context_id=conversation_key,
             )
-        reply_text = _normal_chat_reply_text(result)
-        state = "replied" if str(result.get("assistantReply") or "").strip() else "empty_reply"
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=reply_text,
+            )
+            if self._send_channel_text is None:
+                return
+            try:
+                self._send_channel_text(reply_text, f"channel-report-question:{message.request_id}", target)
+            except Exception:
+                return
+
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="system",
+            text=_REPORT_QUESTION_PROCESSING_REPLY,
+        )
+        self._background_submitter(_finish)
         return self._remember(
             message.request_id,
-            {"handled": True, "replyText": reply_text, "state": state},
+            {
+                "handled": True,
+                "replyText": _REPORT_QUESTION_PROCESSING_REPLY,
+                "state": "report_question_processing",
+                "deferFinalReply": True,
+            },
         )
+
+    def _report_question_reply_text(self, *, report_id: str, text: str, request_id: str, context_id: str) -> str:
+        if self._ask_report_question is None:
+            return "报告追问暂不可用，请在页面查看。"
+        try:
+            result = self._ask_report_question(report_id, text, request_id, context_id)
+        except Exception as exc:
+            user_message = getattr(exc, "user_message", None)
+            return str(user_message or "报告追问失败，请稍后再试。")
+        return str(result.get("text") or "报告材料里没有找到可回答的内容。")
 
     def _remember(self, request_id: str, result: dict[str, Any]) -> dict[str, Any]:
         self._idempotency[request_id] = result
@@ -709,17 +740,6 @@ def _latest_selection_reply_text(result: dict[str, Any]) -> str | None:
         if text:
             return text
     return None
-
-
-def _selection_reply_state(selection: dict[str, Any]) -> str:
-    code = str(selection.get("code") or "").strip()
-    if code == "completed":
-        return "selection_completed"
-    if code == "data_refresh_requested":
-        return "selection_refreshing"
-    if code == "failed":
-        return "selection_failed"
-    return "selection_unavailable"
 
 
 def _normal_chat_reply_text(result: dict[str, Any]) -> str:

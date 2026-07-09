@@ -136,6 +136,15 @@ def test_wechat_ordinary_reply_bridge_failure_can_fall_back_to_default_agent() -
     assert result["result"] is None
 
 
+def test_wechat_ordinary_reply_bridge_handled_false_falls_back_to_default_agent() -> None:
+    result = _run_before_dispatch_hook(
+        "你好",
+        fetch_impl="async () => ({ ok: true, json: async () => ({ handled: false }) })",
+    )
+
+    assert result["result"] is None
+
+
 def test_wechat_deferred_ordinary_reply_does_not_duplicate_processing_ack() -> None:
     result = _run_before_dispatch_hook(
         "你好",
