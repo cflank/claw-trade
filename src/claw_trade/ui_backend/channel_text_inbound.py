@@ -38,6 +38,10 @@ class _PendingSelectionReport:
     markdown: str
 
 
+_NORMAL_CHAT_PROCESSING_REPLY = "收到，正在处理。"
+_CONFIRMATION_PROCESSING_REPLY = "收到，正在识别标的，请稍等。"
+
+
 class ChannelTextInboundController:
     def __init__(
         self,
@@ -112,9 +116,25 @@ class ChannelTextInboundController:
                 text=text,
             )
 
+        if IntentRecognizer.looks_like_supported_intent(text):
+            return self._handle_confirmation_intent(
+                message=message,
+                conversation_key=conversation_key,
+                text=text,
+            )
+
         if not _looks_like_supported_chat_intent(text):
             return self._handle_normal_chat(message=message, conversation_key=conversation_key, text=text)
 
+        return self._handle_supported_chat_message(message=message, conversation_key=conversation_key, text=text)
+
+    def _handle_supported_chat_message(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+    ) -> dict[str, Any]:
         result = self._chat_controller.send_chat_message(
             request_id=message.request_id,
             context_id=conversation_key,
@@ -139,6 +159,44 @@ class ChannelTextInboundController:
                 "handled": True,
                 "replyText": _format_confirmation_reply(card),
                 "state": "awaiting_confirmation",
+            },
+        )
+
+    def _handle_confirmation_intent(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+    ) -> dict[str, Any]:
+        if self._send_channel_text is None:
+            return self._handle_supported_chat_message(message=message, conversation_key=conversation_key, text=text)
+        target = ChannelReplyTarget(
+            channel_kind=message.channel_kind,
+            account_id=message.account_id,
+            sender_id=message.sender_id,
+        )
+
+        def _finish() -> None:
+            result = self._chat_controller.send_chat_message(
+                request_id=message.request_id,
+                context_id=conversation_key,
+                text=text,
+            )
+            reply_text = self._confirmation_result_reply_text(conversation_key=conversation_key, result=result)
+            try:
+                self._send_channel_text(reply_text, f"channel-confirmation-result:{message.request_id}", target)
+            except Exception:
+                return
+
+        self._background_submitter(_finish)
+        return self._remember(
+            message.request_id,
+            {
+                "handled": True,
+                "replyText": _CONFIRMATION_PROCESSING_REPLY,
+                "state": "confirmation_processing",
+                "deferFinalReply": True,
             },
         )
 
@@ -198,6 +256,19 @@ class ChannelTextInboundController:
             message.request_id,
             {"handled": True, "replyText": _format_confirmed_reply(result), "state": "confirmed"},
         )
+
+    def _confirmation_result_reply_text(self, *, conversation_key: str, result: dict[str, Any]) -> str:
+        error = _extract_error(result)
+        if error is not None:
+            return error
+        card = result.get("confirmationCard")
+        if isinstance(card, dict):
+            draft_id = str(card.get("draftId") or "").strip()
+            if draft_id:
+                with self._lock:
+                    self._pending[conversation_key] = _PendingDraft(draft_id=draft_id)
+            return _format_confirmation_reply(card)
+        return _normal_chat_reply_text(result)
 
     def _handle_select_command(
         self,
@@ -452,6 +523,44 @@ class ChannelTextInboundController:
         conversation_key: str,
         text: str,
     ) -> dict[str, Any]:
+        if self._chat_controller.is_running_task_context(context_id=conversation_key):
+            result = self._chat_controller.send_chat_message(
+                request_id=message.request_id,
+                context_id=conversation_key,
+                text=text,
+            )
+            return self._remember(message.request_id, _reply_from_chat_result(result))
+
+        if self._send_channel_text is not None:
+            target = ChannelReplyTarget(
+                channel_kind=message.channel_kind,
+                account_id=message.account_id,
+                sender_id=message.sender_id,
+            )
+
+            def _finish() -> None:
+                result = self._chat_controller.send_chat_message(
+                    request_id=message.request_id,
+                    context_id=conversation_key,
+                    text=text,
+                )
+                reply_text = _normal_chat_reply_text(result)
+                try:
+                    self._send_channel_text(reply_text, f"channel-chat-result:{message.request_id}", target)
+                except Exception:
+                    return
+
+            self._background_submitter(_finish)
+            return self._remember(
+                message.request_id,
+                {
+                    "handled": True,
+                    "replyText": _NORMAL_CHAT_PROCESSING_REPLY,
+                    "state": "chat_processing",
+                    "deferFinalReply": True,
+                },
+            )
+
         result = self._chat_controller.send_chat_message(
             request_id=message.request_id,
             context_id=conversation_key,
@@ -459,26 +568,22 @@ class ChannelTextInboundController:
         )
         error = _extract_error(result)
         if error is not None:
-            return self._remember(
-                message.request_id,
-                {"handled": True, "replyText": error, "state": "failed"},
-            )
+            return self._remember(message.request_id, {"handled": True, "replyText": error, "state": "failed"})
         selection = result.get("selection")
         if isinstance(selection, dict):
-            reply_text = _latest_selection_reply_text(result) or "已收到 /select，但暂时没有返回选股结果。"
             return self._remember(
                 message.request_id,
-                {"handled": True, "replyText": reply_text, "state": _selection_reply_state(selection)},
+                {
+                    "handled": True,
+                    "replyText": _normal_chat_reply_text(result),
+                    "state": _selection_reply_state(selection),
+                },
             )
-        reply_text = str(result.get("assistantReply") or "").strip()
-        if not reply_text:
-            return self._remember(
-                message.request_id,
-                {"handled": True, "replyText": "已收到，但助手暂时没有返回内容。", "state": "empty_reply"},
-            )
+        reply_text = _normal_chat_reply_text(result)
+        state = "replied" if str(result.get("assistantReply") or "").strip() else "empty_reply"
         return self._remember(
             message.request_id,
-            {"handled": True, "replyText": reply_text, "state": "replied"},
+            {"handled": True, "replyText": reply_text, "state": state},
         )
 
     def _remember(self, request_id: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -615,6 +720,17 @@ def _selection_reply_state(selection: dict[str, Any]) -> str:
     if code == "failed":
         return "selection_failed"
     return "selection_unavailable"
+
+
+def _normal_chat_reply_text(result: dict[str, Any]) -> str:
+    error = _extract_error(result)
+    if error is not None:
+        return error
+    selection = result.get("selection")
+    if isinstance(selection, dict):
+        return _latest_selection_reply_text(result) or "已收到 /select，但暂时没有返回选股结果。"
+    reply_text = str(result.get("assistantReply") or "").strip()
+    return reply_text or "已收到，但助手暂时没有返回内容。"
 
 
 def _latest_message_text(result: dict[str, Any]) -> str | None:

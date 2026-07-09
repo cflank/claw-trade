@@ -299,3 +299,62 @@ def test_confirmed_or_cancelled_chat_card_does_not_return_as_active_after_reload
     )
     assert cancelled["confirmationCards"]["card-draft-2"]["status"] == "cancelled"
     assert cancelled["confirmationCards"]["card-draft-2"]["actions"] == []
+
+
+def test_running_task_plain_message_returns_local_status_without_openclaw() -> None:
+    controller, transport, runner = _build_controller()
+
+    draft = controller.send_chat_message(
+        request_id="req-running-local-1",
+        context_id="ctx-running-local",
+        text="/report TSLA",
+    )
+    controller.confirm_intent_draft_from_chat(
+        request_id="req-running-local-2",
+        context_id="ctx-running-local",
+        draft_id=draft["confirmationCard"]["draftId"],
+        decision="confirm",
+        text="确认",
+    )
+
+    result = controller.send_chat_message(
+        request_id="req-running-local-hi",
+        context_id="ctx-running-local",
+        text="hi",
+    )
+
+    assert runner.calls == 1
+    assert transport.calls == 0
+    assert result["assistantReply"].startswith("报告正在生成中")
+    assert "18%" in result["assistantReply"]
+    assert "普通聊天暂时无法处理" in result["assistantReply"]
+    assert result["messages"][-1]["kind"] == "task_progress"
+
+
+def test_running_task_exit_returns_to_normal_chat_without_openclaw() -> None:
+    controller, transport, runner = _build_controller()
+
+    draft = controller.send_chat_message(
+        request_id="req-running-exit-1",
+        context_id="ctx-running-exit",
+        text="/report TSLA",
+    )
+    controller.confirm_intent_draft_from_chat(
+        request_id="req-running-exit-2",
+        context_id="ctx-running-exit",
+        draft_id=draft["confirmationCard"]["draftId"],
+        decision="confirm",
+        text="确认",
+    )
+
+    result = controller.send_chat_message(
+        request_id="req-running-exit",
+        context_id="ctx-running-exit",
+        text="退出",
+    )
+
+    session = controller.get_chat_session(context_id="ctx-running-exit")
+    assert runner.calls == 1
+    assert transport.calls == 0
+    assert result["assistantReply"] == "已回到普通聊天，报告仍在后台生成，完成后会通知你。"
+    assert session["context"]["kind"] == "normal_chat"

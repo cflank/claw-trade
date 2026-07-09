@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
@@ -29,7 +29,7 @@ from claw_trade.ui_backend.worker_chat_catalog import list_worker_chat_menu
 from claw_trade.ui_backend.worker_chat_models import WorkerChatReplyForUser, WorkerChatRequest
 from claw_trade.ui_contracts.user_dto import to_user_payload
 from claw_trade.web.session import resolve_context_id
-from claw_trade.web.state import UiHttpServices, build_report_detail_payload
+from claw_trade.web.state import UiHttpServices, _reply_target_from_origin_context, build_report_detail_payload
 
 router = APIRouter()
 _LOGGER = logging.getLogger("uvicorn.error")
@@ -225,6 +225,7 @@ class SendReportFileRequest(BaseModel):
     requestId: str
     reportId: str
     channelKind: str = "wechat_clawbot"
+    originContextId: str | None = None
 
 
 class ChannelInboundMessageRequest(BaseModel):
@@ -731,7 +732,7 @@ def _apply_report_forward_capability(items: list[dict[str, Any]], services: UiHt
     forwarded_items: list[dict[str, Any]] = []
     for item in items:
         next_item = dict(item)
-        next_item["canForwardToChannel"] = bool(can_forward_current_channel)
+        next_item["canForwardToChannel"] = bool(next_item.get("canForwardToChannel")) and bool(can_forward_current_channel)
         forwarded_items.append(next_item)
     return forwarded_items
 
@@ -889,26 +890,9 @@ def download_report_pdf(request: Request, reportId: str = Query(...)) -> Any:
         report = services.repository.get_report(reportId)
         if report is None:
             raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
-        latest_pdf = services.pdf_export_service.get_latest_record(reportId)
-        if latest_pdf is None or latest_pdf.state != "ready":
-            latest_pdf = services.pdf_export_service.export_saved_markdown_to_pdf(
-                reportId,
-                request_id=f"download-pdf:{reportId}",
-            )
-        if latest_pdf.state != "ready" or not latest_pdf.pdf_artifact_id:
-            raise UiProductError(
-                "PDF_EXPORT_FAILED",
-                latest_pdf.user_message or "PDF 暂不可用，完整报告仍可在设备界面查看。",
-            )
-        filename = _report_pdf_filename(str(report.instrument_code or "report"))
-        file_path = services.repository.pdf_artifact_path(reportId, latest_pdf.pdf_artifact_id)
-        if file_path is not None:
-            return FileResponse(file_path, media_type="application/pdf", filename=filename)
-        payload = services.repository.read_pdf_bytes(reportId, latest_pdf.pdf_artifact_id)
-        return Response(
-            content=payload,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        return _error_response(
+            "FILE_SEND_UNSUPPORTED",
+            "系统不保存 PDF，请使用微信转发完整报告。",
         )
     except Exception as exc:
         return _exception_response(exc)
@@ -918,12 +902,13 @@ def download_report_pdf(request: Request, reportId: str = Query(...)) -> Any:
 def send_report_file_via_channel(payload: SendReportFileRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
-        download_url = _report_pdf_download_url(payload.reportId)
+        target = _reply_target_from_origin_context(payload.originContextId)
         result = services.report_notification_service.request_full_report_file(
             report_id=payload.reportId,
             request_id=payload.requestId,
-            channel_kind=payload.channelKind,
-            download_url=download_url,
+            channel_kind=target.channel_kind if target is not None else payload.channelKind,
+            target=target.sender_id if target is not None else None,
+            account_id=target.account_id if target is not None else None,
         )
         if not bool(result.get("sent")):
             code = str(result.get("code") or "FILE_SEND_UNSUPPORTED")
@@ -1294,19 +1279,6 @@ def save_data_source_instance(payload: SaveDataSourceInstanceRequest, request: R
 
 def _services(request: Request) -> UiHttpServices:
     return request.app.state.ui_services
-
-
-def _report_pdf_download_url(report_id: str) -> str | None:
-    base = os.environ.get("CLAW_TRADE_UI_PUBLIC_BASE_URL", "").strip().rstrip("/")
-    parsed = urlsplit(base)
-    if parsed.scheme != "https" or not parsed.netloc:
-        return None
-    return f"{base}/api/ui/download-report-pdf?{urlencode({'reportId': report_id})}"
-
-
-def _report_pdf_filename(instrument_code: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", instrument_code).strip("._")
-    return f"{cleaned or 'report'}_report.pdf"
 
 
 def _raw_data_maintenance_progress_for_user(services: UiHttpServices) -> dict[str, object] | None:

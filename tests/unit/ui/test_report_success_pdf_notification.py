@@ -10,7 +10,8 @@ from claw_trade.web.state import _handle_completed_workflow_report, _save_comple
 
 
 class _FailPdfRenderer:
-    def render(self, markdown: str) -> bytes:
+    def render(self, markdown: str, *, report_asset_dir=None) -> bytes:  # type: ignore[no-untyped-def]
+        _ = (markdown, report_asset_dir)
         raise RuntimeError("pdf failed")
 
 

@@ -12,7 +12,6 @@ from claw_trade.workflow.models import RunRequest, RunStatus, WorkflowEntryPoint
 from claw_trade.workflow.report_request_factory import build_report_run_request
 
 _LOGGER = logging.getLogger("uvicorn.error")
-_UNRESOLVED_COMPANY_NAME = "名称未查到"
 
 
 @dataclass(frozen=True)
@@ -87,17 +86,18 @@ class ReportWorkflowBridge:
             return False
         return bool(cancel_run(run_id))
 
-    def _company_name_for_task(self, *, task: dict[str, Any], ticker: str, market: str) -> str:
+    def _company_name_for_task(self, *, task: dict[str, Any], ticker: str, market: str) -> str | None:
         fallback = str(task.get("companyName") or task.get("instrumentName") or "").strip()
-        safe_fallback = fallback if _is_usable_display_name(ticker=ticker, market=market, value=fallback) else _UNRESOLVED_COMPANY_NAME
+        if _is_usable_display_name(ticker=ticker, market=market, value=fallback):
+            return fallback
         resolver = self._company_name_resolver
         if resolver is None:
-            return safe_fallback
+            return None
         try:
             identity = resolve_instrument_identity(ticker, market_hint=market)
             names = resolver(market=identity.profile, symbol_ids=(identity.ticker,))
         except (InstrumentResolveError, RuntimeError, ValueError):
-            return safe_fallback
+            return None
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "company name resolver failed market=%s ticker=%s error=%s",
@@ -106,9 +106,9 @@ class ReportWorkflowBridge:
                 exc,
                 exc_info=True,
             )
-            return safe_fallback
+            return None
         name = str(names.get(identity.ticker) or "").strip()
-        return name if _is_usable_display_name(ticker=identity.ticker, market=identity.profile, value=name) else safe_fallback
+        return name if _is_usable_display_name(ticker=identity.ticker, market=identity.profile, value=name) else None
 
 
 def _now_iso() -> str:

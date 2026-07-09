@@ -5,8 +5,8 @@ from pathlib import Path
 
 from claw_trade.data_gateway.models import Market, WarehouseCheck
 from claw_trade.data_gateway.warehouse import DatasetRepository, Warehouse
-from claw_trade.data_gateway.warehouse.repository import DatasetRecord
 from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
+from claw_trade.data_gateway.warehouse.repository import DatasetRecord
 
 
 def _base_record() -> dict[str, object]:
@@ -897,6 +897,77 @@ def test_repository_finds_company_names_from_columnar_quote_snapshot(tmp_path) -
     )
 
     assert names == {"688017.SH": "绿的谐波"}
+
+
+def test_repository_skips_parquet_manifest_when_symbol_ids_exclude_target(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    collections = _collections()
+    warehouse = NormalizedColumnarWarehouse(tmp_path)
+    repo = DatasetRepository(
+        collections=collections,
+        normalized_columnar=warehouse,
+        allow_normalized_mongo_read=False,
+    )
+    record = _base_record()
+    record.update(
+        {
+            "market": "CRYPTO",
+            "symbol_id": "BTCUSDT",
+            "currency": "USDT",
+            "base_asset": "BTC",
+            "quote_asset": "USDT",
+            "field_set": ("date", "close", "company_name"),
+            "row": {"date": "2026-05-31", "close": 68000, "company_name": "Bitcoin"},
+        }
+    )
+    repo.insert_normalized(record)
+    bad_path = tmp_path / "bad-eth.parquet"
+    bad_path.write_bytes(b"not a parquet file")
+    collections["dataset_manifests"]["manifest:bad-eth"] = {
+        "manifest_ref": "manifest:bad-eth",
+        "storage": "parquet",
+        "status": "active",
+        "dataset": "daily_bar",
+        "market": "CRYPTO",
+        "path": str(bad_path),
+        "symbol_ids": ("ETHUSDT",),
+    }
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market="CRYPTO",
+        symbol_ids=("BTCUSDT",),
+    )
+
+    assert names == {"BTCUSDT": "Bitcoin"}
+
+
+def test_repository_reads_parquet_manifest_when_symbol_ids_metadata_missing(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    collections = _collections()
+    warehouse = NormalizedColumnarWarehouse(tmp_path)
+    record = _base_record()
+    record.update(
+        {
+            "symbol_id": "000002.SZ",
+            "field_set": ("date", "close", "company_name"),
+            "row": {"date": "2026-05-31", "close": 12.5, "company_name": "万科A"},
+        }
+    )
+    manifest = dict(warehouse.write_records([record]).manifest)
+    manifest.pop("symbol_ids", None)
+    collections["dataset_manifests"][manifest["manifest_ref"]] = manifest
+    repo = DatasetRepository(
+        collections=collections,
+        normalized_columnar=warehouse,
+        allow_normalized_mongo_read=False,
+    )
+
+    names = repo.find_company_names_by_symbol_ids(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_ids=("000002.SZ",),
+    )
+
+    assert names == {"000002.SZ": "万科A"}
 
 
 def test_repository_finds_company_name_from_seed_manifest_when_runtime_latest_row_has_no_name(tmp_path) -> None:  # type: ignore[no-untyped-def]

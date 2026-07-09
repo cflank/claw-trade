@@ -17,6 +17,7 @@ def test_save_succeeded_report_only_then_visible_in_history() -> None:
     items = repo.list_saved_reports()
     assert len(items) == 1
     assert items[0]["id"] == "r-1"
+    assert items[0]["originContextId"] is None
     assert items[0]["canForwardToChannel"] is False
 
 
@@ -35,6 +36,7 @@ def test_saved_report_exposes_channel_forward_availability_from_origin_context()
     items = repo.list_saved_reports()
 
     assert items[0]["canForwardToChannel"] is True
+    assert items[0]["originContextId"] == "wechat_clawbot:account-1:sender-1"
 
 
 def test_failed_or_running_report_cannot_enter_history() -> None:

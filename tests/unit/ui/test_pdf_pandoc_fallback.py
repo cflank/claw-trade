@@ -129,8 +129,7 @@ def test_pdf_export_failed_when_all_pandoc_engines_fail_and_no_artifact() -> Non
     record = service.export_saved_markdown_to_pdf("r-pandoc", request_id="pandoc-all-fail")
 
     assert record.state == "failed"
-    assert record.pdf_artifact_id is None
-    assert repo.latest_pdf_artifact("r-pandoc") is None
+    assert not hasattr(repo, "latest_pdf_artifact")
     attempts = renderer.last_pandoc_attempts
     assert [attempt.engine for attempt in attempts] == ["wkhtmltopdf", "weasyprint", "default"]
     assert all(attempt.exception_type == "RuntimeError" for attempt in attempts)
@@ -165,5 +164,4 @@ def test_pandoc_fallback_output_still_requires_validator(monkeypatch) -> None:  
 
     assert calls["count"] == 1
     assert record.state == "failed"
-    assert record.pdf_artifact_id is None
-    assert repo.latest_pdf_artifact("r-pandoc") is None
+    assert not hasattr(repo, "latest_pdf_artifact")

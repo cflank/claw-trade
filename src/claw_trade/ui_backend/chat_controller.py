@@ -210,6 +210,13 @@ class ChatController:
         context = self._get_or_create_context(context_id)
         return self._chat_result(context)
 
+    def is_running_task_context(self, *, context_id: str) -> bool:
+        context = self._contexts.get(context_id)
+        if context is None or context.kind != ChatContextKind.TASK_FOLLOWING or not context.active_task_id:
+            return False
+        task = self._queue.get_task_for_testing(context.active_task_id)
+        return task is not None and task.status.value == "running"
+
     def clear_chat_session(self, *, context_id: str) -> dict[str, Any]:
         context = create_normal_chat_context(context_id=context_id)
         if context_id.startswith("wechat_clawbot:"):
@@ -342,10 +349,19 @@ class ChatController:
             kind="plain",
             text=content,
         )
-        if self._is_exit_to_normal_chat(content):
+        running_task = self.is_running_task_context(context_id=context_id)
+        if self._is_exit_to_normal_chat(content) or (running_task and self._is_running_task_exit(content)):
             context = switch_chat_context(context, kind=ChatContextKind.NORMAL_CHAT)
             self._contexts[context_id] = context
-            return self._chat_result(context)
+            reply_text = "已回到普通聊天，报告仍在后台生成，完成后会通知你。" if running_task else "已回到普通聊天。"
+            self._append_message(
+                context_id=context.id,
+                context_kind=context.kind,
+                actor="system",
+                kind="plain",
+                text=reply_text,
+            )
+            return self._chat_result(context, assistant_reply=reply_text)
         if self._is_help_command(content):
             self._append_message(
                 context_id=context.id,
@@ -385,14 +401,30 @@ class ChatController:
                     return self._chat_result(context, confirmation_card=card)
                 if self._recognizer.looks_like_progress_question(content):
                     snapshot = self._queue.get_report_queue_snapshot_for_user()
+                    reply_text = _format_running_task_status_message(snapshot)
                     self._append_message(
                         context_id=context.id,
                         context_kind=context.kind,
                         actor="system",
                         kind="task_progress",
-                        text="报告正在生成中，请稍候。",
+                        text=reply_text,
                     )
-                    return self._chat_result(context, queue_snapshot=snapshot)
+                    return self._chat_result(context, queue_snapshot=snapshot, assistant_reply=reply_text)
+                if (
+                    not content.startswith("/")
+                    and not self._is_maintenance_status_request(content)
+                    and not IntentRecognizer.looks_like_supported_intent(content)
+                ):
+                    snapshot = self._queue.get_report_queue_snapshot_for_user()
+                    reply_text = _format_running_task_status_message(snapshot, include_chat_blocked_hint=True)
+                    self._append_message(
+                        context_id=context.id,
+                        context_kind=context.kind,
+                        actor="system",
+                        kind="task_progress",
+                        text=reply_text,
+                    )
+                    return self._chat_result(context, queue_snapshot=snapshot, assistant_reply=reply_text)
         if self._is_explicit_select_command(content):
             return self._handle_explicit_select_command(context=context, request_id=request_id, content=content)
         if self._is_maintenance_status_request(content):
@@ -654,7 +686,11 @@ class ChatController:
     @staticmethod
     def _is_exit_to_normal_chat(text: str) -> bool:
         lowered = text.strip().lower()
-        return lowered in {"回到普通聊天", "退出这个报告", "聊别的", "normal chat"}
+        return lowered in {"回到普通聊天", "退出报告", "退出这个报告", "聊别的", "normal chat"}
+
+    @staticmethod
+    def _is_running_task_exit(text: str) -> bool:
+        return text.strip().lower() == "退出"
 
     @staticmethod
     def _is_help_command(text: str) -> bool:
@@ -805,6 +841,30 @@ def _format_confirmed_message(result: dict[str, Any]) -> str:
     if "priceAlert" in result:
         return "已确认，价格提醒已创建。"
     return "已确认，已提交。"
+
+
+def _format_running_task_status_message(
+    snapshot: dict[str, Any], *, include_chat_blocked_hint: bool = False
+) -> str:
+    suffix = (
+        "这条普通聊天暂时无法处理；请等待报告完成，或回复“退出”回到普通聊天。"
+        if include_chat_blocked_hint
+        else "需要普通聊天请回复“退出”。"
+    )
+    running = snapshot.get("runningTask")
+    if not isinstance(running, dict):
+        return f"报告正在生成中，请稍候。{suffix}"
+    progress = running.get("progress")
+    progress = progress if isinstance(progress, dict) else {}
+    action = str(progress.get("currentAction") or progress.get("stageLabel") or "").strip()
+    percent = progress.get("percent")
+    if isinstance(percent, (int, float)):
+        progress_text = f"{action}，{int(percent)}%" if action else f"{int(percent)}%"
+    else:
+        progress_text = action
+    if progress_text:
+        return f"报告正在生成中，当前：{progress_text}。{suffix}"
+    return f"报告正在生成中，请稍候。{suffix}"
 
 
 def _task_id_from_result(result: dict[str, Any]) -> str | None:

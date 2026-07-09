@@ -707,7 +707,56 @@ describe('settings-wechat settings page', () => {
     expect(within(updateSection).getByRole('button', { name: '安装更新' })).toBeDisabled();
   });
 
-  it('polls install status without rendering in-progress update as success', async () => {
+  it('shows plain-language remote update progress', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        return json({
+          factoryReset: {
+            installRoot: '/opt/claw-trade',
+            sharedRoot: '/opt/claw-trade/shared',
+            resetPaths: [],
+            preservedPaths: [],
+            confirmation: 'RESET_CLAW_TRADE',
+          },
+          update: {
+            status: 'downloading',
+            userMessage: '正在下载更新包：120 MB / 1800 MB。网络中断后会自动继续。',
+            progressPercent: 14,
+            progressLabel: '正在下载更新包',
+            downloadReceivedBytes: 125829120,
+            downloadTotalBytes: 1887436800,
+          },
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = await screen.findByTestId('settings-section-update');
+
+    expect(updateSection).toHaveTextContent('检查并安装最新版本。下载中断后可以继续，安装失败不会破坏当前版本。');
+    expect(updateSection).not.toHaveTextContent('signed manifest');
+    expect(updateSection).not.toHaveTextContent('archive hash');
+    expect(await within(updateSection).findByText('正在下载更新包：120 MB / 1800 MB。网络中断后会自动继续。')).toHaveClass(
+      'is-warning',
+    );
+    expect(within(updateSection).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '14');
+    expect(within(updateSection).getByText('正在下载更新包')).toBeInTheDocument();
+  });
+
+  it('does not render in-progress update status as success', async () => {
     vi.useFakeTimers();
     window.confirm = vi.fn(() => true);
     let maintenanceCalls = 0;
@@ -799,16 +848,12 @@ describe('settings-wechat settings page', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    const inProgress = within(updateSection).getByText('正在检查更新后服务健康状态。');
-    expect(inProgress).toHaveClass('is-warning');
+    const scheduled = within(updateSection).getByText('已安装版本 1.2.3；正在重启服务并检查健康状态。');
+    expect(scheduled).toHaveClass('is-warning');
+    expect(within(updateSection).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '85');
     expect(updateSection.querySelector('.ct-inline-alert.is-success')?.textContent ?? '').not.toContain(
-      '正在检查更新后服务健康状态。',
+      '正在重启服务并检查健康状态。',
     );
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
-    expect(within(updateSection).getByText('已安装并启用版本 1.2.3。')).toHaveClass('is-success');
   }, 10000);
 
   it('loads WeChat QR when opening general settings and still supports manual refresh', async () => {

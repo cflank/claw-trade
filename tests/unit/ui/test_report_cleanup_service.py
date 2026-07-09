@@ -33,11 +33,8 @@ class _FakeRunner:
 
 
 class _ReadyPdfService:
-    def __init__(self, artifact_id: str) -> None:
-        self._artifact_id = artifact_id
-
-    def get_latest_record(self, _report_id: str) -> object:
-        return SimpleNamespace(state="ready", pdf_artifact_id=self._artifact_id)
+    def render_saved_markdown_to_pdf_bytes(self, _report_id: str) -> bytes:
+        return b"%PDF-1.7\n" + (b"A" * 700)
 
 
 class _TrackingChannel:
@@ -398,12 +395,11 @@ def test_full_report_file_request_marks_report_as_in_flight() -> None:
         title="BTC 报告",
         markdown="正文",
     )
-    artifact = repo.write_pdf_artifact("run-sending", b"%PDF-1.7\n" + (b"A" * 700))
     seen_active_ids: list[set[str]] = []
     service = ReportNotificationService(
         repo,
         CompletionSummaryBuilder(repo),
-        _ReadyPdfService(artifact.id),  # type: ignore[arg-type]
+        _ReadyPdfService(),  # type: ignore[arg-type]
         _TrackingChannel(tracker, seen_active_ids),
         file_send_tracker=tracker,
     )

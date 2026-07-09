@@ -8,7 +8,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
-from uuid import uuid4
 
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
@@ -42,21 +41,10 @@ class SavedReportRecord:
     origin_context_id: str | None = None
 
 
-@dataclass(frozen=True)
-class PdfArtifactRecord:
-    id: str
-    report_id: str
-    content: bytes | None
-    path: Path | None
-    content_hash: str
-    created_at: str
-
-
 class ReportRepository:
     def __init__(self, *, deletion_index_path: Path | None = None) -> None:
         self._reports: dict[str, SavedReportRecord] = {}
         self._report_order: list[str] = []
-        self._pdf_artifacts: dict[str, list[PdfArtifactRecord]] = {}
         self._deletion_index_path = deletion_index_path
         self._deleted_report_ids: set[str] = _load_deleted_report_ids(deletion_index_path)
 
@@ -126,21 +114,16 @@ class ReportRepository:
 
     def delete_saved_report(self, report_id: str) -> bool:
         existed = report_id in self._reports or report_id in self._deleted_report_ids
-        for artifact in self._pdf_artifacts.get(report_id, ()):
-            if artifact.path is not None:
-                artifact.path.unlink(missing_ok=True)
         self._reports.pop(report_id, None)
         self._report_order = [item for item in self._report_order if item != report_id]
-        self._pdf_artifacts.pop(report_id, None)
         self._deleted_report_ids.add(report_id)
         self._persist_deleted_report_ids()
         return existed
 
     def remove_report_state(self, report_id: str) -> bool:
-        existed = report_id in self._reports or report_id in self._pdf_artifacts
+        existed = report_id in self._reports
         self._reports.pop(report_id, None)
         self._report_order = [item for item in self._report_order if item != report_id]
-        self._pdf_artifacts.pop(report_id, None)
         return existed
 
     def discard_deleted_report_id(self, report_id: str) -> bool:
@@ -196,100 +179,6 @@ class ReportRepository:
             )
         return assets
 
-    def write_pdf_artifact(self, report_id: str, pdf_bytes: bytes) -> PdfArtifactRecord:
-        report = self._reports.get(report_id)
-        if report is None:
-            raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
-        artifact_id = f"pdf_{uuid4().hex}"
-        content_path: Path | None = None
-        content: bytes | None = pdf_bytes
-        if report.asset_dir is not None:
-            pdf_dir = report.asset_dir.parent / "pdf"
-            pdf_dir.mkdir(parents=True, exist_ok=True)
-            content_path = pdf_dir / f"{artifact_id}.pdf"
-            content_path.write_bytes(pdf_bytes)
-            content = None
-        artifact = PdfArtifactRecord(
-            id=artifact_id,
-            report_id=report_id,
-            content=content,
-            path=content_path,
-            content_hash=sha256(pdf_bytes).hexdigest(),
-            created_at=_now_iso(),
-        )
-        self._pdf_artifacts.setdefault(report_id, []).append(artifact)
-        return artifact
-
-    def restore_pdf_artifact(self, report_id: str, pdf_path: Path) -> PdfArtifactRecord | None:
-        report = self._reports.get(report_id)
-        if report is None or not pdf_path.is_file() or not pdf_path.stem.startswith("pdf_"):
-            return None
-        artifact_id = pdf_path.stem
-        for item in self._pdf_artifacts.get(report_id, ()):
-            if item.id == artifact_id:
-                return item
-        try:
-            pdf_bytes = pdf_path.read_bytes()
-            created_at = datetime.fromtimestamp(pdf_path.stat().st_mtime, UTC).isoformat()
-        except OSError:
-            return None
-        if not pdf_bytes.startswith(b"%PDF-"):
-            return None
-        artifact = PdfArtifactRecord(
-            id=artifact_id,
-            report_id=report_id,
-            content=None,
-            path=pdf_path.resolve(),
-            content_hash=sha256(pdf_bytes).hexdigest(),
-            created_at=created_at,
-        )
-        self._pdf_artifacts.setdefault(report_id, []).append(artifact)
-        return artifact
-
-    def latest_pdf_artifact(self, report_id: str) -> PdfArtifactRecord | None:
-        items = self._pdf_artifacts.get(report_id, ())
-        return items[-1] if items else None
-
-    def remove_pdf_artifact(self, report_id: str, artifact_id: str) -> bool:
-        items = self._pdf_artifacts.get(report_id, ())
-        if not items:
-            return False
-        removed = False
-        remaining: list[PdfArtifactRecord] = []
-        for item in items:
-            if item.id != artifact_id:
-                remaining.append(item)
-                continue
-            removed = True
-            if item.path is not None:
-                item.path.unlink(missing_ok=True)
-        if remaining:
-            self._pdf_artifacts[report_id] = remaining
-        else:
-            self._pdf_artifacts.pop(report_id, None)
-        return removed
-
-    def read_pdf_bytes(self, report_id: str, artifact_id: str) -> bytes:
-        items = self._pdf_artifacts.get(report_id, ())
-        for item in items:
-            if item.id == artifact_id:
-                if item.content is not None:
-                    return item.content
-                if item.path is not None and item.path.exists() and item.path.is_file():
-                    return item.path.read_bytes()
-                break
-        raise UiProductError("REPORT_NOT_READY", "完整报告文件暂不可发送，请在设备界面查看。")
-
-    def pdf_artifact_path(self, report_id: str, artifact_id: str) -> Path | None:
-        items = self._pdf_artifacts.get(report_id, ())
-        for item in items:
-            if item.id != artifact_id:
-                continue
-            if item.path is not None and item.path.exists() and item.path.is_file():
-                return item.path
-            return None
-        raise UiProductError("REPORT_NOT_READY", "完整报告文件暂不可发送，请在设备界面查看。")
-
     def get_report_detail(
         self,
         report_id: str,
@@ -302,6 +191,7 @@ class ReportRepository:
         report = self.get_report(report_id)
         if report is None:
             raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
+        _ = pdf_export
         markdown = _rewrite_markdown_asset_urls(report)
         assets = [
             {
@@ -313,10 +203,10 @@ class ReportRepository:
             },
             {
                 "kind": "pdf",
-                "available": bool(pdf_export and pdf_export.get("state") == "ready"),
-                "status": (pdf_export or {}).get("state", "not_requested"),
-                "userMessage": (pdf_export or {}).get("userMessage"),
-                "updatedAt": (pdf_export or {}).get("updatedAt"),
+                "available": False,
+                "status": "not_requested",
+                "userMessage": None,
+                "updatedAt": None,
             },
         ]
         return {
@@ -348,6 +238,7 @@ def to_saved_report_for_user(report: SavedReportRecord) -> dict[str, Any]:
         "title": report.title,
         "generatedAt": report.generated_at,
         "summarySnippet": report.summary_snippet,
+        "originContextId": report.origin_context_id,
         "canForwardToChannel": _has_channel_reply_target(report.origin_context_id),
     }
 

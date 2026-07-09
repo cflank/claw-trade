@@ -7,7 +7,6 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_PATH = REPO_ROOT / "openclaw_plugins" / "claw-trade-frontline-tools" / "index.js"
 
@@ -75,45 +74,37 @@ process.stdout.write(JSON.stringify(tools));
     return json.loads(completed.stdout)
 
 
-def _run_reply_dispatch_hook(text: str, *, fetch_impl: str) -> dict[str, object]:
+def _run_before_dispatch_hook(text: str, *, fetch_impl: str) -> dict[str, object]:
     script = f"""
 import plugin from {json.dumps(str(PLUGIN_PATH))};
-const replies = [];
 globalThis.fetch = {fetch_impl};
 process.env.CLAW_TRADE_UI_INBOUND_URL = "http://127.0.0.1:5175/api/ui/channel-inbound-message";
 const api = {{
   registerTool() {{}},
   on(name, handler) {{
-    if (name === "reply_dispatch") {{
-      globalThis.__replyDispatchHook = handler;
+    if (name === "before_dispatch") {{
+      globalThis.__beforeDispatchHook = handler;
     }}
   }},
 }};
 plugin.register(api);
-const hook = globalThis.__replyDispatchHook;
-const dispatcher = {{
-  sendFinalReply(payload) {{
-    replies.push(payload);
-    return true;
-  }},
-  getQueuedCounts() {{
-    return {{ tool: 0, block: 0, final: replies.length }};
-  }},
-}};
+const hook = globalThis.__beforeDispatchHook;
 const result = await hook(
   {{
-    originatingChannel: "openclaw-weixin",
-    runId: "run-1",
-    ctx: {{
-      Body: {json.dumps(text)},
-      SenderId: "sender-1",
-      AccountId: "account-1",
-      MessageSid: "message-1",
-    }},
+    channel: "openclaw-weixin",
+    body: {json.dumps(text)},
+    content: {json.dumps(text)},
+    sessionKey: "session-1",
+    timestamp: 1770000000000,
   }},
-  {{ dispatcher }},
+  {{
+    channelId: "openclaw-weixin",
+    accountId: "account-1",
+    conversationId: "sender-1",
+    sessionKey: "session-1",
+  }},
 );
-process.stdout.write(JSON.stringify({{ result, replies }}));
+process.stdout.write(JSON.stringify({{ result: result ?? null }}));
 """
     completed = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -126,24 +117,33 @@ process.stdout.write(JSON.stringify({{ result, replies }}));
 
 
 def test_wechat_report_reply_bridge_failure_does_not_fall_back_to_default_agent() -> None:
-    result = _run_reply_dispatch_hook(
+    result = _run_before_dispatch_hook(
         "发送完整报告",
         fetch_impl='async () => { throw new Error("timeout"); }',
     )
 
     assert result["result"]["handled"] is True
-    assert result["replies"][0]["text"].startswith("报告请求已收到")
-    assert "/report" not in result["replies"][0]["text"]
+    assert result["result"]["text"].startswith("报告请求已收到")
+    assert "/report" not in result["result"]["text"]
 
 
 def test_wechat_ordinary_reply_bridge_failure_can_fall_back_to_default_agent() -> None:
-    result = _run_reply_dispatch_hook(
+    result = _run_before_dispatch_hook(
         "你好",
         fetch_impl='async () => { throw new Error("timeout"); }',
     )
 
-    assert result["result"]["handled"] is False
-    assert result["replies"] == [{"text": "收到，正在处理。"}]
+    assert result["result"] is None
+
+
+def test_wechat_deferred_ordinary_reply_does_not_duplicate_processing_ack() -> None:
+    result = _run_before_dispatch_hook(
+        "你好",
+        fetch_impl='async () => ({ ok: true, json: async () => ({ handled: true, replyText: "收到，正在处理。", state: "chat_processing", deferFinalReply: true }) })',
+    )
+
+    assert result["result"]["handled"] is True
+    assert result["result"]["text"] == "收到，正在处理。"
 
 
 def _run_tool(

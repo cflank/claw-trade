@@ -16,7 +16,6 @@ from claw_trade.ui_contracts.enums import IntentKind, MarketProfile
 from claw_trade.workflow.report_request_factory import build_report_run_request, report_display_name
 
 _LOGGER = logging.getLogger("uvicorn.error")
-_UNRESOLVED_COMPANY_NAME = "名称未查到"
 
 
 class CompanyNameResolver(Protocol):
@@ -46,6 +45,7 @@ class ConfirmationController:
         )
         self._report_model_ready_checker = report_model_ready_checker
         self._company_name_resolver = company_name_resolver
+        self._company_name_cache: dict[tuple[str, str], str | None] = {}
         self._default_price_alert_notification = default_price_alert_notification
         self._drafts: dict[str, IntentDraft] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
@@ -114,12 +114,13 @@ class ConfirmationController:
             return payload
         if frozen.kind == IntentKind.SCHEDULED_REPORT:
             schedule = frozen.schedule or {}
+            instrument_name = self._required_company_name_for_draft(frozen)
             payload = {
                 "status": "confirmed",
                 **self._scheduler_service.create_scheduled_report_for_user(
                     request_id=request_id,
                     instrument_code=frozen.instrument_code,
-                    instrument_name=frozen.instrument_name,
+                    instrument_name=instrument_name,
                     market=frozen.market,
                     frequency=str(schedule.get("frequency", "daily")),
                     time_of_day=str(schedule.get("timeOfDay", "09:00")),
@@ -150,7 +151,7 @@ class ConfirmationController:
         raise QueueError("INVALID_INPUT", "invalid_input", "暂不支持的确认类型。")
 
     def _build_report_task_input(self, draft: IntentDraft) -> dict[str, Any]:
-        company_name = self._display_company_name_for_draft(draft)
+        company_name = self._required_company_name_for_draft(draft)
         request = build_report_run_request(
             ticker=draft.instrument_code,
             company_name=company_name,
@@ -171,13 +172,58 @@ class ConfirmationController:
         }
 
     def _display_company_name_for_draft(self, draft: IntentDraft) -> str:
-        resolved = self._company_name_for_draft(draft)
-        if resolved:
-            return resolved
+        required_name = self._required_company_name_for_draft(draft) if draft.kind in {IntentKind.REPORT, IntentKind.SCHEDULED_REPORT} else None
+        if required_name:
+            return required_name
+        local_name = self._local_company_name_for_draft(draft)
+        if local_name:
+            return local_name
+        return draft.instrument_code
+
+    def _required_company_name_for_draft(self, draft: IntentDraft) -> str:
+        name = self._local_company_name_for_draft(draft) or self._company_name_for_draft(draft)
+        if name:
+            return name
+        raise QueueError(
+            "INVALID_INPUT",
+            "invalid_input",
+            f"标的 {draft.instrument_code} 名称解析失败，请检查代码或市场后重新输入。",
+        )
+
+    def _local_company_name_for_draft(self, draft: IntentDraft) -> str | None:
         existing = (draft.instrument_name or "").strip()
         if self._is_usable_display_name(draft, existing):
             return existing
-        return _UNRESOLVED_COMPANY_NAME
+        fallback = report_display_name(draft.instrument_code, draft.market.value).strip()
+        if self._is_usable_display_name(draft, fallback):
+            return fallback
+        return None
+
+    def _company_name_for_draft(self, draft: IntentDraft) -> str | None:
+        key = (draft.market.value, draft.instrument_code)
+        if key in self._company_name_cache:
+            return self._company_name_cache[key]
+        resolver = self._company_name_resolver
+        if resolver is None:
+            self._company_name_cache[key] = None
+            return None
+        try:
+            names = resolver(market=draft.market.value, symbol_ids=(draft.instrument_code,))
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "company name resolver failed market=%s symbol=%s error=%s",
+                draft.market.value,
+                draft.instrument_code,
+                exc,
+                exc_info=True,
+            )
+            self._company_name_cache[key] = None
+            return None
+        name = str(names.get(draft.instrument_code) or "").strip()
+        if not self._is_usable_display_name(draft, name):
+            name = None
+        self._company_name_cache[key] = name
+        return name
 
     @staticmethod
     def _notification_for_origin_context(notification: dict[str, Any], origin_context_id: str | None) -> dict[str, Any]:
@@ -204,37 +250,8 @@ class ConfirmationController:
         default = self._default_price_alert_notification()
         return routed if default is None else {**routed, **default, "enabled": True}
 
-    def _company_name_for_draft(self, draft: IntentDraft) -> str | None:
-        resolver = self._company_name_resolver
-        if resolver is None:
-            return None
-        try:
-            names = resolver(market=draft.market.value, symbol_ids=(draft.instrument_code,))
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning(
-                "company name resolver failed market=%s symbol=%s error=%s",
-                draft.market.value,
-                draft.instrument_code,
-                exc,
-                exc_info=True,
-            )
-            return None
-        name = str(names.get(draft.instrument_code) or "").strip()
-        if self._is_usable_display_name(draft, name):
-            return name
-        return None
-
     def _assert_company_name_available(self, draft: IntentDraft) -> None:
-        if self._company_name_for_draft(draft):
-            return
-        existing = (draft.instrument_name or "").strip()
-        if self._is_usable_display_name(draft, existing):
-            return
-        raise QueueError(
-            "INVALID_INPUT",
-            "invalid_input",
-            f"标的 {draft.instrument_code} 名称解析失败，不能创建确认卡。请先检查标的或配置名称解析数据源。",
-        )
+        self._required_company_name_for_draft(draft)
 
     @staticmethod
     def _is_usable_display_name(draft: IntentDraft, value: str) -> bool:

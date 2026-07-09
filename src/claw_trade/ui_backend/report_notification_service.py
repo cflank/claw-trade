@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, Protocol
 
-from claw_trade.ui_backend.pdf_export_service import PdfExportService
+from claw_trade.ui_backend.pdf_export_service import PdfExportService, pdf_export_user_message
 from claw_trade.ui_backend.report_cleanup import ReportFileSendTracker
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.summary_builder import (
@@ -68,17 +69,11 @@ class ReportNotificationService:
         target: str | None = None,
         account_id: str | None = None,
     ) -> dict[str, object]:
-        pdf_state = self._pdf_export_service.get_latest_record(report_id)
-        if pdf_state is None:
-            pdf_state = self._pdf_export_service.export_saved_markdown_to_pdf(
-                report_id,
-                request_id=f"completion:{report_id}:pdf",
-            )
         summary = self._summary_builder.get_cached(report_id)
         if summary is None:
             summary = self._summary_builder.build_completion_summary_from_saved_report(
                 report_id,
-                pdf_available=bool(pdf_state and pdf_state.state == "ready"),
+                pdf_available=False,
             )
         status: dict[str, object] | None = None
         can_send_file: bool | None = None
@@ -122,7 +117,6 @@ class ReportNotificationService:
         channel_kind: str = "wechat_clawbot",
         target: str | None = None,
         account_id: str | None = None,
-        download_url: str | None = None,
     ) -> dict[str, object]:
         with self._file_send_tracker.track(report_id):
             return self._request_full_report_file(
@@ -131,7 +125,6 @@ class ReportNotificationService:
                 channel_kind=channel_kind,
                 target=target,
                 account_id=account_id,
-                download_url=download_url,
             )
 
     def _request_full_report_file(
@@ -142,7 +135,6 @@ class ReportNotificationService:
         channel_kind: str,
         target: str | None,
         account_id: str | None,
-        download_url: str | None,
     ) -> dict[str, object]:
         report = self._repository.get_report(report_id)
         if report is None:
@@ -161,60 +153,23 @@ class ReportNotificationService:
                 "userMessage": "微信已连接，但没有可投递的微信聊天。请先在要接收报告的聊天里给 ClawBot 发一条消息，再点转发。",
             }
 
-        latest_pdf = self._pdf_export_service.get_latest_record(report_id)
-        if latest_pdf is None or latest_pdf.state != "ready":
-            latest_pdf = self._pdf_export_service.export_saved_markdown_to_pdf(
-                report_id,
-                request_id=f"{request_id}:pdf",
-            )
-        if latest_pdf.state != "ready" or not latest_pdf.pdf_artifact_id:
+        try:
+            payload = self._pdf_export_service.render_saved_markdown_to_pdf_bytes(report_id)
+        except Exception as exc:
             return {
                 "sent": False,
                 "code": "PDF_EXPORT_FAILED",
-                "userMessage": latest_pdf.user_message
-                or "PDF 暂不可用，完整报告仍可在设备界面查看。",
+                "userMessage": pdf_export_user_message(exc),
             }
 
-        status = self._channel_bridge.get_channel_status(probe=True)
-        if str(status.get("state")) == "connected" and not bool(status.get("canSendFile")):
-            if download_url:
-                fallback = self._send_report_download_link(
-                    report_title=report.title,
-                    download_url=download_url,
-                    channel_kind=channel_kind,
-                    request_id=request_id,
-                    target=resolved_target,
-                    account_id=resolved_account_id,
-                )
-                if fallback is not None:
-                    return fallback
-            return {
-                "sent": False,
-                "code": "FILE_SEND_UNSUPPORTED",
-                "userMessage": "完整报告文件暂不可发送，请在设备界面查看。",
-            }
-
-        try:
-            file_path = self._repository.pdf_artifact_path(report_id, latest_pdf.pdf_artifact_id)
-            payload = (
-                None
-                if file_path is not None
-                else self._repository.read_pdf_bytes(report_id, latest_pdf.pdf_artifact_id)
-            )
-        except UiProductError:
-            return {
-                "sent": False,
-                "code": "FILE_SEND_UNSUPPORTED",
-                "userMessage": "完整报告文件暂不可发送，请在设备界面查看。",
-            }
         try:
             result = self._channel_bridge.send_report_file_via_channel(
                 request_id=request_id,
                 report_id=report_id,
                 channel_kind=channel_kind,
-                file_name=f"{report.instrument_code}_report.pdf",
+                file_name=_report_pdf_filename(report.instrument_code, report.market, report.generated_at),
                 payload=payload,
-                file_path=file_path,
+                file_path=None,
                 target=resolved_target,
                 account_id=resolved_account_id,
             )
@@ -222,17 +177,6 @@ class ReportNotificationService:
             code = str(getattr(exc, "code", "FILE_SEND_UNSUPPORTED"))
             if code not in {"NOTIFICATION_UNAVAILABLE", "FILE_SEND_UNSUPPORTED"}:
                 code = "FILE_SEND_UNSUPPORTED"
-            if download_url:
-                fallback = self._send_report_download_link(
-                    report_title=report.title,
-                    download_url=download_url,
-                    channel_kind=channel_kind,
-                    request_id=request_id,
-                    target=resolved_target,
-                    account_id=resolved_account_id,
-                )
-                if fallback is not None:
-                    return fallback
             user_message = str(getattr(exc, "user_message", "") or "").strip()
             return {
                 "sent": False,
@@ -273,36 +217,16 @@ class ReportNotificationService:
             "userMessage": "完整报告已发送。",
         }
 
-    def _send_report_download_link(
-        self,
-        *,
-        report_title: str,
-        download_url: str,
-        channel_kind: str,
-        request_id: str,
-        target: str,
-        account_id: str | None,
-    ) -> dict[str, object] | None:
-        try:
-            raw = self._channel_bridge.send_text(
-                channel_kind=channel_kind,
-                text=f"完整报告 PDF 已生成。\n{report_title}\n下载链接：{download_url}",
-                dedupe_key=f"{request_id}:pdf-download-link",
-                target=target,
-                account_id=account_id,
-            )
-        except Exception:
-            return None
-        if raw.get("ok") is False or raw.get("sent") is False:
-            return None
-        message_id = raw.get("messageId") or raw.get("message_id")
-        if isinstance(message_id, str):
-            message_id = message_id.strip() or None
-        else:
-            message_id = None
-        return {
-            "sent": True,
-            "messageId": message_id,
-            "delivery": "download_link",
-            "userMessage": "微信附件上传失败，已发送 PDF 下载链接。",
-        }
+
+def _report_pdf_filename(instrument_code: str, market: str, generated_at: str) -> str:
+    parts = [
+        _filename_token(instrument_code) or "report",
+        _filename_token(market),
+        _filename_token(generated_at[:10]),
+        "report",
+    ]
+    return "-".join(part for part in parts if part) + ".pdf"
+
+
+def _filename_token(value: str) -> str:
+    return re.sub(r"[^\w.-]+", "_", str(value or "")).strip("._-")

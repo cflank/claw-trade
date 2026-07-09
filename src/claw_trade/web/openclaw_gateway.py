@@ -32,6 +32,16 @@ _CHANNEL_STATUS_LIGHT_CACHE_TTL_SECONDS = 30.0
 _CHANNEL_STATUS_PROBE_CACHE_TTL_SECONDS = 15.0
 _CHAT_GATEWAY_METHODS = frozenset({"sessions.create", "agent", "chat.send", "agent.wait", "chat.history"})
 _BACKGROUND_GATEWAY_METHODS = frozenset({"channels.status"})
+_WINDOWS_RESERVED_TEMP_MEDIA_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+
+
 def _resolve_gateway_rpc_helper_script() -> Path:
     env_path = os.environ.get("OPENCLAW_GATEWAY_RPC_HELPER_SCRIPT", "").strip()
     if env_path:
@@ -77,6 +87,7 @@ class _GatewayRpcHelperProcess:
         *,
         expect_final: bool,
         timeout_ms: int | None,
+        scopes: list[str] | None = None,
     ) -> Any:
         effective_timeout_ms = timeout_ms or self._timeout_ms
         with self._lock:
@@ -92,6 +103,8 @@ class _GatewayRpcHelperProcess:
                 "expectFinal": expect_final,
                 "timeoutMs": effective_timeout_ms,
             }
+            if scopes is not None:
+                request["scopes"] = list(scopes)
             try:
                 assert process.stdin is not None
                 process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
@@ -620,14 +633,14 @@ class OpenClawGatewayRpcClient:
         account_id: str | None = None,
     ) -> Any:
         temp_media_path: Path | None = None
+        temp_media_dir = None
         if file_path is not None:
             media_path = Path(file_path)
         elif payload is not None:
-            suffix = Path(file_name).suffix or ".bin"
-            with tempfile.NamedTemporaryFile("wb", delete=False, prefix="openclaw-ui-file-", suffix=suffix) as handle:
-                handle.write(payload)
-                media_path = Path(handle.name)
-                temp_media_path = media_path
+            temp_media_dir = tempfile.TemporaryDirectory(prefix="openclaw-ui-file-")
+            media_path = Path(temp_media_dir.name) / _safe_temp_media_name(file_name)
+            media_path.write_bytes(payload)
+            temp_media_path = media_path
         else:
             raise RuntimeError("file payload unavailable")
         params: dict[str, Any] = {
@@ -637,13 +650,27 @@ class OpenClawGatewayRpcClient:
             "idempotencyKey": dedupe_key,
             "to": to,
         }
+        if temp_media_path is not None:
+            params["skipQueue"] = True
         if account_id:
             params["accountId"] = account_id
         try:
-            return self._call("send", params, timeout_ms=self._channel_file_send_timeout_ms())
-        finally:
+            timeout_ms = self._channel_file_send_timeout_ms()
             if temp_media_path is not None:
-                temp_media_path.unlink(missing_ok=True)
+                return self._background_helper.call(
+                    "send",
+                    params,
+                    expect_final=False,
+                    timeout_ms=timeout_ms,
+                    scopes=["operator.admin"],
+                )
+            return self._call("send", params, timeout_ms=timeout_ms)
+        finally:
+            if temp_media_dir is not None:
+                try:
+                    temp_media_dir.cleanup()
+                except OSError as exc:
+                    _LOGGER.warning("failed to clean temporary media directory %s: %s", temp_media_dir.name, exc)
 
     def cron_add(self, params: Mapping[str, Any]) -> Any:
         return self._call("cron.add", params, timeout_ms=15_000)
@@ -1032,6 +1059,16 @@ def _path_mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _safe_temp_media_name(file_name: str) -> str:
+    raw = Path(str(file_name or "").replace("\\", "/").replace("\x00", "_")).name
+    name = "".join("_" if ord(ch) < 32 or ch in '<>:"/\\|?*' else ch for ch in raw).strip(" .")
+    if not name or name in {".", ".."}:
+        return "file.bin"
+    if name.split(".", 1)[0].upper() in _WINDOWS_RESERVED_TEMP_MEDIA_NAMES:
+        name = f"_{name}"
+    return name
 
 
 def _message_text(message: Mapping[str, Any]) -> str:

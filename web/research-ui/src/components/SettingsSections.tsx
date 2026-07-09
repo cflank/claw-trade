@@ -7,6 +7,7 @@ import type {
   ProductionMaintenanceStatusOutput,
   ReportCleanupSettingsForUser,
   ReportRetentionDays,
+  UpdateActionStatus,
 } from '../api/contracts';
 import {
   LLM_PROVIDER_PRESETS,
@@ -205,6 +206,30 @@ function updateStatusTone(status?: string) {
   return 'is-warning';
 }
 
+function updateProgress(update?: ProductionMaintenanceStatusOutput['update'] | null) {
+  if (!update) {
+    return null;
+  }
+  const fallback: Partial<Record<UpdateActionStatus, { percent: number; label: string }>> = {
+    checking_manifest: { percent: 5, label: '正在检查新版本' },
+    downloading: { percent: 10, label: '正在下载更新包' },
+    restart_scheduled: { percent: 85, label: '正在切换版本' },
+    restarting: { percent: 92, label: '正在重启服务' },
+    health_checking: { percent: 98, label: '正在确认新版本可用' },
+    installed: { percent: 100, label: '更新完成' },
+    rollback_started: { percent: 70, label: '正在恢复旧版本' },
+    rollback_succeeded: { percent: 100, label: '已恢复旧版本' },
+  }[update.status];
+  if (!fallback) {
+    return null;
+  }
+  const rawPercent = typeof update.progressPercent === 'number' ? update.progressPercent : fallback.percent;
+  return {
+    percent: Math.max(0, Math.min(100, Math.round(rawPercent))),
+    label: update.progressLabel || fallback.label,
+  };
+}
+
 type SettingsMainTab = 'model' | 'general' | 'data';
 
 const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
@@ -343,6 +368,7 @@ export function SettingsSections({
   const modelFieldError = modelStatusState(llm) === 'failed';
   const dataSourceMessageTone = dataSourceStatusTone(dataSourceDraft.state ?? 'draft');
   const modelOptions = modelOptionsForProvider(llm.provider, llm.defaultModel);
+  const productionUpdateProgress = productionMaintenance ? updateProgress(productionMaintenance.update) : null;
   const selectedModel = normalizeLlmModelValue(llm.provider, llm.defaultModel);
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsMainTab>('model');
   const visibleDataSources = DATA_SOURCE_TYPES.map((type) => dataSources.find((item) => item.supportedType === type)).filter(
@@ -890,10 +916,24 @@ export function SettingsSections({
         <div className="ct-section-head">
           <h2>远程更新</h2>
         </div>
-        <p className="ct-section-desc">从已配置对象存储检查 signed manifest；安装会校验 archive hash 和签名。</p>
+        <p className="ct-section-desc">检查并安装最新版本。下载中断后可以继续，安装失败不会破坏当前版本。</p>
         {productionMaintenance ? (
           <div className={`ct-inline-alert ${updateStatusTone(productionMaintenance.update.status)}`}>
             {productionMaintenance.update.userMessage}
+          </div>
+        ) : null}
+        {productionUpdateProgress ? (
+          <div className="ct-update-progress">
+            <div
+              className="ct-progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={productionUpdateProgress.percent}
+            >
+              <div className="ct-progress-fill" style={{ width: `${productionUpdateProgress.percent}%` }} />
+            </div>
+            <p className="ct-task-action">{productionUpdateProgress.label}</p>
           </div>
         ) : null}
         <div className="ct-button-row ct-settings-actions">

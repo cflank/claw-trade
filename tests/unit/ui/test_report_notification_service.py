@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from claw_trade.ui_backend import pdf_validation
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.pdf_runtime_capabilities import (
     PdfRuntimeCapabilities,
@@ -59,8 +58,12 @@ class _ChannelBridge:
 
 
 class _PassRenderer:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def render(self, markdown: str, *, report_asset_dir=None) -> bytes:  # type: ignore[no-untyped-def]
         _ = (markdown, report_asset_dir)
+        self.calls += 1
         return b"%PDF-1.7\n" + (b"A" * 700)
 
 
@@ -111,12 +114,7 @@ def test_notify_report_completion_pushes_summary_not_full_report() -> None:
     assert channel.last_account_id == "account-1"
 
 
-def test_notify_report_completion_generates_pdf_by_default(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr(
-        pdf_validation,
-        "_extract_text_with_available_engine",
-        lambda _payload: (1, "BTC 报告 核心理由", "stub"),
-    )
+def test_notify_report_completion_does_not_generate_pdf_by_default(tmp_path) -> None:  # type: ignore[no-untyped-def]
     repo = ReportRepository()
     repo.save_succeeded_report(
         report_id="r-notify",
@@ -127,25 +125,20 @@ def test_notify_report_completion_generates_pdf_by_default(tmp_path, monkeypatch
         asset_dir=tmp_path / "reports" / "assets",
     )
     summary_builder = CompletionSummaryBuilder(repo)
+    renderer = _PassRenderer()
     pdf_service = PdfExportService(
         repo,
-        renderer=_PassRenderer(),
+        renderer=renderer,
         runtime_capabilities_provider=_ready_capabilities,
     )
     channel = _ChannelBridge(connected=True, can_send_text=True, can_send_file=True)
     service = ReportNotificationService(repo, summary_builder, pdf_service, channel)
 
-    assert pdf_service.get_latest_record("r-notify") is None
-
     result = service.notify_report_completion("r-notify", target="sender-1", account_id="account-1")
 
     assert result["sent"] is True
-    pdf_record = pdf_service.get_latest_record("r-notify")
-    assert pdf_record is not None
-    assert pdf_record.state == "ready"
-    pdf_path = repo.pdf_artifact_path("r-notify", pdf_record.pdf_artifact_id or "")
-    assert pdf_path is not None
-    assert pdf_path.exists()
+    assert renderer.calls == 0
+    assert not (tmp_path / "reports" / "pdf").exists()
 
 
 def test_notify_report_completion_does_not_ask_for_file_when_channel_cannot_send_file() -> None:

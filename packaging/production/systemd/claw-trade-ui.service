@@ -19,7 +19,6 @@ ExecStart=/opt/claw-trade/current/bin/claw-trade-ui
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
-PrivateTmp=true
 ReadWritePaths=/opt/claw-trade/shared
 
 [Install]

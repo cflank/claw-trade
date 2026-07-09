@@ -52,6 +52,18 @@ def _is_gateway_send_timeout(exc: BaseException) -> bool:
     return False
 
 
+def _is_wechat_session_paused(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    for _ in range(6):
+        if current is None:
+            return False
+        message = str(current)
+        if "session paused" in message or "errcode -14" in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class ChannelBridge:
     def __init__(self, openclaw_gateway_client: Any) -> None:
         self._client = openclaw_gateway_client
@@ -260,24 +272,27 @@ class ChannelBridge:
             self._light_status_cache = None
 
     def _connected_channel_status(self, provider_state: Mapping[str, Any]) -> dict[str, Any]:
+        has_file_sender = _has_file_sender(self._client)
         can_send_file = False
         file_capability_unverified = False
         if self._channel_capabilities_supported:
             try:
                 capabilities = self._client.channels_capabilities(channel=_PROVIDER_CHANNEL_ID)
-                can_send_file = bool(
+                capability_allows_file = bool(
                     capabilities.get("media")
                     or capabilities.get("file")
                     or capabilities.get("sendMedia")
                     or capabilities.get("can_send_file")
                 )
+                can_send_file = has_file_sender
+                file_capability_unverified = can_send_file and not capability_allows_file
             except Exception as exc:
                 if "unknown method: channels.capabilities" in str(exc):
                     self._channel_capabilities_supported = False
-                can_send_file = _has_file_sender(self._client)
+                can_send_file = has_file_sender
                 file_capability_unverified = can_send_file
         else:
-            can_send_file = _has_file_sender(self._client)
+            can_send_file = has_file_sender
             file_capability_unverified = can_send_file
         file_message = None
         if not can_send_file:
@@ -625,8 +640,6 @@ class ChannelBridge:
         status = self.get_channel_status(probe=True)
         if str(status.get("state")) != "connected":
             raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送前检查失败，报告没有发出。请稍后重试。")
-        if not bool(status.get("canSendFile")):
-            raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
         try:
             sender = _resolve_file_sender(self._client)
         except AttributeError as exc:
@@ -650,6 +663,8 @@ class ChannelBridge:
                     raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件上传失败，报告没有发出。请稍后重试。") from exc
                 if _is_gateway_send_timeout(exc):
                     raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送超时，报告没有发出。请稍后重试。") from exc
+                if _is_wechat_session_paused(exc):
+                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信登录已过期或暂停，报告没有发出。请重新连接微信后再试。") from exc
                 raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
         result = _to_send_result(
             raw,
@@ -659,15 +674,6 @@ class ChannelBridge:
         )
         if not bool(result.get("sent")):
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
-        if attempt > 0:
-            _cleanup_superseded_file_delivery_queue_entries(
-                channel=provider_channel,
-                target=resolved_target,
-                account_id=account_id,
-                file_name=file_name,
-                file_path=file_path,
-                original_dedupe_key=request_id,
-            )
         return result
 
     def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None:
@@ -831,104 +837,6 @@ def _connected_provider_account_id(raw: Mapping[str, Any], provider_channel_id: 
     if item is None or _account_state(item) != "connected":
         return None
     return _optional_str(item.get("accountId"))
-
-
-def _cleanup_superseded_file_delivery_queue_entries(
-    *,
-    channel: str,
-    target: str,
-    account_id: str | None,
-    file_name: str,
-    file_path: Path | None,
-    original_dedupe_key: str,
-) -> None:
-    state_dir = _resolve_openclaw_state_dir()
-    if state_dir is None:
-        default_state_dir = Path(".runtime/dev-services/openclaw-state")
-        state_dir = default_state_dir if default_state_dir.is_dir() else None
-    if state_dir is None:
-        return
-    queue_dir = state_dir / "delivery-queue"
-    if not queue_dir.is_dir():
-        return
-    expected_media_url = str(file_path) if file_path is not None else None
-    for queue_path in sorted(queue_dir.glob("*.json")):
-        try:
-            entry = json.loads(queue_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(entry, Mapping):
-            continue
-        if not _queued_delivery_matches_superseded_retry(
-            entry,
-            channel=channel,
-            target=target,
-            account_id=account_id,
-            file_name=file_name,
-            expected_media_url=expected_media_url,
-            original_dedupe_key=original_dedupe_key,
-        ):
-            continue
-        _mark_delivery_queue_entry_superseded(queue_path)
-
-
-def _queued_delivery_matches_superseded_retry(
-    entry: Mapping[str, Any],
-    *,
-    channel: str,
-    target: str,
-    account_id: str | None,
-    file_name: str,
-    expected_media_url: str | None,
-    original_dedupe_key: str,
-) -> bool:
-    if str(entry.get("channel") or "") != channel:
-        return False
-    if str(entry.get("to") or "") != target:
-        return False
-    if account_id is not None and str(entry.get("accountId") or "") != account_id:
-        return False
-    if "CDN upload server error" not in str(entry.get("lastError") or ""):
-        return False
-    mirror = entry.get("mirror")
-    if not isinstance(mirror, Mapping):
-        return False
-    if str(mirror.get("idempotencyKey") or "") != original_dedupe_key:
-        return False
-    if expected_media_url and _queued_delivery_has_media_url(entry, expected_media_url):
-        return True
-    return _queued_delivery_has_file_name(entry, file_name)
-
-
-def _queued_delivery_has_media_url(entry: Mapping[str, Any], expected_media_url: str) -> bool:
-    payloads = entry.get("payloads")
-    if isinstance(payloads, list):
-        for payload in payloads:
-            if isinstance(payload, Mapping) and str(payload.get("mediaUrl") or "") == expected_media_url:
-                return True
-    mirror = entry.get("mirror")
-    if not isinstance(mirror, Mapping):
-        return False
-    media_urls = mirror.get("mediaUrls")
-    return isinstance(media_urls, list) and expected_media_url in {str(item) for item in media_urls}
-
-
-def _queued_delivery_has_file_name(entry: Mapping[str, Any], file_name: str) -> bool:
-    payloads = entry.get("payloads")
-    if isinstance(payloads, list):
-        for payload in payloads:
-            if isinstance(payload, Mapping) and str(payload.get("text") or "") == file_name:
-                return True
-    mirror = entry.get("mirror")
-    return isinstance(mirror, Mapping) and str(mirror.get("text") or "") == file_name
-
-
-def _mark_delivery_queue_entry_superseded(queue_path: Path) -> None:
-    marker = queue_path.with_name(f"{queue_path.name}.superseded-{int(time.time() * 1000)}")
-    try:
-        queue_path.replace(marker)
-    except OSError:
-        pass
 
 
 def _unlink_if_file(path: Path) -> None:

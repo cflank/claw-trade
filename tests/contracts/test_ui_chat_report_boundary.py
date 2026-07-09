@@ -54,6 +54,18 @@ def _controller() -> tuple[ChatController, _FakeChatTransport, _FakeRunner]:
     return controller, transport, runner
 
 
+def _controller_with_confirmation(confirmation: ConfirmationController, queue: ReportTaskQueue) -> tuple[ChatController, _FakeChatTransport]:
+    transport = _FakeChatTransport()
+    controller = ChatController(
+        openclaw_client=OpenClawGatewayClient(transport),
+        recognizer=IntentRecognizer(),
+        confirmation=confirmation,
+        queue=queue,
+        settings=ReportWorkflowSettings(),
+    )
+    return controller, transport
+
+
 def test_normal_chat_never_starts_report_workflow() -> None:
     controller, transport, runner = _controller()
     result = controller.send_chat_message(request_id="n-1", context_id="ctx-1", text="你好")
@@ -66,6 +78,28 @@ def test_report_request_only_creates_confirmation_card_before_confirm() -> None:
     controller, transport, runner = _controller()
     result = controller.send_chat_message(request_id="n-2", context_id="ctx-2", text="/report BTC")
     assert "confirmationCard" in result
+    assert transport.calls == 0
+    assert runner.calls == 0
+
+
+def test_report_request_confirmation_card_uses_company_name_resolver_when_needed() -> None:
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        assert market == "CN_A"
+        assert symbol_ids == ("600638.SH",)
+        return {"600638.SH": "新黄浦"}
+
+    controller, transport = _controller_with_confirmation(
+        ConfirmationController(queue, company_name_resolver=_resolver),
+        queue,
+    )
+
+    result = controller.send_chat_message(request_id="n-resolver", context_id="ctx-resolver", text="/report 600638")
+
+    assert "confirmationCard" in result
+    assert result["confirmationCard"]["instrumentName"] == "新黄浦"
     assert transport.calls == 0
     assert runner.calls == 0
 

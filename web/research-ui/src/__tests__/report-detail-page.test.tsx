@@ -68,7 +68,7 @@ describe('legacy report route', () => {
             mainRisks: ['消费需求波动'],
             failedConfiguredDataSources: [],
             fullReportAvailable: true,
-            pdfAvailable: true,
+            pdfAvailable: false,
             createdAt: '2026-05-19T10:00:00.000Z',
           },
           dataSourceEvents: [],

@@ -30,7 +30,7 @@ def test_completion_summary_only_extracts_from_saved_report_and_pm_conclusion() 
     assert summary["finalConclusion"] == "建议分批建仓"
     assert summary["coreReasons"] == ["成交量回升", "资金费率回归"]
     assert summary["mainRisks"] == ["波动仍高"]
-    assert summary["pdfAvailable"] is True
+    assert summary["pdfAvailable"] is False
 
 
 def test_completion_summary_uses_fallback_lines_when_sections_missing() -> None:

@@ -85,7 +85,7 @@ from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.llm_settings_bridge import LlmSettingsBridge
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.openclaw_cron_adapter import OpenClawCronAdapter
-from claw_trade.ui_backend.pdf_export_service import PdfExportService, to_pdf_export_for_user
+from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.pdf_renderer import PdfKitWithPandocFallbackRenderer
 from claw_trade.ui_backend.pdf_runtime_capabilities import detect_pdf_runtime_capabilities
 from claw_trade.ui_backend.pdf_validation import validate_pdf_bytes
@@ -1011,7 +1011,7 @@ def restore_report_completion_chat_messages(
         try:
             summary = summary_builder.build_completion_summary_from_saved_report(
                 report.id,
-                pdf_available=repository.latest_pdf_artifact(report.id) is not None,
+                pdf_available=False,
             )
             text = render_completion_summary_text(summary)
         except UiProductError:
@@ -1194,10 +1194,6 @@ def restore_completed_workflow_reports(repository: ReportRepository, run_root: P
                 or request_payload.get("originContextId")
             ),
         )
-        pdf_dir = run_dir / "reports" / "pdf"
-        if pdf_dir.is_dir():
-            for pdf_path in sorted(pdf_dir.glob("pdf_*.pdf"), key=lambda item: item.stat().st_mtime):
-                repository.restore_pdf_artifact(report_id, pdf_path)
         restored += 1
     return restored
 
@@ -1225,17 +1221,12 @@ def build_report_detail_payload(services: UiHttpServices, *, report_id: str) -> 
         chart_assets=services.repository.list_markdown_image_assets(report_id),
         markdown=markdown,
     )
-    latest_pdf = services.pdf_export_service.get_latest_record(report_id)
-    pdf_payload = (
-        {"state": "not_requested", "available": False, "userMessage": None, "updatedAt": None}
-        if latest_pdf is None
-        else to_pdf_export_for_user(latest_pdf)
-    )
+    pdf_payload = {"state": "not_requested", "available": False, "userMessage": None, "updatedAt": None}
     summary = services.summary_builder.get_cached(report_id)
     if summary is None:
         summary = services.summary_builder.build_completion_summary_from_saved_report(
             report_id,
-            pdf_available=bool(pdf_payload.get("available")),
+            pdf_available=False,
         )
     return services.repository.get_report_detail(
         report_id,

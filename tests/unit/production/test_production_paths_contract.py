@@ -545,6 +545,7 @@ def test_systemd_units_use_current_release_and_shared_config_only() -> None:
         assert f"OnFailure={paths.RESCUE_TRIGGER_SERVICE_NAME}" in text
         assert "StartLimitIntervalSec=60" in text
         assert "StartLimitBurst=3" in text
+        assert "PrivateTmp=" not in text
     assert "SuccessExitStatus=143" in _read("packaging/production/systemd/claw-trade-control.service")
 
     trigger = _read(f"packaging/production/systemd/{paths.RESCUE_TRIGGER_SERVICE_NAME}")

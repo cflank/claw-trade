@@ -212,6 +212,7 @@ export interface SavedReportForUser {
   title: string;
   generatedAt: string;
   summarySnippet: string;
+  originContextId?: string | null;
   canForwardToChannel?: boolean;
 }
 
@@ -451,6 +452,7 @@ export interface SendReportFileViaChannelInput {
   requestId: string;
   reportId: string;
   channelKind?: 'wechat_clawbot';
+  originContextId?: string | null;
 }
 
 export interface SendReportFileViaChannelOutput {
@@ -866,6 +868,10 @@ export interface ProductionMaintenanceStatusOutput {
     status: UpdateActionStatus;
     userMessage: string;
     latestVersion?: string | null;
+    progressPercent?: number | null;
+    progressLabel?: string | null;
+    downloadReceivedBytes?: number | null;
+    downloadTotalBytes?: number | null;
     updatedAt?: string | null;
   };
 }

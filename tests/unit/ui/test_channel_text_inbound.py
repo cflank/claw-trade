@@ -72,6 +72,7 @@ def _controller(
     send_channel_text=None,  # type: ignore[no-untyped-def]
     request_full_report_file=None,  # type: ignore[no-untyped-def]
     request_selection_report_file=None,  # type: ignore[no-untyped-def]
+    company_name_resolver=None,  # type: ignore[no-untyped-def]
 ) -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
     runner = _FakeRunner()
     chat_transport = _FakeChatTransport()
@@ -79,7 +80,7 @@ def _controller(
     chat_controller = ChatController(
         openclaw_client=OpenClawGatewayClient(chat_transport),
         recognizer=IntentRecognizer(),
-        confirmation=ConfirmationController(queue),
+        confirmation=ConfirmationController(queue, company_name_resolver=company_name_resolver),
         queue=queue,
         settings=ReportWorkflowSettings(),
         selection_controller=selection_controller,
@@ -108,15 +109,36 @@ def _message(request_id: str, text: str, *, sender_id: str = "sender-1") -> Chan
     )
 
 
-def test_ordinary_wechat_text_uses_normal_chat_without_report_workflow() -> None:
-    controller, runner, chat_transport = _controller()
+def test_ordinary_wechat_text_runs_normal_chat_in_background_without_report_workflow() -> None:
+    background_jobs = []
+    sent_texts = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
+
+    controller, runner, chat_transport = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
     result = controller.handle_message(_message("r-1", "你好"))
-    assert result == {"handled": True, "replyText": "echo:你好", "state": "replied"}
+    assert result == {
+        "handled": True,
+        "replyText": "收到，正在处理。",
+        "state": "chat_processing",
+        "deferFinalReply": True,
+    }
     snapshot = controller.latest_conversation_snapshot()
     assert snapshot["context"]["contextId"] == "wechat_clawbot:account-1:sender-1"
     assert snapshot["context"]["title"] == "微信聊天"
-    assert [item["text"] for item in snapshot["messages"]] == ["你好", "echo:你好"]
+    assert snapshot["messages"] == []
     assert runner.calls == 0
+    assert chat_transport.calls == []
+    assert sent_texts == []
+    assert len(background_jobs) == 1
+
+    background_jobs[0]()
+
     assert chat_transport.calls == [
         {
             "contextId": "wechat_clawbot:account-1:sender-1",
@@ -124,6 +146,19 @@ def test_ordinary_wechat_text_uses_normal_chat_without_report_workflow() -> None
             "requestId": "r-1",
         }
     ]
+    assert sent_texts == [
+        {
+            "text": "echo:你好",
+            "dedupeKey": "channel-chat-result:r-1",
+            "target": ChannelReplyTarget(
+                channel_kind="wechat_clawbot",
+                account_id="account-1",
+                sender_id="sender-1",
+            ),
+        }
+    ]
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["text"] for item in snapshot["messages"]] == ["你好", "echo:你好"]
 
 
 def test_help_command_returns_usage_without_openclaw_chat() -> None:
@@ -271,6 +306,84 @@ def test_report_message_returns_confirmation_without_starting_workflow() -> None
     assert runner.calls == 0
 
 
+def test_report_message_acknowledges_before_sending_slow_confirmation_card() -> None:
+    background_jobs = []
+    sent_texts = []
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        assert market == "CN_A"
+        assert symbol_ids == ("600638.SH",)
+        return {"600638.SH": "新黄浦"}
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
+
+    controller, runner, _ = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+        company_name_resolver=_resolver,
+    )
+
+    result = controller.handle_message(_message("r-report-slow-name", "/report 600638"))
+
+    assert result == {
+        "handled": True,
+        "replyText": "收到，正在识别标的，请稍等。",
+        "state": "confirmation_processing",
+        "deferFinalReply": True,
+    }
+    assert sent_texts == []
+    assert len(background_jobs) == 1
+    assert runner.calls == 0
+
+    background_jobs[0]()
+
+    assert len(sent_texts) == 1
+    assert "请确认是否创建完整报告" in sent_texts[0]["text"]
+    assert "标的：600638.SH" in sent_texts[0]["text"]
+    assert "名称：新黄浦" in sent_texts[0]["text"]
+    assert sent_texts[0]["dedupeKey"] == "channel-confirmation-result:r-report-slow-name"
+    snapshot = controller.latest_conversation_snapshot()
+    assert [item["kind"] for item in snapshot["messages"]] == ["plain", "confirmation_card"]
+    assert snapshot["confirmationCards"]["card-draft-1"]["instrumentName"] == "新黄浦"
+    assert runner.calls == 0
+
+
+def test_report_message_name_lookup_failure_sends_error_without_pending_confirmation() -> None:
+    background_jobs = []
+    sent_texts = []
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        assert market == "CN_A"
+        assert symbol_ids == ("600638.SH",)
+        return {}
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
+
+    controller, runner, _ = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+        company_name_resolver=_resolver,
+    )
+
+    result = controller.handle_message(_message("r-report-bad-name", "/report 600638"))
+
+    assert result["state"] == "confirmation_processing"
+    background_jobs[0]()
+
+    assert len(sent_texts) == 1
+    assert "名称解析失败" in sent_texts[0]["text"]
+    assert "回复“确认”" not in sent_texts[0]["text"]
+    assert sent_texts[0]["dedupeKey"] == "channel-confirmation-result:r-report-bad-name"
+    snapshot = controller.latest_conversation_snapshot()
+    assert "confirmationCards" not in snapshot or snapshot["confirmationCards"] == {}
+    assert snapshot["messages"][-1]["text"] == sent_texts[0]["text"]
+    assert runner.calls == 0
+
+
 def test_sched_alias_returns_confirmation_without_starting_workflow() -> None:
     controller, runner, _ = _controller()
     result = controller.handle_message(_message("r-sched-1", "/sched TSLA 每天 08:00"))
@@ -293,6 +406,42 @@ def test_confirm_reply_starts_existing_report_workflow() -> None:
     assert [item["text"] for item in snapshot["messages"]][-2:] == ["确认", "报告任务已启动，正在生成。"]
     assert runner.calls == 1
     assert runner.requests[0].entry_point.value == "report_command"
+
+
+@pytest.mark.parametrize(("text", "suffix"), (("hi", "plain"), ("进度到哪了", "progress")))
+def test_running_task_wechat_message_replies_inline_without_agent_or_background(text: str, suffix: str) -> None:
+    background_jobs = []
+    sent_texts = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": True}
+
+    controller, runner, chat_transport = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
+    controller.handle_message(_message(f"r-running-inline-report-{suffix}", "/report TSLA"))
+    if background_jobs:
+        background_jobs.pop(0)()
+    controller.handle_message(_message(f"r-running-inline-confirm-{suffix}", "确认"))
+    background_jobs.clear()
+    sent_texts.clear()
+
+    result = controller.handle_message(_message(f"r-running-inline-{suffix}", text))
+
+    assert result["handled"] is True
+    assert result["state"] == "replied"
+    assert result["replyText"].startswith("报告正在生成中")
+    if text == "hi":
+        assert "普通聊天暂时无法处理" in result["replyText"]
+    else:
+        assert "普通聊天暂时无法处理" not in result["replyText"]
+    assert "deferFinalReply" not in result
+    assert background_jobs == []
+    assert sent_texts == []
+    assert chat_transport.calls == []
+    assert runner.calls == 1
 
 
 def test_cancel_reply_does_not_start_workflow() -> None:
@@ -362,6 +511,7 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
     )
 
     controller.handle_message(_message("r-7", "/report TSLA"))
+    background_jobs.pop(0)()
     controller.handle_message(_message("r-8", "确认"))
     queue.get_report_queue_snapshot_for_user()
 

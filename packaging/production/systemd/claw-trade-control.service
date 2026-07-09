@@ -19,7 +19,6 @@ SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
-PrivateTmp=true
 ReadWritePaths=/opt/claw-trade/shared
 
 [Install]

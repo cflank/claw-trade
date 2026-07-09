@@ -29,7 +29,8 @@ class _RendererSpy:
     def __init__(self) -> None:
         self.called = False
 
-    def render(self, markdown: str) -> bytes:
+    def render(self, markdown: str, *, report_asset_dir=None) -> bytes:  # type: ignore[no-untyped-def]
+        _ = (markdown, report_asset_dir)
         self.called = True
         return b"%PDF-1.7\nfake"
 
@@ -93,11 +94,10 @@ def test_export_fails_when_primary_runtime_capability_missing() -> None:
     record = service.export_saved_markdown_to_pdf("r-pdf-gate", request_id="req-capability-missing")
 
     assert record.state == "failed"
-    assert record.pdf_artifact_id is None
     assert record.failure_detail == "pdf primary runtime capability missing: bin:wkhtmltopdf"
     assert record.user_message == "PDF 暂不可用：目标机缺少 bin:wkhtmltopdf。完整报告仍可在设备界面查看。"
     assert renderer.called is False
-    assert repo.latest_pdf_artifact("r-pdf-gate") is None
+    assert not hasattr(repo, "latest_pdf_artifact")
 
 
 def test_export_fails_when_noto_cjk_font_missing() -> None:
@@ -124,6 +124,5 @@ def test_export_fails_when_noto_cjk_font_missing() -> None:
 
     record = service.export_saved_markdown_to_pdf("r-pdf-gate", request_id="req-font-missing")
     assert record.state == "failed"
-    assert record.pdf_artifact_id is None
     assert renderer.called is False
-    assert repo.latest_pdf_artifact("r-pdf-gate") is None
+    assert not hasattr(repo, "latest_pdf_artifact")

@@ -38,6 +38,8 @@ def test_report_detail_user_dto_matches_design_shape_and_no_internal_fields() ->
         "title",
         "generatedAt",
         "summarySnippet",
+        "originContextId",
+        "canForwardToChannel",
     }
     assert len(detail["assets"]) == 2
     for asset in detail["assets"]:

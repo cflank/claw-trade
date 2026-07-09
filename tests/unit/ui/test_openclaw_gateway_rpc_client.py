@@ -9,6 +9,50 @@ import pytest
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 
 
+class _FakeGatewayHelper:
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = dict(kwargs)
+        self.requests: list[dict[str, object]] = []
+        self.on_call = None
+
+    def start(self) -> None:
+        return None
+
+    def call(
+        self,
+        method: str,
+        params: dict[str, object] | None,
+        *,
+        expect_final: bool,
+        timeout_ms: int | None,
+        scopes: list[str] | None = None,
+    ) -> dict[str, object]:
+        self.requests.append(
+            {
+                "method": method,
+                "params": dict(params or {}),
+                "expect_final": expect_final,
+                "timeout_ms": timeout_ms,
+                "scopes": list(scopes) if scopes is not None else None,
+            }
+        )
+        if self.on_call is not None:
+            self.on_call(method, dict(params or {}))
+        return {"sent": True}
+
+
+def _capture_gateway_helpers(monkeypatch: pytest.MonkeyPatch) -> list[_FakeGatewayHelper]:
+    helpers: list[_FakeGatewayHelper] = []
+
+    def fake_helper(**kwargs: object) -> _FakeGatewayHelper:
+        helper = _FakeGatewayHelper(**kwargs)
+        helpers.append(helper)
+        return helper
+
+    monkeypatch.setattr("claw_trade.web.openclaw_gateway._GatewayRpcHelperProcess", fake_helper)
+    return helpers
+
+
 def test_config_patch_uses_gateway_raw_patch_and_current_base_hash(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     calls: list[dict[str, object]] = []
 
@@ -306,25 +350,71 @@ def test_channel_text_send_uses_gateway_send_target_and_message_shape(monkeypatc
 
 
 def test_channel_file_send_uses_local_temp_media_path_and_cleans_up(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    calls: list[dict[str, object]] = []
-    captured_media_path: Path | None = None
+    helpers = _capture_gateway_helpers(monkeypatch)
 
-    def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
-        nonlocal captured_media_path
-        _ = (capture_output, text, check, env, timeout)
-        method = command[3]
-        params = json.loads(command[command.index("--params") + 1])
-        calls.append({"method": method, "params": params})
+    def fail_subprocess_run(*args: object, **kwargs: object) -> None:
+        _ = (args, kwargs)
+        raise AssertionError("channel file send must not spawn openclaw gateway call")
+
+    monkeypatch.setattr("subprocess.run", fail_subprocess_run)
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token=None,
+        password=None,
+    )
+    seen_media_paths: list[Path] = []
+
+    def assert_temp_file_ready(method: str, params: dict[str, object]) -> None:
         assert method == "send"
-        media_url = params["mediaUrl"]
-        assert isinstance(media_url, str)
-        assert not media_url.startswith("data:")
-        captured_media_path = Path(media_url)
-        assert captured_media_path.exists()
-        assert captured_media_path.read_bytes() == b"%PDF-1.4 test payload"
-        return SimpleNamespace(returncode=0, stdout=json.dumps({"result": {"sent": True}}), stderr="")
+        media_path = Path(str(params["mediaUrl"]))
+        seen_media_paths.append(media_path)
+        assert media_path.name == "完整报告.pdf"
+        assert media_path.exists()
+        assert media_path.read_bytes() == b"%PDF-1.4 test payload"
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    helpers[1].on_call = assert_temp_file_ready
+
+    client.channels_send_file(
+        channel="openclaw-weixin",
+        to="sender-1",
+        account_id="account-1",
+        file_name="完整报告.pdf",
+        payload=b"%PDF-1.4 test payload",
+        dedupe_key="file:r-1",
+    )
+
+    assert len(helpers) == 2
+    request = helpers[1].requests[0]
+    params = request["params"]
+    assert isinstance(params, dict)
+    captured_media_path = Path(str(params["mediaUrl"]))
+    assert seen_media_paths == [captured_media_path]
+    assert captured_media_path.name == "完整报告.pdf"
+    assert not captured_media_path.exists()
+    assert helpers[1].requests == [
+        {
+            "method": "send",
+            "params": {
+                "channel": "openclaw-weixin",
+                "to": "sender-1",
+                "accountId": "account-1",
+                "message": "完整报告.pdf",
+                "mediaUrl": str(captured_media_path),
+                "idempotencyKey": "file:r-1",
+                "skipQueue": True,
+            },
+            "expect_final": False,
+            "timeout_ms": 1000,
+            "scopes": ["operator.admin"],
+        }
+    ]
+
+
+def test_channel_file_send_sanitizes_temp_media_basename(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    helpers = _capture_gateway_helpers(monkeypatch)
+    monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("no cli")))
     client = OpenClawGatewayRpcClient(
         gateway_call_bin="openclaw",
         gateway_ws_url="ws://127.0.0.1:18789",
@@ -336,27 +426,16 @@ def test_channel_file_send_uses_local_temp_media_path_and_cleans_up(monkeypatch)
     client.channels_send_file(
         channel="openclaw-weixin",
         to="sender-1",
-        account_id="account-1",
-        file_name="完整报告.pdf",
+        file_name="../CON.pdf",
         payload=b"%PDF-1.4 test payload",
-        dedupe_key="file:r-1",
+        dedupe_key="file:r-safe-name",
     )
 
-    assert captured_media_path is not None
-    assert not captured_media_path.exists()
-    assert calls == [
-        {
-            "method": "send",
-            "params": {
-                "channel": "openclaw-weixin",
-                "to": "sender-1",
-                "accountId": "account-1",
-                "message": "完整报告.pdf",
-                "mediaUrl": str(captured_media_path),
-                "idempotencyKey": "file:r-1",
-            },
-        }
-    ]
+    params = helpers[1].requests[0]["params"]
+    assert isinstance(params, dict)
+    assert Path(str(params["mediaUrl"])).name == "_CON.pdf"
+    assert params["message"] == "../CON.pdf"
+    assert params["skipQueue"] is True
 
 
 def test_channel_file_send_requires_target() -> None:
@@ -428,6 +507,7 @@ def test_channel_file_send_uses_supplied_file_path_without_temp_copy(monkeypatch
 
 def test_channel_send_caps_long_gateway_timeout_by_media_type(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     timeouts: list[str] = []
+    helpers = _capture_gateway_helpers(monkeypatch)
 
     def fake_run(command, capture_output, text, check, env, timeout):  # type: ignore[no-untyped-def]
         _ = (capture_output, text, check, env, timeout)
@@ -458,7 +538,10 @@ def test_channel_send_caps_long_gateway_timeout_by_media_type(monkeypatch) -> No
         dedupe_key="file:r-1",
     )
 
-    assert timeouts == ["15000", "180000"]
+    assert timeouts == ["15000"]
+    assert [(request["timeout_ms"], request["scopes"]) for request in helpers[1].requests] == [
+        (180000, ["operator.admin"])
+    ]
 
 
 def test_gateway_call_has_subprocess_timeout(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -52,8 +52,8 @@ class _FakeChatTransport:
 
 
 class _FailPdfRenderer:
-    def render(self, markdown: str) -> bytes:
-        _ = markdown
+    def render(self, markdown: str, *, report_asset_dir=None) -> bytes:  # type: ignore[no-untyped-def]
+        _ = (markdown, report_asset_dir)
         raise RuntimeError("pdf failed")
 
 
@@ -88,6 +88,10 @@ class _NoopChannelBridge:
     ) -> dict[str, object]:
         _ = (request_id, report_id, channel_kind, file_name, payload, file_path, target, account_id)
         return {"sent": True, "messageId": "m1"}
+
+    def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None:
+        _ = channel_kind
+        return None
 
 
 def _build_controller() -> tuple[ChatController, ReportTaskQueue, _FakeWorkflowRunner, _FakeChatTransport]:

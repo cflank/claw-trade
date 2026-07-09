@@ -57,7 +57,7 @@ const SETTINGS_SAVE_TIMEOUT_MS = 30000;
 const MODEL_TEST_TIMEOUT_MS = 90000;
 const CHANNEL_STATUS_TIMEOUT_MS = 50000;
 const CHANNEL_STATUS_REFRESH_MS = 10000;
-const INSTALL_UPDATE_TIMEOUT_MS = 45000;
+const INSTALL_UPDATE_TIMEOUT_MS = 30 * 60 * 1000;
 const CHANNEL_LOGIN_POLL_MS = 2000;
 const DEFAULT_LLM_DRAFT: LlmConfigDraft = withLlmProviderDefaults({
   provider: 'deepseek',
@@ -97,6 +97,8 @@ const UPDATE_TERMINAL_STATUSES = new Set<UpdateActionStatus>([
   'verify_failed',
 ]);
 const UPDATE_APPLY_ACTIVE_STATUSES = new Set<UpdateActionStatus>([
+  'checking_manifest',
+  'downloading',
   'restart_scheduled',
   'restarting',
   'health_checking',
@@ -109,7 +111,7 @@ const UPDATE_SUCCESS_MESSAGE_STATUSES = new Set<UpdateActionStatus>([
   'up_to_date',
 ]);
 const UPDATE_STATUS_POLL_MS = 2000;
-const UPDATE_STATUS_POLL_LIMIT = 90;
+const UPDATE_STATUS_POLL_LIMIT = 900;
 
 function isUpdateApplyActiveStatus(status?: UpdateActionStatus | null) {
   return !!status && UPDATE_APPLY_ACTIVE_STATUSES.has(status);
@@ -873,6 +875,22 @@ export function SettingsPage() {
     setUpdateActionBusy(true);
     setUpdateActionMessage('');
     setSectionErrors((current) => ({ ...current, update: undefined }));
+    setUpdateActionStatus('downloading');
+    setProductionMaintenance((current) =>
+      current
+        ? {
+            ...current,
+            update: {
+              ...current.update,
+              status: 'downloading',
+              userMessage: '正在准备下载更新包。网络中断后可以继续。',
+              progressPercent: 10,
+              progressLabel: '正在准备下载',
+            },
+          }
+        : current,
+    );
+    void pollProductionMaintenanceStatus();
     try {
       const result = await withSettingsTimeout(
         checkForUpdate({ requestId: `check-update-${Date.now()}` }),
@@ -944,12 +962,8 @@ export function SettingsPage() {
             }
           : current,
       );
-      if (result.status === 'restart_scheduled') {
-        void pollProductionMaintenanceStatus();
-      }
     } catch (updateError) {
       setSectionErrors((current) => ({ ...current, update: (updateError as Error).message }));
-      void pollProductionMaintenanceStatus();
     } finally {
       setUpdateActionBusy(false);
     }

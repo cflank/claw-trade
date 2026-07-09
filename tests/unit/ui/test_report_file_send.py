@@ -9,7 +9,7 @@ from claw_trade.ui_backend.pdf_runtime_capabilities import (
 )
 from claw_trade.ui_backend.report_cleanup import ReportFileSendTracker
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
-from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
+from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.ui_backend.settings_service import UiBoundaryError
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 
@@ -37,6 +37,7 @@ class _FileChannelBridge:
         self.default_report_file_target = default_report_file_target
         self.last_payload: bytes | None = None
         self.last_file_path: Path | None = None
+        self.last_file_name: str | None = None
         self.last_target: str | None = None
         self.last_account_id: str | None = None
         self.send_calls = 0
@@ -86,6 +87,7 @@ class _FileChannelBridge:
         self.send_calls += 1
         self.last_payload = payload
         self.last_file_path = file_path
+        self.last_file_name = file_name
         self.last_target = target
         self.last_account_id = account_id
         if self.send_error is not None:
@@ -94,9 +96,13 @@ class _FileChannelBridge:
 
 
 class _PassRenderer:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def render(self, markdown: str, *, report_asset_dir=None) -> bytes:  # type: ignore[no-untyped-def]
         _ = (markdown, report_asset_dir)
-        return b"%PDF-1.7\n" + (b"A" * 700)
+        self.calls += 1
+        return b"%PDF-1.7\n" + bytes([64 + self.calls]) + (b"A" * 699)
 
 
 class _FailRenderer:
@@ -140,6 +146,7 @@ def _make_service(
         market="CRYPTO",
         title="BTC 报告",
         markdown="# 报告\n正文",
+        generated_at="2026-05-20T17:10:00Z",
         asset_dir=asset_dir,
         origin_context_id=origin_context_id,
     )
@@ -149,7 +156,6 @@ def _make_service(
         renderer=renderer or _PassRenderer(),
         runtime_capabilities_provider=_ready_capabilities,
     )
-    pdf_service.export_saved_markdown_to_pdf("r-file", request_id="seed-pdf")
     return ReportNotificationService(
         repo,
         summary_builder,
@@ -159,12 +165,16 @@ def _make_service(
     )
 
 
-def test_request_full_report_file_requires_file_capability(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_request_full_report_file_returns_unsupported_when_actual_file_send_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
-    service = _make_service(_FileChannelBridge(state="connected", can_send_file=False))
+    renderer = _PassRenderer()
+    channel = _FileChannelBridge(state="connected", can_send_file=False, send_result={"sent": False})
+    service = _make_service(channel, renderer=renderer)
     result = service.request_full_report_file("r-file", "req-file-1", target="sender-1")
     assert result["sent"] is False
     assert result["code"] == "FILE_SEND_UNSUPPORTED"
+    assert renderer.calls == 1
+    assert channel.send_calls == 1
 
 
 def test_request_full_report_file_does_not_stop_on_stale_status_before_send(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -185,10 +195,31 @@ def test_request_full_report_file_sends_ready_pdf(tmp_path, monkeypatch) -> None
     assert result["messageId"] == "msg-1"
     assert result["userMessage"] == "完整报告已发送。"
     assert "暂不可发送" not in result["userMessage"]
-    assert channel.last_payload is None
-    assert channel.last_file_path is not None
-    assert channel.last_file_path.exists()
+    assert channel.last_payload is not None
+    assert channel.last_payload.startswith(b"%PDF-")
+    assert channel.last_file_path is None
+    assert channel.last_file_name == "BTC-CRYPTO-2026-05-20-report.pdf"
     assert "localPath" not in result
+
+
+def test_request_full_report_file_rerenders_pdf_on_forward_retry(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _install_valid_pdf_extractor(monkeypatch)
+    renderer = _PassRenderer()
+    channel = _FileChannelBridge(state="connected", can_send_file=True)
+    service = _make_service(channel, asset_dir=tmp_path / "reports" / "assets", renderer=renderer)
+
+    first = service.request_full_report_file("r-file", "req-file-rerender-1", target="sender-1")
+    first_payload = channel.last_payload
+    channel.can_send_file = False
+    second = service.request_full_report_file("r-file", "req-file-rerender-2", target="sender-1")
+
+    assert first["sent"] is True
+    assert second["sent"] is True
+    assert renderer.calls == 2
+    assert first_payload is not None
+    assert channel.last_payload is not None
+    assert channel.last_payload != first_payload
+    assert not (tmp_path / "reports" / "pdf").exists()
 
 
 def test_request_full_report_file_marks_report_in_flight_while_sending(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -283,7 +314,7 @@ def test_request_full_report_file_uses_default_wechat_conversation_when_saved_or
     result = service.request_full_report_file("r-file", "req-file-default-wechat")
     assert result["sent"] is True
     assert channel.send_calls == 1
-    assert channel.last_file_path is not None
+    assert channel.last_payload is not None
     assert channel.last_target == "sender-default"
     assert channel.last_account_id == "account-default"
 
@@ -309,38 +340,6 @@ def test_request_full_report_file_pdf_failed_returns_pdf_error_and_never_calls_s
     assert result["sent"] is False
     assert result["code"] == "PDF_EXPORT_FAILED"
     assert "PDF 暂不可用" in result["userMessage"]
-    assert channel.send_calls == 0
-
-
-def test_request_full_report_file_missing_artifact_path_returns_unsupported(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    _install_valid_pdf_extractor(monkeypatch)
-    channel = _FileChannelBridge(state="connected", can_send_file=True)
-    service = _make_service(channel, asset_dir=tmp_path / "reports" / "assets")
-    pdf_record = service._pdf_export_service.get_latest_record("r-file")
-    assert pdf_record is not None
-    artifact_path = service._repository.pdf_artifact_path("r-file", pdf_record.pdf_artifact_id or "")
-    assert artifact_path is not None
-    artifact_path.unlink()
-
-    result = service.request_full_report_file("r-file", "req-file-missing-artifact", target="sender-1")
-
-    assert result["sent"] is False
-    assert result["code"] == "FILE_SEND_UNSUPPORTED"
-    assert channel.send_calls == 0
-
-
-def test_request_full_report_file_artifact_read_failure_returns_unsupported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    _install_valid_pdf_extractor(monkeypatch)
-    channel = _FileChannelBridge(state="connected", can_send_file=True)
-    service = _make_service(channel)
-
-    def _raise_read_failure(_report_id: str, _artifact_id: str) -> bytes:
-        raise UiProductError("REPORT_NOT_READY", "完整报告文件暂不可发送，请在设备界面查看。")
-
-    monkeypatch.setattr(service._repository, "read_pdf_bytes", _raise_read_failure)
-    result = service.request_full_report_file("r-file", "req-file-read-failed", target="sender-1")
-    assert result["sent"] is False
-    assert result["code"] == "FILE_SEND_UNSUPPORTED"
     assert channel.send_calls == 0
 
 
@@ -384,7 +383,7 @@ def test_request_full_report_file_preserves_notification_unavailable(monkeypatch
     assert result["userMessage"] == "微信文件发送超时，报告没有发出。请稍后重试。"
 
 
-def test_request_full_report_file_sends_download_link_after_file_cdn_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_request_full_report_file_does_not_send_download_link_after_file_cdn_failure(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
     channel = _FileChannelBridge(
         state="connected",
@@ -397,20 +396,16 @@ def test_request_full_report_file_sends_download_link_after_file_cdn_failure(mon
         "r-file",
         "req-file-cdn-link",
         target="sender-1",
-        download_url="http://192.168.1.21:5175/api/ui/download-report-pdf?reportId=r-file",
     )
 
-    assert result["sent"] is True
-    assert result["delivery"] == "download_link"
-    assert result["messageId"] == "txt-1"
-    assert result["userMessage"] == "微信附件上传失败，已发送 PDF 下载链接。"
+    assert result["sent"] is False
+    assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+    assert result["userMessage"] == "微信文件上传失败，报告没有发出。请稍后重试。"
     assert channel.send_calls == 1
-    assert len(channel.sent_texts) == 1
-    assert "完整报告 PDF 已生成" in str(channel.sent_texts[0]["text"])
-    assert "download-report-pdf?reportId=r-file" in str(channel.sent_texts[0]["text"])
+    assert channel.sent_texts == []
 
 
-def test_request_full_report_file_does_not_claim_download_link_success_when_text_send_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_request_full_report_file_does_not_send_download_link_when_text_send_fails(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
     channel = _FileChannelBridge(
         state="connected",
@@ -424,29 +419,28 @@ def test_request_full_report_file_does_not_claim_download_link_success_when_text
         "r-file",
         "req-file-cdn-link-fail",
         target="sender-1",
-        download_url="https://download.example.com/report.pdf",
     )
 
     assert result["sent"] is False
     assert result["code"] == "NOTIFICATION_UNAVAILABLE"
+    assert channel.sent_texts == []
 
 
-def test_request_full_report_file_sends_download_link_when_file_capability_is_missing(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_request_full_report_file_does_not_send_download_link_when_actual_file_send_is_unsupported(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     _install_valid_pdf_extractor(monkeypatch)
-    channel = _FileChannelBridge(state="connected", can_send_file=False)
+    channel = _FileChannelBridge(state="connected", can_send_file=False, send_result={"sent": False})
     service = _make_service(channel)
 
     result = service.request_full_report_file(
         "r-file",
         "req-file-capability-link",
         target="sender-1",
-        download_url="https://download.example.com/report.pdf",
     )
 
-    assert result["sent"] is True
-    assert result["delivery"] == "download_link"
-    assert channel.send_calls == 0
-    assert len(channel.sent_texts) == 1
+    assert result["sent"] is False
+    assert result["code"] == "FILE_SEND_UNSUPPORTED"
+    assert channel.send_calls == 1
+    assert channel.sent_texts == []
 
 
 def test_request_full_report_file_uses_file_specific_notification_fallback(monkeypatch) -> None:  # type: ignore[no-untyped-def]

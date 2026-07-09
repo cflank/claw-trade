@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 
@@ -307,6 +306,19 @@ def test_get_channel_status_caches_light_homepage_status_without_caching_probe()
 
 def test_get_channel_status_allows_tentative_file_send_when_probe_unavailable() -> None:
     bridge = ChannelBridge(_FakeChannelClient(caps_error=True))
+    payload = bridge.get_channel_status(probe=True)
+    assert payload["canSendText"] is True
+    assert payload["canSendFile"] is True
+    assert "未验证" in (payload["lastErrorMessage"] or "")
+
+
+def test_get_channel_status_allows_tentative_file_send_when_media_capability_is_not_advertised() -> None:
+    class _NoAdvertisedMediaClient(_FakeChannelClient):
+        def channels_capabilities(self, *, channel):  # type: ignore[no-untyped-def]
+            _ = channel
+            return {}
+
+    bridge = ChannelBridge(_NoAdvertisedMediaClient())
     payload = bridge.get_channel_status(probe=True)
     assert payload["canSendText"] is True
     assert payload["canSendFile"] is True
@@ -1072,6 +1084,24 @@ def test_send_report_file_attempts_send_when_media_capability_is_unverified() ->
     assert result["sent"] is True
 
 
+def test_send_report_file_attempts_send_when_media_capability_is_not_advertised() -> None:
+    class _NoAdvertisedMediaClient(_FakeChannelClient):
+        def channels_capabilities(self, *, channel):  # type: ignore[no-untyped-def]
+            _ = channel
+            return {}
+
+    bridge = ChannelBridge(_NoAdvertisedMediaClient())
+    result = bridge.send_report_file_via_channel(
+        request_id="r-no-advertised-media",
+        report_id="rp-no-advertised-media",
+        channel_kind="wechat_clawbot",
+        file_name="report.pdf",
+        payload=b"pdf",
+        target="sender-1",
+    )
+    assert result["sent"] is True
+
+
 def test_send_report_file_returns_file_specific_message_when_not_connected() -> None:
     bridge = ChannelBridge(_FakeChannelClient(connected=False))
     with pytest.raises(UiBoundaryError) as exc:
@@ -1173,50 +1203,25 @@ def test_send_report_file_returns_clear_error_after_gateway_timeout() -> None:
     assert exc.value.user_message == "微信文件发送超时，报告没有发出。请稍后重试。"
 
 
-def test_send_report_file_cleans_superseded_cdn_retry_queue_entry(tmp_path: Path, monkeypatch) -> None:
-    state_dir = tmp_path / "openclaw-state"
-    queue_dir = state_dir / "delivery-queue"
-    queue_dir.mkdir(parents=True)
-    pdf_path = tmp_path / "report.pdf"
-    pdf_path.write_bytes(b"%PDF-1.7\nreport")
-    stale_queue_path = queue_dir / "stale-delivery.json"
-    stale_queue_path.write_text(
-        json.dumps(
-            {
-                "id": "stale-delivery",
-                "channel": "openclaw-weixin",
-                "to": "sender-1",
-                "accountId": "acc-1",
-                "payloads": [{"text": "report.pdf", "mediaUrl": str(pdf_path)}],
-                "mirror": {
-                    "idempotencyKey": "r-cdn-cleanup",
-                    "text": "report.pdf",
-                    "mediaUrls": [str(pdf_path)],
-                },
-                "retryCount": 1,
-                "lastError": "CDN upload server error: status 500",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+def test_send_report_file_returns_clear_error_when_wechat_session_is_paused() -> None:
+    class _PausedSessionFileClient(_FakeChannelClient):
+        def channels_send_file(self, *, channel, file_name, dedupe_key, to, payload=None, file_path=None, account_id=None):
+            _ = (channel, file_name, dedupe_key, to, payload, file_path, account_id)
+            raise RuntimeError("Gateway call failed: session paused for accountId=acc-1, 60 min remaining (errcode -14)")
 
-    client = _OneTimeCdnFailureFileClient()
-    bridge = ChannelBridge(client)
-    result = bridge.send_report_file_via_channel(
-        request_id="r-cdn-cleanup",
-        report_id="rp-cdn-cleanup",
-        channel_kind="wechat_clawbot",
-        file_name="report.pdf",
-        file_path=pdf_path,
-        target="sender-1",
-        account_id="acc-1",
-    )
+    bridge = ChannelBridge(_PausedSessionFileClient())
+    with pytest.raises(UiBoundaryError) as exc:
+        bridge.send_report_file_via_channel(
+            request_id="r-paused",
+            report_id="rp-paused",
+            channel_kind="wechat_clawbot",
+            file_name="report.pdf",
+            payload=b"pdf",
+            target="sender-1",
+        )
 
-    assert result["sent"] is True
-    assert not stale_queue_path.exists()
-    assert list(queue_dir.glob("*.json")) == []
-    assert len(list(queue_dir.glob("*.json.superseded-*"))) == 1
+    assert exc.value.code == "NOTIFICATION_UNAVAILABLE"
+    assert exc.value.user_message == "微信登录已过期或暂停，报告没有发出。请重新连接微信后再试。"
 
 
 def test_send_report_file_requires_explicit_wechat_target() -> None:

@@ -34,7 +34,6 @@ const STDOUT_SUMMARY_MAX_CHARS = 2000;
 const WECHAT_CHANNEL_ID = "openclaw-weixin";
 const UI_CHANNEL_KIND = "wechat_clawbot";
 const DEFAULT_UI_INBOUND_TIMEOUT_MS = 180000;
-const IMMEDIATE_INBOUND_ACK_TEXT = "收到，正在处理。";
 const REPORT_BRIDGE_FALLBACK_TEXT =
   "报告请求已收到，但当前无法确认处理结果。请稍后查看微信消息；如果没有收到文件或回复，请再发送一次。";
 
@@ -207,18 +206,6 @@ function runtimeOnlyText(runtimeVars, fieldName, required = false) {
   return value;
 }
 
-function currentDispatchCounts(dispatcher) {
-  const counts = dispatcher?.getQueuedCounts?.();
-  if (!isRecord(counts)) {
-    return { tool: 0, block: 0, final: 0 };
-  }
-  return {
-    tool: Number(counts.tool) || 0,
-    block: Number(counts.block) || 0,
-    final: Number(counts.final) || 0,
-  };
-}
-
 function resolveInboundChannelId(event) {
   const ctx = isRecord(event?.ctx) ? event.ctx : {};
   const channel =
@@ -264,9 +251,33 @@ function resolveInboundReceivedAt(ctx) {
   return undefined;
 }
 
-function buildUiInboundPayload(event) {
+function buildUiInboundPayload(event, hookContext = {}) {
   if (!isRecord(event?.ctx)) {
-    return null;
+    if ((textValue(event?.channel) ?? textValue(hookContext?.channelId)) !== WECHAT_CHANNEL_ID) {
+      return null;
+    }
+    const text = textValue(event?.body) ?? textValue(event?.content);
+    const senderId =
+      textValue(event?.senderId) ??
+      textValue(hookContext?.senderId) ??
+      textValue(event?.from) ??
+      textValue(hookContext?.from) ??
+      textValue(event?.conversationId) ??
+      textValue(hookContext?.conversationId);
+    if (!text || !senderId) {
+      return null;
+    }
+    const timestamp = Number(event?.timestamp);
+    const timestampToken = Number.isFinite(timestamp) && timestamp > 0 ? String(timestamp) : senderId;
+    const payload = {
+      requestId: `wechat-inbound-${safeToken(textValue(event?.sessionKey) ?? "before-dispatch")}-${safeToken(timestampToken)}-${safeToken(text, "text")}`,
+      channelKind: UI_CHANNEL_KIND,
+      accountId: textValue(hookContext?.accountId) ?? undefined,
+      senderId,
+      text,
+      receivedAt: Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : undefined,
+    };
+    return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined));
   }
   if (resolveInboundChannelId(event) !== WECHAT_CHANNEL_ID) {
     return null;
@@ -307,22 +318,9 @@ function looksLikeReportRequestText(text) {
   );
 }
 
-function shouldSendImmediateInboundAck(payload) {
+function shouldUseReportBridgeFallback(payload) {
   const text = textValue(payload?.text);
-  return Boolean(text && !looksLikeReportRequestText(text));
-}
-
-function claimReportBridgeFailure(payload, ctx) {
-  const text = textValue(payload?.text);
-  if (!text || !looksLikeReportRequestText(text)) {
-    return null;
-  }
-  const queuedFinal = Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: REPORT_BRIDGE_FALLBACK_TEXT }));
-  return {
-    handled: true,
-    queuedFinal,
-    counts: currentDispatchCounts(ctx?.dispatcher),
-  };
+  return Boolean(text && looksLikeReportRequestText(text));
 }
 
 async function postInboundMessageToUi(url, payload, timeoutMs) {
@@ -345,54 +343,33 @@ async function postInboundMessageToUi(url, payload, timeoutMs) {
   }
 }
 
-async function handleReplyDispatchHook(event, ctx) {
-  const counts = currentDispatchCounts(ctx?.dispatcher);
-  const payload = buildUiInboundPayload(event);
+async function handleBeforeDispatchHook(event, ctx) {
+  const payload = buildUiInboundPayload(event, ctx);
   if (!payload) {
-    return { handled: false, queuedFinal: false, counts };
+    return undefined;
   }
   const inboundUrl = textValue(process.env.CLAW_TRADE_UI_INBOUND_URL);
   if (!inboundUrl) {
-    return claimReportBridgeFailure(payload, ctx) ?? { handled: false, queuedFinal: false, counts };
+    return shouldUseReportBridgeFallback(payload) ? { handled: true, text: REPORT_BRIDGE_FALLBACK_TEXT } : undefined;
   }
-  const ackQueued = shouldSendImmediateInboundAck(payload)
-    ? Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: IMMEDIATE_INBOUND_ACK_TEXT }))
-    : false;
   try {
     const inboundResult = await postInboundMessageToUi(inboundUrl, payload, readInboundTimeoutMs());
     if (!isRecord(inboundResult)) {
-      return (
-        claimReportBridgeFailure(payload, ctx) ??
-        { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
-      );
+      return shouldUseReportBridgeFallback(payload) ? { handled: true, text: REPORT_BRIDGE_FALLBACK_TEXT } : undefined;
     }
     if (inboundResult.handled !== true) {
-      return (
-        claimReportBridgeFailure(payload, ctx) ??
-        { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
-      );
+      return shouldUseReportBridgeFallback(payload) ? { handled: true, text: REPORT_BRIDGE_FALLBACK_TEXT } : undefined;
     }
     const replyText = textValue(inboundResult.replyText);
     if (!replyText) {
       console.warn("[claw-trade-frontline-tools] inbound UI bridge returned handled=true without replyText");
-      return (
-        claimReportBridgeFailure(payload, ctx) ??
-        { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
-      );
+      return shouldUseReportBridgeFallback(payload) ? { handled: true, text: REPORT_BRIDGE_FALLBACK_TEXT } : undefined;
     }
-    const queuedFinal = Boolean(ctx?.dispatcher?.sendFinalReply?.({ text: replyText }));
-    return {
-      handled: true,
-      queuedFinal: ackQueued || queuedFinal,
-      counts: currentDispatchCounts(ctx?.dispatcher),
-    };
+    return { handled: true, text: replyText };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[claw-trade-frontline-tools] inbound UI bridge failed: ${message}`);
-    return (
-      claimReportBridgeFailure(payload, ctx) ??
-      { handled: false, queuedFinal: false, counts: currentDispatchCounts(ctx?.dispatcher) }
-    );
+    return shouldUseReportBridgeFallback(payload) ? { handled: true, text: REPORT_BRIDGE_FALLBACK_TEXT } : undefined;
   }
 }
 
@@ -1016,7 +993,7 @@ export default definePluginEntry({
   description: "Registers the claw-trade frontline data layer tool.",
   register(api) {
     if (typeof api.on === "function") {
-      api.on("reply_dispatch", handleReplyDispatchHook);
+      api.on("before_dispatch", handleBeforeDispatchHook);
     }
     registerFrontlineTool(
       api,

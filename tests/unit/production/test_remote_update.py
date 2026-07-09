@@ -344,12 +344,39 @@ def test_archive_download_resumes_after_interrupted_stream(tmp_path: Path, monke
     monkeypatch.setattr(remote_update.requests, "get", fake_get)
     monkeypatch.setattr(remote_update.time, "sleep", lambda _seconds: None)
     target = tmp_path / "downloads" / "claw-trade-production-1.2.3-20260626T120000Z.tar.gz"
+    progress: list[tuple[int, int | None]] = []
 
-    remote_update._requests_download_file("https://updates.example.com/archive.tar.gz", target, max_attempts=2)
+    remote_update._requests_download_file(
+        "https://updates.example.com/archive.tar.gz",
+        target,
+        max_attempts=2,
+        progress=lambda received, total: progress.append((received, total)),
+    )
 
     assert target.read_bytes() == payload
     assert calls == [None, {"Range": "bytes=10-"}]
+    assert (10, len(payload)) in progress
+    assert progress[-1] == (len(payload), len(payload))
     assert not target.with_name(f".{target.name}.part").exists()
+
+
+def test_remote_update_status_exposes_download_progress(tmp_path: Path) -> None:
+    install_root = tmp_path / "opt" / "claw-trade"
+    service = RemoteUpdateService(install_root=install_root, base_url="https://updates.example.com/stable", current_version="1.2.2")
+    writer = service._download_progress_writer(
+        version="1.2.3",
+        archive_name="claw-trade-production-1.2.3-20260626T120000Z.tar.gz",
+    )
+
+    writer(10 * 1024 * 1024, 100 * 1024 * 1024)
+
+    status = service.status_for_user()
+    assert status["status"] == "downloading"
+    assert status["progressPercent"] == 16
+    assert status["progressLabel"] == "正在下载更新包"
+    assert status["downloadReceivedBytes"] == 10 * 1024 * 1024
+    assert status["downloadTotalBytes"] == 100 * 1024 * 1024
+    assert status["userMessage"] == "正在下载更新包：10 MB / 100 MB。网络中断后会自动继续。"
 
 
 def test_remote_update_rejects_archive_hash_mismatch_without_switching_current(tmp_path: Path) -> None:

@@ -54,6 +54,7 @@ class CompletionSummaryBuilder:
         failed_configured_data_sources: list[dict[str, Any]] | None = None,
         pdf_available: bool = False,
     ) -> dict[str, Any]:
+        _ = pdf_available
         report = self._repository.get_report(report_id)
         if report is None:
             raise UiProductError("REPORT_NOT_FOUND", "没有找到这份报告。")
@@ -98,7 +99,7 @@ class CompletionSummaryBuilder:
             main_risks=tuple(risks),
             failed_configured_data_sources=tuple(failed_configured_data_sources or ()),
             full_report_available=True,
-            pdf_available=pdf_available,
+            pdf_available=False,
             created_at=_now_iso(),
         )
         self._cache[report_id] = summary

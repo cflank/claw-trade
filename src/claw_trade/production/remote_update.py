@@ -27,6 +27,7 @@ from claw_trade.production.updater_state import UpdaterStateStore
 FetchBytes = Callable[[str], bytes]
 PreflightRunner = Callable[[Path], None]
 ApplyUpdateStarter = Callable[[Path], None]
+DownloadProgress = Callable[[int, int | None], None]
 UPDATE_APPLY_ACTIVE_STATUSES = {"restart_scheduled", "restarting", "health_checking", "rollback_started"}
 ARCHIVE_DOWNLOAD_ATTEMPTS = 5
 ARCHIVE_DOWNLOAD_CHUNK_SIZE = 8 * 1024 * 1024
@@ -106,6 +107,10 @@ class RemoteUpdateService:
             "status": state.get("status", "idle"),
             "userMessage": state.get("userMessage", "尚未检查远程更新。"),
             "latestVersion": state.get("latestVersion"),
+            "progressPercent": state.get("progressPercent"),
+            "progressLabel": state.get("progressLabel"),
+            "downloadReceivedBytes": state.get("downloadReceivedBytes"),
+            "downloadTotalBytes": state.get("downloadTotalBytes"),
             "updatedAt": state.get("updatedAt"),
         }
 
@@ -225,7 +230,7 @@ class RemoteUpdateService:
                 )
                 self._write_download("manifest.json", check.manifest_bytes)
                 self._write_download("manifest.json.sig", check.manifest_signature)
-                archive_path = self._download_archive(manifest.archive)
+                archive_path = self._download_archive(manifest.archive, version=manifest.version)
                 archive_sig = self._fetch_bytes(urljoin(self._base_url or "", f"{manifest.archive}.sig"))
                 if _sha256_file(archive_path) != manifest.sha256:
                     archive_path.unlink(missing_ok=True)
@@ -277,16 +282,43 @@ class RemoteUpdateService:
         finally:
             lock.__exit__(None, None, None)
 
-    def _download_archive(self, archive_name: str) -> Path:
+    def _download_archive(self, archive_name: str, *, version: str | None = None) -> Path:
         if archive_name != Path(archive_name).name:
             raise ValueError("更新包文件名非法。")
         downloads = self._install_root / "shared" / "updates" / "downloads"
         downloads.mkdir(parents=True, exist_ok=True)
         target = downloads / archive_name
         if self._use_streaming_archive_download:
-            _requests_download_file(urljoin(self._base_url or "", archive_name), target)
+            _requests_download_file(
+                urljoin(self._base_url or "", archive_name),
+                target,
+                progress=self._download_progress_writer(version=version, archive_name=archive_name),
+            )
             return target
         return self._write_download(archive_name, self._fetch_bytes(urljoin(self._base_url or "", archive_name)))
+
+    def _download_progress_writer(self, *, version: str | None, archive_name: str) -> DownloadProgress:
+        last_write = {"time": 0.0, "percent": -1}
+
+        def write(received: int, total: int | None) -> None:
+            percent = _download_progress_percent(received, total)
+            now = time.monotonic()
+            if percent == last_write["percent"] and now - last_write["time"] < 1:
+                return
+            last_write["time"] = now
+            last_write["percent"] = percent
+            self._state_store.write(
+                status="downloading",
+                user_message=_download_progress_message(received, total),
+                latestVersion=version,
+                archive=archive_name,
+                progressPercent=percent,
+                progressLabel="正在下载更新包",
+                downloadReceivedBytes=max(received, 0),
+                downloadTotalBytes=total,
+            )
+
+        return write
 
     def _read_apply_in_progress_state(self) -> RemoteManifestCheck | None:
         if not (self._install_root / "shared" / "updates" / "apply.lock").exists():
@@ -383,6 +415,7 @@ def _requests_download_file(
     *,
     max_attempts: int = ARCHIVE_DOWNLOAD_ATTEMPTS,
     chunk_size: int = ARCHIVE_DOWNLOAD_CHUNK_SIZE,
+    progress: DownloadProgress | None = None,
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_name(f".{target.name}.part")
@@ -401,10 +434,16 @@ def _requests_download_file(
                     response.raise_for_status()
                     mode = "ab" if existing_size else "wb"
                     expected_total = _expected_download_size(response, existing_size=existing_size)
+                if progress is not None:
+                    progress(existing_size, expected_total)
+                downloaded_size = existing_size
                 with partial.open(mode + "") as handle:
                     for chunk in response.iter_content(chunk_size=chunk_size):
                         if chunk:
                             handle.write(chunk)
+                            downloaded_size += len(chunk)
+                            if progress is not None:
+                                progress(downloaded_size, expected_total)
                 downloaded_size = partial.stat().st_size
                 if expected_total is not None and downloaded_size < expected_total:
                     raise requests.ConnectionError(
@@ -420,6 +459,20 @@ def _requests_download_file(
             raise
     if last_error is not None:
         raise last_error
+
+
+def _download_progress_percent(received: int, total: int | None) -> int:
+    if not total or total <= 0:
+        return 10
+    return max(10, min(70, 10 + int((max(received, 0) / total) * 60)))
+
+
+def _download_progress_message(received: int, total: int | None) -> str:
+    received_mb = max(0, round(received / 1024 / 1024))
+    if total and total > 0:
+        total_mb = max(1, round(total / 1024 / 1024))
+        return f"正在下载更新包：{received_mb} MB / {total_mb} MB。网络中断后会自动继续。"
+    return f"正在下载更新包：已下载 {received_mb} MB。网络中断后会自动继续。"
 
 
 def _content_length(response: requests.Response) -> int | None:

@@ -68,6 +68,19 @@ def test_build_run_request_preserves_ui_origin_context() -> None:
     assert request.ui_origin_context_id == "wechat_clawbot:account-1:sender-1"
 
 
+def test_build_run_request_uses_task_company_name_without_resolver() -> None:
+    runner = _FakeRunner()
+
+    def _resolver(*, market: str, symbol_ids: tuple[str, ...]):
+        raise AssertionError(f"resolver should not be called: {market} {symbol_ids}")
+
+    bridge = ReportWorkflowBridge(runner, company_name_resolver=_resolver)
+
+    request = bridge.build_run_request(_task())
+
+    assert request.company_name == "Bitcoin"
+
+
 def test_create_and_poll_workflow_run() -> None:
     runner = _FakeRunner()
     bridge = ReportWorkflowBridge(runner)
@@ -114,7 +127,7 @@ def test_build_run_request_resolves_cn_a_company_name_from_data_layer() -> None:
     assert request.company_name == "绿的谐波"
 
 
-def test_build_run_request_does_not_use_ticker_as_company_name_when_unresolved() -> None:
+def test_build_run_request_uses_factory_fallback_when_company_name_unresolved() -> None:
     runner = _FakeRunner()
     bridge = ReportWorkflowBridge(runner)
     task = _task()
@@ -140,7 +153,7 @@ def test_build_run_request_does_not_use_ticker_as_company_name_when_unresolved()
     request = bridge.build_run_request(task)
 
     assert request.ticker == "688017.SH"
-    assert request.company_name == "名称未查到"
+    assert request.company_name == "688017.SH"
 
 
 def test_build_run_request_allows_crypto_base_symbol_as_display_name() -> None:

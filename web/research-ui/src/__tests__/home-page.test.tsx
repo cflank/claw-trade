@@ -22,10 +22,11 @@ const DEFAULT_SAVED_REPORTS = [
     title: '茅台投研报告',
     generatedAt: '2026-05-19T10:00:00.000Z',
     summarySnippet: '结论偏积极，关注估值与渠道恢复。',
+    originContextId: 'wechat_clawbot:account-1:sender-1',
   },
 ];
 
-type MockSavedReport = (typeof DEFAULT_SAVED_REPORTS)[number] & { canForwardToChannel?: boolean };
+type MockSavedReport = (typeof DEFAULT_SAVED_REPORTS)[number] & { canForwardToChannel?: boolean; originContextId?: string | null };
 type MockDeleteSavedReportResponse = {
   deleted: boolean;
   reportId: unknown;
@@ -264,14 +265,14 @@ function mockWorkspaceFetch(
           mainRisks: ['消费需求波动'],
           failedConfiguredDataSources: [],
           fullReportAvailable: true,
-          pdfAvailable: true,
+          pdfAvailable: false,
           createdAt: '2026-05-19T10:00:00.000Z',
         },
         dataSourceEvents: [],
         chartEvidence: { summary: 'ready', items: [] },
         assets: [
           { kind: 'markdown', available: true, status: 'ready', updatedAt: '2026-05-19T10:00:00.000Z' },
-          { kind: 'pdf', available: true, status: 'ready', updatedAt: '2026-05-19T10:00:00.000Z' },
+          { kind: 'pdf', available: false, status: 'not_requested', updatedAt: null },
         ],
       });
     }
@@ -998,6 +999,64 @@ describe('home page', () => {
     expect(screen.queryByText('需要清掉的问题')).not.toBeInTheDocument();
     expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
     expect(window.sessionStorage.getItem('claw-trade:home-chat-state:v1') ?? '').not.toContain('需要清掉的问题');
+  });
+
+  it('clears the visible wechat chat so it does not come back after returning to the page', async () => {
+    const wechatContextId = 'wechat_clawbot:account-1:sender-1';
+    let mocked: ReturnType<typeof mockWorkspaceFetch>;
+    mocked = mockWorkspaceFetch({
+      channelChatSnapshot: () => {
+        const clearedContextIds = mocked?.getClearChatBodies().map((body) => String(body.contextId)) ?? [];
+        return {
+          channelKind: 'wechat_clawbot',
+          context: {
+            contextId: wechatContextId,
+            kind: 'normal_chat',
+            title: '微信聊天',
+            activeTaskId: null,
+            activeReportId: null,
+          },
+          messages: clearedContextIds.includes(wechatContextId)
+            ? []
+            : [
+                {
+                  messageId: 'wx-clear-u1',
+                  contextKind: 'normal_chat',
+                  actor: 'user',
+                  kind: 'plain',
+                  text: '微信里要清掉的问题',
+                  createdAt: '2026-05-19T10:10:00.000Z',
+                },
+              ],
+          confirmationCards: {},
+        };
+      },
+    });
+    restoreList.push(mocked.restore);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    const firstRender = render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('微信里要清掉的问题')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清除聊天' }));
+
+    await waitFor(() => expect(mocked.getClearChatBodies()).toHaveLength(1));
+    expect(mocked.getClearChatBodies()[0]).toMatchObject({ contextId: wechatContextId });
+    expect(screen.queryByText('微信里要清掉的问题')).not.toBeInTheDocument();
+
+    firstRender.unmount();
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('workspace-layout');
+    expect(screen.queryByText('微信里要清掉的问题')).not.toBeInTheDocument();
   });
 
   it('stops the running report task from the right rail', async () => {
@@ -3334,6 +3393,7 @@ describe('home page', () => {
       expect(mocked.getSendReportFileBodies().at(0)).toMatchObject({
         reportId: 'report-1',
         channelKind: 'wechat_clawbot',
+        originContextId: 'wechat_clawbot:account-1:sender-1',
       });
     });
     expect(await screen.findByText('完整报告已发送。')).toBeInTheDocument();

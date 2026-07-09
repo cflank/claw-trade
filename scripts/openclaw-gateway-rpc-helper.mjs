@@ -50,6 +50,16 @@ function readPositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function readScopes(value) {
+  if (!Array.isArray(value)) {
+    return ["operator.read", "operator.write"];
+  }
+  const scopes = value
+    .filter((item) => typeof item === "string" && item.trim())
+    .map((item) => item.trim());
+  return scopes.length > 0 ? scopes : ["operator.read", "operator.write"];
+}
+
 function readConfig(request = {}) {
   const timeoutMs = readPositiveInt(
     request.timeoutMs ?? process.env.OPENCLAW_GATEWAY_TIMEOUT_MS,
@@ -60,6 +70,7 @@ function readConfig(request = {}) {
     token: readString(request.token) ?? readString(process.env.OPENCLAW_GATEWAY_TOKEN),
     password: readString(request.password) ?? readString(process.env.OPENCLAW_GATEWAY_PASSWORD),
     timeoutMs,
+    scopes: readScopes(request.scopes),
   };
 }
 
@@ -68,6 +79,7 @@ function configKey(config) {
     url: config.url ?? null,
     token: config.token ?? null,
     password: config.password ?? null,
+    scopes: config.scopes,
   });
 }
 
@@ -92,7 +104,7 @@ function createClient(config) {
     clientDisplayName: "claw-trade-ui-chat",
     mode: "cli",
     role: "operator",
-    scopes: ["operator.read", "operator.write"],
+    scopes: config.scopes,
     onHelloOk: () => {
       settled = true;
       activeClient?.resolve?.();

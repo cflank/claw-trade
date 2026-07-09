@@ -50,7 +50,7 @@ def test_restore_completed_workflow_reports_from_run_files(tmp_path: Path) -> No
     assert items[0]["summarySnippet"] == "维持观察，等待突破确认。"
 
 
-def test_restore_completed_workflow_reports_restores_existing_pdf(tmp_path: Path) -> None:
+def test_restore_completed_workflow_reports_does_not_restore_pdf_artifacts(tmp_path: Path) -> None:
     run_root = tmp_path / "runs"
     run_dir = _write_completed_run(run_root, "run-pdf-1")
     pdf_dir = run_dir / "reports" / "pdf"
@@ -65,9 +65,10 @@ def test_restore_completed_workflow_reports_restores_existing_pdf(tmp_path: Path
 
     restore_completed_workflow_reports(repo, run_root)
 
-    artifact = repo.latest_pdf_artifact("run-pdf-1")
-    assert artifact is not None
-    assert artifact.path == pdf_path.resolve()
+    assert repo.get_report("run-pdf-1") is not None
+    assert old_pdf_path.exists()
+    assert pdf_path.exists()
+    assert not hasattr(repo, "latest_pdf_artifact")
 
 
 def test_restore_completed_workflow_reports_restores_wechat_origin_context(tmp_path: Path) -> None:

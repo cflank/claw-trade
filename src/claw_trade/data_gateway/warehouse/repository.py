@@ -1642,7 +1642,8 @@ class DatasetRepository:
         market: str,
         symbols: Sequence[str],
     ) -> dict[str, str]:
-        wanted = set(symbols)
+        wanted_symbols = tuple(dict.fromkeys(str(symbol).strip() for symbol in symbols if str(symbol).strip()))
+        wanted = set(wanted_symbols)
         if not wanted:
             return {}
         with self._lock:
@@ -1651,7 +1652,16 @@ class DatasetRepository:
                     {"storage": "parquet", "status": "active", "dataset": dataset, "market": market}
                 )
             )
-        paths = tuple(Path(str(manifest.get("path") or "")) for manifest in manifests)
+        paths: list[Path] = []
+        for manifest in manifests:
+            manifest_symbols = {
+                str(symbol).strip()
+                for symbol in tuple(manifest.get("symbol_ids", ()) or ())
+                if str(symbol).strip()
+            }
+            if manifest_symbols and wanted.isdisjoint(manifest_symbols):
+                continue
+            paths.append(Path(str(manifest.get("path") or "")))
         paths = tuple(path for path in paths if path.is_file())
         if not paths:
             return {}
@@ -1660,15 +1670,15 @@ class DatasetRepository:
 
         names: dict[str, str] = {}
         latest_seen: dict[str, str] = {}
+        placeholders = ", ".join("?" for _symbol in wanted_symbols)
+        query = (
+            "select symbol_id, period_end, period_start, row_json "
+            f"from read_parquet(?) where symbol_id in ({placeholders})"
+        )
         with duckdb.connect(":memory:") as conn:
             for path in paths:
-                for symbol, period_end, period_start, row_json in conn.execute(
-                    "select symbol_id, period_end, period_start, row_json from read_parquet(?)",
-                    [str(path)],
-                ).fetchall():
+                for symbol, period_end, period_start, row_json in conn.execute(query, [str(path), *wanted_symbols]).fetchall():
                     symbol_text = str(symbol or "").strip()
-                    if symbol_text not in wanted:
-                        continue
                     try:
                         row = json.loads(str(row_json or "{}"))
                     except json.JSONDecodeError:

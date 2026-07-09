@@ -638,6 +638,7 @@ export function HomePage() {
     if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
       return;
     }
+    setContext(snapshot.context);
     setMessages((current) => mergeIncomingChatMessages(current, snapshot.messages));
     if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
@@ -1086,6 +1087,7 @@ export function HomePage() {
         requestId: nextRequestId(),
         reportId: report.id,
         channelKind: 'wechat_clawbot',
+        originContextId: report.originContextId ?? null,
       });
       setReportForwardState((current) => ({
         ...current,
