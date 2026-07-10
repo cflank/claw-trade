@@ -628,6 +628,59 @@ describe('settings-wechat settings page', () => {
     expect(updateSection.querySelector('.ct-inline-alert.is-success')).toBeNull();
   });
 
+  it('shows incomplete installs as remote update errors with current running version', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        return json({
+          factoryReset: {
+            installRoot: '/opt/claw-trade',
+            sharedRoot: '/opt/claw-trade/shared',
+            resetPaths: [],
+            preservedPaths: [],
+            confirmation: 'RESET_CLAW_TRADE',
+          },
+          update: {
+            currentVersion: '1.2.2',
+            status: 'idle',
+            userMessage: '尚未检查远程更新。',
+          },
+        });
+      }
+      if (url.includes('/api/ui/check-for-update')) {
+        return json({
+          status: 'install_incomplete',
+          currentVersion: '1.2.2',
+          latestVersion: '1.2.3',
+          archive: 'claw-trade-production-1.2.3-20260626T120000Z.tar.gz',
+          userMessage: '版本 1.2.3 已安装但当前运行版本仍是 1.2.2，请重启服务。',
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole('heading', { name: '报告模型' });
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = await screen.findByTestId('settings-section-update');
+    fireEvent.click(within(updateSection).getByRole('button', { name: '检查更新' }));
+
+    const errorMessage = await within(updateSection).findByText('版本 1.2.3 已安装但当前运行版本仍是 1.2.2，请重启服务。');
+    expect(errorMessage).toHaveClass('is-error');
+    expect(within(updateSection).getByText('当前版本')).toBeInTheDocument();
+    expect(within(updateSection).getByText('1.2.2')).toBeInTheDocument();
+    expect(updateSection.querySelector('.ct-inline-alert.is-success')).toBeNull();
+  });
+
   it('enables update install after a successful check even without initial maintenance status', async () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);

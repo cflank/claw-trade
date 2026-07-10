@@ -1416,7 +1416,7 @@ def _remote_update_service(request: Request) -> RemoteUpdateService:
 
 
 def _current_release_version() -> str:
-    current = Path("/opt/claw-trade/current")
+    current = Path(os.environ.get("CLAW_TRADE_RELEASE_ROOT") or "/opt/claw-trade/current")
     try:
         release_name = current.resolve(strict=False).name
     except OSError:

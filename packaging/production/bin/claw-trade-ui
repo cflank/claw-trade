@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/runtime/python/bin/python}"
 SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-/opt/claw-trade/shared}"
 RUNTIME_ENV="${SHARED_ROOT}/tmp/dev-services/runtime.env"
+RELEASE_NAME="$(basename "${ROOT_DIR}")"
 
 runtime_env_ready() {
   [[ -f "${RUNTIME_ENV}" ]] || return 1
@@ -47,6 +48,9 @@ export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"
 mkdir -p "${XDG_CACHE_HOME}" "${NUMBA_CACHE_DIR}" "${MPLCONFIGDIR}"
 export CLAW_TRADE_PRODUCTION_PACKAGE=1
+if [[ "${RELEASE_NAME}" =~ ^claw-trade-production-([0-9]+\.[0-9]+\.[0-9]+)- ]]; then
+  export CLAW_TRADE_VERSION="${BASH_REMATCH[1]}"
+fi
 export CLAW_TRADE_LICENSE_REQUIRED="${CLAW_TRADE_LICENSE_REQUIRED:-0}"
 export CLAW_TRADE_SELECTION_AUTO_REFRESH="${CLAW_TRADE_SELECTION_AUTO_REFRESH:-0}"
 if [[ -z "${CLAW_TRADE_REPORT_RUN_DIR:-}" || "${CLAW_TRADE_REPORT_RUN_DIR}" != /* ]]; then
@@ -54,7 +58,7 @@ if [[ -z "${CLAW_TRADE_REPORT_RUN_DIR:-}" || "${CLAW_TRADE_REPORT_RUN_DIR}" != /
 else
   export CLAW_TRADE_REPORT_RUN_DIR
 fi
-export CLAW_TRADE_RELEASE_ROOT="${CLAW_TRADE_RELEASE_ROOT:-${ROOT_DIR}}"
+export CLAW_TRADE_RELEASE_ROOT="${ROOT_DIR}"
 export OPENCLAW_GATEWAY_CALL_BIN="${OPENCLAW_GATEWAY_CALL_BIN:-${ROOT_DIR}/runtime/openclaw/openclaw.mjs}"
 export OPENCLAW_PACKAGE_DIR="${OPENCLAW_PACKAGE_DIR:-${ROOT_DIR}/runtime/openclaw}"
 export OPENCLAW_GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-ws://127.0.0.1:18789}"

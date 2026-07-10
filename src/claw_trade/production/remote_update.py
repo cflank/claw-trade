@@ -40,12 +40,16 @@ class RemoteManifestCheck:
     user_message: str
     manifest_bytes: bytes | None = None
     manifest_signature: bytes | None = None
+    current_version: str | None = None
+    latest_version: str | None = None
+    archive: str | None = None
 
     def to_user_dict(self) -> dict[str, object]:
         return {
             "status": self.status,
-            "latestVersion": self.manifest.version if self.manifest else None,
-            "archive": self.manifest.archive if self.manifest else None,
+            "currentVersion": self.current_version,
+            "latestVersion": self.latest_version if self.latest_version is not None else (self.manifest.version if self.manifest else None),
+            "archive": self.archive if self.archive is not None else (self.manifest.archive if self.manifest else None),
             "userMessage": self.user_message,
         }
 
@@ -117,21 +121,42 @@ class RemoteUpdateService:
         }
 
     def check_manifest(self) -> RemoteManifestCheck:
+        def check_result(
+            *,
+            status: str,
+            manifest: UpdateManifest | None,
+            user_message: str,
+            manifest_bytes: bytes | None = None,
+            manifest_signature: bytes | None = None,
+            latest_version: str | None = None,
+            archive: str | None = None,
+        ) -> RemoteManifestCheck:
+            return RemoteManifestCheck(
+                status=status,
+                manifest=manifest,
+                user_message=user_message,
+                manifest_bytes=manifest_bytes,
+                manifest_signature=manifest_signature,
+                current_version=self._current_version,
+                latest_version=latest_version,
+                archive=archive,
+            )
+
         layout_error = _install_layout_error(self._install_root)
         if layout_error is not None:
-            return RemoteManifestCheck(status="check_failed", manifest=None, user_message=layout_error)
+            return check_result(status="check_failed", manifest=None, user_message=layout_error)
         apply_state = self._read_apply_in_progress_state()
         if apply_state is not None:
             return apply_state
         if not self._base_url:
             state = self._state_store.write(status="not_configured", user_message="远程更新源未配置。")
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
         public_key_error = _public_key_layout_error(self._install_root, self._public_key_path)
         if public_key_error is not None:
-            return RemoteManifestCheck(status="check_failed", manifest=None, user_message=public_key_error)
+            return check_result(status="check_failed", manifest=None, user_message=public_key_error)
         if not self._public_key_path.exists():
             state = self._state_store.write(status="check_failed", user_message="更新公钥不存在。")
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
 
         self._state_store.write(status="checking_manifest", user_message="正在检查远程更新清单。")
         try:
@@ -139,12 +164,12 @@ class RemoteUpdateService:
         except requests.RequestException as exc:
             if _remote_request_not_found(exc):
                 state = self._state_store.write(status="up_to_date", user_message="当前已是最新版本。")
-                return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+                return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
             state = self._state_store.write(status="check_failed", user_message=_remote_request_error_message("远程更新清单检查失败", exc))
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
         except (OSError, ValueError) as exc:
             state = self._state_store.write(status="check_failed", user_message=f"远程更新清单检查失败：{exc}")
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
 
         try:
             signature = self._fetch_bytes(urljoin(self._base_url, "manifest.json.sig"))
@@ -152,28 +177,43 @@ class RemoteUpdateService:
             signature_ok = verify_ed25519_signature(public_key_pem=public_key, data=manifest_bytes, signature=signature)
         except requests.RequestException as exc:
             state = self._state_store.write(status="check_failed", user_message=_remote_request_error_message("远程更新清单检查失败", exc))
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
         except (OSError, ValueError) as exc:
             state = self._state_store.write(status="check_failed", user_message=f"远程更新清单检查失败：{exc}")
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
         if not signature_ok:
             state = self._state_store.write(status="verify_failed", user_message="远程更新清单签名校验失败。")
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
 
         try:
             manifest = UpdateManifest.from_json(manifest_bytes)
             manifest.assert_installable(current_version=self._current_version)
+            target_is_current = _read_current_target(self._install_root) == str(
+                self._install_root / "releases" / _release_name_from_archive(manifest.archive)
+            )
+            if target_is_current and self._current_version != manifest.version:
+                state = self._state_store.write(
+                    status="install_incomplete",
+                    user_message=f"版本 {manifest.version} 已安装但当前运行版本仍是 {self._current_version}，请重启服务。",
+                    latestVersion=manifest.version,
+                    archive=manifest.archive,
+                )
+                return check_result(
+                    status=str(state["status"]),
+                    manifest=None,
+                    user_message=str(state["userMessage"]),
+                    latest_version=manifest.version,
+                    archive=manifest.archive,
+                )
         except ValueError as exc:
             if str(exc) == "manifest version 不高于当前版本。":
                 state = self._state_store.write(status="up_to_date", user_message="当前已是最新版本。")
-                return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+                return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
             state = self._state_store.write(status="check_failed", user_message=str(exc))
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
-        if _read_current_target(self._install_root) == str(
-            self._install_root / "releases" / _release_name_from_archive(manifest.archive)
-        ):
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+        if target_is_current:
             state = self._state_store.write(status="up_to_date", user_message="当前已是最新版本。")
-            return RemoteManifestCheck(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
+            return check_result(status=str(state["status"]), manifest=None, user_message=str(state["userMessage"]))
 
         state = self._state_store.write(
             status="update_available",
@@ -182,7 +222,7 @@ class RemoteUpdateService:
             archive=manifest.archive,
             archiveSha256=manifest.sha256,
         )
-        return RemoteManifestCheck(
+        return check_result(
             status=str(state["status"]),
             manifest=manifest,
             user_message=str(state["userMessage"]),
@@ -330,7 +370,7 @@ class RemoteUpdateService:
         if status not in UPDATE_APPLY_ACTIVE_STATUSES:
             status = "restart_scheduled"
         message = str(state.get("userMessage", "更新应用正在运行，请稍后查看结果。"))
-        return RemoteManifestCheck(status=status, manifest=None, user_message=message)
+        return RemoteManifestCheck(status=status, manifest=None, user_message=message, current_version=self._current_version)
 
     def _write_download(self, archive_name: str, archive_bytes: bytes) -> Path:
         if archive_name != Path(archive_name).name:

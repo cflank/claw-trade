@@ -91,6 +91,7 @@ describe('api client error translation', () => {
       return new Response(
         JSON.stringify({
           status: 'not_configured',
+          currentVersion: '1.2.2',
           latestVersion: null,
           archive: null,
           userMessage: '远程更新源未配置。',

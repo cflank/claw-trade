@@ -9,6 +9,7 @@ from typing import Any
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_ARCHIVE_RE = re.compile(r"^claw-trade-production-(\d+\.\d+\.\d+)-\d{8}T\d{6}Z\.tar\.gz$")
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,11 @@ class UpdateManifest:
             raise ValueError("manifest archive 必须是同目录文件名。")
         if "/" in self.archive or "\\" in self.archive or "\x00" in self.archive:
             raise ValueError("manifest archive 不能包含路径。")
+        archive_match = _ARCHIVE_RE.fullmatch(self.archive)
+        if not archive_match:
+            raise ValueError("manifest archive 文件名非法。")
+        if archive_match.group(1) != self.version:
+            raise ValueError("manifest archive 版本与 manifest version 不匹配。")
 
     def assert_installable(
         self,

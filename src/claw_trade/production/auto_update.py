@@ -7,6 +7,7 @@ import re
 import sys
 import threading
 from collections.abc import Callable, Mapping
+from pathlib import Path
 
 from claw_trade.production import paths
 from claw_trade.production.remote_update import RemoteUpdateService
@@ -122,6 +123,11 @@ def _current_release_version() -> str:
     env_version = os.environ.get("CLAW_TRADE_VERSION")
     if env_version:
         return env_version
+    env_release_root = os.environ.get("CLAW_TRADE_RELEASE_ROOT")
+    if env_release_root:
+        release_name = Path(env_release_root).resolve(strict=False).name
+        match = re.match(r"^claw-trade-production-(\d+\.\d+\.\d+)-", release_name)
+        return match.group(1) if match else "0.1.0"
     try:
         release_name = paths.CURRENT_LINK.resolve(strict=False).name
     except OSError:

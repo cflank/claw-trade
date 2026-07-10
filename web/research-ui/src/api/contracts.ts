@@ -818,6 +818,7 @@ export type UpdateActionStatus =
   | 'downloading'
   | 'verify_failed'
   | 'install_failed'
+  | 'install_incomplete'
   | 'restart_scheduled'
   | 'restarting'
   | 'health_checking'
@@ -829,6 +830,7 @@ export type UpdateActionStatus =
 
 export interface CheckForUpdateOutput {
   status: UpdateActionStatus;
+  currentVersion: string | null;
   latestVersion: string | null;
   archive: string | null;
   userMessage: string;

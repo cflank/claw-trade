@@ -324,6 +324,23 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
     assert factory_script.index('"${install_root}/releases/${top_dir}/bin/claw-trade-preflight"') < factory_script.index(
         'sudo mv -Tf "${tmp_current}" "${install_root}/current"'
     )
+    assert 'log "handing off runtime to systemd"' in factory_script
+    handoff = factory_script.index('log "handing off runtime to systemd"')
+    assert factory_script.index('auto update command did not run successfully') < handoff
+    assert handoff < factory_script.index("\nstop_ui\nstop_control\n", handoff)
+    stop_runtime = factory_script.index("\nstop_ui\nstop_control\n", handoff)
+    clear_runtime_env = factory_script.index('rm -f "${runtime_env}"', stop_runtime)
+    start_control = factory_script.index("sudo systemctl enable --now claw-trade-control.service", clear_runtime_env)
+    wait_control = factory_script.index('wait_for_file "${runtime_env}" 120', start_control)
+    start_ui = factory_script.index("sudo systemctl enable --now claw-trade-ui.service", wait_control)
+    final_curl = factory_script.index("systemd UI service did not respond on 127.0.0.1:5175", start_ui)
+    verify_release = factory_script.index('verify_systemd_ui_release "${install_root}/releases/${top_dir}"', final_curl)
+    assert stop_runtime < clear_runtime_env < start_control < wait_control < start_ui < final_curl < verify_release
+    assert "systemd UI reports version" in factory_script
+    assert "release frontend entry asset not found" in factory_script
+    assert "release frontend asset missing" in factory_script
+    assert "served UI is not loading release asset" in factory_script
+    assert "served frontend asset hash mismatch" in factory_script
     assert "ufw allow 5175/tcp" not in factory_script
     assert "hostname -I" not in factory_script
 
@@ -699,7 +716,18 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
     assert '[[ -f "${CLAW_TRADE_AGENTS_ROOT}/market_analyst/AGENTS.md" ]]' in ui_bin
     assert 'runtime env not ready' in ui_bin
     assert '"${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env" "${RUNTIME_ENV}"' in ui_bin
-    assert 'CLAW_TRADE_RELEASE_ROOT="${CLAW_TRADE_RELEASE_ROOT:-${ROOT_DIR}}"' in ui_bin
+    assert 'ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"' in ui_bin
+    assert 'CLAW_TRADE_RELEASE_ROOT="${ROOT_DIR}"' in ui_bin
+    assert 'RELEASE_NAME="$(basename "${ROOT_DIR}")"' in ui_bin
+    assert 'CLAW_TRADE_VERSION="${BASH_REMATCH[1]}"' in ui_bin
+    control_bin = (ROOT / "packaging" / "production" / "bin" / "claw-trade-control").read_text(encoding="utf-8")
+    auto_update_bin = (ROOT / "packaging" / "production" / "bin" / "claw-trade-auto-update").read_text(encoding="utf-8")
+    assert 'ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"' in control_bin
+    assert 'ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"' in auto_update_bin
+    assert 'RELEASE_NAME="$(basename "${ROOT_DIR}")"' in control_bin
+    assert 'RELEASE_NAME="$(basename "${ROOT_DIR}")"' in auto_update_bin
+    assert 'CLAW_TRADE_VERSION="${BASH_REMATCH[1]}"' in control_bin
+    assert 'CLAW_TRADE_VERSION="${BASH_REMATCH[1]}"' in auto_update_bin
     assert 'OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${SHARED}/data/openclaw-state}"' in runtime_script
     assert 'CLAW_TRADE_RUNTIME_ASSETS_ROOT="${CLAW_TRADE_RUNTIME_ASSETS_ROOT:-${SHARED}/runtime-assets}"' in runtime_script
     assert 'LOG_DIR="${SHARED}/logs"' in runtime_script

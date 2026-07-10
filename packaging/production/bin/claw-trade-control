@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-/opt/claw-trade/shared}"
+RELEASE_NAME="$(basename "${ROOT_DIR}")"
 
 for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/runtime.env"; do
   if [[ -f "${env_file}" ]]; then
@@ -14,6 +15,9 @@ for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/ru
 done
 
 export PYTHONPATH="${ROOT_DIR}/app/python:${ROOT_DIR}/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
+if [[ "${RELEASE_NAME}" =~ ^claw-trade-production-([0-9]+\.[0-9]+\.[0-9]+)- ]]; then
+  export CLAW_TRADE_VERSION="${BASH_REMATCH[1]}"
+fi
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${SHARED_ROOT}/cache/xdg}"
 export NUMBA_CACHE_DIR="${NUMBA_CACHE_DIR:-${SHARED_ROOT}/cache/numba}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-${SHARED_ROOT}/cache/matplotlib}"

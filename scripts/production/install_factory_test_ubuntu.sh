@@ -299,6 +299,45 @@ wait_for_file_from_process() {
   return 1
 }
 
+wait_for_file() {
+  local path="$1"
+  local timeout_sec="$2"
+  local waited=0
+  while (( waited < timeout_sec )); do
+    [[ -s "${path}" ]] && return 0
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  return 1
+}
+
+verify_systemd_ui_release() {
+  local release_dir="$1"
+  local release_name
+  local target_version
+  local maintenance_json
+  local current_version
+  local expected_asset
+  local expected_hash
+  local served_hash
+  local served_html
+  release_name="$(basename "${release_dir}")"
+  target_version="${release_name#claw-trade-production-}"
+  target_version="${target_version%%-*}"
+  [[ "${target_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "cannot parse package version from ${release_name}"
+  maintenance_json="$(curl -fsS http://127.0.0.1:5175/api/ui/get-production-maintenance-status)"
+  current_version="$(python3.12 -c 'import json,sys; payload=json.load(sys.stdin); print(((payload.get("update") or {}).get("currentVersion") or ""))' <<<"${maintenance_json}")"
+  [[ "${current_version}" == "${target_version}" ]] || fail "systemd UI reports version ${current_version:-<empty>}, expected ${target_version}"
+  expected_asset="$(python3.12 -c 'import pathlib,re,sys; text=pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"); match=re.search(r"<script[^>]+src=\"/assets/([^\"]+\\.js)\"", text); print(match.group(1) if match else "")' "${release_dir}/web/dist/index.html")"
+  [[ -n "${expected_asset}" ]] || fail "release frontend entry asset not found"
+  [[ -f "${release_dir}/web/dist/assets/${expected_asset}" ]] || fail "release frontend asset missing: ${expected_asset}"
+  served_html="$(curl -fsS http://127.0.0.1:5175/)"
+  [[ "${served_html}" == *"/assets/${expected_asset}"* ]] || fail "served UI is not loading release asset ${expected_asset}"
+  expected_hash="$(sha256sum "${release_dir}/web/dist/assets/${expected_asset}" | awk '{print $1}')"
+  served_hash="$(curl -fsS "http://127.0.0.1:5175/assets/${expected_asset}" | sha256sum | awk '{print $1}')"
+  [[ "${served_hash}" == "${expected_hash}" ]] || fail "served frontend asset hash mismatch for ${expected_asset}"
+}
+
 source_runtime_env() {
   local runtime_env="$1"
   [[ -f "${runtime_env}" ]] || fail "runtime env not found: ${runtime_env}"
@@ -503,6 +542,28 @@ sudo -u "${runtime_owner}" -g "${runtime_group}" bash -c 'set -euo pipefail; set
   bash "${install_root}/shared/config/claw-trade.env" "${install_root}/current/bin/claw-trade-auto-update" >/dev/null \
   || fail "auto update command did not run successfully"
 sudo systemctl reset-failed claw-trade-auto-update.service claw-trade-control.service claw-trade-rescue.service >/dev/null 2>&1 || true
+
+log "handing off runtime to systemd"
+stop_ui
+stop_control
+rm -f "${runtime_env}"
+sudo systemctl enable --now claw-trade-control.service
+if ! wait_for_file "${runtime_env}" 120; then
+  sudo journalctl -u claw-trade-control.service -n 120 --no-pager >&2 || true
+  fail "systemd control service did not become ready"
+fi
+sudo systemctl enable --now claw-trade-ui.service
+for _ in $(seq 1 60); do
+  if curl -fsS http://127.0.0.1:5175/ >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+curl -fsS http://127.0.0.1:5175/ >/dev/null 2>&1 || {
+  sudo journalctl -u claw-trade-ui.service -n 120 --no-pager >&2 || true
+  fail "systemd UI service did not respond on 127.0.0.1:5175"
+}
+verify_systemd_ui_release "${install_root}/releases/${top_dir}"
 
 ui_lan_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<NF; i++) if ($i == "src") {print $(i+1); exit}}')"
 if [[ -z "${ui_lan_ip}" ]]; then

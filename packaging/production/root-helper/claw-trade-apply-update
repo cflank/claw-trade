@@ -8,6 +8,7 @@ import os
 import posixpath
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -25,6 +26,16 @@ ARCHIVE_NAME_RE = re.compile(r"^(claw-trade-production-\d+\.\d+\.\d+-\d{8}T\d{6}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 DEFAULT_PUBLIC_KEY_PATH = "/etc/claw-trade/update-signing-public.pem"
+HOST_HELPER_PATH = Path("/usr/local/lib/claw-trade/claw-trade-apply-update")
+SYSTEMD_DIR = Path("/etc/systemd/system")
+SUDOERS_PATH = Path("/etc/sudoers.d/claw-trade-update")
+LEGACY_PID_FILES = (Path("/tmp/claw-trade-ui.pid"), Path("/tmp/claw-trade-control.pid"))
+LEGACY_PROCESS_MARKERS = (
+    "claw_trade.web.app",
+    "claw-trade-control-runtime",
+    "/bin/claw-trade-ui",
+    "/bin/claw-trade-control",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,14 +109,16 @@ def run(*, install_root: Path, request_path: Path, public_key_path: Path | None 
         run_preflight(staging_dir)
         staging_dir.replace(target)
         staging_dir = None
+        install_host_files(target)
 
         write_state(install_root, "restarting", f"正在切换到版本 {version} 并重启服务。")
         switch_link(install_root / "current", target)
+        stop_legacy_processes()
         if not restart_main_services():
             return rollback_or_rescue(install_root=install_root, previous=previous, reason="服务重启失败")
 
         write_state(install_root, "health_checking", "正在检查更新后服务健康状态。")
-        if wait_for_ui_health():
+        if wait_for_ui_health(version=version, release_dir=target):
             write_state(install_root, "installed", f"已安装并启用版本 {version}。")
             request_path.unlink(missing_ok=True)
             return 0
@@ -238,6 +251,10 @@ def validate_manifest_for_archive(
         raise ValueError("apply request 与 manifest 不匹配")
     if not VERSION_RE.fullmatch(manifest["version"]) or not VERSION_RE.fullmatch(manifest["min_current_version"]):
         raise ValueError("manifest version 非法")
+    archive_release_name = validate_archive_name(manifest["archive"])
+    archive_version = archive_release_name.split("-")[3]
+    if archive_version != manifest["version"]:
+        raise ValueError("manifest archive 版本与 manifest version 不匹配")
     if current_version is not None:
         if version_tuple(manifest["version"]) <= version_tuple(current_version):
             raise ValueError("manifest version 不高于当前版本")
@@ -323,11 +340,41 @@ def run_preflight(release_dir: Path) -> None:
     subprocess.run([str(release_dir / "bin" / "claw-trade-preflight")], check=True)
 
 
+def install_host_files(release_dir: Path) -> None:
+    if os.geteuid() != 0:
+        return
+    helper = release_dir / "root-helper" / "claw-trade-apply-update"
+    systemd = release_dir / "systemd"
+    sudoers = release_dir / "sudoers" / "claw-trade-update"
+    if not helper.is_file() or not systemd.is_dir() or not sudoers.is_file():
+        raise ValueError("更新包缺少宿主机安装文件")
+
+    HOST_HELPER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
+    SUDOERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(helper, HOST_HELPER_PATH)
+    HOST_HELPER_PATH.chmod(0o755)
+    for unit in sorted(systemd.glob("*.service")) + sorted(systemd.glob("*.timer")):
+        shutil.copy2(unit, SYSTEMD_DIR / unit.name)
+    temp_sudoers = SUDOERS_PATH.with_name(f".{SUDOERS_PATH.name}.{os.getpid()}.tmp")
+    temp_sudoers.unlink(missing_ok=True)
+    shutil.copy2(sudoers, temp_sudoers)
+    temp_sudoers.chmod(0o440)
+    try:
+        subprocess.run(["/usr/sbin/visudo", "-cf", str(temp_sudoers)], check=True, stdout=subprocess.DEVNULL)
+        temp_sudoers.replace(SUDOERS_PATH)
+    finally:
+        temp_sudoers.unlink(missing_ok=True)
+    subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
+    subprocess.run(["/bin/systemctl", "enable", "claw-trade-control.service", "claw-trade-ui.service", "claw-trade-auto-update.timer"], check=True)
+
+
 def rollback_or_rescue(*, install_root: Path, previous: Path | None, reason: str) -> int:
     if previous is not None:
         write_state(install_root, "rollback_started", f"{reason}，正在回滚上一版本。")
         switch_link(install_root / "current", previous)
-        if restart_main_services() and wait_for_ui_health():
+        stop_legacy_processes()
+        if restart_main_services() and wait_for_ui_health(version=current_release_version(install_root), release_dir=previous):
             write_state(install_root, "rollback_succeeded", f"{reason}，已回滚上一版本。")
             return 1
     try:
@@ -358,26 +405,131 @@ def switch_link(link_path: Path, target: Path) -> None:
     temp.replace(link_path)
 
 
+def stop_legacy_processes() -> None:
+    for pid_file in LEGACY_PID_FILES:
+        stop_legacy_pid_file(pid_file)
+
+
+def stop_legacy_pid_file(pid_file: Path) -> None:
+    try:
+        raw_pid = pid_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    try:
+        pid = int(raw_pid)
+    except ValueError:
+        pid_file.unlink(missing_ok=True)
+        return
+    cmdline = process_cmdline(pid)
+    if cmdline and any(marker in cmdline for marker in LEGACY_PROCESS_MARKERS):
+        terminate_process(pid)
+    pid_file.unlink(missing_ok=True)
+
+
+def process_cmdline(pid: int) -> str:
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def terminate_process(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(20):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+
+
 def restart_main_services() -> bool:
     try:
         subprocess.run(["/bin/systemctl", "restart", "claw-trade-control.service"], check=True)
         subprocess.run(["/bin/systemctl", "restart", "claw-trade-ui.service"], check=True)
+        subprocess.run(["/bin/systemctl", "is-active", "--quiet", "claw-trade-control.service"], check=True)
+        subprocess.run(["/bin/systemctl", "is-active", "--quiet", "claw-trade-ui.service"], check=True)
     except subprocess.CalledProcessError:
         return False
     return True
 
 
-def wait_for_ui_health(*, url: str = "http://127.0.0.1:5175/healthz", timeout_seconds: int = 60) -> bool:
+def wait_for_ui_health(
+    *, version: str | None = None, release_dir: Path | None = None, base_url: str = "http://127.0.0.1:5175", timeout_seconds: int = 60
+) -> bool:
+    try:
+        expected_asset = expected_frontend_asset(release_dir) if release_dir is not None else None
+        expected_asset_hash = sha256_path(release_dir / "web" / "dist" / "assets" / expected_asset) if release_dir is not None and expected_asset else None
+    except (OSError, ValueError):
+        return False
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
-            with urlopen(url, timeout=2) as response:  # nosec B310: fixed localhost health URL
-                if 200 <= response.status < 300:
-                    return True
-        except (OSError, URLError):
+            if not http_ok(f"{base_url}/healthz"):
+                raise ValueError("healthz not ready")
+            if version is not None and running_version(base_url) != version:
+                raise ValueError("running version mismatch")
+            if expected_asset is not None:
+                html = fetch_text(f"{base_url}/")
+                if f"/assets/{expected_asset}" not in html:
+                    raise ValueError("frontend asset mismatch")
+                if expected_asset_hash is not None and sha256_bytes(fetch_bytes(f"{base_url}/assets/{expected_asset}")) != expected_asset_hash:
+                    raise ValueError("frontend asset hash mismatch")
+            return True
+        except (OSError, URLError, ValueError, json.JSONDecodeError):
             pass
         time.sleep(2)
     return False
+
+
+def http_ok(url: str) -> bool:
+    with urlopen(url, timeout=2) as response:  # nosec B310: fixed localhost health URL
+        return 200 <= response.status < 300
+
+
+def running_version(base_url: str) -> str | None:
+    payload = json.loads(fetch_text(f"{base_url}/api/ui/get-production-maintenance-status"))
+    if not isinstance(payload, dict):
+        return None
+    update = payload.get("update")
+    if not isinstance(update, dict):
+        return None
+    value = update.get("currentVersion")
+    return value if isinstance(value, str) and value else None
+
+
+def expected_frontend_asset(release_dir: Path) -> str | None:
+    html = (release_dir / "web" / "dist" / "index.html").read_text(encoding="utf-8")
+    match = re.search(r'<script[^>]+src="/assets/([^"]+\.js)"', html)
+    if not match:
+        raise ValueError("前端入口资产缺失")
+    return match.group(1)
+
+
+def fetch_text(url: str) -> str:
+    return fetch_bytes(url).decode("utf-8", "replace")
+
+
+def fetch_bytes(url: str) -> bytes:
+    with urlopen(url, timeout=2) as response:  # nosec B310: fixed localhost URL
+        if not 200 <= response.status < 300:
+            raise ValueError(f"HTTP {response.status}")
+        return response.read()
+
+
+def sha256_path(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
 
 
 def write_state(install_root: Path, status: str, user_message: str) -> None:

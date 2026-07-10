@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from claw_trade.production.auto_update import AutoUpdateScheduler, _env_flag, auto_update_enabled, run_auto_update
+from claw_trade.production.auto_update import AutoUpdateScheduler, _current_release_version, _env_flag, auto_update_enabled, run_auto_update
 from claw_trade.production.remote_update import RemoteManifestCheck, RemoteUpdateInstall
 from claw_trade.production.update_manifest import UpdateManifest
 
@@ -54,6 +54,27 @@ def test_auto_update_enabled_requires_update_source_unless_disabled() -> None:
         )
         is False
     )
+
+
+def test_current_release_version_prefers_process_version(monkeypatch) -> None:
+    monkeypatch.setenv("CLAW_TRADE_VERSION", "1.2.4")
+    monkeypatch.setenv("CLAW_TRADE_RELEASE_ROOT", "/opt/claw-trade/releases/claw-trade-production-1.2.3-20260626T120000Z")
+
+    assert _current_release_version() == "1.2.4"
+
+
+def test_current_release_version_reads_release_root(monkeypatch) -> None:
+    monkeypatch.delenv("CLAW_TRADE_VERSION", raising=False)
+    monkeypatch.setenv("CLAW_TRADE_RELEASE_ROOT", "/opt/claw-trade/releases/claw-trade-production-1.2.3-20260626T120000Z")
+
+    assert _current_release_version() == "1.2.3"
+
+
+def test_current_release_version_falls_back_for_invalid_release_root(monkeypatch) -> None:
+    monkeypatch.delenv("CLAW_TRADE_VERSION", raising=False)
+    monkeypatch.setenv("CLAW_TRADE_RELEASE_ROOT", "/opt/claw-trade/current")
+
+    assert _current_release_version() == "0.1.0"
 
 
 def test_scheduler_run_once_uses_fresh_service_factory() -> None:

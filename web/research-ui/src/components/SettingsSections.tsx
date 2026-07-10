@@ -204,7 +204,13 @@ function updateStatusTone(status?: string) {
   if (status === 'installed' || status === 'update_available' || status === 'up_to_date') {
     return 'is-success';
   }
-  if (status === 'rollback_failed' || status === 'install_failed' || status === 'verify_failed' || status === 'check_failed') {
+  if (
+    status === 'rollback_failed' ||
+    status === 'install_failed' ||
+    status === 'install_incomplete' ||
+    status === 'verify_failed' ||
+    status === 'check_failed'
+  ) {
     return 'is-error';
   }
   return 'is-warning';

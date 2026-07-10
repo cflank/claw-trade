@@ -85,6 +85,7 @@ const UPDATE_ERROR_STATUSES = new Set<UpdateActionStatus>([
   'check_failed',
   'verify_failed',
   'install_failed',
+  'install_incomplete',
   'rollback_failed',
   'not_configured',
 ]);
@@ -93,6 +94,7 @@ const UPDATE_TERMINAL_STATUSES = new Set<UpdateActionStatus>([
   'rollback_succeeded',
   'rollback_failed',
   'install_failed',
+  'install_incomplete',
   'check_failed',
   'verify_failed',
 ]);
@@ -898,7 +900,7 @@ export function SettingsPage() {
       );
       setUpdateActionStatus(result.status);
       if (UPDATE_ERROR_STATUSES.has(result.status)) {
-        setSectionErrors((current) => ({ ...current, update: result.userMessage }));
+        setSectionErrors((current) => ({ ...current, update: productionMaintenance ? undefined : result.userMessage }));
       } else if (shouldShowUpdateActionMessage(result.status)) {
         setUpdateActionMessage(result.userMessage);
       } else {
@@ -912,6 +914,7 @@ export function SettingsPage() {
                 ...current.update,
                 status: result.status,
                 userMessage: result.userMessage,
+                currentVersion: result.currentVersion ?? current.update.currentVersion,
                 latestVersion: result.latestVersion,
               },
             }
@@ -943,7 +946,7 @@ export function SettingsPage() {
       );
       setUpdateActionStatus(result.status);
       if (UPDATE_ERROR_STATUSES.has(result.status)) {
-        setSectionErrors((current) => ({ ...current, update: result.userMessage }));
+        setSectionErrors((current) => ({ ...current, update: productionMaintenance ? undefined : result.userMessage }));
       } else if (shouldShowUpdateActionMessage(result.status)) {
         setUpdateActionMessage(result.userMessage);
       } else {
@@ -984,7 +987,7 @@ export function SettingsPage() {
         setUpdateActionStatus(result.update.status);
         if (UPDATE_ERROR_STATUSES.has(result.update.status)) {
           setUpdateActionMessage('');
-          setSectionErrors((current) => ({ ...current, update: result.update.userMessage }));
+          setSectionErrors((current) => ({ ...current, update: undefined }));
         } else {
           setUpdateActionMessage('');
           setSectionErrors((current) => ({ ...current, update: undefined }));

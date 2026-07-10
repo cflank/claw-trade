@@ -4,9 +4,14 @@ import importlib.machinery
 import importlib.util
 import hashlib
 import json
+import os
 import shutil
+import subprocess
+import sys
 import tarfile
+import threading
 from io import BytesIO
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 
@@ -23,14 +28,19 @@ def test_apply_update_helper_switches_current_after_health_passes(tmp_path: Path
     module = _load_helper()
     install_root, request_path, old_release, new_release = _apply_request(tmp_path)
     (install_root / "current").symlink_to(old_release)
+    installed_releases: list[Path] = []
+    health_checks: list[dict[str, object]] = []
     restart_calls: list[str] = []
+    monkeypatch.setattr(module, "install_host_files", lambda release_dir: installed_releases.append(release_dir))
     monkeypatch.setattr(module, "restart_main_services", lambda: restart_calls.append("restart") or True)
-    monkeypatch.setattr(module, "wait_for_ui_health", lambda: True)
+    monkeypatch.setattr(module, "wait_for_ui_health", lambda **kwargs: health_checks.append(kwargs) or True)
 
     result = module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root))
 
     assert result == 0
+    assert installed_releases == [new_release]
     assert restart_calls == ["restart"]
+    assert health_checks == [{"version": "1.2.3", "release_dir": new_release}]
     assert (install_root / "current").resolve(strict=False) == new_release
     assert json.loads((install_root / "shared" / "updates" / "updater-state.json").read_text())["status"] == "installed"
     assert request_path.exists() is False
@@ -43,8 +53,9 @@ def test_apply_update_helper_rolls_back_when_health_fails(tmp_path: Path, monkey
     (install_root / "current").symlink_to(old_release)
     health_results = iter([False, True])
     restart_calls: list[str] = []
+    monkeypatch.setattr(module, "install_host_files", lambda _release_dir: None)
     monkeypatch.setattr(module, "restart_main_services", lambda: restart_calls.append("restart") or True)
-    monkeypatch.setattr(module, "wait_for_ui_health", lambda: next(health_results))
+    monkeypatch.setattr(module, "wait_for_ui_health", lambda **_kwargs: next(health_results))
     real_run = module.subprocess.run
 
     def fake_run(args, **kwargs):
@@ -74,8 +85,9 @@ def test_apply_update_helper_ignores_request_previous_for_rollback(tmp_path: Pat
     request_path.write_text(json.dumps(payload), encoding="utf-8")
     (install_root / "current").symlink_to(old_release)
     health_results = iter([False, True])
+    monkeypatch.setattr(module, "install_host_files", lambda _release_dir: None)
     monkeypatch.setattr(module, "restart_main_services", lambda: True)
-    monkeypatch.setattr(module, "wait_for_ui_health", lambda: next(health_results))
+    monkeypatch.setattr(module, "wait_for_ui_health", lambda **_kwargs: next(health_results))
 
     result = module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root))
 
@@ -89,8 +101,9 @@ def test_apply_update_helper_adopts_pending_apply_lock(tmp_path: Path, monkeypat
     (install_root / "current").symlink_to(old_release)
     lock_path = install_root / "shared" / "updates" / "apply.lock"
     lock_path.write_text("pending:123", encoding="utf-8")
+    monkeypatch.setattr(module, "install_host_files", lambda _release_dir: None)
     monkeypatch.setattr(module, "restart_main_services", lambda: True)
-    monkeypatch.setattr(module, "wait_for_ui_health", lambda: True)
+    monkeypatch.setattr(module, "wait_for_ui_health", lambda **_kwargs: True)
 
     result = module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root))
 
@@ -148,6 +161,34 @@ def test_apply_update_helper_rejects_request_manifest_mismatch(tmp_path: Path) -
         module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root))
 
 
+def test_apply_update_helper_rejects_manifest_archive_version_mismatch(tmp_path: Path) -> None:
+    module = _load_helper()
+    install_root, request_path, old_release, _new_release = _apply_request(tmp_path)
+    (install_root / "current").symlink_to(old_release)
+    payload = json.loads(request_path.read_text(encoding="utf-8"))
+    payload["archive"] = "claw-trade-production-1.2.2-20260626T120000Z.tar.gz"
+    request_path.write_text(json.dumps(payload), encoding="utf-8")
+    manifest_path = install_root / "shared" / "updates" / "downloads" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["archive"] = payload["archive"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    archive = _build_release_archive("claw-trade-production-1.2.2-20260626T120000Z")
+    downloads = install_root / "shared" / "updates" / "downloads"
+    (downloads / payload["archive"]).write_bytes(archive)
+    key = Ed25519PrivateKey.generate()
+    _public_key_path(install_root).write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    (downloads / "manifest.json.sig").write_bytes(key.sign(manifest_path.read_bytes()))
+    (downloads / f"{payload['archive']}.sig").write_bytes(key.sign(archive))
+
+    with pytest.raises(ValueError, match="archive 版本与 manifest version 不匹配"):
+        module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root))
+
+
 def test_apply_update_helper_rejects_version_not_newer_than_current(tmp_path: Path) -> None:
     module = _load_helper()
     install_root, request_path, _old_release, new_release = _apply_request(tmp_path)
@@ -156,6 +197,249 @@ def test_apply_update_helper_rejects_version_not_newer_than_current(tmp_path: Pa
 
     with pytest.raises(ValueError, match="manifest version 不高于当前版本"):
         module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root))
+
+
+def test_apply_update_helper_stops_legacy_pid_file_process(tmp_path: Path) -> None:
+    module = _load_helper()
+    pid_file = tmp_path / "claw-trade-ui.pid"
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "claw_trade.web.app"])
+    try:
+        pid_file.write_text(str(process.pid), encoding="utf-8")
+
+        module.stop_legacy_pid_file(pid_file)
+
+        assert process.wait(timeout=5) != 0
+        assert not pid_file.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+
+def test_apply_update_helper_does_not_kill_pid_without_marker(tmp_path: Path) -> None:
+    module = _load_helper()
+    pid_file = tmp_path / "claw-trade-ui.pid"
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        pid_file.write_text(str(process.pid), encoding="utf-8")
+
+        module.stop_legacy_pid_file(pid_file)
+
+        assert process.poll() is None
+        assert not pid_file.exists()
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+
+def test_apply_update_helper_stops_legacy_processes_before_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    install_root, request_path, old_release, _new_release = _apply_request(tmp_path)
+    (install_root / "current").symlink_to(old_release)
+    events: list[str] = []
+    monkeypatch.setattr(module, "install_host_files", lambda _release_dir: None)
+    monkeypatch.setattr(module, "stop_legacy_processes", lambda: events.append("stop_legacy"))
+    monkeypatch.setattr(module, "restart_main_services", lambda: events.append("restart") or True)
+    monkeypatch.setattr(module, "wait_for_ui_health", lambda **_kwargs: True)
+
+    assert module.run(install_root=install_root, request_path=request_path, public_key_path=_public_key_path(install_root)) == 0
+
+    assert events == ["stop_legacy", "restart"]
+
+
+def test_install_host_files_copies_units_and_enables_services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    release_dir = tmp_path / "release"
+    (release_dir / "root-helper").mkdir(parents=True)
+    (release_dir / "systemd").mkdir()
+    (release_dir / "sudoers").mkdir()
+    (release_dir / "root-helper" / "claw-trade-apply-update").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (release_dir / "systemd" / "claw-trade-control.service").write_text("[Service]\n", encoding="utf-8")
+    (release_dir / "systemd" / "claw-trade-ui.service").write_text("[Service]\n", encoding="utf-8")
+    (release_dir / "systemd" / "claw-trade-auto-update.timer").write_text("[Timer]\n", encoding="utf-8")
+    (release_dir / "sudoers" / "claw-trade-update").write_text("clawtrade ALL=(root) NOPASSWD: /bin/systemctl start --no-block claw-trade-apply-update.service\n", encoding="utf-8")
+    host_helper = tmp_path / "host" / "claw-trade-apply-update"
+    systemd_dir = tmp_path / "systemd"
+    sudoers_path = tmp_path / "sudoers.d" / "claw-trade-update"
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(module, "HOST_HELPER_PATH", host_helper)
+    monkeypatch.setattr(module, "SYSTEMD_DIR", systemd_dir)
+    monkeypatch.setattr(module, "SUDOERS_PATH", sudoers_path)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.install_host_files(release_dir)
+
+    assert host_helper.read_text(encoding="utf-8") == "#!/usr/bin/env python3\n"
+    assert (systemd_dir / "claw-trade-control.service").read_text(encoding="utf-8") == "[Service]\n"
+    assert (systemd_dir / "claw-trade-ui.service").read_text(encoding="utf-8") == "[Service]\n"
+    assert (systemd_dir / "claw-trade-auto-update.timer").read_text(encoding="utf-8") == "[Timer]\n"
+    assert oct(host_helper.stat().st_mode & 0o777) == "0o755"
+    assert oct(sudoers_path.stat().st_mode & 0o777) == "0o440"
+    visudo_calls = [call for call in calls if call[:2] == ["/usr/sbin/visudo", "-cf"]]
+    assert len(visudo_calls) == 1
+    assert visudo_calls[0][2] != str(sudoers_path)
+    assert not Path(visudo_calls[0][2]).exists()
+    assert ["/bin/systemctl", "daemon-reload"] in calls
+    assert ["/bin/systemctl", "enable", "claw-trade-control.service", "claw-trade-ui.service", "claw-trade-auto-update.timer"] in calls
+
+
+def test_install_host_files_does_not_replace_sudoers_when_validation_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    release_dir = tmp_path / "release"
+    (release_dir / "root-helper").mkdir(parents=True)
+    (release_dir / "systemd").mkdir()
+    (release_dir / "sudoers").mkdir()
+    (release_dir / "root-helper" / "claw-trade-apply-update").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (release_dir / "systemd" / "claw-trade-control.service").write_text("[Service]\n", encoding="utf-8")
+    (release_dir / "sudoers" / "claw-trade-update").write_text("broken sudoers\n", encoding="utf-8")
+    host_helper = tmp_path / "host" / "claw-trade-apply-update"
+    systemd_dir = tmp_path / "systemd"
+    sudoers_path = tmp_path / "sudoers.d" / "claw-trade-update"
+    sudoers_path.parent.mkdir(parents=True)
+    sudoers_path.write_text("old sudoers\n", encoding="utf-8")
+
+    def fake_run(args, **_kwargs):
+        if args[:2] == ["/usr/sbin/visudo", "-cf"]:
+            raise subprocess.CalledProcessError(1, args)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(module, "HOST_HELPER_PATH", host_helper)
+    monkeypatch.setattr(module, "SYSTEMD_DIR", systemd_dir)
+    monkeypatch.setattr(module, "SUDOERS_PATH", sudoers_path)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        module.install_host_files(release_dir)
+
+    assert sudoers_path.read_text(encoding="utf-8") == "old sudoers\n"
+    assert not list(sudoers_path.parent.glob(".claw-trade-update.*.tmp"))
+
+
+def test_stop_legacy_processes_only_uses_pid_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    seen_pid_files: list[Path] = []
+    calls: list[list[str]] = []
+    monkeypatch.setattr(module, "LEGACY_PID_FILES", (Path("/tmp/a.pid"), Path("/tmp/b.pid")))
+    monkeypatch.setattr(module, "stop_legacy_pid_file", lambda pid_file: seen_pid_files.append(pid_file))
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(module.subprocess, "run", lambda args, **_kwargs: calls.append(list(args)) or subprocess.CompletedProcess(args, 0))
+
+    module.stop_legacy_processes()
+
+    assert seen_pid_files == [Path("/tmp/a.pid"), Path("/tmp/b.pid")]
+    assert calls == []
+
+
+def test_apply_update_helper_rejects_stale_health_without_target_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    release_dir = _write_release_tree(tmp_path / "claw-trade-production-1.2.3-20260626T120000Z")
+    server = _start_fake_ui(
+        {
+            "/healthz": (200, b'{"status":"ok"}'),
+            "/api/ui/get-production-maintenance-status": (200, b'{"update":{"status":"up_to_date"}}'),
+            "/": (200, b'<script type="module" src="/assets/index-new.js"></script>'),
+            "/assets/index-new.js": (200, b"console.log('new');"),
+        }
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    try:
+        assert not module.wait_for_ui_health(
+            version="1.2.3",
+            release_dir=release_dir,
+            base_url=f"http://127.0.0.1:{server.server_port}",
+            timeout_seconds=0.01,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_apply_update_helper_accepts_matching_version_and_frontend_asset(tmp_path: Path) -> None:
+    module = _load_helper()
+    release_dir = _write_release_tree(tmp_path / "claw-trade-production-1.2.3-20260626T120000Z")
+    server = _start_fake_ui(
+        {
+            "/healthz": (200, b'{"status":"ok"}'),
+            "/api/ui/get-production-maintenance-status": (200, b'{"update":{"currentVersion":"1.2.3"}}'),
+            "/": (200, b'<script type="module" src="/assets/index-new.js"></script>'),
+            "/assets/index-new.js": (200, b"console.log('new');"),
+        }
+    )
+    try:
+        assert module.wait_for_ui_health(
+            version="1.2.3",
+            release_dir=release_dir,
+            base_url=f"http://127.0.0.1:{server.server_port}",
+            timeout_seconds=1,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_apply_update_helper_rejects_served_html_with_old_frontend_asset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    release_dir = _write_release_tree(tmp_path / "claw-trade-production-1.2.3-20260626T120000Z")
+    server = _start_fake_ui(
+        {
+            "/healthz": (200, b'{"status":"ok"}'),
+            "/api/ui/get-production-maintenance-status": (200, b'{"update":{"currentVersion":"1.2.3"}}'),
+            "/": (200, b'<script type="module" src="/assets/index-old.js"></script>'),
+            "/assets/index-new.js": (200, b"console.log('new');"),
+        }
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    try:
+        assert not module.wait_for_ui_health(
+            version="1.2.3",
+            release_dir=release_dir,
+            base_url=f"http://127.0.0.1:{server.server_port}",
+            timeout_seconds=0.01,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_apply_update_helper_rejects_frontend_asset_hash_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    release_dir = _write_release_tree(tmp_path / "claw-trade-production-1.2.3-20260626T120000Z")
+    server = _start_fake_ui(
+        {
+            "/healthz": (200, b'{"status":"ok"}'),
+            "/api/ui/get-production-maintenance-status": (200, b'{"update":{"currentVersion":"1.2.3"}}'),
+            "/": (200, b'<script type="module" src="/assets/index-new.js"></script>'),
+            "/assets/index-new.js": (200, b"console.log('old');"),
+        }
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    try:
+        assert not module.wait_for_ui_health(
+            version="1.2.3",
+            release_dir=release_dir,
+            base_url=f"http://127.0.0.1:{server.server_port}",
+            timeout_seconds=0.01,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_apply_update_helper_rejects_release_without_frontend_asset(tmp_path: Path) -> None:
+    module = _load_helper()
+    release_dir = tmp_path / "claw-trade-production-1.2.3-20260626T120000Z"
+    (release_dir / "web" / "dist" / "assets").mkdir(parents=True)
+    (release_dir / "web" / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    assert not module.wait_for_ui_health(version="1.2.3", release_dir=release_dir, timeout_seconds=0.01)
 
 
 def _load_helper() -> ModuleType:
@@ -227,14 +511,60 @@ def _public_key_path(install_root: Path) -> Path:
 def _build_release_archive(release_name: str) -> bytes:
     buffer = BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        for name in (release_name, f"{release_name}/bin"):
+        for name in (
+            release_name,
+            f"{release_name}/bin",
+            f"{release_name}/root-helper",
+            f"{release_name}/systemd",
+            f"{release_name}/sudoers",
+            f"{release_name}/web",
+            f"{release_name}/web/dist",
+            f"{release_name}/web/dist/assets",
+        ):
             info = tarfile.TarInfo(name)
             info.type = tarfile.DIRTYPE
             info.mode = 0o755
             archive.addfile(info)
-        data = b"#!/usr/bin/env bash\nexit 0\n"
-        info = tarfile.TarInfo(f"{release_name}/bin/claw-trade-preflight")
-        info.mode = 0o755
-        info.size = len(data)
-        archive.addfile(info, BytesIO(data))
+        _add_file(archive, f"{release_name}/bin/claw-trade-preflight", b"#!/usr/bin/env bash\nexit 0\n", mode=0o755)
+        _add_file(archive, f"{release_name}/root-helper/claw-trade-apply-update", b"#!/usr/bin/env python3\n", mode=0o755)
+        _add_file(archive, f"{release_name}/systemd/claw-trade-control.service", b"[Service]\n")
+        _add_file(archive, f"{release_name}/systemd/claw-trade-ui.service", b"[Service]\n")
+        _add_file(archive, f"{release_name}/systemd/claw-trade-auto-update.timer", b"[Timer]\n")
+        _add_file(archive, f"{release_name}/sudoers/claw-trade-update", b"clawtrade ALL=(root) NOPASSWD: /bin/systemctl start --no-block claw-trade-apply-update.service\n")
+        _add_file(archive, f"{release_name}/web/dist/index.html", b'<script type="module" src="/assets/index-new.js"></script>\n')
+        _add_file(archive, f"{release_name}/web/dist/assets/index-new.js", b"console.log('new');")
     return buffer.getvalue()
+
+
+def _write_release_tree(release_dir: Path) -> Path:
+    (release_dir / "web" / "dist" / "assets").mkdir(parents=True)
+    (release_dir / "web" / "dist" / "index.html").write_text(
+        '<script type="module" src="/assets/index-new.js"></script>\n',
+        encoding="utf-8",
+    )
+    (release_dir / "web" / "dist" / "assets" / "index-new.js").write_text("console.log('new');", encoding="utf-8")
+    return release_dir
+
+
+def _add_file(archive: tarfile.TarFile, name: str, data: bytes, *, mode: int = 0o644) -> None:
+    info = tarfile.TarInfo(name)
+    info.mode = mode
+    info.size = len(data)
+    archive.addfile(info, BytesIO(data))
+
+
+def _start_fake_ui(routes: dict[str, tuple[int, bytes]]) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            status, body = routes.get(self.path, (404, b""))
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server

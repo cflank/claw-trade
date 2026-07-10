@@ -28,6 +28,8 @@ def test_update_manifest_accepts_installable_stable_release() -> None:
     ("patch", "message"),
     [
         ({"archive": "../release.tar.gz"}, "archive 必须是同目录文件名"),
+        ({"archive": "release.tar.gz"}, "archive 文件名非法"),
+        ({"archive": "claw-trade-production-1.2.2-20260626T120000Z.tar.gz"}, "archive 版本与 manifest version 不匹配"),
         ({"sha256": "ABC"}, "sha256"),
         ({"version": "1.2"}, "version"),
     ],
