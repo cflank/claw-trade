@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Protocol
 
@@ -177,6 +178,9 @@ def parse_openclaw_result(payload: dict[str, object]) -> OpenClawResult:
     return OpenClawResult(
         status=_required_str(payload.get("status"), "status"),
         openclaw_run_id=_optional_str(payload.get("openclaw_run_id"), "openclaw_run_id"),
+        provider=_optional_str(payload.get("provider"), "provider"),
+        model=_optional_str(payload.get("model"), "model"),
+        usage=_optional_usage(payload.get("usage")),
         provider_request_id=_optional_str(payload.get("provider_request_id"), "provider_request_id"),
         provider_request_id_status=_optional_str(
             payload.get("provider_request_id_status"),
@@ -313,6 +317,9 @@ def _failed_openclaw_result(reason: str) -> OpenClawResult:
     return OpenClawResult(
         status="failed",
         openclaw_run_id=None,
+        provider=None,
+        model=None,
+        usage=None,
         provider_request_id=None,
         provider_request_id_status=None,
         workspace_evidence_path=None,
@@ -393,6 +400,22 @@ def _optional_str(value: object | None, field_name: str) -> str | None:
     if not isinstance(value, str):
         raise TypeError(f"{field_name} 必须是 str 或 None")
     return value
+
+
+def _optional_usage(value: object | None) -> dict[str, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("usage 必须是 dict 或 None")
+    out: dict[str, int] = {}
+    for key in ("input", "output", "cacheRead", "cacheWrite", "total"):
+        raw = value.get(key)
+        if raw is None:
+            continue
+        if not isinstance(raw, int | float) or not isfinite(raw):
+            raise TypeError(f"usage.{key} 必须是有限数字")
+        out[key] = max(0, int(raw))
+    return out or None
 
 
 def _optional_path(value: object | None, field_name: str) -> Path | None:

@@ -20,6 +20,12 @@ from claw_trade.ui_backend.error_translator import translate_internal_error_for_
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
+from claw_trade.ui_backend.task_costs import (
+    TaskCostSnapshot,
+    append_task_cost_line,
+    collect_token_cost_summary_from_path,
+    estimate_task_cost,
+)
 from claw_trade.ui_contracts.enums import ChatContextKind
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +57,7 @@ class ChatController:
         report_model_ready_checker: Callable[[], None] | None = None,
         selection_controller: SelectionController | None = None,
         maintenance_status_provider: Callable[[], str] | None = None,
+        task_cost_snapshot_provider: Callable[[], TaskCostSnapshot] | None = None,
     ) -> None:
         self._openclaw = openclaw_client
         self._recognizer = recognizer
@@ -60,6 +67,7 @@ class ChatController:
         self._report_model_ready_checker = report_model_ready_checker
         self._selection_controller = selection_controller or SelectionController(store=SelectionRunStore())
         self._maintenance_status_provider = maintenance_status_provider
+        self._task_cost_snapshot_provider = task_cost_snapshot_provider
         self._contexts: dict[str, ChatContext] = {}
         self._messages: dict[str, list[ChatMessage]] = {}
         self._confirmation_cards: dict[str, dict[str, dict[str, Any]]] = {}
@@ -504,6 +512,7 @@ class ChatController:
         request_id: str,
         content: str,
     ) -> dict[str, Any]:
+        cost_start_snapshot = self._capture_task_cost_snapshot()
         try:
             select_result = self._selection_controller.handle_select_command(
                 raw_text=content,
@@ -522,6 +531,21 @@ class ChatController:
             message_kind = "selection_failed"
         else:
             message_kind = "selection_unavailable"
+        terminal_for_cost = select_result.code in {SelectCommandCode.COMPLETED, SelectCommandCode.FAILED}
+        token_summary = (
+            collect_token_cost_summary_from_path(select_result.evidence_path.parent)
+            if terminal_for_cost
+            else None
+        )
+        cost_estimate = (
+            estimate_task_cost(
+                cost_start_snapshot,
+                self._capture_task_cost_snapshot() if cost_start_snapshot is not None else None,
+                token_summary=token_summary,
+            )
+            if terminal_for_cost and (cost_start_snapshot is not None or token_summary is not None)
+            else None
+        )
         selection_payload = {
             "code": select_result.code.value,
             "workflowRunId": select_result.select_workflow_run_id,
@@ -544,7 +568,7 @@ class ChatController:
             context_kind=context.kind,
             actor="system",
             kind=message_kind,
-            text=select_result.chat_text,
+            text=append_task_cost_line(select_result.chat_text, cost_estimate),
             selection=selection_payload,
         )
         payload = self._chat_result(context)
@@ -662,6 +686,14 @@ class ChatController:
         )
         self._messages.setdefault(context_id, []).append(item)
         return item.message_id
+
+    def _capture_task_cost_snapshot(self) -> TaskCostSnapshot | None:
+        if self._task_cost_snapshot_provider is None:
+            return None
+        try:
+            return self._task_cost_snapshot_provider()
+        except Exception:
+            return TaskCostSnapshot.unavailable(reason="snapshot_failed")
 
     @staticmethod
     def _message_to_payload(message: ChatMessage) -> dict[str, Any]:

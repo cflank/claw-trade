@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 
 from claw_trade.ui_backend.pdf_export_service import PdfExportService
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
+from claw_trade.ui_backend.task_costs import TaskCostEstimate, TaskTokenCostSummary
 from claw_trade.web.state import _handle_completed_workflow_report, _save_completed_workflow_report
 
 
@@ -101,7 +103,9 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
             channel_kind: str = "wechat_clawbot",
             target: str | None = None,
             account_id: str | None = None,
+            text_footer: str | None = None,
         ) -> dict[str, object]:
+            _ = text_footer
             self.report_ids.append(report_id)
             self.targets.append((target, account_id, channel_kind))
             return {"sent": True}
@@ -163,6 +167,117 @@ def test_completed_workflow_save_sends_notification_and_appends_origin_chat(tmp_
             ),
         }
     ]
+
+
+def test_completed_workflow_chat_summary_appends_cost_estimate(tmp_path) -> None:
+    run_dir = tmp_path / "run-cost"
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "final-report.md").write_text(
+        "# BTC 报告\n\n"
+        "## 投资建议\n"
+        "维持观察。\n",
+        encoding="utf-8",
+    )
+    repository = ReportRepository()
+
+    class _NotificationSpy:
+        def notify_report_completion(self, report_id: str, **kwargs):  # type: ignore[no-untyped-def]
+            _ = (report_id, kwargs)
+            return {"sent": True}
+
+    class _ChatSpy:
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        def append_report_completed_message(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.messages.append(dict(kwargs))
+
+    chat = _ChatSpy()
+    task = SimpleNamespace(
+        task_id="task-cost",
+        run_id="run-cost",
+        instrument_code="BTC",
+        instrument_name="Bitcoin",
+        market="CRYPTO",
+        origin_context_id="wechat_clawbot:account-1:sender-1",
+        cost_estimate=TaskCostEstimate.estimated(
+            estimated_cost=Decimal("0.28"),
+            balance_before=Decimal("10.00"),
+            balance_after=Decimal("9.72"),
+        ),
+    )
+    workflow_state = SimpleNamespace(
+        run_id="run-cost",
+        run_dir=run_dir,
+        updated_at="2026-05-25T15:15:34Z",
+    )
+
+    _handle_completed_workflow_report(
+        repository,
+        _NotificationSpy(),  # type: ignore[arg-type]
+        chat,  # type: ignore[arg-type]
+        task=task,
+        workflow_state=workflow_state,
+    )
+
+    assert "本次消费：¥0.28" in str(chat.messages[0]["text"])
+    assert "费用统计" not in repository.get_report("run-cost").markdown
+
+
+def test_completed_workflow_chat_summary_reports_missing_token_usage_evidence(tmp_path) -> None:
+    run_dir = tmp_path / "run-missing-usage"
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True)
+    (reports_dir / "final-report.md").write_text(
+        "# BTC 报告\n\n"
+        "## 投资建议\n"
+        "维持观察。\n",
+        encoding="utf-8",
+    )
+    repository = ReportRepository()
+
+    class _NotificationSpy:
+        def notify_report_completion(self, report_id: str, **kwargs):  # type: ignore[no-untyped-def]
+            _ = (report_id, kwargs)
+            return {"sent": True}
+
+    class _ChatSpy:
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        def append_report_completed_message(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.messages.append(dict(kwargs))
+
+    chat = _ChatSpy()
+    task = SimpleNamespace(
+        task_id="task-missing-usage",
+        run_id="run-missing-usage",
+        instrument_code="BTC",
+        instrument_name="Bitcoin",
+        market="CRYPTO",
+        origin_context_id="wechat_clawbot:account-1:sender-1",
+        cost_estimate=TaskCostEstimate.unavailable(
+            reason="finish_balance_missing",
+            token_summary=TaskTokenCostSummary.unavailable(reason="usage_file_missing"),
+        ),
+    )
+    workflow_state = SimpleNamespace(
+        run_id="run-missing-usage",
+        run_dir=run_dir,
+        updated_at="2026-05-25T15:15:34Z",
+    )
+
+    _handle_completed_workflow_report(
+        repository,
+        _NotificationSpy(),  # type: ignore[arg-type]
+        chat,  # type: ignore[arg-type]
+        task=task,
+        workflow_state=workflow_state,
+    )
+
+    assert "Token 总数：未知" in str(chat.messages[0]["text"])
+    assert "费用统计" not in repository.get_report("run-missing-usage").markdown
 
 
 def test_select_handoff_saved_report_includes_boundary_notice_without_polluting_summary(tmp_path) -> None:

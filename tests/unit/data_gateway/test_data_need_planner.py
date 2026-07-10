@@ -3,12 +3,15 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-
 from claw_trade.data_gateway.models import Market
 from claw_trade.data_gateway.needs import DataNeed, NeedPriority, ProviderCallSpec
 from claw_trade.data_gateway.official_catalog import all_endpoints
 from claw_trade.data_gateway.planner import build_provider_call_spec, plan_public_data_requests
-from claw_trade.data_gateway.public_api import PublicDataRequest, PublicRequestPriority, public_api_contracts
+from claw_trade.data_gateway.public_api import (
+    PublicDataRequest,
+    PublicRequestPriority,
+    public_api_contracts,
+)
 
 
 def _request(**overrides: object) -> PublicDataRequest:
@@ -385,6 +388,60 @@ def test_cn_a_sector_flow_uses_latest_completed_trading_day_for_intraday_request
     assert params_by_endpoint["tushare.moneyflow_ind_dc"] == {"trade_date": "20260612", "content_type": "行业"}
     assert params_by_endpoint["tushare.moneyflow_ind_ths"] == {"trade_date": "20260612"}
     assert params_by_endpoint["tushare.moneyflow_cnt_ths"] == {"trade_date": "20260612"}
+
+
+def test_cn_a_trade_date_only_tushare_call_uses_previous_day_at_1540_bjt() -> None:
+    request = _request(
+        request_id="cn-a-sector-flow-1540-bjt",
+        item="板块资金",
+        market=Market.CN_A,
+        time_range_start=date(2026, 7, 1),
+        time_range_end=date(2026, 7, 10),
+        deadline_at=datetime(2026, 7, 10, 7, 40, tzinfo=UTC),
+        granularity="event",
+        purpose="hot_money_report",
+    )
+
+    plan = plan_public_data_requests((request,))
+
+    params_by_endpoint = {call.catalog_endpoint_id: call.params for call in plan.planned_calls}
+    assert params_by_endpoint["tushare.moneyflow_ind_ths"] == {"trade_date": "20260709"}
+
+
+def test_cn_a_single_day_trade_date_only_tushare_call_uses_previous_day_at_1540_bjt() -> None:
+    request = _request(
+        request_id="cn-a-sector-flow-single-day-1540-bjt",
+        item="板块资金",
+        market=Market.CN_A,
+        time_range_start=date(2026, 7, 10),
+        time_range_end=date(2026, 7, 10),
+        deadline_at=datetime(2026, 7, 10, 7, 40, tzinfo=UTC),
+        granularity="event",
+        purpose="hot_money_report",
+    )
+
+    plan = plan_public_data_requests((request,))
+
+    params_by_endpoint = {call.catalog_endpoint_id: call.params for call in plan.planned_calls}
+    assert params_by_endpoint["tushare.moneyflow_ind_ths"] == {"trade_date": "20260709"}
+
+
+def test_cn_a_trade_date_only_tushare_call_uses_today_at_1600_bjt() -> None:
+    request = _request(
+        request_id="cn-a-sector-flow-1600-bjt",
+        item="板块资金",
+        market=Market.CN_A,
+        time_range_start=date(2026, 7, 1),
+        time_range_end=date(2026, 7, 10),
+        deadline_at=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+        granularity="event",
+        purpose="hot_money_report",
+    )
+
+    plan = plan_public_data_requests((request,))
+
+    params_by_endpoint = {call.catalog_endpoint_id: call.params for call in plan.planned_calls}
+    assert params_by_endpoint["tushare.moneyflow_ind_ths"] == {"trade_date": "20260710"}
 
 
 def test_cn_a_annual_financial_metric_uses_report_period_interfaces() -> None:

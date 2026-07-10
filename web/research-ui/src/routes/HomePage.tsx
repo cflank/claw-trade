@@ -573,6 +573,7 @@ export function HomePage() {
     localWorkerMessageIdsFromMessages(persistedInitialChatState?.messages ?? []),
   );
   const localWorkerChatMessagesRef = useRef(localWorkerChatMessageIdsRef.current.size > 0);
+  const clearedAtByContextRef = useRef(new Map<string, number>());
   const activeDetailRef = useRef<ReportDetailForUser | null>(null);
   const activeSelectionDetailRef = useRef<SelectionReportForUser | null>(null);
 
@@ -628,41 +629,71 @@ export function HomePage() {
     setSelectionProgress(null);
   }, []);
 
-  const applyChannelChatSnapshot = useCallback((snapshot: ChannelChatSnapshotForUser | null | undefined) => {
-    if (!snapshot?.context || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
-      return;
+  const messagesVisibleAfterClear = useCallback((contextId: string, snapshotMessages: ChatMessageForUser[]) => {
+    const clearedAt = clearedAtByContextRef.current.get(contextId);
+    if (!clearedAt) {
+      return snapshotMessages;
     }
-    if (activeDetailRef.current || activeSelectionDetailRef.current) {
-      return;
-    }
-    if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
-      return;
-    }
-    setContext(snapshot.context);
-    setMessages((current) => mergeIncomingChatMessages(current, snapshot.messages));
-    if (snapshot.confirmationCards) {
-      setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
-    }
+    return snapshotMessages.filter((message) => {
+      const createdAt = Date.parse(message.createdAt);
+      return Number.isFinite(createdAt) && createdAt > clearedAt;
+    });
   }, []);
 
-  const applyChatSessionSnapshot = useCallback((snapshot: SendChatMessageOutput | null | undefined) => {
-    if (!snapshot?.context || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
+  const applyChannelChatSnapshot = useCallback((snapshot: ChannelChatSnapshotForUser | null | undefined) => {
+    if (!snapshot?.context || !Array.isArray(snapshot.messages)) {
       return;
     }
     if (activeDetailRef.current || activeSelectionDetailRef.current) {
       return;
     }
-    if (localWorkerChatMessagesRef.current && !hasReportCompletedMessage(snapshot.messages)) {
+    const nextMessages = messagesVisibleAfterClear(snapshot.context.contextId, snapshot.messages);
+    if (nextMessages.length === 0 && nextMessages.length === snapshot.messages.length) {
       return;
     }
-    setContext(snapshot.context);
-    setMessages((current) => mergeIncomingChatMessages(current, snapshot.messages));
-    if (snapshot.confirmationCards) {
+    if (nextMessages.length > 0 && localWorkerChatMessagesRef.current && !hasReportCompletedMessage(nextMessages)) {
+      return;
+    }
+    if (nextMessages.length > 0 || snapshot.messages.length === 0) {
+      setContext(snapshot.context);
+    }
+    setMessages((current) => (nextMessages.length ? mergeIncomingChatMessages(current, nextMessages) : []));
+    if (nextMessages.length === 0) {
+      setConfirmationCards(snapshot.confirmationCards ?? {});
+    } else if (snapshot.confirmationCards) {
+      setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
+    }
+  }, [messagesVisibleAfterClear]);
+
+  const applyChatSessionSnapshot = useCallback((snapshot: SendChatMessageOutput | null | undefined, options: { allowEmpty?: boolean } = {}) => {
+    if (!snapshot?.context || !Array.isArray(snapshot.messages)) {
+      return;
+    }
+    if (activeDetailRef.current || activeSelectionDetailRef.current) {
+      return;
+    }
+    const nextMessages = messagesVisibleAfterClear(snapshot.context.contextId, snapshot.messages);
+    if (nextMessages.length === 0 && options.allowEmpty && localWorkerChatMessagesRef.current) {
+      return;
+    }
+    if (nextMessages.length === 0 && nextMessages.length === snapshot.messages.length && !options.allowEmpty) {
+      return;
+    }
+    if (nextMessages.length > 0 && localWorkerChatMessagesRef.current && !hasReportCompletedMessage(nextMessages)) {
+      return;
+    }
+    if (nextMessages.length > 0 || snapshot.messages.length === 0) {
+      setContext(snapshot.context);
+    }
+    setMessages((current) => (nextMessages.length ? mergeIncomingChatMessages(current, nextMessages) : []));
+    if (nextMessages.length === 0) {
+      setConfirmationCards(snapshot.confirmationCards ?? {});
+    } else if (snapshot.confirmationCards) {
       setConfirmationCards((current) => ({ ...current, ...snapshot.confirmationCards }));
     }
     setActiveDetail(null);
     setActiveSelectionDetail(null);
-  }, []);
+  }, [messagesVisibleAfterClear]);
 
   const refreshReportModelStatus = useCallback(async () => {
     const status = await getReportModelStatus().catch(() => null);
@@ -714,7 +745,7 @@ export function HomePage() {
         current && workers.some((worker) => worker.workerId === current) ? current : defaultWorkerId(workers),
       );
       applyQueueSnapshot(queueResult);
-      applyChatSessionSnapshot(normalChatResult);
+      applyChatSessionSnapshot(normalChatResult, { allowEmpty: true });
       applyChannelChatSnapshot(channelChatResult);
       applySelectionRefreshSnapshot(selectionRefreshResult);
     } catch (loadError) {
@@ -935,6 +966,8 @@ export function HomePage() {
       return;
     }
     setError('');
+    const clearStartedAt = Date.now();
+    clearedAtByContextRef.current.set(context.contextId, clearStartedAt);
     try {
       const result = await clearChatSession({
         requestId: nextRequestId(),
@@ -949,6 +982,9 @@ export function HomePage() {
       setActiveDetail(null);
       setActiveSelectionDetail(null);
     } catch (clearError) {
+      if (clearedAtByContextRef.current.get(context.contextId) === clearStartedAt) {
+        clearedAtByContextRef.current.delete(context.contextId);
+      }
       setError((clearError as Error).message);
     }
   }, [context.contextId]);

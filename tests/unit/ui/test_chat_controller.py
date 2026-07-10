@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
@@ -11,6 +12,7 @@ from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
+from claw_trade.ui_backend.task_costs import TaskCostSnapshot
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 
 
@@ -48,6 +50,7 @@ class _FakeSelectionController:
     calls: int = 0
     code: SelectCommandCode = SelectCommandCode.COMPLETED
     chat_text: str = "`/select` 测试结果"
+    evidence_path: Path = Path("runs/selection/workflows/select-test-run/evidence.json")
 
     def handle_select_command(self, *, raw_text: str, request_id: str, user_id: str | None = None) -> SelectCommandResult:
         self.calls += 1
@@ -55,7 +58,7 @@ class _FakeSelectionController:
             code=self.code,
             chat_text=self.chat_text,
             select_workflow_run_id="select-test-run",
-            evidence_path=Path("runs/selection/workflows/select-test-run/evidence.json"),
+            evidence_path=self.evidence_path,
             failure_reason="selection_result_invalid:test" if self.code == SelectCommandCode.FAILED else None,
         )
 
@@ -63,10 +66,15 @@ class _FakeSelectionController:
 def _build_controller(
     *,
     selection_controller: _FakeSelectionController | None = None,
+    task_cost_snapshots: list[TaskCostSnapshot] | None = None,
 ) -> tuple[ChatController, _FakeChatTransport, _FakeWorkflowRunner]:
     transport = _FakeChatTransport()
     workflow_runner = _FakeWorkflowRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(workflow_runner))
+    snapshot_provider = None
+    if task_cost_snapshots is not None:
+        snapshots = iter(task_cost_snapshots)
+        snapshot_provider = lambda: next(snapshots)
     controller = ChatController(
         openclaw_client=OpenClawGatewayClient(transport),
         recognizer=IntentRecognizer(),
@@ -74,6 +82,7 @@ def _build_controller(
         queue=queue,
         settings=ReportWorkflowSettings(),
         selection_controller=selection_controller,
+        task_cost_snapshot_provider=snapshot_provider,
     )
     return controller, transport, workflow_runner
 
@@ -177,6 +186,81 @@ def test_select_command_is_routed_to_selection_before_report_intent() -> None:
     assert selection.calls == 1
     assert transport.calls == 0
     assert workflow_runner.calls == 0
+
+
+def test_select_command_appends_balance_delta_cost_estimate_when_enabled() -> None:
+    selection = _FakeSelectionController()
+    controller, _, _ = _build_controller(
+        selection_controller=selection,
+        task_cost_snapshots=[
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("100.00")),
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("99.97")),
+        ],
+    )
+
+    result = controller.send_chat_message(request_id="req-select-cost", context_id="ctx-select-cost", text="/select")
+
+    assert result["messages"][-1]["text"] == (
+        "`/select` 测试结果\n"
+        "费用统计：Token 总数：未知；任务前余额：¥100.00；任务后余额：¥99.97；本次消费：¥0.03"
+    )
+
+
+def test_select_command_appends_token_cost_summary(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / "select-test-run"
+    dispatch_dir = workflow_dir / "dispatches" / "dispatch-1"
+    dispatch_dir.mkdir(parents=True)
+    (dispatch_dir / "openclaw-result.json").write_text(
+        '{"provider":"deepseek","model":"deepseek-chat","usage":{"cacheRead":1000000,"input":1000000,"output":1000000}}\n',
+        encoding="utf-8",
+    )
+    selection = _FakeSelectionController(evidence_path=workflow_dir / "evidence.json")
+    controller, _, _ = _build_controller(selection_controller=selection)
+
+    result = controller.send_chat_message(
+        request_id="req-select-token-cost",
+        context_id="ctx-select-token-cost",
+        text="/select",
+    )
+
+    text = result["messages"][-1]["text"]
+    assert text == (
+        "`/select` 测试结果\n"
+        "费用统计：Token 总数：3,000,000；任务前余额：未知；任务后余额：未知；本次消费：未知"
+    )
+
+
+def test_select_command_reports_missing_token_usage_evidence(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / "select-test-run"
+    workflow_dir.mkdir()
+    selection = _FakeSelectionController(evidence_path=workflow_dir / "evidence.json")
+    controller, _, _ = _build_controller(selection_controller=selection)
+
+    result = controller.send_chat_message(
+        request_id="req-select-missing-token-cost",
+        context_id="ctx-select-missing-token-cost",
+        text="/select",
+    )
+
+    assert result["messages"][-1]["text"] == (
+        "`/select` 测试结果\n"
+        "费用统计：Token 总数：未知；任务前余额：未知；任务后余额：未知；本次消费：未知"
+    )
+
+
+def test_select_command_does_not_append_cost_for_non_terminal_result() -> None:
+    selection = _FakeSelectionController(code=SelectCommandCode.DATA_REFRESH_REQUESTED, chat_text="已启动补数据。")
+    controller, _, _ = _build_controller(
+        selection_controller=selection,
+        task_cost_snapshots=[
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("100.00")),
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("99.97")),
+        ],
+    )
+
+    result = controller.send_chat_message(request_id="req-select-refresh-cost", context_id="ctx-select-refresh-cost", text="/select")
+
+    assert result["messages"][-1]["text"] == "已启动补数据。"
 
 
 def test_select_command_failed_result_uses_failed_message_kind() -> None:

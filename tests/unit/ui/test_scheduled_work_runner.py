@@ -7,11 +7,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
-from claw_trade.ui_backend.scheduler_service import SchedulerService, UiServiceError
-from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner, ScheduledWorkRunnerError
-from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore
 from claw_trade.selection.models import SelectionMarket, SelectionProfile
+from claw_trade.ui_backend.scheduled_work_runner import (
+    ScheduledWorkRunner,
+    ScheduledWorkRunnerError,
+)
+from claw_trade.ui_backend.scheduled_work_store import InMemoryScheduledWorkStore
+from claw_trade.ui_backend.scheduler_service import SchedulerService, UiServiceError
 from claw_trade.ui_contracts.enums import MarketProfile
 
 
@@ -593,6 +595,7 @@ class FakeDataMaintenanceRunner:
         job_kind: str,
         cron_run_id: str | None,
         maintenance_job_id: str | None,
+        ignore_cached_empty: bool = False,
     ) -> object:
         self.calls.append(
             {
@@ -600,6 +603,7 @@ class FakeDataMaintenanceRunner:
                 "job_kind": job_kind,
                 "cron_run_id": cron_run_id,
                 "maintenance_job_id": maintenance_job_id,
+                "ignore_cached_empty": ignore_cached_empty,
             }
         )
         self.job.job_id = maintenance_job_id or "job-1"
@@ -615,8 +619,9 @@ def test_data_maintenance_wake_dispatches_to_runner_with_payload_fields() -> Non
             "kind": "data_maintenance",
             "market": "CRYPTO",
             "jobKind": "kline-refresh",
-            "cronRunId": "cron-run-1",
+            "cronRunId": "manual-retry-1",
             "maintenanceJobId": "job-crypto",
+            "ignoreCachedEmpty": True,
         }
     )
 
@@ -624,12 +629,38 @@ def test_data_maintenance_wake_dispatches_to_runner_with_payload_fields() -> Non
         {
             "market": "CRYPTO",
             "job_kind": "kline-refresh",
-            "cron_run_id": "cron-run-1",
+            "cron_run_id": "manual-retry-1",
             "maintenance_job_id": "job-crypto",
+            "ignore_cached_empty": True,
         }
     ]
     assert response["status"] == "ok"
     assert response["maintenanceJobId"] == "job-crypto"
+
+
+def test_data_maintenance_wake_does_not_honor_ignore_cached_empty_for_non_manual_cron() -> None:
+    maintenance = FakeDataMaintenanceRunner()
+    runner = ScheduledWorkRunner(data_maintenance_runner=maintenance)
+
+    runner.handle_wake(
+        {
+            "kind": "data_maintenance",
+            "market": "CN_A",
+            "jobKind": "eod",
+            "cronRunId": "cron-run-1",
+            "ignoreCachedEmpty": True,
+        }
+    )
+
+    assert maintenance.calls == [
+        {
+            "market": "CN_A",
+            "job_kind": "eod",
+            "cron_run_id": "cron-run-1",
+            "maintenance_job_id": None,
+            "ignore_cached_empty": False,
+        }
+    ]
 
 
 def test_data_maintenance_wake_refreshes_selection_cache_after_raw_data_update() -> None:

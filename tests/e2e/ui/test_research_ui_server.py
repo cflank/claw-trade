@@ -8,13 +8,15 @@ from threading import Event
 from types import SimpleNamespace
 
 import pytest
-from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
 from claw_trade.production.maintenance_lock import ProductionMaintenanceLock
 from claw_trade.production.remote_update import RemoteUpdateService
+from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.ui_backend.report_cleanup import ReportCleanupResult, ReportCleanupRunResult
 from claw_trade.ui_backend.report_cleanup_settings import ReportCleanupSettingsService
-from claw_trade.ui_backend.selection_auto_refresh_settings import SelectionAutoRefreshSettingsService
+from claw_trade.ui_backend.selection_auto_refresh_settings import (
+    SelectionAutoRefreshSettingsService,
+)
 from claw_trade.web.app import build_research_ui_app, parse_args
 from claw_trade.web.routes_ui import (
     CancelReportTaskRequest,
@@ -723,6 +725,43 @@ def test_selection_refresh_snapshot_surfaces_failed_raw_data_maintenance_reason(
     assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 
+def test_selection_refresh_snapshot_surfaces_cached_empty_raw_data_reason_as_empty_data() -> None:
+    refresh = _TerminalOnlyRefreshSnapshotProbe()
+    raw_maintenance = _FailedRawMaintenanceStatusProbe(
+        market=SelectionMarket.CN_A,
+        reason=(
+            "scheduled maintenance DataAPI returned non-ready status: "
+            "request_id=maintenance:CN_A:daily_bar:all_a_shares:2026-07-10 status=missing reason=cached_empty"
+        ),
+    )
+    services = SimpleNamespace(
+        selection_controller=_SelectionControllerSnapshotProbe(),
+        selection_refresh_service=refresh,
+        raw_maintenance_status_provider=raw_maintenance,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/ui/get-selection-refresh-snapshot",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(ui_services=services)),
+        }
+    )
+
+    response = get_selection_refresh_snapshot(request)
+    assert response.status_code == 200
+    payload = json.loads(response.body)
+
+    progress = payload["selectionProgress"]
+    assert progress["status"] == "failed"
+    assert progress["currentAction"] == "A股原始行情补数据失败：数据源没有返回可用行情。"
+    assert progress["workerStatusLabels"] == [
+        "A股：原始行情补数据失败：数据源没有返回可用行情。"
+    ]
+    assert "cached_empty" not in json.dumps(progress, ensure_ascii=False)
+
+
 def test_confirm_intent_draft_uses_chat_context_when_provided() -> None:
     chat = _ChatControllerProbe()
     request = Request(
@@ -1072,6 +1111,7 @@ def test_retry_raw_data_maintenance_starts_cn_a_job() -> None:
             "market": "CN_A",
             "jobKind": "eod",
             "cronRunId": payload["cronRunId"],
+            "ignoreCachedEmpty": True,
         }
     ]
 
@@ -1337,20 +1377,27 @@ class _RawMaintenanceStatusProbe:
 
 
 class _FailedRawMaintenanceStatusProbe:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        market: SelectionMarket = SelectionMarket.CRYPTO,
+        reason: str = "binance_exchange_info_unavailable:timeout",
+    ) -> None:
         self.calls: list[SelectionMarket] = []
+        self.market = market
+        self.reason = reason
 
     def __call__(self, market: SelectionMarket) -> dict[str, object] | None:
         self.calls.append(market)
-        if market == SelectionMarket.CRYPTO:
+        if market == self.market:
             return {
                 "status": "failed",
-                "job_id": "job-crypto-failed",
-                "market": "CRYPTO",
+                "job_id": f"job-{self.market.value.lower()}-failed",
+                "market": self.market.value,
                 "dataset_scope": "daily_bar",
                 "started_at": "2026-07-01T10:00:02+00:00",
                 "finished_at": "2026-07-01T10:00:09+00:00",
-                "reason": "binance_exchange_info_unavailable:timeout",
+                "reason": self.reason,
             }
         return None
 

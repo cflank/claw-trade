@@ -206,8 +206,8 @@ describe('settings-wechat settings page', () => {
     expect(within(cleanupSection).getByRole('option', { name: '1 个月' })).toBeInTheDocument();
     expect(within(cleanupSection).getByRole('button', { name: '保存报告保留时间' })).toBeInTheDocument();
     expect(await screen.findByText('微信通知')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '恢复默认设置' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '恢复默认设置' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '恢复本页默认配置' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '恢复本页默认配置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重新连接' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '解除连接' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '刷新二维码' })).toBeInTheDocument();
@@ -485,8 +485,8 @@ describe('settings-wechat settings page', () => {
 
     await screen.findByRole('heading', { name: '报告模型' });
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
-    await screen.findByRole('heading', { name: '恢复默认设置' });
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }));
+    await screen.findByRole('heading', { name: '恢复本页默认配置' });
+    fireEvent.click(screen.getByRole('button', { name: '恢复本页默认配置' }));
 
     expect(await screen.findByText('设置已恢复默认。')).toBeInTheDocument();
     expect(seenUrls.some((url) => url.includes('/api/ui/reset-settings-to-defaults'))).toBe(true);
@@ -582,7 +582,7 @@ describe('settings-wechat settings page', () => {
     fireEvent.click(screen.getByRole('tab', { name: '通用' }));
     const updateSection = await screen.findByTestId('settings-section-update');
     await within(updateSection).findByText('远程更新源未配置。');
-    fireEvent.click(screen.getByRole('button', { name: '恢复出厂设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '清空本机数据' }));
 
     expect(await screen.findByText('应用状态已按第一版基线清空；授权和更新文件已保留。')).toBeInTheDocument();
     const resetRequest = seenRequests.find((request) => request.url.includes('/api/ui/factory-reset'));

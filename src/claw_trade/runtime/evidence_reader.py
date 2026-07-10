@@ -23,6 +23,9 @@ class OpenClawResult:
     raw_output_path: Path | None
     openviking_receipt_path: Path | None
     failure_reason: str | None
+    provider: str | None = None
+    model: str | None = None
+    usage: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)

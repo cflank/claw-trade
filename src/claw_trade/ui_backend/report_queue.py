@@ -13,6 +13,14 @@ from claw_trade.ui_backend.error_translator import (
     translate_internal_error_for_user,
 )
 from claw_trade.ui_backend.progress_mapper import map_workflow_progress_to_ui_state
+from claw_trade.ui_backend.task_costs import (
+    TaskCostEstimate,
+    TaskCostSnapshot,
+    TaskTokenCostSummary,
+    append_task_cost_line,
+    collect_token_cost_summary_from_path,
+    estimate_task_cost,
+)
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.ui_contracts.enums import ReportTaskStatus
 from claw_trade.workflow.models import RunStatus
@@ -54,6 +62,8 @@ class ReportTask:
     origin_context_id: str | None = None
     selection_context_ref: str | None = None
     selection_stage_marker: str | None = None
+    cost_start_snapshot: TaskCostSnapshot | None = None
+    cost_estimate: TaskCostEstimate | None = None
 
 
 class ReportTaskQueue:
@@ -65,12 +75,14 @@ class ReportTaskQueue:
         completed_report_writer: Callable[[ReportTask, Any], None] | None = None,
         failed_report_writer: Callable[[ReportTask], None] | None = None,
         report_permission_checker: Callable[[], None] | None = None,
+        task_cost_snapshot_provider: Callable[[], TaskCostSnapshot] | None = None,
     ) -> None:
         self._bridge = bridge
         self._queue_limit = queue_limit
         self._completed_report_writer = completed_report_writer
         self._failed_report_writer = failed_report_writer
         self._report_permission_checker = report_permission_checker
+        self._task_cost_snapshot_provider = task_cost_snapshot_provider
         self._tasks: dict[str, ReportTask] = {}
         self._enqueue_idempotency: dict[str, dict[str, Any]] = {}
         self._cancel_idempotency: dict[str, dict[str, Any]] = {}
@@ -78,6 +90,7 @@ class ReportTaskQueue:
         self._right_rail_active: set[str] = set()
         self._last_terminal_task_id: str | None = None
         self._state_lock = Lock()
+        self._cost_lock = Lock()
 
     def enqueue_report_task(
         self,
@@ -177,6 +190,12 @@ class ReportTaskQueue:
             }
             if task.origin_context_id:
                 task_input["originContextId"] = task.origin_context_id
+        cost_start_snapshot = self._capture_task_cost_snapshot()
+        if cost_start_snapshot is not None:
+            with self._state_lock:
+                current = self._tasks.get(task.task_id)
+                if current is task:
+                    task.cost_start_snapshot = cost_start_snapshot
         try:
             run = self._bridge.create_workflow_run(task_input)
         except Exception as exc:
@@ -213,8 +232,13 @@ class ReportTaskQueue:
                 self._right_rail_active.discard(task.task_id)
                 self._last_terminal_task_id = task.task_id
                 self._refresh_queue_positions()
+                task.cost_estimate = estimate_task_cost(
+                    None,
+                    None,
+                    token_summary=TaskTokenCostSummary.no_model_call(),
+                )
                 task_payload = self.to_report_task_for_user(task)
-                message = "已取消排队任务。"
+                message = append_task_cost_line("已取消排队任务。", task.cost_estimate)
                 needs_start_next = True
         if task_payload is None:
             if not run_id or not self._bridge.cancel_workflow_run(run_id):
@@ -225,7 +249,10 @@ class ReportTaskQueue:
                 self._right_rail_active.discard(task.task_id)
                 self._last_terminal_task_id = task.task_id
                 self._refresh_queue_positions()
+            self._finish_task_cost_estimate(task)
+            with self._state_lock:
                 task_payload = self.to_report_task_for_user(task)
+                message = append_task_cost_line(message, task.cost_estimate)
         payload = {
             "task": task_payload,
             "queueSnapshot": self.get_report_queue_snapshot_for_user(),
@@ -237,7 +264,13 @@ class ReportTaskQueue:
             self.start_next_report_task_if_idle()
         return payload
 
-    def handle_report_failed(self, task_id: str, error: Exception | str) -> ReportTask | None:
+    def handle_report_failed(
+        self,
+        task_id: str,
+        error: Exception | str,
+        *,
+        run_dir: Path | None = None,
+    ) -> ReportTask | None:
         failed_task: ReportTask | None = None
         with self._state_lock:
             task = self._tasks.get(task_id)
@@ -252,6 +285,8 @@ class ReportTaskQueue:
             self._last_terminal_task_id = task.task_id
             self._refresh_queue_positions()
             failed_task = task
+        if failed_task is not None:
+            self._finish_task_cost_estimate(failed_task, run_dir=run_dir)
         if failed_task is not None and self._failed_report_writer is not None:
             try:
                 self._failed_report_writer(failed_task)
@@ -351,11 +386,16 @@ class ReportTaskQueue:
                 should_write = self._completed_report_writer is not None and not task.completed_report_saved
                 if should_write:
                     task.completed_report_saved = True
+            self._finish_task_cost_estimate(task, run_dir=_run_dir_from_workflow_state(workflow_state))
             if should_write:
                 try:
                     self._completed_report_writer(task, workflow_state)
                 except Exception as exc:
-                    self.handle_report_failed(task.task_id, exc)
+                    self.handle_report_failed(
+                        task.task_id,
+                        exc,
+                        run_dir=_run_dir_from_workflow_state(workflow_state),
+                    )
                     return task
             with self._state_lock:
                 task.progress = progress
@@ -367,7 +407,11 @@ class ReportTaskQueue:
         elif status == RunStatus.FAILED.value:
             reason = _read_state_value(workflow_state, "failure_reason", default="workflow_failed")
             reason = _workflow_failure_reason_with_evidence(workflow_state, str(reason or "workflow_failed"))
-            self.handle_report_failed(task.task_id, reason)
+            self.handle_report_failed(
+                task.task_id,
+                reason,
+                run_dir=_run_dir_from_workflow_state(workflow_state),
+            )
         elif status == RunStatus.CANCELLED.value:
             with self._state_lock:
                 task.progress = progress
@@ -375,6 +419,7 @@ class ReportTaskQueue:
                 task.finished_at = _now_iso()
                 self._right_rail_active.discard(task.task_id)
                 self._last_terminal_task_id = task.task_id
+            self._finish_task_cost_estimate(task, run_dir=_run_dir_from_workflow_state(workflow_state))
             self.start_next_report_task_if_idle()
         else:
             with self._state_lock:
@@ -416,6 +461,32 @@ class ReportTaskQueue:
             self._report_permission_checker()
         except PermissionError as exc:
             raise QueueError("LICENSE_BLOCKED", "license_blocked", str(exc)) from exc
+
+    def _capture_task_cost_snapshot(self) -> TaskCostSnapshot | None:
+        if self._task_cost_snapshot_provider is None:
+            return None
+        try:
+            return self._task_cost_snapshot_provider()
+        except Exception:
+            return TaskCostSnapshot.unavailable(reason="snapshot_failed")
+
+    def _finish_task_cost_estimate(self, task: ReportTask, *, run_dir: Path | None = None) -> None:
+        token_summary = collect_token_cost_summary_from_path(run_dir)
+        if self._task_cost_snapshot_provider is None and token_summary is None:
+            return
+        with self._cost_lock:
+            if task.cost_estimate is not None:
+                return
+            finish_snapshot = (
+                self._capture_task_cost_snapshot()
+                if self._task_cost_snapshot_provider is not None
+                else None
+            )
+            task.cost_estimate = estimate_task_cost(
+                task.cost_start_snapshot,
+                finish_snapshot,
+                token_summary=token_summary,
+            )
 
     def _find_existing_queued(self, dedupe_key: str) -> ReportTask | None:
         for task in self._tasks.values():
@@ -493,6 +564,13 @@ def _read_state_value(workflow_state: dict[str, Any] | Any, key: str, *, default
     if isinstance(workflow_state, dict):
         return workflow_state.get(key, default)
     return getattr(workflow_state, key, default)
+
+
+def _run_dir_from_workflow_state(workflow_state: dict[str, Any] | Any) -> Path | None:
+    value = _read_state_value(workflow_state, "run_dir")
+    if not value:
+        return None
+    return Path(str(value))
 
 
 def _worker_progress_from_run_evidence(workflow_state: dict[str, Any] | Any, *, market: str) -> dict[str, Any]:

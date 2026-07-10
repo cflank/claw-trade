@@ -303,6 +303,50 @@ def test_hk_xhkg_trading_day_freshness_uses_16_00_local_close() -> None:
     assert any(gap["reason"] == "warehouse_stale" for gap in after_close.gaps)
 
 
+def test_cn_a_trading_day_freshness_uses_16_00_local_close() -> None:
+    checker = FreshnessChecker()
+    before_close = checker.evaluate(
+        request=_request(
+            date_range_start=date(2026, 7, 9),
+            date_range_end=date(2026, 7, 9),
+            timezone="Asia/Shanghai",
+            calendar="CN_A_SSE_SZSE",
+            as_of=datetime(2026, 7, 10, 7, 40, tzinfo=UTC),
+        ),
+        records=[
+            _record(
+                market="CN_A",
+                symbol_id="600519.SH",
+                period_start=date(2026, 7, 9),
+                period_end=date(2026, 7, 9),
+                as_of=datetime(2026, 7, 9, 8, 30, tzinfo=UTC),
+            )
+        ],
+    )
+    at_close = checker.evaluate(
+        request=_request(
+            date_range_start=date(2026, 7, 9),
+            date_range_end=date(2026, 7, 9),
+            timezone="Asia/Shanghai",
+            calendar="CN_A_SSE_SZSE",
+            as_of=datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+        ),
+        records=[
+            _record(
+                market="CN_A",
+                symbol_id="600519.SH",
+                period_start=date(2026, 7, 9),
+                period_end=date(2026, 7, 9),
+                as_of=datetime(2026, 7, 9, 8, 30, tzinfo=UTC),
+            )
+        ],
+    )
+
+    assert before_close.satisfied is True
+    assert at_close.satisfied is False
+    assert any(gap["reason"] == "warehouse_stale" for gap in at_close.gaps)
+
+
 def test_freshness_checker_reports_stale_gap_when_as_of_is_missing() -> None:
     checker = FreshnessChecker()
     verdict = checker.evaluate(

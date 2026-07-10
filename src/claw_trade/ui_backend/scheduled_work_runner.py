@@ -171,6 +171,7 @@ class ScheduledWorkRunner:
         job_kind = str(payload.get("jobKind") or "").strip()
         cron_run_id = str(payload.get("cronRunId") or "").strip() or None
         maintenance_job_id = str(payload.get("maintenanceJobId") or "").strip() or None
+        ignore_cached_empty = _truthy(payload.get("ignoreCachedEmpty")) and _is_manual_data_maintenance_retry(cron_run_id)
         if not market or not job_kind:
             raise ScheduledWorkRunnerError("INVALID_INPUT", "data_maintenance 唤醒缺少 market 或 jobKind。")
         data_maintenance_lock = self._data_maintenance_lock_for(market=market, job_kind=job_kind)
@@ -181,6 +182,7 @@ class ScheduledWorkRunner:
                 job_kind=job_kind,
                 cron_run_id=cron_run_id,
                 maintenance_job_id=maintenance_job_id,
+                ignore_cached_empty=ignore_cached_empty,
             )
 
     def _data_maintenance_lock_for(self, *, market: str, job_kind: str) -> Lock:
@@ -200,14 +202,18 @@ class ScheduledWorkRunner:
         job_kind: str,
         cron_run_id: str | None,
         maintenance_job_id: str | None,
+        ignore_cached_empty: bool = False,
     ) -> dict[str, Any]:
         try:
-            job = self._data_maintenance_runner.run(
-                market=market,
-                job_kind=job_kind,
-                cron_run_id=cron_run_id,
-                maintenance_job_id=maintenance_job_id,
-            )
+            run_kwargs: dict[str, Any] = {
+                "market": market,
+                "job_kind": job_kind,
+                "cron_run_id": cron_run_id,
+                "maintenance_job_id": maintenance_job_id,
+            }
+            if ignore_cached_empty:
+                run_kwargs["ignore_cached_empty"] = True
+            job = self._data_maintenance_runner.run(**run_kwargs)
         except Exception as exc:
             self._save_latest_result(f"{kind}:{market}:{job_kind}", {
                 "kind": kind,
@@ -374,3 +380,7 @@ def _truthy(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _is_manual_data_maintenance_retry(cron_run_id: str | None) -> bool:
+    return str(cron_run_id or "").startswith("manual-")

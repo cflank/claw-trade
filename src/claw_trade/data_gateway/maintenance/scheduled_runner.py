@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence
 from zoneinfo import ZoneInfo
 
-from claw_trade.data_gateway.maintenance.incremental import IncrementalGapPlanner, run_daily_incremental
+from claw_trade.data_gateway.maintenance.incremental import (
+    IncrementalGapPlanner,
+    run_daily_incremental,
+)
 from claw_trade.data_gateway.maintenance.jobs import (
     MaintenanceJob,
     MaintenanceJobRepository,
@@ -18,7 +21,10 @@ from claw_trade.data_gateway.maintenance.jobs import (
 from claw_trade.data_gateway.models import DataResultStatus, Market
 from claw_trade.data_gateway.public_api import PublicDataRequest
 from claw_trade.data_gateway.warehouse.repository import DatasetRecord, DatasetRepository
-from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
+from claw_trade.data_gateway.warehouse.trading_calendar import (
+    CN_A_DAILY_DATA_READY_CUTOFF,
+    is_expected_daily_date,
+)
 
 _SUPPORTED_JOBS: dict[tuple[str, str], tuple[str, str]] = {
     ("CN_A", "eod"): ("daily_incremental", "daily_bar"),
@@ -40,6 +46,7 @@ _DAILY_BAR_HOLE_SCAN_LOOKBACK_DAYS = 31
 _MAINTENANCE_JOB_LOCK_TTL = timedelta(hours=4)
 _MAINTENANCE_REQUEST_DEADLINE = timedelta(hours=4)
 _REQUESTED_BY = "openclaw_cron"
+_MAINTENANCE_MANUAL_RETRY_CONSUMER = "maintenance_manual_retry"
 
 
 class DataMaintenanceApi(Protocol):
@@ -105,6 +112,7 @@ class ScheduledDataMaintenanceRunner:
         job_kind: str,
         cron_run_id: str | None = None,
         maintenance_job_id: str | None = None,
+        ignore_cached_empty: bool = False,
     ) -> MaintenanceJob:
         normalized_market = market.strip().upper()
         normalized_job_kind = job_kind.strip()
@@ -140,6 +148,7 @@ class ScheduledDataMaintenanceRunner:
                 repo=self._job_repository,
                 incremental_planner=self._incremental_planner,
                 as_of=as_of,
+                request_from_gap=_manual_retry_request_from_gap if ignore_cached_empty else None,
                 lock_ttl=_MAINTENANCE_JOB_LOCK_TTL,
             )
         current, started = begin_job(
@@ -162,6 +171,7 @@ class ScheduledDataMaintenanceRunner:
             repo=self._job_repository,
             gaps=gaps,
             as_of=as_of,
+            request_from_gap=_manual_retry_request_from_gap if ignore_cached_empty else None,
             begin_if_needed=False,
         )
 
@@ -692,9 +702,16 @@ def _maintenance_as_of_day(*, market: str, as_of: datetime | date) -> date:
     normalized = as_of if as_of.tzinfo is not None else as_of.replace(tzinfo=UTC)
     local_as_of = normalized.astimezone(ZoneInfo("Asia/Shanghai"))
     local_day = local_as_of.date()
-    if is_expected_daily_date(local_day, "CN_A_SSE_SZSE") and local_as_of.time() >= time(15, 0):
+    if is_expected_daily_date(local_day, "CN_A_SSE_SZSE") and local_as_of.time() >= CN_A_DAILY_DATA_READY_CUTOFF:
         return local_day
     return _previous_expected_daily_date(local_day - timedelta(days=1), calendar="CN_A_SSE_SZSE")
+
+
+def _manual_retry_request_from_gap(gap: Any, *, consumer: str, consumer_id: str) -> Any:
+    _ = consumer
+    if hasattr(gap, "to_public_data_request"):
+        return gap.to_public_data_request(consumer=_MAINTENANCE_MANUAL_RETRY_CONSUMER, consumer_id=consumer_id)
+    raise TypeError("missing authorized PublicDataRequest builder for manual maintenance retry gap")
 
 
 def _previous_expected_daily_date(start: date, *, calendar: str) -> date:

@@ -5,6 +5,7 @@ type LlmProvider = LlmConfigDraft['provider'];
 export type LlmModelOption = {
   value: string;
   label: string;
+  pricing?: LlmModelPricing;
 };
 
 export type LlmProviderPreset = {
@@ -15,6 +16,39 @@ export type LlmProviderPreset = {
   models: LlmModelOption[];
 };
 
+export type LlmModelPricing = {
+  currency: 'CNY';
+  perMillionCacheHitInput: number;
+  perMillionCacheMissInput: number;
+  perMillionOutput: number;
+  sourceLabel: string;
+  sourceCheckedAt: string;
+};
+
+export type LlmUsageTokens = {
+  cacheHitInputTokens: number;
+  cacheMissInputTokens: number;
+  outputTokens: number;
+};
+
+const DEEPSEEK_V4_FLASH_PRICING: LlmModelPricing = {
+  currency: 'CNY',
+  perMillionCacheHitInput: 0.02,
+  perMillionCacheMissInput: 1,
+  perMillionOutput: 2,
+  sourceLabel: 'DeepSeek 中文官方价格页',
+  sourceCheckedAt: '2026-07-10',
+};
+
+const DEEPSEEK_V4_PRO_PRICING: LlmModelPricing = {
+  currency: 'CNY',
+  perMillionCacheHitInput: 0.025,
+  perMillionCacheMissInput: 3,
+  perMillionOutput: 6,
+  sourceLabel: 'DeepSeek 中文官方价格页',
+  sourceCheckedAt: '2026-07-10',
+};
+
 const PRESETS: LlmProviderPreset[] = [
   {
     value: 'deepseek',
@@ -22,8 +56,10 @@ const PRESETS: LlmProviderPreset[] = [
     endpointUrl: 'https://api.deepseek.com',
     defaultModel: 'deepseek/deepseek-chat',
     models: [
-      { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat' },
-      { value: 'deepseek/deepseek-reasoner', label: 'DeepSeek Reasoner' },
+      { value: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash', pricing: DEEPSEEK_V4_FLASH_PRICING },
+      { value: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro', pricing: DEEPSEEK_V4_PRO_PRICING },
+      { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat', pricing: DEEPSEEK_V4_FLASH_PRICING },
+      { value: 'deepseek/deepseek-reasoner', label: 'DeepSeek Reasoner', pricing: DEEPSEEK_V4_FLASH_PRICING },
     ],
   },
   {
@@ -139,6 +175,20 @@ export function modelOptionsForProvider(provider: LlmProvider, selectedModel: st
     return preset.models;
   }
   return [{ value: normalized, label: normalized }, ...preset.models];
+}
+
+export function pricingForModel(provider: LlmProvider, model: string): LlmModelPricing | null {
+  const normalized = normalizeLlmModelValue(provider, model);
+  return getLlmProviderPreset(provider).models.find((item) => item.value === normalized)?.pricing ?? null;
+}
+
+export function estimateLlmUsageCostCny(pricing: LlmModelPricing, usage: LlmUsageTokens) {
+  return (
+    (Math.max(0, usage.cacheHitInputTokens) * pricing.perMillionCacheHitInput +
+      Math.max(0, usage.cacheMissInputTokens) * pricing.perMillionCacheMissInput +
+      Math.max(0, usage.outputTokens) * pricing.perMillionOutput) /
+    1_000_000
+  );
 }
 
 export function normalizeLlmModelValue(provider: LlmProvider, model: string) {

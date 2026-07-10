@@ -806,7 +806,7 @@ export function SettingsPage() {
 
   async function resetSettings() {
     const confirmed = window.confirm(
-      '恢复默认设置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间、选股刷新和微信通知连接设置，但不会删除历史报告。确定继续吗？',
+      '恢复本页默认配置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间、选股刷新和微信通知连接设置，但不会删除历史报告。确定继续吗？',
     );
     if (!confirmed) {
       return;

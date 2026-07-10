@@ -116,6 +116,7 @@ from claw_trade.ui_backend.summary_builder import (
     CompletionSummaryBuilder,
     render_completion_summary_text,
 )
+from claw_trade.ui_backend.task_costs import append_task_cost_line, render_task_cost_line
 from claw_trade.ui_backend.worker_chat import WorkerChatController
 from claw_trade.ui_backend.worker_chat_openclaw import OpenClawWorkerChatClient
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
@@ -295,12 +296,14 @@ class _LazyDataMaintenanceRunner:
         job_kind: str,
         cron_run_id: str | None,
         maintenance_job_id: str | None,
+        ignore_cached_empty: bool = False,
     ) -> object:
         return self._require_runner().run(
             market=market,
             job_kind=job_kind,
             cron_run_id=cron_run_id,
             maintenance_job_id=maintenance_job_id,
+            ignore_cached_empty=ignore_cached_empty,
         )
 
     def _require_runner(self) -> ScheduledDataMaintenanceRunner:
@@ -656,6 +659,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             task=task,
         ),
         report_permission_checker=license_service.assert_report_generation_allowed,
+        task_cost_snapshot_provider=llm_bridge.capture_report_model_cost_snapshot,
     )
     scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
     cron_adapter = OpenClawCronAdapter(rpc_client)
@@ -739,6 +743,7 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         report_model_ready_checker=llm_bridge.assert_report_model_ready,
         selection_controller=selection_controller,
         maintenance_status_provider=lambda: _format_maintenance_status_for_chat(llm_bridge),
+        task_cost_snapshot_provider=llm_bridge.capture_report_model_cost_snapshot,
     )
     chat_controller_ref["controller"] = chat_controller
     selection_confirmation = SelectionConfirmationController(
@@ -940,7 +945,12 @@ def _handle_completed_workflow_report(
             "target": target.sender_id,
             "account_id": target.account_id,
         }
-    result = notification_service.notify_report_completion(report_id, **notify_kwargs)  # type: ignore[attr-defined]
+    cost_line = render_task_cost_line(getattr(task, "cost_estimate", None))
+    result = notification_service.notify_report_completion(  # type: ignore[attr-defined]
+        report_id,
+        text_footer=cost_line or None,
+        **notify_kwargs,
+    )
     origin_context_id = str(getattr(task, "origin_context_id", "") or "").strip()
     if not origin_context_id:
         return
@@ -949,6 +959,8 @@ def _handle_completed_workflow_report(
         result_text = str(result.get("text") or "").strip()
         if result_text:
             text = result_text
+    if not isinstance(result, dict) or not str(result.get("text") or "").strip():
+        text = append_task_cost_line(text, getattr(task, "cost_estimate", None))
     append = getattr(chat_controller, "append_report_completed_message", None)
     if not callable(append):
         return
@@ -980,6 +992,7 @@ def _handle_failed_workflow_report(
         failure_text = "报告任务失败，请稍后重试。"
     instrument = str(getattr(task, "instrument_code", "") or "").strip()
     text = f"{instrument} 报告任务失败：{failure_text}" if instrument else f"报告任务失败：{failure_text}"
+    text = append_task_cost_line(text, getattr(task, "cost_estimate", None))
     append_plain = getattr(chat_controller, "append_channel_plain_message", None)
     if callable(append_plain):
         append_plain(context_id=origin_context_id, actor="system", text=text)

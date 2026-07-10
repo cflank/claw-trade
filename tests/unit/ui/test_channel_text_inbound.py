@@ -234,6 +234,21 @@ def test_help_command_returns_usage_without_openclaw_chat() -> None:
     ]
 
 
+def test_latest_wechat_snapshot_reflects_cleared_chat_session() -> None:
+    controller, _, _ = _controller()
+    controller.handle_message(_message("r-help-clear", "help"))
+
+    context_id = "wechat_clawbot:account-1:sender-1"
+    assert controller.latest_conversation_snapshot()["messages"]
+
+    controller._chat_controller.clear_chat_session(context_id=context_id)  # noqa: SLF001
+    snapshot = controller.latest_conversation_snapshot()
+
+    assert snapshot["context"]["contextId"] == context_id
+    assert snapshot["context"]["title"] == "微信聊天"
+    assert snapshot["messages"] == []
+
+
 @pytest.mark.parametrize("text", ("/select 1", "/select 2", "/select crypto", "/select 刷新", "/select 2 刷新"))
 def test_channel_select_detector_accepts_market_tokens(text: str) -> None:
     assert _looks_like_select_command(text)

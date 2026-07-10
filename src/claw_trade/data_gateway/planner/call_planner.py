@@ -21,8 +21,15 @@ from claw_trade.data_gateway.needs import (
 )
 from claw_trade.data_gateway.official_catalog import iter_official_catalog_endpoints
 from claw_trade.data_gateway.official_catalog.models import OfficialEndpoint
-from claw_trade.data_gateway.public_api import PublicDataRequest, public_api_contracts, public_output_contract_for_api
-from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
+from claw_trade.data_gateway.public_api import (
+    PublicDataRequest,
+    public_api_contracts,
+    public_output_contract_for_api,
+)
+from claw_trade.data_gateway.warehouse.trading_calendar import (
+    CN_A_DAILY_DATA_READY_CUTOFF,
+    is_expected_daily_date,
+)
 from claw_trade.instruments.resolver import resolve_crypto_provider_symbols
 
 _FORBIDDEN_CALLER_KEYS = frozenset(
@@ -831,13 +838,16 @@ def _single_day_param(need: DataNeed) -> str | None:
 
 
 def _trade_date_param(need: DataNeed, endpoint: OfficialEndpoint) -> str | None:
-    single_day = _single_day_param(need)
-    if single_day is not None:
-        return single_day
     if endpoint.source_type == "tushare" and _uses_only_trade_date(endpoint):
         if need.market == Market.CN_A and str(need.freshness_policy or "") == "trading_day":
             return _date_param(_latest_completed_cn_a_trade_date(need), compact=True)
+        single_day = _single_day_param(need)
+        if single_day is not None:
+            return single_day
         return _date_param(need.time_range_end, compact=True)
+    single_day = _single_day_param(need)
+    if single_day is not None:
+        return single_day
     return None
 
 
@@ -856,7 +866,7 @@ def _latest_completed_cn_a_trade_date(need: DataNeed) -> date | None:
     local_as_of = as_of.astimezone(ZoneInfo("Asia/Shanghai"))
     local_day = local_as_of.date()
     if end >= local_day:
-        if is_expected_daily_date(local_day, "CN_A_SSE_SZSE") and local_as_of.time() >= time(15, 0):
+        if is_expected_daily_date(local_day, "CN_A_SSE_SZSE") and local_as_of.time() >= CN_A_DAILY_DATA_READY_CUTOFF:
             completed = local_day
         else:
             completed = _previous_cn_a_trade_date(local_day - timedelta(days=1))

@@ -8,9 +8,14 @@ from claw_trade.data_gateway._selection_batch import (
     fetch_selection_batch_from_data_gateway,
     resolve_crypto_selection_trade_date_for_scheduler,
 )
-from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
+from claw_trade.data_gateway.warehouse.trading_calendar import (
+    CN_A_DAILY_DATA_READY_CUTOFF,
+    is_expected_daily_date,
+)
 from claw_trade.selection.strategy_config import (
     load_selection_strategy as _load_selection_strategy,
+)
+from claw_trade.selection.strategy_config import (
     load_selection_strategy_config_ref as _load_selection_strategy_config_ref,
 )
 
@@ -20,8 +25,7 @@ _CN_A_CALENDAR = "CN_A_SSE_SZSE"
 def resolve_cn_a_selection_closed_trade_date(now: datetime) -> str:
     value = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
     shanghai_now = value.astimezone(ZoneInfo("Asia/Shanghai"))
-    close_cutoff = shanghai_now.replace(hour=16, minute=0, second=0, microsecond=0)
-    if shanghai_now >= close_cutoff:
+    if shanghai_now.time() >= CN_A_DAILY_DATA_READY_CUTOFF:
         candidate = shanghai_now.date()
     else:
         candidate = shanghai_now.date() - timedelta(days=1)

@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .repository import DatasetRecord
-from .trading_calendar import is_expected_daily_date
+from .trading_calendar import CN_A_DAILY_DATA_READY_CUTOFF, is_expected_daily_date
 
 Gap = dict[str, Any]
 
@@ -318,7 +318,7 @@ class FreshnessChecker:
         if calendar in {"HK_XHKG", "HK_HKEX"}:
             return time(16, 0)
         if calendar == "CN_A_SSE_SZSE":
-            return time(15, 0)
+            return CN_A_DAILY_DATA_READY_CUTOFF
         return time(23, 59)
 
     @staticmethod

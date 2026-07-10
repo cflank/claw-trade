@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
+
+CN_A_DAILY_DATA_READY_CUTOFF = time(16, 0)
 
 _CN_A_NON_TRADING_RANGES: tuple[tuple[date, date], ...] = (
     (date(2024, 1, 1), date(2024, 1, 1)),

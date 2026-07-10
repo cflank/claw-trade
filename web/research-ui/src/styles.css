@@ -1278,6 +1278,14 @@ body {
   font-weight: 700;
 }
 
+.ct-model-subsection .ct-model-grid {
+  margin-top: 12px;
+}
+
+.ct-model-subsection .ct-model-grid + .ct-kv {
+  margin-top: 12px;
+}
+
 .ct-field {
   display: flex;
   flex-direction: column;

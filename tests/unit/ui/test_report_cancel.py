@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
+from claw_trade.ui_backend.task_costs import TaskCostSnapshot
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 
 
@@ -56,6 +58,10 @@ def test_cancel_queued_task_succeeds() -> None:
     queued = queue.enqueue_report_task(request_id="r2", task_input=_task_input("TSLA"), source="manual")
     cancelled = queue.cancel_report_task(request_id="c1", task_id=queued["task"]["taskId"])
     assert cancelled["task"]["status"] == "cancelled"
+    assert cancelled["message"] == (
+        "已取消排队任务。\n"
+        "费用统计：Token 总数：0；任务前余额：未知；任务后余额：未知；本次消费：¥0"
+    )
 
 
 def test_cancel_running_task_stops_workflow_and_hides_active_task() -> None:
@@ -73,3 +79,25 @@ def test_cancel_running_task_stops_workflow_and_hides_active_task() -> None:
     assert task is not None
     assert task.status.value == "cancelled"
     assert task_id not in queue.right_rail_active_task_ids()
+
+
+def test_cancel_running_task_appends_cost_estimate_when_available() -> None:
+    runner = _FakeRunner()
+    snapshots = iter(
+        [
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("10.00")),
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("9.99")),
+        ]
+    )
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        task_cost_snapshot_provider=lambda: next(snapshots),
+    )
+    running = queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+
+    cancelled = queue.cancel_report_task(request_id="c-cost", task_id=running["task"]["taskId"])
+
+    assert cancelled["message"] == (
+        "已停止报告任务。\n"
+        "费用统计：Token 总数：未知；任务前余额：¥10.00；任务后余额：¥9.99；本次消费：¥0.01"
+    )

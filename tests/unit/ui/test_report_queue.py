@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
+from claw_trade.ui_backend.task_costs import TaskCostSnapshot
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 
 
@@ -103,6 +105,7 @@ def test_report_queue_blocks_start_when_license_denied_after_queued() -> None:
     runner = _FakeRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(runner), report_permission_checker=check)
     queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+    queue.get_report_queue_snapshot_for_user()
     queued = queue.enqueue_report_task(request_id="r2", task_input=_task_input("MSFT"), source="manual")
     allowed = False
     queue.handle_report_failed("task-1", RuntimeError("workflow failed"))
@@ -219,6 +222,82 @@ def test_completed_workflow_marks_task_succeeded_and_calls_writer() -> None:
     assert snapshot["runningTask"] is None
     assert saved == ["task-1"]
     assert queue.get_task_for_testing("task-1").status.value == "succeeded"
+
+
+def test_completed_workflow_records_balance_delta_cost_estimate() -> None:
+    runner = _FakeRunner()
+    runner.state = _FakeWorkflowState(status="completed")
+    snapshots = iter(
+        [
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("20.00")),
+            TaskCostSnapshot.captured(provider="deepseek", balance=Decimal("19.42")),
+        ]
+    )
+    writer_costs: list[Decimal | None] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        completed_report_writer=lambda task, _state: writer_costs.append(
+            task.cost_estimate.estimated_cost if task.cost_estimate else None
+        ),
+        task_cost_snapshot_provider=lambda: next(snapshots),
+    )
+
+    queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+    queue.get_report_queue_snapshot_for_user()
+
+    task = queue.get_task_for_testing("task-1")
+    assert task is not None
+    assert task.cost_estimate is not None
+    assert task.cost_estimate.estimated_cost == Decimal("0.58")
+    assert writer_costs == [Decimal("0.58")]
+
+
+def test_completed_workflow_records_token_cost_summary(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    call_dir = run_dir / "calls" / "call-1"
+    call_dir.mkdir(parents=True)
+    (call_dir / "openclaw-result.json").write_text(
+        '{"provider":"deepseek","model":"deepseek-chat","usage":{"cacheRead":1000000,"input":1000000,"output":1000000}}\n',
+        encoding="utf-8",
+    )
+    runner = _FakeRunner()
+    runner.state = _FakeWorkflowState(status="completed", run_dir=run_dir)
+    writer_costs: list[Decimal | None] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        completed_report_writer=lambda task, _state: writer_costs.append(
+            task.cost_estimate.token_summary.total_cost
+            if task.cost_estimate and task.cost_estimate.token_summary
+            else None
+        ),
+    )
+
+    queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+    queue.get_report_queue_snapshot_for_user()
+
+    task = queue.get_task_for_testing("task-1")
+    assert task is not None
+    assert task.cost_estimate is not None
+    assert task.cost_estimate.token_summary is not None
+    assert task.cost_estimate.token_summary.total_tokens == 3_000_000
+    assert writer_costs == [Decimal("3.02")]
+
+
+def test_completed_workflow_records_missing_token_usage_evidence(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    run_dir.mkdir()
+    runner = _FakeRunner()
+    runner.state = _FakeWorkflowState(status="completed", run_dir=run_dir)
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+
+    queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
+    queue.get_report_queue_snapshot_for_user()
+
+    task = queue.get_task_for_testing("task-1")
+    assert task is not None
+    assert task.cost_estimate is not None
+    assert task.cost_estimate.token_summary is not None
+    assert task.cost_estimate.token_summary.reason == "usage_file_missing"
 
 
 def test_failed_report_writer_is_called_after_failure() -> None:

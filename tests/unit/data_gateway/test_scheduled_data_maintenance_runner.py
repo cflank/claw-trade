@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from claw_trade.data_gateway.maintenance import (
     DailyBarMaintenanceGap,
     InMemoryMaintenanceJobRepository,
@@ -212,6 +211,28 @@ def test_cn_a_eod_runs_existing_daily_incremental_maintenance_job() -> None:
     saved = jobs.get("job-cn-a-eod")
     assert saved is not None
     assert saved.requested_by == "openclaw_cron"
+
+
+def test_cn_a_manual_daily_maintenance_retry_marks_requests_to_ignore_cached_empty() -> None:
+    api = FakeDataAPI()
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=api,
+        job_repository=InMemoryMaintenanceJobRepository(),
+        dataset_repository=DatasetRepository(),
+        incremental_planner=FakePlanner(),
+        now_provider=lambda: datetime(2026, 6, 18, 9, 0, tzinfo=UTC),
+    )
+
+    result = runner.run(
+        market="CN_A",
+        job_kind="eod",
+        cron_run_id="manual-retry",
+        maintenance_job_id="job-cn-a-manual-retry",
+        ignore_cached_empty=True,
+    )
+
+    assert result.status == "succeeded"
+    assert [request.consumer for request in api.requests] == ["maintenance_manual_retry", "maintenance_manual_retry"]
 
 
 def test_daily_maintenance_marks_job_running_before_gap_planning() -> None:
@@ -746,6 +767,60 @@ def test_cn_a_daily_maintenance_caps_end_at_latest_completed_trading_day_before_
         ("all_a_shares", date(2026, 6, 26), date(2026, 6, 26)),
         ("all_a_shares", date(2026, 6, 29), date(2026, 6, 29)),
         ("all_a_shares", date(2026, 6, 30), date(2026, 6, 30)),
+    ]
+
+
+def test_cn_a_daily_maintenance_does_not_request_today_at_1540_bjt() -> None:
+    api = FakeDataAPI()
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=api,
+        job_repository=InMemoryMaintenanceJobRepository(),
+        dataset_repository=ManifestOnlyDatasetRepository(
+            (
+                {
+                    "dataset": "daily_bar",
+                    "market": "CN_A",
+                    "status": "active",
+                    "storage": "parquet",
+                    "universe_refs": ("all_a_shares",),
+                    "period_end_max": "2026-07-09",
+                },
+            )
+        ),
+        now_provider=lambda: datetime(2026, 7, 10, 7, 40, tzinfo=UTC),
+    )
+
+    result = runner.run(market="CN_A", job_kind="eod", cron_run_id="cron-run-cn-a")
+
+    assert result.status == "succeeded"
+    assert api.requests == []
+
+
+def test_cn_a_daily_maintenance_requests_today_at_1600_bjt() -> None:
+    api = FakeDataAPI()
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=api,
+        job_repository=InMemoryMaintenanceJobRepository(),
+        dataset_repository=ManifestOnlyDatasetRepository(
+            (
+                {
+                    "dataset": "daily_bar",
+                    "market": "CN_A",
+                    "status": "active",
+                    "storage": "parquet",
+                    "universe_refs": ("all_a_shares",),
+                    "period_end_max": "2026-07-09",
+                },
+            )
+        ),
+        now_provider=lambda: datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+
+    result = runner.run(market="CN_A", job_kind="eod", cron_run_id="cron-run-cn-a")
+
+    assert result.status == "succeeded"
+    assert [(request.instrument, request.time_range_start, request.time_range_end) for request in api.requests] == [
+        ("all_a_shares", date(2026, 7, 10), date(2026, 7, 10)),
     ]
 
 

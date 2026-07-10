@@ -310,6 +310,9 @@ def test_run_worker_returns_failed_when_openclaw_payload_is_missing_required_pat
         payload={
             "status": "succeeded",
             "openclaw_run_id": "openclaw-1",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "usage": {"input": 89, "output": 5, "cacheRead": 1024, "total": 1118},
             "provider_request_id": "req-1",
             "provider_request_id_status": "returned",
             "workspace_evidence_path": str(paths["workspace_evidence_path"]),
@@ -342,6 +345,9 @@ def test_run_worker_sends_command_payload_to_runner(tmp_path: Path) -> None:
         payload={
             "status": "succeeded",
             "openclaw_run_id": "openclaw-1",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "usage": {"input": 89, "output": 5, "cacheRead": 1024, "total": 1118},
             "provider_request_id": "req-1",
             "provider_request_id_status": "returned",
             "workspace_evidence_path": str(paths["workspace_evidence_path"]),
@@ -360,6 +366,9 @@ def test_run_worker_sends_command_payload_to_runner(tmp_path: Path) -> None:
     result = client.run_worker(command)
 
     assert result.status == "succeeded"
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-chat"
+    assert result.usage == {"input": 89, "output": 5, "cacheRead": 1024, "total": 1118}
     sent = runner.last_payload
     assert sent is not None
     assert sent["material_target"]["l1_uri"] == command.material_target["l1_uri"]  # type: ignore[index]

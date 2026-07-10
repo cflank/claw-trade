@@ -5,7 +5,15 @@ from typing import Any
 
 from claw_trade.data_gateway.coordination.service import DataService, _data_request_from_need
 from claw_trade.data_gateway.execution.rate_limiter import RateLimitPolicy
-from claw_trade.data_gateway.models import CoverageRequirement, DataRequest, IngestResult, Market, QueryPlan, WarehouseCheck, WarehouseResult
+from claw_trade.data_gateway.models import (
+    CoverageRequirement,
+    DataRequest,
+    IngestResult,
+    Market,
+    QueryPlan,
+    WarehouseCheck,
+    WarehouseResult,
+)
 from claw_trade.data_gateway.needs import DataNeed, ProviderCallSpec
 
 
@@ -153,6 +161,48 @@ def test_price_alert_provider_batch_bypasses_provider_cache() -> None:
 
     assert batch.ignore_provider_cache is True
     assert batch.ignore_cached_empty is True
+
+
+def test_maintenance_manual_retry_provider_batch_bypasses_cached_empty() -> None:
+    service = DataService(
+        query_planner=object(),
+        warehouse=object(),
+        execution_gate=object(),
+        fetch_engine=object(),
+        ingest=object(),
+    )
+    need = DataNeed(
+        need_id="maintenance:CN_A:daily_bar:all_a_shares:2026-07-10",
+        api_id="cn_a.daily_bar",
+        market=Market.CN_A,
+        instrument="all_a_shares",
+        granularity="daily",
+        requested_by_worker="openclaw_cron",
+        purpose="scheduled_data_maintenance",
+        freshness_policy="trading_day",
+        deadline_at=datetime(2026, 7, 10, 8, 5, tzinfo=UTC),
+        consumer="maintenance_manual_retry",
+    )
+    call = ProviderCallSpec(
+        call_id="call:tushare:daily",
+        provider_id="official_api_tushare",
+        catalog_endpoint_id="tushare.daily",
+        official_path_or_api_name="daily",
+        params={"trade_date": "20260710"},
+        auth_scope="official_api",
+        rate_limit_bucket="tushare",
+        http_visibility="managed_http",
+        parser_status="normalized",
+        batch_key="batch:tushare:daily:20260710",
+        official_doc_ref="https://tushare.pro/document/2?doc_id=27",
+        deadline_at=datetime(2026, 7, 10, 8, 5, tzinfo=UTC),
+        need_ids=(need.need_id,),
+    )
+
+    batch = service._provider_call_batch(call=call, need=need, policy=RateLimitPolicy(window_seconds=60, max_requests=None))
+
+    assert batch.ignore_cached_empty is True
+    assert bool(getattr(batch, "ignore_provider_cache", False)) is False
 
 
 def test_all_a_shares_need_queries_warehouse_by_universe_ref_not_symbol() -> None:

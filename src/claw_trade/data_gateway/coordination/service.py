@@ -400,8 +400,11 @@ class DataService:
             earliest_start_at=earliest_start_at,
             rate_limit_reserved_at=rate_limit_reserved_at,
         )
-        if str(need.consumer).strip() == "price_alert":
+        consumer = str(need.consumer).strip()
+        if consumer == "price_alert":
             setattr(batch, "ignore_provider_cache", True)
+            setattr(batch, "ignore_cached_empty", True)
+        if consumer == "maintenance_manual_retry":
             setattr(batch, "ignore_cached_empty", True)
         return batch
 

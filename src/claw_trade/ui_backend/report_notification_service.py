@@ -68,6 +68,7 @@ class ReportNotificationService:
         channel_kind: str = "wechat_clawbot",
         target: str | None = None,
         account_id: str | None = None,
+        text_footer: str | None = None,
     ) -> dict[str, object]:
         summary = self._summary_builder.get_cached(report_id)
         if summary is None:
@@ -85,7 +86,7 @@ class ReportNotificationService:
             if str(status.get("state")) == "connected" and bool(status.get("canSendText")):
                 can_send_file = bool(status.get("canSendFile"))
 
-        text = render_completion_summary_text(summary, can_send_file=can_send_file)
+        text = _append_text_footer(render_completion_summary_text(summary, can_send_file=can_send_file), text_footer)
         self._in_app_notifier(report_id, text)
 
         if not target:
@@ -226,6 +227,13 @@ def _report_pdf_filename(instrument_code: str, market: str, generated_at: str) -
         "report",
     ]
     return "-".join(part for part in parts if part) + ".pdf"
+
+
+def _append_text_footer(text: str, footer: str | None) -> str:
+    clean_footer = (footer or "").strip()
+    if not clean_footer:
+        return text
+    return f"{text.rstrip()}\n{clean_footer}"
 
 
 def _filename_token(value: str) -> str:

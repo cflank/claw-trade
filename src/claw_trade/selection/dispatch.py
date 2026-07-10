@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from hashlib import sha256
 from pathlib import Path
 from typing import Mapping
@@ -119,6 +119,7 @@ def execute_selection_dispatches(
         )
         command_snapshot = _write_selection_dispatch_command_snapshot(dispatch, command)
         openclaw_result = openclaw.run_worker(command)
+        _write_selection_dispatch_openclaw_result(dispatch, openclaw_result)
         if openclaw_result.status != "succeeded":
             runs.append(
                 SelectionDispatchExecution(
@@ -134,24 +135,29 @@ def execute_selection_dispatches(
             if evidence_guard.paths:
                 path_text = ", ".join(str(path) for path in evidence_guard.paths)
                 reason = f"{reason}; paths={path_text}"
+            failed_result = OpenClawResult(
+                status="failed",
+                openclaw_run_id=openclaw_result.openclaw_run_id,
+                provider_request_id=openclaw_result.provider_request_id,
+                provider_request_id_status=openclaw_result.provider_request_id_status,
+                workspace_evidence_path=openclaw_result.workspace_evidence_path,
+                provider_request_path=openclaw_result.provider_request_path,
+                visible_tools_path=openclaw_result.visible_tools_path,
+                first_response_path=openclaw_result.first_response_path,
+                tool_calls_status=openclaw_result.tool_calls_status,
+                tool_calls_path=openclaw_result.tool_calls_path,
+                raw_output_path=openclaw_result.raw_output_path,
+                openviking_receipt_path=openclaw_result.openviking_receipt_path,
+                failure_reason=f"selection dispatch evidence validation failed: {reason}",
+                provider=openclaw_result.provider,
+                model=openclaw_result.model,
+                usage=openclaw_result.usage,
+            )
+            _write_selection_dispatch_openclaw_result(dispatch, failed_result)
             runs.append(
                 SelectionDispatchExecution(
                     dispatch=dispatch,
-                    openclaw_result=OpenClawResult(
-                        status="failed",
-                        openclaw_run_id=openclaw_result.openclaw_run_id,
-                        provider_request_id=openclaw_result.provider_request_id,
-                        provider_request_id_status=openclaw_result.provider_request_id_status,
-                        workspace_evidence_path=openclaw_result.workspace_evidence_path,
-                        provider_request_path=openclaw_result.provider_request_path,
-                        visible_tools_path=openclaw_result.visible_tools_path,
-                        first_response_path=openclaw_result.first_response_path,
-                        tool_calls_status=openclaw_result.tool_calls_status,
-                        tool_calls_path=openclaw_result.tool_calls_path,
-                        raw_output_path=openclaw_result.raw_output_path,
-                        openviking_receipt_path=openclaw_result.openviking_receipt_path,
-                        failure_reason=f"selection dispatch evidence validation failed: {reason}",
-                    ),
+                    openclaw_result=failed_result,
                     command_snapshot_path=command_snapshot,
                 )
             )
@@ -165,6 +171,33 @@ def execute_selection_dispatches(
             )
         )
     return tuple(runs)
+
+
+def _write_selection_dispatch_openclaw_result(
+    dispatch: SelectionWorkerDispatch,
+    result: OpenClawResult,
+) -> Path:
+    path = dispatch.evidence_dir / "openclaw-result.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(_to_jsonable(result), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _to_jsonable(value: object) -> object:
+    if is_dataclass(value):
+        return {k: _to_jsonable(v) for k, v in asdict(value).items()}
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    return value
 
 
 def build_openclaw_command_for_selection_dispatch(

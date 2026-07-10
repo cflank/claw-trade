@@ -29,7 +29,11 @@ from claw_trade.ui_backend.worker_chat_catalog import list_worker_chat_menu
 from claw_trade.ui_backend.worker_chat_models import WorkerChatReplyForUser, WorkerChatRequest
 from claw_trade.ui_contracts.user_dto import to_user_payload
 from claw_trade.web.session import resolve_context_id
-from claw_trade.web.state import UiHttpServices, _reply_target_from_origin_context, build_report_detail_payload
+from claw_trade.web.state import (
+    UiHttpServices,
+    _reply_target_from_origin_context,
+    build_report_detail_payload,
+)
 
 router = APIRouter()
 _LOGGER = logging.getLogger("uvicorn.error")
@@ -527,6 +531,7 @@ def retry_raw_data_maintenance(payload: RetryRawDataMaintenanceRequest, request:
                     "market": market,
                     "jobKind": job_kind,
                     "cronRunId": cron_run_id,
+                    "ignoreCachedEmpty": True,
                 }
             )
         except Exception:  # noqa: BLE001
@@ -1375,7 +1380,7 @@ def _raw_data_maintenance_reason_for_user(reason: str) -> str:
         return "币安交易对列表暂时不可用，无法补齐加密币行情。"
     if "raw_data_maintenance_lock_expired" in lower or "startup_data_maintenance_interrupted" in lower:
         return "补数据任务中断，请重新补数据。"
-    if any(token in lower for token in ("empty_result", "no data", "rows=0")):
+    if any(token in lower for token in ("provider_empty", "cached_empty", "empty_result", "no data", "rows=0")):
         return "数据源没有返回可用行情。"
     if any(token in lower for token in ("provider", "attempt", "evidence")):
         return "数据源没有返回可核验的调用记录。"

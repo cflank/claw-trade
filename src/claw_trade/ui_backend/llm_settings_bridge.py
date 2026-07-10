@@ -14,7 +14,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import urlopen
 
+from claw_trade.runtime.deepseek_balance import DeepSeekBalance, fetch_deepseek_cny_balance
 from claw_trade.ui_backend.settings_service import EnvLocalAllowlistWriter, UiBoundaryError
+from claw_trade.ui_backend.task_costs import TaskCostSnapshot
 
 _EMBEDDING_ENV_KEYS = (
     "OPENVIKING_EMBEDDING_PROVIDER",
@@ -245,6 +247,7 @@ class LlmSettingsBridge:
         report_model_config_store: Any | None = None,
         runtime_health_probe: Callable[[], Mapping[str, Any]] | None = None,
         embedding_probe: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+        deepseek_balance_fetcher: Callable[..., DeepSeekBalance] | None = None,
         run_root: Path = Path("runs"),
     ) -> None:
         self._client = openclaw_gateway_client
@@ -261,6 +264,7 @@ class LlmSettingsBridge:
         self._report_model_config_store = report_model_config_store
         self._runtime_health_probe = runtime_health_probe or _probe_runtime_services
         self._embedding_probe = embedding_probe or _probe_openviking_embedding_runtime
+        self._deepseek_balance_fetcher = deepseek_balance_fetcher or fetch_deepseek_cny_balance
         self._run_root = run_root
         self._idempotency: dict[str, Any] = {}
 
@@ -311,6 +315,28 @@ class LlmSettingsBridge:
             user_message="报告模型已保存但尚未测试通过，请先执行模型测试。",
             checked_at=_optional_str(status.get("checkedAt") or status.get("savedAt")),
         ).to_user_payload()
+
+    def capture_report_model_cost_snapshot(self) -> TaskCostSnapshot:
+        fields = self._load_report_model_fields_for_cost_snapshot()
+        provider = _normalize_report_provider_id(str(fields.get("provider") or ""))
+        if provider != "deepseek":
+            return TaskCostSnapshot.unavailable(reason="unsupported_provider", provider=provider or None)
+        api_key = _optional_str(fields.get("api_key"))
+        if not api_key or _looks_masked_secret(api_key):
+            return TaskCostSnapshot.unavailable(reason="api_key_missing", provider=provider)
+        try:
+            balance = self._deepseek_balance_fetcher(
+                api_key=api_key,
+                endpoint_url=_optional_str(fields.get("endpoint_url")) or str(_provider_preset("deepseek")["endpoint_url"]),
+            )
+        except Exception:
+            return TaskCostSnapshot.unavailable(reason="balance_unavailable", provider=provider)
+        return TaskCostSnapshot.captured(
+            provider=provider,
+            currency=balance.currency,
+            balance=balance.total_balance,
+            checked_at=balance.checked_at,
+        )
 
     def save_llm_config_via_openclaw(
         self,
@@ -871,6 +897,21 @@ class LlmSettingsBridge:
             "updatedAt": _now_iso(),
         }
         self._report_model_config_store.write(payload)
+
+    def _load_report_model_fields_for_cost_snapshot(self) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        try:
+            config = self._client.config_get(paths=("agents.defaults.model", "models.providers"))
+            fields = _resolve_report_model_fields(config)
+        except Exception:
+            fields = {}
+        runtime_fields: dict[str, Any] = {}
+        if self._report_model_config_store is not None:
+            runtime_fields = _report_model_fields_from_runtime_config(self._report_model_config_store.read())
+        api_key = _optional_str(fields.get("api_key"))
+        if runtime_fields.get("configured") and (not api_key or _looks_masked_secret(api_key)):
+            return runtime_fields
+        return fields or runtime_fields
 
     def _build_config_patch(self, draft: Mapping[str, Any]) -> dict[str, Any]:
         provider = _require_allowed_report_provider(str(draft["provider"]))

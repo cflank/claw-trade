@@ -961,6 +961,14 @@ describe('home page', () => {
   });
 
   it('clears the current chat through the backend and removes local cached chat', async () => {
+    const intervalCallbacks: Array<() => void> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') {
+        intervalCallbacks.push(() => handler());
+      }
+      return 1;
+    }) as typeof window.setInterval);
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
     const mocked = mockWorkspaceFetch({
       chatSessionSnapshot: {
         context: {
@@ -999,6 +1007,108 @@ describe('home page', () => {
     expect(screen.queryByText('需要清掉的问题')).not.toBeInTheDocument();
     expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
     expect(window.sessionStorage.getItem('claw-trade:home-chat-state:v1') ?? '').not.toContain('需要清掉的问题');
+
+    await act(async () => {
+      intervalCallbacks.at(0)?.();
+    });
+
+    expect(screen.queryByText('需要清掉的问题')).not.toBeInTheDocument();
+    expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
+  });
+
+  it('replaces stale cached chat when the backend returns an empty current session', async () => {
+    window.sessionStorage.setItem(
+      'claw-trade:home-chat-state:v1',
+      JSON.stringify({
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'local-task-accepted-stale',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '本地残留消息',
+            createdAt: '2026-05-19T10:08:00.000Z',
+          },
+        ],
+        confirmationCards: {},
+      }),
+    );
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: {
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [],
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('workspace-layout');
+    await waitFor(() => expect(screen.queryByText('本地残留消息')).not.toBeInTheDocument());
+    expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
+  });
+
+  it('keeps the current chat when another channel snapshot is empty', async () => {
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: {
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'normal-current-message',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '普通聊天还在',
+            createdAt: '2026-05-19T10:08:00.000Z',
+          },
+        ],
+      },
+      channelChatSnapshot: {
+        channelKind: 'wechat_clawbot',
+        context: {
+          contextId: 'wechat_clawbot:account-1:sender-1',
+          kind: 'normal_chat',
+          title: '微信聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [],
+        confirmationCards: {},
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('普通聊天还在')).toBeInTheDocument();
+    expect(screen.queryByText('还没有聊天内容')).not.toBeInTheDocument();
   });
 
   it('clears the visible wechat chat so it does not come back after returning to the page', async () => {

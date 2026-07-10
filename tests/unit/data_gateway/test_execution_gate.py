@@ -180,6 +180,47 @@ def test_gate_can_ignore_cached_empty_for_forced_refresh() -> None:
     assert decision.kind == "owner"
 
 
+def test_gate_ignore_cached_empty_keeps_success_cache_but_bypasses_empty_cache() -> None:
+    now = datetime.now(UTC)
+    repository = DatasetRepository()
+    _insert_daily_bar(repository, "dataset:success")
+    success_cache = ProviderResultCache(repository=repository)
+    success_cache.put_remote_success(
+        cache_key="cache:key",
+        refs=ResultRefs(dataset_refs=("dataset:success",), raw_refs=("raw:success",), attempt_refs=("attempt:success",)),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+
+    success_decision = ExecutionGate(
+        cache=success_cache,
+        rate_limiter=RateLimiter(),
+        single_flight=SingleFlight(),
+    ).enter(_Batch(ignore_cached_empty=True))
+
+    empty_cache = ProviderResultCache()
+    empty_cache.put_cached_empty(
+        cache_key="cache:key",
+        refs=ResultRefs(attempt_refs=("attempt:empty",)),
+        fresh_until=now + timedelta(seconds=30),
+        stale_until=now + timedelta(seconds=300),
+    )
+    normal_empty_decision = ExecutionGate(
+        cache=empty_cache,
+        rate_limiter=RateLimiter(),
+        single_flight=SingleFlight(),
+    ).enter(_Batch())
+    manual_retry_decision = ExecutionGate(
+        cache=empty_cache,
+        rate_limiter=RateLimiter(),
+        single_flight=SingleFlight(),
+    ).enter(_Batch(ignore_cached_empty=True))
+
+    assert success_decision.kind == "cache_hit"
+    assert normal_empty_decision.kind == "cached_empty"
+    assert manual_retry_decision.kind == "owner"
+
+
 def test_gate_caps_shared_result_wait_below_data_need_deadline() -> None:
     now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
     single_flight = _WaiterSingleFlight()

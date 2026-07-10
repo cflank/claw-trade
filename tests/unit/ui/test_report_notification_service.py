@@ -114,6 +114,23 @@ def test_notify_report_completion_pushes_summary_not_full_report() -> None:
     assert channel.last_account_id == "account-1"
 
 
+def test_notify_report_completion_appends_footer_to_channel_text() -> None:
+    notifications: list[tuple[str, str]] = []
+    channel = _ChannelBridge(connected=True, can_send_text=True, can_send_file=True)
+    service = _build_service(channel, notifications)
+
+    result = service.notify_report_completion(
+        "r-notify",
+        target="sender-1",
+        account_id="account-1",
+        text_footer="期间扣费估算：¥0.03",
+    )
+
+    assert result["sent"] is True
+    assert channel.last_text.endswith("期间扣费估算：¥0.03")
+    assert result["text"] == channel.last_text
+
+
 def test_notify_report_completion_does_not_generate_pdf_by_default(tmp_path) -> None:  # type: ignore[no-untyped-def]
     repo = ReportRepository()
     repo.save_succeeded_report(
