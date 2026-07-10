@@ -1026,6 +1026,14 @@ export function SettingsSections({
             {productionMaintenance.update.userMessage}
           </div>
         ) : null}
+        {productionMaintenance?.update.currentVersion ? (
+          <div className="ct-settings-summary">
+            <div className="ct-settings-summary-row">
+              <span>当前版本</span>
+              <strong>{productionMaintenance.update.currentVersion}</strong>
+            </div>
+          </div>
+        ) : null}
         {productionUpdateProgress ? (
           <div className="ct-update-progress">
             <div

@@ -94,6 +94,7 @@ class RemoteUpdateService:
         if layout_error is not None:
             return {
                 "configured": bool(self._base_url),
+                "currentVersion": self._current_version,
                 "publicKeyInstalled": False,
                 "status": "check_failed",
                 "userMessage": layout_error,
@@ -103,6 +104,7 @@ class RemoteUpdateService:
         state = self._state_store.read()
         return {
             "configured": bool(self._base_url),
+            "currentVersion": self._current_version,
             "publicKeyInstalled": self._public_key_path.exists(),
             "status": state.get("status", "idle"),
             "userMessage": state.get("userMessage", "尚未检查远程更新。"),

@@ -371,6 +371,7 @@ def test_remote_update_status_exposes_download_progress(tmp_path: Path) -> None:
     writer(10 * 1024 * 1024, 100 * 1024 * 1024)
 
     status = service.status_for_user()
+    assert status["currentVersion"] == "1.2.2"
     assert status["status"] == "downloading"
     assert status["progressPercent"] == 16
     assert status["progressLabel"] == "正在下载更新包"

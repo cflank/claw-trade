@@ -864,6 +864,7 @@ export interface ProductionMaintenanceStatusOutput {
   };
   update: {
     configured?: boolean;
+    currentVersion?: string | null;
     publicKeyInstalled?: boolean;
     status: UpdateActionStatus;
     userMessage: string;

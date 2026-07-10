@@ -684,6 +684,7 @@ describe('settings-wechat settings page', () => {
             confirmation: 'RESET_CLAW_TRADE',
           },
           update: {
+            currentVersion: '1.2.2',
             status: 'health_checking',
             userMessage: '正在检查更新后服务健康状态。',
           },
@@ -703,6 +704,8 @@ describe('settings-wechat settings page', () => {
     const updateSection = await screen.findByTestId('settings-section-update');
     const status = await within(updateSection).findByText('正在检查更新后服务健康状态。');
     expect(status).toHaveClass('is-warning');
+    expect(within(updateSection).getByText('当前版本')).toBeInTheDocument();
+    expect(within(updateSection).getByText('1.2.2')).toBeInTheDocument();
     expect(within(updateSection).getByRole('button', { name: '检查更新' })).toBeDisabled();
     expect(within(updateSection).getByRole('button', { name: '安装更新' })).toBeDisabled();
   });
