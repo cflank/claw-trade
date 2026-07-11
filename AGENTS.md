@@ -610,7 +610,7 @@ Implementation, testing, review, and live/fresh gates should be delegated to sub
 Default sub-agent configuration:
 
 ```text
-model: gpt-5.3-codex
+model: gpt-5.5
 reasoning_effort: high
 ```
 

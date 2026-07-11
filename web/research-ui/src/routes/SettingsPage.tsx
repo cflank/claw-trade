@@ -938,6 +938,7 @@ export function SettingsPage() {
     setUpdateActionBusy(true);
     setUpdateActionMessage('');
     setSectionErrors((current) => ({ ...current, update: undefined }));
+    void pollProductionMaintenanceStatus();
     try {
       const result = await withSettingsTimeout(
         installUpdate({ requestId: `install-update-${Date.now()}` }),

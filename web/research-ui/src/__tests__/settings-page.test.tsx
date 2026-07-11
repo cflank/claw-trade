@@ -904,11 +904,84 @@ describe('settings-wechat settings page', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    const scheduled = within(updateSection).getByText('已安装版本 1.2.3；正在重启服务并检查健康状态。');
+    const scheduled = within(updateSection).getByText('正在检查更新后服务健康状态。');
     expect(scheduled).toHaveClass('is-warning');
-    expect(within(updateSection).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '85');
+    expect(within(updateSection).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '98');
     expect(updateSection.querySelector('.ct-inline-alert.is-success')?.textContent ?? '').not.toContain(
       '正在重启服务并检查健康状态。',
+    );
+  }, 10000);
+
+  it('polls update progress while install request is still running', async () => {
+    vi.useFakeTimers();
+    window.confirm = vi.fn(() => true);
+    let maintenanceCalls = 0;
+    let resolveInstall: ((response: Response) => void) | undefined;
+    const factoryReset = {
+      installRoot: '/opt/claw-trade',
+      sharedRoot: '/opt/claw-trade/shared',
+      resetPaths: [],
+      preservedPaths: [],
+      confirmation: 'RESET_CLAW_TRADE',
+    };
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const base = baseSettingsResponse(url);
+      if (base) {
+        return base;
+      }
+      if (url.includes('/api/ui/get-production-maintenance-status')) {
+        maintenanceCalls += 1;
+        return json({
+          factoryReset,
+          update:
+            maintenanceCalls === 1
+              ? { status: 'update_available', userMessage: '发现新版本 1.2.3。' }
+              : {
+                  status: 'downloading',
+                  userMessage: '正在下载更新包：600 MB / 1800 MB。网络中断后会自动继续。',
+                  progressPercent: 33,
+                  progressLabel: '正在下载更新包',
+                },
+        });
+      }
+      if (url.includes('/api/ui/install-update')) {
+        return new Promise<Response>((resolve) => {
+          resolveInstall = resolve;
+        });
+      }
+      return json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+    }
+    fireEvent.click(screen.getByRole('tab', { name: '通用' }));
+    const updateSection = screen.getByTestId('settings-section-update');
+    fireEvent.click(within(updateSection).getByRole('button', { name: '安装更新' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(within(updateSection).getByText('正在下载更新包：600 MB / 1800 MB。网络中断后会自动继续。')).toHaveClass(
+      'is-warning',
+    );
+    expect(within(updateSection).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '33');
+    resolveInstall?.(
+      json({
+        status: 'restart_scheduled',
+        version: '1.2.3',
+        userMessage: '已安装版本 1.2.3；正在重启服务并检查健康状态。',
+      }),
     );
   }, 10000);
 

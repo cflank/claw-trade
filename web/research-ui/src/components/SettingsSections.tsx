@@ -11,14 +11,10 @@ import type {
 } from '../api/contracts';
 import {
   LLM_PROVIDER_PRESETS,
-  estimateLlmUsageCostCny,
   modelOptionsForProvider,
   normalizeLlmModelValue,
-  pricingForModel,
   presetPatchForProvider,
 } from './llmCatalog';
-
-type CostTokenInputKey = 'cacheHitInputTokens' | 'cacheMissInputTokens' | 'outputTokens';
 
 function formatDate(value?: string | null) {
   if (!value) {
@@ -240,25 +236,6 @@ function updateProgress(update?: ProductionMaintenanceStatusOutput['update'] | n
   };
 }
 
-function parseTokenInput(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0;
-}
-
-function formatCny(value: number) {
-  if (value >= 1) {
-    return `¥${value.toFixed(2)}`;
-  }
-  if (value >= 0.01) {
-    return `¥${value.toFixed(2)}`;
-  }
-  return `¥${value.toFixed(4)}`;
-}
-
-function formatPerMillionCny(value: number) {
-  return `${formatCny(value)} / 百万 token`;
-}
-
 type SettingsMainTab = 'model' | 'general' | 'data';
 
 const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
@@ -399,22 +376,6 @@ export function SettingsSections({
   const modelOptions = modelOptionsForProvider(llm.provider, llm.defaultModel);
   const productionUpdateProgress = productionMaintenance ? updateProgress(productionMaintenance.update) : null;
   const selectedModel = normalizeLlmModelValue(llm.provider, llm.defaultModel);
-  const selectedModelPricing = pricingForModel(llm.provider, selectedModel);
-  const [costTokenInputs, setCostTokenInputs] = useState<Record<CostTokenInputKey, string>>({
-    cacheHitInputTokens: '0',
-    cacheMissInputTokens: '0',
-    outputTokens: '0',
-  });
-  const updateCostTokenInput = (field: CostTokenInputKey, value: string) => {
-    setCostTokenInputs((current) => ({ ...current, [field]: value }));
-  };
-  const estimatedCostCny = selectedModelPricing
-    ? estimateLlmUsageCostCny(selectedModelPricing, {
-        cacheHitInputTokens: parseTokenInput(costTokenInputs.cacheHitInputTokens),
-        cacheMissInputTokens: parseTokenInput(costTokenInputs.cacheMissInputTokens),
-        outputTokens: parseTokenInput(costTokenInputs.outputTokens),
-      })
-    : null;
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsMainTab>('model');
   const visibleDataSources = DATA_SOURCE_TYPES.map((type) => dataSources.find((item) => item.supportedType === type)).filter(
     Boolean,
@@ -516,71 +477,6 @@ export function SettingsSections({
         <div className="ct-kv">
           <span>说明</span>
           <span>{modelStatusMessage(llm)}</span>
-        </div>
-        <div className="ct-model-subsection" data-testid="model-cost-estimator">
-          <h3 className="ct-model-subsection-title">费用估算</h3>
-          {selectedModelPricing ? (
-            <>
-              <div className="ct-kv">
-                <span>单价</span>
-                <span>
-                  命中 {formatPerMillionCny(selectedModelPricing.perMillionCacheHitInput)}，未命中{' '}
-                  {formatPerMillionCny(selectedModelPricing.perMillionCacheMissInput)}，输出{' '}
-                  {formatPerMillionCny(selectedModelPricing.perMillionOutput)}
-                </span>
-              </div>
-              <div className="ct-model-grid">
-                <label className="ct-field">
-                  <span>命中缓存输入</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputMode="numeric"
-                    value={costTokenInputs.cacheHitInputTokens}
-                    onChange={(event) => updateCostTokenInput('cacheHitInputTokens', event.target.value)}
-                  />
-                </label>
-                <label className="ct-field">
-                  <span>未命中缓存输入</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputMode="numeric"
-                    value={costTokenInputs.cacheMissInputTokens}
-                    onChange={(event) => updateCostTokenInput('cacheMissInputTokens', event.target.value)}
-                  />
-                </label>
-                <label className="ct-field">
-                  <span>输出</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    inputMode="numeric"
-                    value={costTokenInputs.outputTokens}
-                    onChange={(event) => updateCostTokenInput('outputTokens', event.target.value)}
-                  />
-                </label>
-              </div>
-              <div className="ct-kv">
-                <span>估算费用</span>
-                <span>{formatCny(estimatedCostCny ?? 0)}</span>
-              </div>
-              <div className="ct-kv">
-                <span>来源</span>
-                <span>
-                  {selectedModelPricing.sourceLabel}（{selectedModelPricing.sourceCheckedAt}）
-                </span>
-              </div>
-            </>
-          ) : (
-            <div className="ct-kv">
-              <span>状态</span>
-              <span>当前模型没有内置单价，暂不计算。</span>
-            </div>
-          )}
         </div>
         <div className="ct-button-row ct-settings-actions">
           <button type="button" className="ct-button" onClick={onTestLlm} disabled={llmActionBusy}>

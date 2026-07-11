@@ -158,13 +158,6 @@ describe('settings-css-sections', () => {
     expect(screen.queryByTestId('settings-section-data-sources')).not.toBeInTheDocument();
     expect(screen.queryByTestId('settings-section-wechat')).not.toBeInTheDocument();
     expect(screen.queryByTestId('settings-section-reset')).not.toBeInTheDocument();
-    expect(within(modelSection).getByRole('heading', { name: '费用估算' })).toBeInTheDocument();
-    expect(within(modelSection).getByText(/DeepSeek 中文官方价格页/)).toBeInTheDocument();
-    fireEvent.change(within(modelSection).getByLabelText('命中缓存输入'), { target: { value: '1000000' } });
-    fireEvent.change(within(modelSection).getByLabelText('未命中缓存输入'), { target: { value: '1000000' } });
-    fireEvent.change(within(modelSection).getByLabelText('输出'), { target: { value: '1000000' } });
-    expect(within(modelSection).getByText('¥3.02')).toBeInTheDocument();
-
     fireEvent.click(screen.getByRole('tab', { name: '数据源' }));
     expect(screen.getByRole('tab', { name: '数据源' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('settings-section-data-sources')).toBeInTheDocument();
