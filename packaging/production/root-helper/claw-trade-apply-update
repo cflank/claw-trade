@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
+import grp
 import hashlib
 import json
 import os
@@ -9,6 +11,7 @@ import posixpath
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tarfile
@@ -16,6 +19,7 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from io import BytesIO
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -27,6 +31,11 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 DEFAULT_PUBLIC_KEY_PATH = "/etc/claw-trade/update-signing-public.pem"
 HOST_HELPER_PATH = Path("/usr/local/lib/claw-trade/claw-trade-apply-update")
+WATCHDOG_HELPER_PATH = Path("/usr/local/lib/claw-trade/claw-trade-watchdog")
+HOST_OPERATION_LOCK_PATH = Path("/opt/claw-trade/host-operations.lock")
+REPORT_ACTIVE_LOCK_PATH = Path("/opt/claw-trade/report-active.lock")
+PRODUCTION_GROUP = "clawtrade"
+ROOT_UID = 0
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SUDOERS_PATH = Path("/etc/sudoers.d/claw-trade-update")
 LEGACY_PID_FILES = (Path("/tmp/claw-trade-ui.pid"), Path("/tmp/claw-trade-control.pid"))
@@ -60,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run(*, install_root: Path, request_path: Path, public_key_path: Path | None = None) -> int:
+    with host_operation_lock():
+        return run_locked(install_root=install_root, request_path=request_path, public_key_path=public_key_path)
+
+
+def run_locked(*, install_root: Path, request_path: Path, public_key_path: Path | None = None) -> int:
     validate_install_layout(install_root)
     public_key_path = public_key_path or Path(DEFAULT_PUBLIC_KEY_PATH)
     validate_public_key(public_key_path)
@@ -129,6 +143,54 @@ def run(*, install_root: Path, request_path: Path, public_key_path: Path | None 
             shutil.rmtree(staging_dir)
         request_path.unlink(missing_ok=True)
         lock_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def host_operation_lock():
+    host_fd = open_verified_lock(HOST_OPERATION_LOCK_PATH)
+    try:
+        fcntl.flock(host_fd, fcntl.LOCK_EX)
+        report_fd = open_verified_lock(REPORT_ACTIVE_LOCK_PATH)
+        try:
+            yield
+        finally:
+            os.close(report_fd)
+    finally:
+        os.close(host_fd)
+
+
+def open_verified_lock(path: Path) -> int:
+    parent_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        parent_fd = os.open(path.parent, parent_flags)
+    except OSError as exc:
+        raise ValueError(f"锁文件父目录非法：{path.parent}") from exc
+    try:
+        parent_info = os.fstat(parent_fd)
+        if parent_info.st_uid != ROOT_UID or parent_info.st_mode & 0o022:
+            raise ValueError(f"锁文件父目录不安全：{path.parent}")
+        flags = os.O_RDWR | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(path.name, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ValueError(f"锁文件不存在或无法打开：{path}") from exc
+        info = os.fstat(fd)
+        try:
+            group_gid = grp.getgrnam(PRODUCTION_GROUP).gr_gid
+        except KeyError as exc:
+            os.close(fd)
+            raise ValueError(f"生产用户组不存在：{PRODUCTION_GROUP}") from exc
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != ROOT_UID
+            or info.st_gid != group_gid
+            or stat.S_IMODE(info.st_mode) != 0o660
+        ):
+            os.close(fd)
+            raise ValueError(f"锁文件不安全：{path}")
+        return fd
+    finally:
+        os.close(parent_fd)
 
 
 def acquire_apply_lock(lock_path: Path) -> None:
@@ -344,16 +406,20 @@ def install_host_files(release_dir: Path) -> None:
     if os.geteuid() != 0:
         return
     helper = release_dir / "root-helper" / "claw-trade-apply-update"
+    watchdog_helper = release_dir / "root-helper" / "claw-trade-watchdog"
     systemd = release_dir / "systemd"
     sudoers = release_dir / "sudoers" / "claw-trade-update"
-    if not helper.is_file() or not systemd.is_dir() or not sudoers.is_file():
+    if not helper.is_file() or not watchdog_helper.is_file() or not systemd.is_dir() or not sudoers.is_file():
         raise ValueError("更新包缺少宿主机安装文件")
 
+    timer_enabled, timer_active = watchdog_timer_state()
     HOST_HELPER_PATH.parent.mkdir(parents=True, exist_ok=True)
     SYSTEMD_DIR.mkdir(parents=True, exist_ok=True)
     SUDOERS_PATH.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(helper, HOST_HELPER_PATH)
     HOST_HELPER_PATH.chmod(0o755)
+    shutil.copy2(watchdog_helper, WATCHDOG_HELPER_PATH)
+    WATCHDOG_HELPER_PATH.chmod(0o755)
     for unit in sorted(systemd.glob("*.service")) + sorted(systemd.glob("*.timer")):
         shutil.copy2(unit, SYSTEMD_DIR / unit.name)
     temp_sudoers = SUDOERS_PATH.with_name(f".{SUDOERS_PATH.name}.{os.getpid()}.tmp")
@@ -366,7 +432,40 @@ def install_host_files(release_dir: Path) -> None:
     finally:
         temp_sudoers.unlink(missing_ok=True)
     subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
-    subprocess.run(["/bin/systemctl", "enable", "claw-trade-control.service", "claw-trade-ui.service", "claw-trade-auto-update.timer"], check=True)
+    subprocess.run(
+        ["/bin/systemctl", "enable", "claw-trade-control.service", "claw-trade-ui.service", "claw-trade-auto-update.timer"],
+        check=True,
+    )
+    restore_watchdog_timer_state(enabled=timer_enabled, active=timer_active)
+
+
+def watchdog_timer_state() -> tuple[bool, bool]:
+    enabled = subprocess.run(
+        ["/bin/systemctl", "is-enabled", "--quiet", "claw-trade-watchdog.timer"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    active = subprocess.run(
+        ["/bin/systemctl", "is-active", "--quiet", "claw-trade-watchdog.timer"],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if enabled.returncode not in {0, 1} or active.returncode not in {0, 3}:
+        raise ValueError("无法读取看门狗 timer 安装前状态")
+    return enabled.returncode == 0, active.returncode == 0
+
+
+def restore_watchdog_timer_state(*, enabled: bool, active: bool) -> None:
+    subprocess.run(
+        ["/bin/systemctl", "enable" if enabled else "disable", "claw-trade-watchdog.timer"],
+        check=True,
+    )
+    subprocess.run(
+        ["/bin/systemctl", "start" if active else "stop", "claw-trade-watchdog.timer"],
+        check=True,
+    )
 
 
 def rollback_or_rescue(*, install_root: Path, previous: Path | None, reason: str) -> int:

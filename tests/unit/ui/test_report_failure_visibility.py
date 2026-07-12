@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import fcntl
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
+
+
+@contextmanager
+def _test_report_lock(path: Path):  # type: ignore[no-untyped-def]
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        yield fd
+    finally:
+        os.close(fd)
+
+
+@pytest.fixture(autouse=True)
+def _inject_report_lock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("claw_trade.ui_backend.report_queue._open_report_lock", _test_report_lock)
+    monkeypatch.setattr("claw_trade.production.paths.REPORT_ACTIVE_LOCK_PATH", tmp_path / "report-active.lock")
 
 
 @dataclass
@@ -46,8 +66,13 @@ def _task_input() -> dict[str, object]:
     }
 
 
-def test_failed_task_not_in_history_and_not_kept_in_right_rail() -> None:
-    queue = ReportTaskQueue(ReportWorkflowBridge(_FakeRunner()))
+def test_failed_task_not_in_history_and_releases_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "failed-report-active.lock"
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(_FakeRunner()),
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
+    )
     payload = queue.enqueue_report_task(request_id="r1", task_input=_task_input(), source="manual")
     task_id = payload["task"]["taskId"]
     failed = queue.handle_report_failed(task_id, RuntimeError("workflow_failed"))
@@ -59,6 +84,9 @@ def test_failed_task_not_in_history_and_not_kept_in_right_rail() -> None:
     snapshot = queue.get_report_queue_snapshot_for_user()
     assert snapshot["lastTerminalTask"]["taskId"] == task_id
     assert snapshot["lastTerminalTask"]["status"] == "failed"
+    fd = os.open(lock_path, os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.close(fd)
 
 
 def test_export_asset_failure_is_visible_as_report_export_failure() -> None:

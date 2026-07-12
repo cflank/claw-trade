@@ -14,6 +14,19 @@ from claw_trade.workflow.report_request_factory import build_report_run_request
 _LOGGER = logging.getLogger("uvicorn.error")
 
 
+class WorkflowRunStartPending(RuntimeError):
+    def __init__(self, attempt_id: str) -> None:
+        super().__init__("workflow_start_timeout")
+        self.attempt_id = attempt_id
+
+
+@dataclass(frozen=True)
+class WorkflowStartAttemptStatus:
+    run_id: str | None
+    has_exited: bool
+    error: str | None = None
+
+
 @dataclass(frozen=True)
 class WorkflowRunRecord:
     run_id: str
@@ -25,6 +38,8 @@ class WorkflowRunnerPort(Protocol):
     def create_run(self, request: RunRequest) -> str | dict[str, Any]: ...
 
     def load_state(self, run_id: str) -> Any: ...
+
+    def wait_run_exit(self, run_id: str) -> bool: ...
 
 
 class CompanyNameResolver(Protocol):
@@ -85,6 +100,20 @@ class ReportWorkflowBridge:
         if not callable(cancel_run):
             return False
         return bool(cancel_run(run_id))
+
+    def workflow_run_has_exited(self, run_id: str) -> bool:
+        has_exited = getattr(self._runner, "run_has_exited", None)
+        return bool(callable(has_exited) and has_exited(run_id))
+
+    def wait_for_workflow_run_exit(self, run_id: str) -> bool:
+        wait_for_exit = getattr(self._runner, "wait_run_exit", None)
+        return bool(callable(wait_for_exit) and wait_for_exit(run_id))
+
+    def poll_workflow_start_attempt(self, attempt_id: str) -> WorkflowStartAttemptStatus:
+        poll_attempt = getattr(self._runner, "poll_start_attempt", None)
+        if not callable(poll_attempt):
+            return WorkflowStartAttemptStatus(run_id=None, has_exited=False)
+        return poll_attempt(attempt_id)
 
     def _company_name_for_task(self, *, task: dict[str, Any], ticker: str, market: str) -> str | None:
         fallback = str(task.get("companyName") or task.get("instrumentName") or "").strip()

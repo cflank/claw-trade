@@ -33,6 +33,8 @@ class ProductionPaths:
 
 
 INSTALL_ROOT = Path("/opt/claw-trade")
+HOST_OPERATIONS_LOCK_PATH = INSTALL_ROOT / "host-operations.lock"
+REPORT_ACTIVE_LOCK_PATH = INSTALL_ROOT / "report-active.lock"
 RELEASES_DIR = INSTALL_ROOT / "releases"
 CURRENT_LINK = INSTALL_ROOT / "current"
 RESCUE_CURRENT_LINK = INSTALL_ROOT / "rescue-current"
@@ -69,6 +71,9 @@ CONTROL_SERVICE_NAME = "claw-trade-control.service"
 UPDATE_APPLY_SERVICE_NAME = "claw-trade-apply-update.service"
 AUTO_UPDATE_SERVICE_NAME = "claw-trade-auto-update.service"
 AUTO_UPDATE_TIMER_NAME = "claw-trade-auto-update.timer"
+WATCHDOG_SERVICE_NAME = "claw-trade-watchdog.service"
+WATCHDOG_TIMER_NAME = "claw-trade-watchdog.timer"
+WATCHDOG_HELPER_PATH = Path("/usr/local/lib/claw-trade/claw-trade-watchdog")
 RESCUE_SERVICE_NAME = "claw-trade-rescue.service"
 RESCUE_TRIGGER_SERVICE_NAME = "claw-trade-rescue-trigger.service"
 RESCUE_BIN_NAME = "claw-trade-rescue"

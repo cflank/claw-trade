@@ -1,12 +1,37 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import os
+import signal
 from pathlib import Path
 
 import pytest
 
 from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
+from claw_trade.production import host_locks
+from claw_trade.production.host_locks import hold_host_lock
 from claw_trade.production.maintenance_lock import ProductionMaintenanceLock
+
+
+@pytest.fixture(autouse=True)
+def local_lock_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_locks, "_expected_identity", lambda: (os.getuid(), os.getgid()))
+
+
+def _install_host_lock(install_root: Path) -> Path:
+    install_root.mkdir(parents=True, exist_ok=True)
+    path = install_root / "host-operations.lock"
+    path.write_bytes(b"")
+    path.chmod(0o660)
+    return path
+
+
+def _hold_host_lock_until_released(path: Path, ready, release) -> None:
+    host_locks._expected_identity = lambda: (os.getuid(), os.getgid())
+    with hold_host_lock(path, exclusive=True, blocking=False):
+        ready.set()
+        release.wait()
 
 
 def test_factory_reset_clears_application_state_and_preserves_release_license_and_updates(tmp_path: Path) -> None:
@@ -25,6 +50,7 @@ def test_factory_reset_clears_application_state_and_preserves_release_license_an
         path = shared / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("delete", encoding="utf-8")
+    _install_host_lock(install_root)
 
     result = FactoryResetService(install_root=install_root).run(
         request_id="reset-1",
@@ -51,6 +77,7 @@ def test_factory_reset_requires_confirmation(tmp_path: Path) -> None:
 
 def test_factory_reset_uses_maintenance_lock(tmp_path: Path) -> None:
     install_root = tmp_path / "opt" / "claw-trade"
+    _install_host_lock(install_root)
     lock = ProductionMaintenanceLock(install_root=install_root)
     seen_locked: list[bool] = []
 
@@ -71,6 +98,7 @@ def test_factory_reset_uses_maintenance_lock(tmp_path: Path) -> None:
 
 def test_factory_reset_rejects_existing_maintenance_lock(tmp_path: Path) -> None:
     install_root = tmp_path / "opt" / "claw-trade"
+    _install_host_lock(install_root)
     lock = ProductionMaintenanceLock(install_root=install_root)
 
     with lock.hold(reason="test", request_id="busy"):
@@ -79,6 +107,43 @@ def test_factory_reset_rejects_existing_maintenance_lock(tmp_path: Path) -> None
                 request_id="reset-1",
                 confirmation=FACTORY_RESET_CONFIRMATION,
             )
+
+
+def test_factory_reset_does_not_mutate_while_host_lock_is_held_and_recovers_after_holder_termination(
+    tmp_path: Path,
+) -> None:
+    install_root = tmp_path / "opt" / "claw-trade"
+    host_lock = _install_host_lock(install_root)
+    entered: list[bool] = []
+
+    class ObservedFactoryResetService(FactoryResetService):
+        def _ensure_required_shared_dirs(self) -> None:
+            entered.append(True)
+            super()._ensure_required_shared_dirs()
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    process = context.Process(target=_hold_host_lock_until_released, args=(host_lock, ready, release))
+    process.start()
+    try:
+        assert ready.wait(timeout=15), f"lock holder did not start; exitcode={process.exitcode}"
+        with pytest.raises(ValueError, match="维护中"):
+            ObservedFactoryResetService(install_root=install_root).run(
+                request_id="reset-1",
+                confirmation=FACTORY_RESET_CONFIRMATION,
+            )
+    finally:
+        process.terminate()
+        process.join(timeout=2)
+
+    assert entered == []
+    assert process.exitcode == -signal.SIGTERM
+    assert ObservedFactoryResetService(install_root=install_root).run(
+        request_id="reset-2",
+        confirmation=FACTORY_RESET_CONFIRMATION,
+    ).status == "completed"
+    assert entered == [True]
 
 
 def test_factory_reset_rejects_install_root_escape(tmp_path: Path) -> None:

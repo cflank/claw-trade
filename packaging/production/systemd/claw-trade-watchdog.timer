@@ -1,0 +1,11 @@
+[Unit]
+Description=claw-trade control health watchdog timer
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=60s
+AccuracySec=1s
+Unit=claw-trade-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from claw_trade.production import host_locks
 from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
 from claw_trade.production.rescue_app import build_rescue_app
+
+
+@pytest.fixture(autouse=True)
+def installed_host_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    host_lock = tmp_path / "opt" / "claw-trade" / "host-operations.lock"
+    host_lock.parent.mkdir(parents=True)
+    host_lock.touch()
+    host_lock.chmod(0o660)
+    monkeypatch.setattr(host_locks, "_expected_identity", lambda: (os.getuid(), os.getgid()))
 
 
 def test_rescue_app_serves_status_and_factory_reset(tmp_path: Path) -> None:

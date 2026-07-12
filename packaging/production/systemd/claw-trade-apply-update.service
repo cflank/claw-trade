@@ -6,3 +6,4 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/lib/claw-trade/claw-trade-apply-update
+TimeoutStartSec=70min

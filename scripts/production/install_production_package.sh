@@ -8,7 +8,7 @@ if [[ -z "${archive}" || ! -f "${archive}" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-install_root="${CLAW_TRADE_INSTALL_ROOT:-/opt/claw-trade}"
+install_root="/opt/claw-trade"
 release_root="${install_root}/releases"
 runtime_owner="${CLAW_TRADE_RUNTIME_OWNER:-clawtrade}"
 runtime_group="${CLAW_TRADE_RUNTIME_GROUP:-clawtrade}"
@@ -27,6 +27,10 @@ fail() {
   printf '[ERROR] %s\n' "$*" >&2
   exit 1
 }
+
+if [[ -n "${CLAW_TRADE_INSTALL_ROOT:-}" && "${CLAW_TRADE_INSTALL_ROOT}" != "${install_root}" ]]; then
+  fail "CLAW_TRADE_INSTALL_ROOT must be exactly ${install_root}"
+fi
 
 require_command() {
   local command_name="$1"
@@ -92,6 +96,85 @@ install_virbox_status_sdk() {
   write_shared_env_var "VIRBOX_LICENSE_ID" "${virbox_license_id}"
 }
 
+manage_host_lock_files() {
+  local mode="$1"
+  python3 - "${install_root}" "${runtime_group}" "${mode}" <<'PY'
+import grp
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+group_gid = grp.getgrnam(sys.argv[2]).gr_gid
+create = sys.argv[3] == "create"
+parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+try:
+    parent_fd = os.open(root, parent_flags)
+except OSError as exc:
+    raise SystemExit(f"unsafe lock parent {root}: {exc}")
+try:
+    parent = os.fstat(parent_fd)
+    if parent.st_uid != 0 or parent.st_mode & 0o022:
+        raise SystemExit(f"unsafe lock parent ownership or mode: {root}")
+    for name in ("host-operations.lock", "report-active.lock"):
+        flags = os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            fd = os.open(name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            if not create:
+                raise SystemExit(f"missing lock file: {root / name}")
+            try:
+                fd = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o660, dir_fd=parent_fd)
+            except OSError as exc:
+                raise SystemExit(f"cannot create lock file {root / name}: {exc}")
+            os.fchown(fd, 0, group_gid)
+            os.fchmod(fd, 0o660)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != group_gid or stat.S_IMODE(info.st_mode) != 0o660:
+                raise SystemExit(f"unsafe lock inode: {root / name}")
+        finally:
+            os.close(fd)
+finally:
+    os.close(parent_fd)
+PY
+}
+
+ensure_host_lock_files() {
+  manage_host_lock_files create
+}
+
+verify_host_lock_files() {
+  manage_host_lock_files verify
+}
+
+disable_watchdog_timer() {
+  local phase="$1"
+  local load_state unit_file_state active_state
+  if ! load_state="$(systemctl show claw-trade-watchdog.timer --property=LoadState --value)"; then
+    fail "failed to inspect claw-trade-watchdog.timer LoadState"
+  fi
+  case "${load_state}" in
+    not-found)
+      [[ "${phase}" == "preinstall" ]] || fail "claw-trade-watchdog.timer missing after installation"
+      return 0
+      ;;
+    loaded) ;;
+    *) fail "unexpected claw-trade-watchdog.timer LoadState: ${load_state:-unknown}" ;;
+  esac
+  systemctl disable --now claw-trade-watchdog.timer >/dev/null \
+    || fail "failed to disable claw-trade-watchdog.timer"
+  if ! load_state="$(systemctl show claw-trade-watchdog.timer --property=LoadState --value)" \
+    || ! unit_file_state="$(systemctl show claw-trade-watchdog.timer --property=UnitFileState --value)" \
+    || ! active_state="$(systemctl show claw-trade-watchdog.timer --property=ActiveState --value)"; then
+    fail "failed to verify claw-trade-watchdog.timer state"
+  fi
+  [[ "${load_state}" == "loaded" ]] || fail "claw-trade-watchdog.timer is not loaded: ${load_state:-unknown}"
+  [[ "${unit_file_state}" == "disabled" ]] || fail "claw-trade-watchdog.timer is not disabled: ${unit_file_state:-unknown}"
+  [[ "${active_state}" == "inactive" ]] || fail "claw-trade-watchdog.timer is not inactive: ${active_state:-unknown}"
+}
+
 ensure_system_identity "${runtime_owner}" "${runtime_group}"
 ensure_system_identity "${kiosk_owner}" "${kiosk_group}"
 [[ -x "${kiosk_browser}" ]] || fail "missing kiosk browser: ${kiosk_browser}"
@@ -99,6 +182,7 @@ require_command wkhtmltopdf "missing PDF renderer: install wkhtmltopdf"
 require_command fc-match "missing PDF font runtime: install fontconfig"
 require_noto_cjk_font
 
+disable_watchdog_timer preinstall
 top_dir="$(python3 "${script_dir}/validate_production_archive.py" "${archive}")"
 if [[ -z "${virbox_status_sdk_archive}" ]]; then
   virbox_status_sdk_archive="${release_root}/${top_dir}/virbox/virbox-status-sdk-linux-x86_64.tgz"
@@ -120,8 +204,10 @@ write_shared_env_var "CLAW_TRADE_AUTO_UPDATE_INSTALL" "${auto_update_install}"
 install_update_public_key_file
 
 "${release_root}/${top_dir}/bin/claw-trade-preflight"
+ensure_host_lock_files
 install -d -m 0755 /usr/local/lib/claw-trade
 install -m 0755 "${release_root}/${top_dir}/root-helper/claw-trade-apply-update" /usr/local/lib/claw-trade/claw-trade-apply-update
+install -m 0755 "${release_root}/${top_dir}/root-helper/claw-trade-watchdog" /usr/local/lib/claw-trade/claw-trade-watchdog
 install -m 0644 "${release_root}/${top_dir}/systemd/"*.service /etc/systemd/system/
 install -m 0644 "${release_root}/${top_dir}/systemd/"*.timer /etc/systemd/system/
 systemctl daemon-reload
@@ -136,4 +222,6 @@ ln -sfn "${release_root}/${top_dir}" "${tmp_rescue_current}"
 mv -Tf "${tmp_rescue_current}" "${install_root}/rescue-current"
 chown -h root:root "${install_root}/rescue-current"
 systemctl enable --now claw-trade-auto-update.timer
+verify_host_lock_files
+disable_watchdog_timer postinstall
 printf '[OK] installed %s -> %s/current\n' "${top_dir}" "${install_root}"

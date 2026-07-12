@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock
 from types import SimpleNamespace
 
 import pytest
+from claw_trade.production import host_locks, paths
 from claw_trade.ui_backend.report_cleanup import (
     ReportCleanupResult,
     ReportCleanupScheduler,
@@ -18,6 +20,15 @@ from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.report_repository import ReportRepository
 from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
+
+
+@pytest.fixture(autouse=True)
+def installed_report_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    report_lock = tmp_path / "report-active.lock"
+    report_lock.touch()
+    report_lock.chmod(0o660)
+    monkeypatch.setattr(paths, "REPORT_ACTIVE_LOCK_PATH", report_lock)
+    monkeypatch.setattr(host_locks, "_expected_identity", lambda: (os.getuid(), os.getgid()))
 
 
 class _FakeRunner:

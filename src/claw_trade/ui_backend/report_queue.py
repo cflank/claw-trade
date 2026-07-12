@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
+from time import sleep
 from typing import Any
 
+from claw_trade.production import paths
+from claw_trade.production.host_locks import hold_host_lock
 from claw_trade.ui_backend.error_translator import (
     UserFacingFailure,
     translate_internal_error_for_user,
@@ -21,7 +25,7 @@ from claw_trade.ui_backend.task_costs import (
     collect_token_cost_summary_from_path,
     estimate_task_cost,
 )
-from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
+from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge, WorkflowRunStartPending
 from claw_trade.ui_contracts.enums import ReportTaskStatus
 from claw_trade.workflow.models import RunStatus
 from claw_trade.workflow.workers import all_worker_ids, stage_plans_for_market
@@ -64,6 +68,10 @@ class ReportTask:
     selection_stage_marker: str | None = None
     cost_start_snapshot: TaskCostSnapshot | None = None
     cost_estimate: TaskCostEstimate | None = None
+    _report_lock: AbstractContextManager[int] | None = field(default=None, repr=False)
+    _report_lock_fd: int | None = field(default=None, repr=False)
+    _workflow_start_attempt_id: str | None = field(default=None, repr=False)
+    _terminalization_claimed: bool = field(default=False, repr=False)
 
 
 class ReportTaskQueue:
@@ -76,6 +84,8 @@ class ReportTaskQueue:
         failed_report_writer: Callable[[ReportTask], None] | None = None,
         report_permission_checker: Callable[[], None] | None = None,
         task_cost_snapshot_provider: Callable[[], TaskCostSnapshot] | None = None,
+        report_lock_path: Path | None = None,
+        report_lock_opener: Callable[[Path], AbstractContextManager[int]] | None = None,
     ) -> None:
         self._bridge = bridge
         self._queue_limit = queue_limit
@@ -83,12 +93,15 @@ class ReportTaskQueue:
         self._failed_report_writer = failed_report_writer
         self._report_permission_checker = report_permission_checker
         self._task_cost_snapshot_provider = task_cost_snapshot_provider
+        self._report_lock_path = report_lock_path or paths.REPORT_ACTIVE_LOCK_PATH
+        self._report_lock_opener = report_lock_opener or _open_report_lock
         self._tasks: dict[str, ReportTask] = {}
         self._enqueue_idempotency: dict[str, dict[str, Any]] = {}
         self._cancel_idempotency: dict[str, dict[str, Any]] = {}
         self._sequence = 0
         self._right_rail_active: set[str] = set()
         self._last_terminal_task_id: str | None = None
+        self._terminal_watchers: set[str] = set()
         self._state_lock = Lock()
         self._cost_lock = Lock()
 
@@ -169,10 +182,30 @@ class ReportTaskQueue:
         except QueueError as exc:
             self.handle_report_failed(task.task_id, exc)
             return task
+        try:
+            report_lock = self._report_lock_opener(self._report_lock_path)
+            report_lock_fd = report_lock.__enter__()
+        except Exception as exc:
+            self.handle_report_failed(
+                task.task_id,
+                QueueError(
+                    "REPORT_LOCK_UNAVAILABLE",
+                    "assistant_unavailable",
+                    f"报告执行锁不可用，任务未启动：{exc}",
+                ),
+            )
+            return task
         with self._state_lock:
             current = self._tasks.get(task.task_id)
-            if current is not task or task.status != ReportTaskStatus.QUEUED:
+            if (
+                current is not task
+                or task.status != ReportTaskStatus.QUEUED
+                or task._terminalization_claimed
+            ):
+                report_lock.__exit__(None, None, None)
                 return task
+            task._report_lock = report_lock
+            task._report_lock_fd = report_lock_fd
             task.status = ReportTaskStatus.RUNNING
             task.queue_position = None
             task.started_at = _now_iso()
@@ -198,6 +231,12 @@ class ReportTaskQueue:
                     task.cost_start_snapshot = cost_start_snapshot
         try:
             run = self._bridge.create_workflow_run(task_input)
+        except WorkflowRunStartPending as exc:
+            with self._state_lock:
+                current = self._tasks.get(task.task_id)
+                if current is task:
+                    task._workflow_start_attempt_id = exc.attempt_id
+            return task
         except Exception as exc:
             self.handle_report_failed(task.task_id, exc)
             return task
@@ -209,11 +248,26 @@ class ReportTaskQueue:
 
     def cancel_report_task(self, *, request_id: str, task_id: str) -> dict[str, Any]:
         with self._state_lock:
+            pending_start = self._tasks.get(task_id)
+            should_refresh_start = bool(
+                pending_start is not None
+                and pending_start.status == ReportTaskStatus.RUNNING
+                and not pending_start.run_id
+                and pending_start._workflow_start_attempt_id
+            )
+        if should_refresh_start:
+            self.refresh_running_task_status()
+        with self._state_lock:
             if request_id in self._cancel_idempotency:
                 return self._cancel_idempotency[request_id]
             task = self._tasks.get(task_id)
             if task is None:
                 raise QueueError("TASK_NOT_FOUND", "invalid_input", "没有找到对应任务，请刷新后重试。")
+            if task._terminalization_claimed and task.status in {
+                ReportTaskStatus.QUEUED,
+                ReportTaskStatus.RUNNING,
+            }:
+                raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "报告任务正在结束，请稍后刷新。")
             if task.status == ReportTaskStatus.CANCELLED:
                 task_payload = self.to_report_task_for_user(task)
                 message = "任务已取消。"
@@ -227,6 +281,7 @@ class ReportTaskQueue:
                 raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "当前状态不支持取消。")
             else:
                 run_id = None
+                task._terminalization_claimed = True
                 task.status = ReportTaskStatus.CANCELLED
                 task.finished_at = _now_iso()
                 self._right_rail_active.discard(task.task_id)
@@ -242,17 +297,24 @@ class ReportTaskQueue:
                 needs_start_next = True
         if task_payload is None:
             if not run_id or not self._bridge.cancel_workflow_run(run_id):
-                raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "报告正在生成，当前运行时不支持停止。")
+                if run_id:
+                    self._ensure_terminal_watcher(task, run_id)
+                raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "取消请求已发出，报告仍在停止中。")
+            self.refresh_running_task_status()
             with self._state_lock:
-                task.status = ReportTaskStatus.CANCELLED
-                task.finished_at = _now_iso()
-                self._right_rail_active.discard(task.task_id)
-                self._last_terminal_task_id = task.task_id
-                self._refresh_queue_positions()
-            self._finish_task_cost_estimate(task)
+                still_running = task.status == ReportTaskStatus.RUNNING
+            if still_running:
+                self._ensure_terminal_watcher(task, run_id)
+                raise QueueError("TASK_NOT_CANCELLABLE", "conflict", "取消请求已发出，报告仍在停止中。")
             with self._state_lock:
                 task_payload = self.to_report_task_for_user(task)
-                message = append_task_cost_line(message, task.cost_estimate)
+                if task.status == ReportTaskStatus.CANCELLED:
+                    message = append_task_cost_line(message, task.cost_estimate)
+                elif task.status == ReportTaskStatus.SUCCEEDED:
+                    message = "报告已在取消完成前生成。"
+                else:
+                    message = "报告任务已结束。"
+                needs_start_next = False
         payload = {
             "task": task_payload,
             "queueSnapshot": self.get_report_queue_snapshot_for_user(),
@@ -264,6 +326,35 @@ class ReportTaskQueue:
             self.start_next_report_task_if_idle()
         return payload
 
+    def _ensure_terminal_watcher(self, task: ReportTask, run_id: str) -> None:
+        with self._state_lock:
+            if task.task_id in self._terminal_watchers:
+                return
+            self._terminal_watchers.add(task.task_id)
+
+        def _finish_after_exit() -> None:
+            try:
+                if not self._bridge.wait_for_workflow_run_exit(run_id):
+                    return
+                while True:
+                    try:
+                        self.refresh_running_task_status()
+                    except Exception:
+                        pass
+                    with self._state_lock:
+                        if task.status != ReportTaskStatus.RUNNING:
+                            return
+                    sleep(0.25)
+            finally:
+                with self._state_lock:
+                    self._terminal_watchers.discard(task.task_id)
+
+        Thread(
+            target=_finish_after_exit,
+            daemon=True,
+            name=f"claw-trade-report-terminal-{task.task_id}",
+        ).start()
+
     def handle_report_failed(
         self,
         task_id: str,
@@ -271,28 +362,17 @@ class ReportTaskQueue:
         *,
         run_dir: Path | None = None,
     ) -> ReportTask | None:
-        failed_task: ReportTask | None = None
         with self._state_lock:
             task = self._tasks.get(task_id)
             if task is None:
                 return None
-            category = error.category if isinstance(error, QueueError) else None
-            failure = translate_internal_error_for_user(error, category=category)
-            task.status = ReportTaskStatus.FAILED
-            task.failure = failure
-            task.finished_at = _now_iso()
-            self._right_rail_active.discard(task.task_id)
-            self._last_terminal_task_id = task.task_id
-            self._refresh_queue_positions()
-            failed_task = task
-        if failed_task is not None:
-            self._finish_task_cost_estimate(failed_task, run_dir=run_dir)
-        if failed_task is not None and self._failed_report_writer is not None:
-            try:
-                self._failed_report_writer(failed_task)
-            except Exception:
-                pass
-        self.start_next_report_task_if_idle()
+            if task._terminalization_claimed or task.status not in {
+                ReportTaskStatus.QUEUED,
+                ReportTaskStatus.RUNNING,
+            }:
+                return task
+            task._terminalization_claimed = True
+        self._finish_claimed_failure(task, error, run_dir=run_dir)
         return task
 
     def list_saved_reports_for_user(self) -> list[dict[str, Any]]:
@@ -367,10 +447,39 @@ class ReportTaskQueue:
     def refresh_running_task_status(self) -> ReportTask | None:
         with self._state_lock:
             task = self._running_task()
-            if task is None or not task.run_id:
+            if task is None:
                 return task
+            if not task.run_id:
+                attempt_id = task._workflow_start_attempt_id
+                if not attempt_id:
+                    return task
+            else:
+                attempt_id = None
             run_id = task.run_id
             market = task.market
+        if attempt_id is not None:
+            try:
+                attempt = self._bridge.poll_workflow_start_attempt(attempt_id)
+            except Exception:
+                return task
+            if attempt.run_id:
+                with self._state_lock:
+                    if task.status != ReportTaskStatus.RUNNING:
+                        return task
+                    task.run_id = attempt.run_id
+                    task._workflow_start_attempt_id = None
+                    run_id = attempt.run_id
+            elif not attempt.has_exited:
+                return task
+            else:
+                with self._state_lock:
+                    task._workflow_start_attempt_id = None
+                return self.handle_report_failed(
+                    task.task_id,
+                    RuntimeError(attempt.error or "workflow_start_timeout"),
+                )
+        if not run_id:
+            return task
         try:
             workflow_state = self._bridge.load_workflow_state(run_id)
         except Exception:
@@ -382,27 +491,30 @@ class ReportTaskQueue:
         )
         status = _workflow_status_value(workflow_state)
         if status == RunStatus.COMPLETED.value:
+            if not self._claim_running_terminalization(task):
+                return task
             with self._state_lock:
                 should_write = self._completed_report_writer is not None and not task.completed_report_saved
                 if should_write:
                     task.completed_report_saved = True
-            self._finish_task_cost_estimate(task, run_dir=_run_dir_from_workflow_state(workflow_state))
-            if should_write:
-                try:
+            try:
+                self._finish_task_cost_estimate(task, run_dir=_run_dir_from_workflow_state(workflow_state))
+                if should_write:
                     self._completed_report_writer(task, workflow_state)
-                except Exception as exc:
-                    self.handle_report_failed(
-                        task.task_id,
-                        exc,
-                        run_dir=_run_dir_from_workflow_state(workflow_state),
-                    )
-                    return task
+            except Exception as exc:
+                self._finish_claimed_failure(
+                    task,
+                    exc,
+                    run_dir=_run_dir_from_workflow_state(workflow_state),
+                )
+                return task
             with self._state_lock:
                 task.progress = progress
                 task.status = ReportTaskStatus.SUCCEEDED
                 task.finished_at = _now_iso()
                 self._right_rail_active.discard(task.task_id)
                 self._last_terminal_task_id = task.task_id
+            self._release_report_lock(task)
             self.start_next_report_task_if_idle()
         elif status == RunStatus.FAILED.value:
             reason = _read_state_value(workflow_state, "failure_reason", default="workflow_failed")
@@ -413,14 +525,23 @@ class ReportTaskQueue:
                 run_dir=_run_dir_from_workflow_state(workflow_state),
             )
         elif status == RunStatus.CANCELLED.value:
-            with self._state_lock:
-                task.progress = progress
-                task.status = ReportTaskStatus.CANCELLED
-                task.finished_at = _now_iso()
-                self._right_rail_active.discard(task.task_id)
-                self._last_terminal_task_id = task.task_id
-            self._finish_task_cost_estimate(task, run_dir=_run_dir_from_workflow_state(workflow_state))
-            self.start_next_report_task_if_idle()
+            if not task.run_id or not self._bridge.workflow_run_has_exited(task.run_id):
+                with self._state_lock:
+                    task.progress = progress
+                return task
+            if not self._claim_running_terminalization(task):
+                return task
+            try:
+                self._finish_task_cost_estimate(task, run_dir=_run_dir_from_workflow_state(workflow_state))
+            finally:
+                with self._state_lock:
+                    task.progress = progress
+                    task.status = ReportTaskStatus.CANCELLED
+                    task.finished_at = _now_iso()
+                    self._right_rail_active.discard(task.task_id)
+                    self._last_terminal_task_id = task.task_id
+                self._release_report_lock(task)
+                self.start_next_report_task_if_idle()
         else:
             with self._state_lock:
                 task.progress = progress
@@ -487,6 +608,59 @@ class ReportTaskQueue:
                 finish_snapshot,
                 token_summary=token_summary,
             )
+
+    def _release_report_lock(self, task: ReportTask) -> None:
+        with self._state_lock:
+            report_lock = task._report_lock
+            task._report_lock = None
+            task._report_lock_fd = None
+        if report_lock is not None:
+            report_lock.__exit__(None, None, None)
+
+    def _claim_running_terminalization(self, task: ReportTask) -> bool:
+        with self._state_lock:
+            if (
+                self._tasks.get(task.task_id) is not task
+                or task.status != ReportTaskStatus.RUNNING
+                or task._terminalization_claimed
+            ):
+                return False
+            task._terminalization_claimed = True
+            return True
+
+    def _finish_claimed_failure(
+        self,
+        task: ReportTask,
+        error: Exception | str,
+        *,
+        run_dir: Path | None = None,
+    ) -> None:
+        category = error.category if isinstance(error, QueueError) else None
+        if isinstance(error, QueueError) and error.code == "REPORT_LOCK_UNAVAILABLE":
+            failure = UserFacingFailure(
+                code="ASSISTANT_UNAVAILABLE",
+                user_message=error.user_message,
+            )
+        else:
+            failure = translate_internal_error_for_user(error, category=category)
+        with self._state_lock:
+            task.failure = failure
+        try:
+            self._finish_task_cost_estimate(task, run_dir=run_dir)
+            if self._failed_report_writer is not None:
+                try:
+                    self._failed_report_writer(task)
+                except Exception:
+                    pass
+        finally:
+            with self._state_lock:
+                task.status = ReportTaskStatus.FAILED
+                task.finished_at = _now_iso()
+                self._right_rail_active.discard(task.task_id)
+                self._last_terminal_task_id = task.task_id
+                self._refresh_queue_positions()
+            self._release_report_lock(task)
+            self.start_next_report_task_if_idle()
 
     def _find_existing_queued(self, dedupe_key: str) -> ReportTask | None:
         for task in self._tasks.values():
@@ -696,3 +870,7 @@ def _string_value(value: Any) -> str:
 
 def _now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def _open_report_lock(path: Path) -> AbstractContextManager[int]:
+    return hold_host_lock(path, exclusive=False, blocking=False)

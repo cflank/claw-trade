@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import errno
+import fcntl
+import grp
+import json
+import math
+import os
+import secrets
+import stat
+import subprocess
+import sys
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import ProxyHandler, build_opener
+
+
+SYSTEMCTL = "/bin/systemctl"
+HOST_OPERATION_LOCK_PATH = Path("/opt/claw-trade/host-operations.lock")
+REPORT_ACTIVE_LOCK_PATH = Path("/opt/claw-trade/report-active.lock")
+RETRY_STATE_PATH = Path("/run/claw-trade-watchdog/retry.json")
+PRODUCTION_GROUP = "clawtrade"
+ROOT_UID = 0
+CONTROL_SERVICE = "claw-trade-control.service"
+RESCUE_SERVICE = "claw-trade-rescue.service"
+UPDATE_SERVICES = ("claw-trade-auto-update.service", "claw-trade-apply-update.service")
+SUPPRESSION_LOCKS = (
+    Path("/opt/claw-trade/shared/maintenance.lock"),
+    Path("/opt/claw-trade/shared/updates/apply.lock"),
+)
+OPENVIKING_HEALTH_URL = "http://127.0.0.1:1933/health"
+OPENCLAW_HEALTH_URL = "http://127.0.0.1:18789/health"
+STARTUP_GRACE_SECONDS = 300
+PROBE_ATTEMPTS = 3
+PROBE_INTERVAL_SECONDS = 5
+FIRST_RETRY_DELAY_SECONDS = 300
+SECOND_RETRY_DELAY_SECONDS = 900
+HTTP_TIMEOUT_SECONDS = 3
+MAX_HEALTH_RESPONSE_BYTES = 65_536
+SYSTEMCTL_QUERY_TIMEOUT_SECONDS = 5
+SYSTEMCTL_ACTION_TIMEOUT_SECONDS = 120
+LOCAL_OPENER = build_opener(ProxyHandler({}))
+
+
+class WatchdogExecutionError(RuntimeError):
+    pass
+
+
+def systemctl_value(service: str, property_name: str) -> str:
+    try:
+        result = subprocess.run(
+            [SYSTEMCTL, "show", service, f"--property={property_name}", "--value"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=SYSTEMCTL_QUERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise WatchdogExecutionError(f"cannot inspect {service}: {property_name}") from exc
+    return result.stdout.strip()
+
+
+def service_active(service: str) -> bool:
+    try:
+        result = subprocess.run(
+            [SYSTEMCTL, "is-active", "--quiet", service],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=SYSTEMCTL_QUERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WatchdogExecutionError(f"cannot inspect {service}") from exc
+    if result.returncode not in {0, 3}:
+        raise WatchdogExecutionError(f"systemctl is-active failed for {service}: {result.returncode}")
+    return result.returncode == 0
+
+
+def control_identity() -> tuple[int, float] | None:
+    if not service_active(CONTROL_SERVICE):
+        return None
+    try:
+        pid = int(systemctl_value(CONTROL_SERVICE, "MainPID"))
+        started_us = int(systemctl_value(CONTROL_SERVICE, "ActiveEnterTimestampMonotonic"))
+    except ValueError as exc:
+        raise WatchdogExecutionError("invalid control identity from systemd") from exc
+    if pid <= 0 or started_us <= 0:
+        return None
+    return pid, started_us / 1_000_000
+
+
+def suppressed() -> str | None:
+    if service_active(RESCUE_SERVICE):
+        return "rescue is active"
+    for service in UPDATE_SERVICES:
+        if service_active(service):
+            return f"{service} is active"
+    for path in SUPPRESSION_LOCKS:
+        if path.exists():
+            return f"suppression lock exists: {path}"
+    return None
+
+
+def fetch_health_json(url: str) -> dict[str, object] | None:
+    try:
+        with LOCAL_OPENER.open(url, timeout=HTTP_TIMEOUT_SECONDS) as response:  # nosec B310: fixed localhost URL
+            if not 200 <= response.status < 300:
+                return None
+            payload = response.read(MAX_HEALTH_RESPONSE_BYTES + 1)
+            if len(payload) > MAX_HEALTH_RESPONSE_BYTES:
+                return None
+            parsed = json.loads(payload)
+            return parsed if isinstance(parsed, dict) else None
+    except (OSError, URLError, ValueError):
+        return None
+
+
+def endpoints_healthy() -> bool:
+    openviking = fetch_health_json(OPENVIKING_HEALTH_URL)
+    if openviking is None or openviking.get("healthy") is not True or openviking.get("status") != "ok":
+        return False
+    openclaw = fetch_health_json(OPENCLAW_HEALTH_URL)
+    return openclaw is not None and openclaw.get("ok") is True and openclaw.get("status") == "live"
+
+
+def eligible(original_pid: int, *, require_grace: bool) -> tuple[bool, str]:
+    reason = suppressed()
+    if reason:
+        return False, reason
+    identity = control_identity()
+    if identity is None:
+        return False, "control is not active"
+    pid, started = identity
+    if pid != original_pid:
+        return False, "control MainPID changed"
+    if require_grace and time.monotonic() - started < STARTUP_GRACE_SECONDS:
+        return False, "control is inside startup grace"
+    return True, ""
+
+
+def run_systemctl(action: str, service: str) -> bool:
+    try:
+        result = subprocess.run(
+            [SYSTEMCTL, action, service],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=SYSTEMCTL_ACTION_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    except OSError as exc:
+        raise WatchdogExecutionError(f"cannot execute systemctl {action} {service}") from exc
+    return result.returncode == 0
+
+
+def _lock_identity() -> tuple[int, int]:
+    try:
+        return ROOT_UID, grp.getgrnam(PRODUCTION_GROUP).gr_gid
+    except KeyError as exc:
+        raise WatchdogExecutionError(f"missing production group: {PRODUCTION_GROUP}") from exc
+
+
+def _open_safe_parent(path: Path, *, exact_mode: int | None = None) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise WatchdogExecutionError(f"cannot open safe parent: {path}") from exc
+    info = os.fstat(fd)
+    if info.st_uid != ROOT_UID or info.st_mode & 0o022 or (exact_mode is not None and stat.S_IMODE(info.st_mode) != exact_mode):
+        os.close(fd)
+        raise WatchdogExecutionError(f"unsafe parent directory: {path}")
+    return fd
+
+
+@contextmanager
+def exclusive_lock(path: Path):
+    parent_fd = _open_safe_parent(path.parent)
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path.name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        os.close(parent_fd)
+        raise WatchdogExecutionError(f"cannot open lock: {path}") from exc
+    try:
+        info = os.fstat(fd)
+        owner_uid, group_gid = _lock_identity()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner_uid
+            or info.st_gid != group_gid
+            or stat.S_IMODE(info.st_mode) != 0o660
+        ):
+            raise WatchdogExecutionError(f"unsafe lock: {path}")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                yield False
+                return
+            raise WatchdogExecutionError(f"cannot lock: {path}") from exc
+        yield True
+    finally:
+        os.close(fd)
+        os.close(parent_fd)
+
+
+def _state_directory_fd() -> int:
+    return _open_safe_parent(RETRY_STATE_PATH.parent, exact_mode=0o700)
+
+
+def _open_state(directory_fd: int) -> int | None:
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(RETRY_STATE_PATH.name, flags, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise WatchdogExecutionError(f"cannot open retry state: {RETRY_STATE_PATH}") from exc
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600:
+        os.close(fd)
+        raise WatchdogExecutionError(f"unsafe retry state: {RETRY_STATE_PATH}")
+    return fd
+
+
+def read_retry_state() -> dict[str, object] | None:
+    directory_fd = _state_directory_fd()
+    try:
+        fd = _open_state(directory_fd)
+        if fd is None:
+            return None
+        try:
+            with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                state = json.load(stream)
+        except (OSError, UnicodeError, ValueError) as exc:
+            raise WatchdogExecutionError("invalid retry state JSON") from exc
+    finally:
+        os.close(directory_fd)
+    if not isinstance(state, dict) or set(state) != {"attempts", "next_allowed", "exhausted"}:
+        raise WatchdogExecutionError("invalid retry state fields")
+    attempts = state["attempts"]
+    next_allowed = state["next_allowed"]
+    exhausted = state["exhausted"]
+    if type(attempts) is not int or attempts not in {1, 2, 3} or type(exhausted) is not bool:
+        raise WatchdogExecutionError("invalid retry state values")
+    if exhausted:
+        if attempts != 3 or next_allowed is not None:
+            raise WatchdogExecutionError("invalid exhausted retry state")
+    elif (
+        attempts not in {1, 2}
+        or type(next_allowed) not in {int, float}
+        or not math.isfinite(next_allowed)
+        or next_allowed < 0
+    ):
+        raise WatchdogExecutionError("invalid retry deadline")
+    return state
+
+
+def write_retry_state(state: dict[str, object]) -> None:
+    directory_fd = _state_directory_fd()
+    temporary_name = f".{RETRY_STATE_PATH.name}.{secrets.token_hex(8)}.tmp"
+    fd: int | None = None
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != ROOT_UID or stat.S_IMODE(info.st_mode) != 0o600:
+            raise WatchdogExecutionError("unsafe retry state temporary file")
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            fd = None
+            json.dump(state, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_name, RETRY_STATE_PATH.name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    except (OSError, TypeError, ValueError) as exc:
+        raise WatchdogExecutionError("cannot atomically write retry state") from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        os.close(directory_fd)
+
+
+def clear_retry_state() -> None:
+    directory_fd = _state_directory_fd()
+    try:
+        fd = _open_state(directory_fd)
+        if fd is None:
+            return
+        os.close(fd)
+        try:
+            os.unlink(RETRY_STATE_PATH.name, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except OSError as exc:
+            raise WatchdogExecutionError("cannot clear retry state") from exc
+    finally:
+        os.close(directory_fd)
+
+
+def _next_state(previous: dict[str, object] | None, now: float) -> dict[str, object]:
+    attempts = 1 if previous is None else int(previous["attempts"]) + 1
+    if attempts == 1:
+        return {"attempts": 1, "next_allowed": now + FIRST_RETRY_DELAY_SECONDS, "exhausted": False}
+    if attempts == 2:
+        return {"attempts": 2, "next_allowed": now + SECOND_RETRY_DELAY_SECONDS, "exhausted": False}
+    return {"attempts": 3, "next_allowed": None, "exhausted": True}
+
+
+def _check_eligibility(original_pid: int, *, require_grace: bool, prefix: str) -> bool:
+    ok, reason = eligible(original_pid, require_grace=require_grace)
+    if not ok:
+        print(f"[INFO] {prefix}: {reason}")
+    return ok
+
+
+def run() -> int:
+    identity = control_identity()
+    if identity is None:
+        print("[INFO] watchdog skipped: control is not active")
+        return 0
+    original_pid, _ = identity
+
+    # The first health check intentionally precedes startup grace and retry cooldown.
+    if not _check_eligibility(original_pid, require_grace=False, prefix="watchdog skipped"):
+        return 0
+    healthy = endpoints_healthy()
+    if not _check_eligibility(original_pid, require_grace=False, prefix="watchdog skipped"):
+        return 0
+    if healthy:
+        clear_retry_state()
+        print("[INFO] watchdog healthy")
+        return 0
+
+    state = read_retry_state()
+    now = time.monotonic()
+    if state is not None and bool(state["exhausted"]):
+        print("[INFO] watchdog retry budget exhausted")
+        return 0
+    if state is not None and now < float(state["next_allowed"]):
+        print("[INFO] watchdog restart cooldown is active")
+        return 0
+    if not _check_eligibility(original_pid, require_grace=True, prefix="watchdog skipped"):
+        return 0
+
+    print(f"[WARN] watchdog probe failed (1/{PROBE_ATTEMPTS})")
+    for attempt in range(2, PROBE_ATTEMPTS + 1):
+        time.sleep(PROBE_INTERVAL_SECONDS)
+        if not _check_eligibility(original_pid, require_grace=True, prefix="watchdog skipped"):
+            return 0
+        healthy = endpoints_healthy()
+        if not _check_eligibility(original_pid, require_grace=True, prefix="watchdog skipped"):
+            return 0
+        if healthy:
+            clear_retry_state()
+            print("[INFO] watchdog healthy")
+            return 0
+        print(f"[WARN] watchdog probe failed ({attempt}/{PROBE_ATTEMPTS})")
+
+    with exclusive_lock(HOST_OPERATION_LOCK_PATH) as host_locked:
+        if not host_locked:
+            print("[INFO] watchdog restart suppressed: host operation lock is held")
+            return 0
+        with exclusive_lock(REPORT_ACTIVE_LOCK_PATH) as report_locked:
+            if not report_locked:
+                print("[INFO] watchdog restart suppressed: report lock is held")
+                return 0
+            if not _check_eligibility(original_pid, require_grace=True, prefix="watchdog restart suppressed"):
+                return 0
+            healthy = endpoints_healthy()
+            if not _check_eligibility(original_pid, require_grace=True, prefix="watchdog restart suppressed"):
+                return 0
+            if healthy:
+                clear_retry_state()
+                print("[INFO] watchdog recovered before restart")
+                return 0
+            next_state = _next_state(state, time.monotonic())
+            write_retry_state(next_state)
+            print(f"[WARN] restarting persistently unhealthy control MainPID={original_pid}")
+            if not run_systemctl("restart", CONTROL_SERVICE):
+                print("[WARN] watchdog control restart failed")
+    return 0
+
+
+def main() -> int:
+    try:
+        return run()
+    except WatchdogExecutionError as exc:
+        print(f"[ERROR] watchdog execution failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

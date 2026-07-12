@@ -1,14 +1,39 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
+import signal
+import subprocess
+import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
-from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
+from claw_trade.ui_backend.report_queue import QueueError, ReportTask, ReportTaskQueue
 from claw_trade.ui_backend.task_costs import TaskCostSnapshot
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
+from claw_trade.web.state import _ControlWorkflowRunner
+
+
+@contextmanager
+def _test_report_lock(path: Path):  # type: ignore[no-untyped-def]
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        yield fd
+    finally:
+        os.close(fd)
+
+
+@pytest.fixture(autouse=True)
+def _inject_report_lock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("claw_trade.ui_backend.report_queue._open_report_lock", _test_report_lock)
+    monkeypatch.setattr("claw_trade.production.paths.REPORT_ACTIVE_LOCK_PATH", tmp_path / "report-active.lock")
 
 
 @dataclass
@@ -32,6 +57,31 @@ class _FakeRunner:
     def load_state(self, run_id: str) -> _FakeWorkflowState:
         _ = run_id
         return self.state
+
+
+class _CreateFailRunner(_FakeRunner):
+    def create_run(self, request):  # type: ignore[no-untyped-def]
+        raise RuntimeError("workflow create failed")
+
+
+class _BlockingCreateStore:
+    def __init__(self, release: Event) -> None:
+        self._release = release
+
+    def create_run(self, request):  # type: ignore[no-untyped-def]
+        self._release.wait()
+        return SimpleNamespace(run_id="late-run")
+
+    def load_state(self, run_id: str) -> _FakeWorkflowState:
+        return _FakeWorkflowState(status="completed")
+
+
+class _BlockingCreateRunner:
+    def __init__(self, release: Event) -> None:
+        self.store = _BlockingCreateStore(release)
+
+    def run(self, request):  # type: ignore[no-untyped-def]
+        return self.store.create_run(request)
 
 
 def _task_input(code: str, market: str = "US", source_profile: str = "US") -> dict[str, object]:
@@ -65,6 +115,66 @@ def test_serial_queue_only_one_running() -> None:
     snapshot = queue.get_report_queue_snapshot_for_user()
     assert snapshot["runningTask"]["instrumentCode"] == "AAPL"
     assert snapshot["queuedCount"] == 1
+
+
+def test_exclusive_report_lock_prevents_task_from_running(tmp_path: Path) -> None:
+    lock_path = tmp_path / "exclusive-report-active.lock"
+    fd = os.open(lock_path, os.O_RDONLY | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    runner = _FakeRunner()
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
+    )
+    try:
+        payload = queue.enqueue_report_task(
+            request_id="lock-contention",
+            task_input=_task_input("AAPL"),
+            source="manual",
+        )
+    finally:
+        os.close(fd)
+
+    task = queue.get_task_for_testing(payload["task"]["taskId"])
+    assert runner.calls == 0
+    assert task is not None
+    assert task.status.value == "failed"
+    assert task.started_at is None
+    assert task.failure is not None
+    assert "报告执行锁不可用" in task.failure.user_message
+
+
+def test_sigkill_releases_report_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "killed-report-active.lock"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import fcntl, os, sys, time; "
+                "fd=os.open(sys.argv[1], os.O_RDONLY|os.O_CREAT, 0o600); "
+                "fcntl.flock(fd, fcntl.LOCK_SH); print('locked', flush=True); time.sleep(60)"
+            ),
+            str(lock_path),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert child.stdout is not None
+        assert child.stdout.readline().strip() == "locked"
+        fd = os.open(lock_path, os.O_RDONLY)
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.kill(child.pid, signal.SIGKILL)
+        child.wait(timeout=5)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.close(fd)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
 
 
 def test_report_queue_carries_origin_context_into_workflow_request() -> None:
@@ -207,13 +317,16 @@ def test_failed_snapshot_uses_tool_call_error_from_collect_first_evidence(tmp_pa
     assert "助手服务暂不可用" not in terminal["failure"]["message"]
 
 
-def test_completed_workflow_marks_task_succeeded_and_calls_writer() -> None:
+def test_completed_workflow_marks_task_succeeded_and_releases_lock(tmp_path: Path) -> None:
     runner = _FakeRunner()
     runner.state = _FakeWorkflowState(status="completed")
     saved: list[str] = []
+    lock_path = tmp_path / "completed-report-active.lock"
     queue = ReportTaskQueue(
         ReportWorkflowBridge(runner),
         completed_report_writer=lambda task, _state: saved.append(task.task_id),
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
     )
 
     queue.enqueue_report_task(request_id="r1", task_input=_task_input("AAPL"), source="manual")
@@ -222,6 +335,150 @@ def test_completed_workflow_marks_task_succeeded_and_calls_writer() -> None:
     assert snapshot["runningTask"] is None
     assert saved == ["task-1"]
     assert queue.get_task_for_testing("task-1").status.value == "succeeded"
+    fd = os.open(lock_path, os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.close(fd)
+
+
+def test_concurrent_completed_refresh_does_not_release_lock_during_writer(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    writer_entered = Event()
+    writer_release = Event()
+    saved: list[str] = []
+    lock_path = tmp_path / "concurrent-completed.lock"
+
+    def write_report(task: ReportTask, _state: object) -> None:
+        writer_entered.set()
+        writer_release.wait()
+        saved.append(task.task_id)
+
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        completed_report_writer=write_report,
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
+    )
+    queue.enqueue_report_task(request_id="concurrent-completed", task_input=_task_input("AAPL"), source="manual")
+    runner.state = _FakeWorkflowState(status="completed")
+    first_refresh = Thread(target=queue.refresh_running_task_status)
+    first_refresh.start()
+    assert writer_entered.wait(timeout=1)
+
+    queue.refresh_running_task_status()
+    fd = os.open(lock_path, os.O_RDONLY)
+    try:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(fd)
+
+    writer_release.set()
+    first_refresh.join(timeout=1)
+    assert not first_refresh.is_alive()
+    assert saved == ["task-1"]
+
+
+def test_concurrent_failed_refresh_does_not_release_lock_during_writer(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    writer_entered = Event()
+    writer_release = Event()
+    notified: list[str] = []
+    lock_path = tmp_path / "concurrent-failed.lock"
+
+    def write_failure(task: ReportTask) -> None:
+        writer_entered.set()
+        writer_release.wait()
+        notified.append(task.task_id)
+
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        failed_report_writer=write_failure,
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
+    )
+    queue.enqueue_report_task(request_id="concurrent-failed", task_input=_task_input("AAPL"), source="manual")
+    runner.state = _FakeWorkflowState(status="failed")
+    first_refresh = Thread(target=queue.refresh_running_task_status)
+    first_refresh.start()
+    assert writer_entered.wait(timeout=1)
+
+    queue.refresh_running_task_status()
+    fd = os.open(lock_path, os.O_RDONLY)
+    try:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(fd)
+
+    writer_release.set()
+    first_refresh.join(timeout=1)
+    assert not first_refresh.is_alive()
+    assert notified == ["task-1"]
+
+
+def test_workflow_creation_failure_releases_lock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "create-failed-report-active.lock"
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(_CreateFailRunner()),
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
+    )
+
+    payload = queue.enqueue_report_task(
+        request_id="create-failed",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+
+    assert payload["task"]["status"] == "failed"
+    fd = os.open(lock_path, os.O_RDONLY)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.close(fd)
+
+
+def test_workflow_creation_timeout_binds_late_run_and_completes_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLAW_TRADE_UI_WORKFLOW_CREATE_TIMEOUT_SECONDS", "0.01")
+    release = Event()
+    control_runner = _ControlWorkflowRunner(run_dir=tmp_path / "runs")
+    control_runner._runner = _BlockingCreateRunner(release)  # noqa: SLF001
+    lock_path = tmp_path / "start-timeout-report-active.lock"
+    saved: list[str] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(control_runner),
+        report_lock_path=lock_path,
+        report_lock_opener=_test_report_lock,
+        completed_report_writer=lambda task, _state: saved.append(task.task_id),
+    )
+
+    payload = queue.enqueue_report_task(
+        request_id="start-timeout",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+
+    task = queue.get_task_for_testing(payload["task"]["taskId"])
+    assert task is not None
+    assert task.status.value == "running"
+    assert task.run_id is None
+    fd = os.open(lock_path, os.O_RDONLY)
+    with pytest.raises(BlockingIOError):
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    release.set()
+    attempt_id = task._workflow_start_attempt_id  # noqa: SLF001
+    assert attempt_id is not None
+    control_runner._start_attempts[attempt_id][0].join(timeout=1)  # noqa: SLF001
+    snapshot = queue.get_report_queue_snapshot_for_user()
+
+    assert snapshot["runningTask"] is None
+    assert snapshot["lastTerminalTask"]["status"] == "succeeded"
+    assert snapshot["lastTerminalTask"]["reportId"] == "late-run"
+    assert saved == [task.task_id]
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.close(fd)
 
 
 def test_completed_workflow_records_balance_delta_cost_estimate() -> None:

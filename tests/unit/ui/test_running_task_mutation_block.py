@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
+import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.production import host_locks, paths
 from claw_trade.ui_backend.chat_controller import ChatController
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
@@ -10,6 +14,15 @@ from claw_trade.ui_backend.openclaw_client import OpenClawGatewayClient
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.ui_contracts.enums import ChatContextKind
+
+
+@pytest.fixture(autouse=True)
+def installed_report_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    report_lock = tmp_path / "report-active.lock"
+    report_lock.touch()
+    report_lock.chmod(0o660)
+    monkeypatch.setattr(paths, "REPORT_ACTIVE_LOCK_PATH", report_lock)
+    monkeypatch.setattr(host_locks, "_expected_identity", lambda: (os.getuid(), os.getgid()))
 
 
 @dataclass

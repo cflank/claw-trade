@@ -18,6 +18,8 @@ ExecStart=/opt/claw-trade/current/bin/claw-trade-control
 SuccessExitStatus=143
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=90
 NoNewPrivileges=true
 ReadWritePaths=/opt/claw-trade/shared
 

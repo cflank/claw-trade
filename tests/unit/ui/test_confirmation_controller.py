@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import pytest
 from claw_trade.config.report_workflow_settings import ReportWorkflowSettings
+from claw_trade.production import host_locks, paths
 from claw_trade.ui_backend.confirmation_controller import ConfirmationController
 from claw_trade.ui_backend.intent_recognizer import IntentRecognizer
 from claw_trade.ui_backend.price_alert_service import UiServiceError
@@ -11,6 +14,15 @@ from claw_trade.ui_backend.report_queue import QueueError, ReportTaskQueue
 from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
 from claw_trade.ui_contracts.enums import MarketProfile
 from claw_trade.ui_contracts.user_dto import PriceAlertForUser, ScheduledReportForUser
+
+
+@pytest.fixture(autouse=True)
+def installed_report_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    report_lock = tmp_path / "report-active.lock"
+    report_lock.touch()
+    report_lock.chmod(0o660)
+    monkeypatch.setattr(paths, "REPORT_ACTIVE_LOCK_PATH", report_lock)
+    monkeypatch.setattr(host_locks, "_expected_identity", lambda: (os.getuid(), os.getgid()))
 
 
 @dataclass
@@ -28,12 +40,16 @@ class _FakeRunner:
         return f"run-{self.calls}"
 
     def load_state(self, run_id: str) -> _FakeState:
-        _ = run_id
+        if run_id in self.cancelled_runs:
+            return _FakeState(status="cancelled")
         return _FakeState()
 
     def cancel_run(self, run_id: str) -> bool:
         self.cancelled_runs.append(run_id)
         return True
+
+    def run_has_exited(self, run_id: str) -> bool:
+        return run_id in self.cancelled_runs
 
 
 def _build_controller() -> tuple[ConfirmationController, ReportTaskQueue, _FakeRunner, IntentRecognizer]:

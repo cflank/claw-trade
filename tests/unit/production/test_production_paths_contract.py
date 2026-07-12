@@ -17,6 +17,69 @@ def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
+def _shell_function(script: str, name: str) -> str:
+    start = script.index(f"{name}() {{")
+    end = script.index("\n}\n", start) + 2
+    return script[start:end]
+
+
+def _run_disable_watchdog_timer(
+    script: str,
+    tmp_path: Path,
+    *,
+    phase: str,
+    load_state: str = "loaded",
+    unit_file_state: str = "disabled",
+    active_state: str = "inactive",
+    fail_property: str = "",
+    disable_rc: int = 0,
+) -> subprocess.CompletedProcess[str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text(
+        """#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"${MOCK_SYSTEMCTL_LOG}"
+if [[ "$1" == "show" ]]; then
+  property="${3#--property=}"
+  [[ "${property}" != "${MOCK_FAIL_PROPERTY}" ]] || exit 1
+  case "${property}" in
+    LoadState) printf '%s\\n' "${MOCK_LOAD_STATE}" ;;
+    UnitFileState) printf '%s\\n' "${MOCK_UNIT_FILE_STATE}" ;;
+    ActiveState) printf '%s\\n' "${MOCK_ACTIVE_STATE}" ;;
+    *) exit 2 ;;
+  esac
+elif [[ "$1" == "disable" ]]; then
+  exit "${MOCK_DISABLE_RC}"
+else
+  exit 2
+fi
+""",
+        encoding="utf-8",
+    )
+    systemctl.chmod(0o755)
+    sudo = bin_dir / "sudo"
+    sudo.write_text('#!/usr/bin/env bash\nexec "$@"\n', encoding="utf-8")
+    sudo.chmod(0o755)
+    log = tmp_path / "systemctl.log"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "MOCK_SYSTEMCTL_LOG": str(log),
+        "MOCK_LOAD_STATE": load_state,
+        "MOCK_UNIT_FILE_STATE": unit_file_state,
+        "MOCK_ACTIVE_STATE": active_state,
+        "MOCK_FAIL_PROPERTY": fail_property,
+        "MOCK_DISABLE_RC": str(disable_rc),
+    }
+    command = f"""set -euo pipefail
+fail() {{ printf '[ERROR] %s\\n' "$*" >&2; exit 1; }}
+{_shell_function(script, "disable_watchdog_timer")}
+disable_watchdog_timer {phase}
+"""
+    return subprocess.run(["bash", "-c", command], capture_output=True, text=True, env=env, check=False)
+
+
 def test_production_path_constants_pin_single_install_layout() -> None:
     assert paths.INSTALL_ROOT == Path("/opt/claw-trade")
     assert paths.RELEASES_DIR == Path("/opt/claw-trade/releases")
@@ -24,6 +87,9 @@ def test_production_path_constants_pin_single_install_layout() -> None:
     assert paths.SHARED_DIR == Path("/opt/claw-trade/shared")
     assert paths.AUTO_UPDATE_SERVICE_NAME == "claw-trade-auto-update.service"
     assert paths.AUTO_UPDATE_TIMER_NAME == "claw-trade-auto-update.timer"
+    assert paths.WATCHDOG_SERVICE_NAME == "claw-trade-watchdog.service"
+    assert paths.WATCHDOG_TIMER_NAME == "claw-trade-watchdog.timer"
+    assert paths.WATCHDOG_HELPER_PATH == Path("/usr/local/lib/claw-trade/claw-trade-watchdog")
     assert paths.required_shared_paths() == tuple(paths.SHARED_DIR / item for item in paths.REQUIRED_SHARED_DIRS)
 
 
@@ -219,7 +285,8 @@ def test_install_scripts_create_the_same_shared_dirs_under_default_root() -> Non
         "scripts/production/install_factory_test_ubuntu.sh",
     ):
         text = _read(script)
-        assert 'install_root="${CLAW_TRADE_INSTALL_ROOT:-/opt/claw-trade}"' in text
+        assert 'install_root="/opt/claw-trade"' in text
+        assert 'CLAW_TRADE_INSTALL_ROOT must be exactly ${install_root}' in text
         assert 'install -d -m 0755 "${release_root}"' in text or 'sudo install -d -m 0755 "${install_root}/releases"' in text
         assert "install -d -m 0750" in text
         assert expected_shared_root in text
@@ -496,6 +563,13 @@ def test_production_preflight_requires_systemd_sudoers_and_root_helper_inputs() 
     assert f'test -f "${{ROOT_DIR}}/systemd/{paths.AUTO_UPDATE_TIMER_NAME}"' in preflight
     assert 'test -x "${ROOT_DIR}/bin/claw-trade-auto-update"' in preflight
     assert 'test -x "${ROOT_DIR}/root-helper/claw-trade-apply-update"' in preflight
+    assert 'test -x "${ROOT_DIR}/root-helper/claw-trade-watchdog"' in preflight
+    assert f'test -f "${{ROOT_DIR}}/systemd/{paths.WATCHDOG_SERVICE_NAME}"' in preflight
+    assert f'test -f "${{ROOT_DIR}}/systemd/{paths.WATCHDOG_TIMER_NAME}"' in preflight
+    assert 'test -e "/opt/claw-trade/host-operations.lock"' not in preflight
+    assert 'test -e "/opt/claw-trade/report-active.lock"' not in preflight
+    assert "apply helper missing host lock contract" in preflight
+    assert "watchdog unit missing runtime directory contract" in preflight
     assert 'test -f "${ROOT_DIR}/sudoers/claw-trade-update"' in preflight
 
 
@@ -564,6 +638,137 @@ def test_systemd_units_use_current_release_and_shared_config_only() -> None:
         assert "StartLimitBurst=3" in text
         assert "PrivateTmp=" not in text
     assert "SuccessExitStatus=143" in _read("packaging/production/systemd/claw-trade-control.service")
+    assert "KillMode=control-group" in _read("packaging/production/systemd/claw-trade-control.service")
+    assert "TimeoutStopSec=90" in _read("packaging/production/systemd/claw-trade-control.service")
+
+    watchdog_service = _read("packaging/production/systemd/claw-trade-watchdog.service")
+    assert "Type=oneshot" in watchdog_service
+    assert f"ExecStart={paths.WATCHDOG_HELPER_PATH}" in watchdog_service
+    assert "TimeoutStartSec=10min" in watchdog_service
+    assert "RuntimeDirectory=claw-trade-watchdog" in watchdog_service
+    assert "RuntimeDirectoryMode=0700" in watchdog_service
+    assert "RuntimeDirectoryPreserve=yes" in watchdog_service
+    assert "ProtectSystem=strict" in watchdog_service
+    assert "ProtectHome=true" in watchdog_service
+    assert "NoNewPrivileges=true" in watchdog_service
+    assert "ReadWritePaths=/run/claw-trade-watchdog" in watchdog_service
+
+    apply_update_service = _read("packaging/production/systemd/claw-trade-apply-update.service")
+    assert "Type=oneshot" in apply_update_service
+    assert "TimeoutStartSec=70min" in apply_update_service
+
+    watchdog_timer = _read("packaging/production/systemd/claw-trade-watchdog.timer")
+    assert "OnBootSec=5min" in watchdog_timer
+    assert "OnUnitInactiveSec=60s" in watchdog_timer
+    assert f"Unit={paths.WATCHDOG_SERVICE_NAME}" in watchdog_timer
+
+
+def test_watchdog_production_lifecycle_contract() -> None:
+    install = _read("scripts/production/install_production_package.sh")
+    factory = _read("scripts/production/install_factory_test_ubuntu.sh")
+    uninstall = _read("scripts/production/uninstall_factory_test_ubuntu.sh")
+
+    for script, extraction in (
+        (install, 'tar --no-same-owner --no-same-permissions -xzf'),
+        (factory, 'sudo tar --no-same-owner --no-same-permissions -xzf'),
+    ):
+        assert "root-helper/claw-trade-watchdog" in script
+        assert "/usr/local/lib/claw-trade/claw-trade-watchdog" in script
+        assert "host-operations.lock" in script
+        assert "report-active.lock" in script
+        assert "os.O_CREAT | os.O_EXCL" in script
+        assert "ensure_host_lock_files" in script
+        assert "verify_host_lock_files" in script
+        assert "disable --now claw-trade-watchdog.timer" in script
+        assert "enable --now claw-trade-watchdog.timer" not in script
+        assert "--property=LoadState --value" in script
+        assert "--property=UnitFileState --value" in script
+        assert "--property=ActiveState --value" in script
+        assert '"${unit_file_state}" == "disabled"' in script
+        assert '"${active_state}" == "inactive"' in script
+        assert '"${phase}" == "preinstall"' in script
+        assert "disable --now claw-trade-watchdog.timer >/dev/null 2>&1 || true" not in script
+        disable_timer = script.index("\ndisable_watchdog_timer preinstall\n")
+        assert disable_timer < script.index(extraction)
+        install_helper = script.index("/usr/local/lib/claw-trade/claw-trade-apply-update", disable_timer)
+        assert disable_timer < install_helper
+        assert script.index("disable_watchdog_timer postinstall", install_helper) > install_helper
+    assert "disable --now claw-trade-watchdog.timer" in uninstall
+    assert "stop claw-trade-watchdog.service" in uninstall
+    assert "stop claw-trade-watchdog.service >/dev/null 2>&1 || true" not in uninstall
+    assert "--property=LoadState --value" in uninstall
+    assert 'unexpected claw-trade-watchdog.timer LoadState' in uninstall
+    assert 'unexpected claw-trade-watchdog.service LoadState' in uninstall
+    assert "--property=ActiveState --value" in uninstall
+    assert '"${watchdog_active_state}" == "inactive"' in uninstall
+    assert 'Path("/usr/local/lib/claw-trade/claw-trade-watchdog")' in uninstall
+    assert "/etc/systemd/system/claw-trade-watchdog.service" in uninstall
+    assert "/etc/systemd/system/claw-trade-watchdog.timer" in uninstall
+    disable_timer = uninstall.index("disable --now claw-trade-watchdog.timer")
+    stop_service = uninstall.index("stop claw-trade-watchdog.service", disable_timer)
+    confirm_inactive = uninstall.index('"${watchdog_active_state}" == "inactive"', stop_service)
+    assert "fcntl.LOCK_EX | fcntl.LOCK_NB" in uninstall
+    assert "uninstall blocked by active lock" in uninstall
+    assert 'os.unlink(name, dir_fd=parent_fd)' in uninstall
+    remove_helper = uninstall.index('Path("/usr/local/lib/claw-trade/claw-trade-watchdog")', confirm_inactive)
+    remove_units = uninstall.index('Path("/etc/systemd/system/claw-trade-watchdog.service")', remove_helper)
+    assert disable_timer < stop_service < confirm_inactive < remove_helper < remove_units
+
+    watchdog = _read("packaging/production/root-helper/claw-trade-watchdog")
+    apply_helper = _read("packaging/production/root-helper/claw-trade-apply-update")
+    lock_path = "/opt/claw-trade/host-operations.lock"
+    assert lock_path in watchdog
+    assert lock_path in apply_helper
+    assert "/opt/claw-trade/report-active.lock" in apply_helper
+    assert "os.O_CREAT" not in apply_helper[apply_helper.index("def open_verified_lock"):apply_helper.index("def acquire_apply_lock")]
+    lock_body = apply_helper[apply_helper.index("def host_operation_lock"):apply_helper.index("def open_verified_lock")]
+    assert lock_body.index("fcntl.flock(host_fd, fcntl.LOCK_EX)") < lock_body.index("open_verified_lock(REPORT_ACTIVE_LOCK_PATH)")
+
+    for script in (install, factory, uninstall):
+        assert 'install_root="/opt/claw-trade"' in script
+        assert 'install_root="${CLAW_TRADE_INSTALL_ROOT:-/opt/claw-trade}"' not in script
+        assert 'CLAW_TRADE_INSTALL_ROOT must be exactly ${install_root}' in script
+
+
+def test_full_installers_fail_closed_on_watchdog_timer_state(tmp_path: Path) -> None:
+    for relative in (
+        "scripts/production/install_production_package.sh",
+        "scripts/production/install_factory_test_ubuntu.sh",
+    ):
+        script = _read(relative)
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="preinstall", load_state="not-found").returncode == 0
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="postinstall", load_state="not-found").returncode == 1
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="preinstall", fail_property="LoadState").returncode == 1
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="preinstall", disable_rc=1).returncode == 1
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="postinstall", unit_file_state="enabled").returncode == 1
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="postinstall", active_state="failed").returncode == 1
+        assert _run_disable_watchdog_timer(script, tmp_path, phase="postinstall").returncode == 0
+
+
+def test_production_install_scripts_reject_install_root_override(tmp_path: Path) -> None:
+    archive = tmp_path / "package.tar.gz"
+    archive.touch()
+    env = {**os.environ, "CLAW_TRADE_INSTALL_ROOT": "/opt/claw-trade-offset"}
+    commands = (
+        ["bash", str(ROOT / "scripts/production/install_production_package.sh"), str(archive)],
+        ["bash", str(ROOT / "scripts/production/install_factory_test_ubuntu.sh"), str(archive)],
+        ["bash", str(ROOT / "scripts/production/uninstall_factory_test_ubuntu.sh")],
+    )
+    for command in commands:
+        result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+        assert result.returncode == 1
+        assert "CLAW_TRADE_INSTALL_ROOT must be exactly /opt/claw-trade" in result.stderr
+
+
+def test_first_watchdog_rollout_requires_complete_installer_without_bootstrap_claim() -> None:
+    install = _read("scripts/production/install_production_package.sh")
+    plan = _read("docs/superpowers/plans/2026-07-12-openclaw-watchdog.md")
+    control_unit = _read("packaging/production/systemd/claw-trade-control.service")
+
+    assert "systemctl enable --now claw-trade-watchdog.timer" not in install
+    assert "disable_watchdog_timer" in install
+    assert "The first fixed full/factory installer must run `disable --now claw-trade-watchdog.timer`" in plan
+    assert "ExecStartPost=" not in control_unit
 
     trigger = _read(f"packaging/production/systemd/{paths.RESCUE_TRIGGER_SERVICE_NAME}")
     assert f"ExecStart=-/bin/systemctl stop {paths.MAIN_UI_SERVICE_NAME}" in trigger

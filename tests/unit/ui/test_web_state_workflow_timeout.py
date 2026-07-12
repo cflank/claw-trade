@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
 from claw_trade.web.state import _ControlWorkflowRunner, _workflow_create_timeout_seconds
+from claw_trade.workflow.models import RunStatus
 
 
 class _FailingRunner:
@@ -40,3 +43,23 @@ def test_workflow_create_preserves_storage_permission_failure(monkeypatch) -> No
 
     with pytest.raises(RuntimeError, match="workflow_storage_unavailable"):
         runner.create_run(object())
+
+
+def test_cancel_run_succeeds_only_after_background_thread_exits() -> None:
+    stop = Event()
+    thread = Thread(target=stop.wait)
+    thread.start()
+    runner = _ControlWorkflowRunner(run_dir=Path("runs"))
+    runner._runner = SimpleNamespace(  # noqa: SLF001
+        store=SimpleNamespace(load_state=lambda _run_id: SimpleNamespace(status=RunStatus.CANCELLED))
+    )
+    runner._run_threads["run-1"] = thread  # noqa: SLF001
+
+    try:
+        assert runner.cancel_run("run-1") is False
+        stop.set()
+        assert runner.wait_run_exit("run-1") is True
+        assert runner.cancel_run("run-1") is True
+    finally:
+        stop.set()
+        thread.join(timeout=1)

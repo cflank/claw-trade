@@ -7,6 +7,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
@@ -119,7 +120,11 @@ from claw_trade.ui_backend.summary_builder import (
 from claw_trade.ui_backend.task_costs import append_task_cost_line, render_task_cost_line
 from claw_trade.ui_backend.worker_chat import WorkerChatController
 from claw_trade.ui_backend.worker_chat_openclaw import OpenClawWorkerChatClient
-from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
+from claw_trade.ui_backend.workflow_bridge import (
+    ReportWorkflowBridge,
+    WorkflowRunStartPending,
+    WorkflowStartAttemptStatus,
+)
 from claw_trade.web.openclaw_gateway import OpenClawGatewayRpcClient
 from claw_trade.web.settings import ResearchUiServerSettings
 from claw_trade.workflow.models import RunStatus
@@ -147,9 +152,11 @@ class _ControlWorkflowRunner:
         self._runner_lock = Lock()
         self._create_run_lock = Lock()
         self._run_threads: dict[str, Thread] = {}
+        self._start_attempts: dict[str, tuple[Thread, dict[str, object]]] = {}
 
     def create_run(self, request):  # type: ignore[no-untyped-def]
         runner = self._require_runner()
+        attempt_id = uuid.uuid4().hex
         created_event = Event()
         created_state: dict[str, object] = {}
         original_create = runner.store.create_run
@@ -173,10 +180,12 @@ class _ControlWorkflowRunner:
                     runner.store.create_run = original_create
 
             thread = Thread(target=_run_workflow, daemon=True, name="claw-trade-ui-workflow")
+            self._start_attempts[attempt_id] = (thread, created_state)
             thread.start()
 
         if not created_event.wait(timeout=_workflow_create_timeout_seconds()):
-            raise RuntimeError("assistant_unavailable")
+            raise WorkflowRunStartPending(attempt_id)
+        self._start_attempts.pop(attempt_id, None)
         error = created_state.get("error")
         if isinstance(error, Exception):
             raise _workflow_start_error(error) from error
@@ -198,19 +207,50 @@ class _ControlWorkflowRunner:
         try:
             runner = self._require_runner()
             state = runner.store.load_state(run_id)
-            if state.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
-                return True
-            cancelled = replace(
-                state,
-                status=RunStatus.CANCELLED,
-                active_stage=None,
-                updated_at=datetime.now(tz=UTC).isoformat(),
-                failure_reason="user_cancelled",
-            )
-            runner.store.save_state(cancelled)
-            return True
+            if state.status not in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED):
+                cancelled = replace(
+                    state,
+                    status=RunStatus.CANCELLED,
+                    active_stage=None,
+                    updated_at=datetime.now(tz=UTC).isoformat(),
+                    failure_reason="user_cancelled",
+                )
+                runner.store.save_state(cancelled)
+            return self.run_has_exited(run_id)
         except Exception as exc:
             raise RuntimeError("assistant_unavailable") from exc
+
+    def run_has_exited(self, run_id: str) -> bool:
+        thread = self._run_threads.get(run_id)
+        return bool(thread is not None and not thread.is_alive())
+
+    def wait_run_exit(self, run_id: str) -> bool:
+        thread = self._run_threads.get(run_id)
+        if thread is None:
+            return False
+        thread.join()
+        return True
+
+    def poll_start_attempt(self, attempt_id: str) -> WorkflowStartAttemptStatus:
+        attempt = self._start_attempts.get(attempt_id)
+        if attempt is None:
+            return WorkflowStartAttemptStatus(run_id=None, has_exited=False)
+        thread, created_state = attempt
+        state = created_state.get("value")
+        run_id = str(getattr(state, "run_id", "")).strip() if state is not None else ""
+        if run_id:
+            self._run_threads[run_id] = thread
+            self._start_attempts.pop(attempt_id, None)
+            return WorkflowStartAttemptStatus(run_id=run_id, has_exited=not thread.is_alive())
+        if thread.is_alive():
+            return WorkflowStartAttemptStatus(run_id=None, has_exited=False)
+        self._start_attempts.pop(attempt_id, None)
+        error = created_state.get("error")
+        return WorkflowStartAttemptStatus(
+            run_id=None,
+            has_exited=True,
+            error=str(error) if isinstance(error, Exception) else None,
+        )
 
     def selection_openclaw_client(self) -> OpenClawClient:
         return OpenClawClient(_SelectionOpenClawRunner(self))

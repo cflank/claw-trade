@@ -2,18 +2,42 @@ from __future__ import annotations
 
 import json
 import hashlib
+import multiprocessing
+import os
 import tarfile
 from io import BytesIO
 from pathlib import Path
 
 import requests
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from claw_trade.production.maintenance_lock import ProductionMaintenanceLock
-from claw_trade.production import remote_update
+from claw_trade.production import host_locks, remote_update
+from claw_trade.production.host_locks import hold_host_lock
 from claw_trade.production.remote_update import RemoteUpdateService
 from claw_trade.production.updater_state import UpdaterStateStore
+
+
+@pytest.fixture(autouse=True)
+def local_lock_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host_locks, "_expected_identity", lambda: (os.getuid(), os.getgid()))
+
+
+def _install_host_lock(install_root: Path) -> Path:
+    install_root.mkdir(parents=True, exist_ok=True)
+    path = install_root / "host-operations.lock"
+    path.write_bytes(b"")
+    path.chmod(0o660)
+    return path
+
+
+def _hold_host_lock_until_released(path: Path, ready, release) -> None:
+    host_locks._expected_identity = lambda: (os.getuid(), os.getgid())
+    with hold_host_lock(path, exclusive=True, blocking=False):
+        ready.set()
+        release.wait()
 
 
 def test_remote_update_check_verifies_signed_manifest_and_writes_state(tmp_path: Path) -> None:
@@ -427,6 +451,44 @@ def test_remote_update_installs_signed_archive_and_schedules_apply(tmp_path: Pat
     assert UpdaterStateStore(install_root=install_root).read()["status"] == "restart_scheduled"
 
 
+def test_remote_update_does_not_download_while_host_lock_is_held_and_recovers_after_holder_exit(
+    tmp_path: Path,
+) -> None:
+    install_root, objects = _signed_update_objects(tmp_path)
+    fetch_calls: list[str] = []
+
+    service = RemoteUpdateService(
+        install_root=install_root,
+        base_url="https://updates.example.com/stable",
+        current_version="1.2.2",
+        public_key_path=_update_public_key_path(install_root),
+        fetch_bytes=lambda url: fetch_calls.append(url) or objects[url],
+        apply_update_starter=lambda _: None,
+    )
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    process = context.Process(
+        target=_hold_host_lock_until_released,
+        args=(install_root / "host-operations.lock", ready, release),
+    )
+    process.start()
+    try:
+        assert ready.wait(timeout=15), f"lock holder did not start; exitcode={process.exitcode}"
+        result = service.install_checked_update()
+    finally:
+        release.set()
+        process.join(timeout=2)
+
+    assert result.status == "install_failed"
+    assert "维护中" in result.user_message
+    assert fetch_calls == []
+    assert process.exitcode == 0
+    assert service.install_checked_update().status == "restart_scheduled"
+    assert fetch_calls
+
+
 def test_archive_download_resumes_after_interrupted_stream(tmp_path: Path, monkeypatch) -> None:
     payload = b"release-archive-bytes" * 64
     calls: list[dict[str, str] | None] = []
@@ -756,6 +818,7 @@ def _signed_update_objects(
     key = Ed25519PrivateKey.generate()
     public_key_path = _update_public_key_path(install_root)
     public_key_path.parent.mkdir(parents=True)
+    _install_host_lock(install_root)
     public_key_path.write_bytes(
         key.public_key().public_bytes(
             encoding=serialization.Encoding.PEM,

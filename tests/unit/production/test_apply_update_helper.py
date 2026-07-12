@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import grp
 import hashlib
 import json
 import os
@@ -22,6 +23,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 ROOT = Path(__file__).resolve().parents[3]
 HELPER = ROOT / "packaging" / "production" / "root-helper" / "claw-trade-apply-update"
+TEST_LOCK_PATH_ENV = "CLAW_TRADE_TEST_HOST_OPERATION_LOCK_PATH"
+TEST_REPORT_LOCK_PATH_ENV = "CLAW_TRADE_TEST_REPORT_ACTIVE_LOCK_PATH"
+
+
+@pytest.fixture(autouse=True)
+def isolated_host_operation_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    host_lock = tmp_path / "host-operations.lock"
+    report_lock = tmp_path / "report-active.lock"
+    for path in (host_lock, report_lock):
+        path.touch(mode=0o660)
+        path.chmod(0o660)
+    monkeypatch.setenv(TEST_LOCK_PATH_ENV, str(host_lock))
+    monkeypatch.setenv(TEST_REPORT_LOCK_PATH_ENV, str(report_lock))
 
 
 def test_apply_update_helper_switches_current_after_health_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -248,18 +262,80 @@ def test_apply_update_helper_stops_legacy_processes_before_restart(tmp_path: Pat
     assert events == ["stop_legacy", "restart"]
 
 
-def test_install_host_files_copies_units_and_enables_services(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_waits_for_host_operation_lock_without_losing_request(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    lock_path = tmp_path / "host-operations.lock"
+    request_path = tmp_path / "apply-request.json"
+    request_path.write_text("{}", encoding="utf-8")
+    entered = threading.Event()
+    finished = threading.Event()
+    results: list[int] = []
+    monkeypatch.setattr(module, "HOST_OPERATION_LOCK_PATH", lock_path)
+    monkeypatch.setattr(module, "run_locked", lambda **_kwargs: entered.set() or 0)
+
+    def apply() -> None:
+        results.append(module.run(install_root=tmp_path, request_path=request_path))
+        finished.set()
+
+    with module.host_operation_lock():
+        thread = threading.Thread(target=apply)
+        thread.start()
+        assert entered.wait(0.1) is False
+        assert request_path.exists()
+    assert finished.wait(2)
+    thread.join(timeout=2)
+
+    assert entered.is_set()
+    assert results == [0]
+
+
+def test_apply_locks_host_before_opening_report_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    events: list[str] = []
+    real_open = module.open_verified_lock
+    real_flock = module.fcntl.flock
+
+    def tracked_open(path: Path) -> int:
+        events.append(f"open:{path.name}")
+        return real_open(path)
+
+    def tracked_flock(fd: int, operation: int) -> None:
+        events.append("flock:host")
+        real_flock(fd, operation)
+
+    monkeypatch.setattr(module, "open_verified_lock", tracked_open)
+    monkeypatch.setattr(module.fcntl, "flock", tracked_flock)
+
+    with module.host_operation_lock():
+        pass
+
+    assert events == ["open:host-operations.lock", "flock:host", "open:report-active.lock"]
+
+
+def test_apply_rejects_missing_report_lock_without_creating_it(tmp_path: Path) -> None:
+    module = _load_helper()
+    module.REPORT_ACTIVE_LOCK_PATH.unlink()
+
+    with pytest.raises(ValueError, match="锁文件不存在或无法打开"):
+        module.run(install_root=tmp_path, request_path=tmp_path / "apply-request.json")
+
+    assert module.REPORT_ACTIVE_LOCK_PATH.exists() is False
+
+
+def test_install_host_files_copies_units_and_restores_enabled_active_timer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_helper()
     release_dir = tmp_path / "release"
     (release_dir / "root-helper").mkdir(parents=True)
     (release_dir / "systemd").mkdir()
     (release_dir / "sudoers").mkdir()
     (release_dir / "root-helper" / "claw-trade-apply-update").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (release_dir / "root-helper" / "claw-trade-watchdog").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     (release_dir / "systemd" / "claw-trade-control.service").write_text("[Service]\n", encoding="utf-8")
     (release_dir / "systemd" / "claw-trade-ui.service").write_text("[Service]\n", encoding="utf-8")
     (release_dir / "systemd" / "claw-trade-auto-update.timer").write_text("[Timer]\n", encoding="utf-8")
     (release_dir / "sudoers" / "claw-trade-update").write_text("clawtrade ALL=(root) NOPASSWD: /bin/systemctl start --no-block claw-trade-apply-update.service\n", encoding="utf-8")
     host_helper = tmp_path / "host" / "claw-trade-apply-update"
+    watchdog_helper = tmp_path / "host" / "claw-trade-watchdog"
     systemd_dir = tmp_path / "systemd"
     sudoers_path = tmp_path / "sudoers.d" / "claw-trade-update"
     calls: list[list[str]] = []
@@ -270,6 +346,7 @@ def test_install_host_files_copies_units_and_enables_services(tmp_path: Path, mo
 
     monkeypatch.setattr(module.os, "geteuid", lambda: 0)
     monkeypatch.setattr(module, "HOST_HELPER_PATH", host_helper)
+    monkeypatch.setattr(module, "WATCHDOG_HELPER_PATH", watchdog_helper)
     monkeypatch.setattr(module, "SYSTEMD_DIR", systemd_dir)
     monkeypatch.setattr(module, "SUDOERS_PATH", sudoers_path)
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -277,10 +354,12 @@ def test_install_host_files_copies_units_and_enables_services(tmp_path: Path, mo
     module.install_host_files(release_dir)
 
     assert host_helper.read_text(encoding="utf-8") == "#!/usr/bin/env python3\n"
+    assert watchdog_helper.read_text(encoding="utf-8") == "#!/usr/bin/env python3\n"
     assert (systemd_dir / "claw-trade-control.service").read_text(encoding="utf-8") == "[Service]\n"
     assert (systemd_dir / "claw-trade-ui.service").read_text(encoding="utf-8") == "[Service]\n"
     assert (systemd_dir / "claw-trade-auto-update.timer").read_text(encoding="utf-8") == "[Timer]\n"
     assert oct(host_helper.stat().st_mode & 0o777) == "0o755"
+    assert oct(watchdog_helper.stat().st_mode & 0o777) == "0o755"
     assert oct(sudoers_path.stat().st_mode & 0o777) == "0o440"
     visudo_calls = [call for call in calls if call[:2] == ["/usr/sbin/visudo", "-cf"]]
     assert len(visudo_calls) == 1
@@ -288,6 +367,42 @@ def test_install_host_files_copies_units_and_enables_services(tmp_path: Path, mo
     assert not Path(visudo_calls[0][2]).exists()
     assert ["/bin/systemctl", "daemon-reload"] in calls
     assert ["/bin/systemctl", "enable", "claw-trade-control.service", "claw-trade-ui.service", "claw-trade-auto-update.timer"] in calls
+    assert ["/bin/systemctl", "enable", "claw-trade-watchdog.timer"] in calls
+    assert ["/bin/systemctl", "start", "claw-trade-watchdog.timer"] in calls
+    assert ["/bin/systemctl", "disable", "claw-trade-watchdog.timer"] not in calls
+    assert ["/bin/systemctl", "stop", "claw-trade-watchdog.timer"] not in calls
+
+
+def test_install_host_files_restores_disabled_inactive_timer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_helper()
+    release_dir = tmp_path / "release"
+    (release_dir / "root-helper").mkdir(parents=True)
+    (release_dir / "systemd").mkdir()
+    (release_dir / "sudoers").mkdir()
+    (release_dir / "root-helper" / "claw-trade-apply-update").write_text("helper\n", encoding="utf-8")
+    (release_dir / "root-helper" / "claw-trade-watchdog").write_text("watchdog\n", encoding="utf-8")
+    (release_dir / "systemd" / "claw-trade-watchdog.service").write_text("[Service]\n", encoding="utf-8")
+    (release_dir / "sudoers" / "claw-trade-update").write_text("sudoers\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        returncode = 1 if args[1:3] == ["is-enabled", "--quiet"] else 3 if args[1:3] == ["is-active", "--quiet"] else 0
+        return subprocess.CompletedProcess(args, returncode)
+
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(module, "HOST_HELPER_PATH", tmp_path / "host" / "claw-trade-apply-update")
+    monkeypatch.setattr(module, "WATCHDOG_HELPER_PATH", tmp_path / "host" / "claw-trade-watchdog")
+    monkeypatch.setattr(module, "SYSTEMD_DIR", tmp_path / "systemd-host")
+    monkeypatch.setattr(module, "SUDOERS_PATH", tmp_path / "sudoers.d" / "claw-trade-update")
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    module.install_host_files(release_dir)
+
+    assert ["/bin/systemctl", "disable", "claw-trade-watchdog.timer"] in calls
+    assert ["/bin/systemctl", "stop", "claw-trade-watchdog.timer"] in calls
+    assert ["/bin/systemctl", "enable", "claw-trade-watchdog.timer"] not in calls
+    assert ["/bin/systemctl", "start", "claw-trade-watchdog.timer"] not in calls
 
 
 def test_install_host_files_does_not_replace_sudoers_when_validation_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,9 +412,11 @@ def test_install_host_files_does_not_replace_sudoers_when_validation_fails(tmp_p
     (release_dir / "systemd").mkdir()
     (release_dir / "sudoers").mkdir()
     (release_dir / "root-helper" / "claw-trade-apply-update").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    (release_dir / "root-helper" / "claw-trade-watchdog").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     (release_dir / "systemd" / "claw-trade-control.service").write_text("[Service]\n", encoding="utf-8")
     (release_dir / "sudoers" / "claw-trade-update").write_text("broken sudoers\n", encoding="utf-8")
     host_helper = tmp_path / "host" / "claw-trade-apply-update"
+    watchdog_helper = tmp_path / "host" / "claw-trade-watchdog"
     systemd_dir = tmp_path / "systemd"
     sudoers_path = tmp_path / "sudoers.d" / "claw-trade-update"
     sudoers_path.parent.mkdir(parents=True)
@@ -312,6 +429,7 @@ def test_install_host_files_does_not_replace_sudoers_when_validation_fails(tmp_p
 
     monkeypatch.setattr(module.os, "geteuid", lambda: 0)
     monkeypatch.setattr(module, "HOST_HELPER_PATH", host_helper)
+    monkeypatch.setattr(module, "WATCHDOG_HELPER_PATH", watchdog_helper)
     monkeypatch.setattr(module, "SYSTEMD_DIR", systemd_dir)
     monkeypatch.setattr(module, "SUDOERS_PATH", sudoers_path)
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -448,6 +566,10 @@ def _load_helper() -> ModuleType:
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
+    module.HOST_OPERATION_LOCK_PATH = Path(os.environ[TEST_LOCK_PATH_ENV])
+    module.REPORT_ACTIVE_LOCK_PATH = Path(os.environ[TEST_REPORT_LOCK_PATH_ENV])
+    module.ROOT_UID = os.getuid()
+    module.PRODUCTION_GROUP = grp.getgrgid(os.getgid()).gr_name
     return module
 
 
