@@ -5,7 +5,7 @@
 当前默认交付数据包：
 
 ```text
-data/current-seed-20260626.tar
+data/current-seed-20260715.tar
 ```
 
 这个包是新机器首次安装时恢复历史数据用的。除非本次交付专门生成了更新的 `data/current-seed-*.tar`，否则就使用这个包。
@@ -13,8 +13,8 @@ data/current-seed-20260626.tar
 制作新的 seed：
 
 ```bash
-SEED_COLUMNAR_ROOT="$(find .runtime/factory-seeds -mindepth 2 -maxdepth 2 -type d -name normalized ! -path '*-test/normalized' | sort | tail -n 1)"
-test -n "$SEED_COLUMNAR_ROOT"
+SEED_COLUMNAR_ROOT=".runtime/factory-seeds/current-seed-20260715/normalized"
+test -d "$SEED_COLUMNAR_ROOT"
 echo "using seed columnar root: $SEED_COLUMNAR_ROOT"
 
 scripts/start-control-runtime.sh -- uv run python scripts/production/export_current_seed.py \
@@ -26,6 +26,8 @@ scripts/start-control-runtime.sh -- uv run python scripts/production/export_curr
 `.runtime/dev-services/runtime.env` 只在本地固定 runtime 运行期间生成，不是仓库自带文件。已有运行中的本地 runtime 时，才改用 `--env-file .runtime/dev-services/runtime.env`。不要省略 `--mongo-database` 和 `--columnar-root`，否则会导出运行时增量数据根，而不是干净 factory seed。
 
 这个命令不会重新下载数据。它只把当前 Mongo 元数据和当前 Parquet 历史数据打包成新的交付 seed。
+
+A 股 `daily_bar` 和 `valuation_metric` 使用最近 300 个交易日的完整 factory seed；导出和恢复都会拒绝历史覆盖不足的包。
 
 它包含两个市场：
 
@@ -73,8 +75,8 @@ CRYPTO:
 
 ```bash
 uv run python scripts/selection/restore_a_share_factory_seed.py \
-  --package data/current-seed-20260626.tar \
-  --checksum data/current-seed-20260626.tar.sha256 \
+  --package data/current-seed-20260715.tar \
+  --checksum data/current-seed-20260715.tar.sha256 \
   --mongo-uri mongodb://127.0.0.1:27017 \
   --mongo-database claw_trade_a_share_factory_seed \
   --replace-existing \
@@ -84,7 +86,7 @@ uv run python scripts/selection/restore_a_share_factory_seed.py \
 运行时默认恢复目录：
 
 ```text
-.runtime/factory-seeds/current-seed-20260626/normalized
+.runtime/factory-seeds/current-seed-20260715/normalized
 ```
 
 注意：

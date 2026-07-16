@@ -6,17 +6,18 @@ import json
 import os
 import shutil
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, MutableMapping, Sequence
 from urllib.parse import urlparse
 
-from claw_trade.data_gateway.factory_seed_integrity import validate_cn_a_daily_bar_company_names
+from claw_trade.data_gateway.factory_seed_integrity import validate_cn_a_factory_seed
 from claw_trade.data_gateway.warehouse import DatasetRepository
 from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 
-DEFAULT_PACKAGE = Path("data/current-seed-20260626.tar")
+DEFAULT_PACKAGE = Path("data/current-seed-20260715.tar")
 MONGO_JSONL_COLLECTIONS = ("raw_payloads", "provider_attempts", "dataset_manifests")
 REPLACE_COLLECTIONS = ("normalized_datasets", *MONGO_JSONL_COLLECTIONS)
 
@@ -28,7 +29,7 @@ class RestoreResult:
     columnar_root: str
     parquet_files: int
     parquet_bytes: int
-    company_name_integrity: dict[str, Any]
+    cn_a_integrity: dict[str, Any]
     mongo_imported: dict[str, int]
     seed_manifest: dict[str, Any]
     cleared_existing: dict[str, Any]
@@ -43,7 +44,7 @@ class RestoreResult:
             "catalog_storage": "mongo",
             "parquet_files": self.parquet_files,
             "parquet_bytes": self.parquet_bytes,
-            "company_name_integrity": self.company_name_integrity,
+            "cn_a_integrity": self.cn_a_integrity,
             "mongo_imported": self.mongo_imported,
             "normalized_datasets": 0,
             "cleared_existing": self.cleared_existing,
@@ -122,15 +123,29 @@ def restore_factory_seed(
         checksum_path = _default_checksum_path(package_path)
     _verify_package_checksum(package_path, checksum_path)
 
-    with tarfile.open(package_path, "r") as archive:
-        members = tuple(archive.getmembers())
-        prefix = _validate_archive_members(members)
-        seed_manifest = _read_json_member(archive, f"{prefix}/seed_manifest.json")
-        package_id = str(seed_manifest.get("package_id") or prefix)
-        mongo_records = {
-            collection: _read_jsonl_member(archive, f"{prefix}/mongo/{collection}.jsonl")
-            for collection in MONGO_JSONL_COLLECTIONS
-        }
+    columnar_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="factory-seed-restore-", dir=str(columnar_root.parent)) as tmp_name:
+        staging_root = Path(tmp_name) / "normalized"
+        with tarfile.open(package_path, "r") as archive:
+            members = tuple(archive.getmembers())
+            prefix = _validate_archive_members(members)
+            seed_manifest = _read_json_member(archive, f"{prefix}/seed_manifest.json")
+            package_id = str(seed_manifest.get("package_id") or prefix)
+            mongo_records = {
+                collection: _read_jsonl_member(archive, f"{prefix}/mongo/{collection}.jsonl")
+                for collection in MONGO_JSONL_COLLECTIONS
+            }
+            parquet_files, parquet_bytes = _extract_columnar_files(
+                archive=archive,
+                members=members,
+                prefix=prefix,
+                columnar_root=staging_root,
+            )
+        cn_a_integrity = validate_cn_a_factory_seed(
+            staging_root,
+            label="A-share factory seed",
+            manifest_records=mongo_records["dataset_manifests"],
+        )
         mongo_records["dataset_manifests"] = _rebase_manifest_paths(
             mongo_records["dataset_manifests"],
             columnar_root=columnar_root,
@@ -143,25 +158,15 @@ def restore_factory_seed(
                 "mongo": _clear_restore_collections(database),
                 "columnar_root": _clear_columnar_root(columnar_root),
             }
-        parquet_files, parquet_bytes = _extract_columnar_files(
-            archive=archive,
-            members=members,
-            prefix=prefix,
-            columnar_root=columnar_root,
-        )
-        company_name_integrity = validate_cn_a_daily_bar_company_names(
-            columnar_root,
-            label="A-share factory seed",
-        )
-
-    imported = _import_mongo_jsonl(repository, mongo_records)
+        _copy_staged_columnar_root(staging_root, columnar_root)
+        imported = _import_mongo_jsonl(repository, mongo_records)
     return RestoreResult(
         package_id=package_id,
         package_path=str(package_path),
         columnar_root=str(columnar_root),
         parquet_files=parquet_files,
         parquet_bytes=parquet_bytes,
-        company_name_integrity=company_name_integrity,
+        cn_a_integrity=cn_a_integrity,
         mongo_imported=imported,
         seed_manifest=seed_manifest,
         cleared_existing=cleared_existing,
@@ -385,6 +390,11 @@ def _clear_columnar_root(columnar_root: Path) -> dict[str, int]:
             continue
         child.unlink(missing_ok=True)
     return {"files": file_count, "dirs": dir_count, "bytes": byte_count}
+
+
+def _copy_staged_columnar_root(staging_root: Path, columnar_root: Path) -> None:
+    columnar_root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(staging_root, columnar_root, dirs_exist_ok=True)
 
 
 def _database_name_from_uri(uri: str) -> str:

@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
-from claw_trade.data_gateway.factory_seed_integrity import validate_cn_a_daily_bar_company_names
+from claw_trade.data_gateway.factory_seed_integrity import validate_cn_a_factory_seed
 
 MONGO_JSONL_COLLECTIONS = ("raw_payloads", "provider_attempts", "dataset_manifests")
 COLLECTION_KEY_FIELDS = {
@@ -32,7 +32,7 @@ class ExportResult:
     columnar_root: str
     parquet_files: int
     parquet_bytes: int
-    company_name_integrity: dict[str, Any]
+    cn_a_integrity: dict[str, Any]
     mongo_exported: dict[str, int]
     seed_manifest: dict[str, Any]
 
@@ -47,7 +47,7 @@ class ExportResult:
             "catalog_storage": "mongo_jsonl",
             "parquet_files": self.parquet_files,
             "parquet_bytes": self.parquet_bytes,
-            "company_name_integrity": self.company_name_integrity,
+            "cn_a_integrity": self.cn_a_integrity,
             "mongo_exported": self.mongo_exported,
             "seed_manifest": self.seed_manifest,
         }
@@ -72,22 +72,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--replace-output", action="store_true")
     parser.add_argument(
         "--mongo-uri",
-        default=os.environ.get("DATA_GATEWAY_MONGODB_URI")
-        or os.environ.get("DATA_GATEWAY_SEED_MONGODB_URI")
+        default=os.environ.get("DATA_GATEWAY_SEED_MONGODB_URI")
+        or os.environ.get("DATA_GATEWAY_MONGODB_URI")
         or os.environ.get("CN_A_MONGODB_URI")
         or "",
     )
     parser.add_argument(
         "--mongo-database",
-        default=os.environ.get("DATA_GATEWAY_MONGODB_DATABASE")
-        or os.environ.get("DATA_GATEWAY_SEED_MONGODB_DATABASE")
+        default=os.environ.get("DATA_GATEWAY_SEED_MONGODB_DATABASE")
+        or os.environ.get("DATA_GATEWAY_MONGODB_DATABASE")
         or os.environ.get("CN_A_MONGODB_DATABASE")
         or "",
     )
     parser.add_argument(
         "--columnar-root",
         type=Path,
-        default=Path(os.environ["DATA_GATEWAY_COLUMNAR_ROOT"]) if os.environ.get("DATA_GATEWAY_COLUMNAR_ROOT") else None,
+        default=(
+            Path(os.environ["A_SHARE_FACTORY_SEED_COLUMNAR_ROOT"])
+            if os.environ.get("A_SHARE_FACTORY_SEED_COLUMNAR_ROOT")
+            else Path(os.environ["DATA_GATEWAY_COLUMNAR_ROOT"])
+            if os.environ.get("DATA_GATEWAY_COLUMNAR_ROOT")
+            else None
+        ),
     )
     parser.add_argument(
         "--include-inactive-manifests",
@@ -151,7 +157,11 @@ def export_current_seed_package(
         columnar_root=columnar_root,
     )
     _verify_manifest_files_exist(normalized_records["dataset_manifests"], columnar_root=columnar_root)
-    company_name_integrity = validate_cn_a_daily_bar_company_names(columnar_root, label="current seed")
+    cn_a_integrity = validate_cn_a_factory_seed(
+        columnar_root,
+        label="current seed",
+        manifest_records=normalized_records["dataset_manifests"],
+    )
     parquet_files = _collect_parquet_files(columnar_root)
     if not parquet_files:
         raise ValueError(f"columnar root contains no Parquet files: {columnar_root}")
@@ -206,7 +216,7 @@ def export_current_seed_package(
         columnar_root=str(columnar_root),
         parquet_files=parquet_count,
         parquet_bytes=parquet_bytes,
-        company_name_integrity=company_name_integrity,
+        cn_a_integrity=cn_a_integrity,
         mongo_exported={collection: len(records) for collection, records in normalized_records.items()},
         seed_manifest=seed_manifest,
     )

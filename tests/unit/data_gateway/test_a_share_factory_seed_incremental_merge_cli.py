@@ -86,8 +86,19 @@ def _write_partition(root: Path, dataset: str, rows: list[dict[str, Any]]) -> Pa
     return path
 
 
-def _row(dataset: str, symbol: str, day: str, value: float, *, as_of: str = "2026-06-01T00:00:00+00:00") -> dict[str, Any]:
+def _row(
+    dataset: str,
+    symbol: str,
+    day: str,
+    value: float,
+    *,
+    as_of: str = "2026-06-01T00:00:00+00:00",
+    company_name: str | None = None,
+) -> dict[str, Any]:
     row_field = "close" if dataset == "daily_bar" else "pe_ttm"
+    row_json = {"trade_date": day, "symbol_id": symbol, row_field: value}
+    if company_name is not None:
+        row_json["company_name"] = company_name
     return {
         "dataset_ref": f"dataset:{dataset}:CN_A:{symbol}:daily:{day}:{day}",
         "dataset": dataset,
@@ -105,7 +116,7 @@ def _row(dataset: str, symbol: str, day: str, value: float, *, as_of: str = "202
         "dataset_checksum_algorithm": "sha256:canonical-json-v1",
         "dataset_checksum_scope": "normalized-batch-v1",
         "dataset_row_count": 1,
-        "row_json": json.dumps({"trade_date": day, "symbol_id": symbol, row_field: value}, ensure_ascii=False, sort_keys=True),
+        "row_json": json.dumps(row_json, ensure_ascii=False, sort_keys=True),
     }
 
 
@@ -149,7 +160,10 @@ def test_incremental_merge_rolls_seed_to_latest_trading_days_and_replaces_metada
     collections["provider_attempts"]["attempt:old"] = {"attempt_ref": "attempt:old"}
 
     for dataset in ("daily_bar", "valuation_metric"):
-        _write_partition(seed_root, dataset, _dataset_rows(dataset, ["2026-01-01", "2026-01-02", "2026-01-03"]))
+        seed_rows = _dataset_rows(dataset, ["2026-01-01", "2026-01-02", "2026-01-03"])
+        if dataset == "daily_bar":
+            seed_rows[0] = _row(dataset, "000001.SZ", "2026-01-01", 1.0, company_name="平安银行")
+        _write_partition(seed_root, dataset, seed_rows)
     _write_partition(
         incremental_root,
         "daily_bar",
@@ -194,6 +208,7 @@ def test_incremental_merge_rolls_seed_to_latest_trading_days_and_replaces_metada
     daily_rows = _read_rows(seed_root / "market=CN_A" / "dataset=daily_bar" / "granularity=daily" / "partition-factory-300td-daily_bar.parquet")
     assert {row["period_start"] for row in daily_rows} == {"2026-01-02", "2026-01-03", "2026-01-04"}
     assert next(row for row in daily_rows if row["symbol_id"] == "000001.SZ" and row["period_start"] == "2026-01-03")["row"]["close"] == 99.0
+    assert next(row for row in daily_rows if row["symbol_id"] == "000001.SZ" and row["period_start"] == "2026-01-03")["row"]["company_name"] == "平安银行"
     assert next(row for row in daily_rows if row["symbol_id"] == "000001.SZ" and row["period_start"] == "2026-01-04")["row"]["close"] == 101.0
 
 

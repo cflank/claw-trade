@@ -20,7 +20,7 @@ MARKET = "CN_A"
 GRANULARITY = "daily"
 PROVIDER_ID = "local_a_share_factory_merge"
 ENDPOINT_ID = "a_share_factory_seed_incremental_merge"
-DEFAULT_SEED_ROOT = Path(".runtime/factory-seeds/current-seed-20260626/normalized")
+DEFAULT_SEED_ROOT = Path(".runtime/factory-seeds/current-seed-20260715/normalized")
 DEFAULT_INCREMENTAL_ROOT = Path(".runtime/dev-services/data-gateway/normalized")
 REPLACE_COLLECTIONS = ("normalized_datasets", "raw_payloads", "provider_attempts", "dataset_manifests")
 
@@ -253,10 +253,7 @@ def _merge_dataset(
         con.execute(
             """
             CREATE TEMP TABLE selected AS
-            SELECT dataset_ref, dataset, market, symbol_id, universe_ref, granularity, period_start, period_end,
-                   field_set_json, as_of, fresh_until, source_roles_json, dataset_checksum,
-                   dataset_checksum_algorithm, dataset_checksum_scope, dataset_row_count, row_json
-            FROM (
+            WITH ranked AS (
                 SELECT *,
                        row_number() OVER (
                          PARTITION BY market, dataset, granularity, coalesce(symbol_id, ''), period_start, period_end
@@ -265,7 +262,26 @@ def _merge_dataset(
                 FROM combined
                 WHERE market = ? AND dataset = ? AND granularity = ?
                   AND period_start IN (SELECT trade_date FROM candidate_dates)
+            ),
+            company_names AS (
+                SELECT symbol_id, max(json_extract_string(row_json, '$.company_name')) AS company_name
+                FROM combined
+                WHERE dataset = 'daily_bar'
+                  AND coalesce(trim(json_extract_string(row_json, '$.company_name')), '') != ''
+                GROUP BY symbol_id
             )
+            SELECT dataset_ref, dataset, market, symbol_id, universe_ref, granularity, period_start, period_end,
+                   field_set_json, as_of, fresh_until, source_roles_json, dataset_checksum,
+                   dataset_checksum_algorithm, dataset_checksum_scope, dataset_row_count,
+                   CASE
+                     WHEN dataset = 'daily_bar'
+                       AND coalesce(trim(json_extract_string(row_json, '$.company_name')), '') = ''
+                       AND company_names.company_name IS NOT NULL
+                     THEN json_merge_patch(row_json, json_object('company_name', company_names.company_name))
+                     ELSE row_json
+                   END AS row_json
+            FROM ranked
+            LEFT JOIN company_names USING (symbol_id)
             WHERE rn = 1
             ORDER BY symbol_id, period_start, dataset_ref
             """,
