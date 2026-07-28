@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -62,6 +63,30 @@ class _FakeRunner:
 class _CreateFailRunner(_FakeRunner):
     def create_run(self, request):  # type: ignore[no-untyped-def]
         raise RuntimeError("workflow create failed")
+
+
+class _WaitableRunner(_FakeRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.exit_event = Event()
+        self.wait_started = Event()
+
+    def wait_run_exit(self, run_id: str) -> bool:
+        _ = run_id
+        self.wait_started.set()
+        self.exit_event.wait()
+        return True
+
+
+class _PollingFallbackRunner(_FakeRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wait_attempted = Event()
+
+    def wait_run_exit(self, run_id: str) -> bool:
+        _ = run_id
+        self.wait_attempted.set()
+        return False
 
 
 class _BlockingCreateStore:
@@ -340,6 +365,52 @@ def test_completed_workflow_marks_task_succeeded_and_releases_lock(tmp_path: Pat
     os.close(fd)
 
 
+def test_completed_workflow_finishes_without_snapshot_poll(tmp_path: Path) -> None:
+    runner = _WaitableRunner()
+    saved = Event()
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        completed_report_writer=lambda _task, _state: saved.set(),
+        report_lock_path=tmp_path / "background-completed.lock",
+        report_lock_opener=_test_report_lock,
+    )
+
+    payload = queue.enqueue_report_task(
+        request_id="background-completed",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+    assert runner.wait_started.wait(timeout=1)
+
+    runner.state = _FakeWorkflowState(status="completed")
+    runner.exit_event.set()
+
+    assert saved.wait(timeout=1)
+    task = queue.get_task_for_testing(payload["task"]["taskId"])
+    assert task is not None
+    assert task.status.value == "succeeded"
+
+
+def test_completed_workflow_falls_back_to_status_polling_when_exit_wait_is_unavailable() -> None:
+    runner = _PollingFallbackRunner()
+    saved = Event()
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        completed_report_writer=lambda _task, _state: saved.set(),
+    )
+
+    queue.enqueue_report_task(
+        request_id="background-polling-fallback",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+    assert runner.wait_attempted.wait(timeout=1)
+
+    runner.state = _FakeWorkflowState(status="completed")
+
+    assert saved.wait(timeout=2)
+
+
 def test_concurrent_completed_refresh_does_not_release_lock_during_writer(tmp_path: Path) -> None:
     runner = _FakeRunner()
     writer_entered = Event()
@@ -471,14 +542,51 @@ def test_workflow_creation_timeout_binds_late_run_and_completes_report(
     attempt_id = task._workflow_start_attempt_id  # noqa: SLF001
     assert attempt_id is not None
     control_runner._start_attempts[attempt_id][0].join(timeout=1)  # noqa: SLF001
-    snapshot = queue.get_report_queue_snapshot_for_user()
+    deadline = time.monotonic() + 1
+    while task.status.value == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
 
-    assert snapshot["runningTask"] is None
-    assert snapshot["lastTerminalTask"]["status"] == "succeeded"
-    assert snapshot["lastTerminalTask"]["reportId"] == "late-run"
+    assert task.status.value == "succeeded"
+    assert task.run_id == "late-run"
     assert saved == [task.task_id]
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     os.close(fd)
+
+
+def test_workflow_creation_timeout_watcher_recovers_from_refresh_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CLAW_TRADE_UI_WORKFLOW_CREATE_TIMEOUT_SECONDS", "0.01")
+    release = Event()
+    control_runner = _ControlWorkflowRunner(run_dir=tmp_path / "runs")
+    control_runner._runner = _BlockingCreateRunner(release)  # noqa: SLF001
+    saved = Event()
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(control_runner),
+        completed_report_writer=lambda _task, _state: saved.set(),
+    )
+    original_refresh = queue.refresh_running_task_status
+    failures_remaining = 1
+
+    def flaky_refresh(*, expected_task_id=None):  # type: ignore[no-untyped-def]
+        nonlocal failures_remaining
+        if failures_remaining:
+            failures_remaining -= 1
+            raise OSError("transient refresh failure")
+        return original_refresh(expected_task_id=expected_task_id)
+
+    queue.refresh_running_task_status = flaky_refresh  # type: ignore[method-assign]
+    queue.enqueue_report_task(
+        request_id="start-timeout-refresh-retry",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+
+    release.set()
+
+    assert saved.wait(timeout=2)
 
 
 def test_completed_workflow_records_balance_delta_cost_estimate() -> None:

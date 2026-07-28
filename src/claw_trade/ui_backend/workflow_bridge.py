@@ -109,6 +109,9 @@ class ReportWorkflowBridge:
         wait_for_exit = getattr(self._runner, "wait_run_exit", None)
         return bool(callable(wait_for_exit) and wait_for_exit(run_id))
 
+    def supports_workflow_run_exit_wait(self) -> bool:
+        return callable(getattr(self._runner, "wait_run_exit", None))
+
     def poll_workflow_start_attempt(self, attempt_id: str) -> WorkflowStartAttemptStatus:
         poll_attempt = getattr(self._runner, "poll_start_attempt", None)
         if not callable(poll_attempt):

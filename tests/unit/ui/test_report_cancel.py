@@ -12,7 +12,11 @@ from threading import Event, Thread
 import pytest
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
 from claw_trade.ui_backend.task_costs import TaskCostSnapshot
-from claw_trade.ui_backend.workflow_bridge import ReportWorkflowBridge
+from claw_trade.ui_backend.workflow_bridge import (
+    ReportWorkflowBridge,
+    WorkflowRunStartPending,
+    WorkflowStartAttemptStatus,
+)
 
 
 @contextmanager
@@ -105,6 +109,33 @@ class _CompletesDuringCancelRunner(_FakeRunner):
         return True
 
 
+class _PendingStartRunner(_FakeRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.start_ready = Event()
+        self.cancelled = Event()
+
+    def create_run(self, request):  # type: ignore[no-untyped-def]
+        raise WorkflowRunStartPending("attempt-1")
+
+    def poll_start_attempt(self, attempt_id: str) -> WorkflowStartAttemptStatus:
+        assert attempt_id == "attempt-1"
+        return WorkflowStartAttemptStatus(
+            run_id="late-run" if self.start_ready.is_set() else None,
+            has_exited=False,
+        )
+
+    def cancel_run(self, run_id: str) -> bool:
+        self.cancelled_runs.append(run_id)
+        self.state = _FakeState(status="cancelled")
+        self.cancelled.set()
+        return True
+
+    def wait_run_exit(self, run_id: str) -> bool:
+        self.cancelled.wait()
+        return True
+
+
 def _task_input(code: str) -> dict[str, object]:
     return {
         "instrumentCode": code,
@@ -156,7 +187,7 @@ def test_cancel_running_task_stops_workflow_and_hides_active_task() -> None:
     assert task_id not in queue.right_rail_active_task_ids()
 
 
-def test_cancel_race_preserves_naturally_completed_report() -> None:
+def test_cancel_race_suppresses_completion_notification() -> None:
     runner = _CompletesDuringCancelRunner()
     saved: list[str] = []
     queue = ReportTaskQueue(
@@ -167,9 +198,37 @@ def test_cancel_race_preserves_naturally_completed_report() -> None:
 
     result = queue.cancel_report_task(request_id="c-race", task_id=running["task"]["taskId"])
 
-    assert result["task"]["status"] == "succeeded"
-    assert result["message"] == "报告已在取消完成前生成。"
-    assert saved == [running["task"]["taskId"]]
+    assert result["task"]["status"] == "cancelled"
+    assert saved == []
+
+
+def test_cancel_pending_start_dispatches_after_run_id_without_completion() -> None:
+    runner = _PendingStartRunner()
+    completed: list[str] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        completed_report_writer=lambda task, _state: completed.append(task.task_id),
+    )
+    running = queue.enqueue_report_task(
+        request_id="pending-start",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+
+    with pytest.raises(Exception, match="启动后将立即停止"):
+        queue.cancel_report_task(request_id="cancel-pending-start", task_id=running["task"]["taskId"])
+    runner.start_ready.set()
+
+    assert runner.cancelled.wait(timeout=1)
+    deadline = time.monotonic() + 1
+    task = queue.get_task_for_testing(running["task"]["taskId"])
+    assert task is not None
+    while task.status.value == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    assert task.status.value == "cancelled"
+    assert runner.cancelled_runs == ["late-run"]
+    assert completed == []
 
 
 def test_cancel_running_task_keeps_running_and_locked_until_thread_exits(tmp_path: Path) -> None:
@@ -240,12 +299,12 @@ def test_cancelled_workflow_releases_after_thread_exit_without_snapshot_poll(tmp
     original_refresh = queue.refresh_running_task_status
     refresh_failures_remaining = 1
 
-    def flaky_refresh():  # type: ignore[no-untyped-def]
+    def flaky_refresh(*, expected_task_id=None):  # type: ignore[no-untyped-def]
         nonlocal refresh_failures_remaining
         if refresh_failures_remaining:
             refresh_failures_remaining -= 1
             raise OSError("transient refresh failure")
-        return original_refresh()
+        return original_refresh(expected_task_id=expected_task_id)
 
     queue.refresh_running_task_status = flaky_refresh  # type: ignore[method-assign]
     with pytest.raises(Exception, match="仍在停止中"):

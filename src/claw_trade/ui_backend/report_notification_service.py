@@ -76,6 +76,14 @@ class ReportNotificationService:
                 report_id,
                 pdf_available=False,
             )
+        if not target:
+            try:
+                default_target = self._channel_bridge.resolve_default_report_file_target(channel_kind=channel_kind)
+            except Exception:
+                default_target = None
+            if default_target is not None:
+                target, default_account_id = default_target
+                account_id = account_id or default_account_id
         status: dict[str, object] | None = None
         can_send_file: bool | None = None
         if target:

@@ -11,10 +11,18 @@ from claw_trade.ui_backend.summary_builder import CompletionSummaryBuilder
 
 
 class _ChannelBridge:
-    def __init__(self, *, connected: bool, can_send_text: bool, can_send_file: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        connected: bool,
+        can_send_text: bool,
+        can_send_file: bool = False,
+        default_target: tuple[str, str | None] | None = None,
+    ) -> None:
         self._connected = connected
         self._can_send_text = can_send_text
         self._can_send_file = can_send_file
+        self._default_target = default_target
         self.last_text = ""
         self.last_target = ""
         self.last_account_id: str | None = None
@@ -55,6 +63,10 @@ class _ChannelBridge:
         account_id: str | None = None,
     ) -> dict[str, object]:
         return {"sent": True, "messageId": "m1"}
+
+    def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None:
+        assert channel_kind == "wechat_clawbot"
+        return self._default_target
 
 
 class _PassRenderer:
@@ -112,6 +124,23 @@ def test_notify_report_completion_pushes_summary_not_full_report() -> None:
     assert "# 报告" not in channel.last_text
     assert channel.last_target == "sender-1"
     assert channel.last_account_id == "account-1"
+
+
+def test_notify_report_completion_uses_the_only_wechat_target() -> None:
+    notifications: list[tuple[str, str]] = []
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-only", "account-only"),
+    )
+    service = _build_service(channel, notifications)
+
+    result = service.notify_report_completion("r-notify")
+
+    assert result["sent"] is True
+    assert result["delivery"] == "channel"
+    assert channel.last_target == "sender-only"
+    assert channel.last_account_id == "account-only"
 
 
 def test_notify_report_completion_appends_footer_to_channel_text() -> None:
