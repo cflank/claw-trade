@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
+import pytest
+
 from claw_trade.data_gateway.models import CoverageRequirement, GapReason, Market, WarehouseCheck
 from claw_trade.data_gateway.warehouse.normalized_columnar import NormalizedColumnarWarehouse
 from claw_trade.data_gateway.warehouse.repository import DatasetRepository
@@ -335,6 +337,56 @@ def test_repository_reads_columnar_rows_from_read_only_seed_manifest(tmp_path) -
     assert runtime_collections["dataset_manifests"] == {}
 
 
+def test_ordered_columnar_read_propagates_midstream_failure(tmp_path, monkeypatch) -> None:
+    columnar = NormalizedColumnarWarehouse(tmp_path / "normalized")
+    result = columnar.write_records((_daily_row(),))
+    iter_partition_rows = columnar._iter_partition_rows
+
+    def broken_iter(*args, **kwargs):
+        rows = iter(iter_partition_rows(*args, **kwargs))
+        yield next(rows)
+        raise RuntimeError("midstream read failed")
+
+    monkeypatch.setattr(columnar, "_iter_partition_rows", broken_iter)
+
+    with pytest.raises(RuntimeError, match="midstream read failed"):
+        tuple(
+            columnar.iter_documents(
+                dataset="daily_bar",
+                market="CN_A",
+                symbol_id=None,
+                universe_ref=None,
+                fields=("close",),
+                order_by_symbol_id=True,
+                manifests=(result.manifest,),
+            )
+        )
+
+
+def test_ordered_columnar_read_unions_mixed_parquet_schemas(tmp_path) -> None:
+    columnar = NormalizedColumnarWarehouse(tmp_path / "normalized")
+    unscoped = _daily_row("600519.SH")
+    scoped = _daily_row("000001.SZ")
+    scoped["universe_ref"] = "all_a_shares"
+    manifests = (
+        columnar.write_records((unscoped,)).manifest,
+        columnar.write_records((scoped,)).manifest,
+    )
+
+    rows = tuple(
+        columnar.iter_documents(
+            dataset="daily_bar",
+            market="CN_A",
+            symbol_id=None,
+            universe_ref=None,
+            order_by_symbol_id=True,
+            manifests=manifests,
+        )
+    )
+
+    assert [row["symbol_id"] for row in rows] == ["000001.SZ", "600519.SH"]
+
+
 def test_columnar_manifest_rebases_legacy_path_to_current_root(tmp_path) -> None:
     runtime_collections = _collections()
     seed_collections = _collections()
@@ -473,7 +525,9 @@ def test_realtime_columnar_upsert_supersedes_stale_same_symbol_manifest(tmp_path
     assert not any(gap.reason == GapReason.DATA_INTEGRITY_FAILED for gap in result.gaps)
 
 
-def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> None:
+def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path, monkeypatch) -> None:
+    import duckdb
+
     repository = DatasetRepository(
         collections=_collections(),
         normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
@@ -487,6 +541,33 @@ def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> 
         for manifest in repository.list_dataset_manifests()
         if manifest["dataset"] == "intraday_bar" and manifest["status"] == "active"
     )
+    connect_count = 0
+    connect = duckdb.connect
+    executed_sql: list[str] = []
+    executed_params: list[object] = []
+
+    class TrackedConnection:
+        def __init__(self, connection) -> None:
+            self.connection = connection
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+
+        def execute(self, query, *args, **kwargs):
+            executed_sql.append(str(query))
+            executed_params.append(args[0] if args else None)
+            return self.connection.execute(query, *args, **kwargs)
+
+    def tracked_connect(*args, **kwargs):
+        nonlocal connect_count
+        connect_count += 1
+        return TrackedConnection(connect(*args, **kwargs))
+
+    monkeypatch.setattr(duckdb, "connect", tracked_connect)
     rows = repository.query_normalized(
         dataset="intraday_bar",
         market="CRYPTO",
@@ -498,6 +579,7 @@ def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> 
         include_row=True,
         fields=("close", "volume"),
     )
+    assert connect_count == 1
     coverage = repository.aggregate_normalized_coverage(
         dataset="intraday_bar",
         market="CRYPTO",
@@ -507,6 +589,32 @@ def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> 
         date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
         require_integrity_metadata=True,
     )
+    assert connect_count == 2
+    count = repository.count_normalized(
+        dataset="intraday_bar",
+        market="CRYPTO",
+        symbol_id="BTCUSDT",
+        universe_ref="binance_spot_all_symbols",
+        date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+        date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+        require_integrity_metadata=True,
+    )
+    assert connect_count == 3
+    ordered = tuple(
+        repository.iter_normalized(
+            dataset="intraday_bar",
+            market="CRYPTO",
+            symbol_id="BTCUSDT",
+            universe_ref="binance_spot_all_symbols",
+            date_range_start=datetime(2026, 6, 10, tzinfo=UTC),
+            date_range_end=datetime(2026, 6, 10, tzinfo=UTC),
+            require_integrity_metadata=True,
+            include_row=True,
+            fields=("close", "volume"),
+            order_by_symbol_id=True,
+        )
+    )
+    assert connect_count == 5
 
     assert len(active_manifests) == 2
     assert sorted(str(manifest["period_start_min"]) for manifest in active_manifests) == [
@@ -521,6 +629,21 @@ def test_columnar_intraday_keeps_same_day_hour_rows_across_upserts(tmp_path) -> 
     assert {record.row["close"] for record in rows} == {100.0, 101.0}
     assert coverage is not None
     assert coverage.record_count == 2
+    assert count == 2
+    assert [record.period_start for record in ordered] == sorted(record.period_start for record in ordered)
+    assert "SET memory_limit='512MB'" in executed_sql
+    assert "SET threads=1" in executed_sql
+    assert "SET preserve_insertion_order=false" in executed_sql
+    projected_sql = next(query for query in executed_sql if "COPY (SELECT" in query)
+    projected_params = executed_params[executed_sql.index(projected_sql)]
+    ordered_sql = next(query for query in executed_sql if "ORDER BY symbol_id" in query)
+    assert "json_extract(row_json" in projected_sql
+    assert "ORDER BY symbol_id" not in projected_sql
+    assert isinstance(projected_params, list)
+    assert projected_params[1:3] == ['$."close"', '$."volume"']
+    assert '$."open_time"' not in projected_params
+    assert "json_extract(row_json" not in ordered_sql
+    assert "row_json" not in ordered_sql
 
 
 def test_columnar_daily_small_window_does_not_supersede_larger_history(tmp_path) -> None:

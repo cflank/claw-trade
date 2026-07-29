@@ -10,12 +10,12 @@
 - 包含前端 `web/dist`、agent 运行资产、OpenClaw dist、当前 Python 依赖 site-packages。
 - 如果已生成 `data/current-seed-*.tar`，包内会包含 CN_A/CRYPTO 当前 active Parquet seed 和 metadata-only 数据血缘。
 - 不包含 `.git`、`tests/`、`docs/`、`memory/`、`web/research-ui/src/`、`.env.local`、签名私钥。
-- Virbox SDK 尚未集成到后端授权门；当前授权码用于后续激活验证。
+- 生产安装已集成 Virbox 状态 SDK 和后端授权门。安装脚本绑定授权码并启用授权检查；授权未激活、过期、吊销或运行时不可用时，报告和数据刷新功能会被阻止。
 
 ## 安装
 
 ```bash
-sudo scripts/production/install_production_package.sh /path/to/claw-trade-production-0.1.0-20260626T120000Z.tar.gz
+sudo scripts/production/install_production_package.sh /path/to/claw-trade-production-1.0.0-时间戳.tar.gz
 ```
 
 安装脚本会创建 `clawtrade`、`clawkiosk`，检查 kiosk 浏览器路径，校验 archive basename 和包内唯一顶层目录一致，再切换 `/opt/claw-trade/current`。

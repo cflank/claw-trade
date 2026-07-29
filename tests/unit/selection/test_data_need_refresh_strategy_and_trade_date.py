@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Mapping
 
 import pytest
 from claw_trade.data_gateway._selection_batch import (
@@ -11,6 +12,7 @@ from claw_trade.data_gateway._selection_batch import (
     _history_row,
     _latest_crypto_selection_history_trade_date,
     _LocalFeatureRowsResult,
+    _materialized_feature_row,
     _refresh_need_chunks,
     resolve_crypto_selection_trade_date_for_scheduler,
     _selection_data_requests,
@@ -1758,6 +1760,160 @@ def test_selection_local_feature_rows_use_history_company_names_before_repositor
 
     assert len(result.rows) == 1
     assert result.rows[0]["company_name"] == "上海电力"
+
+
+def test_selection_local_feature_rows_deduplicate_overlapping_history_partitions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 1)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-overlapping-history",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=30,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    repository = DatasetRepository(collections={name: {} for name in DatasetRepository.collection_names()})
+    ticker = "600204.SH"
+    trade_day = date.fromisoformat(plan.trade_date)
+    for duplicate in range(20):
+        for row in _history_rows_from(start=trade_day - timedelta(days=29), count=30, ticker=ticker):
+            row["company_name"] = "上海电力"
+            record = _selection_daily_dataset_record(ticker=ticker, row=row)
+            record["dataset_ref"] = f"dataset:daily_bar:CN_A:duplicate-{duplicate}:{row['date']}"
+            repository.insert_normalized(record)
+    official_row = _daily_bar_row(ticker=ticker, trade_date=plan.trade_date, close=12.0)
+    official_row["company_name"] = "上海电力"
+    official_record = _selection_daily_dataset_record(ticker=ticker, row=official_row)
+    official_record["dataset_ref"] = "dataset:daily_bar:CN_A:official-winner"
+    official_record["source_roles"] = ("official",)
+    official_record["as_of"] = datetime(2026, 5, 25, tzinfo=UTC)
+    repository.insert_normalized(official_record)
+    public_row = _daily_bar_row(ticker=ticker, trade_date=plan.trade_date, close=99.0)
+    public_row["company_name"] = "上海电力"
+    public_record = _selection_daily_dataset_record(ticker=ticker, row=public_row)
+    public_record["dataset_ref"] = "dataset:daily_bar:CN_A:newer-low-priority"
+    public_record["source_roles"] = ("built_in_public",)
+    public_record["as_of"] = datetime(2026, 5, 27, tzinfo=UTC)
+    repository.insert_normalized(public_record)
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["history_days"] == 30.0
+    assert result.rows[0]["close"] == 12.0
+    assert "official-winner" in str(result.rows[0]["source_ref"])
+
+
+def test_selection_local_feature_rows_materialize_each_ticker_before_reading_the_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 1)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-local-feature-stream-by-ticker",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=30,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn-a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    repository = DatasetRepository(collections={name: {} for name in DatasetRepository.collection_names()})
+    trade_day = date.fromisoformat(plan.trade_date)
+    for ticker, company_name in (("600204.SH", "上海电力"), ("600205.SH", "山东铝业")):
+        for row in _history_rows_from(start=trade_day - timedelta(days=29), count=30, ticker=ticker):
+            row["company_name"] = company_name
+            repository.insert_normalized(_selection_daily_dataset_record(ticker=ticker, row=row))
+    history_records = repository.query_normalized(
+        dataset="daily_bar",
+        market="CN_A",
+        symbol_id=None,
+        universe_ref=None,
+        date_range_start=trade_day - timedelta(days=29),
+        date_range_end=trade_day,
+        require_integrity_metadata=True,
+        include_row=True,
+    )
+    records_by_ticker = {
+        ticker: tuple(record for record in history_records if record.symbol_id == ticker)
+        for ticker in ("600204.SH", "600205.SH")
+    }
+    materialized: list[str] = []
+    def tracked_materialize(**kwargs: object) -> Mapping[str, object]:
+        raw_row = kwargs["raw_row"]
+        assert isinstance(raw_row, Mapping)
+        materialized.append(str(raw_row["ticker"]))
+        return _materialized_feature_row(**kwargs)
+
+    def ordered_records(**kwargs: object):
+        assert kwargs["order_by_symbol_id"] is True
+        assert "company_name" in kwargs["fields"]
+        assert "provider_lineage" in kwargs["fields"]
+        yield from records_by_ticker["600204.SH"]
+        second = records_by_ticker["600205.SH"]
+        yield second[0]
+        assert materialized == ["600204.SH"]
+        yield from second[1:]
+
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._materialized_feature_row", tracked_materialize)
+    monkeypatch.setattr(repository, "iter_normalized", ordered_records)
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 2
+    assert materialized == ["600204.SH", "600205.SH"]
+
+
+def test_selection_columnar_history_projection_preserves_identity_and_amount(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claw_trade.data_gateway._selection_batch._FULL_MARKET_MIN_TICKERS", 1)
+    plan = SelectionRunPlan(
+        selection_run_id="sel-unit-columnar-history-projection",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=30,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    repository = DatasetRepository(
+        collections={name: {} for name in DatasetRepository.collection_names()},
+        normalized_columnar=NormalizedColumnarWarehouse(tmp_path / "normalized"),
+    )
+    ticker = "600204.SH"
+    rows = []
+    for row in _history_rows_from(start=date(2026, 4, 27), count=30, ticker=ticker):
+        row.update(
+            {
+                "amount": 1102446.143,
+                "company_name": "上海电力",
+                "industry": "电力",
+                "market": "CN_A",
+                "provider_lineage": {
+                    "provider_id": "cn_a_primary",
+                    "endpoint_id": "daily_bar_by_trade_date",
+                },
+            }
+        )
+        rows.append(_selection_daily_dataset_record(ticker=ticker, row=row))
+    repository.upsert_normalized_documents(rows)
+
+    result = _selection_feature_rows_from_repository(plan=plan, repository=repository)
+
+    assert len(result.rows) == 1
+    assert result.rows[0]["company_name"] == "上海电力"
+    assert result.rows[0]["industry"] == "电力"
+    assert result.rows[0]["amount"] == 1102446143.0
 
 
 def test_selection_local_feature_rows_keeps_short_history_rows_as_missing_indicators(

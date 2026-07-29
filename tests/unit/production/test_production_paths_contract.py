@@ -411,7 +411,7 @@ def test_formal_install_assigns_release_and_shared_dirs_to_service_user() -> Non
     assert "ufw allow 5175/tcp" not in factory_script
     assert "hostname -I" not in factory_script
 
-    assert "sudo scripts/production/install_production_package.sh /path/to/claw-trade-production-0.1.0-20260626T120000Z.tar.gz" in readme
+    assert "sudo scripts/production/install_production_package.sh /path/to/claw-trade-production-1.0.0-时间戳.tar.gz" in readme
     assert "校验 archive basename 和包内唯一顶层目录一致" in readme
     assert "不要手动 `tar -xzf` 后再用通配符 `ln -sfn` 切换 `current`" in readme
     assert "最小 rescue 服务" in readme
@@ -467,22 +467,198 @@ def test_production_package_bundles_weixin_plugin_and_uses_production_runtime() 
     assert 'tar -C "${package_root}" -cf "${package_root}/runtime/assets/openclaw_plugins.tar" openclaw_plugins' in build_script
 
 
-def test_production_control_uses_release_crypto_history_seed() -> None:
+def test_production_control_initializes_shared_crypto_history_from_release_seed() -> None:
     control_bin = _read("packaging/production/bin/claw-trade-control")
     runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
 
     assert (
         'export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-'
-        '${ROOT_DIR}/data/crypto-history-full/normalized-columnar-usdt-only}"'
+        '${SHARED_ROOT}/data-gateway/crypto-history-full/normalized-columnar-usdt-only}"'
     ) in control_bin
     assert (
         'export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-'
-        '${CURRENT}/data/crypto-history-full/normalized-columnar-usdt-only}"'
+        '${SHARED}/data-gateway/crypto-history-full/normalized-columnar-usdt-only}"'
     ) in runtime_script
+    assert 'SHARED="${CLAW_TRADE_SHARED_ROOT:-${ROOT}/shared}"' in runtime_script
+    assert 'target_root="$(realpath -m "${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT}")"' in runtime_script
+    assert 'shared_root="$(realpath -m "${SHARED}")"' in runtime_script
+    assert 'ensure_crypto_history_working_copy' in runtime_script
+    assert 'local source_root="${CURRENT}/data/crypto-history-full/normalized-columnar-usdt-only"' in runtime_script
+    assert 'staging="$(mktemp -d "${target_parent}/.crypto-history.XXXXXX")"' in runtime_script
+    assert 'cp -a "${source_root}/." "${staging}/"' in runtime_script
+    assert 'mv -T "${staging}" "${target_root}"' in runtime_script
     assert (
         'write_runtime_env_var "${tmp}" "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT" '
         '"${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT}"'
     ) in runtime_script
+
+
+def test_production_control_refreshes_shared_root_after_loading_env(tmp_path: Path) -> None:
+    control_bin = _read("packaging/production/bin/claw-trade-control")
+    initial_assignment = 'SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-/opt/claw-trade/shared}"'
+    refreshed_assignment = 'SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-${SHARED_ROOT}}"'
+    env_loop_end = control_bin.index("\ndone\n") + len("\ndone\n")
+    crypto_root_export = control_bin.index("export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT")
+
+    assert refreshed_assignment in control_bin[env_loop_end:crypto_root_export]
+
+    custom_shared = tmp_path / "custom-shared"
+    command = (
+        f"set -u\nunset CLAW_TRADE_SHARED_ROOT\n{initial_assignment}\n"
+        f"CLAW_TRADE_SHARED_ROOT={custom_shared}\n{refreshed_assignment}\nprintf '%s' \"$SHARED_ROOT\""
+    )
+    completed = subprocess.run(["bash", "-c", command], check=True, capture_output=True, text=True)
+
+    assert completed.stdout == str(custom_shared)
+
+
+def test_production_runtime_honors_custom_shared_root(tmp_path: Path) -> None:
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
+    shared_assignment = next(line for line in runtime_script.splitlines() if line.startswith("SHARED="))
+    custom_shared = tmp_path / "custom-shared"
+    env = {
+        **os.environ,
+        "ROOT": str(tmp_path / "install-root"),
+        "CLAW_TRADE_SHARED_ROOT": str(custom_shared),
+    }
+
+    completed = subprocess.run(
+        ["bash", "-c", f"set -u\n{shared_assignment}\nprintf '%s' \"$SHARED\""],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.stdout == str(custom_shared)
+
+
+def test_production_crypto_history_working_copy_is_initialized_once(tmp_path: Path) -> None:
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
+    current = tmp_path / "current"
+    shared = tmp_path / "shared"
+    relative_daily = Path("market=CRYPTO/dataset=daily_bar/granularity=daily")
+    source_root = current / "data/crypto-history-full/normalized-columnar-usdt-only"
+    target_root = shared / "data-gateway/crypto-history-full/normalized-columnar-usdt-only"
+    (source_root / relative_daily).mkdir(parents=True)
+    source_parquet = source_root / relative_daily / "part.parquet"
+    source_parquet.write_bytes(b"release-seed")
+    env = {
+        **os.environ,
+        "CURRENT": str(current),
+        "SHARED": str(shared),
+        "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT": str(target_root),
+    }
+    command = f"set -euo pipefail\n{_shell_function(runtime_script, 'ensure_crypto_history_working_copy')}\nensure_crypto_history_working_copy"
+
+    subprocess.run(["bash", "-c", command], check=True, env=env)
+    target_parquet = target_root / relative_daily / "part.parquet"
+    assert target_parquet.read_bytes() == b"release-seed"
+
+    target_parquet.write_bytes(b"runtime-updated")
+    source_parquet.write_bytes(b"new-release-seed")
+    subprocess.run(["bash", "-c", command], check=True, env=env)
+
+    assert target_parquet.read_bytes() == b"runtime-updated"
+    assert source_parquet.read_bytes() == b"new-release-seed"
+
+
+def test_production_crypto_history_working_copy_rejects_lexical_shared_escape(tmp_path: Path) -> None:
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
+    current = tmp_path / "current"
+    shared = tmp_path / "shared"
+    relative_daily = Path("market=CRYPTO/dataset=daily_bar/granularity=daily")
+    source_root = current / "data/crypto-history-full/normalized-columnar-usdt-only"
+    (source_root / relative_daily).mkdir(parents=True)
+    (source_root / relative_daily / "part.parquet").write_bytes(b"release-seed")
+    escaped_target = shared / "../current/escaped-crypto-history"
+    env = {
+        **os.environ,
+        "CURRENT": str(current),
+        "SHARED": str(shared),
+        "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT": str(escaped_target),
+    }
+    command = f"set -euo pipefail\n{_shell_function(runtime_script, 'ensure_crypto_history_working_copy')}\nensure_crypto_history_working_copy"
+
+    completed = subprocess.run(["bash", "-c", command], check=False, capture_output=True, text=True, env=env)
+
+    assert completed.returncode != 0
+    assert "must be under" in completed.stderr
+    assert not (current / "escaped-crypto-history").exists()
+
+
+def test_production_crypto_history_working_copy_handles_competing_initializer(tmp_path: Path) -> None:
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
+    current = tmp_path / "current"
+    shared = tmp_path / "shared"
+    relative_daily = Path("market=CRYPTO/dataset=daily_bar/granularity=daily")
+    source_root = current / "data/crypto-history-full/normalized-columnar-usdt-only"
+    target_root = shared / "data-gateway/crypto-history-full/normalized-columnar-usdt-only"
+    (source_root / relative_daily).mkdir(parents=True)
+    (source_root / relative_daily / "part.parquet").write_bytes(b"release-seed")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    competing_cp = bin_dir / "cp"
+    competing_cp.write_text(
+        """#!/usr/bin/env bash
+/bin/cp "$@"
+mkdir -p "${MOCK_TARGET_ROOT}/market=CRYPTO/dataset=daily_bar/granularity=daily"
+printf winner >"${MOCK_TARGET_ROOT}/market=CRYPTO/dataset=daily_bar/granularity=daily/part.parquet"
+""",
+        encoding="utf-8",
+    )
+    competing_cp.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CURRENT": str(current),
+        "SHARED": str(shared),
+        "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT": str(target_root),
+        "MOCK_TARGET_ROOT": str(target_root),
+    }
+    command = (
+        f"set -euo pipefail\n{_shell_function(runtime_script, 'ensure_crypto_history_working_copy')}\n"
+        "ensure_crypto_history_working_copy"
+    )
+
+    subprocess.run(["bash", "-c", command], check=True, env=env)
+
+    assert (target_root / relative_daily / "part.parquet").read_bytes() == b"winner"
+    assert list(target_root.glob(".crypto-history.*")) == []
+    assert list(target_root.parent.glob(".crypto-history.*")) == []
+
+
+def test_production_crypto_history_working_copy_reports_publish_error(tmp_path: Path) -> None:
+    runtime_script = _read("packaging/production/runtime/claw-trade-control-runtime")
+    current = tmp_path / "current"
+    shared = tmp_path / "shared"
+    relative_daily = Path("market=CRYPTO/dataset=daily_bar/granularity=daily")
+    source_root = current / "data/crypto-history-full/normalized-columnar-usdt-only"
+    target_root = shared / "data-gateway/crypto-history-full/normalized-columnar-usdt-only"
+    (source_root / relative_daily).mkdir(parents=True)
+    (source_root / relative_daily / "part.parquet").write_bytes(b"release-seed")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    failing_mv = bin_dir / "mv"
+    failing_mv.write_text("#!/usr/bin/env bash\nprintf 'mock publish failed' >&2\nexit 1\n", encoding="utf-8")
+    failing_mv.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "CURRENT": str(current),
+        "SHARED": str(shared),
+        "CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT": str(target_root),
+    }
+    command = (
+        f"set -euo pipefail\n{_shell_function(runtime_script, 'ensure_crypto_history_working_copy')}\n"
+        "ensure_crypto_history_working_copy"
+    )
+
+    completed = subprocess.run(["bash", "-c", command], check=False, capture_output=True, text=True, env=env)
+
+    assert completed.returncode != 0
+    assert "mock publish failed" in completed.stderr
+    assert list(target_root.parent.glob(".crypto-history.*")) == []
 
 
 def test_production_archive_validator_requires_basename_matched_single_top_dir(tmp_path: Path) -> None:
@@ -850,7 +1026,7 @@ def test_production_control_runtime_writes_runtime_state_under_shared() -> None:
     assert 'CLAW_TRADE_LOCAL_MONGODB_CURRENT_DIR="${ROOT_DIR}/.runtime/mongodb/current"' in control_bin
     control_service = _read("packaging/production/systemd/claw-trade-control.service")
     assert "ExecStartPre=/bin/rm -f /opt/claw-trade/shared/tmp/dev-services/runtime.env" in control_service
-    assert 'SHARED="${ROOT}/shared"' in runtime_script
+    assert 'SHARED="${CLAW_TRADE_SHARED_ROOT:-${ROOT}/shared}"' in runtime_script
     assert 'RUNTIME_ENV_PATH="${RUNTIME_ENV_DIR}/runtime.env"' in runtime_script
     assert 'CN_A_MONGODB_URI="${CN_A_MONGODB_URI:-mongodb://${CN_A_MONGODB_BIND_IP}:${CN_A_MONGODB_PORT}}"' in runtime_script
     assert 'DATA_GATEWAY_MONGODB_URI="${DATA_GATEWAY_MONGODB_URI:-${CN_A_MONGODB_URI}}"' in runtime_script

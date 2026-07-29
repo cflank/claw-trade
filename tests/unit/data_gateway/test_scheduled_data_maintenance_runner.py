@@ -320,10 +320,10 @@ def test_crypto_kline_refresh_fails_closed_when_full_history_is_missing_despite_
 
 def test_crypto_kline_refresh_bootstraps_missing_full_history_before_planning(tmp_path: Path) -> None:
     root = _missing_crypto_columnar_root(tmp_path)
-    calls: list[tuple[Path, datetime | date]] = []
+    calls: list[tuple[Path, datetime | date, tuple[str, ...]]] = []
 
-    def initializer(target_root: Path, as_of: datetime | date) -> None:
-        calls.append((target_root, as_of))
+    def initializer(target_root: Path, as_of: datetime | date, symbols: tuple[str, ...]) -> None:
+        calls.append((target_root, as_of, symbols))
         _write_crypto_history_daily_rows(
             target_root,
             _complete_crypto_history_daily_rows((("BTCUSDT", date(2026, 6, 6)),), filled_day=date(2026, 6, 8)),
@@ -342,7 +342,7 @@ def test_crypto_kline_refresh_bootstraps_missing_full_history_before_planning(tm
     result = runner.run(market="CRYPTO", job_kind="kline-refresh", cron_run_id="cron-run-crypto")
 
     assert result.status == "succeeded"
-    assert calls == [(root, datetime(2026, 6, 8, 9, 0, tzinfo=UTC))]
+    assert calls == [(root, datetime(2026, 6, 8, 9, 0, tzinfo=UTC), ())]
     assert [(request.instrument, request.time_range_start, request.time_range_end) for request in api.requests] == [
         ("BTCUSDT", date(2026, 6, 7), date(2026, 6, 8)),
     ]
@@ -526,6 +526,71 @@ def test_crypto_kline_refresh_fails_closed_when_current_trading_symbol_coverage_
 
     with pytest.raises(RuntimeError, match="does not cover enough current Binance trading symbols"):
         runner.run(market="CRYPTO", job_kind="kline-refresh", cron_run_id="cron-run-crypto")
+
+
+def test_crypto_kline_refresh_repairs_only_missing_current_symbols_before_coverage_gate(tmp_path: Path) -> None:
+    root = tmp_path / "crypto-history"
+    covered_rows = tuple((f"OLD{index:03d}USDT", date(2026, 7, 1)) for index in range(420))
+    missing_symbols = tuple(f"NEW{index:03d}USDT" for index in range(49))
+    _write_crypto_history_daily_rows(root, covered_rows)
+    calls: list[tuple[Path, datetime | date, tuple[str, ...]]] = []
+
+    def initializer(target_root: Path, as_of: datetime | date, symbols: tuple[str, ...]) -> None:
+        calls.append((target_root, as_of, symbols))
+        _write_crypto_history_daily_rows(
+            target_root,
+            covered_rows + tuple((symbol, date(2026, 7, 1)) for symbol in symbols),
+        )
+
+    api = FakeDataAPI()
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=api,
+        job_repository=InMemoryMaintenanceJobRepository(),
+        dataset_repository=DatasetRepository(),
+        now_provider=lambda: datetime(2026, 7, 1, 9, 0, tzinfo=UTC),
+        crypto_history_columnar_root=root,
+        crypto_history_initializer=initializer,
+        crypto_trading_symbol_loader=lambda: tuple(symbol for symbol, _day in covered_rows) + missing_symbols,
+    )
+
+    result = runner.run(market="CRYPTO", job_kind="kline-refresh", cron_run_id="cron-run-crypto")
+
+    assert result.status == "succeeded"
+    assert calls == [(root, datetime(2026, 7, 1, 9, 0, tzinfo=UTC), missing_symbols)]
+    assert api.requests == []
+
+
+def test_crypto_kline_refresh_rechecks_coverage_after_targeted_repair(tmp_path: Path) -> None:
+    root = tmp_path / "crypto-history"
+    covered_rows = tuple((f"OLD{index:03d}USDT", date(2026, 7, 1)) for index in range(420))
+    missing_symbols = tuple(f"NEW{index:03d}USDT" for index in range(49))
+    _write_crypto_history_daily_rows(root, covered_rows)
+
+    def initializer(target_root: Path, _as_of: datetime | date, symbols: tuple[str, ...]) -> None:
+        _write_crypto_history_daily_rows(
+            target_root,
+            covered_rows + tuple((symbol, date(2026, 7, 1)) for symbol in symbols[:2]),
+        )
+
+    api = FakeDataAPI()
+    jobs = InMemoryMaintenanceJobRepository()
+    runner = ScheduledDataMaintenanceRunner(
+        data_api=api,
+        job_repository=jobs,
+        dataset_repository=DatasetRepository(),
+        now_provider=lambda: datetime(2026, 7, 1, 9, 0, tzinfo=UTC),
+        crypto_history_columnar_root=root,
+        crypto_history_initializer=initializer,
+        crypto_trading_symbol_loader=lambda: tuple(symbol for symbol, _day in covered_rows) + missing_symbols,
+    )
+
+    with pytest.raises(RuntimeError, match=r"covered=422 trading=469.*min_coverage=90%"):
+        runner.run(market="CRYPTO", job_kind="kline-refresh", cron_run_id="cron-run-crypto")
+
+    assert api.requests == []
+    saved = jobs.get("data-maintenance:CRYPTO:kline-refresh:cron-run-crypto")
+    assert saved is not None
+    assert saved.status == "failed"
 
 
 def test_crypto_kline_refresh_fails_closed_when_trading_symbol_discovery_fails(tmp_path: Path) -> None:

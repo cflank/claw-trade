@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
@@ -8,7 +9,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -391,8 +393,23 @@ def _load_binance_spot_trading_usdt_symbols() -> tuple[str, ...]:
     return result
 
 
-def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) -> None:
+def _bootstrap_crypto_history_columnar_root(
+    root: Path,
+    as_of: datetime | date,
+    symbols: Sequence[str] = (),
+) -> None:
     target_root = root
+    repair_symbols = tuple(
+        sorted(
+            dict.fromkeys(
+                str(symbol or "").strip().upper()
+                for symbol in symbols
+                if _BINANCE_SPOT_USDT_SYMBOL_RE.fullmatch(str(symbol or "").strip().upper())
+            )
+        )
+    )
+    if symbols and not repair_symbols:
+        raise RuntimeError("CRYPTO history targeted repair has no valid spot USDT symbols")
     writes_factory_seed = _path_is_under(root, _CRYPTO_HISTORY_FACTORY_DATA_ROOT)
     if writes_factory_seed:
         if os.environ.get("CLAW_TRADE_ALLOW_FACTORY_COLUMNAR_WRITE") != "1":
@@ -403,28 +420,41 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
     if as_of_day < _CRYPTO_HISTORY_BOOTSTRAP_START_DATE:
         raise RuntimeError(f"invalid CRYPTO bootstrap end date: {as_of_day.isoformat()}")
     _CRYPTO_HISTORY_BOOTSTRAP_DIR.mkdir(parents=True, exist_ok=True)
-    download_manifest = _CRYPTO_HISTORY_BOOTSTRAP_DIR / f"download-spot-1d-{as_of_day.isoformat()}.json"
-    import_result = _CRYPTO_HISTORY_BOOTSTRAP_DIR / f"import-spot-1d-{as_of_day.isoformat()}.json"
+    mode = "repair-spot-1d" if repair_symbols else "spot-1d"
+    attempt_id = uuid.uuid4().hex if repair_symbols else ""
+    evidence_dir = (
+        _CRYPTO_HISTORY_BOOTSTRAP_DIR / f"{mode}-{as_of_day.isoformat()}-{attempt_id}"
+        if repair_symbols
+        else _CRYPTO_HISTORY_BOOTSTRAP_DIR
+    )
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    download_manifest = evidence_dir / ("download.json" if repair_symbols else f"download-{mode}-{as_of_day.isoformat()}.json")
+    import_result = evidence_dir / ("import.json" if repair_symbols else f"import-{mode}-{as_of_day.isoformat()}.json")
+    symbol_file = evidence_dir / ("symbols.txt" if repair_symbols else f"symbols-{mode}-{as_of_day.isoformat()}.txt")
+    if repair_symbols:
+        symbol_file.write_text("".join(f"{symbol}\n" for symbol in repair_symbols), encoding="utf-8")
     raw_root = _CRYPTO_HISTORY_FACTORY_RAW_ROOT if writes_factory_seed else _CRYPTO_HISTORY_RUNTIME_RAW_ROOT
     mongo_uri, mongo_database = _crypto_history_bootstrap_mongo_target(writes_factory_seed=writes_factory_seed)
     if not mongo_uri:
         raise RuntimeError("missing DATA_GATEWAY_MONGODB_URI/CN_A_MONGODB_URI for CRYPTO history bootstrap")
 
-    _run_crypto_history_bootstrap_command(
+    download_cmd = [
+        sys.executable,
+        str(_runtime_script_path("scripts/crypto/download_binance_public_data.py")),
+        "--output-root",
+        str(raw_root),
+        "--market-segment",
+        "spot",
+        "--interval",
+        "1d",
+        "--start-date",
+        _CRYPTO_HISTORY_BOOTSTRAP_START_DATE.isoformat(),
+        "--end-date",
+        as_of_day.isoformat(),
+    ]
+    download_cmd.extend(["--symbol-file", str(symbol_file)] if repair_symbols else ["--all-symbols"])
+    download_cmd.extend(
         [
-            sys.executable,
-            str(_runtime_script_path("scripts/crypto/download_binance_public_data.py")),
-            "--output-root",
-            str(raw_root),
-            "--market-segment",
-            "spot",
-            "--interval",
-            "1d",
-            "--start-date",
-            _CRYPTO_HISTORY_BOOTSTRAP_START_DATE.isoformat(),
-            "--end-date",
-            as_of_day.isoformat(),
-            "--all-symbols",
             "--checksum-required",
             "--ignore-missing",
             "--progress-every",
@@ -433,6 +463,7 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
             str(download_manifest),
         ]
     )
+    _run_crypto_history_bootstrap_command(download_cmd)
     import_cmd = [
         sys.executable,
         str(_runtime_script_path("scripts/crypto/import_crypto_prepackaged_to_mongo.py")),
@@ -441,13 +472,11 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
         "--trade-date",
         as_of_day.isoformat(),
         "--import-run-id",
-        f"crypto-usdt-bootstrap-{as_of_day.isoformat()}",
+        f"crypto-usdt-{'repair' if repair_symbols else 'bootstrap'}-{as_of_day.isoformat()}{f'-{attempt_id}' if attempt_id else ''}",
         "--start-date",
         _CRYPTO_HISTORY_BOOTSTRAP_START_DATE.isoformat(),
         "--end-date",
         as_of_day.isoformat(),
-        "--symbol-manifest",
-        str(download_manifest),
         "--market-segment",
         "spot",
         "--interval",
@@ -459,6 +488,10 @@ def _bootstrap_crypto_history_columnar_root(root: Path, as_of: datetime | date) 
         "--output-json",
         str(import_result),
     ]
+    if repair_symbols:
+        import_cmd.extend(["--symbol-file", str(symbol_file)])
+    else:
+        import_cmd.extend(["--symbol-manifest", str(download_manifest)])
     if mongo_database:
         import_cmd.extend(["--mongo-database", mongo_database])
     _run_crypto_history_bootstrap_command(import_cmd)
@@ -646,6 +679,17 @@ class UiHttpServices:
     license_service: LicenseService
 
 
+@contextmanager
+def _hold_dev_report_lock(path: Path) -> Iterator[int]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices:
     rpc_client = OpenClawGatewayRpcClient(
         gateway_call_bin=settings.gateway_call_bin,
@@ -682,6 +726,11 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
     restore_completed_workflow_reports(repository, run_root)
     workflow_runner = _ControlWorkflowRunner(run_dir=run_root)
     license_service = build_license_service(os.environ)
+    dev_report_lock_path = (
+        Path(".runtime/dev-services/report-active.lock").resolve()
+        if os.environ.get("CLAW_TRADE_UI_ALLOW_DIRECT_BACKEND_ENTRY") == "1"
+        else None
+    )
     queue = ReportTaskQueue(
         ReportWorkflowBridge(workflow_runner, company_name_resolver=_resolve_company_names_from_data_layer),
         completed_report_writer=lambda task, workflow_state: _handle_completed_workflow_report(
@@ -700,6 +749,8 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         ),
         report_permission_checker=license_service.assert_report_generation_allowed,
         task_cost_snapshot_provider=llm_bridge.capture_report_model_cost_snapshot,
+        report_lock_path=dev_report_lock_path,
+        report_lock_opener=_hold_dev_report_lock if dev_report_lock_path is not None else None,
     )
     scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
     cron_adapter = OpenClawCronAdapter(rpc_client)

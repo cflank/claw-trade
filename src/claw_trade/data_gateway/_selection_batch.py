@@ -14,6 +14,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from itertools import groupby
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -46,6 +47,7 @@ from claw_trade.data_gateway.warehouse.selection_columnar import (
     SelectionColumnarWarehouse,
 )
 from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
+from claw_trade.data_gateway.warehouse.warehouse import _source_role_rank
 from claw_trade.selection.data_job import SelectionDataFetchProgress, SelectionDataNeedResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
 from claw_trade.selection.features import (
@@ -105,6 +107,25 @@ _SELECTION_DAILY_QUERY_FIELDS = (
     "volume",
     "amount",
     "symbol_id",
+)
+_SELECTION_HISTORY_QUERY_FIELDS = (
+    *_SELECTION_DAILY_QUERY_FIELDS,
+    "trade_date",
+    "price",
+    "turnover",
+    "amount_unit",
+    "p_change_pct",
+    "pct_chg",
+    "change_pct",
+    "company_name",
+    "name",
+    "stock_name",
+    "code_name",
+    "security_name",
+    "industry",
+    "sector",
+    "market",
+    "provider_lineage",
 )
 _SELECTION_SUPPLEMENTAL_REQUESTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("corporate_action", "event", ("event_type", "event_date", "title", "source", "symbol_id")),
@@ -1571,14 +1592,12 @@ def _selection_feature_rows_from_repository(
             end=trade_day,
         )
     latest_rows_by_ticker: dict[str, Mapping[str, Any]] = {}
-    latest_dataset_refs_by_ticker: dict[str, str] = {}
     for record in latest_records:
         row = _row_from_dataset_record(record)
         ticker = _ticker_from_row(row)
         if ticker is None:
             continue
         latest_rows_by_ticker[ticker] = row
-        latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
     if not latest_rows_by_ticker and plan.universe_scope and allow_unscoped_latest_fallback:
         latest_records = _query_daily_records(
             repository=repository,
@@ -1595,7 +1614,6 @@ def _selection_feature_rows_from_repository(
             if ticker is None:
                 continue
             latest_rows_by_ticker[ticker] = row
-            latest_dataset_refs_by_ticker[ticker] = record.dataset_ref
     tickers = tuple(sorted(latest_rows_by_ticker))
     _notify_fetch_progress(
         progress_callback,
@@ -1603,48 +1621,7 @@ def _selection_feature_rows_from_repository(
         completed=0,
         total=1,
     )
-    history_rows_by_ticker: dict[str, list[Mapping[str, Any]]] = {}
-    for record in repository.iter_normalized(
-        dataset="daily_bar",
-        market=plan.market.value,
-        symbol_id=None,
-        universe_ref=None,
-        date_range_start=history_start,
-        date_range_end=trade_day,
-        require_integrity_metadata=True,
-        include_row=True,
-    ):
-        row = _row_from_dataset_record(record)
-        ticker = _ticker_from_row(row)
-        if ticker is None:
-            continue
-        history_rows_by_ticker.setdefault(ticker, []).append(row)
-    _notify_fetch_progress(
-        progress_callback,
-        label="读取本地全市场历史日线",
-        completed=1,
-        total=1,
-    )
-    company_names_by_ticker = {
-        ticker: company_name
-        for ticker in tickers
-        if (
-            company_name := _company_name_from_rows(
-                (*history_rows_by_ticker.get(ticker, ()), latest_rows_by_ticker[ticker])
-            )
-        )
-        is not None
-    }
-    missing_company_name_tickers = tuple(ticker for ticker in tickers if ticker not in company_names_by_ticker)
-    if missing_company_name_tickers:
-        company_names_by_ticker = {
-            **repository.find_company_names_by_symbol_ids(
-                dataset="daily_bar",
-                market=plan.market.value,
-                symbol_ids=missing_company_name_tickers,
-            ),
-            **company_names_by_ticker,
-        }
+    ticker_set = set(tickers)
     _notify_fetch_progress(
         progress_callback,
         label="流式计算本地选股特征",
@@ -1660,22 +1637,49 @@ def _selection_feature_rows_from_repository(
     lineage_dataset_refs: list[str] = []
     row_limit_exceeded = False
     processed_ticker_count = 0
-    for index, ticker in enumerate(tickers, start=1):
+    processed_tickers: set[str] = set()
+    ordered_records = repository.iter_normalized(
+        dataset="daily_bar",
+        market=plan.market.value,
+        symbol_id=None,
+        universe_ref=None,
+        date_range_start=history_start,
+        date_range_end=trade_day,
+        require_integrity_metadata=True,
+        include_row=True,
+        fields=_SELECTION_HISTORY_QUERY_FIELDS,
+        order_by_symbol_id=True,
+    )
+    for ticker, ticker_records in groupby(ordered_records, key=lambda record: str(record.symbol_id or "")):
+        if ticker not in ticker_set:
+            continue
         if len(rows) >= _SELECTION_FEATURE_ROW_LIMIT:
             row_limit_exceeded = True
             break
-        processed_ticker_count = index
-        history_source = tuple(
-            sorted(
-                history_rows_by_ticker.get(ticker, ()),
-                key=lambda item: str(_row_date(item) or ""),
+        processed_tickers.add(ticker)
+        processed_ticker_count += 1
+        history_by_date: dict[str, tuple[tuple[int, float], Mapping[str, float | str], str]] = {}
+        history_company_name: str | None = None
+        history_industry: str | None = None
+        for record in ticker_records:
+            row = _row_from_dataset_record(record)
+            mapped = _history_row(row)
+            if mapped is None:
+                continue
+            row_date = str(mapped["date"])
+            preference = (
+                -_source_role_rank(record),
+                record.as_of.timestamp() if record.as_of is not None else float("-inf"),
             )
-        )
-        history = tuple(
-            mapped
-            for mapped in (_history_row(row) for row in history_source)
-            if mapped is not None and (_parse_date(mapped.get("date")) or trade_day) <= trade_day
-        )
+            current = history_by_date.get(row_date)
+            if current is None or preference >= current[0]:
+                history_by_date[row_date] = (preference, mapped, record.dataset_ref)
+            if history_company_name is None:
+                history_company_name = _company_name_from_rows((row,))
+            if history_industry is None:
+                history_industry = _industry_from_rows((row,))
+        history_days = tuple(day for day in sorted(history_by_date) if date.fromisoformat(day) <= trade_day)
+        history = tuple(history_by_date[day][1] for day in history_days)
         if not history:
             dropped.append(ticker)
             _record_drop_reason(
@@ -1697,7 +1701,13 @@ def _selection_feature_rows_from_repository(
                 metadata={"latest_history_date": latest_history_date.isoformat() if latest_history_date else None},
             )
             continue
-        company_name = company_names_by_ticker.get(ticker)
+        company_name = history_company_name or _company_name_from_rows((latest_rows_by_ticker[ticker],))
+        if company_name is None:
+            company_name = repository.find_company_names_by_symbol_ids(
+                dataset="daily_bar",
+                market=plan.market.value,
+                symbol_ids=(ticker,),
+            ).get(ticker)
         if company_name is None:
             dropped.append(ticker)
             _record_drop_reason(
@@ -1708,14 +1718,12 @@ def _selection_feature_rows_from_repository(
                 metadata={},
             )
             continue
-        source_ref = _row_source_ref(
-            history_source[-1] if history_source else latest_rows_by_ticker[ticker],
-            market=plan.market,
-        )
+        winning_dataset_ref = history_by_date[history_days[-1]][2]
+        source_ref = _normalized_ref(winning_dataset_ref, market=plan.market)
         raw_row: dict[str, object] = {
             "ticker": ticker,
             "company_name": company_name,
-            "industry": _industry_from_rows((*history_source, latest_rows_by_ticker[ticker])),
+            "industry": history_industry or _industry_from_rows((latest_rows_by_ticker[ticker],)),
             "history": history,
             "source_ref": source_ref,
         }
@@ -1733,14 +1741,40 @@ def _selection_feature_rows_from_repository(
             continue
         rows.append(feature_row)
         columnar_writer.add_feature_rows((feature_row,))
-        lineage_dataset_refs.append(latest_dataset_refs_by_ticker.get(ticker, ""))
-        if index % 200 == 0 or index == len(tickers):
+        lineage_dataset_refs.append(winning_dataset_ref)
+        if processed_ticker_count % 200 == 0 or processed_ticker_count == len(tickers):
             _notify_fetch_progress(
                 progress_callback,
                 label="流式计算本地选股特征",
-                completed=index,
+                completed=processed_ticker_count,
                 total=max(1, len(tickers)),
             )
+
+    if not row_limit_exceeded:
+        for ticker in tickers:
+            if ticker in processed_tickers:
+                continue
+            processed_ticker_count += 1
+            dropped.append(ticker)
+            _record_drop_reason(
+                reason_counts=drop_reason_counts,
+                samples=drop_samples,
+                reason="history_empty",
+                ticker=ticker,
+                metadata={},
+            )
+    _notify_fetch_progress(
+        progress_callback,
+        label="读取本地全市场历史日线",
+        completed=1,
+        total=1,
+    )
+    _notify_fetch_progress(
+        progress_callback,
+        label="流式计算本地选股特征",
+        completed=processed_ticker_count,
+        total=max(1, len(tickers)),
+    )
 
     sampled_dataset_refs = tuple(
         ref

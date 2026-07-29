@@ -2,7 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="${1:-${CLAW_TRADE_VERSION:-$(date +%Y%m%d%H%M%S)}}"
+VERSION="$(python3.12 - <<'PY' "${ROOT}/pyproject.toml"
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    print(tomllib.load(fh)["project"]["version"])
+PY
+)"
 INPUT_ARCHIVE="${CLAW_TRADE_INPUT_ARCHIVE:-}"
 BUILD_DIR="${ROOT}/.runtime/virbox-protected-build/${VERSION}"
 STAGING_DIR="${BUILD_DIR}/staging"
@@ -33,7 +38,7 @@ require_dir() {
 }
 
 if [[ -z "${INPUT_ARCHIVE}" ]]; then
-  CLAW_TRADE_VERSION="${VERSION}" "${ROOT}/scripts/production/build_production_package.sh" >/dev/null
+  "${ROOT}/scripts/production/build_production_package.sh" >/dev/null
   INPUT_ARCHIVE="${ROOT}/.runtime/production-build/claw-trade-${VERSION}.tar"
 fi
 

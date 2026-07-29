@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="${CLAW_TRADE_HOME:-/opt/claw-trade}"
 CURRENT="${ROOT}/current"
-SHARED="${ROOT}/shared"
+SHARED="${CLAW_TRADE_SHARED_ROOT:-${ROOT}/shared}"
 PYTHON="${CURRENT}/runtime/python/bin/python"
 OPENCLAW="${CURRENT}/runtime/openclaw/openclaw.mjs"
 LOG_DIR="${SHARED}/logs"
@@ -62,7 +62,7 @@ fi
 export A_SHARE_FACTORY_SEED_PACKAGE="${A_SHARE_FACTORY_SEED_PACKAGE:-}"
 export A_SHARE_FACTORY_SEED_CHECKSUM="${A_SHARE_FACTORY_SEED_CHECKSUM:-${A_SHARE_FACTORY_SEED_PACKAGE}.sha256}"
 export A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-${SHARED}/cache/factory-seeds/current-seed/normalized}"
-export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-${CURRENT}/data/crypto-history-full/normalized-columnar-usdt-only}"
+export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-${SHARED}/data-gateway/crypto-history-full/normalized-columnar-usdt-only}"
 export CLAW_TRADE_OPENCLAW_RUNNER="${CLAW_TRADE_OPENCLAW_RUNNER:-claw_trade.runtime.openclaw_local_runner:create_default_runner}"
 export CLAW_TRADE_OPENVIKING_BACKEND="${CLAW_TRADE_OPENVIKING_BACKEND:-claw_trade.artifacts.openviking_backend_http:create_default_backend}"
 export CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED="${CLAW_TRADE_OPENVIKING_EMBEDDING_ENABLED:-0}"
@@ -83,6 +83,54 @@ mkdir -p \
   "${NUMBA_CACHE_DIR}" \
   "${MPLCONFIGDIR}" \
   "${CLAW_TRADE_RUNTIME_ASSETS_ROOT}"
+
+ensure_crypto_history_working_copy() {
+  local source_root="${CURRENT}/data/crypto-history-full/normalized-columnar-usdt-only"
+  local target_root
+  local shared_root
+  local daily_path="market=CRYPTO/dataset=daily_bar/granularity=daily"
+  local target_parent
+  local staging
+  local publish_error
+
+  target_root="$(realpath -m "${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT}")"
+  shared_root="$(realpath -m "${SHARED}")"
+  case "${target_root}" in
+    "${shared_root}/"*) ;;
+    *)
+      echo "CRYPTO history working root must be under ${shared_root}: ${target_root}" >&2
+      return 1
+      ;;
+  esac
+  export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${target_root}"
+  if [[ -d "${target_root}/${daily_path}" ]] && find "${target_root}/${daily_path}" -name '*.parquet' -print -quit | grep -q .; then
+    return 0
+  fi
+  if [[ -e "${target_root}" ]]; then
+    echo "CRYPTO history working root exists but is incomplete: ${target_root}" >&2
+    return 1
+  fi
+  if [[ ! -d "${source_root}/${daily_path}" ]] || ! find "${source_root}/${daily_path}" -name '*.parquet' -print -quit | grep -q .; then
+    echo "CRYPTO release seed is missing or incomplete: ${source_root}" >&2
+    return 1
+  fi
+
+  target_parent="$(dirname "${target_root}")"
+  mkdir -p "${target_parent}"
+  staging="$(mktemp -d "${target_parent}/.crypto-history.XXXXXX")"
+  if ! cp -a "${source_root}/." "${staging}/"; then
+    rm -rf "${staging}"
+    return 1
+  fi
+  if ! publish_error="$(mv -T "${staging}" "${target_root}" 2>&1)"; then
+    rm -rf "${staging}"
+    if [[ -d "${target_root}/${daily_path}" ]] && find "${target_root}/${daily_path}" -name '*.parquet' -print -quit | grep -q .; then
+      return 0
+    fi
+    echo "CRYPTO history working copy publish failed: ${publish_error}" >&2
+    return 1
+  fi
+}
 
 ensure_openclaw_gateway_token() {
   local token_file="${OPENCLAW_GATEWAY_TOKEN_FILE:-${CONFIG_DIR}/openclaw-gateway-token}"
@@ -482,6 +530,7 @@ ensure_openclaw_gateway_token
 ensure_scheduled_work_internal_token
 start_local_mongodb_if_needed
 ensure_a_share_factory_seed_restored
+ensure_crypto_history_working_copy
 load_mongo_ui_settings_into_process_env
 write_runtime_env
 prepare_openviking_config

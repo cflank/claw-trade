@@ -74,11 +74,12 @@ process.stdout.write(JSON.stringify(tools));
     return json.loads(completed.stdout)
 
 
-def _run_before_dispatch_hook(text: str, *, fetch_impl: str) -> dict[str, object]:
+def _run_before_dispatch_hook(text: str, *, fetch_impl: str, timeout_ms: int = 25) -> dict[str, object]:
     script = f"""
 import plugin from {json.dumps(str(PLUGIN_PATH))};
 globalThis.fetch = {fetch_impl};
 process.env.CLAW_TRADE_UI_INBOUND_URL = "http://127.0.0.1:5175/api/ui/channel-inbound-message";
+process.env.CLAW_TRADE_UI_INBOUND_TIMEOUT_MS = {timeout_ms!r};
 const api = {{
   registerTool() {{}},
   on(name, handler) {{
@@ -153,6 +154,23 @@ def test_wechat_deferred_ordinary_reply_does_not_duplicate_processing_ack() -> N
 
     assert result["result"]["handled"] is True
     assert result["result"]["text"] == "收到，正在处理。"
+
+
+def test_wechat_alert_bridge_retries_while_ui_backend_starts() -> None:
+    result = _run_before_dispatch_hook(
+        "/alert BTC 低于 63001",
+        fetch_impl="""(() => {
+          let attempts = 0;
+          return async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error("ECONNREFUSED");
+            return { ok: true, json: async () => ({ handled: true, replyText: "请确认是否创建价格提醒" }) };
+          };
+        })()""",
+        timeout_ms=1000,
+    )
+
+    assert result["result"] == {"handled": True, "text": "请确认是否创建价格提醒"}
 
 
 def _run_tool(

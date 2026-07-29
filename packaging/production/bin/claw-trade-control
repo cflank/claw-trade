@@ -13,6 +13,7 @@ for env_file in "${SHARED_ROOT}/config/claw-trade.env" "${SHARED_ROOT}/config/ru
     set +a
   fi
 done
+SHARED_ROOT="${CLAW_TRADE_SHARED_ROOT:-${SHARED_ROOT}}"
 
 export PYTHONPATH="${ROOT_DIR}/app/python:${ROOT_DIR}/runtime/python-site-packages${PYTHONPATH:+:${PYTHONPATH}}"
 if [[ "${RELEASE_NAME}" =~ ^claw-trade-production-([0-9]+\.[0-9]+\.[0-9]+)- ]]; then
@@ -44,7 +45,7 @@ fi
 export A_SHARE_FACTORY_SEED_PACKAGE
 export A_SHARE_FACTORY_SEED_CHECKSUM="${A_SHARE_FACTORY_SEED_CHECKSUM:-${A_SHARE_FACTORY_SEED_PACKAGE}.sha256}"
 export A_SHARE_FACTORY_SEED_COLUMNAR_ROOT="${A_SHARE_FACTORY_SEED_COLUMNAR_ROOT:-/opt/claw-trade/shared/cache/factory-seeds/current-seed/normalized}"
-export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-${ROOT_DIR}/data/crypto-history-full/normalized-columnar-usdt-only}"
+export CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT="${CLAW_TRADE_CRYPTO_HISTORY_COLUMNAR_ROOT:-${SHARED_ROOT}/data-gateway/crypto-history-full/normalized-columnar-usdt-only}"
 export CLAW_TRADE_SKIP_OPENCLAW_WEIXIN_PLUGIN_INSTALL="${CLAW_TRADE_SKIP_OPENCLAW_WEIXIN_PLUGIN_INSTALL:-1}"
 
 exec "${ROOT_DIR}/runtime/claw-trade-control-runtime" "$@"

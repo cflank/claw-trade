@@ -93,7 +93,7 @@ class ScheduledDataMaintenanceRunner:
         incremental_planner: IncrementalGapPlanner | None = None,
         now_provider: Any | None = None,
         crypto_history_columnar_root: Path | None = None,
-        crypto_history_initializer: Callable[[Path, datetime | date], None] | None = None,
+        crypto_history_initializer: Callable[[Path, datetime | date, tuple[str, ...]], None] | None = None,
         crypto_trading_symbol_loader: Callable[[], Sequence[str]] | None = None,
     ) -> None:
         self._data_api = data_api
@@ -286,7 +286,11 @@ class ScheduledDataMaintenanceRunner:
             and _BINANCE_SPOT_USDT_SYMBOL_RE.fullmatch(str(instrument or "").strip())
         }
         covered_days_by_symbol = self._overlay_crypto_runtime_manifest_latest_days(latest_by_symbol)
-        latest_by_symbol = self._filter_current_crypto_trading_symbols(latest_by_symbol)
+        latest_by_symbol = self._filter_current_crypto_trading_symbols(
+            latest_by_symbol,
+            root=root,
+            as_of=as_of,
+        )
         covered_days_by_symbol = {
             symbol: covered_days
             for symbol, covered_days in covered_days_by_symbol.items()
@@ -316,7 +320,13 @@ class ScheduledDataMaintenanceRunner:
                 )
         return _dedupe_daily_bar_gaps(gaps)
 
-    def _filter_current_crypto_trading_symbols(self, latest_by_symbol: dict[str, date]) -> dict[str, date]:
+    def _filter_current_crypto_trading_symbols(
+        self,
+        latest_by_symbol: dict[str, date],
+        *,
+        root: Path,
+        as_of: datetime | date,
+    ) -> dict[str, date]:
         if self._crypto_trading_symbol_loader is None:
             return latest_by_symbol
         try:
@@ -339,6 +349,33 @@ class ScheduledDataMaintenanceRunner:
             if symbol in trading_symbols
         }
         coverage_ratio = len(filtered) / len(trading_symbols)
+        missing_from_history = tuple(sorted(symbol for symbol in trading_symbols if symbol not in latest_by_symbol))
+        if (
+            (
+                len(filtered) < _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS
+                or coverage_ratio < _CRYPTO_HISTORY_MIN_TRADING_SYMBOL_COVERAGE_RATIO
+            )
+            and self._crypto_history_initializer is not None
+            and missing_from_history
+        ):
+            try:
+                self._crypto_history_initializer(root, as_of, missing_from_history)
+            except Exception as exc:
+                raise RuntimeError(f"CRYPTO full spot USDT columnar history targeted repair failed: {exc}") from exc
+            refreshed_rows = self._read_valid_crypto_history_rows(root=root, as_of=as_of)
+            latest_by_symbol = {
+                str(instrument or "").strip(): latest_day
+                for instrument, latest_value in refreshed_rows
+                if (latest_day := _date_or_none(latest_value)) is not None
+                and _BINANCE_SPOT_USDT_SYMBOL_RE.fullmatch(str(instrument or "").strip())
+            }
+            self._overlay_crypto_runtime_manifest_latest_days(latest_by_symbol)
+            filtered = {
+                symbol: latest_day
+                for symbol, latest_day in latest_by_symbol.items()
+                if symbol in trading_symbols
+            }
+            coverage_ratio = len(filtered) / len(trading_symbols)
         if len(filtered) < _CRYPTO_HISTORY_MIN_SPOT_USDT_SYMBOLS or coverage_ratio < _CRYPTO_HISTORY_MIN_TRADING_SYMBOL_COVERAGE_RATIO:
             missing_from_history = tuple(sorted(symbol for symbol in trading_symbols if symbol not in latest_by_symbol))
             sample = ",".join(missing_from_history[:10])
@@ -361,7 +398,7 @@ class ScheduledDataMaintenanceRunner:
         if _crypto_history_rows_are_complete(rows):
             return rows
         if self._crypto_history_initializer is not None:
-            self._crypto_history_initializer(root, as_of)
+            self._crypto_history_initializer(root, as_of, ())
             daily_dir = root / "market=CRYPTO" / "dataset=daily_bar" / "granularity=daily"
             self._ensure_crypto_history_columnar_root(root=root, daily_dir=daily_dir, as_of=as_of)
             rows = _read_crypto_history_latest_rows(root)
@@ -388,7 +425,7 @@ class ScheduledDataMaintenanceRunner:
                 raise ValueError(f"CRYPTO daily_bar full spot USDT columnar history is missing: {daily_dir}")
             raise ValueError(f"CRYPTO daily_bar full spot USDT columnar history has no parquet files: {daily_dir}")
         try:
-            self._crypto_history_initializer(root, as_of)
+            self._crypto_history_initializer(root, as_of, ())
         except Exception as exc:
             raise RuntimeError(f"CRYPTO daily_bar full spot USDT columnar history bootstrap failed: {exc}") from exc
         if not daily_dir.exists():

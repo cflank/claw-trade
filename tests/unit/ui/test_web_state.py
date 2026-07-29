@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import fcntl
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
+
+import pytest
 
 from claw_trade.data_gateway.models import DataResultStatus
 from claw_trade.ui_contracts.enums import MarketProfile
@@ -60,6 +64,24 @@ class _FakeChannelBridge:
             }
         )
         return {"sent": True}
+
+
+def test_dev_report_lock_blocks_exclusive_host_operation(tmp_path: Path) -> None:
+    path = tmp_path / "report-active.lock"
+
+    with web_state._hold_dev_report_lock(path):
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(fd)
 
 
 def test_lazy_price_alert_quote_provider_uses_data_gateway_runtime(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -226,6 +248,62 @@ def test_crypto_history_runtime_bootstrap_does_not_require_factory_write_flags(m
     assert import_cmd[import_cmd.index("--mongo-uri") + 1] == "mongodb://127.0.0.1:27017/claw_trade"
     assert import_cmd[import_cmd.index("--mongo-database") + 1] == "claw_trade"
     assert import_cmd[import_cmd.index("--columnar-root") + 1] == str(target_root)
+
+
+def test_crypto_history_runtime_repair_uses_same_explicit_symbol_file_for_download_and_import(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    target_root = tmp_path / "runtime-normalized"
+    raw_root = tmp_path / "runtime-binance"
+    bootstrap_dir = tmp_path / "bootstrap"
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setenv("DATA_GATEWAY_MONGODB_URI", "mongodb://127.0.0.1:27017/claw_trade")
+    monkeypatch.setenv("DATA_GATEWAY_MONGODB_DATABASE", "claw_trade")
+    monkeypatch.setattr(web_state, "_CRYPTO_HISTORY_FACTORY_DATA_ROOT", tmp_path / "factory-data")
+    monkeypatch.setattr(web_state, "_CRYPTO_HISTORY_RUNTIME_RAW_ROOT", raw_root)
+    monkeypatch.setattr(web_state, "_CRYPTO_HISTORY_BOOTSTRAP_DIR", bootstrap_dir)
+    monkeypatch.setattr(web_state, "_run_crypto_history_bootstrap_command", lambda command: calls.append(tuple(command)))
+
+    web_state._bootstrap_crypto_history_columnar_root(
+        target_root,
+        date(2026, 7, 26),
+        ("NVDABUSDT", "AAOIBUSDT"),
+    )
+
+    assert len(calls) == 2
+    download_cmd, import_cmd = calls
+    assert "--all-symbols" not in download_cmd
+    download_symbol_file = download_cmd[download_cmd.index("--symbol-file") + 1]
+    import_symbol_file = import_cmd[import_cmd.index("--symbol-file") + 1]
+    assert download_symbol_file == import_symbol_file
+    assert Path(download_symbol_file).read_text(encoding="utf-8") == "AAOIBUSDT\nNVDABUSDT\n"
+    assert import_cmd[import_cmd.index("--columnar-root") + 1] == str(target_root)
+
+
+def test_crypto_history_runtime_repair_keeps_same_day_attempt_evidence_separate(monkeypatch, tmp_path: Path) -> None:
+    target_root = tmp_path / "runtime-normalized"
+    bootstrap_dir = tmp_path / "bootstrap"
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setenv("DATA_GATEWAY_MONGODB_URI", "mongodb://127.0.0.1:27017/claw_trade")
+    monkeypatch.setenv("DATA_GATEWAY_MONGODB_DATABASE", "claw_trade")
+    monkeypatch.setattr(web_state, "_CRYPTO_HISTORY_FACTORY_DATA_ROOT", tmp_path / "factory-data")
+    monkeypatch.setattr(web_state, "_CRYPTO_HISTORY_RUNTIME_RAW_ROOT", tmp_path / "runtime-binance")
+    monkeypatch.setattr(web_state, "_CRYPTO_HISTORY_BOOTSTRAP_DIR", bootstrap_dir)
+    monkeypatch.setattr(web_state, "_run_crypto_history_bootstrap_command", lambda command: calls.append(tuple(command)))
+
+    web_state._bootstrap_crypto_history_columnar_root(target_root, date(2026, 7, 26), ("AAOIBUSDT",))
+    web_state._bootstrap_crypto_history_columnar_root(target_root, date(2026, 7, 26), ("NVDABUSDT",))
+
+    first_download, first_import, second_download, second_import = calls
+    first_symbol_file = Path(first_download[first_download.index("--symbol-file") + 1])
+    second_symbol_file = Path(second_download[second_download.index("--symbol-file") + 1])
+    assert first_symbol_file != second_symbol_file
+    assert first_symbol_file.read_text(encoding="utf-8") == "AAOIBUSDT\n"
+    assert second_symbol_file.read_text(encoding="utf-8") == "NVDABUSDT\n"
+    assert first_import[first_import.index("--symbol-file") + 1] == str(first_symbol_file)
+    assert second_import[second_import.index("--symbol-file") + 1] == str(second_symbol_file)
+    assert first_import[first_import.index("--import-run-id") + 1] != second_import[second_import.index("--import-run-id") + 1]
 
 
 def test_crypto_history_runtime_bootstrap_rejects_seed_mongo_database(monkeypatch, tmp_path: Path) -> None:

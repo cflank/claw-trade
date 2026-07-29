@@ -34,6 +34,7 @@ const STDOUT_SUMMARY_MAX_CHARS = 2000;
 const WECHAT_CHANNEL_ID = "openclaw-weixin";
 const UI_CHANNEL_KIND = "wechat_clawbot";
 const DEFAULT_UI_INBOUND_TIMEOUT_MS = 180000;
+const UI_INBOUND_RETRY_DELAY_MS = 250;
 const REPORT_BRIDGE_FALLBACK_TEXT =
   "报告请求已收到，但当前无法确认处理结果。请稍后查看微信消息；如果没有收到文件或回复，请再发送一次。";
 
@@ -324,22 +325,32 @@ function shouldUseReportBridgeFallback(payload) {
 }
 
 async function postInboundMessageToUi(url, payload, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      console.warn(`[claw-trade-frontline-tools] inbound UI bridge HTTP ${response.status}`);
-      return null;
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const remainingMs = Math.max(0, deadline - Date.now());
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remainingMs);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        console.warn(`[claw-trade-frontline-tools] inbound UI bridge HTTP ${response.status}`);
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      const retryDelayMs = Math.min(UI_INBOUND_RETRY_DELAY_MS, deadline - Date.now());
+      if (retryDelayMs <= 0) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    } finally {
+      clearTimeout(timer);
     }
-    return await response.json();
-  } finally {
-    clearTimeout(timer);
   }
 }
 

@@ -1310,6 +1310,8 @@ class DatasetRepository:
         date_range_end: Any | None = None,
         require_integrity_metadata: bool = False,
         include_row: bool = True,
+        fields: Sequence[str] = (),
+        order_by_symbol_id: bool = False,
     ) -> Iterable[DatasetRecord]:
         if self._normalized_columnar is not None:
             manifests = self._normalized_columnar_manifests(
@@ -1329,12 +1331,14 @@ class DatasetRepository:
                 date_range_end=date_range_end,
                 require_integrity_metadata=require_integrity_metadata,
                 include_row=include_row,
+                fields=fields,
+                order_by_symbol_id=order_by_symbol_id,
                 manifests=manifests,
             )
             yielded = False
             for record in columnar_records:
                 yielded = True
-                yield self._dataset_record_from_document(record, dataset=dataset, market=market)
+                yield self._dataset_record_from_document(record, dataset=dataset, market=market, fields=fields)
             if yielded:
                 return
             if not self._allow_normalized_mongo_fallback:
@@ -1352,8 +1356,19 @@ class DatasetRepository:
         )
         with self._lock:
             records = self._collection("normalized_datasets").iter_find(criteria, include_row=include_row)
+            if order_by_symbol_id:
+                records = iter(
+                    sorted(
+                        records,
+                        key=lambda record: (
+                            str(record.get("symbol_id") or ""),
+                            _date_query_text(record.get("period_start")) or "",
+                            str(record.get("dataset_ref") or ""),
+                        ),
+                    )
+                )
             for record in records:
-                yield self._dataset_record_from_document(record, dataset=dataset, market=market)
+                yield self._dataset_record_from_document(record, dataset=dataset, market=market, fields=fields)
 
     def aggregate_normalized_coverage(
         self,
