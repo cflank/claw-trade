@@ -35,6 +35,7 @@ class ProductionPaths:
 INSTALL_ROOT = Path("/opt/claw-trade")
 HOST_OPERATIONS_LOCK_PATH = INSTALL_ROOT / "host-operations.lock"
 REPORT_ACTIVE_LOCK_PATH = INSTALL_ROOT / "report-active.lock"
+DATA_WORK_ACTIVE_LOCK_PATH = INSTALL_ROOT / "data-work-active.lock"
 RELEASES_DIR = INSTALL_ROOT / "releases"
 CURRENT_LINK = INSTALL_ROOT / "current"
 RESCUE_CURRENT_LINK = INSTALL_ROOT / "rescue-current"

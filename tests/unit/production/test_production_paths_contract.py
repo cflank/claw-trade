@@ -896,7 +896,10 @@ def test_watchdog_production_lifecycle_contract() -> None:
     assert lock_path in watchdog
     assert lock_path in apply_helper
     assert "/opt/claw-trade/report-active.lock" in apply_helper
-    assert "os.O_CREAT" not in apply_helper[apply_helper.index("def open_verified_lock"):apply_helper.index("def acquire_apply_lock")]
+    assert "/opt/claw-trade/data-work-active.lock" in apply_helper
+    assert "os.O_CREAT" not in apply_helper[
+        apply_helper.index("def open_verified_lock"):apply_helper.index("def ensure_lock_file")
+    ]
     lock_body = apply_helper[apply_helper.index("def host_operation_lock"):apply_helper.index("def open_verified_lock")]
     assert lock_body.index("fcntl.flock(host_fd, fcntl.LOCK_EX)") < lock_body.index("open_verified_lock(REPORT_ACTIVE_LOCK_PATH)")
 

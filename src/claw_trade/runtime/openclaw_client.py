@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 
 from claw_trade.artifacts.refs import MaterialReadRef, MaterialTarget, OpenVikingReadCapability
@@ -33,10 +35,15 @@ class OpenClawRunner(Protocol):
 
     def run_worker(self, payload: dict[str, object]) -> dict[str, object]: ...
 
+    def cancel_worker(self, call_id: str) -> bool: ...
+
 
 class OpenClawClient:
     def __init__(self, runner: OpenClawRunner) -> None:
         self._runner = runner
+        self._active_calls: dict[str, set[str]] = {}
+        self._cancelled_runs: set[str] = set()
+        self._active_calls_lock = Lock()
 
     def probe(self) -> ProbeResult:
         try:
@@ -46,10 +53,22 @@ class OpenClawClient:
 
     def run_worker(self, command: OpenClawCommand) -> OpenClawResult:
         # 这里只有“叫醒一个 OpenClaw worker 并拿回结果”的职责，不承接 12-worker DAG。
+        payload = serialize_openclaw_command_payload(command)
+        with self._active_calls_lock:
+            if command.run_id in self._cancelled_runs:
+                return _failed_openclaw_result("workflow 已取消，未启动新的 OpenClaw worker")
+            self._active_calls.setdefault(command.run_id, set()).add(command.call_id)
         try:
-            payload = self._runner.run_worker(serialize_openclaw_command_payload(command))
+            payload = self._runner.run_worker(payload)
         except Exception as exc:
             return _failed_openclaw_result(f"openclaw 运行失败: {exc}")
+        finally:
+            with self._active_calls_lock:
+                calls = self._active_calls.get(command.run_id)
+                if calls is not None:
+                    calls.discard(command.call_id)
+                    if not calls:
+                        self._active_calls.pop(command.run_id, None)
         try:
             result = parse_openclaw_result(payload)
         except Exception as exc:
@@ -68,6 +87,30 @@ class OpenClawClient:
         if not shape.ok:
             return _failed_openclaw_result(shape.reason or "openclaw 结果结构校验失败")
         return result
+
+    def cancel_run(self, run_id: str) -> bool:
+        normalized_run_id = str(run_id).strip()
+        if not normalized_run_id:
+            return False
+        with self._active_calls_lock:
+            self._cancelled_runs.add(normalized_run_id)
+            call_ids = tuple(self._active_calls.get(normalized_run_id, ()))
+        if not call_ids:
+            return False
+
+        def cancel_call(call_id: str) -> bool:
+            try:
+                return self._runner.cancel_worker(call_id)
+            except Exception:
+                return False
+
+        with ThreadPoolExecutor(max_workers=min(8, len(call_ids))) as executor:
+            return any(executor.map(cancel_call, call_ids))
+
+    def release_run(self, run_id: str) -> None:
+        with self._active_calls_lock:
+            self._active_calls.pop(str(run_id).strip(), None)
+            self._cancelled_runs.discard(str(run_id).strip())
 
 
 def serialize_read_policy(policy: ReadPolicy) -> dict[str, object]:
@@ -144,6 +187,7 @@ def serialize_openclaw_command_payload(command: OpenClawCommand) -> dict[str, ob
         "stage": command.stage,
         "run_id": command.run_id,
         "call_id": command.call_id,
+        "openclaw_run_id": command.call_id,
         "runtime_vars": dict(command.runtime_vars),
         "allowed_tools": list(command.allowed_tools),
         "upstream_materials": list(command.upstream_materials),

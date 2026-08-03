@@ -88,11 +88,21 @@ try:
     parent = os.fstat(parent_fd)
     if parent.st_uid != 0 or parent.st_mode & 0o022:
         raise SystemExit(f"unsafe lock parent ownership or mode: {root}")
-    for name in ("host-operations.lock", "report-active.lock"):
+    for name in ("host-operations.lock", "report-active.lock", "data-work-active.lock"):
         try:
             fd = os.open(name, os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=parent_fd)
         except OSError as exc:
-            raise SystemExit(f"cannot open uninstall lock {root / name}: {exc}")
+            if name == "data-work-active.lock" and exc.errno == errno.ENOENT:
+                fd = os.open(
+                    name,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW,
+                    0o660,
+                    dir_fd=parent_fd,
+                )
+                os.fchown(fd, 0, group_gid)
+                os.fchmod(fd, 0o660)
+            else:
+                raise SystemExit(f"cannot open uninstall lock {root / name}: {exc}")
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_gid != group_gid or stat.S_IMODE(info.st_mode) != 0o660:
             os.close(fd)
@@ -127,7 +137,7 @@ try:
     retry_dir = Path("/run/claw-trade-watchdog")
     if retry_dir.is_dir() and not retry_dir.is_symlink():
         shutil.rmtree(retry_dir)
-    for name in ("host-operations.lock", "report-active.lock"):
+    for name in ("host-operations.lock", "report-active.lock", "data-work-active.lock"):
         os.unlink(name, dir_fd=parent_fd)
     subprocess.run(["/bin/systemctl", "daemon-reload"], check=True)
 finally:

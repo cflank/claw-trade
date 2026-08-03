@@ -229,6 +229,76 @@ def test_run_worker_custom_gateway_with_token_keeps_url_and_token(
     assert seen_commands[0][seen_commands[0].index("--token") + 1] == "token-1"
 
 
+def test_run_worker_cancel_terminates_only_its_process_group(tmp_path: Path) -> None:
+    gateway = tmp_path / "fake-gateway.sh"
+    gateway.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$3\" = \"sessions.abort\" ]; then printf '{\"ok\":true,\"abortedRunId\":\"oc-cancel-1\"}'; exit 0; fi\n"
+        "trap 'exit 130' TERM\n"
+        "sleep 30\n"
+        "printf '{\"status\":\"succeeded\"}'\n",
+        encoding="utf-8",
+    )
+    gateway.chmod(0o755)
+    runner = OpenClawLocalRunner(
+        gateway_ws_url="ws://127.0.0.1:18789",
+        gateway_call_bin=str(gateway),
+        timeout_ms=600_000,
+    )
+    outcome: dict[str, object] = {}
+
+    def _run() -> None:
+        try:
+            runner.run_worker({"openclaw_run_id": "oc-cancel-1", "worker_id": "market_analyst"})
+        except Exception as exc:  # noqa: BLE001
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    for _ in range(100):
+        if "oc-cancel-1" in runner._active_calls:  # noqa: SLF001
+            break
+        thread.join(timeout=0.01)
+    assert "oc-cancel-1" in runner._active_calls  # noqa: SLF001
+    assert runner.cancel_worker("oc-cancel-1") is True
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert isinstance(outcome.get("error"), RuntimeError)
+
+
+def test_cancel_worker_bounds_abort_rpc(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = OpenClawLocalRunner(gateway_ws_url="ws://127.0.0.1:18789", timeout_ms=2_000)
+    seen: dict[str, object] = {}
+
+    def _fake_run(cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+        del args
+        seen["cmd"] = list(cmd)
+        seen.update(kwargs)
+        raise subprocess.TimeoutExpired("openclaw", kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    assert runner.cancel_worker("oc-timeout") is False
+    assert seen["timeout"] == 2.0
+    command = seen["cmd"]
+    assert isinstance(command, list)
+    assert command[3] == "sessions.abort"
+    assert command[command.index("--scope") + 1] == "operator.write"
+
+
+def test_cancel_worker_treats_missing_remote_run_as_idempotent_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = OpenClawLocalRunner(gateway_ws_url="ws://127.0.0.1:18789", timeout_ms=2_000)
+
+    monkeypatch.setattr(
+        runner,
+        "_call_gateway",
+        lambda *args, **kwargs: {"ok": True, "status": "no-active-run", "abortedRunId": None},
+    )
+
+    assert runner.cancel_worker("oc-already-stopped") is True
+
+
 def test_run_worker_approves_local_scope_upgrade_and_retries_once(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

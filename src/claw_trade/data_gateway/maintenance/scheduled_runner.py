@@ -25,6 +25,7 @@ from claw_trade.data_gateway.warehouse.trading_calendar import (
     CN_A_DAILY_DATA_READY_CUTOFF,
     is_expected_daily_date,
 )
+from claw_trade.production.data_work_lock import data_work_lock_enabled, hold_data_work_lock
 
 _SUPPORTED_JOBS: dict[tuple[str, str], tuple[str, str]] = {
     ("CN_A", "eod"): ("daily_incremental", "daily_bar"),
@@ -106,6 +107,32 @@ class ScheduledDataMaintenanceRunner:
         self._crypto_trading_symbol_loader = crypto_trading_symbol_loader
 
     def run(
+        self,
+        *,
+        market: str,
+        job_kind: str,
+        cron_run_id: str | None = None,
+        maintenance_job_id: str | None = None,
+        ignore_cached_empty: bool = False,
+    ) -> MaintenanceJob:
+        if data_work_lock_enabled():
+            with hold_data_work_lock(exclusive=False, blocking=True):
+                return self._run_unlocked(
+                    market=market,
+                    job_kind=job_kind,
+                    cron_run_id=cron_run_id,
+                    maintenance_job_id=maintenance_job_id,
+                    ignore_cached_empty=ignore_cached_empty,
+                )
+        return self._run_unlocked(
+            market=market,
+            job_kind=job_kind,
+            cron_run_id=cron_run_id,
+            maintenance_job_id=maintenance_job_id,
+            ignore_cached_empty=ignore_cached_empty,
+        )
+
+    def _run_unlocked(
         self,
         *,
         market: str,

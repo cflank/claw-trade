@@ -40,6 +40,7 @@ test -f "${ROOT_DIR}/systemd/claw-trade-watchdog.service" || fail "missing syste
 test -f "${ROOT_DIR}/systemd/claw-trade-watchdog.timer" || fail "missing systemd/claw-trade-watchdog.timer"
 grep -q '/opt/claw-trade/host-operations.lock' "${ROOT_DIR}/root-helper/claw-trade-apply-update" || fail "apply helper missing host lock contract"
 grep -q '/opt/claw-trade/report-active.lock' "${ROOT_DIR}/root-helper/claw-trade-apply-update" || fail "apply helper missing report lock contract"
+grep -q '/opt/claw-trade/data-work-active.lock' "${ROOT_DIR}/root-helper/claw-trade-apply-update" || fail "apply helper missing data work lock contract"
 grep -q '/opt/claw-trade/host-operations.lock' "${ROOT_DIR}/root-helper/claw-trade-watchdog" || fail "watchdog helper missing host lock contract"
 grep -q '/opt/claw-trade/report-active.lock' "${ROOT_DIR}/root-helper/claw-trade-watchdog" || fail "watchdog helper missing report lock contract"
 grep -q '^RuntimeDirectory=claw-trade-watchdog$' "${ROOT_DIR}/systemd/claw-trade-watchdog.service" || fail "watchdog unit missing runtime directory contract"

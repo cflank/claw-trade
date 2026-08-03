@@ -583,6 +583,7 @@ function runPythonJson(args, payload, options = {}) {
     let timeoutTimer;
     let forceKillTimer;
     let timeoutFallbackTimer;
+    let abortListener;
     function complete(result) {
       if (completed) {
         return;
@@ -596,6 +597,9 @@ function runPythonJson(args, payload, options = {}) {
       }
       if (timeoutFallbackTimer) {
         clearTimeout(timeoutFallbackTimer);
+      }
+      if (abortListener && options.signal) {
+        options.signal.removeEventListener("abort", abortListener);
       }
       resolve(result);
     }
@@ -662,32 +666,50 @@ function runPythonJson(args, payload, options = {}) {
     child.stdin.on("error", (error) => {
       appendStderr(`stdin write failed: ${error.message}`);
     });
-    let timedOut = false;
-    function timeoutResult() {
+    let stopReason;
+    function stoppedResult() {
+      const exitCode = stopReason === "timeout" ? 124 : 130;
+      const message = stopReason === "timeout"
+        ? `process timed out after ${timeoutMs}ms`
+        : "process aborted";
       return {
-        exitCode: 124,
+        exitCode,
         stdout,
-        stderr: `${stderr}\nprocess timed out after ${timeoutMs}ms`.trim(),
+        stderr: `${stderr}\n${message}`.trim(),
         parsed: undefined,
       };
     }
-    timeoutTimer = setTimeout(() => {
-      timedOut = true;
+    function stopChild(reason) {
+      if (stopReason) {
+        return;
+      }
+      stopReason = reason;
       terminateSpawnedProcess(child, "SIGTERM");
       forceKillTimer = setTimeout(() => {
         terminateSpawnedProcess(child, "SIGKILL");
-        timeoutFallbackTimer = setTimeout(() => complete(timeoutResult()), SUBPROCESS_TIMEOUT_CLOSE_GRACE_MS);
+        timeoutFallbackTimer = setTimeout(() => complete(stoppedResult()), SUBPROCESS_TIMEOUT_CLOSE_GRACE_MS);
         timeoutFallbackTimer.unref?.();
       }, SUBPROCESS_FORCE_KILL_GRACE_MS);
       forceKillTimer.unref?.();
+    }
+    timeoutTimer = setTimeout(() => {
+      stopChild("timeout");
     }, timeoutMs);
     timeoutTimer?.unref?.();
+    if (options.signal) {
+      abortListener = () => stopChild("abort");
+      if (options.signal.aborted) {
+        abortListener();
+      } else {
+        options.signal.addEventListener("abort", abortListener, { once: true });
+      }
+    }
     child.on("close", (exitCode) => {
       complete({
-        exitCode: timedOut ? 124 : exitCode ?? 1,
+        exitCode: stopReason === "timeout" ? 124 : stopReason === "abort" ? 130 : exitCode ?? 1,
         stdout,
-        stderr: timedOut ? timeoutResult().stderr : stderr,
-        parsed: timedOut ? undefined : parseJsonFromStdout(stdout),
+        stderr: stopReason ? stoppedResult().stderr : stderr,
+        parsed: stopReason ? undefined : parseJsonFromStdout(stdout),
       });
     });
     if (payload !== undefined) {
@@ -916,11 +938,11 @@ function dataNeedScriptConfig() {
       [
         "import json, sys",
         "try:",
-        "    from claw_trade.reports.data_need_bridge import run_claw_request_data",
+        "    from claw_trade.reports.data_need_bridge import compact_claw_request_data_result, run_claw_request_data",
         "    payload = json.load(sys.stdin)",
         "    tool_input = dict(payload.get('tool_input') or {})",
         "    runtime_context = dict(payload.get('runtime_context') or {})",
-        "    result = run_claw_request_data(tool_input, runtime_context)",
+        "    result = compact_claw_request_data_result(run_claw_request_data(tool_input, runtime_context))",
         "except Exception as exc:",
         "    print(json.dumps({'ok': False, 'error': {'code': 'data_need_runtime_blocked', 'message': '数据层运行时未能完成本次数据请求', 'audit_message': str(exc)}, 'model_visible_text': '数据层运行时未能完成本次数据请求；不要补写不存在的数据结果。'}, ensure_ascii=False, default=str))",
         "    raise SystemExit(0)",
@@ -937,7 +959,7 @@ const TOOL_CONFIG_FACTORIES = Object.freeze({
   [TOOL_NAMES.clawRequestData]: () => dataNeedScriptConfig(),
 });
 
-async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
+async function executeFrontlineTool(ctx, params, toolName, toolCallId, signal) {
   const configFactory = TOOL_CONFIG_FACTORIES[toolName];
   if (!configFactory) {
     return toolErrorResult(TOOL_ERROR_CODES.protocolError, `unknown tool config: ${toolName}`, { tool_name: toolName });
@@ -955,6 +977,7 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   const result = await runPythonJson(config.args, payload, {
     pythonPathDirs: config.pythonPathDirs,
     timeoutMs,
+    signal,
   });
   if (result.exitCode === 124) {
     return subprocessTimeoutError(toolName, runtime, timeoutMs, result.stderr);
@@ -965,21 +988,22 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId) {
   return toolResult(result.parsed, shouldMarkToolResultAsError(result.parsed));
 }
 
-async function runFrontlineDataTool(ctx, params, toolName, expectedWorkerId, toolCallId) {
+async function runFrontlineDataTool(ctx, params, toolName, expectedWorkerId, toolCallId, signal) {
   try {
-    return await executeFrontlineTool(ctx, params, toolName, toolCallId);
+    return await executeFrontlineTool(ctx, params, toolName, toolCallId, signal);
   } catch (error) {
     return runtimeErrorToResult(toolName, expectedWorkerId, error);
   }
 }
 
-async function runClawRequestData(ctx, params, toolCallId) {
+async function runClawRequestData(ctx, params, toolCallId, signal) {
   return runFrontlineDataTool(
     ctx,
     params,
     TOOL_NAMES.clawRequestData,
     undefined,
     toolCallId,
+    signal,
   );
 }
 
@@ -990,8 +1014,8 @@ function registerFrontlineTool(api, name, description, execute, parameters = DAT
       label: name,
       description,
       parameters,
-      async execute(_id, params) {
-        return execute(ctx, params, _id);
+      async execute(_id, params, signal) {
+        return execute(ctx, params, _id, signal);
       },
     }),
     { name, optional: true },

@@ -39,10 +39,31 @@ from claw_trade.reports.data_need_bridge import (
     _row_summary,
     _should_build_crypto_lens,
     _should_build_market_chart,
+    compact_claw_request_data_result,
     run_claw_request_data,
     run_report_data_prefetch,
 )
 from claw_trade.reports.data_evidence_summary import summarize_report_data_need_results, summarize_report_prefetch_manifest
+
+
+def test_compact_claw_request_data_result_keeps_summary_and_drops_full_rows() -> None:
+    payload = compact_claw_request_data_result(
+        {
+            "ok": True,
+            "status": "ready",
+            "model_visible_text": "已返回数据摘要",
+            "data_need_evidence_paths": ("runs/run-1/data.json",),
+            "data_results": ({"rows": [{"close": 1}]},),
+            "provider_attempts": ({"response": "large"},),
+        }
+    )
+
+    assert payload == {
+        "ok": True,
+        "status": "ready",
+        "model_visible_text": "已返回数据摘要",
+        "data_need_evidence_paths": ("runs/run-1/data.json",),
+    }
 
 
 def _internal_need_from_public_request(value: object) -> DataNeed:

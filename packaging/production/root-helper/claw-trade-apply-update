@@ -34,6 +34,7 @@ HOST_HELPER_PATH = Path("/usr/local/lib/claw-trade/claw-trade-apply-update")
 WATCHDOG_HELPER_PATH = Path("/usr/local/lib/claw-trade/claw-trade-watchdog")
 HOST_OPERATION_LOCK_PATH = Path("/opt/claw-trade/host-operations.lock")
 REPORT_ACTIVE_LOCK_PATH = Path("/opt/claw-trade/report-active.lock")
+DATA_WORK_ACTIVE_LOCK_PATH = Path("/opt/claw-trade/data-work-active.lock")
 PRODUCTION_GROUP = "clawtrade"
 ROOT_UID = 0
 SYSTEMD_DIR = Path("/etc/systemd/system")
@@ -152,7 +153,13 @@ def host_operation_lock():
         fcntl.flock(host_fd, fcntl.LOCK_EX)
         report_fd = open_verified_lock(REPORT_ACTIVE_LOCK_PATH)
         try:
-            yield
+            ensure_lock_file(DATA_WORK_ACTIVE_LOCK_PATH)
+            data_work_fd = open_verified_lock(DATA_WORK_ACTIVE_LOCK_PATH)
+            try:
+                fcntl.flock(data_work_fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                os.close(data_work_fd)
         finally:
             os.close(report_fd)
     finally:
@@ -191,6 +198,29 @@ def open_verified_lock(path: Path) -> int:
         return fd
     finally:
         os.close(parent_fd)
+
+
+def ensure_lock_file(path: Path) -> None:
+    if path.is_symlink():
+        raise ValueError(f"锁文件不能是符号链接：{path}")
+    if not path.exists():
+        try:
+            group_gid = grp.getgrnam(PRODUCTION_GROUP).gr_gid
+            fd = os.open(
+                path,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+                0o660,
+            )
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise ValueError(f"无法创建锁文件：{path}") from exc
+        else:
+            try:
+                os.fchown(fd, ROOT_UID, group_gid)
+                os.fchmod(fd, 0o660)
+            finally:
+                os.close(fd)
 
 
 def acquire_apply_lock(lock_path: Path) -> None:

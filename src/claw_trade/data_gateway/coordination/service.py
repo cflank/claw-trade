@@ -29,6 +29,11 @@ from claw_trade.data_gateway.official_catalog import iter_official_catalog_endpo
 from claw_trade.data_gateway.planner import plan_public_data_requests
 from claw_trade.data_gateway.public_api import PublicDataRequest, public_output_contract_for_api
 from claw_trade.instruments.resolver import InstrumentResolveError, resolve_crypto_provider_symbols
+from claw_trade.production.data_work_lock import (
+    data_work_lock_enabled,
+    data_work_lock_exclusive_held,
+    hold_data_work_lock,
+)
 
 _LOGGER = logging.getLogger("uvicorn.error")
 _DATA_NEED_LEASE_TTL_SECONDS = 30
@@ -127,6 +132,15 @@ class DataService:
         self.rate_limit_policy_resolver = rate_limit_policy_resolver
 
     def read_warehouse_batch(self, requests: Sequence[DataRequest]) -> list[DataResult]:
+        normalized_input = tuple(requests)
+        if data_work_lock_enabled() and any(
+            str(request.consumer).strip().lower() != "report" for request in normalized_input
+        ):
+            with hold_data_work_lock(exclusive=False, blocking=True):
+                return self._read_warehouse_batch_unlocked(normalized_input)
+        return self._read_warehouse_batch_unlocked(normalized_input)
+
+    def _read_warehouse_batch_unlocked(self, requests: Sequence[DataRequest]) -> list[DataResult]:
         query_plan = self.query_planner.validate_and_normalize_many(requests)
         normalized_requests = query_plan.normalized_requests
         if not normalized_requests:
@@ -147,6 +161,12 @@ class DataService:
         ordered_requests = tuple(requests)
         if not ordered_requests:
             return []
+        if data_work_lock_enabled() and any(request.consumer.strip().lower() != "report" for request in ordered_requests):
+            with hold_data_work_lock(exclusive=False, blocking=True):
+                return self._request_data_unlocked(ordered_requests)
+        return self._request_data_unlocked(ordered_requests)
+
+    def _request_data_unlocked(self, ordered_requests: tuple[PublicDataRequest, ...]) -> list[DataResult]:
         now = datetime.now(tz=UTC)
         plan = plan_public_data_requests(ordered_requests)
         policies = {call.rate_limit_bucket: self._data_need_rate_limit_policy(call) for call in plan.planned_calls}
@@ -257,7 +277,11 @@ class DataService:
         if not missing or resolved_market != Market.CN_A:
             return names
 
-        names.update(self._resolve_company_names_from_data_needs(resolved_market=resolved_market, symbols=missing))
+        if data_work_lock_enabled() and not data_work_lock_exclusive_held():
+            with hold_data_work_lock(exclusive=False, blocking=True):
+                names.update(self._resolve_company_names_from_data_needs(resolved_market=resolved_market, symbols=missing))
+        else:
+            names.update(self._resolve_company_names_from_data_needs(resolved_market=resolved_market, symbols=missing))
         return names
 
     def _resolve_company_names_from_data_needs(self, *, resolved_market: Market, symbols: Sequence[str]) -> dict[str, str]:

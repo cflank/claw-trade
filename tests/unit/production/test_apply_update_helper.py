@@ -25,17 +25,20 @@ ROOT = Path(__file__).resolve().parents[3]
 HELPER = ROOT / "packaging" / "production" / "root-helper" / "claw-trade-apply-update"
 TEST_LOCK_PATH_ENV = "CLAW_TRADE_TEST_HOST_OPERATION_LOCK_PATH"
 TEST_REPORT_LOCK_PATH_ENV = "CLAW_TRADE_TEST_REPORT_ACTIVE_LOCK_PATH"
+TEST_DATA_WORK_LOCK_PATH_ENV = "CLAW_TRADE_TEST_DATA_WORK_LOCK_PATH"
 
 
 @pytest.fixture(autouse=True)
 def isolated_host_operation_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     host_lock = tmp_path / "host-operations.lock"
     report_lock = tmp_path / "report-active.lock"
-    for path in (host_lock, report_lock):
+    data_work_lock = tmp_path / "data-work-active.lock"
+    for path in (host_lock, report_lock, data_work_lock):
         path.touch(mode=0o660)
         path.chmod(0o660)
     monkeypatch.setenv(TEST_LOCK_PATH_ENV, str(host_lock))
     monkeypatch.setenv(TEST_REPORT_LOCK_PATH_ENV, str(report_lock))
+    monkeypatch.setenv(TEST_DATA_WORK_LOCK_PATH_ENV, str(data_work_lock))
 
 
 def test_apply_update_helper_switches_current_after_health_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,7 +312,13 @@ def test_apply_locks_host_before_opening_report_lock(monkeypatch: pytest.MonkeyP
     with module.host_operation_lock():
         pass
 
-    assert events == ["open:host-operations.lock", "flock:host", "open:report-active.lock"]
+    assert events == [
+        "open:host-operations.lock",
+        "flock:host",
+        "open:report-active.lock",
+        "open:data-work-active.lock",
+        "flock:host",
+    ]
 
 
 def test_apply_rejects_missing_report_lock_without_creating_it(tmp_path: Path) -> None:
@@ -320,6 +329,17 @@ def test_apply_rejects_missing_report_lock_without_creating_it(tmp_path: Path) -
         module.run(install_root=tmp_path, request_path=tmp_path / "apply-request.json")
 
     assert module.REPORT_ACTIVE_LOCK_PATH.exists() is False
+
+
+def test_apply_migrates_missing_data_work_lock() -> None:
+    module = _load_helper()
+    module.DATA_WORK_ACTIVE_LOCK_PATH.unlink()
+
+    with module.host_operation_lock():
+        pass
+
+    assert module.DATA_WORK_ACTIVE_LOCK_PATH.exists()
+    assert module.DATA_WORK_ACTIVE_LOCK_PATH.stat().st_mode & 0o777 == 0o660
 
 
 def test_install_host_files_copies_units_and_restores_enabled_active_timer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -568,6 +588,7 @@ def _load_helper() -> ModuleType:
     loader.exec_module(module)
     module.HOST_OPERATION_LOCK_PATH = Path(os.environ[TEST_LOCK_PATH_ENV])
     module.REPORT_ACTIVE_LOCK_PATH = Path(os.environ[TEST_REPORT_LOCK_PATH_ENV])
+    module.DATA_WORK_ACTIVE_LOCK_PATH = Path(os.environ[TEST_DATA_WORK_LOCK_PATH_ENV])
     module.ROOT_UID = os.getuid()
     module.PRODUCTION_GROUP = grp.getgrgid(os.getgid()).gr_name
     return module

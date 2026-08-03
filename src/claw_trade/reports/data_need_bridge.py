@@ -132,6 +132,41 @@ def run_claw_request_data(tool_input: Mapping[str, Any], runtime_context: Mappin
         return _run_claw_request_data_uncached(tool_input=tool_input, runtime_context=runtime_context)
 
 
+_COMPACT_DATA_NEED_RESULT_KEYS = frozenset(
+    {
+        "ok",
+        "status",
+        "need_domain",
+        "need_satisfied",
+        "planned_calls_count",
+        "scheduled_calls_count",
+        "refs",
+        "gaps",
+        "provider_attempts_summary",
+        "merge_evidence",
+        "rate_limit_evidence",
+        "chart_status",
+        "chart_files",
+        "chart_error",
+        "technical_analysis",
+        "crypto_lens_status",
+        "crypto_lens_analysis",
+        "crypto_lens_evidence_paths",
+        "crypto_lens_local_technical_analysis",
+        "model_visible_text",
+        "readable_summary",
+        "latest_value_summary",
+        "data_need_evidence_paths",
+        "tool_input",
+        "error",
+    }
+)
+
+
+def compact_claw_request_data_result(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in _COMPACT_DATA_NEED_RESULT_KEYS if key in payload}
+
+
 def _cached_data_need_tool_result_for_request(
     *,
     tool_input: Mapping[str, Any],

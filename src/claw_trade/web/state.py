@@ -39,6 +39,7 @@ from claw_trade.data_gateway.runtime import (
     build_data_api_from_env,
     build_data_gateway_runtime_from_env,
 )
+from claw_trade.production.data_work_lock import data_work_lock_enabled, hold_data_work_lock
 from claw_trade.data_gateway.selection_api import (
     build_selection_data_need_audit,
     fetch_selection_batch_from_data_gateway,
@@ -218,6 +219,9 @@ class _ControlWorkflowRunner:
                     failure_reason="user_cancelled",
                 )
                 runner.store.save_state(cancelled)
+                cancel_openclaw = getattr(getattr(runner, "openclaw", None), "cancel_run", None)
+                if callable(cancel_openclaw):
+                    cancel_openclaw(run_id)
             return self.run_has_exited(run_id)
         except Exception as exc:
             raise RuntimeError("assistant_unavailable") from exc
@@ -339,6 +343,32 @@ class _LazyDataMaintenanceRunner:
         cron_run_id: str | None,
         maintenance_job_id: str | None,
         ignore_cached_empty: bool = False,
+    ) -> object:
+        if data_work_lock_enabled():
+            with hold_data_work_lock(exclusive=False, blocking=True):
+                return self._run_unlocked(
+                    market=market,
+                    job_kind=job_kind,
+                    cron_run_id=cron_run_id,
+                    maintenance_job_id=maintenance_job_id,
+                    ignore_cached_empty=ignore_cached_empty,
+                )
+        return self._run_unlocked(
+            market=market,
+            job_kind=job_kind,
+            cron_run_id=cron_run_id,
+            maintenance_job_id=maintenance_job_id,
+            ignore_cached_empty=ignore_cached_empty,
+        )
+
+    def _run_unlocked(
+        self,
+        *,
+        market: str,
+        job_kind: str,
+        cron_run_id: str | None,
+        maintenance_job_id: str | None,
+        ignore_cached_empty: bool,
     ) -> object:
         return self._require_runner().run(
             market=market,

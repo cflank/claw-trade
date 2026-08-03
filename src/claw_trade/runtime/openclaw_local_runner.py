@@ -4,10 +4,12 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib import error, parse, request
 
@@ -17,9 +19,46 @@ from claw_trade.runtime.node_runtime import resolve_openclaw_node_bin
 _DEFAULT_GATEWAY_WS_URL = "ws://127.0.0.1:18789"
 _DEFAULT_TIMEOUT_MS = 10_000
 _METHOD_RUN_SINGLE_WORKER = "agent.runSingleWorker"
+_METHOD_SESSIONS_ABORT = "sessions.abort"
 _GATEWAY_PARAMS_ARG_BYTE_LIMIT = 60_000
 _PAIRING_REQUEST_ID_RE = re.compile(r"requestId:\s*(?P<request_id>[0-9a-fA-F-]{16,})")
 _RUN_SINGLE_WORKER_SCOPES = ("operator.read", "operator.write")
+
+
+def _payload_call_id(payload: dict[str, object]) -> str | None:
+    for key in ("openclaw_run_id", "call_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _terminate_process_group(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+    except (OSError, ProcessLookupError):
+        return
+    try:
+        process.wait(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except (OSError, ProcessLookupError):
+        return
+    try:
+        process.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def create_default_runner() -> OpenClawLocalRunner:
@@ -54,6 +93,10 @@ class OpenClawLocalRunner:
     gateway_call_bin: str = "openclaw"
     state_dir: str | None = None
     config_path: str | None = None
+    _active_calls: dict[str, subprocess.Popen[str]] = field(default_factory=dict, init=False, repr=False)
+    _pending_calls: set[str] = field(default_factory=set, init=False, repr=False)
+    _cancel_requested_calls: set[str] = field(default_factory=set, init=False, repr=False)
+    _active_calls_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def probe(self) -> ProbeResult:
         health_ok, health_reason = self._probe_health()
@@ -68,12 +111,67 @@ class OpenClawLocalRunner:
     def run_worker(self, payload: dict[str, object]) -> dict[str, object]:
         if not isinstance(payload, dict):
             raise TypeError("payload 必须是 dict")
-        result = self._call_gateway(_METHOD_RUN_SINGLE_WORKER, {"command": payload})
+        call_id = _payload_call_id(payload)
+        if call_id:
+            with self._active_calls_lock:
+                if call_id in self._cancel_requested_calls:
+                    self._cancel_requested_calls.discard(call_id)
+                    raise RuntimeError("OpenClaw worker 在启动前已取消")
+                self._pending_calls.add(call_id)
+        try:
+            result = self._call_gateway(
+                _METHOD_RUN_SINGLE_WORKER,
+                {"command": payload},
+                active_call_id=call_id,
+            )
+        except Exception:
+            if call_id:
+                with self._active_calls_lock:
+                    cancellation_already_requested = call_id in self._cancel_requested_calls
+                if not cancellation_already_requested:
+                    self.cancel_worker(call_id)
+            raise
+        finally:
+            if call_id:
+                with self._active_calls_lock:
+                    self._pending_calls.discard(call_id)
+                    self._cancel_requested_calls.discard(call_id)
         if isinstance(result, dict) and isinstance(result.get("payload"), dict):
             result = result["payload"]
         if not isinstance(result, dict):
             raise RuntimeError(f"gateway 返回值不是 object: {type(result).__name__}")
         return dict(result)
+
+    def cancel_worker(self, call_id: str) -> bool:
+        normalized = str(call_id).strip()
+        if not normalized:
+            return False
+        with self._active_calls_lock:
+            process = self._active_calls.get(normalized)
+            self._cancel_requested_calls.add(normalized)
+        if process is not None:
+            _terminate_process_group(process)
+        abort_ok = False
+        try:
+            result = self._call_gateway(
+                _METHOD_SESSIONS_ABORT,
+                {"runId": normalized},
+                timeout_ms=min(self.timeout_ms, 10_000),
+            )
+            if isinstance(result, dict) and isinstance(result.get("payload"), dict):
+                result = result["payload"]
+            abort_ok = (
+                isinstance(result, dict)
+                and result.get("ok") is True
+                and (
+                    result.get("abortedRunId") == normalized
+                    or result.get("status") == "no-active-run"
+                )
+            )
+        except Exception:
+            # The process-group kill below is still required when the gateway is unavailable.
+            abort_ok = False
+        return abort_ok
 
     def _probe_health(self) -> tuple[bool, str | None]:
         health_url = _health_url_from_ws(self.gateway_ws_url, self.gateway_health_path)
@@ -109,7 +207,15 @@ class OpenClawLocalRunner:
                 return True, None
             return False, f"gateway method 探测失败: {exc}"
 
-    def _call_gateway(self, method: str, params: dict[str, object]) -> object:
+    def _call_gateway(
+        self,
+        method: str,
+        params: dict[str, object],
+        *,
+        active_call_id: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> object:
+        call_timeout_ms = self.timeout_ms if timeout_ms is None else max(int(timeout_ms), 1)
         params_json = json.dumps(params, ensure_ascii=False)
         params_file: str | None = None
         command = [
@@ -120,10 +226,12 @@ class OpenClawLocalRunner:
         ]
         if method == _METHOD_RUN_SINGLE_WORKER:
             command.extend(["--scope", "operator.read", "--scope", "operator.write"])
+        elif method == _METHOD_SESSIONS_ABORT:
+            command.extend(["--scope", "operator.write"])
         # 默认本机地址且无显式凭证时，不传 --url，避免触发 OpenClaw 的 URL override 凭证门禁。
         if self.gateway_ws_url != _DEFAULT_GATEWAY_WS_URL or self.token or self.password:
             command.extend(["--url", self.gateway_ws_url])
-        command.extend(["--timeout", str(self.timeout_ms)])
+        command.extend(["--timeout", str(call_timeout_ms)])
         if len(params_json.encode("utf-8")) > _GATEWAY_PARAMS_ARG_BYTE_LIMIT:
             with tempfile.NamedTemporaryFile(
                 "w",
@@ -152,16 +260,12 @@ class OpenClawLocalRunner:
             child_env["OPENCLAW_CONFIG_PATH"] = self.config_path
 
         try:
-            try:
-                completed = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    env=child_env,
-                )
-            except OSError as exc:
-                raise RuntimeError(f"gateway CLI 执行失败: {exc}") from exc
+            completed = self._run_gateway_process(
+                command,
+                child_env,
+                active_call_id=active_call_id,
+                timeout_ms=call_timeout_ms,
+            )
             if completed.returncode != 0:
                 detail = completed.stderr.strip() or completed.stdout.strip() or f"exit={completed.returncode}"
                 if method == _METHOD_RUN_SINGLE_WORKER and _try_approve_local_scope_upgrade(
@@ -169,12 +273,11 @@ class OpenClawLocalRunner:
                     state_dir=_resolve_openclaw_state_dir(child_env),
                     requested_scopes=_RUN_SINGLE_WORKER_SCOPES,
                 ):
-                    completed = subprocess.run(
+                    completed = self._run_gateway_process(
                         command,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        env=child_env,
+                        child_env,
+                        active_call_id=active_call_id,
+                        timeout_ms=call_timeout_ms,
                     )
                     if completed.returncode == 0:
                         stdout = completed.stdout.strip()
@@ -196,6 +299,64 @@ class OpenClawLocalRunner:
         finally:
             if params_file:
                 Path(params_file).unlink(missing_ok=True)
+
+    def _run_gateway_process(
+        self,
+        command: list[str],
+        child_env: dict[str, str],
+        *,
+        active_call_id: str | None,
+        timeout_ms: int,
+    ) -> subprocess.CompletedProcess[str]:
+        if not active_call_id:
+            try:
+                return subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=child_env,
+                    timeout=max(timeout_ms / 1000.0, 0.1),
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(f"gateway CLI 超时（{timeout_ms}ms）") from exc
+            except OSError as exc:
+                raise RuntimeError(f"gateway CLI 执行失败: {exc}") from exc
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=child_env,
+                start_new_session=(os.name == "posix"),
+            )
+        except OSError as exc:
+            raise RuntimeError(f"gateway CLI 执行失败: {exc}") from exc
+        with self._active_calls_lock:
+            if active_call_id in self._cancel_requested_calls:
+                cancelled_before_register = True
+            else:
+                cancelled_before_register = False
+                self._active_calls[active_call_id] = process
+        if cancelled_before_register:
+            _terminate_process_group(process)
+            raise RuntimeError("OpenClaw worker 在启动时已取消")
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=max(timeout_ms / 1000.0 + 2.0, 3.0))
+            except subprocess.TimeoutExpired as exc:
+                _terminate_process_group(process)
+                stdout, stderr = process.communicate()
+                detail = stderr.strip() or stdout.strip() or ""
+                suffix = f": {detail}" if detail else ""
+                raise RuntimeError(f"gateway CLI 超时（{timeout_ms}ms）{suffix}") from exc
+            return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        finally:
+            with self._active_calls_lock:
+                if self._active_calls.get(active_call_id) is process:
+                    self._active_calls.pop(active_call_id, None)
 
 
 def _normalize_gateway_ws_url(raw: str) -> str:

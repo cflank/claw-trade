@@ -48,6 +48,7 @@ from claw_trade.selection.models import (
     SelectionRunPlan,
 )
 from claw_trade.selection.store import SelectionDataRunRecord, SelectionRunStore
+from claw_trade.production.data_work_lock import data_work_lock_enabled, hold_data_work_lock
 from claw_trade.selection.strategy_config import (
     CN_A_SELECTION_V1_STRATEGY_CONFIG_VERSION,
     CN_A_SELECTION_V1_WEIGHT_VERSION,
@@ -163,6 +164,12 @@ class SelectionDataJob:
         )
 
     def run(self, plan: SelectionRunPlan) -> SelectionDataJobExecution:
+        if data_work_lock_enabled():
+            with hold_data_work_lock(exclusive=False, blocking=True):
+                return self._run_unlocked(plan)
+        return self._run_unlocked(plan)
+
+    def _run_unlocked(self, plan: SelectionRunPlan) -> SelectionDataJobExecution:
         provider_attempt_refs: tuple[str, ...] = ()
         normalized_refs: tuple[str, ...] = ()
         warehouse_check_ref: str | None = None

@@ -299,7 +299,7 @@ try:
     parent = os.fstat(parent_fd)
     if parent.st_uid != 0 or parent.st_mode & 0o022:
         raise SystemExit(f"unsafe lock parent ownership or mode: {root}")
-    for name in ("host-operations.lock", "report-active.lock"):
+    for name in ("host-operations.lock", "report-active.lock", "data-work-active.lock"):
         flags = os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW
         try:
             fd = os.open(name, flags, dir_fd=parent_fd)

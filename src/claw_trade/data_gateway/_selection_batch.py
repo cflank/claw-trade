@@ -48,6 +48,7 @@ from claw_trade.data_gateway.warehouse.selection_columnar import (
 )
 from claw_trade.data_gateway.warehouse.trading_calendar import is_expected_daily_date
 from claw_trade.data_gateway.warehouse.warehouse import _source_role_rank
+from claw_trade.production.data_work_lock import data_work_lock_enabled, hold_data_work_lock
 from claw_trade.selection.data_job import SelectionDataFetchProgress, SelectionDataNeedResult
 from claw_trade.selection.engine import ApprovedSelectionStrategy
 from claw_trade.selection.features import (
@@ -290,6 +291,26 @@ def build_selection_data_need_audit(
 
 
 def fetch_selection_batch_from_data_gateway(
+    plan: SelectionRunPlan,
+    *,
+    evidence_root: Path | None = None,
+    progress_callback: Callable[[SelectionDataFetchProgress], None] | None = None,
+) -> SelectionDataNeedResult:
+    if data_work_lock_enabled():
+        with hold_data_work_lock(exclusive=False, blocking=True):
+            return _fetch_selection_batch_from_data_gateway_unlocked(
+                plan,
+                evidence_root=evidence_root,
+                progress_callback=progress_callback,
+            )
+    return _fetch_selection_batch_from_data_gateway_unlocked(
+        plan,
+        evidence_root=evidence_root,
+        progress_callback=progress_callback,
+    )
+
+
+def _fetch_selection_batch_from_data_gateway_unlocked(
     plan: SelectionRunPlan,
     *,
     evidence_root: Path | None = None,

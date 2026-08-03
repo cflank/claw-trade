@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 from claw_trade.artifacts.refs import (
@@ -375,6 +376,58 @@ def test_run_worker_sends_command_payload_to_runner(tmp_path: Path) -> None:
     first_cap = sent["openviking_read_capabilities"][0]  # type: ignore[index]
     assert first_cap["allowed_l2_index_sha256"] == "sha-l2-index"
     assert sent["system_context_policy"] == "single_worker_minimal"
+    assert sent["openclaw_run_id"] == command.call_id
+
+
+def test_cancel_run_delegates_to_the_active_worker_call(tmp_path: Path) -> None:
+    call = _valid_call(evidence_dir=tmp_path / "evidence")
+    command = build_openclaw_command(call)
+    started = Event()
+    release = Event()
+    cancelled: list[str] = []
+
+    class _BlockingRunner(_FakeRunner):
+        def run_worker(self, payload: dict[str, object]) -> dict[str, object]:
+            self.last_payload = payload
+            started.set()
+            release.wait(timeout=2)
+            return {"status": "failed", "failure_reason": "cancelled"}
+
+        def cancel_worker(self, call_id: str) -> bool:
+            cancelled.append(call_id)
+            release.set()
+            return True
+
+    runner = _BlockingRunner(payload={"status": "failed", "failure_reason": "unused"})
+    client = OpenClawClient(runner=runner)
+    result_holder: list[OpenClawResult] = []
+    thread = Thread(target=lambda: result_holder.append(client.run_worker(command)))
+    thread.start()
+    assert started.wait(timeout=1)
+
+    assert client.cancel_run(command.run_id) is True
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert cancelled == [command.call_id]
+    assert result_holder[0].status == "failed"
+
+
+def test_cancel_run_marks_pending_run_before_worker_registration(tmp_path: Path) -> None:
+    call = _valid_call(evidence_dir=tmp_path / "evidence")
+    command = build_openclaw_command(call)
+
+    class _UnexpectedRunner(_FakeRunner):
+        def run_worker(self, payload: dict[str, object]) -> dict[str, object]:
+            raise AssertionError(f"cancelled worker was dispatched: {payload}")
+
+    client = OpenClawClient(runner=_UnexpectedRunner(payload={"status": "failed"}))
+
+    assert client.cancel_run(command.run_id) is False
+    result = client.run_worker(command)
+
+    assert result.status == "failed"
+    assert result.failure_reason is not None
+    assert "未启动" in result.failure_reason
 
 
 def test_probe_delegates_to_runner() -> None:

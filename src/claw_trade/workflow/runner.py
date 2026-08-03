@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
+from time import sleep
 from typing import Any, Callable, Protocol
 
 from claw_trade.artifacts.approval import approve_worker_material
@@ -28,6 +29,7 @@ from claw_trade.guards.provider_request import validate_provider_request
 from claw_trade.guards.tool_calls import validate_tool_calls
 from claw_trade.guards.visible_tools import validate_visible_tools
 from claw_trade.guards.workspace_evidence import validate_workspace_evidence
+from claw_trade.production.data_work_lock import data_work_lock_enabled, hold_data_work_lock
 from claw_trade.reports.data_evidence_summary import summarize_report_data_need_results
 from claw_trade.reports.structure import remove_missing_data_meta_lines, validate_report_polisher_segment_text
 from claw_trade.runtime.evidence_reader import (
@@ -70,6 +72,8 @@ class OpenClawClientLike(Protocol):
     def probe(self) -> object: ...
 
     def run_worker(self, command: object) -> OpenClawResult: ...
+
+    def cancel_run(self, run_id: str) -> bool: ...
 
 
 class OpenVikingClientLike(Protocol):
@@ -270,11 +274,28 @@ class ControlRunner:
         return failed
 
     def run(self, request: RunRequest) -> WorkflowState:
-        boot = self.boot(request)
-        if not boot.ok:
-            return self.fail_before_run(request, boot)
+        if request.entry_point == WorkflowEntryPoint.REPORT_COMMAND:
+            boot = self.boot(request)
+            if not boot.ok:
+                return self.fail_before_run(request, boot)
+            initial_state = self.store.create_run(request)
+            try:
+                current = self.store.load_state(initial_state.run_id)
+                if current.status == RunStatus.CANCELLED:
+                    return current
+                return self._run_unlocked(request, state=initial_state)
+            finally:
+                release_run = getattr(self.openclaw, "release_run", None)
+                if callable(release_run):
+                    release_run(initial_state.run_id)
+        return self._run_unlocked(request)
 
-        state = self.store.create_run(request)
+    def _run_unlocked(self, request: RunRequest, *, state: WorkflowState | None = None) -> WorkflowState:
+        if state is None:
+            boot = self.boot(request)
+            if not boot.ok:
+                return self.fail_before_run(request, boot)
+            state = self.store.create_run(request)
         run_plan_failure = self._initialize_report_run_plan(state)
         if run_plan_failure is not None:
             return self.fail_run(
@@ -505,7 +526,10 @@ class ControlRunner:
         return self.fail_run(state, failure, decision_path)
 
     def _cancelled_state_if_requested(self, run_id: str) -> WorkflowState | None:
-        current = self.store.load_state(run_id)
+        try:
+            current = self.store.load_state(run_id)
+        except FileNotFoundError:
+            return None
         return current if current.status == RunStatus.CANCELLED else None
 
     def export_final_report(self, state: WorkflowState, manifest: ApprovedManifest) -> ExportResult:
@@ -536,9 +560,42 @@ class ControlRunner:
         return result
 
     def run_stage_batch(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
+        if (
+            state.request.entry_point == WorkflowEntryPoint.REPORT_COMMAND
+            and batch.stage == Stage.FRONTLINE
+            and data_work_lock_enabled()
+        ):
+            while True:
+                try:
+                    with hold_data_work_lock(exclusive=True, blocking=False):
+                        return self._run_stage_batch_unlocked(state, batch)
+                except BlockingIOError:
+                    if self._cancelled_state_if_requested(batch.run_id) is not None:
+                        return self._cancelled_stage_batch_result(batch)
+                    sleep(0.1)
+        return self._run_stage_batch_unlocked(state, batch)
+
+    def _run_stage_batch_unlocked(self, state: WorkflowState, batch: StageBatch) -> StageBatchResult:
         if self._should_run_stage_batch_concurrently(state, batch):
             return self._run_stage_batch_concurrent(state, batch)
         return self._run_stage_batch_serial(state, batch)
+
+    def _cancelled_stage_batch_result(self, batch: StageBatch) -> StageBatchResult:
+        report_path = self.write_collect_first_report(
+            batch=batch,
+            results=[],
+            failures=[],
+            early_stop_used=False,
+            early_stop_failures=(),
+        )
+        return StageBatchResult(
+            run_id=batch.run_id,
+            stage=batch.stage,
+            worker_results=(),
+            failures=(),
+            early_stop_used=False,
+            collect_first_report_path=report_path,
+        )
 
     def _should_run_stage_batch_concurrently(self, state: WorkflowState, batch: StageBatch) -> bool:
         return (
@@ -557,6 +614,8 @@ class ControlRunner:
         batch_manifest = self.manifest_store.load(batch.run_id)
         # collect-first 语义在这里执行：同阶段可恢复失败继续收集，命中早停类再中止。
         for spec in _batch_call_specs(batch, batch_manifest):
+            if self._cancelled_state_if_requested(batch.run_id) is not None:
+                break
             worker_id = spec.worker_id
             turn_index = spec.turn_index
             round_index = spec.round_index
@@ -606,6 +665,8 @@ class ControlRunner:
                     spec.section_plan.instruction,
                 )
             call = _with_report_data_evidence_summary(call, state)
+            if self._cancelled_state_if_requested(batch.run_id) is not None:
+                break
             result = self.run_single_worker(call)
             self.store.save_worker_result(result)
             worker_results.append(result)
@@ -723,6 +784,8 @@ class ControlRunner:
         prepared_calls: list[WorkerCall] = []
 
         for worker_id in batch.worker_ids:
+            if self._cancelled_state_if_requested(batch.run_id) is not None:
+                break
             manifest = self.manifest_store.load(batch.run_id)
             call_result = self.request_builder.build_worker_call(
                 state=state,
@@ -789,7 +852,11 @@ class ControlRunner:
 
         if prepared_calls:
             with ThreadPoolExecutor(max_workers=len(prepared_calls)) as executor:
-                future_to_call = {executor.submit(self.run_single_worker, call): call for call in prepared_calls}
+                future_to_call: dict[object, WorkerCall] = {}
+                for call in prepared_calls:
+                    if self._cancelled_state_if_requested(batch.run_id) is not None:
+                        break
+                    future_to_call[executor.submit(self.run_single_worker, call)] = call
                 for future in as_completed(future_to_call):
                     call = future_to_call[future]
                     try:
@@ -916,6 +983,14 @@ class ControlRunner:
         )
 
     def run_single_worker(self, call: WorkerCall) -> WorkerResult:
+        if self._cancelled_state_if_requested(call.run_id) is not None:
+            return _failed_worker_result(
+                call=call,
+                category="cancelled",
+                reason="workflow 已取消，未启动 OpenClaw worker",
+                paths=(call.evidence_dir,),
+                openclaw_result_path=None,
+            )
         self.store.save_call(call)
         command = build_openclaw_command(call)
         openclaw_result = self.openclaw.run_worker(command)
