@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { checkForUpdate, getChannelStatus, installUpdate, sendChatMessage } from '../api/client';
+import {
+  cancelWechatReconnect,
+  checkForUpdate,
+  createWechatNotificationBindingCode,
+  getChannelStatus,
+  installUpdate,
+  retryWechatNotifications,
+  recoverWechatReconnect,
+  sendChatMessage,
+  startWechatReconnect,
+} from '../api/client';
 
 describe('api client error translation', () => {
   const originalFetch = globalThis.fetch;
@@ -132,5 +142,42 @@ describe('api client error translation', () => {
     expect(requests[0]?.url).toBe('/api/ui/install-update');
     expect(requests[0]?.init?.method).toBe('POST');
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({ requestId: 'install-1' });
+  });
+
+  it('posts WeChat replacement and notification actions to their dedicated endpoints', async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), body: JSON.parse(String(init?.body || '{}')) });
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+
+    await startWechatReconnect('replace-request');
+    await cancelWechatReconnect('operation-1');
+    await recoverWechatReconnect('operation-1');
+    await createWechatNotificationBindingCode('bind-request');
+    await retryWechatNotifications('retry-request');
+
+    expect(requests).toEqual([
+      {
+        url: '/api/ui/start-wechat-reconnect',
+        body: { requestId: 'replace-request', channelKind: 'wechat_clawbot' },
+      },
+      {
+        url: '/api/ui/cancel-wechat-reconnect',
+        body: { operationId: 'operation-1', channelKind: 'wechat_clawbot' },
+      },
+      {
+        url: '/api/ui/recover-wechat-reconnect',
+        body: { operationId: 'operation-1', channelKind: 'wechat_clawbot' },
+      },
+      {
+        url: '/api/ui/create-wechat-notification-binding-code',
+        body: { requestId: 'bind-request' },
+      },
+      {
+        url: '/api/ui/retry-wechat-notifications',
+        body: { requestId: 'retry-request' },
+      },
+    ]);
   });
 });

@@ -69,6 +69,9 @@ class ReportWorkflowBridge:
             settings=_settings_from_task(settings),
             entry_point=WorkflowEntryPoint.REPORT_COMMAND,
             ui_origin_context_id=_optional_task_text(task.get("originContextId") or task.get("origin_context_id")),
+            ui_notification_intent_id=_optional_task_text(
+                task.get("notificationIntentId") or task.get("notification_intent_id")
+            ),
         )
 
     def create_workflow_run(self, task: dict[str, Any]) -> WorkflowRunRecord:

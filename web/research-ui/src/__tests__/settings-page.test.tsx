@@ -209,7 +209,7 @@ describe('settings-wechat settings page', () => {
     expect(screen.getByRole('heading', { name: '恢复本页默认配置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '恢复本页默认配置' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '重新连接' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '解除连接' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '停用通知' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '刷新二维码' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '稍后设置' })).toBeInTheDocument();
     expect(await screen.findByAltText('微信登录二维码')).toHaveAttribute(
@@ -1311,6 +1311,28 @@ describe('settings-wechat settings page', () => {
     }
   });
 
+  it('does not report an idempotent notification retry as completed while it is still running', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/retry-wechat-notifications')) {
+        return json({ attempted: 0, sent: 0, inProgress: true });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '手动重试未确认通知' }));
+
+    expect(await screen.findByText('同一次重试仍在执行，请稍后查看结果。')).toBeInTheDocument();
+    expect(screen.queryByText('已手动尝试 0 条，确认发送 0 条。')).not.toBeInTheDocument();
+  });
+
   it('waits for a real QR login response before showing channel unavailable', async () => {
     vi.useFakeTimers();
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -1484,7 +1506,7 @@ describe('settings-wechat settings page', () => {
       'data:image/png;base64,settings-qr',
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '解除连接' })).toBeEnabled(), {
+    await waitFor(() => expect(screen.getByRole('button', { name: '停用通知' })).toBeEnabled(), {
       timeout: 4000,
     });
     expect(screen.getByText('当前微信账号已连接，可接收通知。')).toBeInTheDocument();
@@ -1614,13 +1636,219 @@ describe('settings-wechat settings page', () => {
     fireEvent.click(screen.getByRole('button', { name: '重新连接' }));
     await screen.findByText('已提交重新连接，请重新扫码。');
 
-    fireEvent.click(screen.getByRole('button', { name: '解除连接' }));
-    await screen.findByText('已解除连接。');
+    fireEvent.click(screen.getByRole('button', { name: '停用通知' }));
+    await screen.findByText('已停用微信通知；账号凭据仍保留。');
 
     const saveCalls = calls.filter((item) => item.url.includes('/api/ui/save-channel-config-via-openclaw'));
     expect(saveCalls.length).toBeGreaterThanOrEqual(2);
     expect(saveCalls[0]?.body).toContain('"enabled":true');
     expect(saveCalls[1]?.body).toContain('"enabled":false');
+  });
+
+  it('uses the safe replacement endpoint when a connected WeChat is reconnected', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/start-wechat-reconnect')) {
+        return json({
+          operationId: 'replace-1',
+          phase: 'awaiting_scan',
+          outcome: null,
+          qrCodeImageDataUrl: 'data:image/png;base64,replacement-qr',
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          updatedAt: '2026-08-07T09:00:00Z',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重新连接' }));
+
+    expect(await screen.findByText('请扫描新二维码；完成前旧账号凭据仍可恢复。')).toBeInTheDocument();
+    expect(screen.getByAltText('微信登录二维码')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,replacement-qr',
+    );
+    expect(calls.some((url) => url.includes('/api/ui/start-wechat-reconnect'))).toBe(true);
+    expect(calls.some((url) => url.includes('/api/ui/save-channel-config-via-openclaw'))).toBe(false);
+  });
+
+  it('uses safe replacement after notification was disabled with credentials preserved', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          canSendText: false,
+          canSendFile: false,
+          replacementRequired: true,
+        });
+      }
+      if (url.includes('/api/ui/start-wechat-reconnect')) {
+        return json({
+          operationId: 'replace-disabled',
+          phase: 'awaiting_scan',
+          qrCodeImageDataUrl: 'data:image/png;base64,replacement-qr',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重新连接' }));
+
+    expect(await screen.findByText('请扫描新二维码；完成前旧账号凭据仍可恢复。')).toBeInTheDocument();
+    expect(calls.some((url) => url.includes('/api/ui/start-wechat-reconnect'))).toBe(true);
+    expect(calls.some((url) => url.includes('/api/ui/save-channel-config-via-openclaw'))).toBe(false);
+  });
+
+  it('does not bypass safe replacement when refreshing a disabled saved account', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          canSendText: false,
+          canSendFile: false,
+          replacementRequired: true,
+        });
+      }
+      if (url.includes('/api/ui/start-wechat-reconnect')) {
+        return json({ operationId: 'replace-refresh', phase: 'awaiting_scan' });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '刷新二维码' }));
+
+    expect(await screen.findByText('请扫描新二维码；完成前旧账号凭据仍可恢复。')).toBeInTheDocument();
+    expect(calls.some((url) => url.includes('/api/ui/start-wechat-reconnect'))).toBe(true);
+    expect(calls.some((url) => url.includes('/api/ui/save-channel-config-via-openclaw'))).toBe(false);
+  });
+
+  it('can resume a replacement that needs attention', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/get-wechat-reconnect-state')) {
+        return json({
+          operationId: 'replace-needs-attention',
+          phase: 'needs_attention',
+          lastErrorMessage: '提交中断，等待恢复。',
+        });
+      }
+      if (url.includes('/api/ui/recover-wechat-reconnect')) {
+        return json({
+          operationId: 'replace-needs-attention',
+          phase: 'completed',
+          outcome: 'switched',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '继续恢复' }));
+
+    expect(await screen.findByText('微信已重新连接。')).toBeInTheDocument();
+    expect(calls.some((url) => url.includes('/api/ui/recover-wechat-reconnect'))).toBe(true);
+  });
+
+  it('does not report success when cancelling a replacement fails', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/get-wechat-reconnect-state')) {
+        return json({ operationId: 'replace-cancel-fails', phase: 'awaiting_scan' });
+      }
+      if (url.includes('/api/ui/cancel-wechat-reconnect')) {
+        return json({
+          operationId: 'replace-cancel-fails',
+          phase: 'needs_attention',
+          lastErrorMessage: '旧微信账号恢复失败，发送已暂停。',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '取消重新连接' }));
+
+    expect(await screen.findByText('旧微信账号恢复失败，发送已暂停。')).toBeInTheDocument();
+    expect(screen.queryByText('已取消，旧微信连接已恢复。')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '继续恢复' })).toBeInTheDocument();
+  });
+
+  it('restores an in-progress replacement and its QR after the UI restarts', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/ui/get-wechat-reconnect-state')) {
+        return json({
+          operationId: 'replace-after-restart',
+          phase: 'awaiting_scan',
+          qrCodeImageDataUrl: 'data:image/png;base64,resumed-qr',
+          updatedAt: '2026-08-07T09:00:00Z',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    expect(await screen.findByRole('button', { name: '取消重新连接' })).toBeInTheDocument();
+    expect(screen.getByAltText('微信登录二维码')).toHaveAttribute(
+      'src',
+      'data:image/png;base64,resumed-qr',
+    );
   });
 
   it('submits model and data source settings from editable forms', async () => {

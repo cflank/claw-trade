@@ -6,7 +6,17 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist/production}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.runtime/production-package}"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
-OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"
+OPENCLAW_WEIXIN_PATCHED_VERSION="2.4.4-clawtrade.1"
+if [[ -z "${OPENCLAW_WEIXIN_PLUGIN_SPEC:-}" ]]; then
+  OPENCLAW_WEIXIN_OUTPUT_DIR="${WORK_DIR}/openclaw-weixin-patched" \
+    "${ROOT_DIR}/scripts/build-openclaw-weixin-plugin.sh"
+  OPENCLAW_WEIXIN_OUTPUT_DIR="${WORK_DIR}/openclaw-weixin-patched" \
+    "${ROOT_DIR}/scripts/build-openclaw-weixin-plugin.sh" --verify-artifact
+  OPENCLAW_WEIXIN_PLUGIN_SPEC="${WORK_DIR}/openclaw-weixin-patched/tencent-weixin-openclaw-weixin-${OPENCLAW_WEIXIN_PATCHED_VERSION}.tgz"
+else
+  printf '[ERROR] OPENCLAW_WEIXIN_PLUGIN_SPEC override is not allowed for production packages\n' >&2
+  exit 1
+fi
 VIRBOX_STATUS_SDK_ARCHIVE="${VIRBOX_STATUS_SDK_ARCHIVE:-${ROOT_DIR}/.runtime/virbox-status-sdk/virbox-status-sdk-linux-x86_64.tgz}"
 
 version="$("${PYTHON_BIN}" - <<'PY' "${ROOT_DIR}/pyproject.toml"
@@ -51,6 +61,10 @@ prepare_openclaw_plugin_assets() {
   cp -a "${npm_root}/node_modules/." "${plugins_root}/node_modules/"
   require_path "${plugins_root}/node_modules/@tencent-weixin/openclaw-weixin/openclaw.plugin.json"
   require_path "${plugins_root}/node_modules/@tencent-weixin/openclaw-weixin/dist/index.js"
+  local installed_version
+  installed_version="$(node -p "require(process.argv[1]).version" "${plugins_root}/node_modules/@tencent-weixin/openclaw-weixin/package.json")"
+  [[ "${installed_version}" == "${OPENCLAW_WEIXIN_PATCHED_VERSION}" ]] || \
+    fail "unexpected bundled OpenClaw Weixin plugin version: ${installed_version}"
 }
 
 cd "${ROOT_DIR}"

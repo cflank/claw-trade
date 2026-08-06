@@ -115,6 +115,7 @@ class ConfirmationController:
         if frozen.kind == IntentKind.SCHEDULED_REPORT:
             schedule = frozen.schedule or {}
             instrument_name = self._required_company_name_for_draft(frozen)
+            notification = self._scheduled_notification(dict(frozen.notification), origin_context_id)
             payload = {
                 "status": "confirmed",
                 **self._scheduler_service.create_scheduled_report_for_user(
@@ -125,7 +126,7 @@ class ConfirmationController:
                     frequency=str(schedule.get("frequency", "daily")),
                     time_of_day=str(schedule.get("timeOfDay", "09:00")),
                     weekday=schedule.get("weekday"),
-                    notification=dict(frozen.notification),
+                    notification=notification,
                     workflow_settings=asdict(frozen.workflow_settings),
                 ),
             }
@@ -249,6 +250,17 @@ class ConfirmationController:
             return routed
         default = self._default_price_alert_notification()
         return routed if default is None else {**routed, **default, "enabled": True}
+
+    @staticmethod
+    def _scheduled_notification(notification: dict[str, Any], origin_context_id: str | None) -> dict[str, Any]:
+        parts = str(origin_context_id or "").strip().split(":", 2)
+        if len(parts) == 3 and parts[0].strip() == "wechat_clawbot" and parts[2].strip():
+            return {
+                "channel": "wechat_clawbot",
+                "enabled": True,
+                "recipientKey": "wechat_primary",
+            }
+        return notification
 
     def _assert_company_name_available(self, draft: IntentDraft) -> None:
         self._required_company_name_for_draft(draft)

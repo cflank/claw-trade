@@ -142,6 +142,163 @@ def test_serial_queue_only_one_running() -> None:
     assert snapshot["queuedCount"] == 1
 
 
+def test_wechat_delivery_intent_is_written_before_workflow_starts() -> None:
+    events: list[tuple[str, str]] = []
+
+    class _OrderedRunner(_FakeRunner):
+        def create_run(self, request):  # type: ignore[no-untyped-def]
+            events.append(("workflow", request.ticker))
+            return super().create_run(request)
+
+    runner = _OrderedRunner()
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        notification_intent_writer=lambda task: events.append(("intent", task.notification_intent_id or "")),
+    )
+
+    result = queue.enqueue_report_task(
+        request_id="wechat-report-1",
+        task_input={**_task_input("AAPL"), "notification": {"channel": "wechat_clawbot", "enabled": True}},
+        source="scheduled",
+    )
+
+    task = queue.get_task_for_testing(result["task"]["taskId"])
+    assert task is not None
+    assert task.notification == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "recipientKey": "wechat_primary",
+    }
+    assert task.notification_intent_id == "report-notification:wechat-report-1"
+    assert runner.requests[0].ui_notification_intent_id == task.notification_intent_id
+    assert events == [("intent", "report-notification:wechat-report-1"), ("workflow", "AAPL")]
+
+
+def test_scheduled_notification_is_attached_when_it_dedupes_a_queued_manual_task() -> None:
+    intents: list[str] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(_FakeRunner()),
+        notification_intent_writer=lambda task: intents.append(str(task.notification_intent_id)),
+    )
+    queue.enqueue_report_task(
+        request_id="blocker",
+        task_input=_task_input("MSFT"),
+        source="manual",
+    )
+    manual = queue.enqueue_report_task(
+        request_id="manual-aapl",
+        task_input=_task_input("AAPL"),
+        source="manual",
+    )
+
+    scheduled = queue.enqueue_report_task(
+        request_id="scheduled-aapl",
+        task_input={
+            **_task_input("AAPL"),
+            "notification": {"channel": "wechat_clawbot", "enabled": True},
+        },
+        source="scheduled",
+    )
+
+    task = queue.get_task_for_testing(manual["task"]["taskId"])
+    assert scheduled["deduped"] is True
+    assert task is not None
+    assert task.notification_intent_id == "report-notification:scheduled-aapl"
+    assert intents == ["report-notification:scheduled-aapl"]
+
+
+def test_ordinary_wechat_report_does_not_require_scheduled_delivery_binding() -> None:
+    intents: list[str] = []
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(_FakeRunner()),
+        notification_intent_writer=lambda task: intents.append(task.notification_intent_id or ""),
+    )
+
+    result = queue.enqueue_report_task(
+        request_id="ordinary-wechat-report",
+        task_input=_task_input("AAPL"),
+        source="manual",
+        origin_context_id="wechat_clawbot:account-a:sender-a",
+    )
+
+    task = queue.get_task_for_testing(result["task"]["taskId"])
+    assert task is not None
+    assert task.notification_intent_id is None
+    assert intents == []
+
+
+def test_report_is_not_enqueued_when_delivery_intent_cannot_be_persisted() -> None:
+    runner = _FakeRunner()
+
+    def _fail(_task: ReportTask) -> None:
+        raise RuntimeError("delivery store unavailable")
+
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner), notification_intent_writer=_fail)
+
+    with pytest.raises(RuntimeError, match="delivery store unavailable"):
+        queue.enqueue_report_task(
+            request_id="wechat-report-2",
+            task_input={**_task_input("AAPL"), "notification": {"channel": "wechat_clawbot", "enabled": True}},
+            source="scheduled",
+        )
+
+    assert runner.calls == 0
+    assert queue.get_report_queue_snapshot_for_user()["runningTask"] is None
+
+
+def test_failed_and_cancelled_scheduled_tasks_finish_delivery_intents() -> None:
+    failures: list[tuple[str, str]] = []
+    failed_queue = ReportTaskQueue(
+        ReportWorkflowBridge(_CreateFailRunner()),
+        notification_intent_writer=lambda _task: None,
+        notification_intent_failure_writer=lambda intent_id, error: failures.append((intent_id, error)),
+    )
+    failed_queue.enqueue_report_task(
+        request_id="scheduled-failed",
+        task_input={**_task_input("AAPL"), "notification": {"channel": "wechat_clawbot", "enabled": True}},
+        source="scheduled",
+    )
+
+    cancelled_queue = ReportTaskQueue(
+        ReportWorkflowBridge(_FakeRunner()),
+        notification_intent_writer=lambda _task: None,
+        notification_intent_failure_writer=lambda intent_id, error: failures.append((intent_id, error)),
+    )
+    cancelled_queue.enqueue_report_task(request_id="running", task_input=_task_input("MSFT"), source="manual")
+    queued = cancelled_queue.enqueue_report_task(
+        request_id="scheduled-cancelled",
+        task_input={**_task_input("AAPL"), "notification": {"channel": "wechat_clawbot", "enabled": True}},
+        source="scheduled",
+    )
+    cancelled_queue.cancel_report_task(request_id="cancel-request", task_id=queued["task"]["taskId"])
+
+    assert failures[0][0] == "report-notification:scheduled-failed"
+    assert failures[1] == ("report-notification:scheduled-cancelled", "report_cancelled")
+
+
+def test_notification_finalization_failure_does_not_hold_report_lock_or_queue() -> None:
+    runner = _CreateFailRunner()
+
+    def fail_notification(_intent_id: str, _error: str) -> None:
+        raise OSError("delivery store unavailable")
+
+    queue = ReportTaskQueue(
+        ReportWorkflowBridge(runner),
+        notification_intent_writer=lambda _task: None,
+        notification_intent_failure_writer=fail_notification,
+    )
+
+    first = queue.enqueue_report_task(
+        request_id="scheduled-failed-finalization",
+        task_input={**_task_input("AAPL"), "notification": {"channel": "wechat_clawbot", "enabled": True}},
+        source="scheduled",
+    )
+    second = queue.enqueue_report_task(request_id="next-task", task_input=_task_input("MSFT"), source="manual")
+
+    assert first["task"]["status"] == "failed"
+    assert second["task"]["status"] == "failed"
+
+
 def test_exclusive_report_lock_prevents_task_from_running(tmp_path: Path) -> None:
     lock_path = tmp_path / "exclusive-report-active.lock"
     fd = os.open(lock_path, os.O_RDONLY | os.O_CREAT, 0o600)
@@ -204,7 +361,8 @@ def test_sigkill_releases_report_lock(tmp_path: Path) -> None:
 
 def test_report_queue_carries_origin_context_into_workflow_request() -> None:
     runner = _FakeRunner()
-    queue = ReportTaskQueue(ReportWorkflowBridge(runner))
+    intents: list[ReportTask] = []
+    queue = ReportTaskQueue(ReportWorkflowBridge(runner), notification_intent_writer=intents.append)
 
     queue.enqueue_report_task(
         request_id="r-origin",
@@ -214,6 +372,7 @@ def test_report_queue_carries_origin_context_into_workflow_request() -> None:
     )
 
     assert runner.requests[0].ui_origin_context_id == "wechat_clawbot:account-1:sender-1"
+    assert intents == []
 
 
 def test_report_queue_blocks_enqueue_when_license_denied() -> None:

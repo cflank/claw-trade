@@ -398,6 +398,23 @@ export interface ChannelStatusForUser {
   qrCodeImageDataUrl?: string | null;
   qrCodeExpiresAt?: string | null;
   qrCodeRefreshRequired?: boolean;
+  replacementRequired?: boolean;
+}
+
+export interface WechatReconnectForUser {
+  operationId: string;
+  phase: 'preparing' | 'awaiting_scan' | 'committing' | 'restoring' | 'completed' | 'needs_attention';
+  outcome?: 'switched' | 'restored' | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  updatedAt?: string | null;
+  qrCodeImageDataUrl?: string | null;
+}
+
+export interface WechatNotificationBindingCodeForUser {
+  code: string;
+  expiresAt: string;
+  message: string;
 }
 
 export interface LlmConfigDraft {

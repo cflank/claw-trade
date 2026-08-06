@@ -44,6 +44,7 @@ def build_report_run_request(
     target_stage: Stage | None = None,
     entry_point: WorkflowEntryPoint = WorkflowEntryPoint.REPORT_COMMAND,
     ui_origin_context_id: str | None = None,
+    ui_notification_intent_id: str | None = None,
 ) -> RunRequest:
     identity = resolve_instrument_identity(ticker, market_hint=market)
     resolved_profile = _profile_from_args(profile, identity.profile)
@@ -71,6 +72,7 @@ def build_report_run_request(
         max_risk_discuss_rounds=settings.max_risk_discuss_rounds,
         frontline_execution_mode=settings.frontline_execution_mode,
         ui_origin_context_id=_optional_text(ui_origin_context_id),
+        ui_notification_intent_id=_optional_text(ui_notification_intent_id),
     )
 
 

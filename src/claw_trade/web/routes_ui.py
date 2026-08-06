@@ -156,6 +156,30 @@ class SaveChannelConfigRequest(BaseModel):
     expectedSettingsVersion: str | None = None
 
 
+class StartWechatReconnectRequest(BaseModel):
+    requestId: str
+    channelKind: str = "wechat_clawbot"
+
+
+class PollWechatReconnectRequest(BaseModel):
+    operationId: str
+    timeoutMs: int = 1_500
+
+
+class CancelWechatReconnectRequest(BaseModel):
+    operationId: str
+    channelKind: str = "wechat_clawbot"
+
+
+class RecoverWechatReconnectRequest(BaseModel):
+    operationId: str
+    channelKind: str = "wechat_clawbot"
+
+
+class WechatNotificationActionRequest(BaseModel):
+    requestId: str
+
+
 class TestLlmRequest(BaseModel):
     requestId: str
     provider: str
@@ -957,6 +981,107 @@ def save_channel_config_via_openclaw(payload: SaveChannelConfigRequest, request:
             expected_settings_version=payload.expectedSettingsVersion,
         )
         return _success_response(result)
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/start-wechat-reconnect")
+def start_wechat_reconnect(payload: StartWechatReconnectRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.channel_bridge.start_wechat_reconnect(
+                request_id=payload.requestId,
+                channel_kind=payload.channelKind,
+            )
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.get("/get-wechat-reconnect-state")
+def get_wechat_reconnect_state(request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.channel_bridge.get_wechat_reconnect_state(include_qr=True)
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/poll-wechat-reconnect")
+def poll_wechat_reconnect(payload: PollWechatReconnectRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.channel_bridge.poll_wechat_reconnect(
+                operation_id=payload.operationId,
+                timeout_ms=max(1_000, min(payload.timeoutMs, 10_000)),
+            )
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/cancel-wechat-reconnect")
+def cancel_wechat_reconnect(payload: CancelWechatReconnectRequest, request: Request) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.channel_bridge.cancel_wechat_reconnect(
+                operation_id=payload.operationId,
+                channel_kind=payload.channelKind,
+            )
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/recover-wechat-reconnect")
+def recover_wechat_reconnect(
+    payload: RecoverWechatReconnectRequest,
+    request: Request,
+) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.channel_bridge.resume_wechat_reconnect(
+                operation_id=payload.operationId,
+                channel_kind=payload.channelKind,
+            )
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/create-wechat-notification-binding-code")
+def create_wechat_notification_binding_code(
+    payload: WechatNotificationActionRequest,
+    request: Request,
+) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.report_notification_service.create_binding_code(request_id=payload.requestId)
+        )
+    except Exception as exc:
+        return _exception_response(exc)
+
+
+@router.post("/retry-wechat-notifications")
+def retry_wechat_notifications(
+    payload: WechatNotificationActionRequest,
+    request: Request,
+) -> JSONResponse:
+    services = _services(request)
+    try:
+        return _success_response(
+            services.report_notification_service.retry_pending(
+                manual=True,
+                request_id=payload.requestId,
+            )
+        )
     except Exception as exc:
         return _exception_response(exc)
 

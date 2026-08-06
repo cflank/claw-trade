@@ -256,7 +256,7 @@ def test_settings_controls_visual_surface_live() -> None:
                 for item in settings_buttons
                 if isinstance(item, dict) and "ct-button-secondary" in str(item.get("className", ""))
             }
-            for expected in ("重新连接", "解除连接", "刷新二维码", "稍后设置"):
+            for expected in ("重新连接", "停用通知", "刷新二维码", "稍后设置"):
                 assert expected in secondary_texts
 
             home_size = _png_size(home_png)

@@ -545,11 +545,11 @@ class OpenClawGatewayRpcClient:
             return payload
         return payload
 
-    def channels_status(self, *, probe: bool = False) -> Any:
+    def channels_status(self, *, probe: bool = False, fresh: bool = False) -> Any:
         ttl_seconds = _CHANNEL_STATUS_PROBE_CACHE_TTL_SECONDS if probe else _CHANNEL_STATUS_LIGHT_CACHE_TTL_SECONDS
         cache_key = bool(probe)
         with self._channel_status_cache_lock:
-            cached = self._channel_status_cache.get(cache_key)
+            cached = None if fresh else self._channel_status_cache.get(cache_key)
             now = perf_counter()
             if cached is not None:
                 cached_at, payload = cached
@@ -561,7 +561,8 @@ class OpenClawGatewayRpcClient:
                 {"probe": probe, "timeoutMs": 8000 if probe else 3000},
                 timeout_ms=10_000 if probe else 5000,
             )
-            self._channel_status_cache[cache_key] = (perf_counter(), deepcopy(payload))
+            if not fresh:
+                self._channel_status_cache[cache_key] = (perf_counter(), deepcopy(payload))
             return deepcopy(payload)
 
     def channels_capabilities(self, *, channel: str) -> Any:
@@ -595,6 +596,85 @@ class OpenClawGatewayRpcClient:
             params["sessionKey"] = session_key
         try:
             return self._call("web.login.wait", params, timeout_ms=max(timeout_ms + 3000, 45_000))
+        finally:
+            self._clear_channels_status_cache()
+
+    def weixin_replacement_begin(self, *, operation_id: str, old_account_ids: list[str]) -> Any:
+        return self._weixin_lifecycle_call(
+            "weixin.replacement.begin",
+            {"operationId": operation_id, "oldAccountIds": list(old_account_ids)},
+            timeout_ms=15_000,
+        )
+
+    def weixin_replacement_login_start(self, *, operation_id: str) -> Any:
+        return self._weixin_lifecycle_call(
+            "weixin.replacement.login.start",
+            {"operationId": operation_id},
+            timeout_ms=15_000,
+        )
+
+    def weixin_replacement_login_wait(
+        self,
+        *,
+        operation_id: str,
+        session_key: str,
+        timeout_ms: int = 1_500,
+    ) -> Any:
+        return self._weixin_lifecycle_call(
+            "weixin.replacement.login.wait",
+            {"operationId": operation_id, "sessionKey": session_key, "timeoutMs": timeout_ms},
+            timeout_ms=timeout_ms + 3_000,
+        )
+
+    def weixin_login_cancel(self, *, operation_id: str, session_key: str) -> Any:
+        return self._weixin_lifecycle_call(
+            "weixin.login.cancel",
+            {"operationId": operation_id, "sessionKey": session_key},
+            timeout_ms=15_000,
+        )
+
+    def weixin_replacement_commit(
+        self,
+        *,
+        operation_id: str,
+        candidate_account_id: str,
+        login_receipt_id: str,
+    ) -> Any:
+        return self._weixin_lifecycle_call(
+            "weixin.replacement.commit",
+            {
+                "operationId": operation_id,
+                "candidateAccountId": candidate_account_id,
+                "loginReceiptId": login_receipt_id,
+            },
+            timeout_ms=30_000,
+        )
+
+    def weixin_replacement_restore(self, *, operation_id: str) -> Any:
+        return self._weixin_lifecycle_call(
+            "weixin.replacement.restore",
+            {"operationId": operation_id},
+            timeout_ms=30_000,
+        )
+
+    def weixin_replacement_inspect(self, *, operation_id: str | None) -> Any:
+        params = {"operationId": operation_id} if operation_id else {}
+        return self._weixin_lifecycle_call(
+            "weixin.replacement.inspect",
+            params,
+            timeout_ms=10_000,
+        )
+
+    def _weixin_lifecycle_call(
+        self,
+        method: str,
+        params: Mapping[str, Any],
+        *,
+        timeout_ms: int,
+    ) -> Any:
+        self._clear_channels_status_cache()
+        try:
+            return self._call(method, params, timeout_ms=timeout_ms)
         finally:
             self._clear_channels_status_cache()
 

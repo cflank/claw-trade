@@ -3,9 +3,15 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from threading import Event
 
 from claw_trade.ui_backend.report_repository import ReportRepository
-from claw_trade.web.state import restore_completed_workflow_reports
+from claw_trade.ui_backend.wechat_delivery_store import WechatDeliveryStore
+from claw_trade.web.state import (
+    _restore_wechat_delivery_failures,
+    _start_wechat_delivery_recovery_watcher,
+    restore_completed_workflow_reports,
+)
 
 
 def _write_completed_run(run_root: Path, run_id: str, *, origin_context_id: str | None = None) -> Path:
@@ -119,3 +125,87 @@ def test_discarded_tombstone_allows_restore_when_run_files_still_exist(tmp_path:
 
     assert restored == 1
     assert reloaded.list_saved_reports()[0]["id"] == "run-visible-again"
+
+
+def test_wechat_delivery_watcher_recovers_report_that_finishes_after_ui_restart(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    run_dir = run_root / "run-active"
+    run_dir.mkdir(parents=True)
+    intent_id = "intent-active"
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-active",
+                "status": "running",
+                "request": {"ticker": "BTC", "ui_notification_intent_id": intent_id},
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = WechatDeliveryStore(run_root / ".ui-wechat-delivery.json")
+    store.create_waiting_report(intent_id)
+    repository = ReportRepository()
+
+    class _NotificationService:
+        calls = 0
+
+        def recover_completed_deliveries(self) -> int:
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("transient delivery recovery failure")
+            recovered = 0
+            for record in store.list_delivery_records(states={"waiting_report"}):
+                report_id = str(record.get("report_id") or "")
+                if report_id and repository.get_report(report_id) is not None:
+                    store.mark_report_pending(str(record["intent_id"]), report_id=report_id)
+                    stop_event.set()
+                    recovered += 1
+            return recovered
+
+        def retry_pending(self) -> dict[str, int]:
+            return {"attempted": 0, "sent": 0}
+
+    def finish_report(_seconds: float) -> None:
+        _write_completed_run(run_root, "run-active")
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+        state["request"]["ui_notification_intent_id"] = intent_id
+        (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    stop_event = Event()
+    watcher = _start_wechat_delivery_recovery_watcher(
+        delivery_store=store,
+        notification_service=_NotificationService(),  # type: ignore[arg-type]
+        repository=repository,
+        run_root=run_root,
+        sleep=finish_report,
+        stop_event=stop_event,
+    )
+
+    assert watcher is not None
+    watcher.join(timeout=2)
+    assert watcher.is_alive() is False
+    assert repository.get_report("run-active") is not None
+    assert store.get_delivery_status(intent_id)["state"] == "pending"
+
+
+def test_failed_run_restores_waiting_delivery_as_failed(tmp_path: Path) -> None:
+    run_root = tmp_path / "runs"
+    run_dir = run_root / "run-failed"
+    run_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-failed",
+                "status": "failed",
+                "request": {"ui_notification_intent_id": "intent-failed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = WechatDeliveryStore(run_root / ".ui-wechat-delivery.json")
+    store.create_waiting_report("intent-failed")
+
+    restored = _restore_wechat_delivery_failures(store, run_root)
+
+    assert restored == 1
+    assert store.get_delivery_status("intent-failed")["state"] == "failed"

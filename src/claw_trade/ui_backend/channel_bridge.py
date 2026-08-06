@@ -5,11 +5,17 @@ import json
 import os
 import threading
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from claw_trade.ui_backend.settings_service import UiBoundaryError
+from claw_trade.ui_backend.wechat_reconnect import (
+    WechatReconnectController,
+    WechatReconnectError,
+    resolve_current_unique_account_id,
+)
 
 USER_CHANNEL_KIND = "wechat_clawbot"
 _PROVIDER_CHANNEL_ID = "openclaw-weixin"
@@ -65,8 +71,23 @@ def _is_wechat_session_paused(exc: BaseException) -> bool:
 
 
 class ChannelBridge:
-    def __init__(self, openclaw_gateway_client: Any) -> None:
+    def __init__(
+        self,
+        openclaw_gateway_client: Any,
+        *,
+        reconnect_state_path: Path | None = None,
+        reconnect_sleep: Any = time.sleep,
+    ) -> None:
         self._client = openclaw_gateway_client
+        self._wechat_reconnect = (
+            WechatReconnectController(
+                openclaw_gateway_client,
+                state_path=reconnect_state_path,
+                sleep=reconnect_sleep,
+            )
+            if reconnect_state_path is not None
+            else None
+        )
         self._idempotency: dict[str, Any] = {}
         self._active_qr_data_url: str | None = None
         self._active_qr_session_key: str | None = None
@@ -74,11 +95,84 @@ class ChannelBridge:
         self._qr_wait_inflight_generation: int | None = None
         self._qr_wait_result: dict[str, Any] | None = None
         self._qr_wait_lock = threading.Lock()
+        self._wechat_delivery_local = threading.local()
         self._light_status_cache: tuple[float, dict[str, Any]] | None = None
         self._light_status_cache_lock = threading.Lock()
         self._channel_capabilities_supported = bool(
             getattr(openclaw_gateway_client, "supports_channel_capabilities", True)
         )
+
+    def start_wechat_reconnect(self, *, request_id: str, channel_kind: str) -> dict[str, Any]:
+        self.resolve_clawbot_channel_id(channel_kind)
+        return self._require_wechat_reconnect().begin(request_id=request_id)
+
+    def poll_wechat_reconnect(self, *, operation_id: str, timeout_ms: int = 1_500) -> dict[str, Any]:
+        return self._require_wechat_reconnect().poll(
+            operation_id=operation_id,
+            timeout_ms=timeout_ms,
+        )
+
+    def cancel_wechat_reconnect(self, *, operation_id: str, channel_kind: str) -> dict[str, Any]:
+        self.resolve_clawbot_channel_id(channel_kind)
+        return self._require_wechat_reconnect().cancel(operation_id=operation_id)
+
+    def recover_wechat_reconnect(self) -> dict[str, Any] | None:
+        reconnect = self._require_wechat_reconnect()
+        try:
+            return reconnect.recover()
+        except Exception:
+            return reconnect.record_recovery_failure()
+
+    def resume_wechat_reconnect(
+        self,
+        *,
+        operation_id: str,
+        channel_kind: str,
+    ) -> dict[str, Any] | None:
+        self.resolve_clawbot_channel_id(channel_kind)
+        return self._require_wechat_reconnect().recover(operation_id=operation_id)
+
+    def get_wechat_reconnect_state(self, *, include_qr: bool = False) -> dict[str, Any] | None:
+        reconnect = self._wechat_reconnect
+        return reconnect.current_state(include_qr=include_qr) if reconnect is not None else None
+
+    def current_unique_account_id(self) -> str | None:
+        reconnect = self._wechat_reconnect
+        if reconnect is not None and reconnect.blocks_delivery():
+            return None
+        try:
+            return resolve_current_unique_account_id(self._client)
+        except Exception:
+            return None
+
+    @contextmanager
+    def wechat_delivery_account(self) -> Iterator[str | None]:
+        cached_account_id = getattr(self._wechat_delivery_local, "account_id", None)
+        if cached_account_id:
+            yield str(cached_account_id)
+            return
+        reconnect = self._require_wechat_reconnect()
+        with reconnect.delivery_guard() as allowed:
+            if not allowed:
+                yield None
+                return
+            try:
+                current_account_id = resolve_current_unique_account_id(self._client)
+                if current_account_id is None:
+                    yield None
+                    return
+                self._wechat_delivery_local.account_id = current_account_id
+                try:
+                    yield current_account_id
+                finally:
+                    self._wechat_delivery_local.account_id = None
+            except Exception:
+                yield None
+
+    def _require_wechat_reconnect(self) -> WechatReconnectController:
+        if self._wechat_reconnect is None:
+            raise WechatReconnectError("wechat reconnect state path is not configured")
+        return self._wechat_reconnect
 
     def resolve_clawbot_channel_id(self, channel_kind: str) -> str:
         if channel_kind != USER_CHANNEL_KIND:
@@ -142,7 +236,8 @@ class ChannelBridge:
         except Exception:
             return finish(_channel_status_for_user(state="error", message="微信通知暂不可用，请在设备界面查看。"))
         has_provider_channel = _has_provider_channel(raw_status, _PROVIDER_CHANNEL_ID)
-        if not has_provider_channel:
+        channel_disabled = self._channel_disabled_by_config()
+        if not has_provider_channel or channel_disabled:
             try:
                 plugins = self._client.plugins_list()
             except Exception:
@@ -158,17 +253,19 @@ class ChannelBridge:
                 self._active_qr_session_key = None
                 self._invalidate_qr_wait_state()
                 return finish(_channel_status_for_user(state="disconnected", message="请先启用微信 ClawBot 插件。"))
-            if self._channel_disabled_by_config():
-                self._active_qr_data_url = None
-                self._active_qr_session_key = None
-                self._invalidate_qr_wait_state()
-                return finish(
-                    _channel_status_for_user(
-                        state="disconnected",
-                        message="微信已解除连接，请点击刷新二维码重新扫码。",
-                        qr_code_refresh_required=True,
-                    )
+        if channel_disabled:
+            self._active_qr_data_url = None
+            self._active_qr_session_key = None
+            self._invalidate_qr_wait_state()
+            return finish(
+                _channel_status_for_user(
+                    state="disconnected",
+                    message="微信通知已停用，请点击重新连接。",
+                    qr_code_refresh_required=True,
+                    replacement_required=self._replacement_required_for_disabled_channel(),
                 )
+            )
+        if not has_provider_channel:
             self._active_qr_data_url = None
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
@@ -341,8 +438,20 @@ class ChannelBridge:
         try:
             config = self._client.config_get(paths=("channels.openclaw-weixin",))
         except Exception:
-            return False
+            return True
         return _config_weixin_enabled(config) is False
+
+    def _replacement_required_for_disabled_channel(self) -> bool:
+        try:
+            inspection = self._client.weixin_replacement_inspect(operation_id=None)
+        except Exception:
+            return True
+        if not isinstance(inspection, Mapping):
+            return True
+        stored = inspection.get("storedAccountIds")
+        if not isinstance(stored, (list, tuple)):
+            return True
+        return len([item for item in stored if _optional_str(item) is not None]) != 0
 
     def _request_qr_login(self, *, refresh: bool, poll_login: bool) -> dict[str, Any]:
         try:
@@ -503,20 +612,6 @@ class ChannelBridge:
             self._qr_wait_result = None
             self._qr_wait_inflight_generation = None
 
-    def _clear_weixin_login_state(self) -> None:
-        state_dir = _resolve_openclaw_state_dir()
-        if state_dir is None:
-            return
-        weixin_dir = state_dir / "openclaw-weixin"
-        accounts_dir = weixin_dir / "accounts"
-        _unlink_if_file(weixin_dir / "accounts.json")
-        if accounts_dir.is_dir():
-            for child in accounts_dir.iterdir():
-                if child.is_file() or child.is_symlink():
-                    _unlink_if_file(child)
-        _unlink_if_file(state_dir / "credentials" / "openclaw-weixin" / "credentials.json")
-        _unlink_if_file(state_dir / "agents" / "default" / "sessions" / ".openclaw-weixin-sync" / "default.json")
-
     def save_channel_config_via_openclaw(
         self,
         *,
@@ -536,20 +631,19 @@ class ChannelBridge:
             self._active_qr_data_url = None
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
-            self._clear_weixin_login_state()
         try:
             result = self._client.config_patch(
                 expected_settings_version=expected_settings_version,
                 patch={"channels": {provider_channel: provider_patch}},
             )
             if provider_patch.get("enabled") is False:
-                self._clear_weixin_login_state()
                 status = _channel_status_for_user(
                     state="disconnected",
-                    message="已解除连接。",
+                    message="微信通知已停用；账号凭据仍保留。",
                     can_send_text=False,
                     can_send_file=False,
                     qr_code_refresh_required=True,
+                    replacement_required=self._replacement_required_for_disabled_channel(),
                 )
             else:
                 status = self._get_channel_status_after_config_patch(
@@ -599,24 +693,25 @@ class ChannelBridge:
         provider_channel = self.resolve_clawbot_channel_id(channel_kind)
         if not target:
             raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。")
-        status = self.get_channel_status(probe=True)
-        if str(status.get("state")) != "connected" or not bool(status.get("canSendText")):
-            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。")
-        try:
-            sender = _resolve_text_sender(self._client)
-        except AttributeError as exc:
-            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
-        try:
-            raw = sender(
-                channel=provider_channel,
-                text=text,
-                dedupe_key=dedupe_key,
-                to=target,
-                account_id=account_id,
-            )
-        except Exception as exc:
-            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
-        return _to_send_result(raw, default_sent=True)
+        with self._wechat_send_guard(account_id) as current_account_id:
+            status = self.get_channel_status(probe=True)
+            if str(status.get("state")) != "connected" or not bool(status.get("canSendText")):
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。")
+            try:
+                sender = _resolve_text_sender(self._client)
+            except AttributeError as exc:
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
+            try:
+                raw = sender(
+                    channel=provider_channel,
+                    text=text,
+                    dedupe_key=dedupe_key,
+                    to=target,
+                    account_id=account_id or current_account_id,
+                )
+            except Exception as exc:
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信通知暂不可用，请在设备界面查看。") from exc
+        return _to_send_result(raw, default_sent=False, message_id_implies_sent=True)
 
     def send_report_file_via_channel(
         self,
@@ -637,35 +732,36 @@ class ChannelBridge:
         if not resolved_target:
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
         provider_channel = self.resolve_clawbot_channel_id(channel_kind)
-        status = self.get_channel_status(probe=True)
-        if str(status.get("state")) != "connected":
-            raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送前检查失败，报告没有发出。请稍后重试。")
-        try:
-            sender = _resolve_file_sender(self._client)
-        except AttributeError as exc:
-            raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
-        for attempt in range(_FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS):
+        with self._wechat_send_guard(account_id) as current_account_id:
+            status = self.get_channel_status(probe=True)
+            if str(status.get("state")) != "connected":
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送前检查失败，报告没有发出。请稍后重试。")
             try:
-                raw = sender(
-                    channel=provider_channel,
-                    file_name=file_name,
-                    payload=payload,
-                    file_path=file_path,
-                    dedupe_key=request_id if attempt == 0 else f"{request_id}:cdn-retry-{attempt}",
-                    to=resolved_target,
-                    account_id=account_id,
-                )
-                break
-            except Exception as exc:
-                if attempt + 1 < _FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS and _is_cdn_upload_server_error(exc):
-                    continue
-                if _is_cdn_upload_server_error(exc):
-                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件上传失败，报告没有发出。请稍后重试。") from exc
-                if _is_gateway_send_timeout(exc):
-                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送超时，报告没有发出。请稍后重试。") from exc
-                if _is_wechat_session_paused(exc):
-                    raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信登录已过期或暂停，报告没有发出。请重新连接微信后再试。") from exc
+                sender = _resolve_file_sender(self._client)
+            except AttributeError as exc:
                 raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
+            for attempt in range(_FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS):
+                try:
+                    raw = sender(
+                        channel=provider_channel,
+                        file_name=file_name,
+                        payload=payload,
+                        file_path=file_path,
+                        dedupe_key=request_id if attempt == 0 else f"{request_id}:cdn-retry-{attempt}",
+                        to=resolved_target,
+                        account_id=account_id or current_account_id,
+                    )
+                    break
+                except Exception as exc:
+                    if attempt + 1 < _FILE_SEND_CDN_SERVER_RETRY_ATTEMPTS and _is_cdn_upload_server_error(exc):
+                        continue
+                    if _is_cdn_upload_server_error(exc):
+                        raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件上传失败，报告没有发出。请稍后重试。") from exc
+                    if _is_gateway_send_timeout(exc):
+                        raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信文件发送超时，报告没有发出。请稍后重试。") from exc
+                    if _is_wechat_session_paused(exc):
+                        raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信登录已过期或暂停，报告没有发出。请重新连接微信后再试。") from exc
+                    raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。") from exc
         result = _to_send_result(
             raw,
             default_sent=False,
@@ -675,6 +771,26 @@ class ChannelBridge:
         if not bool(result.get("sent")):
             raise UiBoundaryError("FILE_SEND_UNSUPPORTED", "完整报告文件暂不可发送，请在设备界面查看。")
         return result
+
+    @contextmanager
+    def _wechat_send_guard(self, account_id: str | None) -> Iterator[str | None]:
+        cached_account_id = getattr(self._wechat_delivery_local, "account_id", None)
+        if cached_account_id:
+            if account_id and account_id != cached_account_id:
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信账号已变化，消息没有发出。")
+            yield str(cached_account_id)
+            return
+        reconnect = self._wechat_reconnect
+        if reconnect is None:
+            yield account_id
+            return
+        with reconnect.delivery_guard() as allowed:
+            if not allowed:
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信正在重新连接，消息没有发出。")
+            current_account_id = resolve_current_unique_account_id(self._client)
+            if current_account_id is None or (account_id and account_id != current_account_id):
+                raise UiBoundaryError("NOTIFICATION_UNAVAILABLE", "微信账号已变化，消息没有发出。")
+            yield current_account_id
 
     def resolve_default_report_file_target(self, *, channel_kind: str) -> tuple[str, str | None] | None:
         self.resolve_clawbot_channel_id(channel_kind)
@@ -703,6 +819,7 @@ def to_channel_status_for_user(status: Mapping[str, Any]) -> dict[str, Any]:
         "qrCodeImageDataUrl": _optional_qr_data_url(status.get("qrCodeImageDataUrl")),
         "qrCodeExpiresAt": _optional_str(status.get("qrCodeExpiresAt")),
         "qrCodeRefreshRequired": bool(status.get("qrCodeRefreshRequired", False)),
+        "replacementRequired": bool(status.get("replacementRequired", False)),
     }
 
 
@@ -717,6 +834,7 @@ def _channel_status_for_user(
     qr_code_image_data_url: Any = None,
     qr_code_expires_at: Any = None,
     qr_code_refresh_required: bool = False,
+    replacement_required: bool = False,
 ) -> dict[str, Any]:
     return {
         "channelKind": USER_CHANNEL_KIND,
@@ -731,6 +849,7 @@ def _channel_status_for_user(
         "qrCodeImageDataUrl": _optional_qr_data_url(qr_code_image_data_url),
         "qrCodeExpiresAt": _optional_str(qr_code_expires_at),
         "qrCodeRefreshRequired": bool(qr_code_refresh_required),
+        "replacementRequired": bool(replacement_required),
         "updatedAt": _now_iso(),
     }
 
@@ -837,14 +956,6 @@ def _connected_provider_account_id(raw: Mapping[str, Any], provider_channel_id: 
     if item is None or _account_state(item) != "connected":
         return None
     return _optional_str(item.get("accountId"))
-
-
-def _unlink_if_file(path: Path) -> None:
-    try:
-        if path.is_file() or path.is_symlink():
-            path.unlink()
-    except OSError:
-        pass
 
 
 def _has_provider_channel(raw: Mapping[str, Any], provider_channel_id: str) -> bool:
@@ -1045,15 +1156,28 @@ def _to_send_result(
             message_id = message_id.strip() or None
         else:
             message_id = None
-        if raw.get("ok") is False:
-            sent = False
-        elif "sent" in raw:
-            sent = bool(raw.get("sent"))
+        if raw.get("ok") is False or raw.get("sent") is False:
+            outcome = "failed"
+        elif raw.get("sent") is True:
+            outcome = "sent"
         elif message_id_implies_sent and message_id:
-            sent = True
+            outcome = "sent"
+        elif default_sent:
+            outcome = "sent"
         else:
-            sent = default_sent
-        if require_message_id_for_success and sent and not message_id:
-            sent = False
-        return {"sent": sent, "messageId": message_id}
-    return {"sent": default_sent, "messageId": None}
+            outcome = "unknown"
+        if require_message_id_for_success and outcome == "sent" and not message_id:
+            outcome = "unknown"
+        return {
+            "sent": outcome == "sent",
+            "messageId": message_id,
+            "outcome": outcome,
+            "resultKnown": outcome != "unknown",
+        }
+    outcome = "sent" if default_sent else "unknown"
+    return {
+        "sent": outcome == "sent",
+        "messageId": None,
+        "outcome": outcome,
+        "resultKnown": outcome != "unknown",
+    }

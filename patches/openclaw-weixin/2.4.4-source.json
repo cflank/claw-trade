@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "package": "@tencent-weixin/openclaw-weixin",
+  "upstreamVersion": "2.4.4",
+  "upstreamTag": "v2.4.4",
+  "upstreamCommit": "9d3af4784c27f71ed9c0dd5be8b4e6f03f16e0de",
+  "upstreamRepository": "https://github.com/Tencent/openclaw-weixin.git",
+  "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.4.tgz",
+  "tarballIntegrity": "sha512-tb4Ix+6JPLEGlWz90wBWc5MYojISvYWReCeXjCwGCryi0RxVHCZa6ncCHT0xINNrYTOQbpAEN0U+i7UHVTk9XQ==",
+  "patchedVersion": "2.4.4-clawtrade.1",
+  "patchFile": "2.4.4-single-account-replacement.patch",
+  "patchSha256": "47aeefc004c1683a09886d43a1ebbf230d41ee444535bdeb7d5f752eead61070",
+  "buildSource": "verified official npm tarball; exact tagged git commit supplies tsconfig.json only",
+  "dependencyLock": "package-lock.json is carried by the patch and installed with npm ci",
+  "compatibilityPatch": {
+    "file": "src/messaging/outbound-hooks.ts",
+    "change": "Remove the unsupported runId property passed to buildCanonicalSentMessageHookContext.",
+    "reason": "OpenClaw 2026.3.23 neither accepts, reads, nor returns this property; removal restores the upstream plugin's declared typecheck/build compatibility without changing hook payload behavior."
+  },
+  "focusedTests": [
+    "src/replacement.test.ts",
+    "src/auth/login-qr-cancel.test.ts"
+  ],
+  "knownUpstreamBaseline": {
+    "fullSuiteUnrelatedFailures": 4,
+    "focusedAuthApiBaseline": "56/56 passed before this patch",
+    "typecheckBuildBaseline": "Failed at src/messaging/outbound-hooks.ts:77 because runId was not accepted by buildCanonicalSentMessageHookContext"
+  }
+}

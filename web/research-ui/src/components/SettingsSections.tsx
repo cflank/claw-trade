@@ -286,6 +286,12 @@ export function SettingsSections({
   canInstallUpdate,
   productionMaintenance,
   onReconnectChannel,
+  onCancelReconnectChannel,
+  onRecoverReconnectChannel,
+  reconnectNeedsAttention,
+  reconnectInProgress,
+  onCreateWechatBindingCode,
+  onRetryWechatNotifications,
   onDisconnectChannel,
   onSkipWechatSetup,
   onRefreshChannel,
@@ -348,6 +354,12 @@ export function SettingsSections({
   canInstallUpdate: boolean;
   productionMaintenance: ProductionMaintenanceStatusOutput | null;
   onReconnectChannel: () => void;
+  onCancelReconnectChannel?: () => void;
+  onRecoverReconnectChannel?: () => void;
+  reconnectNeedsAttention?: boolean;
+  reconnectInProgress?: boolean;
+  onCreateWechatBindingCode?: () => void;
+  onRetryWechatNotifications?: () => void;
   onDisconnectChannel: () => void;
   onSkipWechatSetup: () => void;
   onRefreshChannel: () => void;
@@ -831,7 +843,7 @@ export function SettingsSections({
             type="button"
             className="ct-button ct-button-secondary"
             onClick={onReconnectChannel}
-            disabled={channelActionBusy}
+            disabled={channelActionBusy || reconnectInProgress}
           >
             {channelActionBusy ? '处理中...' : '重新连接'}
           </button>
@@ -839,15 +851,35 @@ export function SettingsSections({
             type="button"
             className="ct-button ct-button-secondary"
             onClick={onDisconnectChannel}
-            disabled={channelActionBusy || channel?.state !== 'connected'}
+            disabled={channelActionBusy || channel?.state !== 'connected' || reconnectInProgress}
           >
-            解除连接
+            停用通知
           </button>
+          {reconnectInProgress ? (
+            <button
+              type="button"
+              className="ct-button ct-button-secondary"
+              onClick={onCancelReconnectChannel}
+              disabled={channelActionBusy}
+            >
+              取消重新连接
+            </button>
+          ) : null}
+          {reconnectNeedsAttention ? (
+            <button
+              type="button"
+              className="ct-button ct-button-secondary"
+              onClick={onRecoverReconnectChannel}
+              disabled={channelActionBusy}
+            >
+              继续恢复
+            </button>
+          ) : null}
           <button
             type="button"
             className="ct-button ct-button-secondary"
             onClick={onRefreshChannel}
-            disabled={channelActionBusy}
+            disabled={channelActionBusy || reconnectInProgress}
           >
             刷新二维码
           </button>
@@ -859,6 +891,22 @@ export function SettingsSections({
           >
             稍后设置
           </button>
+          <button
+            type="button"
+            className="ct-button ct-button-secondary"
+            onClick={onCreateWechatBindingCode}
+            disabled={channelActionBusy || channel?.state !== 'connected' || reconnectInProgress}
+          >
+            绑定报告通知
+          </button>
+          <button
+            type="button"
+            className="ct-button ct-button-secondary"
+            onClick={onRetryWechatNotifications}
+            disabled={channelActionBusy || channel?.state !== 'connected' || reconnectInProgress}
+          >
+            手动重试未确认通知
+          </button>
         </div>
         {channelActionMessage ? <div className="ct-inline-alert is-success">{channelActionMessage}</div> : null}
         {sectionErrors.channel ? <div className="ct-inline-alert is-error">{sectionErrors.channel}</div> : null}
@@ -868,7 +916,7 @@ export function SettingsSections({
         <div className="ct-section-head">
           <h2>恢复本页默认配置</h2>
         </div>
-        <p className="ct-section-desc">清空本页保存的模型、Embedding、增强数据源、报告保留时间和微信通知连接设置；历史报告不会删除。</p>
+        <p className="ct-section-desc">清空本页保存的模型、Embedding、增强数据源和报告保留设置，并停用微信通知；历史报告和微信账号凭据不会删除。</p>
         <div className="ct-button-row ct-settings-actions">
           <button
             type="button"

@@ -749,6 +749,7 @@ class SchedulerService:
             "endDate": request.end_date,
             "currentDate": request.current_date,
             "workflowSettings": _workflow_settings_from_request(request),
+            "notification": self._normalize_notification(item.notification),
         }
 
     def _task_for_user_payload(self, *, task: dict[str, Any], schedule: ScheduledReport) -> dict[str, Any]:
@@ -940,6 +941,12 @@ class SchedulerService:
         source = notification or {}
         channel = str(source.get("channel", "in_app")).strip() or "in_app"
         enabled = bool(source.get("enabled", True))
+        if channel == "wechat_clawbot":
+            return {
+                "channel": channel,
+                "enabled": enabled,
+                "recipientKey": "wechat_primary",
+            }
         return {"channel": channel, "enabled": enabled}
 
     @staticmethod

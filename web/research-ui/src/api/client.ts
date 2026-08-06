@@ -76,6 +76,8 @@ import type {
   TestLlmViaOpenClawInput,
   TestLlmViaOpenClawOutput,
   WorkerChatReplyForUser,
+  WechatNotificationBindingCodeForUser,
+  WechatReconnectForUser,
 } from './contracts';
 
 type JsonRecord = Record<string, unknown>;
@@ -310,6 +312,52 @@ export function getChannelStatus(options?: {
   }
   const suffix = query.toString();
   return requestJson<ChannelStatusForUser>(`/api/ui/get-channel-status${suffix ? `?${suffix}` : ''}`);
+}
+
+export function startWechatReconnect(requestId: string) {
+  return requestJson<WechatReconnectForUser>('/api/ui/start-wechat-reconnect', {
+    method: 'POST',
+    body: JSON.stringify({ requestId, channelKind: 'wechat_clawbot' }),
+  });
+}
+
+export function getWechatReconnectState() {
+  return requestJson<WechatReconnectForUser | null>('/api/ui/get-wechat-reconnect-state');
+}
+
+export function pollWechatReconnect(operationId: string) {
+  return requestJson<WechatReconnectForUser>('/api/ui/poll-wechat-reconnect', {
+    method: 'POST',
+    body: JSON.stringify({ operationId, timeoutMs: 1500 }),
+  });
+}
+
+export function cancelWechatReconnect(operationId: string) {
+  return requestJson<WechatReconnectForUser>('/api/ui/cancel-wechat-reconnect', {
+    method: 'POST',
+    body: JSON.stringify({ operationId, channelKind: 'wechat_clawbot' }),
+  });
+}
+
+export function recoverWechatReconnect(operationId: string) {
+  return requestJson<WechatReconnectForUser>('/api/ui/recover-wechat-reconnect', {
+    method: 'POST',
+    body: JSON.stringify({ operationId, channelKind: 'wechat_clawbot' }),
+  });
+}
+
+export function createWechatNotificationBindingCode(requestId: string) {
+  return requestJson<WechatNotificationBindingCodeForUser>(
+    '/api/ui/create-wechat-notification-binding-code',
+    { method: 'POST', body: JSON.stringify({ requestId }) },
+  );
+}
+
+export function retryWechatNotifications(requestId: string) {
+  return requestJson<{ attempted: number; sent: number; inProgress?: boolean }>('/api/ui/retry-wechat-notifications', {
+    method: 'POST',
+    body: JSON.stringify({ requestId }),
+  });
 }
 
 export function getChannelChatSnapshot() {

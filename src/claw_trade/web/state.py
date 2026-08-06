@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +18,9 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any
+
+
+_LOGGER = logging.getLogger(__name__)
 
 from claw_trade.cli.run_control import _build_runner
 from claw_trade.config.report_workflow_settings import (
@@ -108,6 +113,7 @@ from claw_trade.ui_backend.report_context import ReportContextRetriever
 from claw_trade.ui_backend.report_notification_service import ReportNotificationService
 from claw_trade.ui_backend.report_qa import ReportQaContextPolicy, ReportQuestionService
 from claw_trade.ui_backend.report_queue import ReportTaskQueue
+from claw_trade.ui_backend.wechat_delivery_store import WechatDeliveryStore
 from claw_trade.ui_backend.report_repository import ReportRepository, UiProductError
 from claw_trade.ui_backend.scheduled_work_runner import ScheduledWorkRunner
 from claw_trade.ui_backend.scheduled_work_store import JsonScheduledWorkStore
@@ -781,6 +787,19 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         task_cost_snapshot_provider=llm_bridge.capture_report_model_cost_snapshot,
         report_lock_path=dev_report_lock_path,
         report_lock_opener=_hold_dev_report_lock if dev_report_lock_path is not None else None,
+        notification_intent_writer=lambda task: report_notification_service.create_report_delivery_intent(
+            str(task.notification_intent_id)
+        )
+        if task.notification_intent_id
+        else None,
+        notification_report_linker=lambda intent_id, report_id: report_notification_service.link_report_delivery_intent(
+            intent_id,
+            report_id,
+        ),
+        notification_intent_failure_writer=lambda intent_id, error: report_notification_service.fail_report_delivery_intent(
+            intent_id,
+            error,
+        ),
     )
     scheduled_work_store = JsonScheduledWorkStore(run_root / ".ui-scheduled-work.json")
     cron_adapter = OpenClawCronAdapter(rpc_client)
@@ -902,7 +921,13 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         else None,
         json_path=run_root / ".ui-selection-auto-refresh-settings.json",
     )
-    channel_bridge = ChannelBridge(rpc_client)
+    channel_bridge = ChannelBridge(
+        rpc_client,
+        reconnect_state_path=run_root / ".ui-wechat-reconnect.json",
+    )
+    channel_bridge.recover_wechat_reconnect()
+    wechat_delivery_store = WechatDeliveryStore(run_root / ".ui-wechat-delivery.json")
+    _restore_wechat_delivery_links(wechat_delivery_store, run_root)
     file_send_tracker = ReportFileSendTracker()
     report_notification_service = ReportNotificationService(
         repository,
@@ -910,6 +935,15 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         pdf_export_service,
         channel_bridge,
         file_send_tracker=file_send_tracker,
+        delivery_store=wechat_delivery_store,
+    )
+    report_notification_service.recover_completed_deliveries()
+    report_notification_service.retry_pending()
+    _start_wechat_delivery_recovery_watcher(
+        delivery_store=wechat_delivery_store,
+        notification_service=report_notification_service,
+        repository=repository,
+        run_root=run_root,
     )
     report_cleanup_service = ReportCleanupService(
         run_root=run_root,
@@ -951,6 +985,11 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             markdown=markdown,
             request_id=request_id,
             target=target,
+        ),
+        bind_notification_recipient=lambda text, account_id, sender_id: report_notification_service.bind_notification_recipient(
+            text,
+            account_id=account_id,
+            sender_id=sender_id,
         ),
     )
     restore_report_completion_chat_messages(repository, summary_builder, chat_controller, channel_text_inbound)
@@ -1067,6 +1106,9 @@ def _handle_completed_workflow_report(
             "account_id": target.account_id,
         }
     cost_line = render_task_cost_line(getattr(task, "cost_estimate", None))
+    delivery_intent_id = getattr(task, "notification_intent_id", None)
+    if delivery_intent_id:
+        notify_kwargs["delivery_intent_id"] = delivery_intent_id
     result = notification_service.notify_report_completion(  # type: ignore[attr-defined]
         report_id,
         text_footer=cost_line or None,
@@ -1335,6 +1377,96 @@ def restore_completed_workflow_reports(repository: ReportRepository, run_root: P
             ),
         )
         restored += 1
+    return restored
+
+
+def _restore_wechat_delivery_links(
+    delivery_store: WechatDeliveryStore,
+    run_root: Path,
+) -> int:
+    if not run_root.exists():
+        return 0
+    restored = 0
+    for run_dir in sorted(item for item in run_root.iterdir() if item.is_dir()):
+        state = _read_json_object(run_dir / "state.json")
+        if not state or str(state.get("status") or "").lower() != "completed":
+            continue
+        request = state.get("request")
+        request_payload = request if isinstance(request, dict) else {}
+        intent_id = _optional_text(request_payload.get("ui_notification_intent_id"))
+        report_id = _optional_text(state.get("run_id") or run_dir.name)
+        if intent_id and report_id:
+            delivery_store.link_report(intent_id, report_id=report_id)
+            restored += 1
+    return restored
+
+
+def _start_wechat_delivery_recovery_watcher(
+    *,
+    delivery_store: WechatDeliveryStore,
+    notification_service: ReportNotificationService,
+    repository: ReportRepository,
+    run_root: Path,
+    sleep: Callable[[float], None] = time.sleep,
+    stop_event: Event | None = None,
+) -> Thread:
+    stop = stop_event or Event()
+
+    def recover() -> None:
+        while not stop.is_set():
+            try:
+                _dispatch_wechat_deliveries_once(
+                    delivery_store=delivery_store,
+                    notification_service=notification_service,
+                    repository=repository,
+                    run_root=run_root,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("wechat delivery recovery failed: %s", exc)
+            if stop.is_set():
+                break
+            sleep(5.0)
+
+    thread = Thread(target=recover, daemon=True, name="claw-trade-wechat-delivery-recovery")
+    thread.start()
+    return thread
+
+
+def _dispatch_wechat_deliveries_once(
+    *,
+    delivery_store: WechatDeliveryStore,
+    notification_service: ReportNotificationService,
+    repository: ReportRepository,
+    run_root: Path,
+) -> None:
+    records = delivery_store.list_delivery_records(states={"waiting_report", "pending"})
+    if not records:
+        return
+    if any(record.get("state") == "waiting_report" for record in records):
+        restore_completed_workflow_reports(repository, run_root)
+        _restore_wechat_delivery_links(delivery_store, run_root)
+        _restore_wechat_delivery_failures(delivery_store, run_root)
+        notification_service.recover_completed_deliveries()
+    notification_service.retry_pending()
+
+
+def _restore_wechat_delivery_failures(delivery_store: WechatDeliveryStore, run_root: Path) -> int:
+    if not run_root.exists():
+        return 0
+    restored = 0
+    for run_dir in sorted(item for item in run_root.iterdir() if item.is_dir()):
+        state = _read_json_object(run_dir / "state.json")
+        if not state or str(state.get("status") or "").lower() not in {"failed", "cancelled"}:
+            continue
+        request = state.get("request")
+        request_payload = request if isinstance(request, dict) else {}
+        intent_id = _optional_text(request_payload.get("ui_notification_intent_id"))
+        if intent_id:
+            delivery_store.mark_report_failed(
+                intent_id,
+                error=str(state.get("status") or "report_failed").lower(),
+            )
+            restored += 1
     return restored
 
 

@@ -155,7 +155,15 @@ OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-${RUNTIME_DIR}/openclaw-state}"
 OPENCLAW_DEFAULT_STATE_DIR="${RUNTIME_DIR}/openclaw-state"
 OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_STATE_DIR}/openclaw.json}"
 OPENCLAW_WEIXIN_PLUGIN_ID="${OPENCLAW_WEIXIN_PLUGIN_ID:-openclaw-weixin}"
-OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_SPEC:-@tencent-weixin/openclaw-weixin@2.4.4}"
+OPENCLAW_WEIXIN_PATCHED_VERSION="2.4.4-clawtrade.1"
+OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR="${ROOT_DIR}/.runtime/openclaw-weixin-patched"
+OPENCLAW_WEIXIN_PLUGIN_ARCHIVE="${OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR}/tencent-weixin-openclaw-weixin-${OPENCLAW_WEIXIN_PATCHED_VERSION}.tgz"
+if [[ -n "${OPENCLAW_WEIXIN_PLUGIN_SPEC:-}" ]]; then
+  OPENCLAW_WEIXIN_PLUGIN_SPEC_IS_OVERRIDE=1
+else
+  OPENCLAW_WEIXIN_PLUGIN_SPEC="${OPENCLAW_WEIXIN_PLUGIN_ARCHIVE}"
+  OPENCLAW_WEIXIN_PLUGIN_SPEC_IS_OVERRIDE=0
+fi
 OPENCLAW_GATEWAY_TIMEOUT_MS="${OPENCLAW_GATEWAY_TIMEOUT_MS:-600000}"
 OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS="${OPENCLAW_LLM_IDLE_TIMEOUT_SECONDS:-600}"
 OPENCLAW_MARKET_TOOL_PYTHON="${OPENCLAW_MARKET_TOOL_PYTHON:-}"
@@ -566,7 +574,7 @@ let raw = "";
 try {
   raw = fs.readFileSync(pluginsJsonPath, "utf8");
 } catch {
-  process.stdout.write("missing");
+  process.stdout.write("missing\t\n");
   process.exit(0);
 }
 
@@ -574,7 +582,7 @@ let parsed = null;
 try {
   parsed = JSON.parse(raw);
 } catch {
-  process.stdout.write("invalid");
+  process.stdout.write("invalid\t\n");
   process.exit(0);
 }
 
@@ -589,15 +597,58 @@ if (Array.isArray(parsed)) {
 
 const plugin = plugins.find((item) => String(item?.id || "").trim() === pluginId);
 if (!plugin) {
-  process.stdout.write("missing");
+  process.stdout.write("missing\t\n");
   process.exit(0);
 }
 if (plugin.enabled === false) {
-  process.stdout.write("disabled");
+  process.stdout.write(`disabled\t${String(plugin.version || "")}\n`);
   process.exit(0);
 }
-process.stdout.write("enabled");
+process.stdout.write(`enabled\t${String(plugin.version || "")}\n`);
 NODE
+}
+
+ensure_openclaw_weixin_plugin_archive() {
+  if [[ "${OPENCLAW_WEIXIN_PLUGIN_SPEC_IS_OVERRIDE}" == "1" ]]; then
+    return 0
+  fi
+  if OPENCLAW_WEIXIN_OUTPUT_DIR="${OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR}" \
+    "${ROOT_DIR}/scripts/build-openclaw-weixin-plugin.sh" --verify-artifact \
+    >"${LOG_DIR}/openclaw-weixin-plugin-verify.log" 2>&1; then
+    return 0
+  fi
+  if [[ -f "${OPENCLAW_WEIXIN_PLUGIN_ARCHIVE}" ]]; then
+    log_warn "现有微信插件补丁哈希链无效，执行重建。日志：${LOG_DIR}/openclaw-weixin-plugin-verify.log"
+  fi
+  log_info "构建已校验的微信插件补丁：${OPENCLAW_WEIXIN_PATCHED_VERSION}"
+  OPENCLAW_WEIXIN_OUTPUT_DIR="${OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR}" \
+    "${ROOT_DIR}/scripts/build-openclaw-weixin-plugin.sh"
+  if ! OPENCLAW_WEIXIN_OUTPUT_DIR="${OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR}" \
+    "${ROOT_DIR}/scripts/build-openclaw-weixin-plugin.sh" --verify-artifact \
+    >"${LOG_DIR}/openclaw-weixin-plugin-verify.log" 2>&1; then
+    log_error "微信插件补丁构建后哈希链校验失败。日志：${LOG_DIR}/openclaw-weixin-plugin-verify.log"
+    exit 1
+  fi
+}
+
+verify_openclaw_weixin_plugin_ready() {
+  local plugin_list_json="${LOG_DIR}/openclaw-plugins-list-verified.json"
+  local plugin_list_log="${LOG_DIR}/openclaw-plugins-list-verified.log"
+  OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
+  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
+    "${OPENCLAW_GATEWAY_CALL_BIN}" plugins list --json >"${plugin_list_json}" 2>"${plugin_list_log}" || {
+      log_error "微信插件安装后状态检查失败。日志：${plugin_list_log}"
+      exit 1
+    }
+  local plugin_state="missing"
+  local plugin_version=""
+  IFS=$'\t' read -r plugin_state plugin_version < <(
+    read_openclaw_plugin_state "${plugin_list_json}" "${OPENCLAW_WEIXIN_PLUGIN_ID}"
+  )
+  if [[ "${plugin_state}" != "enabled" || "${plugin_version}" != "${OPENCLAW_WEIXIN_PATCHED_VERSION}" ]]; then
+    log_error "微信插件版本校验失败：期望 enabled ${OPENCLAW_WEIXIN_PATCHED_VERSION}，实际 ${plugin_state} ${plugin_version:-<none>}"
+    exit 1
+  fi
 }
 
 ensure_openclaw_weixin_plugin_ready() {
@@ -608,7 +659,9 @@ ensure_openclaw_weixin_plugin_ready() {
 
   local plugin_list_json="${LOG_DIR}/openclaw-plugins-list.json"
   local plugin_list_log="${LOG_DIR}/openclaw-plugins-list.log"
+  ensure_openclaw_weixin_plugin_archive
   local plugin_state="missing"
+  local plugin_version=""
   set +e
   OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
   OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
@@ -616,42 +669,28 @@ ensure_openclaw_weixin_plugin_ready() {
   local list_status=$?
   set -e
   if [[ "${list_status}" == "0" ]]; then
-    plugin_state="$(read_openclaw_plugin_state "${plugin_list_json}" "${OPENCLAW_WEIXIN_PLUGIN_ID}")"
+    IFS=$'\t' read -r plugin_state plugin_version < <(
+      read_openclaw_plugin_state "${plugin_list_json}" "${OPENCLAW_WEIXIN_PLUGIN_ID}"
+    )
   else
     log_warn "无法读取 OpenClaw 插件列表（退出码 ${list_status}），继续尝试安装微信插件。日志：${plugin_list_log}"
   fi
 
-  if [[ "${plugin_state}" == "enabled" ]]; then
-    log_info "微信插件已安装并启用：${OPENCLAW_WEIXIN_PLUGIN_ID}"
-    return 0
-  fi
-
-  if [[ "${plugin_state}" == "disabled" ]]; then
-    log_info "微信插件已安装但未启用，执行启用：${OPENCLAW_WEIXIN_PLUGIN_ID}"
-    set +e
-    OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
-    OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
-      "${OPENCLAW_GATEWAY_CALL_BIN}" config set "plugins.entries.${OPENCLAW_WEIXIN_PLUGIN_ID}.enabled" true \
-      >"${LOG_DIR}/openclaw-weixin-plugin-enable.log" 2>&1
-    local enable_status=$?
-    set -e
-    if [[ "${enable_status}" != "0" ]]; then
-      log_warn "微信插件启用命令失败（退出码 ${enable_status}），继续启动。日志：${LOG_DIR}/openclaw-weixin-plugin-enable.log"
-    fi
-    return 0
+  if [[ "${plugin_state}" == "enabled" && "${plugin_version}" == "${OPENCLAW_WEIXIN_PATCHED_VERSION}" ]]; then
+    log_info "微信插件版本已匹配，仍从当前已校验产物覆盖安装：${OPENCLAW_WEIXIN_PLUGIN_ID}"
   fi
 
   log_info "安装微信插件：${OPENCLAW_WEIXIN_PLUGIN_SPEC}"
   set +e
   OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}" \
   OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \
-    "${OPENCLAW_GATEWAY_CALL_BIN}" plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}" \
+    "${OPENCLAW_GATEWAY_CALL_BIN}" plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}" --force \
     >"${LOG_DIR}/openclaw-weixin-plugin-install.log" 2>&1
   local install_status=$?
   set -e
   if [[ "${install_status}" != "0" ]]; then
-    log_warn "微信插件安装失败（退出码 ${install_status}），继续启动。日志：${LOG_DIR}/openclaw-weixin-plugin-install.log"
-    return 0
+    log_error "微信插件安装失败（退出码 ${install_status}）。日志：${LOG_DIR}/openclaw-weixin-plugin-install.log"
+    exit 1
   fi
 
   set +e
@@ -662,9 +701,10 @@ ensure_openclaw_weixin_plugin_ready() {
   local enable_after_install_status=$?
   set -e
   if [[ "${enable_after_install_status}" != "0" ]]; then
-    log_warn "微信插件安装后启用失败（退出码 ${enable_after_install_status}），继续启动。日志：${LOG_DIR}/openclaw-weixin-plugin-enable.log"
-    return 0
+    log_error "微信插件安装后启用失败（退出码 ${enable_after_install_status}）。日志：${LOG_DIR}/openclaw-weixin-plugin-enable.log"
+    exit 1
   fi
+  verify_openclaw_weixin_plugin_ready
   log_info "微信插件安装并启用完成：${OPENCLAW_WEIXIN_PLUGIN_ID}"
 }
 

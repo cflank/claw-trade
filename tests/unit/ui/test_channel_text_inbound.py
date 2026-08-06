@@ -84,6 +84,7 @@ def _controller(
     request_full_report_file=None,  # type: ignore[no-untyped-def]
     request_selection_report_file=None,  # type: ignore[no-untyped-def]
     ask_report_question=None,  # type: ignore[no-untyped-def]
+    bind_notification_recipient=None,  # type: ignore[no-untyped-def]
     company_name_resolver=None,  # type: ignore[no-untyped-def]
 ) -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
     runner = _FakeRunner()
@@ -105,6 +106,7 @@ def _controller(
             send_channel_text=send_channel_text,
             request_selection_report_file=request_selection_report_file,
             ask_report_question=ask_report_question,
+            bind_notification_recipient=bind_notification_recipient,
         ),
         runner,
         chat_transport,
@@ -120,6 +122,27 @@ def _message(request_id: str, text: str, *, sender_id: str = "sender-1") -> Chan
         text=text,
         message_id=f"m-{request_id}",
     )
+
+
+def test_notification_binding_command_uses_inbound_account_and_sender_before_chat_routing() -> None:
+    calls: list[tuple[str, str | None, str]] = []
+    controller, runner, chat_transport = _controller(
+        bind_notification_recipient=lambda text, account_id, sender_id: (
+            calls.append((text, account_id, sender_id))
+            or {"bound": True, "message": "绑定成功，将发送待发送报告。"}
+        )
+    )
+
+    result = controller.handle_message(_message("bind-1", "绑定通知 A1B2C3D4"))
+
+    assert result == {
+        "handled": True,
+        "replyText": "绑定成功，将发送待发送报告。",
+        "state": "notification_bound",
+    }
+    assert calls == [("绑定通知 A1B2C3D4", "account-1", "sender-1")]
+    assert runner.calls == 0
+    assert chat_transport.calls == []
 
 
 def test_ordinary_wechat_text_is_left_to_openclaw_native_channel() -> None:

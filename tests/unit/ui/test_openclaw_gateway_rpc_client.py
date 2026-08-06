@@ -307,6 +307,83 @@ def test_web_login_wait_forwards_qr_session_key(monkeypatch) -> None:  # type: i
     ]
 
 
+def test_weixin_replacement_rpc_methods_use_frozen_contract(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token=None,
+        password=None,
+    )
+    calls: list[tuple[str, dict[str, object], int | None]] = []
+
+    def fake_call(method, params=None, *, expect_final=False, timeout_ms=None):  # type: ignore[no-untyped-def]
+        _ = expect_final
+        calls.append((method, dict(params or {}), timeout_ms))
+        return {"ok": True}
+
+    monkeypatch.setattr(client, "_call", fake_call)
+
+    client.weixin_replacement_begin(operation_id="op-1", old_account_ids=["old-1"])
+    client.weixin_replacement_login_start(operation_id="op-1")
+    client.weixin_replacement_login_wait(operation_id="op-1", session_key="session-1", timeout_ms=1500)
+    client.weixin_login_cancel(operation_id="op-1", session_key="session-1")
+    client.weixin_replacement_commit(
+        operation_id="op-1",
+        candidate_account_id="candidate-1",
+        login_receipt_id="receipt-1",
+    )
+    client.weixin_replacement_restore(operation_id="op-1")
+    client.weixin_replacement_inspect(operation_id="op-1")
+
+    assert calls == [
+        ("weixin.replacement.begin", {"operationId": "op-1", "oldAccountIds": ["old-1"]}, 15_000),
+        ("weixin.replacement.login.start", {"operationId": "op-1"}, 15_000),
+        (
+            "weixin.replacement.login.wait",
+            {"operationId": "op-1", "sessionKey": "session-1", "timeoutMs": 1500},
+            4_500,
+        ),
+        ("weixin.login.cancel", {"operationId": "op-1", "sessionKey": "session-1"}, 15_000),
+        (
+            "weixin.replacement.commit",
+            {
+                "operationId": "op-1",
+                "candidateAccountId": "candidate-1",
+                "loginReceiptId": "receipt-1",
+            },
+            30_000,
+        ),
+        ("weixin.replacement.restore", {"operationId": "op-1"}, 30_000),
+        ("weixin.replacement.inspect", {"operationId": "op-1"}, 10_000),
+    ]
+
+
+def test_fresh_channel_status_bypasses_python_cache(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    client = OpenClawGatewayRpcClient(
+        gateway_call_bin="openclaw",
+        gateway_ws_url="ws://127.0.0.1:18789",
+        timeout_ms=1000,
+        token=None,
+        password=None,
+    )
+    calls = 0
+
+    def fake_call(method, params=None, *, expect_final=False, timeout_ms=None):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        _ = (params, expect_final, timeout_ms)
+        assert method == "channels.status"
+        calls += 1
+        return {"revision": calls}
+
+    monkeypatch.setattr(client, "_call", fake_call)
+
+    assert client.channels_status(probe=True) == {"revision": 1}
+    assert client.channels_status(probe=True) == {"revision": 1}
+    assert client.channels_status(probe=True, fresh=True) == {"revision": 2}
+    assert client.channels_status(probe=True, fresh=True) == {"revision": 3}
+
+
 def test_channel_text_send_uses_gateway_send_target_and_message_shape(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     calls: list[dict[str, object]] = []
 

@@ -9,6 +9,18 @@ def _script_path() -> Path:
     return Path(__file__).resolve().parents[2] / "scripts" / "start-control-runtime.sh"
 
 
+def test_patched_weixin_builder_verifies_the_complete_artifact_chain() -> None:
+    script = (
+        Path(__file__).resolve().parents[2] / "scripts" / "build-openclaw-weixin-plugin.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "--verify-artifact" in script
+    assert 'actual_patch_sha == source.get("patchSha256")' in script
+    assert 'build.get("patchSha256") == source.get("patchSha256")' in script
+    assert 'actual_artifact_sha == build.get("artifactSha256")' in script
+    assert 'package.get("version") != source.get("patchedVersion")' in script
+
+
 def test_start_control_runtime_script_is_bash_valid() -> None:
     script = _script_path()
     completed = subprocess.run(
@@ -52,11 +64,20 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "OPENCLAW_WEIXIN_PLUGIN_ID" in text
     assert "OPENCLAW_WEIXIN_PLUGIN_SPEC" in text
     assert "ensure_openclaw_weixin_plugin_ready" in text
+    assert "verify_openclaw_weixin_plugin_ready" in text
+    assert '"${plugin_version}" != "${OPENCLAW_WEIXIN_PATCHED_VERSION}"' in text
     assert "existingPluginAllow" in text
     assert "requiredPluginAllow" in text
     assert "allow: mergedPluginAllow" in text
-    assert "@tencent-weixin/openclaw-weixin@2.4.4" in text
-    assert 'plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}"' in text
+    assert "2.4.4-clawtrade.1" in text
+    assert "build-openclaw-weixin-plugin.sh" in text
+    assert 'build-openclaw-weixin-plugin.sh" --verify-artifact' in text
+    assert 'OPENCLAW_WEIXIN_OUTPUT_DIR="${OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR}"' in text
+    assert "现有微信插件补丁哈希链无效，执行重建" in text
+    assert "微信插件补丁构建后哈希链校验失败" in text
+    assert 'plugins install "${OPENCLAW_WEIXIN_PLUGIN_SPEC}" --force' in text
+    assert "微信插件版本已匹配，仍从当前已校验产物覆盖安装" in text
+    assert "微信插件已安装并启用：${OPENCLAW_WEIXIN_PLUGIN_ID}" not in text
     assert "OPENCLAW_STATE_DIR" in text
     assert "OPENCLAW_CONFIG_PATH" in text
     assert "preauthorize_openclaw_gateway_cli_scopes" in text

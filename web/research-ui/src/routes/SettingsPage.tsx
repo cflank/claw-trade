@@ -5,20 +5,27 @@ import { SettingsSections } from '../components/SettingsSections';
 import { withLlmProviderDefaults } from '../components/llmCatalog';
 import {
   checkForUpdate,
+  cancelWechatReconnect,
+  createWechatNotificationBindingCode,
   getChannelStatus,
+  getWechatReconnectState,
   factoryReset,
   getProductionMaintenanceStatus,
   getReportCleanupSettings,
   getSelectionAutoRefreshSettings,
   listDataSources,
   loadLlmSettings,
+  recoverWechatReconnect,
   resetSettingsToDefaults,
+  retryWechatNotifications,
   saveChannelConfig,
   saveDataSourceInstance,
   saveEmbeddingConfig,
   saveReportCleanupSettings,
   saveSelectionAutoRefreshSettings,
   saveReportModelConfig,
+  startWechatReconnect,
+  pollWechatReconnect,
   installUpdate,
   testDataSource,
   testEmbeddingConnection,
@@ -32,6 +39,7 @@ import {
   type ReportRetentionDays,
   type SelectionAutoRefreshSettingsForUser,
   type UpdateActionStatus,
+  type WechatReconnectForUser,
 } from '../api/workspace';
 
 type SectionErrors = {
@@ -48,7 +56,7 @@ type SectionErrors = {
 
 function shouldEnableWechatPlugin(channel: ChannelStatusForUser | null) {
   const message = channel?.lastErrorMessage ?? '';
-  return channel?.state !== 'connected' && (message.includes('启用微信 ClawBot 插件') || message.includes('微信已解除连接'));
+  return channel?.state !== 'connected' && (message.includes('启用微信 ClawBot 插件') || message.includes('微信通知已停用'));
 }
 
 const SETTINGS_LOAD_TIMEOUT_MS = 8000;
@@ -249,6 +257,7 @@ export function SettingsPage() {
   const [sectionErrors, setSectionErrors] = useState<SectionErrors>({});
   const [channelActionBusy, setChannelActionBusy] = useState(false);
   const [channelActionMessage, setChannelActionMessage] = useState('');
+  const [wechatReconnect, setWechatReconnect] = useState<WechatReconnectForUser | null>(null);
   const [llmActionBusy, setLlmActionBusy] = useState(false);
   const [llmActionMessage, setLlmActionMessage] = useState('');
   const [embeddingActionBusy, setEmbeddingActionBusy] = useState(false);
@@ -324,7 +333,9 @@ export function SettingsPage() {
         .then((result) => {
           if (active) {
             setChannel((current) =>
-              current?.qrCodeImageDataUrl && !result.qrCodeImageDataUrl ? current : result,
+              current?.state === 'reconnecting' || (current?.qrCodeImageDataUrl && !result.qrCodeImageDataUrl)
+                ? current
+                : result,
             );
           }
         })
@@ -334,6 +345,27 @@ export function SettingsPage() {
           }
         })
         .finally(finishOne);
+      void getWechatReconnectState()
+        .then((result) => {
+          if (
+            !active
+            || !result?.operationId
+            || !['preparing', 'awaiting_scan', 'committing', 'restoring', 'needs_attention'].includes(result.phase)
+          ) return;
+          setWechatReconnect(result);
+          setChannel((current) => ({
+            ...(current ?? {
+              channelKind: 'wechat_clawbot',
+              onboardingState: 'completed',
+              displayName: '微信 ClawBot',
+            }),
+            state: 'reconnecting',
+            canSendText: false,
+            canSendFile: false,
+            qrCodeImageDataUrl: result.qrCodeImageDataUrl ?? null,
+          }));
+        })
+        .catch(() => undefined);
       void withSettingsTimeout(
         loadLlmSettings(),
         '报告模型设置暂不可用，请稍后重试。',
@@ -412,7 +444,7 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    if (!channel?.qrCodeImageDataUrl || channel.state === 'connected') {
+    if (wechatReconnect || !channel?.qrCodeImageDataUrl || channel.state === 'connected') {
       return undefined;
     }
     let active = true;
@@ -446,10 +478,63 @@ export function SettingsPage() {
         clearTimeout(timer);
       }
     };
-  }, [channel?.qrCodeImageDataUrl, channel?.state]);
+  }, [channel?.qrCodeImageDataUrl, channel?.state, wechatReconnect]);
 
   useEffect(() => {
-    if (channel?.qrCodeImageDataUrl) {
+    if (!wechatReconnect || !['awaiting_scan', 'committing'].includes(wechatReconnect.phase)) {
+      return undefined;
+    }
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const result = await pollWechatReconnect(wechatReconnect.operationId);
+        if (!active) return;
+        setWechatReconnect(result);
+        if (result.qrCodeImageDataUrl) {
+          setChannel((current) => ({
+            ...(current ?? {
+              channelKind: 'wechat_clawbot',
+              onboardingState: 'completed',
+              displayName: '微信 ClawBot',
+              canSendText: false,
+              canSendFile: false,
+            }),
+            state: 'reconnecting',
+            canSendText: false,
+            canSendFile: false,
+            qrCodeImageDataUrl: result.qrCodeImageDataUrl,
+          }));
+        }
+        if (result.phase === 'completed') {
+          setChannelActionMessage(result.outcome === 'switched' ? '微信已重新连接。' : '已取消，旧微信连接已恢复。');
+          setChannel(await getChannelStatus({ probe: true }));
+          setWechatReconnect(null);
+          return;
+        }
+        if (result.phase === 'needs_attention') {
+          setSectionErrors((current) => ({
+            ...current,
+            channel: result.lastErrorMessage ?? '微信账号状态异常，发送已暂停。',
+          }));
+          return;
+        }
+        timer = setTimeout(poll, CHANNEL_LOGIN_POLL_MS);
+      } catch (pollError) {
+        if (!active) return;
+        setSectionErrors((current) => ({ ...current, channel: (pollError as Error).message }));
+        timer = setTimeout(poll, CHANNEL_LOGIN_POLL_MS * 2);
+      }
+    };
+    timer = setTimeout(poll, CHANNEL_LOGIN_POLL_MS);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [wechatReconnect?.operationId, wechatReconnect?.phase]);
+
+  useEffect(() => {
+    if (wechatReconnect || channel?.qrCodeImageDataUrl) {
       return undefined;
     }
     let active = true;
@@ -470,9 +555,13 @@ export function SettingsPage() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [channel?.qrCodeImageDataUrl]);
+  }, [channel?.qrCodeImageDataUrl, wechatReconnect]);
 
   async function refreshChannel() {
+    if (channel?.replacementRequired === true) {
+      await reconnectChannel();
+      return;
+    }
     if (shouldEnableWechatPlugin(channel)) {
       await setChannelEnabled(true);
       return;
@@ -541,7 +630,7 @@ export function SettingsPage() {
       if (enabled) {
         setChannelActionMessage(result.restartRequired ? '已提交重新连接，请重启后重新扫码。' : '已提交重新连接，请重新扫码。');
       } else {
-        setChannelActionMessage('已解除连接。');
+        setChannelActionMessage('已停用微信通知；账号凭据仍保留。');
       }
     } catch (saveError) {
       setSectionErrors((current) => ({
@@ -554,7 +643,116 @@ export function SettingsPage() {
   }
 
   async function reconnectChannel() {
-    await setChannelEnabled(true);
+    if (channel?.state !== 'connected' && channel?.replacementRequired !== true) {
+      await setChannelEnabled(true);
+      return;
+    }
+    setChannelActionBusy(true);
+    setChannelActionMessage('');
+    setSectionErrors((current) => ({ ...current, channel: undefined }));
+    try {
+      const result = await startWechatReconnect(`wechat-reconnect-${Date.now()}`);
+      setWechatReconnect(result);
+      if (result.phase === 'needs_attention') {
+        setSectionErrors((current) => ({
+          ...current,
+          channel: result.lastErrorMessage ?? '微信账号状态异常，无法安全重新连接。',
+        }));
+        return;
+      }
+      setChannel((current) => current && {
+        ...current,
+        state: 'reconnecting',
+        canSendText: false,
+        canSendFile: false,
+        qrCodeImageDataUrl: result.qrCodeImageDataUrl ?? null,
+      });
+      setChannelActionMessage('请扫描新二维码；完成前旧账号凭据仍可恢复。');
+    } catch (reconnectError) {
+      setSectionErrors((current) => ({ ...current, channel: (reconnectError as Error).message }));
+    } finally {
+      setChannelActionBusy(false);
+    }
+  }
+
+  async function cancelReconnectChannel() {
+    if (!wechatReconnect) return;
+    setChannelActionBusy(true);
+    try {
+      const result = await cancelWechatReconnect(wechatReconnect.operationId);
+      if (result.phase === 'completed' && result.outcome === 'restored') {
+        setWechatReconnect(null);
+        setChannel(await getChannelStatus({ probe: true }));
+        setChannelActionMessage('已取消，旧微信连接已恢复。');
+        return;
+      }
+      setWechatReconnect(result);
+      setSectionErrors((current) => ({
+        ...current,
+        channel: result.lastErrorMessage ?? '取消未完成，微信发送仍处于暂停状态。',
+      }));
+    } catch (cancelError) {
+      setSectionErrors((current) => ({ ...current, channel: (cancelError as Error).message }));
+    } finally {
+      setChannelActionBusy(false);
+    }
+  }
+
+  async function recoverReconnectChannel() {
+    if (!wechatReconnect) return;
+    setChannelActionBusy(true);
+    setChannelActionMessage('');
+    setSectionErrors((current) => ({ ...current, channel: undefined }));
+    try {
+      const result = await recoverWechatReconnect(wechatReconnect.operationId);
+      if (result.phase === 'completed') {
+        setWechatReconnect(null);
+        setChannel(await getChannelStatus({ probe: true }));
+        setChannelActionMessage(
+          result.outcome === 'switched' ? '微信已重新连接。' : '旧微信连接已恢复。',
+        );
+        return;
+      }
+      setWechatReconnect(result);
+      if (result.phase === 'needs_attention') {
+        setSectionErrors((current) => ({
+          ...current,
+          channel: result.lastErrorMessage ?? '微信恢复尚未完成，发送仍处于暂停状态。',
+        }));
+      }
+    } catch (recoverError) {
+      setSectionErrors((current) => ({ ...current, channel: (recoverError as Error).message }));
+    } finally {
+      setChannelActionBusy(false);
+    }
+  }
+
+  async function createWechatBindingCode() {
+    setChannelActionBusy(true);
+    try {
+      const result = await createWechatNotificationBindingCode(`wechat-binding-${Date.now()}`);
+      setChannelActionMessage(result.message);
+    } catch (bindingError) {
+      setSectionErrors((current) => ({ ...current, channel: (bindingError as Error).message }));
+    } finally {
+      setChannelActionBusy(false);
+    }
+  }
+
+  async function retryUnknownWechatNotifications() {
+    setChannelActionBusy(true);
+    try {
+      const result = await retryWechatNotifications(`wechat-retry-${Date.now()}`);
+      setChannelActionMessage(
+        result.inProgress
+          ? '同一次重试仍在执行，请稍后查看结果。'
+          : `已手动尝试 ${result.attempted} 条，确认发送 ${result.sent} 条。`,
+      );
+    } catch (retryError) {
+      setSectionErrors((current) => ({ ...current, channel: (retryError as Error).message }));
+    } finally {
+      setChannelActionBusy(false);
+    }
   }
 
   async function disconnectChannel() {
@@ -808,7 +1006,7 @@ export function SettingsPage() {
 
   async function resetSettings() {
     const confirmed = window.confirm(
-      '恢复本页默认配置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间、选股刷新和微信通知连接设置，但不会删除历史报告。确定继续吗？',
+      '恢复本页默认配置会清空本页保存的报告模型、Embedding、增强数据源、报告保留时间和选股刷新设置，并停用微信通知，但不会删除历史报告或微信账号凭据。确定继续吗？',
     );
     if (!confirmed) {
       return;
@@ -1048,6 +1246,12 @@ export function SettingsPage() {
           canInstallUpdate={canInstallUpdate}
           productionMaintenance={productionMaintenance}
           onReconnectChannel={reconnectChannel}
+          onCancelReconnectChannel={cancelReconnectChannel}
+          onRecoverReconnectChannel={recoverReconnectChannel}
+          reconnectNeedsAttention={wechatReconnect?.phase === 'needs_attention'}
+          reconnectInProgress={wechatReconnect !== null && wechatReconnect.phase !== 'completed'}
+          onCreateWechatBindingCode={createWechatBindingCode}
+          onRetryWechatNotifications={retryUnknownWechatNotifications}
           onDisconnectChannel={disconnectChannel}
           onSkipWechatSetup={skipWechatSetup}
           onRefreshChannel={refreshChannel}

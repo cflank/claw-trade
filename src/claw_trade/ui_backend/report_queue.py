@@ -68,6 +68,8 @@ class ReportTask:
     progress: dict[str, Any] | None = None
     completed_report_saved: bool = False
     origin_context_id: str | None = None
+    notification: dict[str, Any] | None = None
+    notification_intent_id: str | None = None
     selection_context_ref: str | None = None
     selection_stage_marker: str | None = None
     cost_start_snapshot: TaskCostSnapshot | None = None
@@ -92,6 +94,9 @@ class ReportTaskQueue:
         task_cost_snapshot_provider: Callable[[], TaskCostSnapshot] | None = None,
         report_lock_path: Path | None = None,
         report_lock_opener: Callable[[Path], AbstractContextManager[int]] | None = None,
+        notification_intent_writer: Callable[[ReportTask], None] | None = None,
+        notification_report_linker: Callable[[str, str], None] | None = None,
+        notification_intent_failure_writer: Callable[[str, str], None] | None = None,
     ) -> None:
         self._bridge = bridge
         self._queue_limit = queue_limit
@@ -101,6 +106,9 @@ class ReportTaskQueue:
         self._task_cost_snapshot_provider = task_cost_snapshot_provider
         self._report_lock_path = report_lock_path or paths.REPORT_ACTIVE_LOCK_PATH
         self._report_lock_opener = report_lock_opener or _open_report_lock
+        self._notification_intent_writer = notification_intent_writer
+        self._notification_report_linker = notification_report_linker
+        self._notification_intent_failure_writer = notification_intent_failure_writer
         self._tasks: dict[str, ReportTask] = {}
         self._enqueue_idempotency: dict[str, dict[str, Any]] = {}
         self._cancel_idempotency: dict[str, dict[str, Any]] = {}
@@ -125,9 +133,21 @@ class ReportTaskQueue:
                 return self._enqueue_idempotency[request_id]
             dedupe_key = self._build_dedupe_key(task_input)
             existing = self._find_existing_queued(dedupe_key)
+            notification = _notification_for_task(task_input.get("notification"), origin_context_id)
             if existing:
                 if source == "manual" and existing.source == "scheduled":
                     existing.priority = 100
+                if notification is not None and existing.notification_intent_id is None:
+                    previous_notification = existing.notification
+                    existing.notification = notification
+                    existing.notification_intent_id = f"report-notification:{request_id}"
+                    try:
+                        if self._notification_intent_writer is not None:
+                            self._notification_intent_writer(existing)
+                    except Exception:
+                        existing.notification = previous_notification
+                        existing.notification_intent_id = None
+                        raise
                 task_payload = self.to_report_task_for_user(existing)
             else:
                 task_payload = None
@@ -137,6 +157,9 @@ class ReportTaskQueue:
                     raise QueueError("QUEUE_FULL", "queue_full", "报告队列已满，请稍后再试。")
                 self._sequence += 1
                 now = _now_iso()
+                notification_intent_id = (
+                    f"report-notification:{request_id}" if notification is not None else None
+                )
                 task = ReportTask(
                     task_id=f"task-{self._sequence}",
                     source=source,
@@ -154,9 +177,13 @@ class ReportTaskQueue:
                     priority=100 if source == "manual" else 10,
                     created_at=now,
                     origin_context_id=origin_context_id,
+                    notification=notification,
+                    notification_intent_id=notification_intent_id,
                     selection_context_ref=_optional_task_text(task_input.get("selectionContextRef")),
                     selection_stage_marker=_optional_task_text(task_input.get("selectionStageMarker")),
                 )
+                if notification_intent_id is not None and self._notification_intent_writer is not None:
+                    self._notification_intent_writer(task)
                 self._tasks[task.task_id] = task
                 self._right_rail_active.add(task.task_id)
                 self._refresh_queue_positions()
@@ -229,6 +256,8 @@ class ReportTaskQueue:
             }
             if task.origin_context_id:
                 task_input["originContextId"] = task.origin_context_id
+            if task.notification_intent_id:
+                task_input["notificationIntentId"] = task.notification_intent_id
         cost_start_snapshot = self._capture_task_cost_snapshot()
         if cost_start_snapshot is not None:
             with self._state_lock:
@@ -251,6 +280,7 @@ class ReportTaskQueue:
             current = self._tasks.get(task.task_id)
             if current is task:
                 task.run_id = run.run_id
+        self._link_notification_report(task, run.run_id)
         self._ensure_terminal_watcher(task)
         return task
 
@@ -328,6 +358,8 @@ class ReportTaskQueue:
                 else:
                     message = "报告任务已结束。"
                 needs_start_next = False
+        if task.status == ReportTaskStatus.CANCELLED:
+            self._fail_notification_intent(task, "report_cancelled")
         payload = {
             "task": task_payload,
             "queueSnapshot": self.get_report_queue_snapshot_for_user(),
@@ -507,6 +539,7 @@ class ReportTaskQueue:
                     task.run_id = attempt.run_id
                     task._workflow_start_attempt_id = None
                     run_id = attempt.run_id
+                self._link_notification_report(task, attempt.run_id)
             elif not attempt.has_exited:
                 return task
             else:
@@ -573,6 +606,7 @@ class ReportTaskQueue:
                     task.finished_at = _now_iso()
                     self._right_rail_active.discard(task.task_id)
                     self._last_terminal_task_id = task.task_id
+                self._fail_notification_intent(task, "report_cancelled")
                 self._release_report_lock(task)
                 self.start_next_report_task_if_idle()
         elif status == RunStatus.FAILED.value:
@@ -587,6 +621,17 @@ class ReportTaskQueue:
             with self._state_lock:
                 task.progress = progress
         return task
+
+    def _link_notification_report(self, task: ReportTask, run_id: str) -> None:
+        if task.notification_intent_id and self._notification_report_linker is not None:
+            self._notification_report_linker(task.notification_intent_id, run_id)
+
+    def _fail_notification_intent(self, task: ReportTask, error: str) -> None:
+        if task.notification_intent_id and self._notification_intent_failure_writer is not None:
+            try:
+                self._notification_intent_failure_writer(task.notification_intent_id, error)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("notification intent finalization failed for %s: %s", task.task_id, exc)
 
     def _dispatch_requested_cancel(self, task: ReportTask, run_id: str) -> None:
         with self._state_lock:
@@ -712,6 +757,7 @@ class ReportTaskQueue:
                 self._right_rail_active.discard(task.task_id)
                 self._last_terminal_task_id = task.task_id
                 self._refresh_queue_positions()
+            self._fail_notification_intent(task, failure.code)
             self._release_report_lock(task)
             self.start_next_report_task_if_idle()
 
@@ -919,6 +965,16 @@ def _string_value(value: Any) -> str:
     if hasattr(value, "value"):
         value = value.value
     return str(value or "").strip().lower()
+
+
+def _notification_for_task(value: Any, origin_context_id: str | None) -> dict[str, Any] | None:
+    _ = origin_context_id
+    source = value if isinstance(value, dict) else {}
+    channel = str(source.get("channel") or "").strip()
+    enabled = bool(source.get("enabled", True))
+    if channel != "wechat_clawbot" or not enabled:
+        return None
+    return {"channel": "wechat_clawbot", "enabled": True, "recipientKey": "wechat_primary"}
 
 
 def _now_iso() -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -199,6 +200,10 @@ class _ChannelDisabledConfigClient(_FakeChannelClient):
     def config_get(self, *, paths=()):
         self.config_get_calls.append(tuple(paths))
         return {"channels": {"openclaw-weixin": {"enabled": False}}}
+
+    def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+        assert operation_id is None
+        return {"storedAccountIds": ["account-a"]}
 
 
 class _RawFileResponseClient(_FakeChannelClient):
@@ -742,9 +747,117 @@ def test_get_channel_status_reports_user_disabled_channel_without_auto_qr() -> N
     assert payload["state"] == "disconnected"
     assert payload["qrCodeImageDataUrl"] is None
     assert payload["qrCodeRefreshRequired"] is True
-    assert payload["lastErrorMessage"] == "微信已解除连接，请点击刷新二维码重新扫码。"
+    assert payload["lastErrorMessage"] == "微信通知已停用，请点击重新连接。"
+    assert payload["replacementRequired"] is True
     assert client.web_login_start_calls == []
     assert client.config_get_calls == [("channels.openclaw-weixin",)]
+
+
+def test_disabled_channel_with_multiple_stored_accounts_still_requires_safe_replacement() -> None:
+    class _ConflictedDisabledClient(_ChannelDisabledConfigClient):
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            _ = operation_id
+            return {"storedAccountIds": ["account-a", "account-b"]}
+
+    payload = ChannelBridge(_ConflictedDisabledClient()).get_channel_status(probe=True)
+
+    assert payload["replacementRequired"] is True
+
+
+def test_disabled_channel_with_stale_runtime_row_never_starts_ordinary_qr_login() -> None:
+    class _StaleDisabledClient(_ChannelDisabledConfigClient):
+        def channels_status(self, *, probe=False):  # type: ignore[no-untyped-def]
+            _ = probe
+            return {
+                "channelOrder": ["openclaw-weixin"],
+                "channelAccounts": {
+                    "openclaw-weixin": [
+                        {
+                            "accountId": "old-account",
+                            "configured": True,
+                            "enabled": False,
+                            "running": False,
+                        }
+                    ]
+                },
+            }
+
+    client = _StaleDisabledClient()
+    payload = ChannelBridge(client).get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["replacementRequired"] is True
+    assert client.web_login_start_calls == []
+
+
+def test_config_read_failure_never_starts_ordinary_qr_login() -> None:
+    class _ConfigReadFailureClient(_FakeChannelClient):
+        def config_get(self, *, paths=()):  # type: ignore[no-untyped-def]
+            raise RuntimeError("config unavailable")
+
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            return {"storedAccountIds": ["old-account"]}
+
+    client = _ConfigReadFailureClient(connected=False, qr_data_url="data:image/png;base64,unsafe")
+
+    payload = ChannelBridge(client).get_channel_status(probe=True, include_qr=True)
+
+    assert payload["replacementRequired"] is True
+    assert client.web_login_start_calls == []
+
+
+def test_startup_recovery_failure_does_not_block_ui_service(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    bridge = ChannelBridge(
+        _FakeChannelClient(),
+        reconnect_state_path=tmp_path / ".ui-wechat-reconnect.json",
+    )
+    reconnect = bridge._require_wechat_reconnect()
+    monkeypatch.setattr(reconnect, "recover", lambda: (_ for _ in ()).throw(OSError("gateway down")))
+
+    result = bridge.recover_wechat_reconnect()
+
+    assert result is not None
+    assert result["phase"] == "needs_attention"
+    assert result["lastErrorCode"] == "WECHAT_RECOVERY_CHECK_FAILED"
+
+
+def test_corrupt_reconnect_state_fails_closed_without_raising_from_delivery_guard(tmp_path: Path) -> None:
+    state_path = tmp_path / ".ui-wechat-reconnect.json"
+    state_path.write_text("not-json", encoding="utf-8")
+    bridge = ChannelBridge(_FakeChannelClient(), reconnect_state_path=state_path)
+
+    with bridge.wechat_delivery_account() as account_id:
+        assert account_id is None
+
+
+def test_all_text_sends_are_blocked_while_reconnect_is_active(tmp_path: Path) -> None:
+    class _CountingClient(_FakeChannelClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.send_count = 0
+
+        def channels_send_text(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.send_count += 1
+            return super().channels_send_text(**kwargs)
+
+    state_path = tmp_path / ".ui-wechat-reconnect.json"
+    state_path.write_text(
+        json.dumps({"schemaVersion": 1, "operationId": "op-1", "phase": "awaiting_scan"}),
+        encoding="utf-8",
+    )
+    client = _CountingClient()
+    bridge = ChannelBridge(client, reconnect_state_path=state_path)
+
+    with pytest.raises(UiBoundaryError, match="正在重新连接"):
+        bridge.send_text(
+            channel_kind="wechat_clawbot",
+            text="不应发送",
+            dedupe_key="blocked-send",
+            target="sender-old",
+            account_id="account-old",
+        )
+
+    assert client.send_count == 0
 
 
 def test_save_channel_config_rejects_non_wechat_channel_kind() -> None:
@@ -803,11 +916,14 @@ def test_save_channel_config_does_not_request_qr_when_disabled() -> None:
     patch = client.config_patch_calls[0]["patch"]
     assert patch["channels"]["openclaw-weixin"]["enabled"] is False
     assert result["status"]["state"] == "disconnected"
-    assert result["status"]["lastErrorMessage"] == "已解除连接。"
+    assert result["status"]["lastErrorMessage"] == "微信通知已停用；账号凭据仍保留。"
     assert client.web_login_start_calls == []
 
 
-def test_save_channel_config_disabled_clears_weixin_login_state(tmp_path: Path, monkeypatch) -> None:
+def test_save_channel_config_disabled_preserves_plugin_owned_login_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     state_dir = tmp_path / "openclaw-state"
     accounts_dir = state_dir / "openclaw-weixin" / "accounts"
     accounts_dir.mkdir(parents=True)
@@ -839,12 +955,12 @@ def test_save_channel_config_disabled_clears_weixin_login_state(tmp_path: Path, 
     )
 
     assert result["status"]["state"] == "disconnected"
-    assert not (state_dir / "openclaw-weixin" / "accounts.json").exists()
-    assert not (accounts_dir / "acc-1.json").exists()
-    assert not (accounts_dir / "acc-1.sync.json").exists()
-    assert not (accounts_dir / "acc-1.context-tokens.json").exists()
-    assert not legacy_credentials.exists()
-    assert not legacy_sync.exists()
+    assert (state_dir / "openclaw-weixin" / "accounts.json").exists()
+    assert (accounts_dir / "acc-1.json").exists()
+    assert (accounts_dir / "acc-1.sync.json").read_text(encoding="utf-8") == '{"get_updates_buf":"rewritten"}'
+    assert (accounts_dir / "acc-1.context-tokens.json").exists()
+    assert legacy_credentials.exists()
+    assert legacy_sync.exists()
 
 
 def test_save_channel_config_disabled_does_not_clear_default_runtime_without_explicit_state_dir(
@@ -1057,6 +1173,57 @@ def test_send_text_uses_runtime_capability_and_returns_sent_result() -> None:
     )
     assert result["sent"] is True
     assert result["messageId"] is None
+
+
+@pytest.mark.parametrize("raw_response", [{}, {"ok": True}, None, "ok"])
+def test_send_text_does_not_treat_unknown_provider_result_as_sent(raw_response) -> None:  # type: ignore[no-untyped-def]
+    class _UnknownTextResponseClient(_FakeChannelClient):
+        def channels_send_text(self, *, channel, text, dedupe_key, to, account_id=None):  # type: ignore[no-untyped-def]
+            _ = (channel, text, dedupe_key, to, account_id)
+            return raw_response
+
+    bridge = ChannelBridge(_UnknownTextResponseClient())
+
+    result = bridge.send_text(
+        channel_kind="wechat_clawbot",
+        text="报告已完成",
+        dedupe_key="completion:r-unknown",
+        target="sender-1",
+    )
+
+    assert result == {
+        "sent": False,
+        "messageId": None,
+        "outcome": "unknown",
+        "resultKnown": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("raw_response", "expected_outcome"),
+    [
+        ({"sent": False}, "failed"),
+        ({"ok": False}, "failed"),
+        ({"sent": True}, "sent"),
+        ({"messageId": "message-1"}, "sent"),
+    ],
+)
+def test_send_text_preserves_known_provider_outcome(raw_response, expected_outcome: str) -> None:  # type: ignore[no-untyped-def]
+    class _KnownTextResponseClient(_FakeChannelClient):
+        def channels_send_text(self, *, channel, text, dedupe_key, to, account_id=None):  # type: ignore[no-untyped-def]
+            _ = (channel, text, dedupe_key, to, account_id)
+            return raw_response
+
+    result = ChannelBridge(_KnownTextResponseClient()).send_text(
+        channel_kind="wechat_clawbot",
+        text="报告已完成",
+        dedupe_key="completion:r-known",
+        target="sender-1",
+    )
+
+    assert result["outcome"] == expected_outcome
+    assert result["resultKnown"] is True
+    assert result["sent"] is (expected_outcome == "sent")
 
 
 def test_send_text_returns_notification_unavailable_when_not_connected() -> None:

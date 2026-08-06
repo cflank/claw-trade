@@ -102,6 +102,89 @@ def test_open_device_interface_redirects_with_fragment_token(tmp_path: Path) -> 
     assert "?token=" not in location
 
 
+def test_wechat_reconnect_and_notification_control_routes_delegate_without_exposing_recipients(
+    tmp_path: Path,
+) -> None:
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    class _Channel:
+        def get_wechat_reconnect_state(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs == {"include_qr": True}
+            return {"operationId": "operation-1", "phase": "awaiting_scan"}
+
+        def start_wechat_reconnect(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs == {"request_id": "reconnect-1", "channel_kind": "wechat_clawbot"}
+            return {"operationId": "operation-1", "phase": "awaiting_scan", "qrCodeImageDataUrl": "data:image/png;base64,qr"}
+
+        def poll_wechat_reconnect(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs == {"operation_id": "operation-1", "timeout_ms": 1500}
+            return {"operationId": "operation-1", "phase": "completed", "outcome": "switched"}
+
+        def cancel_wechat_reconnect(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs == {"operation_id": "operation-1", "channel_kind": "wechat_clawbot"}
+            return {"operationId": "operation-1", "phase": "completed", "outcome": "restored"}
+
+        def resume_wechat_reconnect(self, **kwargs):  # type: ignore[no-untyped-def]
+            assert kwargs == {"operation_id": "operation-1", "channel_kind": "wechat_clawbot"}
+            return {"operationId": "operation-1", "phase": "completed", "outcome": "switched"}
+
+    class _Notifications:
+        def create_binding_code(self, *, request_id: str) -> dict[str, object]:
+            assert request_id == "binding-1"
+            return {"code": "A1B2C3D4", "expiresAt": "2026-08-07T10:00:00Z", "message": "请发送绑定命令"}
+
+        def retry_pending(self, *, manual: bool, request_id: str) -> dict[str, int]:
+            assert manual is True
+            assert request_id == "retry-1"
+            return {"attempted": 1, "sent": 0}
+
+    app = build_research_ui_app(
+        settings=ResearchUiServerSettings(frontend_dist=dist),
+        services=SimpleNamespace(
+            channel_bridge=_Channel(),
+            report_notification_service=_Notifications(),
+        ),  # type: ignore[arg-type]
+    )
+    client = TestClient(app)
+
+    started = client.post(
+        "/api/ui/start-wechat-reconnect",
+        json={"requestId": "reconnect-1", "channelKind": "wechat_clawbot"},
+    )
+    current = client.get("/api/ui/get-wechat-reconnect-state")
+    polled = client.post(
+        "/api/ui/poll-wechat-reconnect",
+        json={"operationId": "operation-1", "timeoutMs": 1500},
+    )
+    cancelled = client.post(
+        "/api/ui/cancel-wechat-reconnect",
+        json={"operationId": "operation-1", "channelKind": "wechat_clawbot"},
+    )
+    recovered = client.post(
+        "/api/ui/recover-wechat-reconnect",
+        json={"operationId": "operation-1", "channelKind": "wechat_clawbot"},
+    )
+    binding = client.post(
+        "/api/ui/create-wechat-notification-binding-code",
+        json={"requestId": "binding-1"},
+    )
+    retried = client.post(
+        "/api/ui/retry-wechat-notifications",
+        json={"requestId": "retry-1"},
+    )
+
+    assert started.json()["phase"] == "awaiting_scan"
+    assert current.json()["operationId"] == "operation-1"
+    assert polled.json() == {"operationId": "operation-1", "phase": "completed", "outcome": "switched"}
+    assert recovered.json() == {"operationId": "operation-1", "phase": "completed", "outcome": "switched"}
+    assert cancelled.json()["outcome"] == "restored"
+    assert binding.json()["message"] == "请发送绑定命令"
+    assert "accountId" not in json.dumps(binding.json())
+    assert retried.json() == {"attempted": 1, "sent": 0}
+
+
 def test_list_saved_reports_enables_forward_when_wechat_can_send_files(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     assets = dist / "assets"

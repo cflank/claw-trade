@@ -53,6 +53,7 @@ class ChannelTextInboundController:
         send_channel_text: Callable[[str, str, ChannelReplyTarget], dict[str, object]] | None = None,
         request_selection_report_file: Callable[[str, str, str, ChannelReplyTarget], dict[str, object]] | None = None,
         ask_report_question: Callable[[str, str, str, str], dict[str, str]] | None = None,
+        bind_notification_recipient: Callable[[str, str | None, str], dict[str, object]] | None = None,
     ) -> None:
         self._chat_controller = chat_controller
         self._request_full_report_file = request_full_report_file
@@ -60,6 +61,7 @@ class ChannelTextInboundController:
         self._send_channel_text = send_channel_text
         self._request_selection_report_file = request_selection_report_file
         self._ask_report_question = ask_report_question
+        self._bind_notification_recipient = bind_notification_recipient
         self._pending: dict[str, _PendingDraft] = {}
         self._selection_reports: dict[str, _PendingSelectionReport] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
@@ -73,6 +75,17 @@ class ChannelTextInboundController:
         text = message.text.strip()
         if not text:
             return self._remember(message.request_id, {"handled": False})
+
+        if _looks_like_notification_binding(text) and self._bind_notification_recipient is not None:
+            result = self._bind_notification_recipient(text, message.account_id, message.sender_id)
+            return self._remember(
+                message.request_id,
+                {
+                    "handled": True,
+                    "replyText": str(result.get("message") or "绑定失败，请重新生成绑定码。"),
+                    "state": "notification_bound" if result.get("bound") is True else "notification_binding_rejected",
+                },
+            )
 
         conversation_key = self._conversation_key(message)
         self._remember_latest_conversation(conversation_key)
@@ -650,6 +663,10 @@ def _parse_confirmation_decision(text: str) -> str | None:
     if normalized in {"取消", "放弃", "不要", "cancel", "no", "n"}:
         return "cancel"
     return None
+
+
+def _looks_like_notification_binding(text: str) -> bool:
+    return re.fullmatch(r"\s*绑定通知\s+\S+\s*", text) is not None
 
 
 def _looks_like_full_report_request(text: str) -> bool:

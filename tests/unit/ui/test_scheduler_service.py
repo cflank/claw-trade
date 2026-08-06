@@ -90,6 +90,67 @@ def test_create_scheduled_report_registers_openclaw_cron_job() -> None:
     assert saved.openclaw_cron_job_id == "scheduled-report:schedule-1"
 
 
+def test_wechat_schedule_enqueues_logical_recipient_and_drops_old_account_route() -> None:
+    enqueued: list[dict[str, object]] = []
+    service = SchedulerService(
+        enqueue_report_task=lambda task, _request: enqueued.append(task) or {
+            "taskId": "task-1",
+            "instrumentCode": task["instrumentCode"],
+            "market": task["market"],
+            "status": "queued",
+        },
+        store=InMemoryScheduledWorkStore(),
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="req-wechat-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+        notification={
+            "channel": "wechat_clawbot",
+            "enabled": True,
+            "target": "old-sender",
+            "accountId": "old-account",
+        },
+    )
+
+    service.run_scheduled_report_now(request_id="req-run-wechat", scheduled_report_id=schedule.scheduledReportId)
+
+    assert enqueued[0]["notification"] == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "recipientKey": "wechat_primary",
+    }
+
+
+def test_legacy_in_app_schedule_is_not_migrated_to_wechat() -> None:
+    enqueued: list[dict[str, object]] = []
+    service = SchedulerService(
+        enqueue_report_task=lambda task, _request: enqueued.append(task) or {
+            "taskId": "task-1",
+            "instrumentCode": task["instrumentCode"],
+            "market": task["market"],
+            "status": "queued",
+        },
+        store=InMemoryScheduledWorkStore(),
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_report(
+        request_id="req-in-app-schedule",
+        instrument_code="AAPL",
+        market=MarketProfile.US,
+        frequency="daily",
+        time_of_day="09:30",
+        notification={"channel": "in_app", "enabled": True},
+    )
+
+    service.run_scheduled_report_now(request_id="req-run-in-app", scheduled_report_id=schedule.scheduledReportId)
+
+    assert enqueued[0]["notification"] == {"channel": "in_app", "enabled": True}
+
+
 def test_create_weekly_scheduled_report_maps_python_weekday_to_cron_weekday() -> None:
     fake_gateway = _FakeCronGateway()
     service = SchedulerService(
