@@ -35,6 +35,9 @@ const WECHAT_CHANNEL_ID = "openclaw-weixin";
 const UI_CHANNEL_KIND = "wechat_clawbot";
 const DEFAULT_UI_INBOUND_TIMEOUT_MS = 180000;
 const UI_INBOUND_RETRY_DELAY_MS = 250;
+const DATA_NEED_MAX_CONCURRENCY = readDataNeedMaxConcurrency();
+let activeDataNeedSubprocesses = 0;
+const dataNeedSubprocessWaiters = [];
 const REPORT_BRIDGE_FALLBACK_TEXT =
   "报告请求已收到，但当前无法确认处理结果。请稍后查看微信消息；如果没有收到文件或回复，请再发送一次。";
 
@@ -540,6 +543,72 @@ function positiveSecondsEnvToMs(name, defaultMs) {
   return seconds * 1000;
 }
 
+function readDataNeedMaxConcurrency() {
+  const raw = textValue(process.env.CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY);
+  if (!raw) {
+    return undefined;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error("CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY must be a positive integer");
+  }
+  return value;
+}
+
+function waitForDataNeedSubprocessSlot(signal) {
+  if (DATA_NEED_MAX_CONCURRENCY === undefined) {
+    return Promise.resolve();
+  }
+  if (signal?.aborted) {
+    return Promise.reject(new Error("claw_request_data aborted while waiting for a subprocess slot"));
+  }
+  if (activeDataNeedSubprocesses < DATA_NEED_MAX_CONCURRENCY) {
+    activeDataNeedSubprocesses += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, signal, onAbort: undefined };
+    if (signal) {
+      waiter.onAbort = () => {
+        const index = dataNeedSubprocessWaiters.indexOf(waiter);
+        if (index >= 0) {
+          dataNeedSubprocessWaiters.splice(index, 1);
+        }
+        reject(new Error("claw_request_data aborted while waiting for a subprocess slot"));
+      };
+      signal.addEventListener("abort", waiter.onAbort, { once: true });
+    }
+    dataNeedSubprocessWaiters.push(waiter);
+  });
+}
+
+function releaseDataNeedSubprocessSlot() {
+  if (DATA_NEED_MAX_CONCURRENCY === undefined) {
+    return;
+  }
+  while (dataNeedSubprocessWaiters.length > 0) {
+    const waiter = dataNeedSubprocessWaiters.shift();
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener("abort", waiter.onAbort);
+    }
+    if (waiter.signal?.aborted) {
+      continue;
+    }
+    waiter.resolve();
+    return;
+  }
+  activeDataNeedSubprocesses -= 1;
+}
+
+async function withDataNeedSubprocessSlot(operation, signal) {
+  await waitForDataNeedSubprocessSlot(signal);
+  try {
+    return await operation();
+  } finally {
+    releaseDataNeedSubprocessSlot();
+  }
+}
+
 function subprocessTimeoutMs(domainTotalTimeoutMs) {
   const totalTimeout = Number.isFinite(domainTotalTimeoutMs) && domainTotalTimeoutMs > 0
     ? domainTotalTimeoutMs
@@ -974,11 +1043,14 @@ async function executeFrontlineTool(ctx, params, toolName, toolCallId, signal) {
     runtime_context: runtimeContext,
   };
   const timeoutMs = subprocessTimeoutMs(config.totalTimeoutMs);
-  const result = await runPythonJson(config.args, payload, {
-    pythonPathDirs: config.pythonPathDirs,
-    timeoutMs,
+  const result = await withDataNeedSubprocessSlot(
+    () => runPythonJson(config.args, payload, {
+      pythonPathDirs: config.pythonPathDirs,
+      timeoutMs,
+      signal,
+    }),
     signal,
-  });
+  );
   if (result.exitCode === 124) {
     return subprocessTimeoutError(toolName, runtime, timeoutMs, result.stderr);
   }

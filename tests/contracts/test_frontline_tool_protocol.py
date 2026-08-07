@@ -15,6 +15,7 @@ def _runtime_ctx(
     worker_id: str,
     stage: str = "frontline",
     runtime_vars: dict[str, object] | None = None,
+    run_id: str = "run-1",
 ) -> dict[str, object]:
     vars_payload: dict[str, object] = {
         "ticker": "00700.HK",
@@ -30,7 +31,7 @@ def _runtime_ctx(
         vars_payload.update(runtime_vars)
     return {
         "singleWorkerCommand": {
-            "run_id": "run-1",
+            "run_id": run_id,
             "stage": stage,
             "worker_id": worker_id,
             "call_id": "call-1",
@@ -214,6 +215,59 @@ process.stdout.write(JSON.stringify(result));
     return json.loads(completed.stdout)
 
 
+def _run_concurrent_data_tools(
+    *,
+    contexts: list[dict[str, object]],
+    params: dict[str, object],
+    env_overrides: dict[str, str] | None = None,
+    abort_index: int | None = None,
+) -> list[dict[str, object]]:
+    script = f"""
+import plugin from {json.dumps(str(PLUGIN_PATH))};
+const contexts = JSON.parse(process.argv[1]);
+const params = JSON.parse(process.argv[2]);
+const abortIndex = Number(process.argv[3]);
+let factory;
+const api = {{
+  registerTool(candidate) {{
+    factory = candidate;
+  }},
+  on() {{}},
+}};
+plugin.register(api);
+const tools = contexts.map((ctx) => factory(ctx));
+const controllers = contexts.map(() => new AbortController());
+if (abortIndex >= 0) {{
+  setTimeout(() => controllers[abortIndex].abort(), 100);
+}}
+const results = await Promise.all(
+  tools.map((tool, index) => tool.execute(`call-${{index}}`, params, controllers[index].signal)),
+);
+process.stdout.write(JSON.stringify(results));
+"""
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
+    completed = subprocess.run(
+        [
+            "node",
+            "--input-type=module",
+            "-e",
+            script,
+            json.dumps(contexts),
+            json.dumps(params),
+            str(abort_index if abort_index is not None else -1),
+        ],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=10,
+    )
+    return json.loads(completed.stdout)
+
+
 def _error_code(result: dict[str, object]) -> str:
     details = result.get("details", {})
     assert isinstance(details, dict)
@@ -303,6 +357,174 @@ echo '{{"ok": true}}'
 
     assert result.get("isError") in {False, None}
     assert marker.exists() is True
+
+
+def test_data_need_max_concurrency_limits_python_subprocesses_globally(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY", raising=False)
+    state_path = tmp_path / "state.json"
+    lock_path = tmp_path / "state.lock"
+    probe_python = tmp_path / "probe_python.py"
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env python3
+import fcntl
+import json
+import time
+
+state_path = {str(state_path)!r}
+lock_path = {str(lock_path)!r}
+
+
+def update_active(delta):
+    with open(lock_path, "a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                with open(state_path, encoding="utf-8") as state_file:
+                    state = json.load(state_file)
+            except FileNotFoundError:
+                state = {{"active": 0, "max_active": 0}}
+            state["active"] += delta
+            state["max_active"] = max(state["max_active"], state["active"])
+            with open(state_path, "w", encoding="utf-8") as state_file:
+                json.dump(state, state_file)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+update_active(1)
+try:
+    time.sleep(0.2)
+    print(json.dumps({{"ok": True, "model_visible_text": "ok"}}))
+finally:
+    update_active(-1)
+""",
+    )
+
+    results = _run_concurrent_data_tools(
+        contexts=[
+            _runtime_ctx(worker_id="market_analyst", run_id="report-1"),
+            _runtime_ctx(worker_id="fundamental_analyst", run_id="report-1"),
+            _runtime_ctx(worker_id="news_analyst", run_id="report-2"),
+            _runtime_ctx(worker_id="social_analyst", run_id="report-2"),
+            _runtime_ctx(worker_id="market_analyst", run_id="report-3"),
+        ],
+        params={"item": "日线", "purpose": "market_report"},
+        env_overrides={
+            "CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python),
+            "CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY": "2",
+        },
+    )
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state == {"active": 0, "max_active": 2}
+    assert all(result.get("isError") is False for result in results)
+
+    state_path.unlink()
+    unlimited_results = _run_concurrent_data_tools(
+        contexts=[_runtime_ctx(worker_id="market_analyst") for _ in range(5)],
+        params={"item": "日线", "purpose": "market_report"},
+        env_overrides={"CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python)},
+    )
+
+    unlimited_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert unlimited_state == {"active": 0, "max_active": 5}
+    assert all(result.get("isError") is False for result in unlimited_results)
+
+
+def test_data_need_max_concurrency_rejects_invalid_startup_value() -> None:
+    script = f"import {json.dumps(str(PLUGIN_PATH))};"
+    env = os.environ.copy()
+    env["CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY"] = "0"
+
+    completed = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode != 0
+    assert "CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY must be a positive integer" in completed.stderr
+
+
+def test_data_need_concurrency_queue_starts_timeout_after_slot_and_releases_timed_out_slot(tmp_path: Path) -> None:
+    probe_python = tmp_path / "probe_python.py"
+    _write_executable(
+        probe_python,
+        """#!/usr/bin/env python3
+import json
+import sys
+import time
+
+payload = json.load(sys.stdin)
+if payload["tool_input"]["instrument"] == "HANG":
+    time.sleep(60)
+if payload["tool_input"]["instrument"] == "INVALID":
+    print("not-json")
+    raise SystemExit(0)
+print(json.dumps({"ok": True, "model_visible_text": "ok"}))
+""",
+    )
+
+    results = _run_concurrent_data_tools(
+        contexts=[
+            _runtime_ctx(worker_id="market_analyst", runtime_vars={"ticker": "HANG"}),
+            _runtime_ctx(worker_id="news_analyst", runtime_vars={"ticker": "INVALID"}),
+            _runtime_ctx(worker_id="social_analyst", runtime_vars={"ticker": "READY"}),
+        ],
+        params={"item": "日线", "purpose": "market_report"},
+        env_overrides={
+            "CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python),
+            "CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY": "1",
+            "CLAW_TRADE_DATA_NEED_TOOL_BUDGET_SECONDS": "1",
+            "CN_A_PROVIDER_TOTAL_TIMEOUT_MS": "1",
+        },
+    )
+
+    assert _error_code(results[0]) == "TOOL_SUBPROCESS_TIMEOUT"
+    assert _error_code(results[1]) == "TOOL_PROTOCOL_ERROR"
+    assert results[2].get("isError") is False
+
+
+def test_data_need_concurrency_releases_running_cancelled_slot(tmp_path: Path) -> None:
+    started_path = tmp_path / "started.txt"
+    probe_python = tmp_path / "probe_python.py"
+    _write_executable(
+        probe_python,
+        f"""#!/usr/bin/env python3
+import json
+import sys
+import time
+
+payload = json.load(sys.stdin)
+with open({str(started_path)!r}, "a", encoding="utf-8") as started:
+    started.write(payload["tool_input"]["instrument"] + "\\n")
+time.sleep(0.2)
+print(json.dumps({{"ok": True, "model_visible_text": "ok"}}))
+""",
+    )
+
+    results = _run_concurrent_data_tools(
+        contexts=[
+            _runtime_ctx(worker_id="market_analyst", runtime_vars={"ticker": "CANCELLED"}),
+            _runtime_ctx(worker_id="news_analyst", runtime_vars={"ticker": "SECOND"}),
+            _runtime_ctx(worker_id="social_analyst", runtime_vars={"ticker": "THIRD"}),
+        ],
+        params={"item": "日线", "purpose": "market_report"},
+        env_overrides={
+            "CLAW_TRADE_FRONTLINE_TOOL_PYTHON": str(probe_python),
+            "CLAW_TRADE_DATA_NEED_MAX_CONCURRENCY": "1",
+        },
+        abort_index=0,
+    )
+
+    assert started_path.read_text(encoding="utf-8").splitlines() == ["CANCELLED", "SECOND", "THIRD"]
+    assert _error_code(results[0]) == "TOOL_PROTOCOL_ERROR"
+    assert results[1].get("isError") is False
+    assert results[2].get("isError") is False
 
 
 def test_non_frontline_stage_returns_context_incomplete_without_spawning_python(tmp_path: Path) -> None:
