@@ -340,25 +340,68 @@ def test_recover_retries_commit_when_new_account_is_stable_but_plugin_operation_
     assert client.commit_calls == 2
 
 
-def test_begin_does_not_guess_when_old_inventory_has_multiple_accounts(tmp_path: Path) -> None:
-    client = _ReplacementClient()
-    client.statuses = [
-        {
-            "registeredAccountIds": ["old-a", "old-b"],
-            "configuredAccountIds": ["old-a", "old-b"],
-            "enabledAccountIds": ["old-a", "old-b"],
-            "runningAccountIds": ["old-a", "old-b"],
-            "defaultAccountId": "old-b",
-            "activeLoginCount": 0,
-        }
-    ]
-    controller = WechatReconnectController(client, state_path=tmp_path / ".ui-wechat-reconnect.json")
+def test_begin_replaces_all_legacy_accounts_without_treating_empty_index_entry_as_restorable(
+    tmp_path: Path,
+) -> None:
+    class _LegacyInventoryClient(_ReplacementClient):
+        restored = False
+
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            self.calls.append(("inspect", {"operationId": operation_id}))
+            if self.restored:
+                return {
+                    "registeredAccountIds": ["old-a", "old-b"],
+                    "storedAccountIds": ["old-a", "old-b"],
+                    "activeLoginCount": 0,
+                }
+            return {
+                "registeredAccountIds": ["stale-index", "old-a", "old-b"],
+                "storedAccountIds": ["old-a", "old-b"],
+                "activeLoginCount": 0,
+            }
+
+        def weixin_replacement_restore(self, *, operation_id):  # type: ignore[no-untyped-def]
+            self.restored = True
+            return super().weixin_replacement_restore(operation_id=operation_id)
+
+        def weixin_replacement_login_start(self, *, operation_id):  # type: ignore[no-untyped-def]
+            self.calls.append(("login.start", {"operationId": operation_id}))
+            return {
+                "sessionKey": "session-1",
+                "qrDataUrl": "data:image/svg+xml;base64,fake-qr",
+            }
+
+    client = _LegacyInventoryClient()
+    legacy_inventory = {
+        "registeredAccountIds": ["stale-index", "old-a", "old-b"],
+        "configuredAccountIds": ["old-a", "old-b"],
+        "enabledAccountIds": ["stale-index", "old-a", "old-b"],
+        "runningAccountIds": ["old-a", "old-b"],
+        "defaultAccountId": "stale-index",
+        "activeLoginCount": 0,
+    }
+    restored_inventory = {
+        **legacy_inventory,
+        "registeredAccountIds": ["old-a", "old-b"],
+        "enabledAccountIds": ["old-a", "old-b"],
+        "defaultAccountId": "old-b",
+    }
+    client.statuses = [legacy_inventory, restored_inventory, restored_inventory]
+    controller = WechatReconnectController(
+        client, state_path=tmp_path / ".ui-wechat-reconnect.json"
+    )
 
     result = controller.begin(request_id="request-conflict")
 
-    assert result["phase"] == "needs_attention"
-    assert result["lastErrorCode"] == "WECHAT_ACCOUNT_INVENTORY_CONFLICT"
-    assert [name for name, _ in client.calls] == ["inspect", "status"]
+    assert result["phase"] == "awaiting_scan"
+    assert result["qrCodeImageDataUrl"] == "data:image/svg+xml;base64,fake-qr"
+    state = json.loads((tmp_path / ".ui-wechat-reconnect.json").read_text(encoding="utf-8"))
+    assert state["oldAccountIds"] == ["stale-index", "old-a", "old-b"]
+    assert state["restorableAccountIds"] == ["old-a", "old-b"]
+    assert client.calls[2][1]["oldAccountIds"] == ["stale-index", "old-a", "old-b"]
+    cancelled = controller.cancel(operation_id=str(result["operationId"]))
+    assert cancelled["phase"] == "completed"
+    assert cancelled["outcome"] == "restored"
 
 
 def test_begin_rejects_orphan_stored_credential_before_replacement(tmp_path: Path) -> None:

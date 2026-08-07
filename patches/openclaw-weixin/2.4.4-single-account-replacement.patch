@@ -6842,7 +6842,7 @@ new file mode 100644
 index 0000000..aef9c9e
 --- /dev/null
 +++ b/src/replacement.test.ts
-@@ -0,0 +1,579 @@
+@@ -0,0 +1,580 @@
 +import fs from "node:fs";
 +import os from "node:os";
 +import path from "node:path";
@@ -7259,14 +7259,15 @@ index 0000000..aef9c9e
 +    saveWeixinAccount("account-b", { token: "token-b" });
 +    registerWeixinAccountId("account-a");
 +    registerWeixinAccountId("account-b");
++    registerWeixinAccountId("stale-index");
 +    const begun = await call("weixin.replacement.begin", {
 +      operationId: "replace-restore",
-+      oldAccountIds: ["account-b", "account-a", "account-a"],
++      oldAccountIds: ["stale-index", "account-b", "account-a", "account-a"],
 +    });
 +    expect(
 +      await call("weixin.replacement.begin", {
 +        operationId: "replace-restore",
-+        oldAccountIds: ["account-a", "account-b"],
++        oldAccountIds: ["account-a", "account-b", "stale-index"],
 +      }),
 +    ).toEqual(begun);
 +    const started = await call("weixin.replacement.login.start", {
@@ -7427,7 +7428,7 @@ new file mode 100644
 index 0000000..92591fb
 --- /dev/null
 +++ b/src/replacement.ts
-@@ -0,0 +1,710 @@
+@@ -0,0 +1,717 @@
 +import { randomUUID } from "node:crypto";
 +import fs from "node:fs";
 +import path from "node:path";
@@ -8099,11 +8100,18 @@ index 0000000..92591fb
 +        operation.phase = "restoring";
 +        writeJson(operationPath(), operation);
 +        removeFile(candidatePath());
-+        replaceIndexedWeixinAccountIds(operation.oldAccountIds);
-+        for (const accountId of operation.oldAccountIds) {
++        const storedAccountIds = new Set(
++          listStoredWeixinAccountIds().map((accountId) => normalizeAccountId(accountId)),
++        );
++        const restorableAccountIds = operation.oldAccountIds.filter((accountId) =>
++          storedAccountIds.has(accountId),
++        );
++        if (!restorableAccountIds.length) throw new Error("no old account credentials remain");
++        replaceIndexedWeixinAccountIds(restorableAccountIds);
++        for (const accountId of restorableAccountIds) {
 +          await context.startChannel(CHANNEL_ID, accountId);
 +        }
-+        const notRunning = operation.oldAccountIds.filter((accountId) => !isRunning(context, accountId));
++        const notRunning = restorableAccountIds.filter((accountId) => !isRunning(context, accountId));
 +        if (notRunning.length) {
 +          throw new Error(`restored accounts did not start: ${notRunning.join(",")}`);
 +        }
@@ -8112,7 +8120,7 @@ index 0000000..92591fb
 +          restored: true,
 +          registeredAccountIds: listIndexedWeixinAccountIds(),
 +          storedAccountIds: listStoredWeixinAccountIds(),
-+          runningAccountIds: operation.oldAccountIds,
++          runningAccountIds: restorableAccountIds,
 +        };
 +        writeJson(terminalPath(), { operationId, outcome: "restored", result } satisfies TerminalResult);
 +        removeFile(operationPath());
@@ -8138,4 +8146,58 @@ index 0000000..92591fb
 +    { scope: "operator.admin" },
 +  );
 +}
-
+diff --git a/src/replacement.test.ts b/src/replacement.test.ts
+index aef9c9e..985648a 100644
+--- a/src/replacement.test.ts
++++ b/src/replacement.test.ts
+@@ -110,3 +110,4 @@ describe("replacement gateway contract", () => {
+     const started = await call("weixin.replacement.login.start", { operationId: "replace-1" });
+     expect(started.sessionKey).toEqual(expect.any(String));
++    expect(started.qrDataUrl).toEqual(expect.stringMatching(/^data:image\/svg\+xml;base64,/));
+     expect(await call("weixin.replacement.login.start", { operationId: "replace-1" })).toEqual(
+diff --git a/src/replacement.ts b/src/replacement.ts
+index 92591fb..44db54f 100644
+--- a/src/replacement.ts
++++ b/src/replacement.ts
+@@ -1,2 +1,3 @@
+ import { randomUUID } from "node:crypto";
++import { createRequire } from "node:module";
+ import fs from "node:fs";
+@@ -27,1 +28,28 @@ const CHANNEL_ID = "openclaw-weixin";
+ const OPERATION_ID = /^[A-Za-z0-9._-]{1,128}$/;
++const require = createRequire(import.meta.url);
++const QRCode = require("qrcode-terminal/vendor/QRCode");
++const QRErrorCorrectLevel = require("qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel");
++
++function renderQrSvgDataUrl(value: string): string {
++  const qr = new QRCode(-1, QRErrorCorrectLevel.L);
++  qr.addData(value);
++  qr.make();
++  const margin = 4;
++  const moduleCount = qr.getModuleCount();
++  const path: string[] = [];
++  for (let row = 0; row < moduleCount; row += 1) {
++    for (let column = 0; column < moduleCount; ) {
++      if (!qr.isDark(row, column)) {
++        column += 1;
++        continue;
++      }
++      const start = column;
++      while (column < moduleCount && qr.isDark(row, column)) column += 1;
++      const length = column - start;
++      path.push(`M${start + margin} ${row + margin}h${length}v1h-${length}z`);
++    }
++  }
++  const size = moduleCount + margin * 2;
++  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="white"/><path d="${path.join("")}" fill="black"/></svg>`;
++  return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
++}
+@@ -474,7 +502,7 @@ export function registerWeixinReplacementGatewayMethods(
+         respond(true, {
+           operationId,
+           sessionKey: result.sessionKey,
+-          qrDataUrl: result.qrcodeUrl,
++          qrDataUrl: renderQrSvgDataUrl(result.qrcodeUrl),
+           message: result.message,
+         });
+       } catch (error) {

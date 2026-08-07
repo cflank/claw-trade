@@ -9,7 +9,7 @@
   "tarballIntegrity": "sha512-tb4Ix+6JPLEGlWz90wBWc5MYojISvYWReCeXjCwGCryi0RxVHCZa6ncCHT0xINNrYTOQbpAEN0U+i7UHVTk9XQ==",
   "patchedVersion": "2.4.4-clawtrade.1",
   "patchFile": "2.4.4-single-account-replacement.patch",
-  "patchSha256": "47aeefc004c1683a09886d43a1ebbf230d41ee444535bdeb7d5f752eead61070",
+  "patchSha256": "8bd693aca9afe92439327e6777b3fe08579facfa6430a1af7518d28d06b537f6",
   "buildSource": "verified official npm tarball; exact tagged git commit supplies tsconfig.json only",
   "dependencyLock": "package-lock.json is carried by the patch and installed with npm ci",
   "compatibilityPatch": {

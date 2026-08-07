@@ -1105,11 +1105,11 @@ def _optional_qr_data_url(value: Any) -> str | None:
     text = _optional_str(value)
     if not text:
         return None
-    if not text.startswith("data:image/png;base64,"):
-        return None
-    if len(text) > 16_384:
-        return None
-    return text
+    if text.startswith("data:image/png;base64,") and len(text) <= 16_384:
+        return text
+    if text.startswith("data:image/svg+xml;base64,") and len(text) <= 65_536:
+        return text
+    return None
 
 
 def _now_iso() -> str:

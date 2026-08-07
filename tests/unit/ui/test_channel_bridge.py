@@ -697,6 +697,18 @@ def test_get_channel_status_refreshes_qr_without_accepting_non_image_url() -> No
     assert client.web_login_start_calls == [{"force": True, "timeoutMs": 12000}]
 
 
+def test_get_channel_status_accepts_generated_svg_qr() -> None:
+    client = _FakeChannelClient(
+        connected=False,
+        qr_data_url="data:image/svg+xml;base64,fake-qr",
+    )
+    bridge = ChannelBridge(client)
+
+    payload = bridge.get_channel_status(probe=True, include_qr=True, refresh_qr=True)
+
+    assert payload["qrCodeImageDataUrl"] == "data:image/svg+xml;base64,fake-qr"
+
+
 def test_get_channel_status_clears_cached_qr_after_channel_disabled() -> None:
     client = _FakeChannelClient(
         connected=False,

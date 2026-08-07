@@ -78,7 +78,10 @@ class WechatReconnectController:
                 "requestId": request_id,
                 "phase": "preparing",
                 "oldAccountIds": old_account_ids,
-                "channelWasDisabled": inventory.get("enabledAccountIds") == [],
+                "restorableAccountIds": stored_account_ids,
+                "channelWasDisabled": not set(stored_account_ids).intersection(
+                    inventory.get("enabledAccountIds", [])
+                ),
                 "sessionKey": None,
                 "candidateAccountId": None,
                 "loginReceiptId": None,
@@ -88,10 +91,13 @@ class WechatReconnectController:
                 "updatedAt": _now_iso(),
             }
             if (
-                len(old_account_ids) != 1
-                or stored_account_ids != old_account_ids
+                not old_account_ids
+                or not stored_account_ids
+                or len(set(old_account_ids)) != len(old_account_ids)
+                or len(set(stored_account_ids)) != len(stored_account_ids)
+                or not set(stored_account_ids).issubset(old_account_ids)
                 or _nonnegative_int(inspection.get("activeLoginCount")) != 0
-                or not _inventory_is_replaceable(inventory, old_account_ids[0])
+                or not _inventory_is_replaceable(inventory, stored_account_ids)
             ):
                 state.update(
                     phase="needs_attention",
@@ -387,10 +393,10 @@ class WechatReconnectController:
                         )
                         self._save_state(state)
                         return _public_state(state)
-                    old_account_ids = _string_list(state.get("oldAccountIds"))
-                    if len(old_account_ids) == 1 and self._candidate_is_stable(
+                    restorable_account_ids = _restorable_account_ids(state)
+                    if restorable_account_ids and self._accounts_are_stable(
                         current_operation_id,
-                        old_account_ids[0],
+                        restorable_account_ids,
                     ):
                         return self._complete_restored(state)
                     state.update(
@@ -413,10 +419,13 @@ class WechatReconnectController:
         return state
 
     def _candidate_is_stable(self, operation_id: str, candidate_account_id: str) -> bool:
+        return self._accounts_are_stable(operation_id, [candidate_account_id])
+
+    def _accounts_are_stable(self, operation_id: str, account_ids: Sequence[str]) -> bool:
         first = self._combined_snapshot(operation_id)
         self._sleep(0.4)
         second = self._combined_snapshot(operation_id)
-        return first == second and _combined_snapshot_is_healthy(second, candidate_account_id)
+        return first == second and _combined_snapshot_matches_accounts(second, account_ids)
 
     def _combined_snapshot(self, operation_id: str) -> dict[str, Any]:
         replacement = _mapping(
@@ -437,8 +446,8 @@ class WechatReconnectController:
 
     def _restore_locked(self, state: dict[str, Any]) -> dict[str, Any]:
         operation_id = str(state["operationId"])
-        old_account_ids = _string_list(state.get("oldAccountIds"))
-        if len(old_account_ids) != 1:
+        restorable_account_ids = _restorable_account_ids(state)
+        if not restorable_account_ids:
             state.update(
                 phase="needs_attention",
                 lastErrorCode="WECHAT_RESTORE_AMBIGUOUS",
@@ -459,7 +468,7 @@ class WechatReconnectController:
             )
             self._save_state(state)
             return _public_state(state)
-        if not self._candidate_is_stable(operation_id, old_account_ids[0]):
+        if not self._accounts_are_stable(operation_id, restorable_account_ids):
             state.update(
                 phase="needs_attention",
                 lastErrorCode="WECHAT_RESTORE_UNSTABLE",
@@ -698,35 +707,51 @@ def _inventory_is_healthy(inventory: Mapping[str, Any], account_id: str) -> bool
     ) and inventory.get("defaultAccountId") == account_id
 
 
-def _inventory_is_replaceable(inventory: Mapping[str, Any], account_id: str) -> bool:
-    expected = [account_id]
+def _inventory_is_replaceable(
+    inventory: Mapping[str, Any], account_ids: Sequence[str]
+) -> bool:
+    expected = set(account_ids)
+    registered = set(inventory.get("registeredAccountIds", []))
+    configured = set(inventory.get("configuredAccountIds", []))
+    enabled = set(inventory.get("enabledAccountIds", []))
+    running = set(inventory.get("runningAccountIds", []))
+    stale = registered - expected
     active = (
-        inventory.get("enabledAccountIds") == expected
-        and inventory.get("runningAccountIds") == expected
+        running == expected
+        and expected.issubset(enabled)
+        and (enabled - expected).issubset(stale)
     )
-    disabled = (
-        inventory.get("enabledAccountIds") == []
-        and inventory.get("runningAccountIds") == []
-    )
+    disabled = not running and enabled.issubset(stale)
     return (
-        inventory.get("configuredAccountIds") == expected
-        and inventory.get("defaultAccountId") == account_id
+        expected.issubset(registered)
+        and configured == expected
+        and inventory.get("defaultAccountId") in registered
         and (active or disabled)
     )
 
 
-def _combined_snapshot_is_healthy(snapshot: Mapping[str, Any], account_id: str) -> bool:
-    expected = [account_id]
-    return all(
-        snapshot.get(field) == expected
-        for field in (
-            "registeredAccountIds",
-            "storedAccountIds",
-            "configuredAccountIds",
-            "enabledAccountIds",
-            "runningAccountIds",
+def _combined_snapshot_matches_accounts(
+    snapshot: Mapping[str, Any], account_ids: Sequence[str]
+) -> bool:
+    expected = sorted(account_ids)
+    return (
+        all(
+            sorted(snapshot.get(field, [])) == expected
+            for field in (
+                "registeredAccountIds",
+                "storedAccountIds",
+                "configuredAccountIds",
+                "enabledAccountIds",
+                "runningAccountIds",
+            )
         )
-    ) and snapshot.get("defaultAccountId") == account_id and snapshot.get("activeLoginCount") == 0
+        and snapshot.get("defaultAccountId") in expected
+        and snapshot.get("activeLoginCount") == 0
+    )
+
+
+def _restorable_account_ids(state: Mapping[str, Any]) -> list[str]:
+    return _string_list(state.get("restorableAccountIds") or state.get("oldAccountIds"))
 
 
 def _public_state(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -773,9 +798,13 @@ def _optional_str(value: Any) -> str | None:
 
 def _optional_qr_data_url(value: Any) -> str | None:
     text = _optional_str(value)
-    if text is None or not text.startswith("data:image/png;base64,") or len(text) > 16_384:
+    if text is None:
         return None
-    return text
+    if text.startswith("data:image/png;base64,") and len(text) <= 16_384:
+        return text
+    if text.startswith("data:image/svg+xml;base64,") and len(text) <= 65_536:
+        return text
+    return None
 
 
 def _login_finished_unsuccessfully(raw: Mapping[str, Any]) -> bool:
