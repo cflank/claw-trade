@@ -246,6 +246,33 @@ def test_confirm_scheduled_report_from_wechat_uses_logical_recipient_without_acc
     }
 
 
+def test_confirm_scheduled_report_from_ui_uses_logical_wechat_recipient() -> None:
+    controller, _queue, _runner, recognizer = _build_controller()
+    draft = recognizer.classify_user_intent(
+        text="每天 08:00 给我 BTC 报告",
+        source_message_id="m-ui-schedule",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    result = controller.confirm_intent_draft(
+        request_id="c-ui-schedule",
+        draft_id=draft.draft_id,
+        decision="confirm",
+    )
+
+    stored = controller._scheduler_service._store.get_scheduled_report(  # noqa: SLF001
+        result["scheduledReport"].scheduledReportId
+    )
+    assert stored is not None
+    assert stored.notification == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "recipientKey": "wechat_primary",
+    }
+
+
 def test_confirm_price_alert_uses_default_wechat_target_when_ui_chat_has_one() -> None:
     runner = _FakeRunner()
     queue = ReportTaskQueue(ReportWorkflowBridge(runner))

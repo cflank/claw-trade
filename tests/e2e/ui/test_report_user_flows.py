@@ -174,17 +174,30 @@ def test_failed_report_not_in_history() -> None:
 
 def test_confirm_scheduled_report_and_price_alert_return_real_dto() -> None:
     controller, _queue, _runner, _transport = _build_controller()
-    schedule_draft = controller.create_intent_draft(
+    schedule_draft = controller.send_chat_message(
         request_id="e2e-s-1",
-        source_message_id="m-1",
-        text="每天 08:00 给我 BTC 报告",
+        context_id="normal-chat",
+        text="/sched BTC 每天 08:00",
     )
-    schedule_confirm = controller.confirm_intent_draft(
+    schedule_confirm = controller.confirm_intent_draft_from_chat(
         request_id="e2e-s-2",
-        draft_id=schedule_draft["draft"]["draftId"],
+        context_id="normal-chat",
+        draft_id=schedule_draft["confirmationCard"]["draftId"],
         decision="confirm",
+        text="确认",
     )
-    assert schedule_confirm["scheduledReport"].scheduledReportId.startswith("schedule-")
+    scheduled_report = schedule_confirm["scheduledReport"]
+    assert scheduled_report.scheduledReportId.startswith("schedule-")
+    assert scheduled_report.notification.channel == "wechat_clawbot"
+    stored = controller._confirmation._scheduler_service._store.get_scheduled_report(  # noqa: SLF001
+        scheduled_report.scheduledReportId
+    )
+    assert stored is not None
+    assert stored.notification == {
+        "channel": "wechat_clawbot",
+        "enabled": True,
+        "recipientKey": "wechat_primary",
+    }
 
     alert_draft = controller.create_intent_draft(
         request_id="e2e-a-1",

@@ -199,7 +199,10 @@ class IntentRecognizer:
             instrument_code=instrument_code,
             instrument_name=instrument.get("instrumentName"),
             market=market,
-            notification={"channel": "in_app", "enabled": True},
+            notification={
+                "channel": "wechat_clawbot" if kind == IntentKind.SCHEDULED_REPORT else "in_app",
+                "enabled": True,
+            },
             workflow_settings=snapshot,
             dedupe_key=dedupe_key,
             schedule=schedule,
