@@ -69,7 +69,7 @@ def test_start_control_runtime_script_contains_required_guards() -> None:
     assert "existingPluginAllow" in text
     assert "requiredPluginAllow" in text
     assert "allow: mergedPluginAllow" in text
-    assert "2.4.4-clawtrade.1" in text
+    assert "2.4.4-clawtrade.2" in text
     assert "build-openclaw-weixin-plugin.sh" in text
     assert 'build-openclaw-weixin-plugin.sh" --verify-artifact' in text
     assert 'OPENCLAW_WEIXIN_OUTPUT_DIR="${OPENCLAW_WEIXIN_PLUGIN_OUTPUT_DIR}"' in text

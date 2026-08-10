@@ -435,7 +435,7 @@ def test_production_package_bundles_weixin_plugin_and_uses_production_runtime() 
     helper = _read("scripts/openclaw-gateway-rpc-helper.mjs")
 
     assert "build-openclaw-weixin-plugin.sh" in build_script
-    assert "2.4.4-clawtrade.1" in build_script
+    assert "2.4.4-clawtrade.2" in build_script
     assert "prepare_openclaw_plugin_assets" in build_script
     assert 'build-openclaw-weixin-plugin.sh" --verify-artifact' in build_script
     assert "OPENCLAW_WEIXIN_PLUGIN_SPEC override is not allowed for production packages" in build_script

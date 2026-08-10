@@ -213,6 +213,91 @@ def test_pending_delivery_is_sent_after_connection_recovers(tmp_path: Path) -> N
     assert store.get_delivery_status("intent-reconnect")["state"] == "sent"
 
 
+def test_durable_delivery_invites_pdf_reply_when_channel_can_send_files(tmp_path: Path) -> None:
+    channel = _ChannelBridge(connected=True, can_send_text=True, can_send_file=True)
+    service, store = _build_durable_service(tmp_path, channel)
+    store.set_binding(account_id="account-new", sender_id="sender-new")
+    service.create_report_delivery_intent("intent-pdf-reply")
+
+    result = service.notify_report_completion("r-notify", delivery_intent_id="intent-pdf-reply")
+
+    assert result["delivery"] == "sent"
+    assert "需要 PDF 时，回复“发送完整报告”。" in channel.last_text
+
+
+def test_latest_delivered_report_only_resolves_for_the_binding_that_received_it(tmp_path: Path) -> None:
+    now = ["2026-08-07T09:00:00Z"]
+    store = WechatDeliveryStore(tmp_path / "wechat-delivery.json", now_provider=lambda: now[0])
+    repo = ReportRepository()
+    repo.save_succeeded_report(
+        report_id="report-old-binding",
+        instrument_code="BTC",
+        market="CRYPTO",
+        title="BTC 报告",
+        markdown="# 报告",
+        pm_final_conclusion="继续观察",
+    )
+    service = ReportNotificationService(
+        repo,
+        CompletionSummaryBuilder(repo),
+        PdfExportService(repo),
+        _ChannelBridge(connected=True, can_send_text=True),
+        delivery_store=store,
+    )
+    store.set_binding(account_id="account-old", sender_id="sender-old")
+    store.create_waiting_report("intent-old-binding")
+    store.mark_report_pending("intent-old-binding", report_id="report-old-binding")
+    now[0] = "2026-08-07T09:01:00Z"
+    store.mark_sent(
+        "intent-old-binding",
+        message_id="message-1",
+        account_id="account-old",
+        sender_id="sender-old",
+    )
+
+    assert service.latest_delivered_report_for_recipient(
+        account_id="account-old", sender_id="sender-old"
+    ) == "report-old-binding"
+
+    now[0] = "2026-08-07T09:02:00Z"
+    store.set_binding(account_id="account-new", sender_id="sender-new")
+    assert service.latest_delivered_report_for_recipient(
+        account_id="account-new", sender_id="sender-new"
+    ) is None
+
+
+def test_confirmed_schedule_recipient_replaces_missing_binding_and_sends_pending(tmp_path: Path) -> None:
+    channel = _ChannelBridge(connected=True, can_send_text=True)
+    service, store = _build_durable_service(tmp_path, channel)
+    service.create_report_delivery_intent("intent-scheduled")
+    service.notify_report_completion("r-notify", delivery_intent_id="intent-scheduled")
+
+    remembered = service.remember_current_notification_recipient(
+        account_id="account-new",
+        sender_id="sender-new",
+    )
+
+    assert remembered is True
+    assert store.get_delivery_status("intent-scheduled")["state"] == "sent"
+    assert channel.last_account_id == "account-new"
+    assert channel.last_target == "sender-new"
+
+
+def test_schedule_recipient_rejects_non_current_account(tmp_path: Path) -> None:
+    service, store = _build_durable_service(
+        tmp_path,
+        _ChannelBridge(connected=True, can_send_text=True),
+    )
+
+    remembered = service.remember_current_notification_recipient(
+        account_id="account-old",
+        sender_id="sender-old",
+    )
+
+    assert remembered is False
+    assert store.get_binding() is None
+
+
 def test_unbound_pending_batch_does_not_probe_wechat_for_each_delivery(tmp_path: Path) -> None:
     channel = _ChannelBridge(connected=False, can_send_text=False)
     service, _store = _build_durable_service(tmp_path, channel, unique_account=None)

@@ -85,6 +85,8 @@ def _controller(
     request_selection_report_file=None,  # type: ignore[no-untyped-def]
     ask_report_question=None,  # type: ignore[no-untyped-def]
     bind_notification_recipient=None,  # type: ignore[no-untyped-def]
+    remember_current_notification_recipient=None,  # type: ignore[no-untyped-def]
+    resolve_latest_delivered_report=None,  # type: ignore[no-untyped-def]
     company_name_resolver=None,  # type: ignore[no-untyped-def]
 ) -> tuple[ChannelTextInboundController, _FakeRunner, _FakeChatTransport]:
     runner = _FakeRunner()
@@ -107,6 +109,8 @@ def _controller(
             request_selection_report_file=request_selection_report_file,
             ask_report_question=ask_report_question,
             bind_notification_recipient=bind_notification_recipient,
+            remember_current_notification_recipient=remember_current_notification_recipient,
+            resolve_latest_delivered_report=resolve_latest_delivered_report,
         ),
         runner,
         chat_transport,
@@ -492,6 +496,23 @@ def test_sched_alias_returns_confirmation_without_starting_workflow() -> None:
     assert runner.calls == 0
 
 
+def test_confirmed_wechat_schedule_becomes_current_notification_recipient() -> None:
+    remembered: list[tuple[str | None, str]] = []
+    controller, runner, _ = _controller(
+        remember_current_notification_recipient=lambda account_id, sender_id: remembered.append(
+            (account_id, sender_id)
+        ),
+        company_name_resolver=lambda **_kwargs: {"TSLA": "Tesla"},
+    )
+
+    controller.handle_message(_message("r-sched-bind-1", "/sched TSLA 每天 08:00"))
+    result = controller.handle_message(_message("r-sched-bind-2", "确认"))
+
+    assert result["state"] == "confirmed"
+    assert remembered == [("account-1", "sender-1")]
+    assert runner.calls == 0
+
+
 def test_confirm_reply_starts_existing_report_workflow() -> None:
     controller, runner, _ = _controller()
     controller.handle_message(_message("r-3", "/report TSLA"))
@@ -636,3 +657,26 @@ def test_wechat_report_completion_appends_completed_card_to_same_conversation(tm
     assert sent_texts[-1]["text"] == "完整报告已发送。"
     snapshot = controller.latest_conversation_snapshot()
     assert snapshot["messages"][-1]["text"] == "完整报告已发送。"
+
+
+def test_full_report_reply_uses_latest_report_delivered_to_same_wechat() -> None:
+    background_jobs = []
+    full_report_requests: list[tuple[str, str, ChannelReplyTarget]] = []
+
+    def request_full_report(report_id: str, request_id: str, target: ChannelReplyTarget) -> dict[str, object]:
+        full_report_requests.append((report_id, request_id, target))
+        return {"sent": True, "userMessage": "完整报告已发送。"}
+
+    controller, _runner, _transport = _controller(
+        request_full_report_file=request_full_report,
+        background_submitter=background_jobs.append,
+        resolve_latest_delivered_report=lambda account_id, sender_id: "run-scheduled-1",
+    )
+
+    result = controller.handle_message(_message("scheduled-pdf-1", "发送完整报告"))
+
+    assert result == {"handled": True, "replyText": "收到，正在发送完整报告。", "state": "file_sending"}
+    background_jobs.pop(0)()
+    assert [(report_id, target.account_id, target.sender_id) for report_id, _, target in full_report_requests] == [
+        ("run-scheduled-1", "account-1", "sender-1")
+    ]

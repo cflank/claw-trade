@@ -270,6 +270,19 @@ class ChannelBridge:
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
             return finish(_channel_status_for_user(state="disconnected", message="微信登录服务启动中，请稍后重试。"))
+        stored_account_ids = self._stored_wechat_account_ids()
+        if stored_account_ids is not None and len(stored_account_ids) > 1:
+            self._active_qr_data_url = None
+            self._active_qr_session_key = None
+            self._invalidate_qr_wait_state()
+            return finish(
+                _channel_status_for_user(
+                    state="disconnected",
+                    message="检测到多个微信账号，请重新连接并只保留当前账号。",
+                    qr_code_refresh_required=True,
+                    replacement_required=True,
+                )
+            )
         if include_qr:
             unavailable_status = self._login_provider_unavailable_status(raw_status)
             if unavailable_status is not None:
@@ -311,6 +324,25 @@ class ChannelBridge:
             return finish(self._connected_channel_status(provider_state))
 
         if provider_state.get("state") != "connected":
+            replacement_required = bool(stored_account_ids)
+            if replacement_required:
+                self._active_qr_data_url = None
+                self._active_qr_session_key = None
+                self._invalidate_qr_wait_state()
+                return finish(
+                    _channel_status_for_user(
+                        state="disconnected",
+                        message=(
+                            "微信登录已失效，请重新连接。"
+                            if _is_expired_wechat_session_error(provider_state.get("lastError"))
+                            else "微信连接不可用，请重新连接。"
+                        ),
+                        account_label=provider_state.get("accountLabel"),
+                        last_connected_at=provider_state.get("lastConnectedAt"),
+                        qr_code_refresh_required=True,
+                        replacement_required=True,
+                    )
+                )
             qr_state: dict[str, Any] = {"qrCodeImageDataUrl": None, "connected": False}
             if include_qr:
                 qr_state = self._request_qr_login(refresh=refresh_qr, poll_login=poll_login)
@@ -442,16 +474,24 @@ class ChannelBridge:
         return _config_weixin_enabled(config) is False
 
     def _replacement_required_for_disabled_channel(self) -> bool:
+        stored = self._stored_wechat_account_ids()
+        return stored is None or bool(stored)
+
+    def _stored_wechat_account_ids(self) -> tuple[str, ...] | None:
         try:
             inspection = self._client.weixin_replacement_inspect(operation_id=None)
         except Exception:
-            return True
+            return None
         if not isinstance(inspection, Mapping):
-            return True
+            return None
         stored = inspection.get("storedAccountIds")
         if not isinstance(stored, (list, tuple)):
-            return True
-        return len([item for item in stored if _optional_str(item) is not None]) != 0
+            return None
+        return tuple(
+            account_id
+            for item in stored
+            if (account_id := _optional_str(item)) is not None
+        )
 
     def _request_qr_login(self, *, refresh: bool, poll_login: bool) -> dict[str, Any]:
         try:
@@ -988,6 +1028,7 @@ def _extract_provider_status(raw: Mapping[str, Any], provider_channel_id: str) -
                     "lastConnectedAt": _optional_connected_at(
                         item.get("lastConnectedAt") or item.get("last_connected_at")
                     ),
+                    "lastError": _optional_str(item.get("lastError") or item.get("last_error")),
                 }
     channels = raw.get("channels") if isinstance(raw, Mapping) else None
     if isinstance(channels, Mapping):
@@ -1001,8 +1042,9 @@ def _extract_provider_status(raw: Mapping[str, Any], provider_channel_id: str) -
                 "lastConnectedAt": _optional_connected_at(
                     item.get("lastConnectedAt") or item.get("last_connected_at")
                 ),
+                "lastError": _optional_str(item.get("lastError") or item.get("last_error")),
             }
-    return {"state": "unknown", "accountLabel": None, "lastConnectedAt": None}
+    return {"state": "unknown", "accountLabel": None, "lastConnectedAt": None, "lastError": None}
 
 
 def _default_account_id(raw: Mapping[str, Any], provider_channel_id: str) -> str | None:
@@ -1034,6 +1076,10 @@ def _find_default_account_snapshot(
 
 
 def _account_state(item: Mapping[str, Any]) -> str:
+    if item.get("connected") is False or _optional_str(
+        item.get("lastError") or item.get("last_error")
+    ):
+        return "disconnected"
     if item.get("connected") is True:
         return "connected"
     if item.get("running") is True and item.get("configured") is True:
@@ -1043,6 +1089,11 @@ def _account_state(item: Mapping[str, Any]) -> str:
     if item.get("enabled") is False:
         return "disconnected"
     return "disconnected"
+
+
+def _is_expired_wechat_session_error(value: Any) -> bool:
+    message = str(value or "").lower()
+    return "errcode -14" in message or "session expired" in message
 
 
 def _optional_str(value: Any) -> str | None:

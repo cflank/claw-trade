@@ -27,6 +27,7 @@ def test_prepare_openclaw_config_uses_runtime_asset_paths(tmp_path: Path) -> Non
 
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["agents"]["defaults"]["workspace"] == str(agents_root)
+    assert payload["agents"]["defaults"]["compaction"]["midTurnPrecheck"]["enabled"] is True
     workers = {item["id"]: item for item in payload["agents"]["list"]}
     assert workers["market_analyst"]["workspace"] == str(agents_root / "market_analyst")
     assert workers["market_analyst"]["skills"] == ["claw-trade-stage"]

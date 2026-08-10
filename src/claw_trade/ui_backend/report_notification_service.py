@@ -150,6 +150,20 @@ class ReportNotificationService:
             "message": f"绑定成功，已将 {pending_count} 条待发送报告转移到此微信并开始发送。",
         }
 
+    def remember_current_notification_recipient(self, *, account_id: str | None, sender_id: str) -> bool:
+        if self._delivery_store is None:
+            return False
+        incoming_account_id = str(account_id or "").strip()
+        sender_id = sender_id.strip()
+        if not incoming_account_id or not sender_id:
+            return False
+        with self._channel_bridge.wechat_delivery_account() as current_account_id:
+            if current_account_id != incoming_account_id:
+                return False
+            self._delivery_store.set_binding(account_id=incoming_account_id, sender_id=sender_id)
+        self.retry_pending()
+        return True
+
     def retry_pending(
         self,
         *,
@@ -187,6 +201,7 @@ class ReportNotificationService:
                             str(record["intent_id"]),
                             binding=binding,
                             current_account_id=current_account_id,
+                            can_send_file=bool(status.get("canSendFile")),
                             allow_unknown=manual,
                         )
                         if delivery is None:
@@ -212,6 +227,32 @@ class ReportNotificationService:
         if self._delivery_store is None:
             return None
         return self._delivery_store.get_delivery_status(intent_id)
+
+    def latest_delivered_report_for_recipient(self, *, account_id: str | None, sender_id: str) -> str | None:
+        store = self._delivery_store
+        account_id = str(account_id or "").strip()
+        sender_id = sender_id.strip()
+        if store is None or not account_id or not sender_id:
+            return None
+        binding = store.get_binding()
+        if binding is None or binding.get("account_id") != account_id or binding.get("sender_id") != sender_id:
+            return None
+        bound_at = str(binding.get("bound_at") or "")
+        deliveries = []
+        for item in store.list_delivery_records(states={"sent"}):
+            report_id = str(item.get("report_id") or "").strip()
+            delivered_account_id = str(item.get("delivered_account_id") or "").strip()
+            delivered_sender_id = str(item.get("delivered_sender_id") or "").strip()
+            if delivered_account_id or delivered_sender_id:
+                delivered_to_binding = delivered_account_id == account_id and delivered_sender_id == sender_id
+            else:
+                delivered_to_binding = str(item.get("updated_at") or "") > bound_at
+            if delivered_to_binding and report_id and self._repository.get_report(report_id) is not None:
+                deliveries.append(item)
+        if not deliveries:
+            return None
+        latest = max(deliveries, key=lambda item: str(item.get("updated_at") or ""))
+        return str(latest["report_id"])
 
     def notify_report_completion(
         self,
@@ -287,14 +328,23 @@ class ReportNotificationService:
             self._in_app_notifier(report_id, "微信通知发送失败，已在设备界面显示完成摘要。")
             return {"sent": False, "delivery": "in_app_only", "text": text}
 
-    def _completion_text(self, report_id: str, *, text_footer: str | None) -> str:
+    def _completion_text(
+        self,
+        report_id: str,
+        *,
+        text_footer: str | None,
+        can_send_file: bool | None = None,
+    ) -> str:
         summary = self._summary_builder.get_cached(report_id)
         if summary is None:
             summary = self._summary_builder.build_completion_summary_from_saved_report(
                 report_id,
                 pdf_available=False,
             )
-        return _append_text_footer(render_completion_summary_text(summary, can_send_file=None), text_footer)
+        return _append_text_footer(
+            render_completion_summary_text(summary, can_send_file=can_send_file),
+            text_footer,
+        )
 
     def _attempt_delivery(self, intent_id: str, *, allow_unknown: bool = False) -> str | None:
         store = self._delivery_store
@@ -323,6 +373,7 @@ class ReportNotificationService:
                 intent_id,
                 binding=binding,
                 current_account_id=current_account_id,
+                can_send_file=bool(status.get("canSendFile")),
                 allow_unknown=allow_unknown,
             )
 
@@ -332,6 +383,7 @@ class ReportNotificationService:
         *,
         binding: Mapping[str, str],
         current_account_id: str,
+        can_send_file: bool,
         allow_unknown: bool,
     ) -> str | None:
         store = self._delivery_store
@@ -344,7 +396,11 @@ class ReportNotificationService:
         if not report_id:
             store.mark_unknown(intent_id, error="missing_report_id")
             return "unknown"
-        text = self._completion_text(report_id, text_footer=str(record.get("text_footer") or "") or None)
+        text = self._completion_text(
+            report_id,
+            text_footer=str(record.get("text_footer") or "") or None,
+            can_send_file=can_send_file,
+        )
         try:
             result = self._channel_bridge.send_text(
                 channel_kind="wechat_clawbot",
@@ -362,7 +418,12 @@ class ReportNotificationService:
         if result.get("sent") is True:
             message_id = result.get("messageId") or result.get("message_id")
             try:
-                store.mark_sent(intent_id, message_id=str(message_id or "") or None)
+                store.mark_sent(
+                    intent_id,
+                    message_id=str(message_id or "") or None,
+                    account_id=current_account_id,
+                    sender_id=binding["sender_id"],
+                )
             except Exception:
                 return "unknown"
             return "sent"

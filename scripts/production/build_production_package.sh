@@ -6,7 +6,7 @@ OUT_DIR="${OUT_DIR:-${ROOT_DIR}/dist/production}"
 WORK_DIR="${WORK_DIR:-${ROOT_DIR}/.runtime/production-package}"
 PYTHON_BIN="${PYTHON_BIN:-python3.12}"
 BUILD_FRONTEND="${BUILD_FRONTEND:-1}"
-OPENCLAW_WEIXIN_PATCHED_VERSION="2.4.4-clawtrade.1"
+OPENCLAW_WEIXIN_PATCHED_VERSION="2.4.4-clawtrade.2"
 if [[ -z "${OPENCLAW_WEIXIN_PLUGIN_SPEC:-}" ]]; then
   OPENCLAW_WEIXIN_OUTPUT_DIR="${WORK_DIR}/openclaw-weixin-patched" \
     "${ROOT_DIR}/scripts/build-openclaw-weixin-plugin.sh"

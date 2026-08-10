@@ -127,13 +127,22 @@ class WechatDeliveryStore:
             self._save(payload)
             return dict(item)
 
-    def mark_sent(self, intent_id: str, *, message_id: str | None) -> None:
+    def mark_sent(
+        self,
+        intent_id: str,
+        *,
+        message_id: str | None,
+        account_id: str | None = None,
+        sender_id: str | None = None,
+    ) -> None:
         self._update_delivery(
             intent_id,
             state="sent",
             last_error=None,
             result_unknown=False,
             message_id=(message_id or "").strip() or None,
+            delivered_account_id=(account_id or "").strip() or None,
+            delivered_sender_id=(sender_id or "").strip() or None,
         )
 
     def mark_known_failure(self, intent_id: str, *, error: str) -> None:
@@ -236,6 +245,22 @@ class WechatDeliveryStore:
         if not isinstance(binding, dict):
             return None
         return {str(key): str(value) for key, value in binding.items()}
+
+    def set_binding(self, *, account_id: str, sender_id: str) -> None:
+        account_id = account_id.strip()
+        sender_id = sender_id.strip()
+        if not account_id or not sender_id:
+            raise ValueError("invalid_wechat_binding")
+        with self._lock:
+            payload = self._load()
+            payload["binding"] = {
+                "account_id": account_id,
+                "sender_id": sender_id,
+                "bound_at": self._now_provider(),
+            }
+            payload["binding_challenge"] = None
+            payload["binding_code_requests"] = {}
+            self._save(payload)
 
     def begin_manual_retry(self, request_id: str) -> dict[str, object]:
         request_id = request_id.strip()

@@ -519,6 +519,10 @@ For WSL-local UI integration tests, do not guess the Chrome startup path.
 Rules:
 
 - First read the latest `memory/` entries that mention Chrome, WSL, `9223`, `9224`, `mcp-chrome`, or `playwright-win-chrome`.
+- When the human provides `PLAYWRIGHT_MCP_EXTENSION_TOKEN` for an already-open Chrome, extension mode is a single persistent MCP session: start exactly one `playwright-mcp --extension` process, keep that process and client session alive, and send every browser command through it.
+- The extension token is authorization only. Re-running `npx playwright-mcp --extension` for `browser_tabs`, navigation, snapshots, console inspection, or later actions creates another connection and may open another page. Never implement a browser flow as multiple one-shot MCP process invocations.
+- Before any browser command, inspect whether the requested extension/CDP MCP session is already alive. Reuse it without reconnecting, navigating, opening, switching, or closing pages unless that exact page action is required by the human flow.
+- If the existing MCP session cannot be reused, stop browser operations and report the connection problem. Do not create a replacement MCP process, browser profile, page, or tab without explicit human approval in the current turn.
 - Verify the WSL runtime before opening Chrome: `http://127.0.0.1:5175/healthz`, `http://127.0.0.1:1933/health`, and `http://127.0.0.1:18789/health` must return 200.
 - Use the WSL IP URL for local UI tests, for example `http://172.27.36.34:5175/`. Do not use the target-machine URL such as `192.168.1.21` when the human says to test WSL.
 - Start with the project script, not a handwritten Chrome command:

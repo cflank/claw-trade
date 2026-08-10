@@ -25,13 +25,13 @@ index 0000000..04c4cb1
 @@ -0,0 +1,6130 @@
 +{
 +  "name": "@tencent-weixin/openclaw-weixin",
-+  "version": "2.4.4-clawtrade.1",
++  "version": "2.4.4-clawtrade.2",
 +  "lockfileVersion": 3,
 +  "requires": true,
 +  "packages": {
 +    "": {
 +      "name": "@tencent-weixin/openclaw-weixin",
-+      "version": "2.4.4-clawtrade.1",
++      "version": "2.4.4-clawtrade.2",
 +      "license": "MIT",
 +      "dependencies": {
 +        "qrcode-terminal": "0.12.0",
@@ -6161,7 +6161,7 @@ index c06e3e0..c40a97f 100644
  {
    "name": "@tencent-weixin/openclaw-weixin",
 -  "version": "2.4.4",
-+  "version": "2.4.4-clawtrade.1",
++  "version": "2.4.4-clawtrade.2",
    "description": "OpenClaw Weixin channel",
    "license": "MIT",
    "author": "Tencent",
@@ -8201,3 +8201,125 @@ index 92591fb..44db54f 100644
            message: result.message,
          });
        } catch (error) {
+diff --git a/src/channel.ts b/src/channel.ts
+--- a/src/channel.ts
++++ b/src/channel.ts
+@@ -411,6 +411,8 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
+       ctx.setStatus?.({
+         accountId: account.accountId,
+         running: true,
++        connected: false,
++        lastError: null,
+         lastStartAt: Date.now(),
+         lastEventAt: Date.now(),
+       });
+diff --git a/src/monitor/monitor-status.test.ts b/src/monitor/monitor-status.test.ts
+new file mode 100644
+--- /dev/null
++++ b/src/monitor/monitor-status.test.ts
+@@ -0,0 +1,75 @@
++import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contract";
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++vi.mock("../api/api.js", () => ({ getUpdates: vi.fn() }));
++
++import { getUpdates } from "../api/api.js";
++import { _resetForTest } from "../api/session-guard.js";
++import { monitorWeixinProvider } from "./monitor.js";
++
++const mockedGetUpdates = vi.mocked(getUpdates);
++
++function runMonitor(
++  response: Awaited<ReturnType<typeof getUpdates>>,
++  onStatus: (next: ChannelAccountSnapshot, abort: AbortController) => void,
++): Promise<void> {
++  const abort = new AbortController();
++  mockedGetUpdates.mockResolvedValue(response);
++  return monitorWeixinProvider({
++    baseUrl: "https://example.invalid",
++    cdnBaseUrl: "https://example.invalid",
++    token: "token",
++    accountId: "wechat-account",
++    config: {} as never,
++    channelRuntime: {} as never,
++    abortSignal: abort.signal,
++    setStatus: (next) => onStatus(next, abort),
++  });
++}
++
++describe("monitor status", () => {
++  beforeEach(() => {
++    mockedGetUpdates.mockReset();
++    _resetForTest();
++  });
++
++  it("marks a successful poll connected and clears the previous error", async () => {
++    const statuses: ChannelAccountSnapshot[] = [];
++    await runMonitor(
++      { ret: 0, errcode: 0, msgs: [] },
++      (next, abort) => {
++        statuses.push(next);
++        if (next.connected === true) abort.abort();
++      },
++    );
++
++    expect(statuses).toContainEqual(
++      expect.objectContaining({
++        accountId: "wechat-account",
++        running: true,
++        connected: true,
++        lastError: null,
++      }),
++    );
++  });
++
++  it("marks an expired session disconnected before pausing", async () => {
++    const statuses: ChannelAccountSnapshot[] = [];
++    await runMonitor(
++      { ret: -14, errcode: -14, errmsg: "session expired", msgs: [] },
++      (next, abort) => {
++        statuses.push(next);
++        if (next.connected === false) setTimeout(() => abort.abort(), 0);
++      },
++    );
++
++    expect(statuses).toContainEqual(
++      expect.objectContaining({
++        accountId: "wechat-account",
++        running: true,
++        connected: false,
++        lastError: "session expired (errcode -14)",
++      }),
++    );
++  });
++});
+diff --git a/src/monitor/monitor.ts b/src/monitor/monitor.ts
+--- a/src/monitor/monitor.ts
++++ b/src/monitor/monitor.ts
+@@ -117,5 +117,11 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
+         if (isSessionExpired) {
+           pauseSession(accountId);
++          setStatus?.({
++            accountId,
++            running: true,
++            connected: false,
++            lastError: `session expired (errcode ${SESSION_EXPIRED_ERRCODE})`,
++          });
+           const pauseMs = getRemainingPauseMs(accountId);
+           errLog(
+             `weixin getUpdates: session expired (errcode ${SESSION_EXPIRED_ERRCODE}), pausing bot for ${Math.ceil(pauseMs / 60_000)} min`,
+@@ -151,7 +157,13 @@ export async function monitorWeixinProvider(opts: MonitorWeixinOpts): Promise<vo
+         continue;
+       }
+       consecutiveFailures = 0;
+-      setStatus?.({ accountId, lastEventAt: Date.now() });
++      setStatus?.({
++        accountId,
++        running: true,
++        connected: true,
++        lastError: null,
++        lastEventAt: Date.now(),
++      });
+       if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
+         saveGetUpdatesBuf(syncFilePath, resp.get_updates_buf);
+         getUpdatesBuf = resp.get_updates_buf;

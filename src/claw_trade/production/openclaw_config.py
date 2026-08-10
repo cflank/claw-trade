@@ -89,6 +89,8 @@ def prepare_openclaw_config(
     existing_providers = _object(existing_models.get("providers"))
     existing_agents = _object(existing.get("agents"))
     existing_defaults = _object(existing_agents.get("defaults"))
+    existing_compaction = _object(existing_defaults.get("compaction"))
+    existing_mid_turn_precheck = _object(existing_compaction.get("midTurnPrecheck"))
     existing_plugins = _object(existing.get("plugins"))
     existing_plugin_entries = _object(existing_plugins.get("entries"))
     existing_plugin_allow = _string_list(existing_plugins.get("allow"))
@@ -128,6 +130,10 @@ def prepare_openclaw_config(
         **existing_defaults,
         "workspace": str(agents_root),
         "skipBootstrap": True,
+        "compaction": {
+            **existing_compaction,
+            "midTurnPrecheck": {**existing_mid_turn_precheck, "enabled": True},
+        },
     }
     if llm is not None:
         merged_defaults["model"] = {"primary": llm.model}

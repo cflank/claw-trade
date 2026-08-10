@@ -54,6 +54,8 @@ class ChannelTextInboundController:
         request_selection_report_file: Callable[[str, str, str, ChannelReplyTarget], dict[str, object]] | None = None,
         ask_report_question: Callable[[str, str, str, str], dict[str, str]] | None = None,
         bind_notification_recipient: Callable[[str, str | None, str], dict[str, object]] | None = None,
+        remember_current_notification_recipient: Callable[[str | None, str], object] | None = None,
+        resolve_latest_delivered_report: Callable[[str | None, str], str | None] | None = None,
     ) -> None:
         self._chat_controller = chat_controller
         self._request_full_report_file = request_full_report_file
@@ -62,6 +64,8 @@ class ChannelTextInboundController:
         self._request_selection_report_file = request_selection_report_file
         self._ask_report_question = ask_report_question
         self._bind_notification_recipient = bind_notification_recipient
+        self._remember_current_notification_recipient = remember_current_notification_recipient
+        self._resolve_latest_delivered_report = resolve_latest_delivered_report
         self._pending: dict[str, _PendingDraft] = {}
         self._selection_reports: dict[str, _PendingSelectionReport] = {}
         self._idempotency: dict[str, dict[str, Any]] = {}
@@ -268,6 +272,8 @@ class ChannelTextInboundController:
                 message.request_id,
                 {"handled": True, "replyText": "已取消。", "state": "cancelled"},
             )
+        if "scheduledReport" in result and self._remember_current_notification_recipient is not None:
+            self._remember_current_notification_recipient(message.account_id, message.sender_id)
         return self._remember(
             message.request_id,
             {"handled": True, "replyText": _format_confirmed_reply(result), "state": "confirmed"},
@@ -350,6 +356,14 @@ class ChannelTextInboundController:
                 message=message,
                 selection_report=selection_report,
             )
+
+        if self._resolve_latest_delivered_report is not None:
+            report_id = str(self._resolve_latest_delivered_report(message.account_id, message.sender_id) or "").strip()
+            if report_id:
+                return self._send_full_report_file(
+                    message=message,
+                    report_id=report_id,
+                )
 
         reply_text = "没有找到可发送的完整报告。请先等待报告完成。"
         self._chat_controller.append_channel_plain_message(

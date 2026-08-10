@@ -991,6 +991,14 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             account_id=account_id,
             sender_id=sender_id,
         ),
+        remember_current_notification_recipient=lambda account_id, sender_id: report_notification_service.remember_current_notification_recipient(
+            account_id=account_id,
+            sender_id=sender_id,
+        ),
+        resolve_latest_delivered_report=lambda account_id, sender_id: report_notification_service.latest_delivered_report_for_recipient(
+            account_id=account_id,
+            sender_id=sender_id,
+        ),
     )
     restore_report_completion_chat_messages(repository, summary_builder, chat_controller, channel_text_inbound)
     settings_service = SettingsService(env_writer=None)

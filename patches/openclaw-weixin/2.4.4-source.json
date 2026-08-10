@@ -7,9 +7,9 @@
   "upstreamRepository": "https://github.com/Tencent/openclaw-weixin.git",
   "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.4.tgz",
   "tarballIntegrity": "sha512-tb4Ix+6JPLEGlWz90wBWc5MYojISvYWReCeXjCwGCryi0RxVHCZa6ncCHT0xINNrYTOQbpAEN0U+i7UHVTk9XQ==",
-  "patchedVersion": "2.4.4-clawtrade.1",
+  "patchedVersion": "2.4.4-clawtrade.2",
   "patchFile": "2.4.4-single-account-replacement.patch",
-  "patchSha256": "8bd693aca9afe92439327e6777b3fe08579facfa6430a1af7518d28d06b537f6",
+  "patchSha256": "684c7b0ff5d6ce14d4a01965d97356b6c848b61deb0cfa09a6119bdf598f31fe",
   "buildSource": "verified official npm tarball; exact tagged git commit supplies tsconfig.json only",
   "dependencyLock": "package-lock.json is carried by the patch and installed with npm ci",
   "compatibilityPatch": {
@@ -19,7 +19,8 @@
   },
   "focusedTests": [
     "src/replacement.test.ts",
-    "src/auth/login-qr-cancel.test.ts"
+    "src/auth/login-qr-cancel.test.ts",
+    "src/monitor/monitor-status.test.ts"
   ],
   "knownUpstreamBaseline": {
     "fullSuiteUnrelatedFailures": 4,

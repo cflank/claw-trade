@@ -263,6 +263,57 @@ def test_get_channel_status_treats_running_configured_account_as_connected() -> 
     assert payload["canSendText"] is True
 
 
+def test_get_channel_status_rejects_expired_running_account() -> None:
+    class _ExpiredAccountClient(_FakeAccountStatusClient):
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            assert operation_id is None
+            return {"storedAccountIds": ["wechat-bot-1"]}
+
+    bridge = ChannelBridge(
+        _ExpiredAccountClient(
+            {
+                "accountId": "wechat-bot-1",
+                "configured": True,
+                "running": True,
+                "connected": False,
+                "lastError": "session expired (errcode -14)",
+            }
+        )
+    )
+
+    payload = bridge.get_channel_status(probe=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["canSendText"] is False
+    assert payload["replacementRequired"] is True
+    assert payload["lastErrorMessage"] == "微信登录已失效，请重新连接。"
+
+
+def test_get_channel_status_rejects_multiple_running_accounts() -> None:
+    class _MultipleAccountClient(_FakeChannelClient):
+        def channels_status(self, *, probe=False):  # type: ignore[no-untyped-def]
+            self.channels_status_calls.append({"probe": probe})
+            accounts = [
+                {"accountId": "old-bot", "configured": True, "running": True},
+                {"accountId": "new-bot", "configured": True, "running": True},
+            ]
+            return {
+                "channelAccounts": {"openclaw-weixin": accounts},
+                "channelDefaultAccountId": {"openclaw-weixin": "old-bot"},
+            }
+
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            assert operation_id is None
+            return {"storedAccountIds": ["old-bot", "new-bot"]}
+
+    payload = ChannelBridge(_MultipleAccountClient()).get_channel_status(probe=True)
+
+    assert payload["state"] == "disconnected"
+    assert payload["canSendText"] is False
+    assert payload["replacementRequired"] is True
+    assert payload["lastErrorMessage"] == "检测到多个微信账号，请重新连接并只保留当前账号。"
+
+
 def test_get_channel_status_ignores_stale_default_account_when_running_account_exists() -> None:
     class _StaleDefaultAccountClient(_FakeChannelClient):
         def channels_status(self, *, probe=False):  # type: ignore[no-untyped-def]
