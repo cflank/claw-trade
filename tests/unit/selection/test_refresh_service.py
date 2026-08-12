@@ -82,6 +82,96 @@ def test_selection_refresh_service_blocks_when_license_denied() -> None:
     assert result.reason == "设备授权已失效，请在授权页修复后重试。"
 
 
+def test_selection_refresh_service_wait_timeout_is_explicit() -> None:
+    service = SelectionDataRefreshService(
+        store=SelectionRunStore(),
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-05-26",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+    )
+
+    result = service.wait_for_refresh("sel-missing", timeout_seconds=0)
+
+    assert result.status == "failed"
+    assert result.error_code == "selection_data_refresh_wait_timeout"
+
+
+def test_selection_refresh_service_waits_for_its_background_job() -> None:
+    store = SelectionRunStore()
+
+    def _run_job(plan: SelectionRunPlan) -> None:
+        store.save_data_run_record(
+            SelectionDataRunRecord(
+                run_plan=plan,
+                data_run=SelectionDataRun(
+                    selection_run_id=plan.selection_run_id,
+                    status=SelectionDataRunStatus.NO_CANDIDATE,
+                    completed_at="2026-05-26T10:01:00+00:00",
+                ),
+                manifest=None,
+            )
+        )
+
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=_run_job,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-05-26",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        run_id_factory=lambda: "sel-refresh-wait",
+    )
+
+    started = service.request_refresh(
+        request=_request(),
+        unavailable_code="no_completed_selection_run",
+        select_workflow_run_id="select-wf-wait",
+    )
+    result = service.wait_for_refresh("sel-refresh-wait", timeout_seconds=1)
+
+    assert started.status == "started"
+    assert result.status == "no_candidate"
+
+
+def test_selection_refresh_service_wait_marks_stuck_job_failed() -> None:
+    store = SelectionRunStore()
+    plan = SelectionRunPlan(
+        selection_run_id="sel-refresh-stuck",
+        market=SelectionMarket.CN_A,
+        profile=SelectionProfile.CN_A,
+        trade_date="2026-05-26",
+        lookback_trading_days=260,
+        universe_scope="all_a_shares",
+        data_need_audit_ref="plan://selection/cn_a/2026-05-26/batch-v1",
+        approved_strategy_config_ref="config://cn-a-selection-v1",
+        trigger_source=SelectionTriggerSource.SCHEDULED,
+    )
+    store.save_data_run_record(
+        SelectionDataRunRecord(
+            run_plan=plan,
+            data_run=SelectionDataRun(
+                selection_run_id=plan.selection_run_id,
+                status=SelectionDataRunStatus.FETCHING_DATA,
+                updated_at="2026-05-26T09:00:00+00:00",
+            ),
+            manifest=None,
+        )
+    )
+    service = SelectionDataRefreshService(
+        store=store,
+        run_data_job=lambda _plan: None,  # type: ignore[arg-type]
+        resolve_closed_trade_date=lambda value: value or "2026-05-26",
+        load_approved_strategy_config_ref=lambda _market, _profile: "config://cn-a-selection-v1",
+        build_data_need_audit=_data_need_audit,
+        now_fn=lambda: datetime(2026, 5, 26, 10, tzinfo=UTC),
+    )
+
+    result = service.wait_for_refresh(plan.selection_run_id)
+
+    assert result.status == "failed"
+    assert result.error_code == "selection_data_run_interrupted"
+
+
 def test_selection_refresh_request_blocks_when_license_denied() -> None:
     def deny() -> None:
         raise PermissionError("设备授权已失效，请在授权页修复后重试。")

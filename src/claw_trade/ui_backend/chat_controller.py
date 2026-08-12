@@ -302,6 +302,7 @@ class ChatController:
                 context=context,
                 request_id=request_id,
                 content=content,
+                wait_for_data_refresh=True,
             )
         except QueueError as exc:
             self._append_message(
@@ -511,6 +512,7 @@ class ChatController:
         context: ChatContext,
         request_id: str,
         content: str,
+        wait_for_data_refresh: bool = False,
     ) -> dict[str, Any]:
         cost_start_snapshot = self._capture_task_cost_snapshot()
         try:
@@ -518,6 +520,7 @@ class ChatController:
                 raw_text=content,
                 request_id=request_id,
                 user_id=context.id,
+                wait_for_data_refresh=wait_for_data_refresh,
             )
         except ValueError as exc:
             if str(exc) != "invalid_select_command":

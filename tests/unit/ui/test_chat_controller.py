@@ -64,7 +64,15 @@ class _FakeSelectionController:
     chat_text: str = "`/select` 测试结果"
     evidence_path: Path = Path("runs/selection/workflows/select-test-run/evidence.json")
 
-    def handle_select_command(self, *, raw_text: str, request_id: str, user_id: str | None = None) -> SelectCommandResult:
+    def handle_select_command(
+        self,
+        *,
+        raw_text: str,
+        request_id: str,
+        user_id: str | None = None,
+        wait_for_data_refresh: bool = False,
+    ) -> SelectCommandResult:
+        _ = wait_for_data_refresh
         self.calls += 1
         return SelectCommandResult(
             code=self.code,

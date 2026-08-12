@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from threading import Lock, Thread
@@ -41,6 +42,7 @@ class _PendingSelectionReport:
 
 _REPORT_QUESTION_PROCESSING_REPLY = "收到，正在查这份报告。"
 _CONFIRMATION_PROCESSING_REPLY = "收到，正在识别标的，请稍等。"
+_LOGGER = logging.getLogger(__name__)
 
 
 class ChannelTextInboundController:
@@ -537,14 +539,28 @@ class ChannelTextInboundController:
             account_id=message.account_id,
             sender_id=message.sender_id,
         )
+        dedupe_key = f"channel-select-summary:{message.request_id}"
+        delivery_known_failed = False
         try:
-            self._send_channel_text(
-                reply_text,
-                f"channel-select-summary:{message.request_id}",
-                target,
-            )
+            for _attempt in range(2):
+                send_result = self._send_channel_text(reply_text, dedupe_key, target)
+                if send_result.get("sent") is True:
+                    return
+                delivery_known_failed = send_result.get("resultKnown") is True
+                if not delivery_known_failed:
+                    break
         except Exception:
-            return
+            delivery_known_failed = False
+            _LOGGER.exception("selection result WeChat delivery failed request_id=%s", message.request_id)
+        self._chat_controller.append_channel_plain_message(
+            context_id=conversation_key,
+            actor="system",
+            text=(
+                "选股结果发送到微信失败；结果已保留在工作台。"
+                if delivery_known_failed
+                else "选股结果是否送达微信无法确认；为避免重复发送，本次未自动重试，结果已保留在工作台。"
+            ),
+        )
 
     def _handle_normal_chat(
         self,

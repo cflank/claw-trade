@@ -1119,6 +1119,131 @@ def test_select_command_no_completed_run_requests_background_data_refresh(tmp_pa
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("refresh_status", ("started", "already_running", "completed"))
+def test_channel_crypto_select_keeps_trade_date_and_continues_after_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refresh_status: str,
+) -> None:
+    completed_controller, selection_runner = _selection_controller_with_completed_run(tmp_path)
+    completed_record = next(iter(completed_controller._store._runs.values()))  # noqa: SLF001
+    trade_date = "2026-08-11"
+    crypto_plan = replace(
+        completed_record.run_plan,
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+        trade_date=trade_date,
+        universe_scope="spot_usdt",
+        approved_strategy_config_ref="config://crypto-selection-v1",
+    )
+    cache_ref = completed_record.data_run.candidate_cache_ref
+    assert cache_ref is not None
+    manifest_path = tmp_path / "crypto-refresh-candidate-cache-manifest.json"
+    manifest_payload = _candidate_cache_manifest_payload(
+        run_id=crypto_plan.selection_run_id,
+        body_sha=cache_ref.content_sha256,
+    )
+    manifest_payload.update(
+        {
+            "market": "CRYPTO",
+            "profile": "CRYPTO",
+            "trade_date": trade_date,
+            "strategy_config_ref": "config://crypto-selection-v1",
+            "strategy_config_version": "crypto.selection_strategy.v1",
+            "weight_version": "crypto.selection_weights.v1",
+        }
+    )
+    manifest_path.write_text(
+        json.dumps(manifest_payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+    _write_readback_log(
+        manifest_path, expected_sha256=sha256(manifest_path.read_bytes()).hexdigest()
+    )
+    completed_record = replace(
+        completed_record,
+        run_plan=crypto_plan,
+        data_run=replace(
+            completed_record.data_run,
+            candidate_cache_ref=replace(
+                cache_ref,
+                manifest_ref=str(manifest_path),
+                expires_at="2026-08-13T09:00:00+00:00",
+            ),
+            normalized_refs=("dataset://normalized/CRYPTO/daily/BTCUSDT",),
+            completed_at="2026-08-11T19:34:52+00:00",
+        ),
+        manifest=replace(
+            completed_record.manifest,
+            market=SelectionMarket.CRYPTO,
+            profile=SelectionProfile.CRYPTO,
+            trade_date=trade_date,
+            strategy_config_ref="config://crypto-selection-v1",
+            strategy_config_version="crypto.selection_strategy.v1",
+            weight_version="crypto.selection_weights.v1",
+        ),
+    )
+    store = SelectionRunStore()
+    clock = [datetime.fromisoformat("2026-08-11T23:59:59+00:00").astimezone(UTC)]
+    refresh_requests = []
+    wait_calls: list[str] = []
+    monkeypatch.setattr(
+        "claw_trade.selection.controller.resolve_crypto_selection_trade_date_for_scheduler",
+        lambda _value: clock[0].date().isoformat(),
+    )
+
+    def _refresh(**kwargs: object) -> SelectionDataRefreshResult:
+        refresh_requests.append(kwargs["request"])
+        if refresh_status == "completed":
+            clock[0] = datetime.fromisoformat("2026-08-12T00:00:01+00:00").astimezone(UTC)
+            store.save_data_run_record(completed_record)
+        return SelectionDataRefreshResult(
+            status=refresh_status,
+            selection_run_id=completed_record.run_plan.selection_run_id,
+            trade_date=trade_date,
+            reason="no_completed_selection_run",
+        )
+
+    def _wait_for_refresh(selection_run_id: str) -> SelectionDataRefreshResult:
+        wait_calls.append(selection_run_id)
+        clock[0] = datetime.fromisoformat("2026-08-12T00:00:01+00:00").astimezone(UTC)
+        store.save_data_run_record(completed_record)
+        return SelectionDataRefreshResult(
+            status="completed",
+            selection_run_id=selection_run_id,
+            trade_date=trade_date,
+            reason="no_completed_selection_run",
+        )
+
+    selection_controller = SelectionController(
+        store=store,
+        now_fn=lambda: clock[0],
+        openclaw=OpenClawClient(selection_runner),
+        scheduler_enqueue=_refresh,
+        refresh_completion_waiter=_wait_for_refresh,
+        workflow_evidence_root=tmp_path / "selection-workflows-refresh-resume",
+    )
+    controller, chat_transport, workflow_runner = _build_controller(
+        selection_controller=selection_controller
+    )
+
+    controller.begin_channel_select_command(context_id="wechat-ctx", text="/select 2")
+    result = controller.finish_channel_select_command(
+        request_id="sel-refresh-resume",
+        context_id="wechat-ctx",
+        text="/select 2",
+    )
+
+    assert result["selection"]["code"] == "completed"
+    assert [request.trade_date for request in refresh_requests] == [trade_date]
+    assert wait_calls == (
+        [] if refresh_status == "completed" else [completed_record.run_plan.selection_run_id]
+    )
+    assert selection_runner.payloads
+    assert chat_transport.calls == 0
+    assert workflow_runner.calls == 0
+
+
+@pytest.mark.integration
 def test_select_command_refreshes_current_trade_date_instead_of_reusing_older_completed_run(
     tmp_path: Path,
 ) -> None:

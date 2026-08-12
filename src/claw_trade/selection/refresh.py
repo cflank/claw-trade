@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
+from time import monotonic, sleep
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -186,6 +187,39 @@ class SelectionDataRefreshService:
                 name="selection-auto-refresh-scheduler",
             )
             self._auto_refresh_thread.start()
+
+    def wait_for_refresh(
+        self,
+        selection_run_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> SelectionDataRefreshResult:
+        deadline = None if timeout_seconds is None else monotonic() + timeout_seconds
+        while True:
+            record = self._store.load_data_run_record(selection_run_id)
+            if record is not None and self._mark_stale_active_record_failed(record):
+                continue
+            if record is not None and record.data_run.status in {
+                SelectionDataRunStatus.COMPLETED,
+                SelectionDataRunStatus.NO_CANDIDATE,
+                SelectionDataRunStatus.FAILED,
+            }:
+                return self._refresh_result_from_data_run_record(
+                    record=record,
+                    plan=record.run_plan,
+                    trade_date=record.run_plan.trade_date,
+                    reason="selection_data_refresh_wait",
+                )
+            remaining = None if deadline is None else deadline - monotonic()
+            if remaining is not None and remaining <= 0:
+                return SelectionDataRefreshResult(
+                    status="failed",
+                    selection_run_id=selection_run_id,
+                    trade_date=record.run_plan.trade_date if record is not None else None,
+                    reason="selection_data_refresh_wait_timeout",
+                    error_code="selection_data_refresh_wait_timeout",
+                )
+            sleep(0.2 if remaining is None else min(0.2, remaining))
 
     def stop_automatic_refresh_scheduler(self, *, timeout_seconds: float = 1.0) -> None:
         self._auto_refresh_stop.set()

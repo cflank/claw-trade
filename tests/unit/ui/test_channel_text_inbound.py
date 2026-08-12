@@ -65,7 +65,15 @@ class _FakeChatTransport:
 class _FakeSelectionController:
     calls: int = 0
 
-    def handle_select_command(self, *, raw_text: str, request_id: str, user_id: str | None = None) -> SelectCommandResult:
+    def handle_select_command(
+        self,
+        *,
+        raw_text: str,
+        request_id: str,
+        user_id: str | None = None,
+        wait_for_data_refresh: bool = False,
+    ) -> SelectCommandResult:
+        _ = wait_for_data_refresh
         self.calls += 1
         return SelectCommandResult(
             code=SelectCommandCode.COMPLETED,
@@ -391,6 +399,109 @@ def test_select_command_pushes_wechat_summary_and_sends_selection_pdf_on_request
     assert snapshot["messages"][-1]["text"] == "完整选股报告已发送。"
     assert runner.calls == 0
     assert chat_transport.calls == []
+
+
+def test_select_command_retries_known_wechat_send_failure_once() -> None:
+    selection = _FakeSelectionController()
+    background_jobs = []
+    send_results = [
+        {"sent": False, "resultKnown": True},
+        {"sent": False, "resultKnown": True},
+    ]
+    sent_texts = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return send_results.pop(0)
+
+    controller, _runner, _chat_transport = _controller(
+        selection_controller=selection,
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
+
+    controller.handle_message(_message("r-select-retry", "/select 2"))
+    background_jobs[0]()
+
+    assert len(sent_texts) == 2
+    assert sent_texts[0]["dedupeKey"] == sent_texts[1]["dedupeKey"]
+    last_message = controller.latest_conversation_snapshot()["messages"][-1]
+    assert last_message["kind"] == "plain"
+    assert "发送到微信失败" in last_message["text"]
+
+
+def test_select_command_records_unknown_wechat_send_result_without_duplicate_retry() -> None:
+    background_jobs = []
+    sent_texts = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        sent_texts.append({"text": text, "dedupeKey": dedupe_key, "target": target})
+        return {"sent": False, "resultKnown": False}
+
+    controller, _runner, _chat_transport = _controller(
+        selection_controller=_FakeSelectionController(),
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
+
+    controller.handle_message(_message("r-select-unknown", "/select 2"))
+    background_jobs[0]()
+
+    assert len(sent_texts) == 1
+    last_message = controller.latest_conversation_snapshot()["messages"][-1]
+    assert last_message["kind"] == "plain"
+    assert "是否送达微信无法确认" in last_message["text"]
+
+
+def test_select_command_records_wechat_send_exception_without_duplicate_retry() -> None:
+    background_jobs = []
+    send_calls = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        send_calls.append((text, dedupe_key, target))
+        raise RuntimeError("gateway result unknown")
+
+    controller, _runner, _chat_transport = _controller(
+        selection_controller=_FakeSelectionController(),
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
+
+    controller.handle_message(_message("r-select-exception", "/select 2"))
+    background_jobs[0]()
+
+    assert len(send_calls) == 1
+    last_message = controller.latest_conversation_snapshot()["messages"][-1]
+    assert last_message["kind"] == "plain"
+    assert "是否送达微信无法确认" in last_message["text"]
+
+
+@pytest.mark.parametrize("second_result", ({"sent": False, "resultKnown": False}, RuntimeError()))
+def test_select_command_records_unknown_after_known_failure(second_result: object) -> None:
+    background_jobs = []
+    send_results = iter(({"sent": False, "resultKnown": True}, second_result))
+    send_calls = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        send_calls.append((text, dedupe_key, target))
+        result = next(send_results)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    controller, _runner, _chat_transport = _controller(
+        selection_controller=_FakeSelectionController(),
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
+
+    controller.handle_message(_message("r-select-mixed", "/select 2"))
+    background_jobs[0]()
+
+    assert len(send_calls) == 2
+    last_message = controller.latest_conversation_snapshot()["messages"][-1]
+    assert last_message["kind"] == "plain"
+    assert "是否送达微信无法确认" in last_message["text"]
 
 
 def test_report_message_returns_confirmation_without_starting_workflow() -> None:

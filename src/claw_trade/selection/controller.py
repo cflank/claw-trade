@@ -408,6 +408,7 @@ class SelectionController:
         workflow_evidence_root: Path | None = None,
         provider_fetch: Callable[..., object] | None = None,
         scheduler_enqueue: Callable[..., object] | None = None,
+        refresh_completion_waiter: Callable[[str], object] | None = None,
         data_job_runner: Callable[..., object] | None = None,
         default_trade_date_resolver: Callable[[str | None], str] | None = None,
         raw_maintenance_status_provider: Callable[[SelectionMarket], object | None] | None = None,
@@ -422,6 +423,7 @@ class SelectionController:
         # 这些依赖保留给后续 SEL-03/SEL-08 注入；/select 不应调用。
         self._provider_fetch = provider_fetch
         self._scheduler_enqueue = scheduler_enqueue
+        self._refresh_completion_waiter = refresh_completion_waiter
         self._data_job_runner = data_job_runner
         self._default_trade_date_resolver = default_trade_date_resolver
         self._raw_maintenance_status_provider = raw_maintenance_status_provider
@@ -472,6 +474,7 @@ class SelectionController:
         raw_text: str,
         request_id: str,
         user_id: str | None = None,
+        wait_for_data_refresh: bool = False,
     ) -> SelectCommandResult:
         request = _parse_select_request(
             raw_text=raw_text, request_id=request_id, user_id=user_id, now_fn=self._now_fn
@@ -573,6 +576,26 @@ class SelectionController:
                     workflow_run_id=workflow_run_id,
                 )
                 if refresh_result is not None:
+                    if (
+                        wait_for_data_refresh
+                        and self._refresh_completion_waiter is not None
+                        and refresh_result.status in {"started", "already_running"}
+                        and refresh_result.selection_run_id
+                    ):
+                        refresh_result = _coerce_data_refresh_result(
+                            self._refresh_completion_waiter(refresh_result.selection_run_id),
+                            default_reason=gate.unavailable_code.value,
+                        )
+                    if wait_for_data_refresh and refresh_result.status == "completed":
+                        refreshed_gate = self.load_latest_completed_for_select(request)
+                        if refreshed_gate.is_available:
+                            return self._run_available_select_workflow(
+                                request=request,
+                                raw_text=raw_text,
+                                workflow_run_id=workflow_run_id,
+                                evidence_dir=evidence_dir,
+                                gate=refreshed_gate,
+                            )
                     payload["data_refresh"] = _data_refresh_payload(refresh_result)
                     evidence_path = _write_selection_workflow_evidence(
                         evidence_dir=evidence_dir, payload=payload
