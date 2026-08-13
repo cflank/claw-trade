@@ -89,16 +89,24 @@ class SelectionColumnarWarehouse:
         return manifest
 
     def validate_manifest_ref(self, manifest_ref: str, *, expected_sha256: str | None = None) -> bool:
+        return self.load_valid_manifest_ref(manifest_ref, expected_sha256=expected_sha256) is not None
+
+    def load_valid_manifest_ref(
+        self,
+        manifest_ref: str,
+        *,
+        expected_sha256: str | None = None,
+    ) -> SelectionColumnarManifest | None:
         try:
             path = self._path_from_manifest_ref(manifest_ref)
             if expected_sha256 is not None and _sha256_file(path) != expected_sha256:
-                return False
+                return None
             if not self._manifest_hash_matches_sidecar(path):
-                return False
+                return None
             manifest = _manifest_from_payload(_read_json_object(path))
         except (ValueError, TypeError, OSError):
-            return False
-        return self.validate_manifest(manifest)
+            return None
+        return manifest if self.validate_manifest(manifest) else None
 
     def manifest_sha256(self, manifest_ref: str) -> str | None:
         try:

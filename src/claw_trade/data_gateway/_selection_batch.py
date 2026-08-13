@@ -41,6 +41,7 @@ from claw_trade.data_gateway.report_evidence import (
 )
 from claw_trade.data_gateway.refs import normalize_normalized_dataset_ref
 from claw_trade.data_gateway.runtime import build_data_gateway_runtime_from_env
+from claw_trade.data_gateway.selection_integrity import selection_columnar_manifest_sources_are_current
 from claw_trade.data_gateway.warehouse import DatasetRecord, DatasetRepository
 from claw_trade.data_gateway.warehouse.selection_columnar import (
     SelectionColumnarManifest,
@@ -324,9 +325,9 @@ def _fetch_selection_batch_from_data_gateway_unlocked(
     )
     columnar_warehouse = SelectionColumnarWarehouse.default()
     columnar_manifest = columnar_warehouse.load_valid_manifest(plan=plan)
-    if columnar_manifest is not None and not _columnar_manifest_has_sufficient_full_market_coverage(
-        plan=plan,
-        manifest=columnar_manifest,
+    if columnar_manifest is not None and (
+        not _columnar_manifest_has_sufficient_full_market_coverage(plan=plan, manifest=columnar_manifest)
+        or not selection_columnar_manifest_sources_are_current(columnar_manifest)
     ):
         columnar_manifest = None
     if columnar_manifest is not None:
