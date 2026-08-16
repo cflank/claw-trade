@@ -204,7 +204,7 @@ def test_list_saved_reports_enables_forward_when_wechat_can_send_files(tmp_path:
 
     assert response.status_code == 200
     payload = response.json()
-    assert [item["canForwardToChannel"] for item in payload["items"]] == [False, False]
+    assert [item["canForwardToChannel"] for item in payload["items"]] == [True, True]
 
 
 def test_report_cleanup_settings_routes_and_reset(tmp_path: Path) -> None:

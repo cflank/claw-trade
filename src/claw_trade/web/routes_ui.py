@@ -761,7 +761,7 @@ def _apply_report_forward_capability(items: list[dict[str, Any]], services: UiHt
     forwarded_items: list[dict[str, Any]] = []
     for item in items:
         next_item = dict(item)
-        next_item["canForwardToChannel"] = bool(next_item.get("canForwardToChannel")) and bool(can_forward_current_channel)
+        next_item["canForwardToChannel"] = bool(can_forward_current_channel)
         forwarded_items.append(next_item)
     return forwarded_items
 
