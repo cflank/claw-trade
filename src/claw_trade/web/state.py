@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Any
+from typing import Any, Callable
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ from claw_trade.ui_backend.channel_bridge import ChannelBridge
 from claw_trade.ui_backend.channel_text_inbound import (
     ChannelReplyTarget,
     ChannelTextInboundController,
+    ChannelTextMessage,
 )
 from claw_trade.ui_backend.chart_evidence import get_report_chart_evidence
 from claw_trade.ui_backend.chat_controller import ChatController
@@ -859,13 +860,6 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         build_data_need_audit=build_selection_data_need_audit,
         data_refresh_permission_checker=license_service.assert_data_refresh_allowed,
     )
-    scheduled_work_runner = ScheduledWorkRunner(
-        price_alert_scan_service=price_alert_scan_service,
-        scheduler_service=scheduler_service,
-        selection_data_refresh_runner=selection_refresh_service,
-        data_maintenance_runner=_LazyDataMaintenanceRunner(),
-        data_refresh_permission_checker=license_service.assert_data_refresh_allowed,
-    )
     selection_controller = SelectionController(
         store=selection_store,
         openclaw=workflow_runner.selection_openclaw_client(),
@@ -1001,6 +995,35 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
             sender_id=sender_id,
         ),
     )
+
+    def _run_scheduled_selection(
+        command: str,
+        request_id: str,
+        on_complete: Callable[[dict[str, Any]], None],
+    ) -> dict[str, Any]:
+        binding = wechat_delivery_store.get_binding()
+        if binding is None:
+            raise RuntimeError("尚未绑定微信通知接收人，定时选股未启动。")
+        return channel_text_inbound.handle_scheduled_select(
+            ChannelTextMessage(
+                request_id=request_id,
+                channel_kind="wechat_clawbot",
+                account_id=binding["account_id"],
+                sender_id=binding["sender_id"],
+                text=command,
+            ),
+            on_complete,
+        )
+
+    scheduled_work_runner = ScheduledWorkRunner(
+        price_alert_scan_service=price_alert_scan_service,
+        scheduler_service=scheduler_service,
+        selection_data_refresh_runner=selection_refresh_service,
+        data_maintenance_runner=_LazyDataMaintenanceRunner(),
+        data_refresh_permission_checker=license_service.assert_data_refresh_allowed,
+        scheduled_selection_runner=_run_scheduled_selection,
+    )
+    scheduled_work_runner.recover_pending_scheduled_selections()
     restore_report_completion_chat_messages(repository, summary_builder, chat_controller, channel_text_inbound)
     settings_service = SettingsService(env_writer=None)
     return UiHttpServices(

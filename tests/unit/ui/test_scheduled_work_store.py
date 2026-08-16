@@ -86,6 +86,8 @@ def _scheduled_report(report_id: str = "schedule-1", *, state: str = "active") -
 
 def test_scheduled_reports_persist_across_store_instances(tmp_path) -> None:
     report = _scheduled_report()
+    report.task_kind = "selection"
+    report.pending_cron_run_id = "cron-run-1"
     store = JsonScheduledWorkStore(tmp_path / "scheduled.json")
     store.save_scheduled_report(report)
 

@@ -40,7 +40,7 @@ def test_scheduled_work_tool_accepts_all_scheduled_work_kinds_without_internal_e
     schema_end = source.index("const TOOL_ERROR_CODES")
     schema_text = source[schema_start:schema_end]
 
-    for kind in ("price_alert_scan", "scheduled_report", "selection_data_refresh", "data_maintenance"):
+    for kind in ("price_alert_scan", "scheduled_report", "scheduled_selection", "selection_data_refresh", "data_maintenance"):
         assert kind in schema_text
     for field in (
         "bucketKey",
@@ -146,6 +146,15 @@ def test_scheduled_work_tool_executes_real_validation_and_forwarding_contract(tm
             assert.equal(scheduledReport.scheduledReportId, "scheduled-report-1");
             assert.match(scheduledReport.cronRunId, /^scheduled-report:scheduled-report-1:\\d+:[0-9a-f-]+$/);
 
+            const scheduledSelection = await execute({
+              kind: "scheduled_selection",
+              scheduledReportId: "scheduled-selection-1",
+              cronRunId: "auto",
+            });
+            assert.equal(scheduledSelection.kind, "scheduled_selection");
+            assert.equal(scheduledSelection.scheduledReportId, "scheduled-selection-1");
+            assert.match(scheduledSelection.cronRunId, /^scheduled-selection:scheduled-selection-1:\\d+:[0-9a-f-]+$/);
+
             const selectionRefresh = await execute({
               kind: "selection_data_refresh",
               cronRunId: "auto",
@@ -180,6 +189,7 @@ def test_scheduled_work_tool_executes_real_validation_and_forwarding_contract(tm
             for (const missingCronRunId of [
               { kind: "price_alert_scan", bucketKey: "CRYPTO:3m" },
               { kind: "scheduled_report", scheduledReportId: "scheduled-report-1" },
+              { kind: "scheduled_selection", scheduledReportId: "scheduled-selection-1" },
               { kind: "selection_data_refresh" },
               { kind: "data_maintenance", market: "CN_A", jobKind: "provider_cache_refresh" },
             ]) {

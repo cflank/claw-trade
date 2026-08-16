@@ -23,12 +23,17 @@ class ScheduledWorkRunner:
         selection_data_refresh_runner: Any | None = None,
         data_maintenance_runner: Any | None = None,
         data_refresh_permission_checker: Callable[[], None] | None = None,
+        scheduled_selection_runner: Callable[
+            [str, str, Callable[[dict[str, Any]], None]], dict[str, Any]
+        ]
+        | None = None,
     ) -> None:
         self._price_alert_scan_service = price_alert_scan_service
         self._scheduler_service = scheduler_service
         self._selection_data_refresh_runner = selection_data_refresh_runner
         self._data_maintenance_runner = data_maintenance_runner
         self._data_refresh_permission_checker = data_refresh_permission_checker
+        self._scheduled_selection_runner = scheduled_selection_runner
         self._latest_results: dict[str, dict[str, Any]] = {}
         self._latest_results_lock = Lock()
         self._data_maintenance_locks: dict[tuple[str, str], Lock] = {}
@@ -40,6 +45,8 @@ class ScheduledWorkRunner:
             return self._handle_price_alert_scan(payload, kind=kind)
         if kind == "scheduled_report":
             return self._handle_scheduled_report(payload, kind=kind)
+        if kind == "scheduled_selection":
+            return self._handle_scheduled_selection(payload, kind=kind)
         if kind == "selection_data_refresh":
             return self._handle_selection_data_refresh(payload, kind=kind)
         if kind == "data_maintenance":
@@ -49,6 +56,11 @@ class ScheduledWorkRunner:
     def latest_results_for_user(self) -> dict[str, Any]:
         with self._latest_results_lock:
             return {"items": list(self._latest_results.values())}
+
+    def recover_pending_scheduled_selections(self) -> int:
+        if self._scheduler_service is None or self._scheduled_selection_runner is None:
+            return 0
+        return self._scheduler_service.recover_pending_scheduled_selections(self._scheduled_selection_runner)
 
     def _handle_price_alert_scan(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
         if self._price_alert_scan_service is None:
@@ -95,6 +107,32 @@ class ScheduledWorkRunner:
             cron_run_id=cron_run_id,
         )
         payload_out = {"kind": kind, "scheduledReportId": scheduled_report_id, "cronRunId": cron_run_id, "status": "ok", **result}
+        self._save_latest_result(f"{kind}:{scheduled_report_id}", _scrub_runtime_objects(payload_out))
+        return payload_out
+
+    def _handle_scheduled_selection(self, payload: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
+        if self._scheduler_service is None or self._scheduled_selection_runner is None:
+            raise ScheduledWorkRunnerError("INVALID_INPUT", "定时选股执行器未配置。")
+        scheduled_report_id = str(payload.get("scheduledReportId") or "").strip()
+        cron_run_id = str(payload.get("cronRunId") or "").strip()
+        if not scheduled_report_id or not cron_run_id:
+            raise ScheduledWorkRunnerError("INVALID_INPUT", "定时选股唤醒缺少 scheduledReportId 或 cronRunId。")
+        request_id = str(payload.get("requestId") or "").strip()
+        if not request_id:
+            request_id = f"scheduled-selection:{scheduled_report_id}:{cron_run_id}"
+        result = self._scheduler_service.handle_scheduled_selection_cron_wake(
+            request_id=request_id,
+            scheduled_report_id=scheduled_report_id,
+            cron_run_id=cron_run_id,
+            run_selection=self._scheduled_selection_runner,
+        )
+        payload_out = {
+            "kind": kind,
+            "scheduledReportId": scheduled_report_id,
+            "cronRunId": cron_run_id,
+            "status": "started",
+            **result,
+        }
         self._save_latest_result(f"{kind}:{scheduled_report_id}", _scrub_runtime_objects(payload_out))
         return payload_out
 

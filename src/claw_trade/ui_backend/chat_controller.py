@@ -754,6 +754,8 @@ class ChatController:
                 "用途：创建定时报告。",
                 "例子：",
                 "  /sched TSLA 每天 08:00",
+                "  /sched /select 1 每天 08:00",
+                "  /sched /select 2 每天 08:00",
                 "",
                 "/alert <标的> 高于/低于 <价格>",
                 "用途：创建价格提醒。",
@@ -872,6 +874,8 @@ def _format_confirmed_message(result: dict[str, Any]) -> str:
         message = str(result.get("message") or "").strip()
         if message:
             return message
+        if result.get("scheduledTaskKind") == "selection":
+            return "已确认，定时选股已创建。"
         return "已确认，定时报告已创建。"
     if "priceAlert" in result:
         return "已确认，价格提醒已创建。"

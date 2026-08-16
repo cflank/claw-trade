@@ -32,6 +32,8 @@ class ScheduledReport:
     sync_error_message: str | None
     created_at: str
     updated_at: str
+    task_kind: str = "report"
+    pending_cron_run_id: str | None = None
 
 
 @dataclass
@@ -257,6 +259,8 @@ def _scheduled_report_to_payload(report: ScheduledReport) -> dict[str, Any]:
         "sync_error_message": report.sync_error_message,
         "created_at": report.created_at,
         "updated_at": report.updated_at,
+        "task_kind": report.task_kind,
+        "pending_cron_run_id": report.pending_cron_run_id,
     }
 
 
@@ -282,6 +286,8 @@ def _scheduled_report_from_payload(raw: dict[str, Any]) -> ScheduledReport:
         sync_error_message=None if raw.get("sync_error_message") is None else str(raw["sync_error_message"]),
         created_at=str(raw["created_at"]),
         updated_at=str(raw["updated_at"]),
+        task_kind=str(raw.get("task_kind") or "report"),
+        pending_cron_run_id=None if raw.get("pending_cron_run_id") is None else str(raw["pending_cron_run_id"]),
     )
 
 

@@ -58,6 +58,25 @@ class ConfirmationController:
 
     def build_confirmation_card(self, draft: IntentDraft) -> dict[str, Any]:
         self.assert_confirmation_card_available(draft)
+        if draft.kind == IntentKind.SCHEDULED_SELECTION:
+            schedule = draft.schedule or {}
+            return {
+                "id": f"card-{draft.draft_id}",
+                "draftId": draft.draft_id,
+                "title": "请确认是否创建定时选股",
+                "summaryLines": [
+                    f"命令：{draft.instrument_code}",
+                    f"市场：{draft.market.value}",
+                    f"时间：每天 {schedule.get('timeOfDay', '09:00')}",
+                ],
+                "instrumentCode": draft.instrument_code,
+                "instrumentName": draft.instrument_name,
+                "market": draft.market.value,
+                "dataSourceSummary": "unknown",
+                "actions": ["confirm", "cancel"],
+                "status": "active",
+                "createdAt": draft.expires_at,
+            }
         instrument_name = self._display_company_name_for_draft(draft)
         lines = [f"标的：{draft.instrument_code}", f"名称：{instrument_name}", f"市场：{draft.market.value}"]
         return {
@@ -75,7 +94,8 @@ class ConfirmationController:
         }
 
     def assert_confirmation_card_available(self, draft: IntentDraft) -> None:
-        self._assert_profile_strategy_approved(draft)
+        if draft.kind != IntentKind.SCHEDULED_SELECTION:
+            self._assert_profile_strategy_approved(draft)
         if draft.kind in {IntentKind.REPORT, IntentKind.SCHEDULED_REPORT}:
             self._assert_company_name_available(draft)
 
@@ -99,7 +119,8 @@ class ConfirmationController:
             return result
         frozen = self._apply_overrides(draft, overrides or {})
         self.assert_confirmation_card_available(frozen)
-        self._assert_instrument_market_match(frozen)
+        if frozen.kind != IntentKind.SCHEDULED_SELECTION:
+            self._assert_instrument_market_match(frozen)
         if frozen.kind == IntentKind.REPORT:
             self._assert_report_model_ready()
             task_input = self._build_report_task_input(frozen)
@@ -128,6 +149,22 @@ class ConfirmationController:
                     weekday=schedule.get("weekday"),
                     notification=notification,
                     workflow_settings=asdict(frozen.workflow_settings),
+                ),
+            }
+            self._idempotency[request_id] = payload
+            return payload
+        if frozen.kind == IntentKind.SCHEDULED_SELECTION:
+            schedule = frozen.schedule or {}
+            notification = self._scheduled_notification(dict(frozen.notification), origin_context_id)
+            payload = {
+                "status": "confirmed",
+                "scheduledTaskKind": "selection",
+                **self._scheduler_service.create_scheduled_selection_for_user(
+                    request_id=request_id,
+                    market=frozen.market,
+                    frequency=str(schedule.get("frequency", "daily")),
+                    time_of_day=str(schedule.get("timeOfDay", "09:00")),
+                    notification=notification,
                 ),
             }
             self._idempotency[request_id] = payload
@@ -362,6 +399,7 @@ def _label_intent_kind(kind: IntentKind) -> str:
     mapping = {
         IntentKind.REPORT: "完整报告",
         IntentKind.SCHEDULED_REPORT: "定时报告",
+        IntentKind.SCHEDULED_SELECTION: "定时选股",
         IntentKind.PRICE_ALERT: "价格提醒",
     }
     return mapping[kind]

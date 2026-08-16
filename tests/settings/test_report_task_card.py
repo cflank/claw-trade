@@ -97,6 +97,8 @@ def test_help_command_returns_command_usage_without_normal_chat() -> None:
         assert result["messages"][-1]["actor"] == "system"
         assert "/report <标的>" in result["messages"][-1]["text"]
         assert "/sched <标的> 每天 HH:MM" in result["messages"][-1]["text"]
+        assert "/sched /select 1 每天 08:00" in result["messages"][-1]["text"]
+        assert "/sched /select 2 每天 08:00" in result["messages"][-1]["text"]
         assert "/alert <标的> 高于/低于 <价格>" in result["messages"][-1]["text"]
         assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["messages"][-1]["text"]
         assert "带 refresh/刷新 时强制刷新数据" in result["messages"][-1]["text"]
@@ -116,6 +118,55 @@ def test_sched_alias_builds_scheduled_report_confirmation_card() -> None:
     card = result["confirmationCard"]
     assert card["title"] == "请确认是否创建定时报告"
     assert card["summaryLines"] == ["标的：AAPL", "名称：Apple Inc.", "市场：US"]
+
+
+def test_sched_select_builds_and_confirms_daily_crypto_selection() -> None:
+    controller = _controller()
+    result = controller.send_chat_message(
+        request_id="s06-sched-select-1",
+        context_id="ctx-1",
+        text="/sched /select 2 每天 08:00",
+    )
+
+    card = result["confirmationCard"]
+    assert card["title"] == "请确认是否创建定时选股"
+    assert card["summaryLines"] == ["命令：/select 2", "市场：CRYPTO", "时间：每天 08:00"]
+
+    confirmed = controller.confirm_intent_draft_from_chat(
+        request_id="s06-sched-select-2",
+        context_id="ctx-1",
+        draft_id=card["draftId"],
+        decision="confirm",
+        text="确认",
+    )
+    scheduled = confirmed["scheduledReport"]
+    assert scheduled.instrumentCode == "/select 2"
+    stored = controller._confirmation._scheduler_service._store.get_scheduled_report(  # noqa: SLF001
+        scheduled.scheduledReportId
+    )
+    assert stored is not None
+    assert stored.task_kind == "selection"
+
+
+def test_sched_select_requires_exact_daily_time_command() -> None:
+    controller = _controller()
+
+    for index, text in enumerate(
+        (
+            "/sched /select 2 每天",
+            "/sched /select 1 junk 每天 08:00",
+            "/sched /select 2 每天 25:00",
+            "/sched /select 1 daily 08:00",
+            "/sched /select 2 每天 8:00",
+        ),
+        start=1,
+    ):
+        result = controller.send_chat_message(
+            request_id=f"s06-sched-select-invalid-{index}",
+            context_id=f"ctx-invalid-{index}",
+            text=text,
+        )
+        assert "confirmationCard" not in result
 
 
 def test_alert_alias_builds_price_alert_confirmation_card() -> None:

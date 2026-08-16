@@ -90,6 +90,49 @@ def test_create_scheduled_report_registers_openclaw_cron_job() -> None:
     assert saved.openclaw_cron_job_id == "scheduled-report:schedule-1"
 
 
+def test_create_scheduled_crypto_selection_registers_beijing_cron_job() -> None:
+    store = InMemoryScheduledWorkStore()
+    fake_gateway = _FakeCronGateway()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        cron_adapter=OpenClawCronAdapter(fake_gateway),
+        store=store,
+        now_provider=_fixed_now,
+    )
+
+    created = service.create_scheduled_selection_for_user(
+        request_id="req-create-selection",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="08:00",
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )["scheduledReport"]
+
+    params = fake_gateway.calls[0]["params"]
+    assert params["schedule"] == {"kind": "cron", "expr": "0 8 * * *", "tz": "Asia/Shanghai", "staggerMs": 0}
+    assert params["payload"] == {
+        "kind": "toolCall",
+        "toolName": "claw-trade-scheduled-work-wake",
+        "input": {
+            "kind": "scheduled_selection",
+            "scheduledReportId": created.scheduledReportId,
+            "cronRunId": "auto",
+        },
+    }
+    saved = store.get_scheduled_report(created.scheduledReportId)
+    assert saved is not None
+    assert saved.task_kind == "selection"
+    assert saved.instrument_code == "/select 2"
+    assert saved.next_run_at == "2026-05-20T00:00:00Z"
+
+    triggered = service.run_scheduled_report_now(
+        request_id="req-run-selection",
+        scheduled_report_id=created.scheduledReportId,
+    )
+    assert triggered["cronRunId"] == "cron-run-1"
+    assert store.get_scheduled_report(created.scheduledReportId).last_cron_run_id is None
+
+
 def test_wechat_schedule_enqueues_logical_recipient_and_drops_old_account_route() -> None:
     enqueued: list[dict[str, object]] = []
     service = SchedulerService(

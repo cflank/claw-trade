@@ -78,6 +78,194 @@ def test_scheduled_report_wake_dispatches_to_scheduler_queue() -> None:
     assert saved.next_run_at == "2026-05-19T13:30:00Z"
 
 
+def test_scheduled_selection_wake_runs_existing_select_command_once() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(
+        enqueue_report_task=lambda _task, _request: {},
+        store=store,
+        now_provider=_fixed_now,
+    )
+    schedule = service.create_scheduled_selection_for_user(
+        request_id="create-selection",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="08:00",
+        notification={"channel": "wechat_clawbot", "enabled": True},
+    )["scheduledReport"]
+    calls: list[tuple[str, str]] = []
+    completions = []
+
+    def run_selection(command, request_id, on_complete):  # type: ignore[no-untyped-def]
+        calls.append((command, request_id))
+        completions.append(on_complete)
+        return {"handled": True, "state": "selection_processing"}
+
+    runner = ScheduledWorkRunner(
+        scheduler_service=service,
+        scheduled_selection_runner=run_selection,
+    )
+
+    response = runner.handle_wake(
+        {
+            "kind": "scheduled_selection",
+            "scheduledReportId": schedule.scheduledReportId,
+            "cronRunId": "cron-run-1",
+        }
+    )
+    duplicate = runner.handle_wake(
+        {
+            "kind": "scheduled_selection",
+            "scheduledReportId": schedule.scheduledReportId,
+            "cronRunId": "cron-run-1",
+            "requestId": "cron-request-retry",
+        }
+    )
+
+    assert calls == [("/select 2", f"scheduled-selection:{schedule.scheduledReportId}:cron-run-1")]
+    assert response["status"] == "started"
+    assert response["selection"]["state"] == "selection_processing"
+    assert duplicate["selection"]["state"] == "selection_processing"
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.state == "enqueued"
+    assert saved.pending_cron_run_id == "cron-run-1"
+    assert saved.last_cron_run_id is None
+
+    completions[0]({"selection": {"workflowRunId": "sel-1"}, "channelDelivery": {"status": "sent"}})
+
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.state == "active"
+    assert saved.pending_cron_run_id is None
+    assert saved.last_cron_run_id == "cron-run-1"
+    assert saved.next_run_at == "2026-05-20T00:00:00Z"
+    assert saved.sync_error_message is None
+
+
+@pytest.mark.parametrize("action", ("pause", "delete"))
+def test_scheduled_selection_completion_preserves_user_pause_or_delete(action: str) -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    schedule = service.create_scheduled_selection_for_user(
+        request_id=f"create-selection-{action}",
+        market=MarketProfile.CRYPTO,
+        frequency="daily",
+        time_of_day="08:00",
+    )["scheduledReport"]
+    completions = []
+    runner = ScheduledWorkRunner(
+        scheduler_service=service,
+        scheduled_selection_runner=lambda _command, _request_id, on_complete: completions.append(on_complete)
+        or {"handled": True},
+    )
+    runner.handle_wake(
+        {"kind": "scheduled_selection", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-user-action"}
+    )
+
+    if action == "pause":
+        service.pause_scheduled_report(request_id="pause-selection", scheduled_report_id=schedule.scheduledReportId)
+    else:
+        service.delete_scheduled_report(request_id="delete-selection", scheduled_report_id=schedule.scheduledReportId)
+    completions[0]({"channelDelivery": {"status": "sent"}})
+
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.state == ("paused" if action == "pause" else "deleted")
+    assert saved.pending_cron_run_id is None
+
+
+@pytest.mark.parametrize(
+    ("delivery_status", "expected_message"),
+    (
+        ("failed", "选股完成，但微信发送失败。"),
+        ("unknown", "选股完成，但无法确认微信是否收到。"),
+    ),
+)
+def test_scheduled_selection_records_wechat_delivery_failure(
+    delivery_status: str,
+    expected_message: str,
+) -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    schedule = service.create_scheduled_selection_for_user(
+        request_id="create-selection-delivery-failure",
+        market=MarketProfile.CN_A,
+        frequency="daily",
+        time_of_day="08:00",
+    )["scheduledReport"]
+    completions = []
+    runner = ScheduledWorkRunner(
+        scheduler_service=service,
+        scheduled_selection_runner=lambda _command, _request_id, on_complete: completions.append(on_complete)
+        or {"handled": True},
+    )
+    runner.handle_wake(
+        {"kind": "scheduled_selection", "scheduledReportId": schedule.scheduledReportId, "cronRunId": "cron-send-failed"}
+    )
+
+    completions[0]({"channelDelivery": {"status": delivery_status}})
+
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.last_cron_run_id == "cron-send-failed"
+    assert saved.sync_error_message == expected_message
+
+
+def test_pending_scheduled_selection_is_restarted_after_process_recovery() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    schedule = service.create_scheduled_selection_for_user(
+        request_id="create-selection-recovery",
+        market=MarketProfile.CN_A,
+        frequency="daily",
+        time_of_day="08:00",
+    )["scheduledReport"]
+    item = store.get_scheduled_report(schedule.scheduledReportId)
+    assert item is not None
+    item.state = "enqueued"
+    item.pending_cron_run_id = "cron-run-recovery"
+    store.save_scheduled_report(item)
+    calls = []
+
+    runner = ScheduledWorkRunner(
+        scheduler_service=service,
+        scheduled_selection_runner=lambda command, request_id, _on_complete: calls.append((command, request_id))
+        or {"handled": True},
+    )
+
+    assert runner.recover_pending_scheduled_selections() == 1
+    assert calls == [("/select 1", f"scheduled-selection:{schedule.scheduledReportId}:cron-run-recovery")]
+
+
+def test_failed_scheduled_selection_recovery_unwedges_next_cron_run() -> None:
+    store = InMemoryScheduledWorkStore()
+    service = SchedulerService(enqueue_report_task=lambda _task, _request: {}, store=store, now_provider=_fixed_now)
+    schedule = service.create_scheduled_selection_for_user(
+        request_id="create-selection-failed-recovery",
+        market=MarketProfile.CN_A,
+        frequency="daily",
+        time_of_day="08:00",
+    )["scheduledReport"]
+    item = store.get_scheduled_report(schedule.scheduledReportId)
+    assert item is not None
+    item.state = "enqueued"
+    item.pending_cron_run_id = "cron-run-failed-recovery"
+    store.save_scheduled_report(item)
+    runner = ScheduledWorkRunner(
+        scheduler_service=service,
+        scheduled_selection_runner=lambda _command, _request_id, _on_complete: (_ for _ in ()).throw(
+            RuntimeError("wechat binding unavailable")
+        ),
+    )
+
+    assert runner.recover_pending_scheduled_selections() == 0
+    saved = store.get_scheduled_report(schedule.scheduledReportId)
+    assert saved is not None
+    assert saved.state == "active"
+    assert saved.pending_cron_run_id is None
+    assert saved.sync_error_message == "定时选股恢复失败，将在下次计划时间重试。"
+
+
 def test_scheduled_report_wake_dedupes_different_cron_run_ids_for_same_window() -> None:
     queue_calls: list[tuple[dict[str, Any], str]] = []
     store = InMemoryScheduledWorkStore()

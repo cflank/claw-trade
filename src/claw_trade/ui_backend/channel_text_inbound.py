@@ -301,22 +301,64 @@ class ChannelTextInboundController:
         conversation_key: str,
         text: str,
     ) -> dict[str, Any]:
+        return self._start_select_command(
+            message=message,
+            conversation_key=conversation_key,
+            text=text,
+        )
+
+    def handle_scheduled_select(
+        self,
+        message: ChannelTextMessage,
+        on_complete: Callable[[dict[str, Any]], None],
+    ) -> dict[str, Any]:
+        conversation_key = self._conversation_key(message)
+        self._remember_latest_conversation(conversation_key)
+        return self._start_select_command(
+            message=message,
+            conversation_key=conversation_key,
+            text=message.text,
+            on_complete=on_complete,
+        )
+
+    def _start_select_command(
+        self,
+        *,
+        message: ChannelTextMessage,
+        conversation_key: str,
+        text: str,
+        on_complete: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         self._chat_controller.begin_channel_select_command(
             context_id=conversation_key,
             text=text,
         )
 
         def _finish() -> None:
-            result = self._chat_controller.finish_channel_select_command(
-                request_id=message.request_id,
-                context_id=conversation_key,
-                text=text,
-            )
-            self._push_select_result_to_channel(
-                message=message,
-                conversation_key=conversation_key,
-                result=result,
-            )
+            delivery = {"status": "not_attempted"}
+            try:
+                result = self._chat_controller.finish_channel_select_command(
+                    request_id=message.request_id,
+                    context_id=conversation_key,
+                    text=text,
+                )
+                delivery = self._push_select_result_to_channel(
+                    message=message,
+                    conversation_key=conversation_key,
+                    result=result,
+                )
+            except Exception:
+                _LOGGER.exception("selection failed request_id=%s", message.request_id)
+                failure_text = "定时选股执行失败，请稍后重试。" if on_complete is not None else "选股执行失败，请稍后重试。"
+                result = {"error": {"message": failure_text}}
+                delivery = self._push_select_result_to_channel(
+                    message=message,
+                    conversation_key=conversation_key,
+                    result=result,
+                )
+            finally:
+                if on_complete is not None:
+                    on_complete({**result, "channelDelivery": delivery})
 
         self._background_submitter(_finish)
         return self._remember(
@@ -517,11 +559,11 @@ class ChannelTextInboundController:
         message: ChannelTextMessage,
         conversation_key: str,
         result: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, str]:
         selection = result.get("selection")
         reply_text = _latest_selection_reply_text(result) or _extract_error(result)
         if not reply_text:
-            return
+            return {"status": "not_attempted"}
         if isinstance(selection, dict):
             workflow_run_id = str(selection.get("workflowRunId") or "").strip()
             markdown = str(selection.get("readerReportMarkdown") or "").strip()
@@ -533,7 +575,7 @@ class ChannelTextInboundController:
                     )
                 reply_text = _format_select_completion_reply(reply_text)
         if self._send_channel_text is None:
-            return
+            return {"status": "unavailable"}
         target = ChannelReplyTarget(
             channel_kind=message.channel_kind,
             account_id=message.account_id,
@@ -545,7 +587,7 @@ class ChannelTextInboundController:
             for _attempt in range(2):
                 send_result = self._send_channel_text(reply_text, dedupe_key, target)
                 if send_result.get("sent") is True:
-                    return
+                    return {"status": "sent"}
                 delivery_known_failed = send_result.get("resultKnown") is True
                 if not delivery_known_failed:
                     break
@@ -561,6 +603,7 @@ class ChannelTextInboundController:
                 else "选股结果是否送达微信无法确认；为避免重复发送，本次未自动重试，结果已保留在工作台。"
             ),
         )
+        return {"status": "failed" if delivery_known_failed else "unknown"}
 
     def _handle_normal_chat(
         self,
@@ -840,6 +883,7 @@ def _wechat_help_message() -> str:
             "/select 2 刷新：刷新加密数据",
             "/alert BTC 高于 70000：价格提醒",
             "/sched TSLA 每天 08:00：定时报告",
+            "/sched /select 1|2 每天 08:00",
             "/maint：维护状态",
             "发送完整报告：发PDF",
             "回到普通聊天：退出报告",
@@ -870,6 +914,8 @@ def _format_confirmed_reply(result: dict[str, Any]) -> str:
             lines.append(f"状态：{status_label}")
         return "\n".join(lines)
     if "scheduledReport" in result:
+        if result.get("scheduledTaskKind") == "selection":
+            return "已确认，定时选股已创建。"
         return "已确认，定时报告已创建。"
     if "priceAlert" in result:
         return "已确认，价格提醒已创建。"

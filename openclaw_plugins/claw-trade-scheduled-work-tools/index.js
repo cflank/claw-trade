@@ -8,7 +8,7 @@ const TOOL_INPUT_SCHEMA = Object.freeze({
   additionalProperties: false,
   required: ["kind", "cronRunId"],
   properties: {
-    kind: { type: "string", enum: ["price_alert_scan", "scheduled_report", "selection_data_refresh", "data_maintenance"] },
+    kind: { type: "string", enum: ["price_alert_scan", "scheduled_report", "scheduled_selection", "selection_data_refresh", "data_maintenance"] },
     cronRunId: { type: "string", minLength: 1 },
     requestId: { type: "string", minLength: 1 },
     bucketKey: { type: "string", minLength: 1 },
@@ -96,6 +96,7 @@ function validateParams(params) {
   const allowedByKind = {
     price_alert_scan: ["bucketKey", "cronRunId", "kind", "requestId"],
     scheduled_report: ["cronRunId", "kind", "requestId", "scheduledReportId"],
+    scheduled_selection: ["cronRunId", "kind", "requestId", "scheduledReportId"],
     selection_data_refresh: ["cronRunId", "kind", "reason", "requestId"],
     data_maintenance: ["cronRunId", "jobKind", "kind", "maintenanceJobId", "market", "requestId"],
   };
@@ -131,10 +132,10 @@ function validateParams(params) {
     return withCronRunId({ ...base, bucketKey }, bucketKey);
   }
 
-  if (kind === "scheduled_report") {
+  if (kind === "scheduled_report" || kind === "scheduled_selection") {
     const scheduledReportId = textValue(params.scheduledReportId);
     if (!scheduledReportId) {
-      throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, "scheduled_report requires scheduledReportId");
+      throw new ScheduledWorkToolError(TOOL_ERROR_CODES.paramsInvalid, `${kind} requires scheduledReportId`);
     }
     return withCronRunId({ ...base, scheduledReportId }, scheduledReportId);
   }
@@ -169,6 +170,7 @@ function buildCronRunId(kind, key) {
   const prefixByKind = {
     price_alert_scan: "price-alert-scan",
     scheduled_report: "scheduled-report",
+    scheduled_selection: "scheduled-selection",
     selection_data_refresh: "selection-data-refresh",
     data_maintenance: "data-maintenance",
   };

@@ -266,6 +266,7 @@ def test_help_command_returns_usage_without_openclaw_chat() -> None:
     assert "/select：A股选股结果" in result["replyText"]
     assert "/select 2：加密选股结果" in result["replyText"]
     assert "/select 2 刷新：刷新加密数据" in result["replyText"]
+    assert "/sched /select 1|2 每天 08:00" in result["replyText"]
     assert "发送完整报告：发PDF" in result["replyText"]
     assert "$superpowers:using-superpowers" not in result["replyText"]
     lines = result["replyText"].splitlines()
@@ -399,6 +400,57 @@ def test_select_command_pushes_wechat_summary_and_sends_selection_pdf_on_request
     assert snapshot["messages"][-1]["text"] == "完整选股报告已发送。"
     assert runner.calls == 0
     assert chat_transport.calls == []
+
+
+def test_scheduled_select_completes_only_after_wechat_summary_is_sent() -> None:
+    background_jobs = []
+    sent_texts = []
+    completed = []
+    controller, _runner, _transport = _controller(
+        selection_controller=_FakeSelectionController(),
+        background_submitter=background_jobs.append,
+        send_channel_text=lambda text, dedupe_key, target: sent_texts.append(
+            {"text": text, "dedupeKey": dedupe_key, "target": target}
+        )
+        or {"sent": True},
+    )
+
+    started = controller.handle_scheduled_select(
+        _message("scheduled-selection:schedule-1:cron-1", "/select 2"),
+        completed.append,
+    )
+
+    assert started["state"] == "selection_processing"
+    assert completed == []
+    assert sent_texts == []
+
+    background_jobs[0]()
+
+    assert len(sent_texts) == 1
+    assert sent_texts[0]["target"].account_id == "account-1"
+    assert sent_texts[0]["target"].sender_id == "sender-1"
+    assert completed[0]["selection"]["workflowRunId"] == "select-wechat-test-run"
+
+
+def test_manual_select_failure_does_not_claim_it_was_scheduled() -> None:
+    background_jobs = []
+    sent_texts = []
+    controller, _runner, _transport = _controller(
+        selection_controller=_FakeSelectionController(),
+        background_submitter=background_jobs.append,
+        send_channel_text=lambda text, _dedupe_key, _target: sent_texts.append(text) or {"sent": True},
+    )
+
+    def _fail_finish(**_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("selection exploded")
+
+    controller._chat_controller.finish_channel_select_command = _fail_finish  # type: ignore[method-assign]
+
+    controller.handle_message(_message("manual-select-failed", "/select 2"))
+    background_jobs[0]()
+
+    assert sent_texts == ["选股执行失败，请稍后重试。"]
+    assert "定时选股" not in sent_texts[0]
 
 
 def test_select_command_retries_known_wechat_send_failure_once() -> None:
@@ -620,6 +672,25 @@ def test_confirmed_wechat_schedule_becomes_current_notification_recipient() -> N
     result = controller.handle_message(_message("r-sched-bind-2", "确认"))
 
     assert result["state"] == "confirmed"
+    assert remembered == [("account-1", "sender-1")]
+    assert runner.calls == 0
+
+
+def test_confirmed_wechat_selection_schedule_becomes_current_notification_recipient() -> None:
+    remembered: list[tuple[str | None, str]] = []
+    controller, runner, _ = _controller(
+        remember_current_notification_recipient=lambda account_id, sender_id: remembered.append(
+            (account_id, sender_id)
+        ),
+    )
+
+    first = controller.handle_message(_message("r-sched-select-bind-1", "/sched /select 2 每天 08:00"))
+    result = controller.handle_message(_message("r-sched-select-bind-2", "确认"))
+
+    assert first["state"] == "awaiting_confirmation"
+    assert "请确认是否创建定时选股" in first["replyText"]
+    assert result["state"] == "confirmed"
+    assert result["replyText"] == "已确认，定时选股已创建。"
     assert remembered == [("account-1", "sender-1")]
     assert runner.calls == 0
 

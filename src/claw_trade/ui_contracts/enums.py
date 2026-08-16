@@ -20,6 +20,7 @@ class ChatContextKind(str, Enum):
 class IntentKind(str, Enum):
     REPORT = "report"
     SCHEDULED_REPORT = "scheduled_report"
+    SCHEDULED_SELECTION = "scheduled_selection"
     PRICE_ALERT = "price_alert"
 
 

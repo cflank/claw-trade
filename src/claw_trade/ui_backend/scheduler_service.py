@@ -28,6 +28,7 @@ from claw_trade.workflow.report_request_factory import build_report_run_request,
 _SCHEDULED_REPORT_AGENT_ID = "scheduled_report_runner"
 _SCHEDULED_WORK_TOOL = "claw-trade-scheduled-work-wake"
 _SCHEDULE_TIMEZONE = "America/New_York"
+_SELECTION_SCHEDULE_TIMEZONE = "Asia/Shanghai"
 _VISIBLE_SCHEDULE_STATES = {"active", "paused", "due", "enqueued"}
 _COLLAPSIBLE_SCHEDULE_STATES = _VISIBLE_SCHEDULE_STATES | {"sync_failed"}
 _DAILY_DUPLICATE_WINDOW_MINUTES = 4 * 60
@@ -111,6 +112,7 @@ class SchedulerService:
         notification: dict[str, Any] | None = None,
         instrument_name: str | None = None,
         workflow_settings: dict[str, Any] | None = None,
+        task_kind: str = "report",
     ) -> dict[str, Any]:
         cached = self._idempotency.get(request_id)
         if cached is not None:
@@ -126,12 +128,19 @@ class SchedulerService:
         if frequency == "weekly":
             if weekday is None or weekday < 0 or weekday > 6:
                 raise UiServiceError("INVALID_INPUT", "每周计划需要 weekday(0-6)。")
-        identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
-        market_value = MarketProfile(identity.profile)
+        if task_kind == "selection":
+            selection = self._selection_identity(market_value)
+            instrument_ticker = selection["command"]
+            display_name = selection["name"]
+        else:
+            identity = resolve_instrument_identity(instrument_code, market_hint=market_value.value)
+            market_value = MarketProfile(identity.profile)
+            instrument_ticker = identity.ticker
+            display_name = instrument_name or report_display_name(identity.ticker, identity.profile)
         normalized_notification = self._normalize_notification(notification)
         normalized_workflow_settings = self._normalize_workflow_settings(workflow_settings, market_value)
         existing = self._find_matching_scheduled_report(
-            instrument_code=identity.ticker,
+            instrument_code=instrument_ticker,
             market=market_value,
             frequency=frequency,
             time_of_day=time_text,
@@ -146,7 +155,7 @@ class SchedulerService:
             self._idempotency[request_id] = payload
             return payload
         nearby = self._find_nearby_daily_scheduled_report(
-            instrument_code=identity.ticker,
+            instrument_code=instrument_ticker,
             market=market_value,
             frequency=frequency,
             time_of_day=time_text,
@@ -160,13 +169,14 @@ class SchedulerService:
             nearby.weekday = weekday
             nearby.notification = normalized_notification
             nearby.workflow_settings = normalized_workflow_settings
-            nearby.instrument_name = instrument_name or nearby.instrument_name or report_display_name(identity.ticker, identity.profile)
+            nearby.instrument_name = display_name or nearby.instrument_name
+            nearby.task_kind = task_kind
             nearby.next_run_at = self.compute_next_run_at(
                 frequency=frequency,
                 time_of_day=time_text,
                 weekday=weekday,
                 after=self._now_provider(),
-                timezone_name=_SCHEDULE_TIMEZONE,
+                timezone_name=self._schedule_timezone(task_kind),
             )
             nearby.state = "active"
             nearby.sync_error_message = None
@@ -178,7 +188,7 @@ class SchedulerService:
                         patch={
                             "name": self._cron_job_name(nearby),
                             "schedule": self._cron_schedule(nearby),
-                            "payload": self._scheduled_report_cron_payload(nearby.id),
+                            "payload": self._scheduled_report_cron_payload(nearby),
                             "enabled": True,
                         },
                     )
@@ -199,13 +209,13 @@ class SchedulerService:
             time_of_day=time_text,
             weekday=weekday,
             after=self._now_provider(),
-            timezone_name=_SCHEDULE_TIMEZONE,
+            timezone_name=self._schedule_timezone(task_kind),
         )
         now_iso = self._now_iso()
         item = ScheduledReport(
             id=self._next_schedule_id(),
-            instrument_code=identity.ticker,
-            instrument_name=instrument_name or report_display_name(identity.ticker, identity.profile),
+            instrument_code=instrument_ticker,
+            instrument_name=display_name,
             market=market_value,
             frequency=frequency,
             time_of_day=time_text,
@@ -223,6 +233,7 @@ class SchedulerService:
             sync_error_message=None,
             created_at=now_iso,
             updated_at=now_iso,
+            task_kind=task_kind,
         )
         self._store.save_scheduled_report(item)
         if self._cron_adapter is not None:
@@ -231,7 +242,7 @@ class SchedulerService:
                     name=self._cron_job_name(item),
                     schedule=self._cron_schedule(item),
                     agent_id=_SCHEDULED_REPORT_AGENT_ID,
-                    payload=self._scheduled_report_cron_payload(item.id),
+                    payload=self._scheduled_report_cron_payload(item),
                     session_target="isolated",
                     wake_mode="now",
                     delivery={"mode": "none"},
@@ -252,6 +263,28 @@ class SchedulerService:
         payload = {"scheduledReport": dto}
         self._idempotency[request_id] = payload
         return payload
+
+    def create_scheduled_selection_for_user(
+        self,
+        *,
+        request_id: str,
+        market: MarketProfile | str,
+        frequency: str,
+        time_of_day: str,
+        notification: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        market_value = self._as_market_profile(market)
+        selection = self._selection_identity(market_value)
+        return self.create_scheduled_report_for_user(
+            request_id=request_id,
+            instrument_code=selection["command"],
+            instrument_name=selection["name"],
+            market=market_value,
+            frequency=frequency,
+            time_of_day=time_of_day,
+            notification=notification,
+            task_kind="selection",
+        )
 
     def pause_scheduled_report(self, *, request_id: str, scheduled_report_id: str) -> ScheduledReportForUser:
         cached = self._idempotency.get(request_id)
@@ -291,7 +324,7 @@ class SchedulerService:
             time_of_day=item.time_of_day,
             weekday=item.weekday,
             after=self._now_provider(),
-            timezone_name=_SCHEDULE_TIMEZONE,
+            timezone_name=self._schedule_timezone(item.task_kind),
         )
         item.updated_at = self._now_iso()
         item.sync_error_message = None
@@ -332,12 +365,16 @@ class SchedulerService:
         if self._cron_adapter is not None:
             if item.state == "paused":
                 raise UiServiceError("INVALID_INPUT", "定时报告已暂停。")
+            if item.task_kind == "selection" and item.pending_cron_run_id:
+                raise UiServiceError("INVALID_INPUT", "定时选股正在执行。")
             if item.last_run_task_id and self._is_duplicate_scheduled_report_window(item):
                 raise UiServiceError("INVALID_INPUT", "定时报告当前计划窗口已触发。")
             if not item.openclaw_cron_job_id:
                 raise UiServiceError("CRON_PROVISION_FAILED", "定时报告 OpenClaw cron 尚未配置。")
             result = self._cron_adapter.run_job(job_id=item.openclaw_cron_job_id, idempotency_key=request_id)
-            item.last_cron_run_id = self._cron_run_id_from_result(result)
+            cron_run_id = self._cron_run_id_from_result(result)
+            if item.task_kind == "report":
+                item.last_cron_run_id = cron_run_id
             item.updated_at = self._now_iso()
             item.sync_error_message = None
             self._store.save_scheduled_report(item)
@@ -345,7 +382,7 @@ class SchedulerService:
             payload = {
                 "scheduledReport": to_scheduled_report_for_user(item),
                 "triggered": True,
-                "cronRunId": item.last_cron_run_id,
+                "cronRunId": cron_run_id,
                 "queueSnapshot": self._queue_snapshot_for_user(snapshot),
             }
             self._idempotency[request_id] = payload
@@ -372,6 +409,8 @@ class SchedulerService:
         cron_run_id: str,
     ) -> dict[str, Any]:
         item = self._get_schedule_or_raise(scheduled_report_id)
+        if item.task_kind != "report":
+            raise UiServiceError("INVALID_INPUT", "该计划不是定时报告。")
         if item.state == "deleted":
             raise UiServiceError("SCHEDULE_NOT_FOUND", "定时报告不存在。")
         if item.state == "paused":
@@ -437,6 +476,119 @@ class SchedulerService:
         self._idempotency[request_id] = payload
         self._idempotency[stable_request_id] = payload
         return payload
+
+    def handle_scheduled_selection_cron_wake(
+        self,
+        *,
+        request_id: str,
+        scheduled_report_id: str,
+        cron_run_id: str,
+        run_selection: Callable[[str, str, Callable[[dict[str, Any]], None]], dict[str, Any]],
+    ) -> dict[str, Any]:
+        cached = self._idempotency.get(request_id)
+        if cached is not None:
+            return cached
+        item = self._get_schedule_or_raise(scheduled_report_id)
+        if item.task_kind != "selection":
+            raise UiServiceError("INVALID_INPUT", "该计划不是定时选股。")
+        if item.state == "paused":
+            raise UiServiceError("INVALID_INPUT", "定时选股已暂停。")
+        if item.pending_cron_run_id:
+            payload = {"selection": {"handled": True, "state": "selection_processing"}, "deduped": True}
+            self._idempotency[request_id] = payload
+            return payload
+        if item.last_cron_run_id and self._is_duplicate_scheduled_report_wake(item, cron_run_id=cron_run_id):
+            payload = {"deduped": True, "skipped": True}
+            self._idempotency[request_id] = payload
+            return payload
+
+        item.pending_cron_run_id = cron_run_id
+        item.state = "enqueued"
+        item.updated_at = self._now_iso()
+        item.sync_error_message = None
+        self._store.save_scheduled_report(item)
+        on_complete = lambda result: self._complete_scheduled_selection(
+            scheduled_report_id=scheduled_report_id,
+            cron_run_id=cron_run_id,
+            result=result,
+        )
+        try:
+            selection = run_selection(item.instrument_code, request_id, on_complete)
+        except Exception:
+            item.pending_cron_run_id = None
+            item.state = "active"
+            item.updated_at = self._now_iso()
+            self._store.save_scheduled_report(item)
+            raise
+        payload = {"selection": selection}
+        self._idempotency[request_id] = payload
+        return payload
+
+    def recover_pending_scheduled_selections(
+        self,
+        run_selection: Callable[[str, str, Callable[[dict[str, Any]], None]], dict[str, Any]],
+    ) -> int:
+        recovered = 0
+        for item in self._store.list_scheduled_reports(states={"enqueued"}):
+            cron_run_id = item.pending_cron_run_id
+            if item.task_kind != "selection" or not cron_run_id:
+                continue
+            request_id = f"scheduled-selection:{item.id}:{cron_run_id}"
+            try:
+                run_selection(
+                    item.instrument_code,
+                    request_id,
+                    lambda result, item_id=item.id, run_id=cron_run_id: self._complete_scheduled_selection(
+                        scheduled_report_id=item_id,
+                        cron_run_id=run_id,
+                        result=result,
+                    ),
+                )
+            except Exception:
+                current = self._store.get_scheduled_report(item.id)
+                if current is not None and current.pending_cron_run_id == cron_run_id:
+                    current.pending_cron_run_id = None
+                    current.state = "active"
+                    current.sync_error_message = "定时选股恢复失败，将在下次计划时间重试。"
+                    current.updated_at = self._now_iso()
+                    self._store.save_scheduled_report(current)
+                continue
+            recovered += 1
+        return recovered
+
+    def _complete_scheduled_selection(
+        self,
+        *,
+        scheduled_report_id: str,
+        cron_run_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        item = self._store.get_scheduled_report(scheduled_report_id)
+        if item is None or item.pending_cron_run_id != cron_run_id:
+            return
+        item.pending_cron_run_id = None
+        item.last_cron_run_id = cron_run_id
+        if item.state not in {"paused", "deleted"}:
+            item.next_run_at = self.compute_next_run_at(
+                frequency=item.frequency,
+                time_of_day=item.time_of_day,
+                weekday=item.weekday,
+                after=self._now_provider(),
+                timezone_name=_SELECTION_SCHEDULE_TIMEZONE,
+            )
+            item.state = "active"
+        item.updated_at = self._now_iso()
+        delivery = result.get("channelDelivery")
+        delivery_status = str(delivery.get("status") or "unknown") if isinstance(delivery, Mapping) else "unknown"
+        item.sync_error_message = {
+            "failed": "选股完成，但微信发送失败。",
+            "unknown": "选股完成，但无法确认微信是否收到。",
+            "unavailable": "选股完成，但微信发送不可用。",
+            "not_attempted": "选股完成，但没有可发送的结果。",
+        }.get(delivery_status)
+        if "error" in result:
+            item.sync_error_message = str(result["error"])
+        self._store.save_scheduled_report(item)
 
     def tick_scheduled_reports(self, *, now: datetime | str | None = None) -> dict[str, tuple[TickItemResult, ...]]:
         if not self._allow_local_tick_for_tests:
@@ -923,19 +1075,31 @@ class SchedulerService:
             expr = f"{minute} {hour} * * {cron_weekday}"
         else:
             raise UiServiceError("INVALID_INPUT", "当前只支持每天或每周生成完整报告。")
-        return {"kind": "cron", "expr": expr, "tz": _SCHEDULE_TIMEZONE, "staggerMs": 0}
+        return {"kind": "cron", "expr": expr, "tz": self._schedule_timezone(item.task_kind), "staggerMs": 0}
 
     @staticmethod
-    def _scheduled_report_cron_payload(scheduled_report_id: str) -> dict[str, Any]:
+    def _scheduled_report_cron_payload(item: ScheduledReport) -> dict[str, Any]:
         return {
             "kind": "toolCall",
             "toolName": _SCHEDULED_WORK_TOOL,
             "input": {
-                "kind": "scheduled_report",
-                "scheduledReportId": scheduled_report_id,
+                "kind": "scheduled_selection" if item.task_kind == "selection" else "scheduled_report",
+                "scheduledReportId": item.id,
                 "cronRunId": "auto",
             },
         }
+
+    @staticmethod
+    def _schedule_timezone(task_kind: str) -> str:
+        return _SELECTION_SCHEDULE_TIMEZONE if task_kind == "selection" else _SCHEDULE_TIMEZONE
+
+    @staticmethod
+    def _selection_identity(market: MarketProfile) -> dict[str, str]:
+        if market == MarketProfile.CN_A:
+            return {"command": "/select 1", "name": "A股选股"}
+        if market == MarketProfile.CRYPTO:
+            return {"command": "/select 2", "name": "加密货币选股"}
+        raise UiServiceError("INVALID_INPUT", "定时选股仅支持 A 股或加密货币。")
 
     def _normalize_notification(self, notification: dict[str, Any] | None) -> dict[str, Any]:
         source = notification or {}

@@ -70,8 +70,26 @@ class IntentRecognizer:
         if not normalized:
             raise ValueError("invalid_input")
         lowered = normalized.lower()
-        instrument = _resolve_instrument(normalized)
         snapshot = _snapshot_from_settings(settings)
+        scheduled_selection = _parse_scheduled_selection(lowered)
+        if lowered.startswith("/sched /select") and scheduled_selection is None:
+            return None
+        if scheduled_selection is not None:
+            market = MarketProfile(str(scheduled_selection["market"]))
+            command = str(scheduled_selection["command"])
+            return self._build_draft(
+                kind=IntentKind.SCHEDULED_SELECTION,
+                summary=f"定时选股：{command}",
+                source_message_id=source_message_id,
+                instrument={
+                    "instrumentCode": command,
+                    "instrumentName": str(scheduled_selection["name"]),
+                    "market": market.value,
+                },
+                snapshot=snapshot,
+                schedule=dict(scheduled_selection["schedule"]),
+            )
+        instrument = _resolve_instrument(normalized)
         if _looks_like_schedule_command(lowered):
             if _looks_like_hourly(lowered):
                 assert_schedule_frequency_supported("hourly")
@@ -200,7 +218,9 @@ class IntentRecognizer:
             instrument_name=instrument.get("instrumentName"),
             market=market,
             notification={
-                "channel": "wechat_clawbot" if kind == IntentKind.SCHEDULED_REPORT else "in_app",
+                "channel": "wechat_clawbot"
+                if kind in {IntentKind.SCHEDULED_REPORT, IntentKind.SCHEDULED_SELECTION}
+                else "in_app",
                 "enabled": True,
             },
             workflow_settings=snapshot,
@@ -237,6 +257,29 @@ def _looks_like_schedule_marker(lowered: str) -> bool:
 
 def _looks_like_hourly(lowered: str) -> bool:
     return "每小时" in lowered or "hourly" in lowered or "every hour" in lowered
+
+
+def _parse_scheduled_selection(lowered: str) -> dict[str, object] | None:
+    matched = re.fullmatch(
+        r"/sched\s+/select\s+([12])\s+每天\s+((?:[01]\d|2[0-3]):[0-5]\d)",
+        lowered,
+    )
+    if matched is None:
+        return None
+    schedule = {"frequency": "daily", "timeOfDay": _parse_time_of_day(matched.group(2)), "weekday": None}
+    if matched.group(1) == "1":
+        return {
+            "command": "/select 1",
+            "name": "A股选股",
+            "market": MarketProfile.CN_A.value,
+            "schedule": schedule,
+        }
+    return {
+        "command": "/select 2",
+        "name": "加密货币选股",
+        "market": MarketProfile.CRYPTO.value,
+        "schedule": schedule,
+    }
 
 
 def _parse_schedule(lowered: str) -> dict[str, object] | None:
