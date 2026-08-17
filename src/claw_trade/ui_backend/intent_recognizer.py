@@ -72,7 +72,7 @@ class IntentRecognizer:
         lowered = normalized.lower()
         snapshot = _snapshot_from_settings(settings)
         scheduled_selection = _parse_scheduled_selection(lowered)
-        if lowered.startswith("/sched /select") and scheduled_selection is None:
+        if re.match(r"/sched\s+/?select\b", lowered) and scheduled_selection is None:
             return None
         if scheduled_selection is not None:
             market = MarketProfile(str(scheduled_selection["market"]))
@@ -261,12 +261,15 @@ def _looks_like_hourly(lowered: str) -> bool:
 
 def _parse_scheduled_selection(lowered: str) -> dict[str, object] | None:
     matched = re.fullmatch(
-        r"/sched\s+/select\s+([12])\s+每天\s+((?:[01]\d|2[0-3]):[0-5]\d)",
+        r"/sched\s+/?select\s+([12])\s+每天(?:下午)?\s*(\d{1,2}:[0-5]\d)",
         lowered,
     )
     if matched is None:
         return None
-    schedule = {"frequency": "daily", "timeOfDay": _parse_time_of_day(matched.group(2)), "weekday": None}
+    time_of_day = _parse_time_of_day(matched.group(2))
+    if time_of_day is None:
+        return None
+    schedule = {"frequency": "daily", "timeOfDay": time_of_day, "weekday": None}
     if matched.group(1) == "1":
         return {
             "command": "/select 1",

@@ -358,7 +358,11 @@ class ConfirmationController:
         if "market" in overrides and str(overrides["market"]).strip():
             market_value = MarketProfile(str(overrides["market"]).strip().upper())
             raw["market"] = market_value
-        if "instrumentCode" in overrides and str(overrides["instrumentCode"]).strip():
+        if (
+            draft.kind != IntentKind.SCHEDULED_SELECTION
+            and "instrumentCode" in overrides
+            and str(overrides["instrumentCode"]).strip()
+        ):
             code = str(overrides["instrumentCode"]).strip().upper()
             identity = resolve_instrument_identity(code, market_hint=market_value.value if market_overridden else None)
             market_value = MarketProfile(identity.profile)

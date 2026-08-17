@@ -372,6 +372,22 @@ def test_confirm_scheduled_report_and_price_alert_use_real_services() -> None:
     assert not isinstance(alert, dict)
 
 
+@pytest.mark.parametrize(
+    ("text", "expected_time"),
+    (
+        ("/sched /select 2 每天 9:00", "09:00"),
+        ("/sched select 2 每天下午19:00", "19:00"),
+    ),
+)
+def test_scheduled_selection_accepts_user_time_spelling(text: str, expected_time: str) -> None:
+    controller, _, _ = _build_controller()
+
+    result = controller.send_chat_message(request_id=f"req-{expected_time}", context_id="ctx-sched", text=text)
+
+    assert result["confirmationCard"]["instrumentCode"] == "/select 2"
+    assert f"时间：每天 {expected_time}" in result["confirmationCard"]["summaryLines"]
+
+
 def test_scheduled_report_replacement_message_is_shown_as_confirmation_text() -> None:
     assert (
         _format_confirmed_message({"scheduledReport": object(), "message": "已替换相近的定时报告：原时间 23:59，新时间 23:58。"})

@@ -190,6 +190,28 @@ def test_confirm_scheduled_and_price_alert_return_for_user_dto() -> None:
     assert isinstance(alert_result["priceAlert"], PriceAlertForUser)
 
 
+def test_confirm_scheduled_selection_accepts_ui_card_overrides() -> None:
+    controller, _queue, _runner, recognizer = _build_controller()
+    draft = recognizer.classify_user_intent(
+        text="/sched /select 2 每天 19:00",
+        source_message_id="m-scheduled-selection",
+        settings=ReportWorkflowSettings(),
+    )
+    assert draft is not None
+    controller.register_draft(draft)
+
+    result = controller.confirm_intent_draft(
+        request_id="c-scheduled-selection",
+        draft_id=draft.draft_id,
+        decision="confirm",
+        overrides={"instrumentCode": "/select 2", "market": "CRYPTO"},
+    )
+
+    assert result["status"] == "confirmed"
+    assert result["scheduledTaskKind"] == "selection"
+    assert result["scheduledReport"].instrumentCode == "/select 2"
+
+
 def test_confirm_price_alert_from_wechat_context_targets_wechat_sender() -> None:
     controller, _queue, _runner, recognizer = _build_controller()
     draft = recognizer.classify_user_intent(
