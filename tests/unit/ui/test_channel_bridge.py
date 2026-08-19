@@ -1156,6 +1156,30 @@ def test_resolve_default_report_file_target_uses_single_login_account_file(
     )
 
 
+def test_resolve_default_report_file_target_ignores_historical_contexts_when_login_target_exists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / "openclaw-state"
+    accounts_dir = state_dir / "openclaw-weixin" / "accounts"
+    accounts_dir.mkdir(parents=True)
+    (accounts_dir / "acc-1.json").write_text(
+        '{"userId":"current-user@im.wechat","token":"current-token"}',
+        encoding="utf-8",
+    )
+    (accounts_dir / "acc-1.context-tokens.json").write_text(
+        '{"old-user@im.wechat":"old-token","current-user@im.wechat":"current-token"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENCLAW_STATE_DIR", str(state_dir))
+    bridge = ChannelBridge(_FakeChannelClient(connected=True))
+
+    assert bridge.resolve_default_report_file_target(channel_kind=USER_CHANNEL_KIND) == (
+        "current-user@im.wechat",
+        "acc-1",
+    )
+
+
 def test_resolve_default_report_file_target_returns_none_for_multiple_weixin_targets(
     tmp_path: Path,
     monkeypatch,

@@ -948,7 +948,7 @@ def _single_weixin_report_file_target(*, account_id: str | None = None) -> tuple
     accounts_dir = state_dir / "openclaw-weixin" / "accounts"
     if not accounts_dir.is_dir():
         return None
-    candidates: set[tuple[str, str | None]] = set()
+    context_candidates: set[tuple[str, str | None]] = set()
     for path in sorted(accounts_dir.glob("*.context-tokens.json")):
         candidate_account_id = path.name.removesuffix(".context-tokens.json").strip()
         if account_id and candidate_account_id != account_id:
@@ -963,7 +963,8 @@ def _single_weixin_report_file_target(*, account_id: str | None = None) -> tuple
             user_id = str(raw_user_id or "").strip()
             token = str(raw_token or "").strip()
             if user_id.endswith("@im.wechat") and token:
-                candidates.add((user_id, candidate_account_id or None))
+                context_candidates.add((user_id, candidate_account_id or None))
+    login_candidates: set[tuple[str, str | None]] = set()
     for path in sorted(accounts_dir.glob("*.json")):
         if path.name.endswith((".context-tokens.json", ".sync.json")):
             continue
@@ -979,10 +980,12 @@ def _single_weixin_report_file_target(*, account_id: str | None = None) -> tuple
             candidate_account_id = _optional_str(data.get("accountId")) or path.name.removesuffix(".json").strip()
             if account_id and candidate_account_id != account_id:
                 continue
-            candidates.add((user_id, candidate_account_id or None))
-    if len(candidates) != 1:
+            login_candidates.add((user_id, candidate_account_id or None))
+    if len(login_candidates) == 1:
+        return next(iter(login_candidates))
+    if login_candidates or len(context_candidates) != 1:
         return None
-    return next(iter(candidates))
+    return next(iter(context_candidates))
 
 
 def _connected_provider_account_id(raw: Mapping[str, Any], provider_channel_id: str) -> str | None:

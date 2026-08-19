@@ -116,6 +116,38 @@ def test_price_alert_wechat_send_uses_default_channel_target_when_notification_h
     ]
 
 
+def test_scheduled_selection_starts_when_current_wechat_target_is_unavailable() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _NotificationService:
+        def resolve_and_store_current_notification_recipient(self):  # type: ignore[no-untyped-def]
+            return None
+
+    class _Inbound:
+        def handle_scheduled_select(self, message, on_complete, *, deliver_to_channel=True):  # type: ignore[no-untyped-def]
+            calls.append(
+                {
+                    "message": message,
+                    "onComplete": on_complete,
+                    "deliverToChannel": deliver_to_channel,
+                }
+            )
+            return {"handled": True, "state": "selection_processing"}
+
+    completed = []
+    result = web_state._run_scheduled_selection(
+        "/select 2",
+        "scheduled-selection:schedule-1:cron-1",
+        completed.append,
+        report_notification_service=_NotificationService(),  # type: ignore[arg-type]
+        channel_text_inbound=_Inbound(),  # type: ignore[arg-type]
+    )
+
+    assert result == {"handled": True, "state": "selection_processing"}
+    assert calls[0]["deliverToChannel"] is False
+    assert calls[0]["message"].text == "/select 2"  # type: ignore[union-attr]
+
+
 def test_price_alert_wechat_send_uses_stored_target_over_default_channel_target() -> None:
     bridge = _FakeChannelBridge()
 

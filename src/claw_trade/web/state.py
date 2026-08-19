@@ -15,9 +15,10 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Any, Callable
+from typing import Any
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -996,32 +997,17 @@ def build_ui_http_services(settings: ResearchUiServerSettings) -> UiHttpServices
         ),
     )
 
-    def _run_scheduled_selection(
-        command: str,
-        request_id: str,
-        on_complete: Callable[[dict[str, Any]], None],
-    ) -> dict[str, Any]:
-        binding = wechat_delivery_store.get_binding()
-        if binding is None:
-            raise RuntimeError("尚未绑定微信通知接收人，定时选股未启动。")
-        return channel_text_inbound.handle_scheduled_select(
-            ChannelTextMessage(
-                request_id=request_id,
-                channel_kind="wechat_clawbot",
-                account_id=binding["account_id"],
-                sender_id=binding["sender_id"],
-                text=command,
-            ),
-            on_complete,
-        )
-
     scheduled_work_runner = ScheduledWorkRunner(
         price_alert_scan_service=price_alert_scan_service,
         scheduler_service=scheduler_service,
         selection_data_refresh_runner=selection_refresh_service,
         data_maintenance_runner=_LazyDataMaintenanceRunner(),
         data_refresh_permission_checker=license_service.assert_data_refresh_allowed,
-        scheduled_selection_runner=_run_scheduled_selection,
+        scheduled_selection_runner=partial(
+            _run_scheduled_selection,
+            report_notification_service=report_notification_service,
+            channel_text_inbound=channel_text_inbound,
+        ),
     )
     scheduled_work_runner.recover_pending_scheduled_selections()
     restore_report_completion_chat_messages(repository, summary_builder, chat_controller, channel_text_inbound)
@@ -1262,6 +1248,28 @@ def _reply_target_from_origin_context(origin_context_id: object) -> ChannelReply
         channel_kind=channel_kind,
         account_id=account_id or None,
         sender_id=sender_id,
+    )
+
+
+def _run_scheduled_selection(
+    command: str,
+    request_id: str,
+    on_complete: Callable[[dict[str, Any]], None],
+    *,
+    report_notification_service: ReportNotificationService,
+    channel_text_inbound: ChannelTextInboundController,
+) -> dict[str, Any]:
+    binding = report_notification_service.resolve_and_store_current_notification_recipient()
+    return channel_text_inbound.handle_scheduled_select(
+        ChannelTextMessage(
+            request_id=request_id,
+            channel_kind="wechat_clawbot",
+            account_id=binding["account_id"] if binding is not None else None,
+            sender_id=binding["sender_id"] if binding is not None else "scheduled-selection",
+            text=command,
+        ),
+        on_complete,
+        deliver_to_channel=binding is not None,
     )
 
 

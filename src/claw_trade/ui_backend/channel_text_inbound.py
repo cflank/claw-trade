@@ -311,6 +311,8 @@ class ChannelTextInboundController:
         self,
         message: ChannelTextMessage,
         on_complete: Callable[[dict[str, Any]], None],
+        *,
+        deliver_to_channel: bool = True,
     ) -> dict[str, Any]:
         conversation_key = self._conversation_key(message)
         self._remember_latest_conversation(conversation_key)
@@ -319,6 +321,7 @@ class ChannelTextInboundController:
             conversation_key=conversation_key,
             text=message.text,
             on_complete=on_complete,
+            deliver_to_channel=deliver_to_channel,
         )
 
     def _start_select_command(
@@ -328,6 +331,7 @@ class ChannelTextInboundController:
         conversation_key: str,
         text: str,
         on_complete: Callable[[dict[str, Any]], None] | None = None,
+        deliver_to_channel: bool = True,
     ) -> dict[str, Any]:
         self._chat_controller.begin_channel_select_command(
             context_id=conversation_key,
@@ -346,6 +350,7 @@ class ChannelTextInboundController:
                     message=message,
                     conversation_key=conversation_key,
                     result=result,
+                    deliver_to_channel=deliver_to_channel,
                 )
             except Exception:
                 _LOGGER.exception("selection failed request_id=%s", message.request_id)
@@ -355,6 +360,7 @@ class ChannelTextInboundController:
                     message=message,
                     conversation_key=conversation_key,
                     result=result,
+                    deliver_to_channel=deliver_to_channel,
                 )
             finally:
                 if on_complete is not None:
@@ -559,6 +565,7 @@ class ChannelTextInboundController:
         message: ChannelTextMessage,
         conversation_key: str,
         result: dict[str, Any],
+        deliver_to_channel: bool = True,
     ) -> dict[str, str]:
         selection = result.get("selection")
         reply_text = _latest_selection_reply_text(result) or _extract_error(result)
@@ -574,6 +581,8 @@ class ChannelTextInboundController:
                         markdown=markdown,
                     )
                 reply_text = _format_select_completion_reply(reply_text)
+        if not deliver_to_channel:
+            return {"status": "unavailable"}
         if self._send_channel_text is None:
             return {"status": "unavailable"}
         target = ChannelReplyTarget(

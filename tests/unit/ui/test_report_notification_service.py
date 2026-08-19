@@ -194,7 +194,11 @@ def test_report_delivery_moves_from_waiting_report_to_pending_before_send(tmp_pa
 
 
 def test_pending_delivery_is_sent_after_connection_recovers(tmp_path: Path) -> None:
-    channel = _ChannelBridge(connected=False, can_send_text=False)
+    channel = _ChannelBridge(
+        connected=False,
+        can_send_text=False,
+        default_target=("sender-new", "account-new"),
+    )
     service, store = _build_durable_service(tmp_path, channel)
     challenge = service.create_binding_code(request_id="binding-request")
     service.bind_notification_recipient(
@@ -214,7 +218,12 @@ def test_pending_delivery_is_sent_after_connection_recovers(tmp_path: Path) -> N
 
 
 def test_durable_delivery_invites_pdf_reply_when_channel_can_send_files(tmp_path: Path) -> None:
-    channel = _ChannelBridge(connected=True, can_send_text=True, can_send_file=True)
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        can_send_file=True,
+        default_target=("sender-new", "account-new"),
+    )
     service, store = _build_durable_service(tmp_path, channel)
     store.set_binding(account_id="account-new", sender_id="sender-new")
     service.create_report_delivery_intent("intent-pdf-reply")
@@ -267,7 +276,11 @@ def test_latest_delivered_report_only_resolves_for_the_binding_that_received_it(
 
 
 def test_confirmed_schedule_recipient_replaces_missing_binding_and_sends_pending(tmp_path: Path) -> None:
-    channel = _ChannelBridge(connected=True, can_send_text=True)
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-new", "account-new"),
+    )
     service, store = _build_durable_service(tmp_path, channel)
     service.create_report_delivery_intent("intent-scheduled")
     service.notify_report_completion("r-notify", delivery_intent_id="intent-scheduled")
@@ -279,6 +292,52 @@ def test_confirmed_schedule_recipient_replaces_missing_binding_and_sends_pending
 
     assert remembered is True
     assert store.get_delivery_status("intent-scheduled")["state"] == "sent"
+    assert channel.last_account_id == "account-new"
+    assert channel.last_target == "sender-new"
+
+
+def test_unbound_notification_uses_the_only_connected_wechat_target(tmp_path: Path) -> None:
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-new", "account-new"),
+    )
+    service, store = _build_durable_service(tmp_path, channel)
+    service.create_report_delivery_intent("intent-current-wechat")
+
+    result = service.notify_report_completion(
+        "r-notify",
+        delivery_intent_id="intent-current-wechat",
+    )
+
+    assert result["delivery"] == "sent"
+    assert store.get_binding() == {
+        "account_id": "account-new",
+        "sender_id": "sender-new",
+        "bound_at": "2026-08-07T09:00:00Z",
+    }
+    assert channel.last_account_id == "account-new"
+    assert channel.last_target == "sender-new"
+
+
+def test_notification_replaces_stale_recipient_for_current_wechat_account(tmp_path: Path) -> None:
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-new", "account-new"),
+    )
+    service, store = _build_durable_service(tmp_path, channel)
+    store.set_binding(account_id="account-new", sender_id="sender-old")
+    service.create_report_delivery_intent("intent-reconnected-wechat")
+
+    result = service.notify_report_completion(
+        "r-notify",
+        delivery_intent_id="intent-reconnected-wechat",
+    )
+
+    assert result["delivery"] == "sent"
+    assert store.get_binding()["account_id"] == "account-new"
+    assert store.get_binding()["sender_id"] == "sender-new"
     assert channel.last_account_id == "account-new"
     assert channel.last_target == "sender-new"
 
@@ -300,16 +359,16 @@ def test_schedule_recipient_rejects_non_current_account(tmp_path: Path) -> None:
 
 def test_unbound_pending_batch_does_not_probe_wechat_for_each_delivery(tmp_path: Path) -> None:
     channel = _ChannelBridge(connected=False, can_send_text=False)
-    service, _store = _build_durable_service(tmp_path, channel, unique_account=None)
+    service, store = _build_durable_service(tmp_path, channel, unique_account=None)
     for index in range(28):
         intent_id = f"intent-unbound-{index}"
-        service.create_report_delivery_intent(intent_id)
-        service.notify_report_completion("r-notify", delivery_intent_id=intent_id)
+        store.create_waiting_report(intent_id)
+        store.mark_report_pending(intent_id, report_id="r-notify")
 
     result = service.retry_pending()
 
     assert result == {"attempted": 0, "sent": 0}
-    assert channel.delivery_guard_entries == 0
+    assert channel.delivery_guard_entries == 1
 
 
 def test_disconnected_pending_batch_checks_wechat_once(tmp_path: Path) -> None:
@@ -336,7 +395,11 @@ def test_disconnected_pending_batch_checks_wechat_once(tmp_path: Path) -> None:
 
 
 def test_completed_linked_delivery_is_recovered_after_service_restart(tmp_path: Path) -> None:
-    channel = _ChannelBridge(connected=True, can_send_text=True)
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-new", "account-new"),
+    )
     service, store = _build_durable_service(tmp_path, channel)
     challenge = service.create_binding_code(request_id="binding-request")
     service.bind_notification_recipient(
@@ -367,6 +430,7 @@ def test_binding_code_requires_unique_current_account_and_transfers_pending(tmp_
         account_id="account-old",
         sender_id="sender-1",
     )
+    channel._default_target = ("sender-1", "account-new")
     accepted = service.bind_notification_recipient(
         f"绑定通知 {challenge['code']}",
         account_id="account-new",
@@ -443,6 +507,7 @@ def test_scheduled_report_created_on_a_is_delivered_only_to_newly_bound_b(tmp_pa
     assert store.get_delivery_status(intent_id)["state"] == "waiting_report"
 
     channel._unique_account = "account-b"
+    channel._default_target = ("sender-b", "account-b")
     challenge = service.create_binding_code(request_id="binding-request", ttl_seconds=300)
     bound = service.bind_notification_recipient(
         f"绑定通知 {challenge['code']}",
@@ -488,6 +553,7 @@ def test_manual_retry_request_is_idempotent_across_service_restart(tmp_path: Pat
     channel = _ChannelBridge(
         connected=True,
         can_send_text=True,
+        default_target=("sender-1", "account-new"),
         send_results=[
             {"sent": False, "resultKnown": False},
             {"sent": True, "messageId": "manual-retry"},
@@ -515,6 +581,7 @@ def test_ambiguous_send_becomes_unknown_and_is_not_automatically_retried(tmp_pat
     channel = _ChannelBridge(
         connected=True,
         can_send_text=True,
+        default_target=("sender-1", "account-new"),
         send_results=[{"sent": False, "resultKnown": False}],
     )
     service, store = _build_durable_service(tmp_path, channel)
@@ -528,7 +595,11 @@ def test_ambiguous_send_becomes_unknown_and_is_not_automatically_retried(tmp_pat
 
     result = service.notify_report_completion("r-notify", delivery_intent_id="intent-unknown")
     service.retry_pending()
-    restarted_channel = _ChannelBridge(connected=True, can_send_text=True)
+    restarted_channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-1", "account-new"),
+    )
     restarted_service, restarted_store = _build_durable_service(tmp_path, restarted_channel)
     restarted_service.retry_pending()
 
@@ -550,6 +621,7 @@ def test_explicit_send_failure_has_bounded_automatic_retries(tmp_path: Path) -> 
     channel = _ChannelBridge(
         connected=True,
         can_send_text=True,
+        default_target=("sender-1", "account-new"),
         send_results=[
             {"sent": False, "resultKnown": True},
             {"sent": False, "resultKnown": True},
@@ -579,6 +651,7 @@ def test_unknown_delivery_can_only_be_retried_explicitly(tmp_path: Path) -> None
     channel = _ChannelBridge(
         connected=True,
         can_send_text=True,
+        default_target=("sender-1", "account-new"),
         send_results=[
             {"sent": False, "resultKnown": False},
             {"sent": True, "resultKnown": True, "messageId": "message-after-confirmation"},
@@ -610,7 +683,11 @@ def test_sent_result_with_persistence_failure_remains_unknown(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    channel = _ChannelBridge(connected=True, can_send_text=True)
+    channel = _ChannelBridge(
+        connected=True,
+        can_send_text=True,
+        default_target=("sender-1", "account-new"),
+    )
     service, store = _build_durable_service(tmp_path, channel)
     challenge = service.create_binding_code(request_id="binding-request", ttl_seconds=300)
     service.bind_notification_recipient(

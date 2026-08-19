@@ -432,6 +432,32 @@ def test_scheduled_select_completes_only_after_wechat_summary_is_sent() -> None:
     assert completed[0]["selection"]["workflowRunId"] == "select-wechat-test-run"
 
 
+def test_scheduled_select_runs_when_wechat_target_is_temporarily_unavailable() -> None:
+    background_jobs = []
+    sent_texts = []
+    completed = []
+    controller, _runner, _transport = _controller(
+        selection_controller=_FakeSelectionController(),
+        background_submitter=background_jobs.append,
+        send_channel_text=lambda text, dedupe_key, target: sent_texts.append(
+            {"text": text, "dedupeKey": dedupe_key, "target": target}
+        )
+        or {"sent": True},
+    )
+
+    started = controller.handle_scheduled_select(
+        _message("scheduled-selection:schedule-1:cron-no-target", "/select 2"),
+        completed.append,
+        deliver_to_channel=False,
+    )
+    background_jobs[0]()
+
+    assert started["state"] == "selection_processing"
+    assert completed[0]["selection"]["workflowRunId"] == "select-wechat-test-run"
+    assert completed[0]["channelDelivery"] == {"status": "unavailable"}
+    assert sent_texts == []
+
+
 def test_manual_select_failure_does_not_claim_it_was_scheduled() -> None:
     background_jobs = []
     sent_texts = []

@@ -164,6 +164,25 @@ class ReportNotificationService:
         self.retry_pending()
         return True
 
+    def resolve_and_store_current_notification_recipient(self) -> dict[str, str] | None:
+        with self._channel_bridge.wechat_delivery_account() as current_account_id:
+            return self._recipient_for_current_account(current_account_id)
+
+    def _recipient_for_current_account(self, current_account_id: str | None) -> dict[str, str] | None:
+        store = self._delivery_store
+        if store is None or not current_account_id:
+            return None
+        target = self._channel_bridge.resolve_default_report_file_target(
+            channel_kind="wechat_clawbot"
+        )
+        if target is None:
+            return None
+        sender_id, account_id = target
+        if account_id != current_account_id:
+            return None
+        store.set_binding(account_id=account_id, sender_id=sender_id)
+        return store.get_binding()
+
     def retry_pending(
         self,
         *,
@@ -184,15 +203,14 @@ class ReportNotificationService:
         records = self._delivery_store.list_delivery_records(states=states)
         attempted = 0
         sent = 0
-        binding = self._delivery_store.get_binding()
-        if binding is not None:
-            with self._channel_bridge.wechat_delivery_account() as current_account_id:
+        with self._channel_bridge.wechat_delivery_account() as current_account_id:
+            binding = self._recipient_for_current_account(current_account_id)
+            if binding is not None and current_account_id is not None:
                 status: Mapping[str, object] = {}
-                if current_account_id and binding.get("account_id") == current_account_id:
-                    try:
-                        status = self._channel_bridge.get_channel_status(probe=False)
-                    except Exception:
-                        status = {}
+                try:
+                    status = self._channel_bridge.get_channel_status(probe=False)
+                except Exception:
+                    status = {}
                 if str(status.get("state")) == "connected" and bool(status.get("canSendText")):
                     for record in records:
                         if not manual and int(record.get("attempt_count", 0)) >= _MAX_AUTOMATIC_SEND_ATTEMPTS:
@@ -357,11 +375,9 @@ class ReportNotificationService:
             and int(delivery_status.get("attemptCount", 0)) >= _MAX_AUTOMATIC_SEND_ATTEMPTS
         ):
             return None
-        binding = store.get_binding()
-        if binding is None:
-            return None
         with self._channel_bridge.wechat_delivery_account() as current_account_id:
-            if not current_account_id or binding.get("account_id") != current_account_id:
+            binding = self._recipient_for_current_account(current_account_id)
+            if binding is None or current_account_id is None:
                 return None
             try:
                 status = self._channel_bridge.get_channel_status(probe=False)
