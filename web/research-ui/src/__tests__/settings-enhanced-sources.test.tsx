@@ -118,7 +118,7 @@ describe('settings-enhanced-sources', () => {
     const section = (await screen.findByRole('heading', { name: '增强数据源' })).closest('section');
     expect(section).not.toBeNull();
     const scoped = within(section as HTMLElement);
-    expect(scoped.getByText('6 个 API 源')).toBeInTheDocument();
+    expect(scoped.getByText('3 个 API 源')).toBeInTheDocument();
     expect(scoped.queryByText('此功能可配置的增强源')).not.toBeInTheDocument();
     for (const market of ['A股', '港股', '美股', '全球市场/宏观', '加密货币']) {
       expect(scoped.queryByRole('tab', { name: market })).not.toBeInTheDocument();
@@ -140,13 +140,16 @@ describe('settings-enhanced-sources', () => {
     expect(scoped.queryByText(/JSON 映射/i)).not.toBeInTheDocument();
     expect(scoped.queryByText(/provider 优先级/i)).not.toBeInTheDocument();
     expect(scoped.queryByText(/适用范围/i)).not.toBeInTheDocument();
-    for (const approved of ['Tushare', 'Finnhub', 'FRED', 'CoinGecko Pro', 'Coinglass', 'Glassnode']) {
-      expect(scoped.getByTestId(`data-source-card-${approved === 'CoinGecko Pro' ? 'coingecko_pro' : approved.toLowerCase()}`)).toBeInTheDocument();
+    for (const approved of ['Tushare', 'Finnhub', 'FRED']) {
+      expect(scoped.getByTestId(`data-source-card-${approved.toLowerCase()}`)).toBeInTheDocument();
+    }
+    for (const hidden of ['CoinGecko Pro', 'Coinglass', 'Glassnode']) {
+      expect(scoped.queryByText(hidden)).not.toBeInTheDocument();
     }
     for (const hidden of ['CSMAR', 'Wind', 'AKShare', '东方财富', 'SEC EDGAR', 'CoinGecko', 'Binance', 'OKX', 'CCXT', 'LongPort']) {
       expect(scoped.queryByText(hidden)).not.toBeInTheDocument();
     }
-    expect((section as HTMLElement).querySelectorAll('.ct-source-card')).toHaveLength(6);
+    expect((section as HTMLElement).querySelectorAll('.ct-source-card')).toHaveLength(3);
     expect((section as HTMLElement).querySelectorAll('.ct-source-category-card')).toHaveLength(0);
     expect((section as HTMLElement).querySelectorAll('.ct-source-row')).toHaveLength(0);
     expect(scoped.queryByText('Custom Vendor')).not.toBeInTheDocument();
@@ -173,9 +176,6 @@ describe('settings-enhanced-sources', () => {
     expect(within(tushareCard).getByText('接口地址：默认')).toBeInTheDocument();
     expect(within(tushareCard).getByText('启用开关：未启用')).toBeInTheDocument();
 
-    const coinglassCard = scoped.getByTestId('data-source-card-coinglass');
-    fireEvent.click(within(coinglassCard).getByRole('button', { name: '编辑' }));
-    expect(scoped.getByText('配置详情：Coinglass')).toBeInTheDocument();
   });
 
   it('shows actionable error when enabling enhanced source without passing real test', async () => {

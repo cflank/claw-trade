@@ -390,6 +390,7 @@ export function AdvancedDiagnosticsPage() {
             <span>selection 刷新</span>
             <span data-testid="maintenance-selection-refresh">
               {(state.maintenance?.selectionRefresh ?? [])
+                .filter((item) => item.market !== 'CRYPTO')
                 .map((item) => `${item.market}: ${item.status} / ${item.runId ?? '暂无 run'}${item.failureReason ? ` / ${item.failureReason}` : ''}`)
                 .join('；') || '—'}
             </span>
@@ -399,6 +400,11 @@ export function AdvancedDiagnosticsPage() {
             <span data-testid="maintenance-scheduled-report-wake">
               {(state.maintenance?.scheduledReportWakes ?? []).length
                 ? (state.maintenance?.scheduledReportWakes ?? [])
+                    .filter(
+                      (item) =>
+                        String(item.market ?? (item.task as { market?: unknown } | undefined)?.market ?? '').toUpperCase() !==
+                        'CRYPTO',
+                    )
                     .map(
                       (item) =>
                         `${String(item.scheduledReportId ?? '未知计划')}: ${String(item.status ?? 'unknown')} / ${String(
@@ -416,13 +422,14 @@ export function AdvancedDiagnosticsPage() {
             <span data-testid="maintenance-price-scan">
               {(state.maintenance?.priceAlertScanBuckets ?? []).length
                 ? (state.maintenance?.priceAlertScanBuckets ?? [])
+                    .filter((bucket) => bucket.market !== 'CRYPTO')
                     .map(
                       (bucket) =>
                         `${bucket.bucketKey}: ${bucket.enabled ? '启用' : '跳过'} / ${bucket.lastScanRunId ?? '暂无扫描'}${
                           bucket.lastErrorMessage ? ` / ${bucket.lastErrorMessage}` : ''
                         }${bucket.skippedReason ? ` / ${bucket.skippedReason}` : ''}`,
                     )
-                    .join('；')
+                    .join('；') || '暂无扫描 bucket'
                 : '暂无扫描 bucket'}
             </span>
           </div>
@@ -430,7 +437,10 @@ export function AdvancedDiagnosticsPage() {
             <span>数据维护</span>
             <span data-testid="maintenance-data-jobs">
               {(state.maintenance?.dataMaintenance ?? []).length
-                ? (state.maintenance?.dataMaintenance ?? []).map((item) => formatMaintenanceDataJob(item)).join('；')
+                ? (state.maintenance?.dataMaintenance ?? [])
+                    .filter((item) => String(item.market ?? '').toUpperCase() !== 'CRYPTO')
+                    .map((item) => formatMaintenanceDataJob(item))
+                    .join('；') || '暂无数据维护运行记录'
                 : '暂无数据维护运行记录'}
             </span>
           </div>

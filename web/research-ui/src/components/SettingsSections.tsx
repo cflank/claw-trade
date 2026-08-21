@@ -244,7 +244,7 @@ const SETTINGS_MAIN_TABS: Array<{ id: SettingsMainTab; title: string }> = [
   { id: 'data', title: '数据源' },
 ];
 
-const DATA_SOURCE_TYPES = ['tushare', 'finnhub', 'fred', 'coingecko', 'coingecko_pro', 'coinglass', 'glassnode'];
+const DATA_SOURCE_TYPES = ['tushare', 'finnhub', 'fred'];
 const REPORT_RETENTION_OPTIONS: Array<{ value: ReportRetentionDays; label: string }> = [
   { value: 7, label: '7 天' },
   { value: 14, label: '14 天' },

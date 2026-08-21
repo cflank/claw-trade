@@ -69,12 +69,13 @@ const DEFAULT_CONTEXT: ChatContextForUser = {
   activeTaskId: null,
   activeReportId: null,
 };
-const REPORT_INPUT_FORMAT_HINT = '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL；加密 AR/USDT。裸 AR 按美股，写加密请用 AR/USDT。';
+const REPORT_INPUT_FORMAT_HINT = '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL。';
 const DEVICE_UI_HREF = '/api/ui/open-device-interface';
 const WORKER_CHAT_UNAVAILABLE_MESSAGE = 'Worker chat 暂无可用 worker，请刷新页面后重试。';
 const WORKER_CHAT_LOAD_FAILED_MESSAGE = 'Worker chat 菜单加载失败，请刷新页面后重试。';
 const REPORT_DELETE_SCOPE_COPY = '将删除报告文件、图表、运行证据、worker 输出和相关本地缓存。';
-const HOME_CHAT_STATE_STORAGE_KEY = 'claw-trade:home-chat-state:v1';
+const HOME_CHAT_STATE_STORAGE_KEY = 'claw-trade:home-chat-state:v2';
+const LEGACY_HOME_CHAT_STATE_STORAGE_KEY = 'claw-trade:home-chat-state:v1';
 const WORKSPACE_REFRESH_INTERVAL_MS = 4000;
 const PENDING_CHAT_REFRESH_INTERVAL_MS = 500;
 
@@ -188,6 +189,27 @@ function selectionReportStartedMessage(ticker: string, reportTaskId?: string | n
 
 function isExplicitSelectCommand(text: string) {
   return /^\s*\/select(?:\s+(?:(?:1|cn_a|a|a股|2|crypto|加密|3|us|hk|港股)(?:\s+(?:refresh|刷新))?(?:\s+\d{4}-\d{2}-\d{2})?|(?:refresh|刷新)(?:\s+\d{4}-\d{2}-\d{2})?|\d{4}-\d{2}-\d{2}))?\s*$/i.test(text);
+}
+
+function isHiddenCryptoSelectCommand(text: string) {
+  return /^\s*\/select\s+(?:2|crypto|加密|加密币|加密货币)(?:\s|$)/i.test(text);
+}
+
+function isHiddenCryptoSelectionMessage(message: ChatMessageForUser) {
+  const markdown = message.selection?.readerReportMarkdown ?? '';
+  return isHiddenCryptoSelectCommand(message.text) || /^#\s*加密市场选股报告/m.test(markdown);
+}
+
+function isHiddenCryptoChatMessage(
+  message: ChatMessageForUser,
+  alertIds: ReadonlySet<string>,
+  alertCodes: ReadonlySet<string>,
+) {
+  const isLegacyCryptoAlert =
+    message.kind === 'plain' &&
+    message.text.includes('提醒') &&
+    [...alertCodes].some((code) => message.text.startsWith(`${code} `) || message.text.startsWith(`已检查 ${code}，`));
+  return alertIds.has(message.taskId ?? '') || isLegacyCryptoAlert || isHiddenCryptoSelectionMessage(message);
 }
 
 function isWorkspaceCommand(text: string) {
@@ -330,7 +352,8 @@ function loadPersistedHomeChatState(): PersistedHomeChatState | null {
     return null;
   }
   try {
-    const raw = window.sessionStorage.getItem(HOME_CHAT_STATE_STORAGE_KEY);
+    const currentRaw = window.sessionStorage.getItem(HOME_CHAT_STATE_STORAGE_KEY);
+    const raw = currentRaw ?? window.sessionStorage.getItem(LEGACY_HOME_CHAT_STATE_STORAGE_KEY);
     if (!raw) {
       return null;
     }
@@ -338,10 +361,23 @@ function loadPersistedHomeChatState(): PersistedHomeChatState | null {
     if (!parsed.context || !Array.isArray(parsed.messages)) {
       return null;
     }
+    const confirmationCards = parsed.confirmationCards ?? {};
+    const hiddenCardIds = new Set(
+      Object.entries(confirmationCards)
+        .filter(([, card]) => card.market === 'CRYPTO')
+        .map(([cardId]) => cardId),
+    );
     return {
       context: parsed.context,
-      messages: parsed.messages,
-      confirmationCards: parsed.confirmationCards ?? {},
+      messages: parsed.messages.filter(
+        (message) =>
+          !isHiddenCryptoChatMessage(message, new Set(), new Set()) &&
+          !(message.cardId && hiddenCardIds.has(message.cardId)) &&
+          !(currentRaw === null && message.taskId),
+      ),
+      confirmationCards: Object.fromEntries(
+        Object.entries(confirmationCards).filter(([, card]) => card.market !== 'CRYPTO'),
+      ),
     };
   } catch {
     return null;
@@ -567,6 +603,8 @@ export function HomePage() {
   const notifiedTerminalTaskIdsRef = useRef<Set<string>>(new Set());
   const channelRefreshInFlightRef = useRef(false);
   const pendingScheduledReportDeletesRef = useRef(new Set<string>());
+  const hiddenCryptoAlertIdsRef = useRef(new Set<string>());
+  const hiddenCryptoAlertCodesRef = useRef(new Set<string>());
   const selectionRequestInFlightRef = useRef(false);
   const selectionCancelTokenRef = useRef(0);
   const localWorkerChatMessageIdsRef = useRef<Set<string>>(
@@ -612,14 +650,20 @@ export function HomePage() {
 
   const applyQueueSnapshot = useCallback(
     (snapshot: ReportQueueSnapshotForUser) => {
-      setQueueSnapshot(snapshot);
-      showFailedTask(snapshot.lastTerminalTask);
+      const queuedTasks = snapshot.queuedTasks.filter((task) => task.market !== 'CRYPTO');
+      setQueueSnapshot({
+        ...snapshot,
+        runningTask: snapshot.runningTask?.market === 'CRYPTO' ? null : snapshot.runningTask,
+        queuedTasks,
+        queuedCount: queuedTasks.length,
+      });
+      showFailedTask(snapshot.lastTerminalTask?.market === 'CRYPTO' ? null : snapshot.lastTerminalTask);
     },
     [showFailedTask],
   );
 
   const applySelectionRefreshSnapshot = useCallback((snapshot: { selectionProgress?: SelectionProgressForUser | null } | null) => {
-    if (snapshot?.selectionProgress) {
+    if (snapshot?.selectionProgress && !isHiddenCryptoSelectCommand(snapshot.selectionProgress.command)) {
       setSelectionProgress(snapshot.selectionProgress);
       return;
     }
@@ -631,10 +675,13 @@ export function HomePage() {
 
   const messagesVisibleAfterClear = useCallback((contextId: string, snapshotMessages: ChatMessageForUser[]) => {
     const clearedAt = clearedAtByContextRef.current.get(contextId);
-    if (!clearedAt) {
-      return snapshotMessages;
-    }
     return snapshotMessages.filter((message) => {
+      if (isHiddenCryptoChatMessage(message, hiddenCryptoAlertIdsRef.current, hiddenCryptoAlertCodesRef.current)) {
+        return false;
+      }
+      if (!clearedAt) {
+        return true;
+      }
       const createdAt = Date.parse(message.createdAt);
       return Number.isFinite(createdAt) && createdAt > clearedAt;
     });
@@ -729,11 +776,25 @@ export function HomePage() {
         listPriceAlerts().catch(() => ({ items: [] })),
       ]);
       const workers = Array.isArray(workerChatResult.workers) ? workerChatResult.workers : [];
-      setSavedReports(historyResult.items);
-      setScheduledReports(
-        scheduledReportsResult.items.filter((item) => !pendingScheduledReportDeletesRef.current.has(item.scheduledReportId)),
+      hiddenCryptoAlertIdsRef.current = new Set(
+        priceAlertsResult.items.filter((item) => item.market === 'CRYPTO').map((item) => item.priceAlertId),
       );
-      setPriceAlerts(priceAlertsResult.items);
+      hiddenCryptoAlertCodesRef.current = new Set(
+        priceAlertsResult.items.filter((item) => item.market === 'CRYPTO').map((item) => item.instrumentCode),
+      );
+      setMessages((current) =>
+        current.filter(
+          (message) =>
+            !isHiddenCryptoChatMessage(message, hiddenCryptoAlertIdsRef.current, hiddenCryptoAlertCodesRef.current),
+        ),
+      );
+      setSavedReports(historyResult.items.filter((item) => item.market !== 'CRYPTO'));
+      setScheduledReports(
+        scheduledReportsResult.items.filter(
+          (item) => item.market !== 'CRYPTO' && !pendingScheduledReportDeletesRef.current.has(item.scheduledReportId),
+        ),
+      );
+      setPriceAlerts(priceAlertsResult.items.filter((item) => item.market !== 'CRYPTO'));
       setWorkerChatWorkers(workers);
       if (licenseStatusResult) {
         setLicenseStatus(licenseStatusResult);
@@ -810,11 +871,25 @@ export function HomePage() {
         listScheduledReports().catch(() => ({ items: [] })),
         listPriceAlerts().catch(() => ({ items: [] })),
       ]);
-      setSavedReports(historyResult.items);
-      setScheduledReports(
-        scheduledReportsResult.items.filter((item) => !pendingScheduledReportDeletesRef.current.has(item.scheduledReportId)),
+      hiddenCryptoAlertIdsRef.current = new Set(
+        priceAlertsResult.items.filter((item) => item.market === 'CRYPTO').map((item) => item.priceAlertId),
       );
-      setPriceAlerts(priceAlertsResult.items);
+      hiddenCryptoAlertCodesRef.current = new Set(
+        priceAlertsResult.items.filter((item) => item.market === 'CRYPTO').map((item) => item.instrumentCode),
+      );
+      setMessages((current) =>
+        current.filter(
+          (message) =>
+            !isHiddenCryptoChatMessage(message, hiddenCryptoAlertIdsRef.current, hiddenCryptoAlertCodesRef.current),
+        ),
+      );
+      setSavedReports(historyResult.items.filter((item) => item.market !== 'CRYPTO'));
+      setScheduledReports(
+        scheduledReportsResult.items.filter(
+          (item) => item.market !== 'CRYPTO' && !pendingScheduledReportDeletesRef.current.has(item.scheduledReportId),
+        ),
+      );
+      setPriceAlerts(priceAlertsResult.items.filter((item) => item.market !== 'CRYPTO'));
       if (licenseStatusResult) {
         setLicenseStatus(licenseStatusResult);
       }
@@ -921,6 +996,10 @@ export function HomePage() {
   );
 
   const openReport = useCallback(async (report: SavedReportForUser) => {
+    if (report.market === 'CRYPTO') {
+      setError('当前版本仅支持 A股、港股和美股报告。');
+      return;
+    }
     setError('');
     setQaEntries([]);
     setSelectedReportWorkerId(defaultWorkerId(workerChatWorkers));
@@ -1217,6 +1296,10 @@ export function HomePage() {
 
   const onSendChat = useCallback(
     async (text: string) => {
+      if (isHiddenCryptoSelectCommand(text)) {
+        setError('当前版本仅支持 A股选股。');
+        return;
+      }
       const isSelectCommand = isExplicitSelectCommand(text);
       const useCommandChat = isWorkspaceCommand(text);
       const workerMention = useCommandChat ? ({ kind: 'none' } as WorkerMention) : parseLeadingWorkerMention(text, workerChatWorkers);
@@ -1451,6 +1534,10 @@ export function HomePage() {
           getReportDetail(reportId),
           getReportChartEvidence(reportId),
         ]);
+        if (detailResult.report.market === 'CRYPTO') {
+          setError('当前版本仅支持 A股、港股和美股报告。');
+          return;
+        }
         setContext({
           contextId: `report-${reportId}`,
           kind: 'report_reading',

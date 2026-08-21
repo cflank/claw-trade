@@ -171,7 +171,7 @@ describe('settings-css-sections', () => {
     expect(within(sourceSection).queryByLabelText('代理地址')).not.toBeInTheDocument();
     expect(within(sourceSection).queryByLabelText('请求头名')).not.toBeInTheDocument();
     expect(within(sourceSection).queryByLabelText('优先级')).not.toBeInTheDocument();
-    expect(sourceSection.querySelectorAll('.ct-source-card')).toHaveLength(6);
+    expect(sourceSection.querySelectorAll('.ct-source-card')).toHaveLength(3);
     expect(sourceSection.querySelectorAll('.ct-source-category-card')).toHaveLength(0);
     expect(sourceSection.querySelectorAll('.ct-source-row')).toHaveLength(0);
     expect(sourceSection.querySelectorAll('.ct-source-list')).toHaveLength(0);
@@ -180,7 +180,7 @@ describe('settings-css-sections', () => {
     expect(within(sourceSection).queryByRole('tab', { name: '加密货币' })).not.toBeInTheDocument();
     expect(within(sourceSection).queryByLabelText(/可配置增强源/)).not.toBeInTheDocument();
     expect(within(sourceSection).getByTestId('data-source-card-finnhub')).toBeInTheDocument();
-    expect(within(sourceSection).getByTestId('data-source-card-coinglass')).toBeInTheDocument();
+    expect(within(sourceSection).queryByTestId('data-source-card-coinglass')).not.toBeInTheDocument();
     expect(within(sourceSection).getByText('配置详情：Tushare')).toBeInTheDocument();
     expect(stylesText).toMatch(/\.ct-source-editor-panel\s*{[^}]*border:\s*2px solid var\(--ct-primary\);/s);
     expect(stylesText).toMatch(/\.ct-settings-section\s*{[^}]*border:\s*1px solid var\(--ct-border-strong\);[^}]*box-shadow:\s*var\(--ct-shadow-panel\);/s);

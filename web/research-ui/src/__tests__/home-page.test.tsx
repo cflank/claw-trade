@@ -535,13 +535,10 @@ function mockWorkspaceFetch(
                 '市场放前面，刷新放后面。',
                 '市场：',
                 '  1 / cn_a / A股',
-                '  2 / crypto / 加密',
                 '例子：',
                 '  /select',
                 '  /select 1',
-                '  /select 2',
                 '  /select 刷新',
-                '  /select 2 刷新',
                 '',
                 '/help',
                 '用途：查看这份命令帮助。',
@@ -551,7 +548,7 @@ function mockWorkspaceFetch(
           ],
         });
       }
-      if (body.text.includes('/report BTC')) {
+      if (body.text.includes('/report AAPL')) {
         return json({
           context: {
             contextId: body.contextId,
@@ -583,10 +580,10 @@ function mockWorkspaceFetch(
             id: 'card-1',
             draftId: 'draft-1',
             title: '请确认是否创建完整报告',
-            summaryLines: ['标的：BTC', '名称：Bitcoin', '市场：CRYPTO'],
-            instrumentCode: 'BTC',
-            instrumentName: 'Bitcoin',
-            market: 'CRYPTO',
+            summaryLines: ['标的：AAPL', '名称：Apple', '市场：US'],
+            instrumentCode: 'AAPL',
+            instrumentName: 'Apple',
+            market: 'US',
             dataSourceSummary: 'partial',
             actions: ['confirm', 'cancel'],
             status: 'active',
@@ -685,10 +682,10 @@ function mockWorkspaceFetch(
             source: 'manual',
             status: 'failed',
             statusLabel: '失败',
-            instrumentCode: 'BTC',
-            instrumentName: 'Bitcoin',
-            market: 'CRYPTO',
-            companyName: 'Bitcoin',
+            instrumentCode: 'AAPL',
+            instrumentName: 'Apple',
+            market: 'US',
+            companyName: 'Apple',
             currencySymbol: '$',
             startDate: '2026-05-01',
             endDate: '2026-05-19',
@@ -720,10 +717,10 @@ function mockWorkspaceFetch(
           source: 'manual',
           status: 'queued',
           statusLabel: '排队中',
-          instrumentCode: 'BTC',
-          instrumentName: 'Bitcoin',
-          market: 'CRYPTO',
-          companyName: 'Bitcoin',
+          instrumentCode: 'AAPL',
+          instrumentName: 'Apple',
+          market: 'US',
+          companyName: 'Apple',
           currencySymbol: '$',
           startDate: '2026-05-01',
           endDate: '2026-05-19',
@@ -817,9 +814,9 @@ describe('home page', () => {
       priceAlerts: [
         {
           priceAlertId: 'alert-1',
-          instrumentCode: 'BTC',
-          market: 'CRYPTO',
-          condition: { type: 'price_threshold', operator: 'above', value: 70000 },
+          instrumentCode: 'AAPL',
+          market: 'US',
+          condition: { type: 'price_threshold', operator: 'above', value: 250 },
           notification: { channel: 'wechat_clawbot', enabled: true },
           state: 'active',
           lastCheckedAt: '2026-05-19T10:00:00.000Z',
@@ -1006,7 +1003,7 @@ describe('home page', () => {
     expect(mocked.getClearChatBodies()[0]).toMatchObject({ contextId: 'normal-chat' });
     expect(screen.queryByText('需要清掉的问题')).not.toBeInTheDocument();
     expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
-    expect(window.sessionStorage.getItem('claw-trade:home-chat-state:v1') ?? '').not.toContain('需要清掉的问题');
+    expect(window.sessionStorage.getItem('claw-trade:home-chat-state:v2') ?? '').not.toContain('需要清掉的问题');
 
     await act(async () => {
       intervalCallbacks.at(0)?.();
@@ -1016,7 +1013,7 @@ describe('home page', () => {
     expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
   });
 
-  it('replaces stale cached chat when the backend returns an empty current session', async () => {
+  it('filters crypto while preserving previous-version local worker chat', async () => {
     window.sessionStorage.setItem(
       'claw-trade:home-chat-state:v1',
       JSON.stringify({
@@ -1029,15 +1026,54 @@ describe('home page', () => {
         },
         messages: [
           {
-            messageId: 'local-task-accepted-stale',
+            messageId: 'crypto-select-stale',
             contextKind: 'normal_chat',
             actor: 'user',
             kind: 'plain',
-            text: '本地残留消息',
+            text: '/select 2',
             createdAt: '2026-05-19T10:08:00.000Z',
           },
+          {
+            messageId: 'local-worker-user-cached',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '保留的本地 worker 消息',
+            createdAt: '2026-05-19T10:08:01.000Z',
+          },
+          {
+            messageId: 'crypto-alert-cached',
+            contextKind: 'normal_chat',
+            actor: 'system',
+            kind: 'plain',
+            text: 'BTC 已触发价格提醒，当前价格 62198.24。',
+            taskId: 'alert-crypto',
+            createdAt: '2026-05-19T10:08:02.000Z',
+          },
+          {
+            messageId: 'crypto-card-cached',
+            contextKind: 'normal_chat',
+            actor: 'system',
+            kind: 'confirmation_card',
+            text: '请确认是否创建完整报告',
+            cardId: 'card-crypto',
+            createdAt: '2026-05-19T10:08:03.000Z',
+          },
         ],
-        confirmationCards: {},
+        confirmationCards: {
+          'card-crypto': {
+            id: 'card-crypto',
+            draftId: 'draft-crypto',
+            title: '请确认是否创建完整报告',
+            summaryLines: ['标的：BTC', '名称：Bitcoin', '市场：CRYPTO'],
+            instrumentCode: 'BTC',
+            instrumentName: 'Bitcoin',
+            market: 'CRYPTO',
+            dataSourceSummary: 'partial',
+            actions: ['confirm', 'cancel'],
+            status: 'active',
+          },
+        },
       }),
     );
     const mocked = mockWorkspaceFetch({
@@ -1061,8 +1097,10 @@ describe('home page', () => {
     );
 
     await screen.findByTestId('workspace-layout');
-    await waitFor(() => expect(screen.queryByText('本地残留消息')).not.toBeInTheDocument());
-    expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
+    expect(screen.queryByText('/select 2')).not.toBeInTheDocument();
+    expect(screen.queryByText('BTC 已触发价格提醒，当前价格 62198.24。')).not.toBeInTheDocument();
+    expect(screen.queryByText('请确认是否创建完整报告')).not.toBeInTheDocument();
+    expect(screen.getByText('保留的本地 worker 消息')).toBeInTheDocument();
   });
 
   it('keeps the current chat when another channel snapshot is empty', async () => {
@@ -1199,7 +1237,7 @@ describe('home page', () => {
     );
 
     const hint = await screen.findByText(
-      '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL；加密 AR/USDT。裸 AR 按美股，写加密请用 AR/USDT。',
+      '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL。',
     );
     expect(hint).toBeInTheDocument();
     expect(screen.getByLabelText('输入消息')).toHaveAccessibleDescription(hint.textContent ?? '');
@@ -1279,7 +1317,8 @@ describe('home page', () => {
     expect(screen.getByText('系统启动自动补数据')).toBeInTheDocument();
     expect(screen.getByText('原始行情补数据中')).toBeInTheDocument();
     expect(screen.getByText('A股：原始行情补数据中')).toBeInTheDocument();
-    expect(screen.getByText('加密币：原始行情补数据中')).toBeInTheDocument();
+    expect(screen.queryByText('加密币：原始行情补数据中')).not.toBeInTheDocument();
+    expect(screen.getByText('正在补齐A股原始行情，完成后会计算选股候选池。')).toBeInTheDocument();
     expect(screen.queryByText(/工作流：raw-data-maintenance/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止选股' })).not.toBeInTheDocument();
   });
@@ -2411,7 +2450,7 @@ describe('home page', () => {
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
-  it('keeps select market shortcuts on the original chat message flow', async () => {
+  it('blocks crypto selection commands in the browser UI', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -2425,12 +2464,58 @@ describe('home page', () => {
     fireEvent.change(input, { target: { value: '/select 2 refresh' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
-    expect(mocked.getChatBodies().at(0)).toMatchObject({
-      contextId: 'normal-chat',
-      text: '/select 2 refresh',
-    });
+    expect(await screen.findByText('当前版本仅支持 A股选股。')).toBeInTheDocument();
+    expect(mocked.getChatBodies()).toHaveLength(0);
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
+  });
+
+  it('hides persisted crypto selection messages and history', async () => {
+    const mocked = mockWorkspaceFetch({
+      chatSessionSnapshot: {
+        context: {
+          contextId: 'normal-chat',
+          kind: 'normal_chat',
+          title: '普通聊天',
+          activeTaskId: null,
+          activeReportId: null,
+        },
+        messages: [
+          {
+            messageId: 'crypto-select-command',
+            contextKind: 'normal_chat',
+            actor: 'user',
+            kind: 'plain',
+            text: '/select 2',
+            createdAt: '2026-07-03T19:36:30.000Z',
+          },
+          {
+            messageId: 'crypto-select-result',
+            contextKind: 'normal_chat',
+            actor: 'system',
+            kind: 'selection_result',
+            text: '加密市场选股已完成。',
+            selection: {
+              code: 'completed',
+              workflowRunId: 'select-crypto-history',
+              readerReportMarkdown: '# 加密市场选股报告\n\n历史结果',
+            },
+            createdAt: '2026-07-03T19:36:31.000Z',
+          },
+        ],
+      },
+    });
+    restoreList.push(mocked.restore);
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId('workspace-layout');
+    expect(screen.queryByText('/select 2')).not.toBeInTheDocument();
+    expect(screen.queryByText('加密市场选股已完成。')).not.toBeInTheDocument();
+    expect(screen.queryByText('选股结果报告')).not.toBeInTheDocument();
   });
 
   it('renders help command output as readable multi-line text', async () => {
@@ -2455,7 +2540,8 @@ describe('home page', () => {
     expect(help.textContent).toContain('带 refresh/刷新 时强制刷新数据');
     expect(help.textContent).toContain('市场放前面，刷新放后面。');
     expect(help.textContent).toContain('1 / cn_a / A股');
-    expect(help.textContent).toContain('/select 2\n  /select 刷新\n  /select 2 刷新');
+    expect(help.textContent).not.toContain('crypto');
+    expect(help.textContent).not.toContain('加密');
     expect(help.textContent).toContain('/help\n用途：查看这份命令帮助。');
   });
 
@@ -2556,7 +2642,8 @@ describe('home page', () => {
     const input = await screen.findByLabelText('输入消息');
     fireEvent.change(input, { target: { value: '/' } });
     const selectOption = await screen.findByRole('option', { name: /\/select/ });
-    expect(selectOption.textContent).toContain('/select 1、/select 2、/select crypto');
+    expect(selectOption.textContent).toContain('/select 1');
+    expect(selectOption.textContent).not.toContain('crypto');
     fireEvent.click(await screen.findByRole('option', { name: /\/report/ }));
 
     expect(input).toHaveValue('/report ');
@@ -2978,7 +3065,7 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.change(input, { target: { value: '/report AAPL' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     const cardTitle = await screen.findByText('请确认是否创建完整报告');
@@ -2986,8 +3073,8 @@ describe('home page', () => {
     expect(card).not.toBeNull();
     const scoped = within(card as HTMLElement);
     expect(scoped.getByText('标的')).toBeInTheDocument();
-    expect(scoped.getByText('BTC')).toBeInTheDocument();
-    expect(scoped.getByRole('combobox', { name: '市场' })).toHaveValue('CRYPTO');
+    expect(scoped.getByText('AAPL')).toBeInTheDocument();
+    expect(scoped.getByRole('combobox', { name: '市场' })).toHaveValue('US');
 
     fireEvent.click(screen.getByRole('button', { name: '确认' }));
     expect(await screen.findByText('报告已进入队列。')).toBeInTheDocument();
@@ -2995,7 +3082,7 @@ describe('home page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     const secondInput = screen.getByLabelText('输入消息');
-    fireEvent.change(secondInput, { target: { value: '/report BTC' } });
+    fireEvent.change(secondInput, { target: { value: '/report AAPL' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '取消' }));
@@ -3028,7 +3115,7 @@ describe('home page', () => {
     expect(screen.getByTestId('license-status-banner')).toHaveTextContent('报告不可用 · 数据刷新不可用 · 尾号 1234');
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.change(input, { target: { value: '/report AAPL' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
@@ -3049,7 +3136,7 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.change(input, { target: { value: '/report AAPL' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
@@ -3076,7 +3163,7 @@ describe('home page', () => {
               context: {
                 contextId: 'normal-chat',
                 kind: 'report_reading',
-                title: 'BTC 报告',
+                title: 'AAPL 报告',
                 activeTaskId: 'task-2',
                 activeReportId: 'report-1',
               },
@@ -3096,7 +3183,7 @@ describe('home page', () => {
               context: {
                 contextId: 'normal-chat',
                 kind: 'task_following',
-                title: '任务跟进：BTC',
+                title: '任务跟进：AAPL',
                 activeTaskId: 'task-2',
                 activeReportId: null,
               },
@@ -3112,7 +3199,7 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.change(input, { target: { value: '/report AAPL' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
@@ -3140,7 +3227,7 @@ describe('home page', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '/report BTC' } });
+    fireEvent.change(input, { target: { value: '/report AAPL' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     expect(await screen.findByText('请确认是否创建完整报告')).toBeInTheDocument();
@@ -3783,7 +3870,7 @@ describe('home page', () => {
     });
   });
 
-  it('shows background price alert messages from normal chat polling', async () => {
+  it('hides background crypto price alert messages from normal chat polling', async () => {
     let chatHasPriceAlert = false;
     const intervalCallbacks: Array<() => void> = [];
     vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
@@ -3794,6 +3881,16 @@ describe('home page', () => {
     }) as typeof window.setInterval);
     vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined);
     const mocked = mockWorkspaceFetch({
+      priceAlerts: [
+        {
+          priceAlertId: 'alert-crypto',
+          instrumentCode: 'BTC',
+          market: 'CRYPTO',
+          condition: { type: 'price_threshold', operator: 'above', value: 60000 },
+          notification: { channel: 'in_app', enabled: true },
+          state: 'closed',
+        },
+      ],
       chatSessionSnapshot: () => ({
         context: {
           contextId: 'normal-chat',
@@ -3832,7 +3929,8 @@ describe('home page', () => {
       intervalCallbacks.at(0)?.();
     });
 
-    expect(await screen.findByText('BTC 已触发价格提醒，当前价格 62198.24。')).toBeInTheDocument();
+    await waitFor(() => expect(mocked.getQueueCount()).toBeGreaterThan(0));
+    expect(screen.queryByText('BTC 已触发价格提醒，当前价格 62198.24。')).not.toBeInTheDocument();
   });
 
   it('shows latest wechat channel conversation in the message stream', async () => {

@@ -99,11 +99,19 @@ describe('advanced diagnostics page', () => {
             {
               kind: 'scheduled_report',
               scheduledReportId: 'schedule-1',
+              market: 'CN_A',
               cronRunId: 'cron-run-2',
               status: 'ok',
               deduped: true,
               skipped: true,
               lastRunTaskId: 'task-1',
+            },
+            {
+              kind: 'scheduled_report',
+              scheduledReportId: 'schedule-crypto',
+              market: 'CRYPTO',
+              cronRunId: 'cron-crypto',
+              status: 'ok',
             },
           ],
           priceAlertScanBuckets: [
@@ -147,7 +155,9 @@ describe('advanced diagnostics page', () => {
     expect(screen.getByTestId('maintenance-scheduled-report-wake')).toHaveTextContent(
       'schedule-1: ok / cron-run-2 / 已去重 / 已跳过 / task-1',
     );
-    expect(screen.getByTestId('maintenance-price-scan')).toHaveTextContent('CRYPTO:3m: 启用 / scan-1');
+    expect(screen.getByTestId('maintenance-scheduled-report-wake')).not.toHaveTextContent('schedule-crypto');
+    expect(screen.getByTestId('maintenance-price-scan')).toHaveTextContent('暂无扫描 bucket');
+    expect(screen.getByTestId('maintenance-price-scan')).not.toHaveTextContent('CRYPTO');
     expect(screen.getByTestId('maintenance-data-jobs')).toHaveTextContent('CN_A:eod / ok / job-1');
     expect(screen.getByTestId('maintenance-report-cleanup')).toHaveTextContent('ok / cleanup-1');
   });

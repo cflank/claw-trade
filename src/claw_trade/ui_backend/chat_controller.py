@@ -258,7 +258,14 @@ class ChatController:
         )
         return self._chat_result(context)
 
-    def append_channel_plain_message(self, *, context_id: str, actor: str, text: str) -> dict[str, Any]:
+    def append_channel_plain_message(
+        self,
+        *,
+        context_id: str,
+        actor: str,
+        text: str,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
         if actor not in {"user", "system"}:
             raise ValueError("actor must be user or system")
         context = self._get_or_create_context(context_id)
@@ -268,6 +275,7 @@ class ChatController:
             actor=actor,
             kind="plain",
             text=text,
+            task_id=task_id,
         )
         return self._chat_result(context)
 
@@ -748,19 +756,17 @@ class ChatController:
                 "例子：",
                 "  /report TSLA",
                 "  /report 600519.SH",
-                "  /report BTC/USDT",
                 "",
                 "/sched <标的> 每天 HH:MM",
                 "用途：创建定时报告。",
                 "例子：",
                 "  /sched TSLA 每天 08:00",
                 "  /sched /select 1 每天 08:00",
-                "  /sched /select 2 每天 08:00",
                 "",
                 "/alert <标的> 高于/低于 <价格>",
                 "用途：创建价格提醒。",
                 "例子：",
-                "  /alert BTC 高于 70000",
+                "  /alert AAPL 高于 250",
                 "",
                 "/select [市场] [refresh|刷新] [YYYY-MM-DD]",
                 "用途：查看选股结果；带 refresh/刷新 时强制刷新数据。",
@@ -768,13 +774,10 @@ class ChatController:
                 "市场放前面，刷新放后面。",
                 "市场：",
                 "  1 / cn_a / A股",
-                "  2 / crypto / 加密",
                 "例子：",
                 "  /select",
                 "  /select 1",
-                "  /select 2",
                 "  /select 刷新",
-                "  /select 2 刷新",
                 "",
                 "/maint",
                 "用途：查看维护状态摘要。",

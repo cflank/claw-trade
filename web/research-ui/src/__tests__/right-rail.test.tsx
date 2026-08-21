@@ -190,6 +190,16 @@ describe('RightRail channel state text', () => {
             lastCronRunId: 'cron-run-1',
             lastRunTaskId: 'task-1',
           },
+          {
+            scheduledReportId: 'schedule-crypto',
+            instrumentCode: 'BTC',
+            instrumentName: 'Bitcoin',
+            market: 'CRYPTO',
+            frequency: 'daily',
+            timeOfDay: '09:00',
+            notification: { channel: 'in_app', enabled: true },
+            state: 'active',
+          },
         ]}
         onScheduledReportAction={onScheduledReportAction}
       />,
@@ -197,6 +207,7 @@ describe('RightRail channel state text', () => {
 
     expect(screen.getByText('定时报表管理')).toBeInTheDocument();
     expect(screen.getByText('600519.SH')).toBeInTheDocument();
+    expect(screen.queryByText('BTC')).not.toBeInTheDocument();
     expect(screen.getByText('最近运行：task-1')).toBeInTheDocument();
     expect(screen.getByText('cron：cron-job-1 / cron-run-1')).toBeInTheDocument();
 
@@ -221,18 +232,18 @@ describe('RightRail channel state text', () => {
         priceAlerts={[
           {
             priceAlertId: 'alert-1',
-            instrumentCode: 'BTC/USDT',
-            instrumentName: 'Bitcoin',
-            market: 'CRYPTO',
-            condition: { type: 'price_threshold', operator: 'above', value: 70000, window: null },
+            instrumentCode: 'AAPL',
+            instrumentName: 'Apple',
+            market: 'US',
+            condition: { type: 'price_threshold', operator: 'above', value: 250, window: null },
             notification: { channel: 'in_app', enabled: true },
             state: 'active',
             lastCheckedAt: '2026-06-24T12:00:00Z',
             triggeredAt: null,
             lastErrorMessage: null,
-            scanBucket: 'CRYPTO:3m',
+            scanBucket: 'US:1m',
             lastScanRunId: 'scan-1',
-            lastQuote: { currentPrice: 71000 },
+            lastQuote: { currentPrice: 251 },
             notificationDedupeKey: 'dedupe-1',
           },
           {
@@ -303,11 +314,12 @@ describe('RightRail channel state text', () => {
     );
 
     expect(screen.getByText('价格提醒管理')).toBeInTheDocument();
-    expect(screen.getByText('BTC/USDT')).toBeInTheDocument();
-    expect(screen.getByText('最近报价：71000')).toBeInTheDocument();
-    expect(screen.getByText('扫描：CRYPTO:3m / scan-1')).toBeInTheDocument();
+    expect(screen.getByText('AAPL')).toBeInTheDocument();
+    expect(screen.getByText('最近报价：251')).toBeInTheDocument();
+    expect(screen.getByText('扫描：US:1m / scan-1')).toBeInTheDocument();
     expect(screen.getByText('扫描结果：已扫描')).toBeInTheDocument();
-    expect(screen.getByText('扫描结果：已跳过：paused')).toBeInTheDocument();
+    expect(screen.queryByText('ETH/USDT')).not.toBeInTheDocument();
+    expect(screen.queryByText('扫描结果：已跳过：paused')).not.toBeInTheDocument();
     expect(screen.queryByText('SOL/USDT')).not.toBeInTheDocument();
     expect(screen.queryByText('ADA/USDT')).not.toBeInTheDocument();
     expect(screen.queryByText('扫描结果：已触发')).not.toBeInTheDocument();

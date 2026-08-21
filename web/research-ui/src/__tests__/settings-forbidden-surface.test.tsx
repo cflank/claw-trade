@@ -142,9 +142,6 @@ describe('settings forbidden surface', () => {
     for (const item of forbidden) {
       expect(text).not.toContain(item);
     }
-    for (const approved of ['coingecko pro', 'coinglass', 'glassnode']) {
-      expect(text).toContain(approved);
-    }
     for (const hiddenDefaultOrInternal of [
       'akshare',
       '东方财富',
@@ -160,6 +157,9 @@ describe('settings forbidden surface', () => {
       'x.com',
       'reddit',
       'sec edgar',
+      'coingecko pro',
+      'coinglass',
+      'glassnode',
       'binance',
       'okx',
       'ccxt',
