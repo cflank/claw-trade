@@ -17,7 +17,7 @@ from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, Fact
 from claw_trade.production.remote_update import RemoteUpdateService
 from claw_trade.selection.confirmation import SelectionConfirmationError, SelectionConfirmRequest
 from claw_trade.selection.models import SelectionMarket
-from claw_trade.ui_backend.channel_text_inbound import ChannelTextMessage
+from claw_trade.ui_backend.channel_text_inbound import ChannelReplyTarget, ChannelTextMessage
 from claw_trade.ui_backend.error_translator import translate_internal_error_for_user
 from claw_trade.ui_backend.price_alert_service import UiServiceError as PriceAlertServiceError
 from claw_trade.ui_backend.report_queue import QueueError
@@ -288,10 +288,17 @@ class ScheduledWorkCronWakeRequest(BaseModel):
 def send_chat_message(payload: SendChatMessageRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
+        context_id = resolve_context_id(payload.contextId)
         result = services.chat_controller.send_chat_message(
             request_id=payload.requestId,
-            context_id=resolve_context_id(payload.contextId),
+            context_id=context_id,
             text=payload.text,
+        )
+        result = _maybe_deliver_ui_select_result_to_wechat(
+            services=services,
+            request_id=payload.requestId,
+            context_id=context_id,
+            result=result,
         )
         service_error = _service_error(result)
         if service_error is not None:
@@ -299,6 +306,53 @@ def send_chat_message(payload: SendChatMessageRequest, request: Request) -> JSON
         return _success_response(result)
     except Exception as exc:
         return _exception_response(exc)
+
+
+def _maybe_deliver_ui_select_result_to_wechat(
+    *,
+    services: UiHttpServices,
+    request_id: str,
+    context_id: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    selection = result.get("selection")
+    if not isinstance(selection, dict) or selection.get("code") != "completed" or "channelDelivery" in result:
+        return result
+    try:
+        binding = services.report_notification_service.resolve_and_store_current_notification_recipient()
+    except Exception:
+        _LOGGER.exception("ui select WeChat recipient lookup failed request_id=%s", request_id)
+        delivery = {"status": "unavailable", "reason": "wechat_recipient_lookup_failed"}
+        try:
+            services.chat_controller.append_channel_plain_message(
+                context_id=context_id,
+                actor="system",
+                text="选股结果未发送到微信：无法确认当前微信收件人；结果已保留在工作台。",
+            )
+        except Exception:
+            result["channelDelivery"] = delivery
+            return result
+        refreshed = services.chat_controller.get_chat_session(context_id=context_id)
+        result.update(refreshed)
+        result["channelDelivery"] = delivery
+        return result
+    target = None
+    if binding is not None:
+        target = ChannelReplyTarget(
+            channel_kind="wechat_clawbot",
+            account_id=binding["account_id"],
+            sender_id=binding["sender_id"],
+        )
+    delivery = services.channel_text_inbound.deliver_select_result_to_channel(
+        request_id=request_id,
+        context_id=context_id,
+        result=result,
+        target=target,
+    )
+    refreshed = services.chat_controller.get_chat_session(context_id=context_id)
+    result.update(refreshed)
+    result["channelDelivery"] = delivery
+    return result
 
 
 @router.post("/create-intent-draft")

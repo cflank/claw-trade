@@ -566,6 +566,7 @@ class ChannelTextInboundController:
         conversation_key: str,
         result: dict[str, Any],
         deliver_to_channel: bool = True,
+        status_context_id: str | None = None,
     ) -> dict[str, str]:
         selection = result.get("selection")
         reply_text = _latest_selection_reply_text(result) or _extract_error(result)
@@ -604,7 +605,7 @@ class ChannelTextInboundController:
             delivery_known_failed = False
             _LOGGER.exception("selection result WeChat delivery failed request_id=%s", message.request_id)
         self._chat_controller.append_channel_plain_message(
-            context_id=conversation_key,
+            context_id=status_context_id or conversation_key,
             actor="system",
             text=(
                 "选股结果发送到微信失败；结果已保留在工作台。"
@@ -728,6 +729,36 @@ class ChannelTextInboundController:
         cleaned = conversation_key.strip()
         if cleaned:
             self._remember_latest_conversation(cleaned)
+
+    def deliver_select_result_to_channel(
+        self,
+        *,
+        request_id: str,
+        context_id: str,
+        result: dict[str, Any],
+        target: ChannelReplyTarget | None,
+    ) -> dict[str, str]:
+        if target is None:
+            self._chat_controller.append_channel_plain_message(
+                context_id=context_id,
+                actor="system",
+                text="选股结果未发送到微信：当前没有可用的微信收件人；结果已保留在工作台。",
+            )
+            return {"status": "unavailable", "reason": "wechat_recipient_unavailable"}
+        message = ChannelTextMessage(
+            request_id=request_id,
+            channel_kind=target.channel_kind,
+            account_id=target.account_id,
+            sender_id=target.sender_id,
+            text="/select",
+        )
+        conversation_key = self._conversation_key(message)
+        return self._push_select_result_to_channel(
+            message=message,
+            conversation_key=conversation_key,
+            result=result,
+            status_context_id=context_id,
+        )
 
     def _remember_latest_conversation(self, conversation_key: str) -> None:
         with self._lock:
