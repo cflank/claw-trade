@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { HomePage } from '../routes/HomePage';
 
@@ -73,8 +73,7 @@ function mockFetchForTaskCard() {
     }
     if (url.includes('/api/ui/send-chat-message') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as { contextId: string; text: string };
-      if (body.text === '/report AAPL' || body.text === '/report BTC') {
-        const isCrypto = body.text.endsWith('BTC');
+      if (body.text === '/report BTC') {
         return json({
           context: {
             contextId: body.contextId,
@@ -106,10 +105,10 @@ function mockFetchForTaskCard() {
             id: 'card-1',
             draftId: 'draft-1',
             title: '请确认是否创建完整报告',
-            summaryLines: isCrypto ? ['标的：BTC', '名称：Bitcoin', '市场：CRYPTO'] : ['标的：AAPL', '名称：Apple', '市场：US'],
-            instrumentCode: isCrypto ? 'BTC' : 'AAPL',
-            instrumentName: isCrypto ? 'Bitcoin' : 'Apple',
-            market: isCrypto ? 'CRYPTO' : 'US',
+            summaryLines: ['标的：BTC', '名称：Bitcoin', '市场：CRYPTO'],
+            instrumentCode: 'BTC',
+            instrumentName: 'Bitcoin',
+            market: 'CRYPTO',
             dataSourceSummary: 'unknown',
             actions: ['confirm', 'cancel'],
             status: 'active',
@@ -283,7 +282,7 @@ describe('report task card', () => {
     );
 
     const input = await screen.findByLabelText('输入消息');
-    fireEvent.change(input, { target: { value: '/report AAPL' } });
+    fireEvent.change(input, { target: { value: '/report BTC' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
     const cardTitle = await screen.findByText('请确认是否创建完整报告');
@@ -294,9 +293,9 @@ describe('report task card', () => {
     expect(scoped.getByText('标的')).toBeInTheDocument();
     expect(scoped.getByText('名称')).toBeInTheDocument();
     expect(scoped.getByText('市场')).toBeInTheDocument();
-    expect(scoped.getByText('AAPL')).toBeInTheDocument();
-    expect(scoped.getByText('Apple')).toBeInTheDocument();
-    expect(scoped.getByRole('combobox', { name: '市场' })).toHaveValue('US');
+    expect(scoped.getByText('BTC')).toBeInTheDocument();
+    expect(scoped.getByText('Bitcoin')).toBeInTheDocument();
+    expect(scoped.getByRole('combobox', { name: '市场' })).toHaveValue('CRYPTO');
     expect(screen.queryByText('报告方案')).not.toBeInTheDocument();
     expect(screen.queryByText('计价单位')).not.toBeInTheDocument();
     expect(screen.queryByText('profile')).not.toBeInTheDocument();
@@ -320,7 +319,7 @@ describe('report task card', () => {
     expect((mocked.confirmBodies[0].overrides as Record<string, unknown>).market).toBe('US');
   });
 
-  it('hides a crypto confirmation returned by the backend', async () => {
+  it('re-validates symbol-market match after market switch', async () => {
     const mocked = mockFetchForTaskCard();
     restoreList.push(mocked.restore);
     render(
@@ -332,10 +331,18 @@ describe('report task card', () => {
     const input = await screen.findByLabelText('输入消息');
     fireEvent.change(input, { target: { value: '/report BTC' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
-    expect(await screen.findByText('当前版本仅支持 A股、港股和美股报告。')).toBeInTheDocument();
-    expect(screen.queryByText('Bitcoin')).not.toBeInTheDocument();
-    expect(screen.queryByText('CRYPTO')).not.toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: '市场' })).not.toBeInTheDocument();
-    expect(mocked.draftBodies).toHaveLength(0);
+    await screen.findByText('BTC');
+
+    fireEvent.change(screen.getByLabelText('市场'), { target: { value: 'US' } });
+    expect(await screen.findByText('当前标的识别为 CRYPTO 市场，请修改标的或选择匹配市场。')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '确认' })).toBeDisabled();
+    });
+
+    fireEvent.change(screen.getByLabelText('市场'), { target: { value: 'CRYPTO' } });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '确认' })).not.toBeDisabled();
+    });
+    expect(mocked.draftBodies.length).toBeGreaterThanOrEqual(2);
   });
 });

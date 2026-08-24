@@ -687,7 +687,7 @@ def test_parse_args_does_not_read_runtime_gateway_token_in_production(tmp_path: 
     assert args.gateway_token is None
 
 
-def test_selection_refresh_snapshot_does_not_surface_crypto_refresh_progress() -> None:
+def test_selection_refresh_snapshot_falls_back_to_crypto_refresh_progress() -> None:
     refresh = _RefreshSnapshotProbe()
     services = SimpleNamespace(
         selection_controller=_SelectionControllerSnapshotProbe(),
@@ -706,13 +706,18 @@ def test_selection_refresh_snapshot_does_not_surface_crypto_refresh_progress() -
     response = get_selection_refresh_snapshot(request)
     assert response.status_code == 200
     payload = json.loads(response.body)
-    assert payload["selectionProgress"] is None
-    assert refresh.calls == [(None, None, None, False)]
+    assert payload["selectionProgress"]["workflowRunId"] == "sel-auto-crypto-active"
+    assert refresh.calls == [
+        (None, None, None, False),
+        (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO, None, False),
+    ]
 
 
-def test_maintenance_diagnostics_hides_crypto_scheduled_report_wakes() -> None:
+def test_maintenance_diagnostics_surfaces_valid_crypto_scheduled_report_wakes() -> None:
     services = SimpleNamespace(
-        selection_refresh_service=SimpleNamespace(latest_progress_for_user=lambda: {"selectionProgress": None}),
+        selection_refresh_service=SimpleNamespace(
+            latest_progress_for_user=lambda **_kwargs: {"selectionProgress": None}
+        ),
         scheduled_work_runner=SimpleNamespace(
             latest_results_for_user=lambda: {
                 "items": [
@@ -747,7 +752,10 @@ def test_maintenance_diagnostics_hides_crypto_scheduled_report_wakes() -> None:
     response = get_maintenance_task_diagnostics(request)
     payload = json.loads(response.body)
 
-    assert [item["scheduledReportId"] for item in payload["scheduledReportWakes"]] == ["schedule-cn"]
+    assert [item["scheduledReportId"] for item in payload["scheduledReportWakes"]] == [
+        "schedule-cn",
+        "schedule-crypto",
+    ]
 
 
 def test_selection_refresh_snapshot_does_not_surface_terminal_refresh_failure() -> None:
@@ -770,7 +778,10 @@ def test_selection_refresh_snapshot_does_not_surface_terminal_refresh_failure() 
     assert response.status_code == 200
     payload = json.loads(response.body)
     assert payload == {"selectionProgress": None}
-    assert refresh.calls == [(None, None, None, False)]
+    assert refresh.calls == [
+        (None, None, None, False),
+        (SelectionMarket.CRYPTO, SelectionProfile.CRYPTO, None, False),
+    ]
 
 
 def test_selection_refresh_snapshot_surfaces_running_raw_data_maintenance() -> None:
@@ -801,12 +812,12 @@ def test_selection_refresh_snapshot_surfaces_running_raw_data_maintenance() -> N
     assert progress["statusLabel"] == "原始行情补数据中"
     assert progress["stageLabel"] == "原始行情补数据"
     assert progress["command"] == "系统启动自动补数据"
-    assert progress["workerStatusLabels"] == ["A股：原始行情补数据中"]
+    assert progress["workerStatusLabels"] == ["A股：原始行情补数据中", "加密币：原始行情补数据中"]
     assert progress["workflowRunId"] == "raw-data-maintenance"
-    assert raw_maintenance.calls == [SelectionMarket.CN_A]
+    assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 
-def test_selection_refresh_snapshot_does_not_surface_failed_crypto_raw_data_maintenance() -> None:
+def test_selection_refresh_snapshot_surfaces_failed_raw_data_maintenance_reason() -> None:
     refresh = _TerminalOnlyRefreshSnapshotProbe()
     raw_maintenance = _FailedRawMaintenanceStatusProbe()
     services = SimpleNamespace(
@@ -828,8 +839,16 @@ def test_selection_refresh_snapshot_does_not_surface_failed_crypto_raw_data_main
     assert response.status_code == 200
     payload = json.loads(response.body)
 
-    assert payload == {"selectionProgress": None}
-    assert raw_maintenance.calls == [SelectionMarket.CN_A]
+    progress = payload["selectionProgress"]
+    assert progress["status"] == "failed"
+    assert progress["statusLabel"] == "原始行情补数据失败"
+    assert progress["currentAction"] == "加密币原始行情补数据失败：数据源响应超时，请稍后重试。"
+    assert progress["workerStatusLabels"] == [
+        "加密币：原始行情补数据失败：数据源响应超时，请稍后重试。"
+    ]
+    assert "binance_exchange_info_unavailable" not in json.dumps(progress, ensure_ascii=False)
+    assert progress["workflowRunId"] == "raw-data-maintenance"
+    assert raw_maintenance.calls == [SelectionMarket.CN_A, SelectionMarket.CRYPTO]
 
 
 def test_selection_refresh_snapshot_surfaces_cached_empty_raw_data_reason_as_empty_data() -> None:

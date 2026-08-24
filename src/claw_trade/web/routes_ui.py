@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from claw_trade.production.factory_reset import FACTORY_RESET_CONFIRMATION, FactoryResetService
 from claw_trade.production.remote_update import RemoteUpdateService
 from claw_trade.selection.confirmation import SelectionConfirmationError, SelectionConfirmRequest
-from claw_trade.selection.models import SelectionMarket
+from claw_trade.selection.models import SelectionMarket, SelectionProfile
 from claw_trade.ui_backend.channel_text_inbound import ChannelReplyTarget, ChannelTextMessage
 from claw_trade.ui_backend.error_translator import translate_internal_error_for_user
 from claw_trade.ui_backend.price_alert_service import UiServiceError as PriceAlertServiceError
@@ -536,6 +536,13 @@ def get_selection_refresh_snapshot(request: Request) -> JSONResponse:
         refresh_snapshot = services.selection_refresh_service.latest_progress_for_user(include_terminal=False)
         if refresh_snapshot.get("selectionProgress"):
             return _success_response(refresh_snapshot)
+        crypto_refresh_snapshot = services.selection_refresh_service.latest_progress_for_user(
+            market=SelectionMarket.CRYPTO,
+            profile=SelectionProfile.CRYPTO,
+            include_terminal=False,
+        )
+        if crypto_refresh_snapshot.get("selectionProgress"):
+            return _success_response(crypto_refresh_snapshot)
         raw_maintenance_progress = _raw_data_maintenance_progress_for_user(services)
         if raw_maintenance_progress:
             return _success_response({"selectionProgress": raw_maintenance_progress})
@@ -1464,7 +1471,7 @@ def _raw_data_maintenance_progress_for_user(services: UiHttpServices) -> dict[st
         return None
     running: list[tuple[str, Mapping[str, object]]] = []
     failed: list[tuple[str, Mapping[str, object]]] = []
-    for market, label in ((SelectionMarket.CN_A, "A股"),):
+    for market, label in ((SelectionMarket.CN_A, "A股"), (SelectionMarket.CRYPTO, "加密币")):
         raw_status = status_provider(market)
         if not isinstance(raw_status, Mapping):
             continue
@@ -1689,6 +1696,10 @@ def _report_cleanup_settings_response(settings: dict[str, int]) -> dict[str, Any
 
 def _maintenance_task_diagnostics(services: UiHttpServices) -> dict[str, Any]:
     cn_a_refresh = services.selection_refresh_service.latest_progress_for_user()
+    crypto_refresh = services.selection_refresh_service.latest_progress_for_user(
+        market=SelectionMarket.CRYPTO,
+        profile=SelectionProfile.CRYPTO,
+    )
     runner_results = services.scheduled_work_runner.latest_results_for_user().get("items", [])
     data_maintenance_items = [
         item for item in runner_results if isinstance(item, Mapping) and item.get("kind") == "data_maintenance"
@@ -1699,15 +1710,19 @@ def _maintenance_task_diagnostics(services: UiHttpServices) -> dict[str, Any]:
     visible_schedule_ids = {
         str(item.get("scheduledReportId") or "")
         for item in services.scheduler_service.list_scheduled_reports_for_user().get("items", [])
-        if isinstance(item, Mapping) and str(item.get("market") or "").upper() in {"CN_A", "US", "HK"}
+        if isinstance(item, Mapping)
+        and str(item.get("market") or "").upper() in {"CN_A", "US", "HK", "CRYPTO"}
     }
     scheduled_report_wakes = [
-        item for item in scheduled_report_wakes if str(item.get("scheduledReportId") or "") in visible_schedule_ids
+        item
+        for item in scheduled_report_wakes
+        if str(item.get("scheduledReportId") or "") in visible_schedule_ids
     ]
     return {
         "checkedAt": _utc_now_iso(),
         "selectionRefresh": [
             {"kind": "selection_data_refresh", "market": "CN_A", **_selection_refresh_diag(cn_a_refresh)},
+            {"kind": "selection_data_refresh", "market": "CRYPTO", **_selection_refresh_diag(crypto_refresh)},
         ],
         "scheduledReportWakes": scheduled_report_wakes,
         "priceAlertScanBuckets": services.price_alert_service.list_price_alert_scan_buckets_for_user()["items"],

@@ -1319,12 +1319,7 @@ def _append_price_alert_in_app(
     chat_controller = chat_controller_ref.get("controller")
     if chat_controller is None:
         return
-    chat_controller.append_channel_plain_message(
-        context_id="normal-chat",
-        actor="system",
-        text=text,
-        task_id=alert_id,
-    )
+    chat_controller.append_channel_plain_message(context_id="normal-chat", actor="system", text=text)
 
 
 def _send_selection_report_file(

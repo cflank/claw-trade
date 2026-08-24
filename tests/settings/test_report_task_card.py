@@ -98,14 +98,14 @@ def test_help_command_returns_command_usage_without_normal_chat() -> None:
         assert "/report <标的>" in result["messages"][-1]["text"]
         assert "/sched <标的> 每天 HH:MM" in result["messages"][-1]["text"]
         assert "/sched /select 1 每天 08:00" in result["messages"][-1]["text"]
-        assert "/sched /select 2 每天 08:00" not in result["messages"][-1]["text"]
+        assert "/sched /select 2 每天 08:00" in result["messages"][-1]["text"]
         assert "/alert <标的> 高于/低于 <价格>" in result["messages"][-1]["text"]
         assert "/select [市场] [refresh|刷新] [YYYY-MM-DD]" in result["messages"][-1]["text"]
         assert "带 refresh/刷新 时强制刷新数据" in result["messages"][-1]["text"]
         assert "市场放前面，刷新放后面" in result["messages"][-1]["text"]
         assert "1 / cn_a / A股" in result["messages"][-1]["text"]
-        assert "crypto" not in result["messages"][-1]["text"].lower()
-        assert "加密" not in result["messages"][-1]["text"]
+        assert "2 / crypto / 加密" in result["messages"][-1]["text"]
+        assert "/select 2\n  /select 刷新\n  /select 2 刷新" in result["messages"][-1]["text"]
         assert "$superpowers:using-superpowers" not in result["messages"][-1]["text"]
         assert "/maint" in result["messages"][-1]["text"]
         assert max(len(line) for line in result["messages"][-1]["text"].splitlines()) <= 42

@@ -207,13 +207,13 @@ describe('RightRail channel state text', () => {
 
     expect(screen.getByText('定时报表管理')).toBeInTheDocument();
     expect(screen.getByText('600519.SH')).toBeInTheDocument();
-    expect(screen.queryByText('BTC')).not.toBeInTheDocument();
+    expect(screen.getByText('BTC')).toBeInTheDocument();
     expect(screen.getByText('最近运行：task-1')).toBeInTheDocument();
     expect(screen.getByText('cron：cron-job-1 / cron-run-1')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '暂停' }));
-    fireEvent.click(screen.getByRole('button', { name: '手动运行' }));
-    fireEvent.click(screen.getByRole('button', { name: '删除' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '暂停' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: '手动运行' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0]);
 
     expect(onScheduledReportAction).toHaveBeenNthCalledWith(1, 'pause', 'schedule-1');
     expect(onScheduledReportAction).toHaveBeenNthCalledWith(2, 'run', 'schedule-1');
@@ -318,8 +318,8 @@ describe('RightRail channel state text', () => {
     expect(screen.getByText('最近报价：251')).toBeInTheDocument();
     expect(screen.getByText('扫描：US:1m / scan-1')).toBeInTheDocument();
     expect(screen.getByText('扫描结果：已扫描')).toBeInTheDocument();
-    expect(screen.queryByText('ETH/USDT')).not.toBeInTheDocument();
-    expect(screen.queryByText('扫描结果：已跳过：paused')).not.toBeInTheDocument();
+    expect(screen.getByText('ETH/USDT')).toBeInTheDocument();
+    expect(screen.getByText('扫描结果：已跳过：paused')).toBeInTheDocument();
     expect(screen.queryByText('SOL/USDT')).not.toBeInTheDocument();
     expect(screen.queryByText('ADA/USDT')).not.toBeInTheDocument();
     expect(screen.queryByText('扫描结果：已触发')).not.toBeInTheDocument();

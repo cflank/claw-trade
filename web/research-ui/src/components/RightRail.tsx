@@ -149,7 +149,10 @@ function failedRawMarkets(progress: SelectionProgressForUser): RawMaintenanceMar
     return [];
   }
   const text = [progress.currentAction, ...progress.workerStatusLabels].join('\n');
-  return text.includes('A股') ? ['CN_A'] : [];
+  return [
+    ...(text.includes('A股') ? (['CN_A'] as const) : []),
+    ...(text.includes('加密币') ? (['CRYPTO'] as const) : []),
+  ];
 }
 
 function SelectionTaskBlock({
@@ -173,13 +176,6 @@ function SelectionTaskBlock({
   const isRawMaintenance = title === '原始行情补数据' || String(progress.workflowRunId ?? '').startsWith('raw-data-maintenance');
   const canCancel = !isRawMaintenance;
   const retryMarkets = failedRawMarkets(progress);
-  const visibleAction = progress.currentAction
-    .replace('A股、加密币', 'A股')
-    .replace('加密币、A股', 'A股');
-  const currentAction = visibleAction.includes('加密币') || visibleAction.includes('CRYPTO') ? '' : visibleAction;
-  const workerStatusLabels = progress.workerStatusLabels.filter(
-    (item) => !item.includes('加密币') && !item.includes('CRYPTO'),
-  );
   return (
     <section className="ct-right-section" data-testid="right-rail-selection-section">
       <h2>{title}</h2>
@@ -197,9 +193,9 @@ function SelectionTaskBlock({
         <div className="ct-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
           <div className="ct-progress-fill" style={{ width: `${percent}%` }} />
         </div>
-        {currentAction ? <p className="ct-task-action">{currentAction}</p> : null}
+        <p className="ct-task-action">{progress.currentAction}</p>
         <ul className="ct-task-status-list">
-          {workerStatusLabels.map((item) => (
+          {progress.workerStatusLabels.map((item) => (
             <li key={`${progress.startedAt}-${item}`}>{item}</li>
           ))}
         </ul>
@@ -222,7 +218,7 @@ function SelectionTaskBlock({
                 onClick={() => onRetryRawDataMaintenance(market)}
                 disabled={retryingRawMarket === market}
               >
-                {retryingRawMarket === market ? '启动中' : '重新补A股'}
+                {retryingRawMarket === market ? '启动中' : `重新补${market === 'CN_A' ? 'A股' : '加密币'}`}
               </button>
             ))
           : null}
@@ -243,7 +239,7 @@ function TaskBlock({
   const rows = [
     ...(queue.runningTask ? [queue.runningTask] : []),
     ...queue.queuedTasks,
-  ].filter((task) => task.market !== 'CRYPTO' && (task.status === 'running' || task.status === 'queued'));
+  ].filter((task) => task.status === 'running' || task.status === 'queued');
 
   return (
     <section className="ct-right-section" data-testid="right-rail-task-section">
@@ -306,7 +302,7 @@ function ScheduledReportsBlock({
   onAction?: (action: 'pause' | 'resume' | 'delete' | 'run', scheduledReportId: string) => void;
   actionId?: string | null;
 }) {
-  const rows = items.filter((item) => item.market !== 'CRYPTO' && item.state !== 'closed' && item.state !== 'deleted');
+  const rows = items.filter((item) => item.state !== 'closed' && item.state !== 'deleted');
 
   return (
     <section className="ct-right-section" data-testid="right-rail-scheduled-reports-section">
@@ -384,7 +380,7 @@ function PriceAlertsBlock({
   items: PriceAlertForUser[];
   onAction?: (action: 'pause' | 'resume' | 'delete' | 'check', priceAlertId: string) => void;
 }) {
-  const rows = items.filter((alert) => alert.market !== 'CRYPTO' && alert.state !== 'closed' && alert.state !== 'deleted');
+  const rows = items.filter((alert) => alert.state !== 'closed' && alert.state !== 'deleted');
 
   return (
     <section className="ct-right-section" data-testid="right-rail-price-alerts-section">

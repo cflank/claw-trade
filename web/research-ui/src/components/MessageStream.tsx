@@ -214,9 +214,6 @@ function MessageBody({
   reportActionDisabledReason?: string;
 }) {
   if (item.kind === 'confirmation_card' && card) {
-    if (card.market === 'CRYPTO') {
-      return <p className="ct-message-text">当前版本仅支持 A股、港股和美股报告。</p>;
-    }
     const isBusy = cardSubmittingId === card.id;
     const canConfirm = card.status === 'active' && card.validationState !== 'mismatch';
     const reportActionBlocked = Boolean(reportActionDisabledReason);
@@ -247,6 +244,7 @@ function MessageBody({
                 <option value="CN_A">CN_A</option>
                 <option value="US">US</option>
                 <option value="HK">HK</option>
+                <option value="CRYPTO">CRYPTO</option>
               </select>
             </span>
           </div>

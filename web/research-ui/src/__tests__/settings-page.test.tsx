@@ -237,7 +237,7 @@ describe('settings-wechat settings page', () => {
     expect(settingsScope.textContent ?? '').not.toContain('/runtime/dev-services/openviking/ov.conf');
     const dataSourceSection = screen.getByRole('heading', { name: '增强数据源' }).closest('section') as HTMLElement;
     expect(within(dataSourceSection).queryByText('此功能可配置的增强源')).not.toBeInTheDocument();
-    expect(within(dataSourceSection).getByText('1 个 API 源')).toBeInTheDocument();
+    expect(within(dataSourceSection).getByText('3 个 API 源')).toBeInTheDocument();
     expect(within(dataSourceSection).queryByRole('tab', { name: 'A股' })).not.toBeInTheDocument();
     expect(within(dataSourceSection).queryByRole('tab', { name: '港股' })).not.toBeInTheDocument();
     expect(within(dataSourceSection).queryByRole('tab', { name: '美股' })).not.toBeInTheDocument();
@@ -250,9 +250,9 @@ describe('settings-wechat settings page', () => {
     expect(screen.queryByText('代理地址')).not.toBeInTheDocument();
     expect(screen.queryByText('请求头名')).not.toBeInTheDocument();
     expect(screen.queryByText('优先级')).not.toBeInTheDocument();
-    expect(dataSourceSection.querySelectorAll('.ct-source-card')).toHaveLength(1);
-    expect(within(dataSourceSection).queryByText('CoinGecko Pro')).not.toBeInTheDocument();
-    expect(within(dataSourceSection).queryByText('Coinglass')).not.toBeInTheDocument();
+    expect(dataSourceSection.querySelectorAll('.ct-source-card')).toHaveLength(3);
+    expect(within(dataSourceSection).getByText('CoinGecko Pro')).toBeInTheDocument();
+    expect(within(dataSourceSection).getByText('Coinglass')).toBeInTheDocument();
     expect(dataSourceSection.querySelectorAll('.ct-source-category-card')).toHaveLength(0);
     expect(dataSourceSection.querySelectorAll('.ct-source-row')).toHaveLength(0);
     expect(screen.queryByText('Custom Vendor')).not.toBeInTheDocument();

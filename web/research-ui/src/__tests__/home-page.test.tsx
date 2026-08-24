@@ -535,10 +535,13 @@ function mockWorkspaceFetch(
                 '市场放前面，刷新放后面。',
                 '市场：',
                 '  1 / cn_a / A股',
+                '  2 / crypto / 加密',
                 '例子：',
                 '  /select',
                 '  /select 1',
+                '  /select 2',
                 '  /select 刷新',
+                '  /select 2 刷新',
                 '',
                 '/help',
                 '用途：查看这份命令帮助。',
@@ -1013,7 +1016,7 @@ describe('home page', () => {
     expect(screen.getByText('还没有聊天内容')).toBeInTheDocument();
   });
 
-  it('filters crypto while preserving previous-version local worker chat', async () => {
+  it('restores previous-version local crypto chat', async () => {
     window.sessionStorage.setItem(
       'claw-trade:home-chat-state:v1',
       JSON.stringify({
@@ -1047,7 +1050,6 @@ describe('home page', () => {
             actor: 'system',
             kind: 'plain',
             text: 'BTC 已触发价格提醒，当前价格 62198.24。',
-            taskId: 'alert-crypto',
             createdAt: '2026-05-19T10:08:02.000Z',
           },
           {
@@ -1097,9 +1099,9 @@ describe('home page', () => {
     );
 
     await screen.findByTestId('workspace-layout');
-    expect(screen.queryByText('/select 2')).not.toBeInTheDocument();
-    expect(screen.queryByText('BTC 已触发价格提醒，当前价格 62198.24。')).not.toBeInTheDocument();
-    expect(screen.queryByText('请确认是否创建完整报告')).not.toBeInTheDocument();
+    expect(screen.getByText('/select 2')).toBeInTheDocument();
+    expect(screen.getByText('BTC 已触发价格提醒，当前价格 62198.24。')).toBeInTheDocument();
+    expect(screen.getByText('请确认是否创建完整报告')).toBeInTheDocument();
     expect(screen.getByText('保留的本地 worker 消息')).toBeInTheDocument();
   });
 
@@ -1237,7 +1239,7 @@ describe('home page', () => {
     );
 
     const hint = await screen.findByText(
-      '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL。',
+      '格式提示：A股 600519.SH；港股 00700.HK；美股 AAPL；加密 AR/USDT。裸 AR 按美股，写加密请用 AR/USDT。',
     );
     expect(hint).toBeInTheDocument();
     expect(screen.getByLabelText('输入消息')).toHaveAccessibleDescription(hint.textContent ?? '');
@@ -1317,8 +1319,8 @@ describe('home page', () => {
     expect(screen.getByText('系统启动自动补数据')).toBeInTheDocument();
     expect(screen.getByText('原始行情补数据中')).toBeInTheDocument();
     expect(screen.getByText('A股：原始行情补数据中')).toBeInTheDocument();
-    expect(screen.queryByText('加密币：原始行情补数据中')).not.toBeInTheDocument();
-    expect(screen.getByText('正在补齐A股原始行情，完成后会计算选股候选池。')).toBeInTheDocument();
+    expect(screen.getByText('加密币：原始行情补数据中')).toBeInTheDocument();
+    expect(screen.getByText('正在补齐A股、加密币原始行情，完成后会计算选股候选池。')).toBeInTheDocument();
     expect(screen.queryByText(/工作流：raw-data-maintenance/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '停止选股' })).not.toBeInTheDocument();
   });
@@ -2450,7 +2452,7 @@ describe('home page', () => {
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
-  it('blocks crypto selection commands in the browser UI', async () => {
+  it('sends crypto selection commands from the browser UI', async () => {
     const mocked = mockWorkspaceFetch();
     restoreList.push(mocked.restore);
 
@@ -2464,12 +2466,12 @@ describe('home page', () => {
     fireEvent.change(input, { target: { value: '/select 2 refresh' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
 
-    expect(await screen.findByText('当前版本仅支持 A股选股。')).toBeInTheDocument();
-    expect(mocked.getChatBodies()).toHaveLength(0);
+    await waitFor(() => expect(mocked.getChatBodies()).toHaveLength(1));
+    expect(mocked.getChatBodies().at(0)).toMatchObject({ text: '/select 2 refresh' });
     expect(mocked.getWorkerChatBodies()).toHaveLength(0);
   });
 
-  it('hides persisted crypto selection messages and history', async () => {
+  it('shows persisted crypto selection messages and history', async () => {
     const mocked = mockWorkspaceFetch({
       chatSessionSnapshot: {
         context: {
@@ -2513,9 +2515,9 @@ describe('home page', () => {
     );
 
     await screen.findByTestId('workspace-layout');
-    expect(screen.queryByText('/select 2')).not.toBeInTheDocument();
-    expect(screen.queryByText('加密市场选股已完成。')).not.toBeInTheDocument();
-    expect(screen.queryByText('选股结果报告')).not.toBeInTheDocument();
+    expect(screen.getByText('/select 2')).toBeInTheDocument();
+    expect(screen.getByText('加密市场选股已完成。')).toBeInTheDocument();
+    expect(screen.getByText('选股结果报告')).toBeInTheDocument();
   });
 
   it('renders help command output as readable multi-line text', async () => {
@@ -2540,8 +2542,7 @@ describe('home page', () => {
     expect(help.textContent).toContain('带 refresh/刷新 时强制刷新数据');
     expect(help.textContent).toContain('市场放前面，刷新放后面。');
     expect(help.textContent).toContain('1 / cn_a / A股');
-    expect(help.textContent).not.toContain('crypto');
-    expect(help.textContent).not.toContain('加密');
+    expect(help.textContent).toContain('/select 2\n  /select 刷新\n  /select 2 刷新');
     expect(help.textContent).toContain('/help\n用途：查看这份命令帮助。');
   });
 
@@ -2642,8 +2643,7 @@ describe('home page', () => {
     const input = await screen.findByLabelText('输入消息');
     fireEvent.change(input, { target: { value: '/' } });
     const selectOption = await screen.findByRole('option', { name: /\/select/ });
-    expect(selectOption.textContent).toContain('/select 1');
-    expect(selectOption.textContent).not.toContain('crypto');
+    expect(selectOption.textContent).toContain('/select 1、/select 2、/select crypto');
     fireEvent.click(await screen.findByRole('option', { name: /\/report/ }));
 
     expect(input).toHaveValue('/report ');
@@ -3870,7 +3870,7 @@ describe('home page', () => {
     });
   });
 
-  it('hides background crypto price alert messages from normal chat polling', async () => {
+  it('shows background crypto price alert messages from normal chat polling', async () => {
     let chatHasPriceAlert = false;
     const intervalCallbacks: Array<() => void> = [];
     vi.spyOn(window, 'setInterval').mockImplementation(((handler: Parameters<typeof window.setInterval>[0]) => {
@@ -3930,7 +3930,7 @@ describe('home page', () => {
     });
 
     await waitFor(() => expect(mocked.getQueueCount()).toBeGreaterThan(0));
-    expect(screen.queryByText('BTC 已触发价格提醒，当前价格 62198.24。')).not.toBeInTheDocument();
+    expect(screen.getByText('BTC 已触发价格提醒，当前价格 62198.24。')).toBeInTheDocument();
   });
 
   it('shows latest wechat channel conversation in the message stream', async () => {

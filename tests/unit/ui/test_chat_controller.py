@@ -130,19 +130,6 @@ def test_normal_chat_passthrough_openclaw() -> None:
     assert transport.calls == 1
 
 
-def test_channel_plain_message_keeps_price_alert_id() -> None:
-    controller, _, _ = _build_controller()
-
-    controller.append_channel_plain_message(
-        context_id="normal-chat",
-        actor="system",
-        text="提醒已触发。",
-        task_id="alert-crypto",
-    )
-
-    assert controller.get_chat_session(context_id="normal-chat")["messages"][-1]["taskId"] == "alert-crypto"
-
-
 def test_clear_chat_session_removes_messages_without_calling_runtime() -> None:
     controller, transport, workflow_runner = _build_controller()
     controller.send_chat_message(request_id="req-clear-seed", context_id="ctx-clear", text="你好")
