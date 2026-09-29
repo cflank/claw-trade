@@ -1123,11 +1123,12 @@ export function HomePage() {
     setError('');
     setForwardingReportId(report.id);
     try {
+      // Always send to current WeChat target, not historical originContextId
       const result = await sendReportFileViaChannel({
         requestId: nextRequestId(),
         reportId: report.id,
         channelKind: 'wechat_clawbot',
-        originContextId: report.originContextId ?? null,
+        originContextId: null,  // Use current bound session
       });
       setReportForwardState((current) => ({
         ...current,

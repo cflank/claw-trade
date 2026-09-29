@@ -1760,6 +1760,153 @@ describe('settings-wechat settings page', () => {
     expect(calls.some((url) => url.includes('/api/ui/save-channel-config-via-openclaw'))).toBe(false);
   });
 
+  it('enters safe replacement immediately when enabling a stored account', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          canSendText: false,
+          canSendFile: false,
+          lastErrorMessage: '微信通知已停用，请点击重新连接。',
+          replacementRequired: false,
+        });
+      }
+      if (url.includes('/api/ui/save-channel-config-via-openclaw')) {
+        return json({
+          status: {
+            channelKind: 'wechat_clawbot',
+            onboardingState: 'completed',
+            state: 'disconnected',
+            displayName: '微信 ClawBot',
+            canSendText: false,
+            canSendFile: false,
+            replacementRequired: true,
+          },
+          restartRequired: false,
+        });
+      }
+      if (url.includes('/api/ui/start-wechat-reconnect')) {
+        return json({
+          operationId: 'replace-after-enable',
+          phase: 'awaiting_scan',
+          qrCodeImageDataUrl: 'data:image/png;base64,replacement-qr',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重新连接' }));
+
+    expect(await screen.findByText('请扫描新二维码；完成前旧账号凭据仍可恢复。')).toBeInTheDocument();
+    expect(calls.some((url) => url.includes('/api/ui/save-channel-config-via-openclaw'))).toBe(true);
+    expect(calls.some((url) => url.includes('/api/ui/start-wechat-reconnect'))).toBe(true);
+  });
+
+  it('enters safe replacement when refresh discovers a stored account', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'connected',
+          displayName: '微信 ClawBot',
+          accountLabel: '测试号',
+          canSendText: true,
+          canSendFile: false,
+          replacementRequired: url.includes('refreshQr=true'),
+        });
+      }
+      if (url.includes('/api/ui/start-wechat-reconnect')) {
+        return json({
+          operationId: 'replace-after-refresh',
+          phase: 'awaiting_scan',
+          qrCodeImageDataUrl: 'data:image/png;base64,replacement-qr',
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '刷新二维码' }));
+
+    expect(await screen.findByText('请扫描新二维码；完成前旧账号凭据仍可恢复。')).toBeInTheDocument();
+    expect(calls.some((url) => url.includes('refreshQr=true'))).toBe(true);
+    expect(calls.some((url) => url.includes('/api/ui/start-wechat-reconnect'))).toBe(true);
+    expect(calls.some((url) => url.includes('/api/ui/save-channel-config-via-openclaw'))).toBe(false);
+  });
+
+  it('shows inventory errors after enabling without claiming QR login started', async () => {
+    const calls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/api/ui/get-channel-status')) {
+        return json({
+          channelKind: 'wechat_clawbot',
+          onboardingState: 'completed',
+          state: 'disconnected',
+          displayName: '微信 ClawBot',
+          lastErrorMessage: '微信通知已停用，请点击重新连接。',
+          canSendText: false,
+          canSendFile: false,
+          replacementRequired: false,
+        });
+      }
+      if (url.includes('/api/ui/save-channel-config-via-openclaw')) {
+        return json({
+          status: {
+            channelKind: 'wechat_clawbot',
+            onboardingState: 'completed',
+            state: 'error',
+            displayName: '微信 ClawBot',
+            lastErrorMessage: '微信账号状态检查失败，请在设备界面查看。',
+            canSendText: false,
+            canSendFile: false,
+            replacementRequired: false,
+          },
+          restartRequired: false,
+        });
+      }
+      return baseSettingsResponse(url) ?? json({});
+    }) as typeof fetch;
+
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('tab', { name: '通用' }));
+    fireEvent.click(await screen.findByRole('button', { name: '重新连接' }));
+
+    expect(await screen.findByText('微信账号状态检查失败，请在设备界面查看。')).toBeInTheDocument();
+    expect(screen.queryByText('已提交重新连接，请重新扫码。')).not.toBeInTheDocument();
+    expect(calls.some((url) => url.includes('/api/ui/start-wechat-reconnect'))).toBe(false);
+    expect(calls.some((url) => url.includes('refreshQr=true'))).toBe(false);
+  });
+
   it('can resume a replacement that needs attention', async () => {
     const calls: string[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL) => {

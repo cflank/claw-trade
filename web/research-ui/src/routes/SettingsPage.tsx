@@ -576,6 +576,10 @@ export function SettingsPage() {
         CHANNEL_STATUS_TIMEOUT_MS,
       );
       setChannel(result);
+      if (result.replacementRequired === true) {
+        await reconnectChannel(result);
+        return;
+      }
     } catch (refreshError) {
       setSectionErrors((current) => ({
         ...current,
@@ -627,6 +631,13 @@ export function SettingsPage() {
         configPatch: { enabled },
       });
       setChannel(result.status);
+      if (enabled && result.status.replacementRequired === true) {
+        await reconnectChannel(result.status);
+        return;
+      }
+      if (enabled && result.status.state === 'error') {
+        return;
+      }
       if (enabled) {
         setChannelActionMessage(result.restartRequired ? '已提交重新连接，请重启后重新扫码。' : '已提交重新连接，请重新扫码。');
       } else {
@@ -642,8 +653,9 @@ export function SettingsPage() {
     }
   }
 
-  async function reconnectChannel() {
-    if (channel?.state !== 'connected' && channel?.replacementRequired !== true) {
+  async function reconnectChannel(nextChannel?: ChannelStatusForUser) {
+    const currentChannel = nextChannel ?? channel;
+    if (currentChannel?.state !== 'connected' && currentChannel?.replacementRequired !== true) {
       await setChannelEnabled(true);
       return;
     }
@@ -682,8 +694,17 @@ export function SettingsPage() {
       const result = await cancelWechatReconnect(wechatReconnect.operationId);
       if (result.phase === 'completed' && result.outcome === 'restored') {
         setWechatReconnect(null);
-        setChannel(await getChannelStatus({ probe: true }));
-        setChannelActionMessage('已取消，旧微信连接已恢复。');
+        const newChannel = await getChannelStatus({ probe: true });
+        setChannel(newChannel);
+        // Verify actual state after restore
+        const isUsable = newChannel.state === 'connected' && newChannel.canSendFile && !newChannel.replacementRequired;
+        if (isUsable) {
+          setChannelActionMessage('已取消，微信连接已恢复。');
+        } else if (newChannel.replacementRequired) {
+          setChannelActionMessage('已取消，但多账号冲突仍需处理，请重新连接。');
+        } else {
+          setChannelActionMessage('已取消，请重新连接微信。');
+        }
         return;
       }
       setWechatReconnect(result);
@@ -707,10 +728,19 @@ export function SettingsPage() {
       const result = await recoverWechatReconnect(wechatReconnect.operationId);
       if (result.phase === 'completed') {
         setWechatReconnect(null);
-        setChannel(await getChannelStatus({ probe: true }));
-        setChannelActionMessage(
-          result.outcome === 'switched' ? '微信已重新连接。' : '旧微信连接已恢复。',
-        );
+        const newChannel = await getChannelStatus({ probe: true });
+        setChannel(newChannel);
+        // Verify actual state after recovery
+        const isUsable = newChannel.state === 'connected' && newChannel.canSendFile && !newChannel.replacementRequired;
+        if (isUsable) {
+          setChannelActionMessage(result.outcome === 'switched' ? '微信已重新连接。' : '微信连接已恢复。');
+        } else if (newChannel.replacementRequired) {
+          setChannelActionMessage('操作已完成，但多账号冲突仍需处理，请重新连接。');
+        } else if (newChannel.state !== 'connected') {
+          setChannelActionMessage('操作已完成，但微信未连接，请重新连接。');
+        } else {
+          setChannelActionMessage('操作已完成，请检查微信发送功能。');
+        }
         return;
       }
       setWechatReconnect(result);
@@ -1245,7 +1275,7 @@ export function SettingsPage() {
           updateApplyBusy={updateApplyBusy}
           canInstallUpdate={canInstallUpdate}
           productionMaintenance={productionMaintenance}
-          onReconnectChannel={reconnectChannel}
+          onReconnectChannel={() => void reconnectChannel()}
           onCancelReconnectChannel={cancelReconnectChannel}
           onRecoverReconnectChannel={recoverReconnectChannel}
           reconnectNeedsAttention={wechatReconnect?.phase === 'needs_attention'}

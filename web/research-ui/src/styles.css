@@ -241,6 +241,13 @@ body {
   opacity: 0.65;
 }
 
+.ct-history-forward.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  color: var(--ct-text-muted);
+  border-color: var(--ct-border);
+}
+
 .ct-history-code,
 .ct-history-time,
 .ct-history-summary,

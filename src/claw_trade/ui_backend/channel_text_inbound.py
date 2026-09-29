@@ -32,6 +32,7 @@ class ChannelReplyTarget:
 @dataclass(frozen=True)
 class _PendingDraft:
     draft_id: str
+    reply_text: str
 
 
 @dataclass(frozen=True)
@@ -106,7 +107,7 @@ class ChannelTextInboundController:
                     message.request_id,
                     {
                         "handled": True,
-                        "replyText": "当前有一张待确认卡。回复“确认”开始执行，或回复“取消”放弃。",
+                        "replyText": pending.reply_text,
                         "state": "awaiting_confirmation",
                     },
                 )
@@ -172,14 +173,18 @@ class ChannelTextInboundController:
         if not isinstance(card, dict):
             return self._remember(message.request_id, _reply_from_chat_result(result))
         draft_id = str(card.get("draftId") or "").strip()
+        reply_text = _format_confirmation_reply(card)
         if draft_id:
             with self._lock:
-                self._pending[conversation_key] = _PendingDraft(draft_id=draft_id)
+                self._pending[conversation_key] = _PendingDraft(
+                    draft_id=draft_id,
+                    reply_text=reply_text,
+                )
         return self._remember(
             message.request_id,
             {
                 "handled": True,
-                "replyText": _format_confirmation_reply(card),
+                "replyText": reply_text,
                 "state": "awaiting_confirmation",
             },
         )
@@ -206,10 +211,48 @@ class ChannelTextInboundController:
                 text=text,
             )
             reply_text = self._confirmation_result_reply_text(conversation_key=conversation_key, result=result)
+            with self._lock:
+                card_is_recoverable = conversation_key in self._pending
             try:
-                self._send_channel_text(reply_text, f"channel-confirmation-result:{message.request_id}", target)
+                send_result = self._send_channel_text(
+                    reply_text,
+                    f"channel-confirmation-result:{message.request_id}",
+                    target,
+                )
+                if send_result.get("sent") is True:
+                    return
+                _LOGGER.error(
+                    "confirmation result delivery failed request_id=%s result=%r",
+                    message.request_id,
+                    send_result,
+                )
+                if send_result.get("resultKnown") is True:
+                    delivery_message = (
+                        "确认卡发送失败，微信未收到；完整确认卡已保留在工作台，"
+                        "发送下一条非“确认/取消”消息可再次查看。"
+                        if card_is_recoverable
+                        else "确认结果发送失败，微信未收到；处理结果已保留在工作台，请在工作台查看。"
+                    )
+                else:
+                    delivery_message = (
+                        "确认卡送达状态无法确认；为避免重复发送，完整确认卡已保留在工作台，"
+                        "发送下一条非“确认/取消”消息可再次查看。"
+                        if card_is_recoverable
+                        else "确认结果送达状态无法确认；请在工作台查看处理结果。"
+                    )
             except Exception:
-                return
+                _LOGGER.exception("confirmation result delivery unknown request_id=%s", message.request_id)
+                delivery_message = (
+                    "确认卡送达状态无法确认；为避免重复发送，完整确认卡已保留在工作台，"
+                    "发送下一条非“确认/取消”消息可再次查看。"
+                    if card_is_recoverable
+                    else "确认结果送达状态无法确认；请在工作台查看处理结果。"
+                )
+            self._chat_controller.append_channel_plain_message(
+                context_id=conversation_key,
+                actor="system",
+                text=delivery_message,
+            )
 
         self._background_submitter(_finish)
         return self._remember(
@@ -290,7 +333,12 @@ class ChannelTextInboundController:
             draft_id = str(card.get("draftId") or "").strip()
             if draft_id:
                 with self._lock:
-                    self._pending[conversation_key] = _PendingDraft(draft_id=draft_id)
+                    reply_text = _format_confirmation_reply(card)
+                    self._pending[conversation_key] = _PendingDraft(
+                        draft_id=draft_id,
+                        reply_text=reply_text,
+                    )
+                    return reply_text
             return _format_confirmation_reply(card)
         return _normal_chat_reply_text(result)
 
@@ -352,6 +400,12 @@ class ChannelTextInboundController:
                     result=result,
                     deliver_to_channel=deliver_to_channel,
                 )
+                if on_complete is not None:
+                    delivery = self._push_scheduled_selection_report_file(
+                        message=message,
+                        result=result,
+                        deliver_to_channel=deliver_to_channel,
+                    )
             except Exception:
                 _LOGGER.exception("selection failed request_id=%s", message.request_id)
                 failure_text = "定时选股执行失败，请稍后重试。" if on_complete is not None else "选股执行失败，请稍后重试。"
@@ -375,6 +429,40 @@ class ChannelTextInboundController:
                 "state": "selection_processing",
             },
         )
+
+    def _push_scheduled_selection_report_file(
+        self,
+        *,
+        message: ChannelTextMessage,
+        result: dict[str, Any],
+        deliver_to_channel: bool,
+    ) -> dict[str, str]:
+        if not deliver_to_channel or self._request_selection_report_file is None:
+            return {"status": "unavailable"}
+        selection = result.get("selection")
+        if not isinstance(selection, dict):
+            return {"status": "not_attempted"}
+        workflow_run_id = str(selection.get("workflowRunId") or "").strip()
+        markdown = str(selection.get("readerReportMarkdown") or "").strip()
+        if not workflow_run_id or not markdown:
+            return {"status": "not_attempted"}
+        try:
+            sent = self._request_selection_report_file(
+                workflow_run_id,
+                markdown,
+                f"scheduled-select-file:{message.request_id}",
+                ChannelReplyTarget(message.channel_kind, message.account_id, message.sender_id),
+            )
+        except Exception:
+            _LOGGER.exception("scheduled selection report delivery failed request_id=%s", message.request_id)
+            return {"status": "unknown"}
+        if sent.get("sent") is not True:
+            return {"status": "failed"}
+        delivery = {"status": "sent"}
+        message_id = str(sent.get("messageId") or sent.get("message_id") or "").strip()
+        if message_id:
+            delivery["messageId"] = message_id
+        return delivery
 
     def _handle_full_report_request(
         self,
@@ -729,6 +817,11 @@ class ChannelTextInboundController:
         cleaned = conversation_key.strip()
         if cleaned:
             self._remember_latest_conversation(cleaned)
+
+    def clear_conversation_context(self) -> None:
+        """Clear the conversation context after account switch."""
+        with self._lock:
+            self._latest_conversation_key = None
 
     def deliver_select_result_to_channel(
         self,

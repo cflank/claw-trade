@@ -120,7 +120,7 @@ def test_send_report_file_route_ignores_public_download_url(tmp_path: Path, monk
     assert "download_url" not in service.kwargs
 
 
-def test_send_report_file_route_uses_origin_context_target() -> None:
+def test_send_report_file_route_ignores_stale_origin_context_target() -> None:
     service = _ReportNotificationProbe()
     services = SimpleNamespace(report_notification_service=service)
 
@@ -136,8 +136,8 @@ def test_send_report_file_route_uses_origin_context_target() -> None:
 
     assert response.status_code == 200
     assert service.kwargs["channel_kind"] == "wechat_clawbot"
-    assert service.kwargs["target"] == "sender-997"
-    assert service.kwargs["account_id"] == "account-997"
+    assert service.kwargs["target"] is None
+    assert service.kwargs["account_id"] is None
 
 
 class _ReportNotificationProbe:

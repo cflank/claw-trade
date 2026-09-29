@@ -271,7 +271,17 @@ class ChannelBridge:
             self._invalidate_qr_wait_state()
             return finish(_channel_status_for_user(state="disconnected", message="微信登录服务启动中，请稍后重试。"))
         stored_account_ids = self._stored_wechat_account_ids()
-        if stored_account_ids is not None and len(stored_account_ids) > 1:
+        if stored_account_ids is None:
+            self._active_qr_data_url = None
+            self._active_qr_session_key = None
+            self._invalidate_qr_wait_state()
+            return finish(
+                _channel_status_for_user(
+                    state="error",
+                    message="微信账号状态检查失败，请在设备界面查看。",
+                )
+            )
+        if len(stored_account_ids) > 1:
             self._active_qr_data_url = None
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
@@ -289,6 +299,12 @@ class ChannelBridge:
                 return finish(unavailable_status)
         provider_state = _extract_provider_status(raw_status, _PROVIDER_CHANNEL_ID)
         if provider_state.get("state") == "connected":
+            if stored_account_ids and include_qr and refresh_qr:
+                # Rescanning with any stored account must go through the replacement flow.
+                self._active_qr_data_url = None
+                self._active_qr_session_key = None
+                self._invalidate_qr_wait_state()
+                return finish(self._connected_channel_status(provider_state, replacement_required=True))
             if include_qr and refresh_qr:
                 qr_state = self._request_qr_login(refresh=True, poll_login=poll_login)
                 if qr_state.get("connected") is True:
@@ -321,7 +337,12 @@ class ChannelBridge:
             self._active_qr_data_url = None
             self._active_qr_session_key = None
             self._invalidate_qr_wait_state()
-            return finish(self._connected_channel_status(provider_state))
+            return finish(
+                self._connected_channel_status(
+                    provider_state,
+                    replacement_required=len(stored_account_ids) > 1 if stored_account_ids else False,
+                )
+            )
 
         if provider_state.get("state") != "connected":
             replacement_required = bool(stored_account_ids)
@@ -400,7 +421,12 @@ class ChannelBridge:
         with self._light_status_cache_lock:
             self._light_status_cache = None
 
-    def _connected_channel_status(self, provider_state: Mapping[str, Any]) -> dict[str, Any]:
+    def _connected_channel_status(
+        self,
+        provider_state: Mapping[str, Any],
+        *,
+        replacement_required: bool = False,
+    ) -> dict[str, Any]:
         has_file_sender = _has_file_sender(self._client)
         can_send_file = False
         file_capability_unverified = False
@@ -435,6 +461,7 @@ class ChannelBridge:
             last_connected_at=provider_state.get("lastConnectedAt"),
             can_send_text=True,
             can_send_file=can_send_file,
+            replacement_required=replacement_required,
         )
 
     def _login_provider_unavailable_status(self, raw_status: Mapping[str, Any]) -> dict[str, Any] | None:

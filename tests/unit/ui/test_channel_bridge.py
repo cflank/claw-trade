@@ -92,6 +92,10 @@ class _FakeChannelClient:
         self.config_get_calls.append(tuple(paths))
         return {"channels": {"openclaw-weixin": {"enabled": self.enabled}}}
 
+    def weixin_replacement_inspect(self, *, operation_id):
+        _ = operation_id
+        return {"storedAccountIds": []}
+
     def web_login_start(self, *, force=False, timeout_ms=12000):
         self.web_login_start_calls.append({"force": force, "timeoutMs": timeout_ms})
         if self.start_exception:
@@ -443,6 +447,39 @@ def test_get_channel_status_refreshes_qr_even_when_channel_is_connected() -> Non
     assert client.web_login_start_calls == [{"force": True, "timeoutMs": 12000}]
 
 
+def test_connected_stored_account_refresh_uses_replacement_status_without_ordinary_login() -> None:
+    class _StoredAccountClient(_FakeChannelClient):
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            _ = operation_id
+            return {"storedAccountIds": ["account-a"]}
+
+    client = _StoredAccountClient(connected=True, qr_data_url="data:image/png;base64,unsafe")
+    payload = ChannelBridge(client).get_channel_status(
+        probe=True,
+        include_qr=True,
+        refresh_qr=True,
+    )
+
+    assert payload["state"] == "connected"
+    assert payload["replacementRequired"] is True
+    assert payload["qrCodeImageDataUrl"] is None
+    assert client.web_login_start_calls == []
+
+
+def test_account_inventory_failure_never_starts_ordinary_qr_login() -> None:
+    class _InventoryFailureClient(_FakeChannelClient):
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            _ = operation_id
+            raise RuntimeError("inventory unavailable")
+
+    client = _InventoryFailureClient(connected=False, qr_data_url="data:image/png;base64,unsafe")
+    payload = ChannelBridge(client).get_channel_status(probe=True, include_qr=True)
+
+    assert payload["state"] == "error"
+    assert "账号状态检查失败" in payload["lastErrorMessage"]
+    assert client.web_login_start_calls == []
+
+
 def test_get_channel_status_keeps_connected_when_refresh_returns_no_qr() -> None:
     client = _FakeChannelClient(connected=True)
     bridge = ChannelBridge(client)
@@ -518,6 +555,41 @@ def test_get_channel_status_polls_qr_login_with_session_key_until_connected() ->
 
     assert first["state"] == "disconnected"
     assert second["state"] == "connected"
+
+
+def test_first_login_poll_consumes_success_after_plugin_stores_new_account() -> None:
+    class _FirstLoginStoresAccountClient(_FakeChannelClient):
+        def __init__(self) -> None:
+            super().__init__(
+                connected=False,
+                qr_data_url="data:image/png;base64,real-qr",
+                qr_session_key="login-session-1",
+                wait_connected=True,
+            )
+            self.stored_account_ids: list[str] = []
+
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            _ = operation_id
+            return {"storedAccountIds": list(self.stored_account_ids)}
+
+        def web_login_wait(self, **kwargs):  # type: ignore[no-untyped-def]
+            result = super().web_login_wait(**kwargs)
+            self.stored_account_ids = ["new-account"]
+            return result
+
+    client = _FirstLoginStoresAccountClient()
+    bridge = ChannelBridge(client)
+
+    first = bridge.get_channel_status(probe=True, include_qr=True)
+    second = {"state": "disconnected"}
+    for _ in range(20):
+        second = bridge.get_channel_status(probe=True, include_qr=True, poll_login=True)
+        if second["state"] == "connected":
+            break
+
+    assert first["state"] == "disconnected"
+    assert second["state"] == "connected"
+    assert client.stored_account_ids == ["new-account"]
     assert client.web_login_start_calls == [{"force": False, "timeoutMs": 12000}]
     assert client.web_login_wait_calls == [
         {
@@ -949,6 +1021,24 @@ def test_save_channel_config_marks_wechat_channel_as_configured_when_enabled() -
     assert patch["channels"]["openclaw-weixin"]["enabled"] is True
     assert isinstance(patch["channels"]["openclaw-weixin"]["channelConfigUpdatedAt"], str)
     assert result["status"]["qrCodeImageDataUrl"] == "data:image/png;base64,real-qr"
+
+
+def test_save_channel_config_with_stored_account_returns_replacement_without_ordinary_qr() -> None:
+    class _StoredAccountClient(_FakeChannelClient):
+        def weixin_replacement_inspect(self, *, operation_id):  # type: ignore[no-untyped-def]
+            _ = operation_id
+            return {"storedAccountIds": ["account-a"]}
+
+    client = _StoredAccountClient(connected=False, qr_data_url="data:image/png;base64,unsafe")
+    result = ChannelBridge(client).save_channel_config_via_openclaw(
+        request_id="req-enable-existing-wechat",
+        channel_kind="wechat_clawbot",
+        config_patch={"enabled": True},
+    )
+
+    assert result["status"]["replacementRequired"] is True
+    assert result["status"]["qrCodeImageDataUrl"] is None
+    assert client.web_login_start_calls == []
 
 
 def test_save_channel_config_waits_for_gateway_restart_after_enable(monkeypatch) -> None:

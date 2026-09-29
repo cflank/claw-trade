@@ -104,13 +104,14 @@ export function HistoryRail({
                   ) : null}
                 </button>
                 <div className="ct-history-actions">
-                  {item.canForwardToChannel && onForwardReport ? (
+                  {onForwardReport ? (
                     <button
                       type="button"
-                      className="ct-history-forward"
+                      className={`ct-history-forward${item.canForwardToChannel ? '' : ' is-disabled'}`}
                       aria-label={`转发 ${item.title}`}
-                      disabled={forwardingReportId === item.id}
-                      onClick={() => onForwardReport(item)}
+                      disabled={forwardingReportId === item.id || !item.canForwardToChannel}
+                      onClick={() => item.canForwardToChannel && onForwardReport(item)}
+                      title={item.forwardDisabledReason ?? undefined}
                     >
                       {forwardingReportId === item.id ? '发送中' : '转发'}
                     </button>

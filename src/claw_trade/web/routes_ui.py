@@ -31,7 +31,6 @@ from claw_trade.ui_contracts.user_dto import to_user_payload
 from claw_trade.web.session import resolve_context_id
 from claw_trade.web.state import (
     UiHttpServices,
-    _reply_target_from_origin_context,
     build_report_detail_payload,
 )
 
@@ -805,17 +804,41 @@ def list_saved_reports(
         return _exception_response(exc)
 
 
+def _get_forward_reason(status: dict[str, Any]) -> str | None:
+    """Determine why report forward is unavailable, or None if available."""
+    try:
+        state = str(status.get("state", ""))
+        replacement_required = status.get("replacementRequired", False)
+        can_send_file = status.get("canSendFile", False)
+
+        if state == "connected" and can_send_file and not replacement_required:
+            return None  # Forward is available
+
+        if replacement_required:
+            return "多账号冲突，请前往设置重新连接微信。"
+        if state != "connected":
+            return "微信未连接，请先在设置中连接微信。"
+        if not can_send_file:
+            return "微信当前无法发送文件，请检查连接状态。"
+        return "微信状态暂未确认，请稍后重试。"
+    except Exception:
+        return "微信状态检查失败，请前往设置查看。"
+
+
 def _apply_report_forward_capability(items: list[dict[str, Any]], services: UiHttpServices) -> list[dict[str, Any]]:
     can_forward_current_channel = False
+    forward_reason: str | None = None
     try:
         status = services.channel_bridge.get_channel_status(probe=True)
         can_forward_current_channel = str(status.get("state")) == "connected" and bool(status.get("canSendFile"))
+        forward_reason = _get_forward_reason(status) if not can_forward_current_channel else None
     except Exception:
-        can_forward_current_channel = False
+        forward_reason = "微信状态检查失败，请前往设置查看。"
     forwarded_items: list[dict[str, Any]] = []
     for item in items:
         next_item = dict(item)
         next_item["canForwardToChannel"] = bool(can_forward_current_channel)
+        next_item["forwardDisabledReason"] = forward_reason
         forwarded_items.append(next_item)
     return forwarded_items
 
@@ -985,13 +1008,14 @@ def download_report_pdf(request: Request, reportId: str = Query(...)) -> Any:
 def send_report_file_via_channel(payload: SendReportFileRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
-        target = _reply_target_from_origin_context(payload.originContextId)
+        # Manual forwards always go to the currently bound chat; a stale page may still
+        # submit a historical originContextId that points at a replaced account.
         result = services.report_notification_service.request_full_report_file(
             report_id=payload.reportId,
             request_id=payload.requestId,
-            channel_kind=target.channel_kind if target is not None else payload.channelKind,
-            target=target.sender_id if target is not None else None,
-            account_id=target.account_id if target is not None else None,
+            channel_kind=payload.channelKind,
+            target=None,
+            account_id=None,
         )
         if not bool(result.get("sent")):
             code = str(result.get("code") or "FILE_SEND_UNSUPPORTED")
@@ -1068,12 +1092,14 @@ def get_wechat_reconnect_state(request: Request) -> JSONResponse:
 def poll_wechat_reconnect(payload: PollWechatReconnectRequest, request: Request) -> JSONResponse:
     services = _services(request)
     try:
-        return _success_response(
-            services.channel_bridge.poll_wechat_reconnect(
-                operation_id=payload.operationId,
-                timeout_ms=max(1_000, min(payload.timeoutMs, 10_000)),
-            )
+        result = services.channel_bridge.poll_wechat_reconnect(
+            operation_id=payload.operationId,
+            timeout_ms=max(1_000, min(payload.timeoutMs, 10_000)),
         )
+        # Clear conversation context after successful account switch
+        if result.get("phase") == "completed" and result.get("outcome") == "switched":
+            services.channel_text_inbound.clear_conversation_context()
+        return _success_response(result)
     except Exception as exc:
         return _exception_response(exc)
 
@@ -1099,12 +1125,14 @@ def recover_wechat_reconnect(
 ) -> JSONResponse:
     services = _services(request)
     try:
-        return _success_response(
-            services.channel_bridge.resume_wechat_reconnect(
-                operation_id=payload.operationId,
-                channel_kind=payload.channelKind,
-            )
+        result = services.channel_bridge.resume_wechat_reconnect(
+            operation_id=payload.operationId,
+            channel_kind=payload.channelKind,
         )
+        # Clear conversation context after successful account switch
+        if result.get("phase") == "completed" and result.get("outcome") == "switched":
+            services.channel_text_inbound.clear_conversation_context()
+        return _success_response(result)
     except Exception as exc:
         return _exception_response(exc)
 

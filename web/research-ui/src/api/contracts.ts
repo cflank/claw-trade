@@ -214,6 +214,7 @@ export interface SavedReportForUser {
   summarySnippet: string;
   originContextId?: string | null;
   canForwardToChannel?: boolean;
+  forwardDisabledReason?: string | null;
 }
 
 export interface DataSourceHealthEventForUser {

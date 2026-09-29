@@ -402,9 +402,10 @@ def test_select_command_pushes_wechat_summary_and_sends_selection_pdf_on_request
     assert chat_transport.calls == []
 
 
-def test_scheduled_select_completes_only_after_wechat_summary_is_sent() -> None:
+def test_scheduled_select_completes_only_after_wechat_summary_and_report_are_sent() -> None:
     background_jobs = []
     sent_texts = []
+    sent_files = []
     completed = []
     controller, _runner, _transport = _controller(
         selection_controller=_FakeSelectionController(),
@@ -413,6 +414,15 @@ def test_scheduled_select_completes_only_after_wechat_summary_is_sent() -> None:
             {"text": text, "dedupeKey": dedupe_key, "target": target}
         )
         or {"sent": True},
+        request_selection_report_file=lambda workflow_run_id, markdown, request_id, target: sent_files.append(
+            {
+                "workflowRunId": workflow_run_id,
+                "markdown": markdown,
+                "requestId": request_id,
+                "target": target,
+            }
+        )
+        or {"sent": True, "messageId": "selection-file-1"},
     )
 
     started = controller.handle_scheduled_select(
@@ -429,7 +439,15 @@ def test_scheduled_select_completes_only_after_wechat_summary_is_sent() -> None:
     assert len(sent_texts) == 1
     assert sent_texts[0]["target"].account_id == "account-1"
     assert sent_texts[0]["target"].sender_id == "sender-1"
+    assert len(sent_files) == 1
+    assert sent_files[0]["workflowRunId"] == "select-wechat-test-run"
+    assert sent_files[0]["requestId"] == "scheduled-select-file:scheduled-selection:schedule-1:cron-1"
+    assert sent_files[0]["target"].sender_id == "sender-1"
     assert completed[0]["selection"]["workflowRunId"] == "select-wechat-test-run"
+    assert completed[0]["channelDelivery"] == {
+        "status": "sent",
+        "messageId": "selection-file-1",
+    }
 
 
 def test_scheduled_select_runs_when_wechat_target_is_temporarily_unavailable() -> None:
@@ -673,6 +691,68 @@ def test_report_message_name_lookup_failure_sends_error_without_pending_confirma
     assert "confirmationCards" not in snapshot or snapshot["confirmationCards"] == {}
     assert snapshot["messages"][-1]["text"] == sent_texts[0]["text"]
     assert runner.calls == 0
+
+
+@pytest.mark.parametrize(
+    ("send_result", "expected_status"),
+    (
+        ({"sent": False, "resultKnown": True}, "确认卡发送失败，微信未收到"),
+        ({"sent": False, "resultKnown": False}, "确认卡送达状态无法确认"),
+        (RuntimeError("gateway timeout"), "确认卡送达状态无法确认"),
+        ({"sent": True}, None),
+    ),
+)
+def test_confirmation_card_delivery_status_is_visible_and_card_is_recoverable(
+    send_result: object,
+    expected_status: str | None,
+) -> None:
+    background_jobs = []
+
+    def _send_text(text, dedupe_key, target):  # type: ignore[no-untyped-def]
+        _ = (text, dedupe_key, target)
+        if isinstance(send_result, Exception):
+            raise send_result
+        return send_result
+
+    controller, runner, _ = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=_send_text,
+    )
+
+    first = controller.handle_message(_message("r-confirm-delivery", "/report TSLA"))
+    assert first["state"] == "confirmation_processing"
+    background_jobs[0]()
+
+    follow_up = controller.handle_message(_message("r-confirm-follow-up", "换个标的"))
+    assert follow_up["state"] == "awaiting_confirmation"
+    assert "标的：TSLA" in follow_up["replyText"]
+    assert len(controller.latest_conversation_snapshot()["confirmationCards"]) == 1
+    assert runner.calls == 0
+
+    messages = controller.latest_conversation_snapshot()["messages"]
+    if expected_status is None:
+        assert not any("确认卡发送失败" in item["text"] for item in messages)
+        assert not any("送达状态无法确认" in item["text"] for item in messages)
+    else:
+        assert any(expected_status in item["text"] for item in messages)
+
+
+def test_confirmation_result_delivery_failure_without_card_does_not_claim_card_exists() -> None:
+    background_jobs = []
+
+    controller, _runner, _ = _controller(
+        background_submitter=background_jobs.append,
+        send_channel_text=lambda *_args: (_ for _ in ()).throw(RuntimeError("gateway timeout")),
+        company_name_resolver=lambda **_kwargs: {},
+    )
+
+    controller.handle_message(_message("r-confirm-no-card", "/report 600638"))
+    background_jobs[0]()
+
+    messages = controller.latest_conversation_snapshot()["messages"]
+    assert "确认结果送达状态无法确认" in messages[-1]["text"]
+    assert "完整确认卡" not in messages[-1]["text"]
+    assert controller.latest_conversation_snapshot().get("confirmationCards", {}) == {}
 
 
 def test_sched_alias_returns_confirmation_without_starting_workflow() -> None:

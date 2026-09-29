@@ -3590,7 +3590,7 @@ describe('home page', () => {
       expect(mocked.getSendReportFileBodies().at(0)).toMatchObject({
         reportId: 'report-1',
         channelKind: 'wechat_clawbot',
-        originContextId: 'wechat_clawbot:account-1:sender-1',
+        originContextId: null,
       });
     });
     expect(await screen.findByText('完整报告已发送。')).toBeInTheDocument();
