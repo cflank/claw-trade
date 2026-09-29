@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from hashlib import sha256
 
 from claw_trade.ui_backend.task_costs import (
     TaskCostSnapshot,
@@ -199,7 +200,7 @@ def test_collect_token_cost_summary_keeps_token_total_for_mixed_deepseek_pricing
     )
 
 
-def test_collect_token_cost_summary_from_openclaw_trajectory(tmp_path) -> None:
+def test_collect_token_cost_summary_from_hashed_long_run_trajectory(tmp_path) -> None:
     call_dir = tmp_path / "calls" / "call-1"
     call_dir.mkdir(parents=True)
     provider_request_path = call_dir / "provider-request.json"
@@ -214,7 +215,10 @@ def test_collect_token_cost_summary_from_openclaw_trajectory(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
-    openclaw_run_id = "run-usage-1"
+    openclaw_run_id = (
+        "select-20260821T110008-scheduled-selection-schedule-1-cron-"
+        "7d16466d-d7e7-4794-b2d8-505a80516c54-1787310000010-dispatch-01-selection_strategist"
+    )
     (call_dir / "openclaw-result.json").write_text(
         json.dumps(
             {
@@ -227,7 +231,8 @@ def test_collect_token_cost_summary_from_openclaw_trajectory(tmp_path) -> None:
     state_root = tmp_path / "openclaw-state" / "agents"
     trajectory_dir = state_root / "report_polisher" / "sessions"
     trajectory_dir.mkdir(parents=True)
-    (trajectory_dir / f"single-worker-{openclaw_run_id}.trajectory.jsonl").write_text(
+    session_id = f"single-worker-{sha256(openclaw_run_id.encode()).hexdigest()}"
+    (trajectory_dir / f"{session_id}.trajectory.jsonl").write_text(
         "\n".join(
             [
                 json.dumps({"type": "trace.metadata", "runId": openclaw_run_id}),

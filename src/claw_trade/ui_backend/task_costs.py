@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
+from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -509,6 +510,11 @@ def _usage_collection_from_trajectory(
             f"*/sessions/single-worker-{openclaw_run_id}.trajectory.jsonl"
         )
     )
+    if not trajectory_paths:
+        session_id = f"single-worker-{sha256(openclaw_run_id.encode()).hexdigest()}"
+        trajectory_paths = sorted(
+            openclaw_state_agent_root.glob(f"*/sessions/{session_id}.trajectory.jsonl")
+        )
     if not trajectory_paths:
         trajectory_paths = sorted(openclaw_state_agent_root.glob(f"*/sessions/*{openclaw_run_id}*.trajectory.jsonl"))
     total_tokens = _UsageTokens()
