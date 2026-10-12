@@ -8323,3 +8323,224 @@ diff --git a/src/monitor/monitor.ts b/src/monitor/monitor.ts
        if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
          saveGetUpdatesBuf(syncFilePath, resp.get_updates_buf);
          getUpdatesBuf = resp.get_updates_buf;
+diff --git a/package.json b/package.json
+index 6a14df3..aa70e32 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@tencent-weixin/openclaw-weixin",
+-  "version": "2.4.4-clawtrade.2",
++  "version": "2.4.4-clawtrade.3",
+   "description": "OpenClaw Weixin channel",
+   "license": "MIT",
+   "author": "Tencent",
+diff --git a/src/api/api.ts b/src/api/api.ts
+index a16420c..bdc64f0 100644
+--- a/src/api/api.ts
++++ b/src/api/api.ts
+@@ -16,6 +16,7 @@ import type {
+   NotifyStopResp,
+   NotifyStartResp,
+   SendMessageReq,
++  SendMessageResp,
+   SendTypingReq,
+   GetConfigResp,
+ } from "./types.js";
+@@ -467,7 +468,7 @@ export async function getUploadUrl(
+ export async function sendMessage(
+   params: WeixinApiOptions & { body: SendMessageReq },
+ ): Promise<void> {
+-  await apiPostFetch({
++  const rawText = await apiPostFetch({
+     baseUrl: params.baseUrl,
+     endpoint: "ilink/bot/sendmessage",
+     body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
+@@ -475,6 +476,26 @@ export async function sendMessage(
+     timeoutMs: params.timeoutMs ?? DEFAULT_API_TIMEOUT_MS,
+     label: "sendMessage",
+   });
++  assertSendMessageAccepted(rawText);
++}
++
++/** claw-trade: HTTP 200 is not business acceptance; reject non-zero ret/errcode. */
++export function assertSendMessageAccepted(rawText: string): void {
++  if (!rawText.trim()) return;
++  let resp: SendMessageResp;
++  try {
++    resp = JSON.parse(rawText) as SendMessageResp;
++  } catch {
++    throw new Error(`sendMessage: unparseable response: ${redactBody(rawText)}`);
++  }
++  const rejected =
++    (resp.ret !== undefined && resp.ret !== 0) ||
++    (resp.errcode !== undefined && resp.errcode !== 0);
++  if (rejected) {
++    const message = `sendMessage rejected: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg ?? ""}`;
++    logger.error(message);
++    throw new Error(message);
++  }
+ }
+ 
+ /** Fetch bot config (includes typing_ticket) for a given user. */
+diff --git a/src/api/types.ts b/src/api/types.ts
+index a1b0a2f..22bb828 100644
+--- a/src/api/types.ts
++++ b/src/api/types.ts
+@@ -224,7 +224,9 @@ export interface SendMessageReq {
+ }
+ 
+ export interface SendMessageResp {
+-  // empty
++  ret?: number;
++  errcode?: number;
++  errmsg?: string;
+ }
+ 
+ /** Typing status: 1 = typing (default), 2 = cancel typing. */
+diff --git a/src/channel.ts b/src/channel.ts
+index 705bec5..067be86 100644
+--- a/src/channel.ts
++++ b/src/channel.ts
+@@ -31,7 +31,7 @@ import type { WeixinQrStartResult, WeixinQrWaitResult } from "./auth/login-qr.js
+ // resolution before the account actually starts.
+ import { applyWeixinMessageSendingHook, emitWeixinMessageSent } from "./messaging/outbound-hooks.js";
+ import { sendWeixinMediaFile } from "./messaging/send-media.js";
+-import { sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
++import { requireContextToken, sendMessageWeixin, StreamingMarkdownFilter } from "./messaging/send.js";
+ import { downloadRemoteImageToTemp } from "./cdn/upload.js";
+ 
+ /** Returns true when mediaUrl refers to a local filesystem path (absolute or relative). */
+@@ -120,9 +120,7 @@ async function sendWeixinOutbound(params: {
+     aLog.error(`sendWeixinOutbound: account not configured`);
+     throw new Error("weixin not configured: please run `openclaw channels login --channel openclaw-weixin`");
+   }
+-  if (!params.contextToken) {
+-    aLog.warn(`sendWeixinOutbound: contextToken missing for to=${params.to}, sending without context`);
+-  }
++  requireContextToken("sendWeixinOutbound", params.to, params.contextToken);
+   const f = new StreamingMarkdownFilter();
+   const rawText = params.text ?? "";
+   let filteredText = f.feed(rawText) + f.flush();
+@@ -240,6 +238,9 @@ export const weixinPlugin: ChannelPlugin<ResolvedWeixinAccount> = {
+         );
+       }
+ 
++      // Fail before any CDN upload when delivery cannot succeed.
++      requireContextToken("sendMedia", ctx.to, getContextToken(account.accountId, ctx.to));
++
+       const mediaUrl = ctx.mediaUrl;
+       let text = ctx.text ?? "";
+ 
+diff --git a/src/clawtrade-delivery.test.ts b/src/clawtrade-delivery.test.ts
+new file mode 100644
+index 0000000..7f57633
+--- /dev/null
++++ b/src/clawtrade-delivery.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, it } from "vitest";
++
++import { assertSendMessageAccepted } from "./api/api.js";
++import { requireContextToken } from "./messaging/send.js";
++
++describe("claw-trade weixin delivery guards", () => {
++  it("rejects outbound sends without a context token", () => {
++    expect(() => requireContextToken("sendFileMessageWeixin", "u@im.wechat", undefined)).toThrow(
++      /contextToken missing for to=u@im\.wechat/,
++    );
++    expect(requireContextToken("sendMessageWeixin", "u@im.wechat", "tok")).toBe("tok");
++  });
++
++  it("treats non-zero ret or errcode as a failed send", () => {
++    expect(() => assertSendMessageAccepted('{"ret":-2,"errmsg":"bad"}')).toThrow(/ret=-2/);
++    expect(() => assertSendMessageAccepted('{"errcode":-14}')).toThrow(/errcode=-14/);
++    expect(() => assertSendMessageAccepted("not json")).toThrow(/unparseable/);
++  });
++
++  it("accepts empty and zero-code responses", () => {
++    expect(() => assertSendMessageAccepted("")).not.toThrow();
++    expect(() => assertSendMessageAccepted("{}")).not.toThrow();
++    expect(() => assertSendMessageAccepted('{"ret":0}')).not.toThrow();
++  });
++});
+diff --git a/src/messaging/send.ts b/src/messaging/send.ts
+index 9c8379e..03a65f6 100644
+--- a/src/messaging/send.ts
++++ b/src/messaging/send.ts
+@@ -63,6 +63,21 @@ function buildSendMessageReq(params: {
+   });
+ }
+ 
++/**
++ * claw-trade: iLink accepts sends without context_token at HTTP level but does
++ * not deliver them, so a missing token must fail instead of reporting success.
++ */
++export function requireContextToken(label: string, to: string, contextToken: string | undefined): string {
++  if (!contextToken) {
++    const message =
++      `${label}: weixin contextToken missing for to=${to}; ` +
++      `the recipient must message the bot in Weixin before outbound delivery can work`;
++    logger.error(message);
++    throw new Error(message);
++  }
++  return contextToken;
++}
++
+ /**
+  * Send a plain text message downstream.
+  */
+@@ -72,9 +87,7 @@ export async function sendMessageWeixin(params: {
+   opts: WeixinMessageSendOptions;
+ }): Promise<{ messageId: string }> {
+   const { to, text, opts } = params;
+-  if (!opts.contextToken) {
+-    logger.warn(`sendMessageWeixin: contextToken missing for to=${to}, sending without context`);
+-  }
++  requireContextToken("sendMessageWeixin", to, opts.contextToken);
+   const clientId = generateClientId();
+   const req = buildSendMessageReq({
+     to,
+@@ -106,9 +119,7 @@ export async function sendMessageItemWeixin(params: {
+   label?: string;
+ }): Promise<{ messageId: string }> {
+   const { to, item, opts } = params;
+-  if (!opts.contextToken) {
+-    logger.warn(`sendMessageItemWeixin: contextToken missing for to=${to}, sending without context`);
+-  }
++  requireContextToken("sendMessageItemWeixin", to, opts.contextToken);
+   const clientId = params.clientId ?? generateClientId();
+   const req: SendMessageReq = {
+     msg: {
+@@ -208,9 +219,7 @@ export async function sendImageMessageWeixin(params: {
+   opts: WeixinMessageSendOptions;
+ }): Promise<{ messageId: string }> {
+   const { to, text, uploaded, opts } = params;
+-  if (!opts.contextToken) {
+-    logger.warn(`sendImageMessageWeixin: contextToken missing for to=${to}, sending without context`);
+-  }
++  requireContextToken("sendImageMessageWeixin", to, opts.contextToken);
+   logger.info(
+     `sendImageMessageWeixin: to=${to} filekey=${uploaded.filekey} fileSize=${uploaded.fileSize} aeskey=present`,
+   );
+@@ -242,9 +251,7 @@ export async function sendVideoMessageWeixin(params: {
+   opts: WeixinMessageSendOptions;
+ }): Promise<{ messageId: string }> {
+   const { to, text, uploaded, opts } = params;
+-  if (!opts.contextToken) {
+-    logger.warn(`sendVideoMessageWeixin: contextToken missing for to=${to}, sending without context`);
+-  }
++  requireContextToken("sendVideoMessageWeixin", to, opts.contextToken);
+ 
+   const videoItem: MessageItem = {
+     type: MessageItemType.VIDEO,
+@@ -274,9 +281,7 @@ export async function sendFileMessageWeixin(params: {
+   opts: WeixinMessageSendOptions;
+ }): Promise<{ messageId: string }> {
+   const { to, text, fileName, uploaded, opts } = params;
+-  if (!opts.contextToken) {
+-    logger.warn(`sendFileMessageWeixin: contextToken missing for to=${to}, sending without context`);
+-  }
++  requireContextToken("sendFileMessageWeixin", to, opts.contextToken);
+   const fileItem: MessageItem = {
+     type: MessageItemType.FILE,
+     file_item: {

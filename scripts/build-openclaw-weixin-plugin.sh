@@ -161,6 +161,7 @@ npm exec --prefix "${SOURCE_DIR}" -- vitest run \
   src/replacement.test.ts \
   src/auth/login-qr-cancel.test.ts \
   src/monitor/monitor-status.test.ts \
+  src/clawtrade-delivery.test.ts \
   --coverage.enabled=false
 (
   cd "${SOURCE_DIR}"
